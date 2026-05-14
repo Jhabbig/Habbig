@@ -596,11 +596,34 @@ SECURITY_HEADERS = {
     # introduce XSS via universal-XSS bugs. Modern OWASP guidance is 0.
     "X-XSS-Protection": "0",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    # Permissions-Policy: deny every browser sensor/payment/synced API by
+    # default. Adding a feature you actually use? Edit this list — but
+    # consider whether you really need browser-level access first. Keep
+    # `clipboard-write=(self)` so copy buttons keep working; everything
+    # else is deny.
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
+        "midi=(), magnetometer=(), gyroscope=(), accelerometer=(), "
+        "ambient-light-sensor=(), autoplay=(), encrypted-media=(), "
+        "fullscreen=(self), picture-in-picture=(), publickey-credentials-get=(self), "
+        "sync-xhr=(), bluetooth=(), display-capture=(), serial=(), hid=(), "
+        "clipboard-read=(), clipboard-write=(self), idle-detection=(), "
+        "interest-cohort=(), browsing-topics=()"
+    ),
     "Cross-Origin-Opener-Policy": "same-origin",
+    # Cross-Origin-Resource-Policy: blocks attacker pages from reading our
+    # responses via cross-origin <img>/<script> probes — closes one of the
+    # Spectre-class side-channel vectors. We don't intentionally serve any
+    # cross-origin embeds at this origin, so same-origin is safe.
+    "Cross-Origin-Resource-Policy": "same-origin",
 }
 if IS_PRODUCTION:
-    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # 2-year max-age + preload directive. `preload` is the prerequisite for
+    # submitting the domain at hstspreload.org (which baked-into-the-browser
+    # HSTS, immune to first-visit downgrade attacks). Stays harmless until
+    # the submission is approved. 2 years is the minimum browsers accept
+    # for preload.
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
 
 CSP = "; ".join([
     "default-src 'self'",
@@ -6510,8 +6533,25 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     if not user:
         return RedirectResponse(f"https://{apex}/gate", status_code=302)
 
-    # 2. Require active subscription.
-    if not db.has_active_subscription(user["user_id"], key):
+    # 2. Require active subscription — but mirror the /dashboards hub logic
+    # so admins and Pro/__plan__ subscribers don't get bounced to /billing
+    # for dashboards that the hub already showed as "Active".
+    is_admin = bool(user.get("is_admin"))
+    has_access = is_admin or db.has_active_subscription(user["user_id"], key)
+    if not has_access:
+        # Pro plan (via __plan__ sentinel) unlocks every dashboard.
+        try:
+            _plan_subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+            _plan = _plan_subs.get("__plan__")
+            if _plan and _plan["status"] == "active":
+                _exp = _plan["expires_at"]
+                if (not _exp or _exp > int(time.time())):
+                    _raw = _plan["plan"] or ""
+                    if _raw.startswith("pro"):
+                        has_access = True
+        except Exception:
+            pass
+    if not has_access:
         return RedirectResponse(
             f"https://{apex}/billing?dashboard={key}",
             status_code=302,
@@ -6572,9 +6612,17 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
             status_code=502,
         )
 
-    # Relay response; strip hop-by-hop headers from upstream.
+    # Relay response; strip hop-by-hop headers AND content-encoding/length
+    # from upstream because httpx already transparently decompresses gzip/br
+    # responses. Leaving the upstream Content-Encoding+Content-Length pair in
+    # the response causes uvicorn to error with "Response content longer than
+    # Content-Length" when the decoded body is bigger than the compressed
+    # header value — which silently produces empty 200s for every JSON API
+    # served by an upstream that gzips by default (e.g. Flask + werkzeug).
+    _drop_response_headers = hop_by_hop | {"content-encoding", "content-length"}
     resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in _drop_response_headers
     }
 
     # Inject dashboard switcher into HTML responses. Pass apex so the
@@ -6586,10 +6634,10 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         user["user_id"],
         apex=apex,
     )
-    # Update Content-Length since injection may have changed the body size.
-    if body is not upstream.content:
-        resp_headers.pop("content-length", None)
-        resp_headers["content-length"] = str(len(body))
+    # Always set the Content-Length to the actual decoded body length —
+    # whether or not we injected. Starlette/uvicorn would compute it from
+    # the body anyway, but being explicit avoids surprises.
+    resp_headers["content-length"] = str(len(body))
 
     return Response(
         content=body,

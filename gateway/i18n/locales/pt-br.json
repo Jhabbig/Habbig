@@ -1,158 +1,1035 @@
 {
+  "admin.affiliate.contact_example": {
+    "_machine": true,
+    "text": "ex. co-administra a newsletter PredictionMarkets, 8k assinantes"
+  },
+  "admin.analytics.title": {
+    "_machine": true,
+    "text": "Analytics"
+  },
+  "admin.enquiries.title": {
+    "_machine": true,
+    "text": "Consultas"
+  },
+  "admin.feedback.title": {
+    "_machine": true,
+    "text": "Feedback"
+  },
+  "admin.filter.active": {
+    "_machine": true,
+    "text": "Ativos"
+  },
+  "admin.filter.all": {
+    "_machine": true,
+    "text": "Todos"
+  },
+  "admin.filter.claimed": {
+    "_machine": true,
+    "text": "Resgatados"
+  },
+  "admin.filter.revoked": {
+    "_machine": true,
+    "text": "Revogados"
+  },
+  "admin.flag.description_hint": {
+    "_machine": true,
+    "text": "Opcional — o que esta flag controla"
+  },
+  "admin.flag.label_hint": {
+    "_machine": true,
+    "text": "Rótulo legível"
+  },
+  "admin.flag.name_example": {
+    "_machine": true,
+    "text": "ex. insider_signals"
+  },
+  "admin.forensics.paste_placeholder": {
+    "_machine": true,
+    "text": "Cole o texto bruto vazado aqui — log de chat, post de fórum, saída de OCR de screenshot, qualquer coisa."
+  },
+  "admin.gifts.title": {
+    "_machine": true,
+    "text": "Presentes"
+  },
+  "admin.note_placeholder": {
+    "_machine": true,
+    "text": "Nota (opcional) — ex. Para o João, Stripe #123"
+  },
+  "admin.search_all": {
+    "_machine": true,
+    "text": "Buscar"
+  },
+  "admin.status.notes_placeholder": {
+    "_machine": true,
+    "text": "Notas iniciais da investigação. Markdown permitido."
+  },
+  "admin.status.title_example": {
+    "_machine": true,
+    "text": "ex. Serviço de scraper temporariamente indisponível"
+  },
+  "admin.tokens.title": {
+    "_machine": true,
+    "text": "Tokens"
+  },
+  "admin.users.bulk.delete": {
+    "_machine": true,
+    "text": "Excluir"
+  },
+  "admin.users.bulk.demote": {
+    "_machine": true,
+    "text": "Rebaixar"
+  },
+  "admin.users.bulk.promote": {
+    "_machine": true,
+    "text": "Promover"
+  },
+  "admin.users.bulk.selected": {
+    "_machine": true,
+    "text": "{n} selecionados"
+  },
+  "admin.users.bulk.suspend": {
+    "_machine": true,
+    "text": "Suspender"
+  },
+  "admin.users.bulk.unsuspend": {
+    "_machine": true,
+    "text": "Reativar"
+  },
+  "admin.users.search_placeholder": {
+    "_machine": true,
+    "text": "Buscar usuários por nome ou e-mail"
+  },
+  "admin.users.select_all": {
+    "_machine": true,
+    "text": "Selecionar tudo"
+  },
+  "admin.users.title": {
+    "_machine": true,
+    "text": "Usuários"
+  },
+  "auth.err.password_complexity": {
+    "_machine": true,
+    "text": "A senha deve incluir maiúscula, minúscula, número e caractere especial."
+  },
+  "auth.err.password_min_length": {
+    "_machine": true,
+    "text": "A senha deve ter pelo menos 12 caracteres."
+  },
+  "auth.err.password_too_long": {
+    "_machine": true,
+    "text": "A senha é muito longa."
+  },
+  "auth.err.passwords_dont_match": {
+    "_machine": true,
+    "text": "As senhas não coincidem."
+  },
+  "auth.err.reset_link_expired": {
+    "_machine": true,
+    "text": "Este link de redefinição é inválido ou expirou. Solicite um novo."
+  },
+  "auth.err.reset_link_used": {
+    "_machine": true,
+    "text": "Este link de redefinição já foi usado."
+  },
+  "auth.err.reset_rate_limited": {
+    "_machine": true,
+    "text": "Muitas tentativas de redefinição de senha. Aguarde e tente mais tarde."
+  },
+  "auth.login.email": {
+    "_machine": true,
+    "text": "E-mail"
+  },
+  "auth.login.forgot": {
+    "_machine": true,
+    "text": "Esqueceu sua senha?"
+  },
+  "auth.login.password": {
+    "_machine": true,
+    "text": "Senha"
+  },
+  "auth.login.submit": {
+    "_machine": true,
+    "text": "Entrar"
+  },
+  "auth.login.title": {
+    "_machine": true,
+    "text": "Entrar"
+  },
+  "auth.logout.confirm": {
+    "_machine": true,
+    "text": "Sair de narve.ai?"
+  },
+  "auth.msg.email_mismatch": {
+    "_machine": true,
+    "text": "O e-mail não corresponde à conta vinculada a este token."
+  },
+  "auth.msg.gate_not_configured": {
+    "_machine": true,
+    "text": "Gate não configurado. Contate o admin."
+  },
+  "auth.msg.invite_prompt": {
+    "_machine": true,
+    "text": "Tem um token de convite? Use aqui."
+  },
+  "auth.msg.password_reset_all_logged_out": {
+    "_machine": true,
+    "text": "Senha redefinida com sucesso. Todas as sessões foram encerradas. Agora você pode entrar com sua nova senha."
+  },
+  "auth.msg.password_reset_success": {
+    "_machine": true,
+    "text": "Senha redefinida com sucesso. Agora você pode entrar."
+  },
+  "auth.msg.reset_check_your_email": {
+    "_machine": true,
+    "text": "Se essa conta existir, um link de redefinição de senha foi enviado."
+  },
+  "auth.msg.token_invalid": {
+    "_machine": true,
+    "text": "Token inválido."
+  },
+  "auth.msg.token_invalid_unclaimed": {
+    "_machine": true,
+    "text": "Token inválido ou não resgatado."
+  },
+  "auth.msg.token_or_email_invalid": {
+    "_machine": true,
+    "text": "Token ou e-mail inválido."
+  },
+  "auth.register.submit": {
+    "_machine": true,
+    "text": "Criar conta"
+  },
+  "auth.register.title": {
+    "_machine": true,
+    "text": "Crie sua conta"
+  },
+  "auth.token.checking": {
+    "_machine": true,
+    "text": "Verificando"
+  },
+  "auth.token.placeholder": {
+    "_machine": true,
+    "text": "Token de acesso"
+  },
+  "auth.token.subtitle": {
+    "_machine": true,
+    "text": "Tokens são emitidos na compra. Precisa de um? Veja os preços ou fale com o suporte."
+  },
+  "auth.token.title": {
+    "_machine": true,
+    "text": "Digite seu token de acesso"
+  },
+  "auth.token.too_many": {
+    "_machine": true,
+    "text": "Muitas tentativas. Espere 60 segundos."
+  },
+  "billing.access.admin": {
+    "_machine": true,
+    "text": "Acesso total a todos os painéis via privilégios de admin."
+  },
+  "billing.access.none": {
+    "_machine": true,
+    "text": "Assine um plano acima para desbloquear painéis."
+  },
+  "billing.access.pro": {
+    "_machine": true,
+    "text": "Todos os painéis estão inclusos na sua assinatura Pro."
+  },
+  "billing.access.trader": {
+    "_machine": true,
+    "text": "Você tem {remaining} de {total} créditos de painel restantes."
+  },
+  "billing.action.add": {
+    "_machine": true,
+    "text": "Adicionar"
+  },
+  "billing.action.subscribe": {
+    "_machine": true,
+    "text": "Assinar"
+  },
+  "billing.dashboards_heading": {
+    "_machine": true,
+    "text": "Acesso aos painéis"
+  },
+  "billing.plan.active": {
+    "_machine": true,
+    "text": "Ativo"
+  },
+  "billing.plan.expired": {
+    "_machine": true,
+    "text": "Expirado"
+  },
+  "billing.plan.trial": {
+    "_machine": true,
+    "text": "Teste"
+  },
+  "billing.status.added": {
+    "_machine": true,
+    "text": "Adicionado"
+  },
+  "billing.status.available": {
+    "_machine": true,
+    "text": "Disponível"
+  },
+  "billing.status.credits_left": {
+    "_machine": true,
+    "text": "Sem créditos restantes"
+  },
+  "billing.subtitle": {
+    "_machine": true,
+    "text": "Gerencie seu plano e o acesso aos painéis."
+  },
+  "billing.title": {
+    "_machine": true,
+    "text": "Cobrança & assinaturas"
+  },
   "brand.name": "narve.ai",
-  "brand.tagline": {"text": "Inteligência de mercados de previsão para operadores.", "_machine": true},
-
-  "nav.dashboards": {"text": "Painéis", "_machine": true},
-  "nav.feed": {"text": "Feed", "_machine": true},
-  "nav.predictions": {"text": "Previsões", "_machine": true},
-  "nav.saved": {"text": "Salvos", "_machine": true},
-  "nav.sources": {"text": "Fontes", "_machine": true},
-  "nav.intelligence": {"text": "Intelligence", "_machine": true},
-  "nav.search": {"text": "Buscar", "_machine": true},
-  "nav.billing": {"text": "Cobrança", "_machine": true},
-  "nav.settings": {"text": "Ajustes", "_machine": true},
-  "nav.admin": {"text": "Admin", "_machine": true},
-  "nav.profile": {"text": "Perfil", "_machine": true},
-  "nav.sign_out": {"text": "Sair", "_machine": true},
-  "nav.sign_in": {"text": "Entrar", "_machine": true},
-  "nav.get_started": {"text": "Começar", "_machine": true},
-
-  "btn.save": {"text": "Salvar", "_machine": true},
-  "btn.save_changes": {"text": "Salvar alterações", "_machine": true},
-  "btn.cancel": {"text": "Cancelar", "_machine": true},
-  "btn.confirm": {"text": "Confirmar", "_machine": true},
-  "btn.retry": {"text": "Tentar de novo", "_machine": true},
-  "btn.back_to_dashboard": {"text": "Voltar ao painel", "_machine": true},
-  "btn.continue": {"text": "Continuar", "_machine": true},
-  "btn.send": {"text": "Enviar", "_machine": true},
-  "btn.submit": {"text": "Enviar", "_machine": true},
-  "btn.delete": {"text": "Excluir", "_machine": true},
-  "btn.close": {"text": "Fechar", "_machine": true},
-  "btn.copy": {"text": "Copiar", "_machine": true},
-  "btn.edit": {"text": "Editar", "_machine": true},
-  "btn.export": {"text": "Exportar", "_machine": true},
-  "btn.apply": {"text": "Aplicar", "_machine": true},
-  "btn.upgrade": {"text": "Fazer upgrade", "_machine": true},
-  "btn.subscribe": {"text": "Assinar", "_machine": true},
-
-  "loading.default": {"text": "Carregando", "_machine": true},
-  "loading.feed": {"text": "Carregando o feed", "_machine": true},
-  "loading.markets": {"text": "Carregando mercados", "_machine": true},
-  "loading.one_moment": {"text": "Um momento", "_machine": true},
-
-  "empty.feed.title": {"text": "Ainda sem atividade", "_machine": true},
-  "empty.feed.body": {"text": "Quando as fontes que você segue publicarem previsões, elas vão aparecer aqui.", "_machine": true},
-  "empty.feed.cta": {"text": "Explorar fontes", "_machine": true},
-  "empty.saved.title": {"text": "Nenhuma previsão salva ainda", "_machine": true},
-  "empty.saved.body": {"text": "Quando encontrar uma previsão que queira acompanhar, toque em Salvar e ela cai aqui.", "_machine": true},
-  "empty.saved.cta": {"text": "Explorar previsões", "_machine": true},
-  "empty.sources.title": {"text": "Nenhuma fonte seguida", "_machine": true},
-  "empty.sources.body": {"text": "Siga fontes para ver as previsões delas no seu feed.", "_machine": true},
-  "empty.billing.title": {"text": "Ainda não há painéis disponíveis", "_machine": true},
-  "empty.billing.body": {"text": "Volte aqui quando seu plano estiver ativo.", "_machine": true},
-  "empty.admin.tokens": {"text": "Ainda não há tokens de convite. Gere um acima para compartilhar acesso.", "_machine": true},
-  "empty.admin.users": {"text": "Nenhum usuário corresponde à busca. Limpe o filtro ou convide alguém pela aba Tokens.", "_machine": true},
-  "empty.admin.enquiries": {"text": "Ainda não há consultas nem tickets de suporte.", "_machine": true},
-
-  "error.generic.title": {"text": "Algo deu errado", "_machine": true},
-  "error.generic.body": {"text": "Tivemos um problema. Tente de novo ou volte ao painel.", "_machine": true},
-  "error.load_failed.title": {"text": "Não foi possível carregar esta seção", "_machine": true},
-  "error.load_failed.body": {"text": "Confira sua conexão e tente de novo.", "_machine": true},
-  "error.paywall.title": {"text": "Este é um recurso pago", "_machine": true},
-  "error.paywall.body": {"text": "Faça upgrade para acessar previsões, mercados e intelligence em todos os painéis.", "_machine": true},
-  "error.rate_limit.title": {"text": "Muitas requisições", "_machine": true},
-  "error.rate_limit.body": {"text": "Espere um instante e tente de novo.", "_machine": true},
-  "error.invalid_token": {"text": "Token inválido ou revogado.", "_machine": true},
-  "error.network": {"text": "Erro de rede. Tente de novo.", "_machine": true},
-  "error.unauthorized": {"text": "Entre para continuar.", "_machine": true},
-  "error.forbidden": {"text": "Você não tem acesso a isto.", "_machine": true},
-  "error.not_found": {"text": "Não encontramos essa página.", "_machine": true},
-
-  "billing.title": {"text": "Cobrança & assinaturas", "_machine": true},
-  "billing.subtitle": {"text": "Gerencie seu plano e o acesso aos painéis.", "_machine": true},
-  "billing.plan.active": {"text": "Ativo", "_machine": true},
-  "billing.plan.trial": {"text": "Teste", "_machine": true},
-  "billing.plan.expired": {"text": "Expirado", "_machine": true},
-  "billing.access.admin": {"text": "Acesso total a todos os painéis via privilégios de admin.", "_machine": true},
-  "billing.access.pro": {"text": "Todos os painéis estão inclusos na sua assinatura Pro.", "_machine": true},
-  "billing.access.trader": {"text": "Você tem {remaining} de {total} créditos de painel restantes.", "_machine": true},
-  "billing.access.none": {"text": "Assine um plano acima para desbloquear painéis.", "_machine": true},
-  "billing.dashboards_heading": {"text": "Acesso aos painéis", "_machine": true},
-  "billing.status.added": {"text": "Adicionado", "_machine": true},
-  "billing.status.available": {"text": "Disponível", "_machine": true},
-  "billing.status.credits_left": {"text": "Sem créditos restantes", "_machine": true},
-  "billing.action.add": {"text": "Adicionar", "_machine": true},
-  "billing.action.subscribe": {"text": "Assinar", "_machine": true},
-
-  "admin.tokens.title": {"text": "Tokens", "_machine": true},
-  "admin.users.title": {"text": "Usuários", "_machine": true},
-  "admin.enquiries.title": {"text": "Consultas", "_machine": true},
-  "admin.feedback.title": {"text": "Feedback", "_machine": true},
-  "admin.analytics.title": {"text": "Analytics", "_machine": true},
-  "admin.gifts.title": {"text": "Presentes", "_machine": true},
-  "admin.filter.all": {"text": "Todos", "_machine": true},
-  "admin.filter.active": {"text": "Ativos", "_machine": true},
-  "admin.filter.claimed": {"text": "Resgatados", "_machine": true},
-  "admin.filter.revoked": {"text": "Revogados", "_machine": true},
-  "admin.users.search_placeholder": {"text": "Buscar usuários por nome ou e-mail", "_machine": true},
-  "admin.users.select_all": {"text": "Selecionar tudo", "_machine": true},
-  "admin.users.bulk.selected": {"text": "{n} selecionados", "_machine": true},
-  "admin.users.bulk.promote": {"text": "Promover", "_machine": true},
-  "admin.users.bulk.demote": {"text": "Rebaixar", "_machine": true},
-  "admin.users.bulk.suspend": {"text": "Suspender", "_machine": true},
-  "admin.users.bulk.unsuspend": {"text": "Reativar", "_machine": true},
-  "admin.users.bulk.delete": {"text": "Excluir", "_machine": true},
-
-  "settings.title": {"text": "Ajustes", "_machine": true},
-  "settings.language.heading": {"text": "Idioma", "_machine": true},
-  "settings.language.body": {"text": "Escolha o idioma em que quer ver a interface. Os dados de mercado ficam em inglês — é assim que eles chegam da fonte.", "_machine": true},
-  "settings.email.heading": {"text": "Preferências de e-mail", "_machine": true},
-  "settings.email.digest": {"text": "Resumo semanal", "_machine": true},
-  "settings.email.marketing": {"text": "Novidades do produto", "_machine": true},
-  "settings.theme.heading": {"text": "Tema", "_machine": true},
-  "settings.theme.light": {"text": "Claro", "_machine": true},
-  "settings.theme.dark": {"text": "Escuro", "_machine": true},
-  "settings.privacy.heading": {"text": "Privacidade", "_machine": true},
-  "settings.privacy.export": {"text": "Baixar seus dados", "_machine": true},
-  "settings.privacy.delete_account": {"text": "Excluir conta", "_machine": true},
-
-  "auth.token.title": {"text": "Digite seu token de acesso", "_machine": true},
-  "auth.token.subtitle": {"text": "Tokens são emitidos na compra. Precisa de um? Veja os preços ou fale com o suporte.", "_machine": true},
-  "auth.token.placeholder": {"text": "Token de acesso", "_machine": true},
-  "auth.token.checking": {"text": "Verificando", "_machine": true},
-  "auth.token.too_many": {"text": "Muitas tentativas. Espere 60 segundos.", "_machine": true},
-  "auth.login.title": {"text": "Entrar", "_machine": true},
-  "auth.login.email": {"text": "E-mail", "_machine": true},
-  "auth.login.password": {"text": "Senha", "_machine": true},
-  "auth.login.submit": {"text": "Entrar", "_machine": true},
-  "auth.login.forgot": {"text": "Esqueceu sua senha?", "_machine": true},
-  "auth.register.title": {"text": "Crie sua conta", "_machine": true},
-  "auth.register.submit": {"text": "Criar conta", "_machine": true},
-  "auth.logout.confirm": {"text": "Sair de narve.ai?", "_machine": true},
-
-  "enquire.title": {"text": "Solicitar acesso", "_machine": true},
-  "enquire.subtitle": {"text": "Diga quem você é e o que está tentando fazer.", "_machine": true},
-  "enquire.email": {"text": "E-mail", "_machine": true},
-  "enquire.role": {"text": "Função", "_machine": true},
-  "enquire.message": {"text": "Para que você usaria narve.ai?", "_machine": true},
-  "enquire.submit": {"text": "Enviar consulta", "_machine": true},
-  "enquire.sending": {"text": "Enviando", "_machine": true},
-  "enquire.success.title": {"text": "Valeu — vamos entrar em contato", "_machine": true},
-  "enquire.success.body": {"text": "Analisamos cada consulta. Retorno em 1–2 dias úteis.", "_machine": true},
-
-  "feed.X_predictions": {"text": "{count} previsão{plural}", "_machine": true},
-  "feed.X_new": {"text": "{count} novos", "_machine": true},
-  "feed.loaded_at": {"text": "Carregado {time}", "_machine": true},
-  "feed.live": {"text": "Ao vivo", "_machine": true},
-
-  "market.edge_explainer": {"text": "Nosso consenso ponderado por credibilidade está a {edge} do mercado.", "_machine": true},
-  "market.open": {"text": "Abrir mercado", "_machine": true},
-  "market.closed": {"text": "Fechado", "_machine": true},
-  "market.yes": {"text": "Sim", "_machine": true},
-  "market.no": {"text": "Não", "_machine": true},
-
+  "brand.tagline": {
+    "_machine": true,
+    "text": "Inteligência de mercados de previsão para operadores."
+  },
+  "btn.apply": {
+    "_machine": true,
+    "text": "Aplicar"
+  },
+  "btn.back_to_dashboard": {
+    "_machine": true,
+    "text": "Voltar ao painel"
+  },
+  "btn.cancel": {
+    "_machine": true,
+    "text": "Cancelar"
+  },
+  "btn.close": {
+    "_machine": true,
+    "text": "Fechar"
+  },
+  "btn.confirm": {
+    "_machine": true,
+    "text": "Confirmar"
+  },
+  "btn.continue": {
+    "_machine": true,
+    "text": "Continuar"
+  },
+  "btn.copy": {
+    "_machine": true,
+    "text": "Copiar"
+  },
+  "btn.delete": {
+    "_machine": true,
+    "text": "Excluir"
+  },
+  "btn.edit": {
+    "_machine": true,
+    "text": "Editar"
+  },
+  "btn.export": {
+    "_machine": true,
+    "text": "Exportar"
+  },
+  "btn.retry": {
+    "_machine": true,
+    "text": "Tentar de novo"
+  },
+  "btn.save": {
+    "_machine": true,
+    "text": "Salvar"
+  },
+  "btn.save_changes": {
+    "_machine": true,
+    "text": "Salvar alterações"
+  },
+  "btn.send": {
+    "_machine": true,
+    "text": "Enviar"
+  },
+  "btn.submit": {
+    "_machine": true,
+    "text": "Enviar"
+  },
+  "btn.subscribe": {
+    "_machine": true,
+    "text": "Assinar"
+  },
+  "btn.upgrade": {
+    "_machine": true,
+    "text": "Fazer upgrade"
+  },
+  "common.loading_ellipsis": {
+    "_machine": true,
+    "text": "Carregando"
+  },
+  "common.time_window": {
+    "_machine": true,
+    "text": "Janela de tempo"
+  },
+  "empty.admin.enquiries": {
+    "_machine": true,
+    "text": "Ainda não há consultas nem tickets de suporte."
+  },
+  "empty.admin.tokens": {
+    "_machine": true,
+    "text": "Ainda não há tokens de convite. Gere um acima para compartilhar acesso."
+  },
+  "empty.admin.users": {
+    "_machine": true,
+    "text": "Nenhum usuário corresponde à busca. Limpe o filtro ou convide alguém pela aba Tokens."
+  },
+  "empty.billing.body": {
+    "_machine": true,
+    "text": "Volte aqui quando seu plano estiver ativo."
+  },
+  "empty.billing.title": {
+    "_machine": true,
+    "text": "Ainda não há painéis disponíveis"
+  },
+  "empty.feed.body": {
+    "_machine": true,
+    "text": "Quando as fontes que você segue publicarem previsões, elas vão aparecer aqui."
+  },
+  "empty.feed.cta": {
+    "_machine": true,
+    "text": "Explorar fontes"
+  },
+  "empty.feed.title": {
+    "_machine": true,
+    "text": "Ainda sem atividade"
+  },
+  "empty.saved.body": {
+    "_machine": true,
+    "text": "Quando encontrar uma previsão que queira acompanhar, toque em Salvar e ela cai aqui."
+  },
+  "empty.saved.cta": {
+    "_machine": true,
+    "text": "Explorar previsões"
+  },
+  "empty.saved.title": {
+    "_machine": true,
+    "text": "Nenhuma previsão salva ainda"
+  },
+  "empty.sources.body": {
+    "_machine": true,
+    "text": "Siga fontes para ver as previsões delas no seu feed."
+  },
+  "empty.sources.title": {
+    "_machine": true,
+    "text": "Nenhuma fonte seguida"
+  },
+  "enquire.email": {
+    "_machine": true,
+    "text": "E-mail"
+  },
+  "enquire.message": {
+    "_machine": true,
+    "text": "Para que você usaria narve.ai?"
+  },
+  "enquire.role": {
+    "_machine": true,
+    "text": "Função"
+  },
+  "enquire.role.data_scientist": {
+    "_machine": true,
+    "text": "Cientista de Dados"
+  },
+  "enquire.role.financial_analyst": {
+    "_machine": true,
+    "text": "Analista Financeiro"
+  },
+  "enquire.role.fund_manager": {
+    "_machine": true,
+    "text": "Gestor de Fundos"
+  },
+  "enquire.role.journalist_media": {
+    "_machine": true,
+    "text": "Jornalista / Mídia"
+  },
+  "enquire.role.other": {
+    "_machine": true,
+    "text": "Outro"
+  },
+  "enquire.role.quantitative_analyst": {
+    "_machine": true,
+    "text": "Analista Quantitativo"
+  },
+  "enquire.role.researcher_academic": {
+    "_machine": true,
+    "text": "Pesquisador / Acadêmico"
+  },
+  "enquire.role.software_engineer": {
+    "_machine": true,
+    "text": "Engenheiro de Software"
+  },
+  "enquire.role.trader_investor": {
+    "_machine": true,
+    "text": "Trader / Investidor"
+  },
+  "enquire.sending": {
+    "_machine": true,
+    "text": "Enviando"
+  },
+  "enquire.submit": {
+    "_machine": true,
+    "text": "Enviar consulta"
+  },
+  "enquire.subtitle": {
+    "_machine": true,
+    "text": "Diga quem você é e o que está tentando fazer."
+  },
+  "enquire.success.body": {
+    "_machine": true,
+    "text": "Analisamos cada consulta. Retorno em 1–2 dias úteis."
+  },
+  "enquire.success.title": {
+    "_machine": true,
+    "text": "Valeu — vamos entrar em contato"
+  },
+  "enquire.title": {
+    "_machine": true,
+    "text": "Solicitar acesso"
+  },
+  "enquire.use_case_placeholder": {
+    "_machine": true,
+    "text": "Conte sobre seu caso de uso, o que você quer resolver ou como nos encontrou."
+  },
+  "error.forbidden": {
+    "_machine": true,
+    "text": "Você não tem acesso a isto."
+  },
+  "error.generic.body": {
+    "_machine": true,
+    "text": "Tivemos um problema. Tente de novo ou volte ao painel."
+  },
+  "error.generic.title": {
+    "_machine": true,
+    "text": "Algo deu errado"
+  },
+  "error.invalid_token": {
+    "_machine": true,
+    "text": "Token inválido ou revogado."
+  },
+  "error.load_failed.body": {
+    "_machine": true,
+    "text": "Confira sua conexão e tente de novo."
+  },
+  "error.load_failed.title": {
+    "_machine": true,
+    "text": "Não foi possível carregar esta seção"
+  },
+  "error.network": {
+    "_machine": true,
+    "text": "Erro de rede. Tente de novo."
+  },
+  "error.not_found": {
+    "_machine": true,
+    "text": "Não encontramos essa página."
+  },
+  "error.paywall.body": {
+    "_machine": true,
+    "text": "Faça upgrade para acessar previsões, mercados e intelligence em todos os painéis."
+  },
+  "error.paywall.title": {
+    "_machine": true,
+    "text": "Este é um recurso pago"
+  },
+  "error.rate_limit.body": {
+    "_machine": true,
+    "text": "Espere um instante e tente de novo."
+  },
+  "error.rate_limit.title": {
+    "_machine": true,
+    "text": "Muitas requisições"
+  },
+  "error.unauthorized": {
+    "_machine": true,
+    "text": "Entre para continuar."
+  },
+  "feed.X_new": {
+    "_machine": true,
+    "text": "{count} novos"
+  },
+  "feed.X_predictions": {
+    "_machine": true,
+    "text": "{count} previsão{plural}"
+  },
+  "feed.live": {
+    "_machine": true,
+    "text": "Ao vivo"
+  },
+  "feed.loaded_at": {
+    "_machine": true,
+    "text": "Carregado {time}"
+  },
+  "filter.filter_affiliates": {
+    "_machine": true,
+    "text": "Filtrar afiliados"
+  },
+  "filter.filter_by_email_username_or_code": {
+    "_machine": true,
+    "text": "Filtrar por e-mail, usuário ou código"
+  },
+  "filter.filter_by_position": {
+    "_machine": true,
+    "text": "Filtrar por posição"
+  },
+  "filter.filter_notifications": {
+    "_machine": true,
+    "text": "Filtrar notificações"
+  },
+  "filter.filter_predictions": {
+    "_machine": true,
+    "text": "Filtrar previsões"
+  },
+  "filter.filter_saved_predictions": {
+    "_machine": true,
+    "text": "Filtrar previsões salvas"
+  },
+  "filter.search_market_or_question": {
+    "_machine": true,
+    "text": "Buscar mercado ou pergunta"
+  },
+  "filter.search_prediction_text_or_source": {
+    "_machine": true,
+    "text": "Buscar texto da previsão ou fonte"
+  },
+  "filter.search_saved_predictions": {
+    "_machine": true,
+    "text": "Buscar previsões salvas"
+  },
+  "filter.search_users_by_name_or_email": {
+    "_machine": true,
+    "text": "Buscar usuários por nome ou e-mail"
+  },
+  "filter.search_your_predictions": {
+    "_machine": true,
+    "text": "Buscar suas previsões"
+  },
+  "filter.sort_order": {
+    "_machine": true,
+    "text": "Ordenação"
+  },
+  "filter.time_window": {
+    "_machine": true,
+    "text": "Janela de tempo"
+  },
+  "form.access_token": {
+    "_machine": true,
+    "text": "Token de acesso"
+  },
+  "form.add_a_comment": {
+    "_machine": true,
+    "text": "Adicionar um comentário"
+  },
+  "form.dismiss": {
+    "_machine": true,
+    "text": "Dispensar"
+  },
+  "form.email_address": {
+    "_machine": true,
+    "text": "Endereço de e-mail"
+  },
+  "form.email_placeholder": {
+    "_machine": true,
+    "text": "voce@empresa.com"
+  },
+  "form.enter_email": {
+    "_machine": true,
+    "text": "Digite seu e-mail"
+  },
+  "form.example_email": {
+    "_machine": true,
+    "text": "voce@exemplo.com"
+  },
+  "form.hide_password": {
+    "_machine": true,
+    "text": "Ocultar senha"
+  },
+  "form.how_should_we_greet_you": {
+    "_machine": true,
+    "text": "Como devemos te chamar?"
+  },
+  "form.paste_invite_token": {
+    "_machine": true,
+    "text": "Cole seu token de convite"
+  },
+  "form.show_password": {
+    "_machine": true,
+    "text": "Mostrar senha"
+  },
+  "form.the_email_linked_to_your_account": {
+    "_machine": true,
+    "text": "O e-mail vinculado à sua conta"
+  },
+  "form.your_32_char_token": {
+    "_machine": true,
+    "text": "Seu token de 32 caracteres"
+  },
+  "intelligence.prompt_placeholder": {
+    "_machine": true,
+    "text": "Pergunte sobre qualquer previsão, fonte ou mercado."
+  },
+  "landing.features.eyebrow": {
+    "_machine": true,
+    "text": "O que tem dentro"
+  },
+  "landing.features.sub": {
+    "_machine": true,
+    "text": "Cada card é uma assinatura separada. Comece com um, adicione mais quando quiser, cancele individualmente."
+  },
+  "landing.features.title": {
+    "_machine": true,
+    "text": "Escolha e combine painéis"
+  },
+  "landing.hero.cta_login": {
+    "_machine": true,
+    "text": "Entrar"
+  },
+  "landing.hero.cta_primary": {
+    "_machine": true,
+    "text": "Começar"
+  },
+  "landing.hero.eyebrow": {
+    "_machine": true,
+    "text": "{count} painéis · um login · cancele quando quiser"
+  },
+  "landing.hero.headline_1": {
+    "_machine": true,
+    "text": "Os sinais"
+  },
+  "landing.hero.headline_2": {
+    "_machine": true,
+    "text": "que os mercados não te mostram."
+  },
+  "landing.hero.sub": {
+    "_machine": true,
+    "text": "narve.ai transforma dados brutos de Polymarket, cripto, ações, clima e geopolítica em painéis focados que você vai querer olhar. Assine os que afiam seu edge. Ignore o resto."
+  },
+  "landing.hero.trust": {
+    "_machine": true,
+    "text": "Sem pegadinhas de plano grátis. Sem anúncios. Sem revenda de dados."
+  },
+  "landing.nav.close_menu": {
+    "_machine": true,
+    "text": "Fechar menu"
+  },
+  "landing.nav.dashboards": {
+    "_machine": true,
+    "text": "Painéis"
+  },
+  "landing.nav.open_menu": {
+    "_machine": true,
+    "text": "Abrir menu"
+  },
+  "landing.nav.pricing": {
+    "_machine": true,
+    "text": "Preços"
+  },
+  "landing.pricing.compare_link": {
+    "_machine": true,
+    "text": "Ver comparação completa de recursos →"
+  },
+  "landing.pricing.cta_contact": {
+    "_machine": true,
+    "text": "Fale conosco"
+  },
+  "landing.pricing.cta_get_started": {
+    "_machine": true,
+    "text": "Começar"
+  },
+  "landing.pricing.currency_note": {
+    "_machine": true,
+    "text": "Preços em GBP e USD. Cobrança em GBP. USD apenas como referência."
+  },
+  "landing.pricing.enterprise.desc": {
+    "_machine": true,
+    "text": "Para fundos, instituições e casos de uso customizados"
+  },
+  "landing.pricing.enterprise.features": {
+    "_machine": true,
+    "text": "Tudo do Pro · Histórico completo · Acesso à API · Integrações customizadas · Tópicos ilimitados · Trading incluído"
+  },
+  "landing.pricing.enterprise.name": {
+    "_machine": true,
+    "text": "Enterprise"
+  },
+  "landing.pricing.enterprise.price": {
+    "_machine": true,
+    "text": "Preço sob consulta"
+  },
+  "landing.pricing.eyebrow": {
+    "_machine": true,
+    "text": "Preços"
+  },
+  "landing.pricing.most_popular": {
+    "_machine": true,
+    "text": "Mais popular"
+  },
+  "landing.pricing.pro.desc": {
+    "_machine": true,
+    "text": "Para traders sérios que querem o edge completo"
+  },
+  "landing.pricing.pro.features": {
+    "_machine": true,
+    "text": "Tudo do Trader · 6 meses de dados · Mercados ilimitados · Credibilidade completa · Signal Search (IA) · Notificações push"
+  },
+  "landing.pricing.pro.name": {
+    "_machine": true,
+    "text": "Pro"
+  },
+  "landing.pricing.title": {
+    "_machine": true,
+    "text": "Suba de nível no seu trading no Polymarket hoje"
+  },
+  "landing.pricing.trader.desc": {
+    "_machine": true,
+    "text": "Para traders ativos começando com inteligência de sinais"
+  },
+  "landing.pricing.trader.features": {
+    "_machine": true,
+    "text": "Janela de 30 dias · 10 mercados · Scores globais de credibilidade · Melhores apostas (top 5) · % de probabilidade em todas as apostas"
+  },
+  "landing.pricing.trader.name": {
+    "_machine": true,
+    "text": "Trader"
+  },
+  "lang.de": "Deutsch",
   "lang.en": "English",
   "lang.es": "Español",
-  "lang.de": "Deutsch",
-  "lang.pt-br": "Português (Brasil)"
+  "lang.pt-br": "Português (Brasil)",
+  "loading.default": {
+    "_machine": true,
+    "text": "Carregando"
+  },
+  "loading.feed": {
+    "_machine": true,
+    "text": "Carregando o feed"
+  },
+  "loading.markets": {
+    "_machine": true,
+    "text": "Carregando mercados"
+  },
+  "loading.one_moment": {
+    "_machine": true,
+    "text": "Um momento"
+  },
+  "market.closed": {
+    "_machine": true,
+    "text": "Fechado"
+  },
+  "market.edge_explainer": {
+    "_machine": true,
+    "text": "Nosso consenso ponderado por credibilidade está a {edge} do mercado."
+  },
+  "market.no": {
+    "_machine": true,
+    "text": "Não"
+  },
+  "market.open": {
+    "_machine": true,
+    "text": "Abrir mercado"
+  },
+  "market.yes": {
+    "_machine": true,
+    "text": "Sim"
+  },
+  "market_detail.forecast_probability_over_time": {
+    "_machine": true,
+    "text": "Probabilidade prevista ao longo do tempo"
+  },
+  "market_detail.post_your_take": {
+    "_machine": true,
+    "text": "Compartilhe sua opinião sobre este mercado"
+  },
+  "market_detail.takes_filter_and_sort": {
+    "_machine": true,
+    "text": "Filtrar e ordenar opiniões"
+  },
+  "market_detail.why_do_you_think_so": {
+    "_machine": true,
+    "text": "Por que você pensa assim?"
+  },
+  "nav.admin": {
+    "_machine": true,
+    "text": "Admin"
+  },
+  "nav.billing": {
+    "_machine": true,
+    "text": "Cobrança"
+  },
+  "nav.dashboards": {
+    "_machine": true,
+    "text": "Painéis"
+  },
+  "nav.feed": {
+    "_machine": true,
+    "text": "Feed"
+  },
+  "nav.get_started": {
+    "_machine": true,
+    "text": "Começar"
+  },
+  "nav.intelligence": {
+    "_machine": true,
+    "text": "Intelligence"
+  },
+  "nav.predictions": {
+    "_machine": true,
+    "text": "Previsões"
+  },
+  "nav.profile": {
+    "_machine": true,
+    "text": "Perfil"
+  },
+  "nav.saved": {
+    "_machine": true,
+    "text": "Salvos"
+  },
+  "nav.search": {
+    "_machine": true,
+    "text": "Buscar"
+  },
+  "nav.settings": {
+    "_machine": true,
+    "text": "Ajustes"
+  },
+  "nav.sign_in": {
+    "_machine": true,
+    "text": "Entrar"
+  },
+  "nav.sign_out": {
+    "_machine": true,
+    "text": "Sair"
+  },
+  "nav.sources": {
+    "_machine": true,
+    "text": "Fontes"
+  },
+  "privacy.table_of_contents": {
+    "_machine": true,
+    "text": "Sumário"
+  },
+  "settings.affiliate.label_placeholder": {
+    "_machine": true,
+    "text": "Rótulo amigável (opcional)"
+  },
+  "settings.affiliate.slug_placeholder": {
+    "_machine": true,
+    "text": "Slug da campanha (ex.: podcast_ep_47)"
+  },
+  "settings.api_keys.name_example": {
+    "_machine": true,
+    "text": "ex. bot de backtest"
+  },
+  "settings.billing.interval": {
+    "_machine": true,
+    "text": "Intervalo de cobrança"
+  },
+  "settings.email.digest": {
+    "_machine": true,
+    "text": "Resumo semanal"
+  },
+  "settings.email.heading": {
+    "_machine": true,
+    "text": "Preferências de e-mail"
+  },
+  "settings.email.marketing": {
+    "_machine": true,
+    "text": "Novidades do produto"
+  },
+  "settings.language.body": {
+    "_machine": true,
+    "text": "Escolha o idioma em que quer ver a interface. Os dados de mercado ficam em inglês — é assim que eles chegam da fonte."
+  },
+  "settings.language.heading": {
+    "_machine": true,
+    "text": "Idioma"
+  },
+  "settings.offline.enable": {
+    "_machine": true,
+    "text": "Ativar modo offline"
+  },
+  "settings.offline.push": {
+    "_machine": true,
+    "text": "Ativar notificações push"
+  },
+  "settings.privacy.delete_account": {
+    "_machine": true,
+    "text": "Excluir conta"
+  },
+  "settings.privacy.export": {
+    "_machine": true,
+    "text": "Baixar seus dados"
+  },
+  "settings.privacy.heading": {
+    "_machine": true,
+    "text": "Privacidade"
+  },
+  "settings.saved_views.scope": {
+    "_machine": true,
+    "text": "Escopo da visualização"
+  },
+  "settings.theme.dark": {
+    "_machine": true,
+    "text": "Escuro"
+  },
+  "settings.theme.heading": {
+    "_machine": true,
+    "text": "Tema"
+  },
+  "settings.theme.light": {
+    "_machine": true,
+    "text": "Claro"
+  },
+  "settings.title": {
+    "_machine": true,
+    "text": "Ajustes"
+  },
+  "signal_search.term_example": {
+    "_machine": true,
+    "text": "ex. eleição, senado, congresso"
+  },
+  "signal_search.topic_example": {
+    "_machine": true,
+    "text": "ex. Eleições EUA 2026"
+  },
+  "source.key_statistics": {
+    "_machine": true,
+    "text": "Estatísticas principais"
+  },
+  "status.feed_title": {
+    "_machine": true,
+    "text": "Feed de status do narve.ai"
+  },
+  "status.uptime_window": {
+    "_machine": true,
+    "text": "Histórico de uptime dos últimos 90 dias"
+  },
+  "support.body_placeholder": {
+    "_machine": true,
+    "text": "Descreva o que aconteceu, seu usuário ou e-mail e qualquer detalhe relevante."
+  },
+  "support.topic.account_suspension": {
+    "_machine": true,
+    "text": "Suspensão de conta"
+  },
+  "support.topic.billing_issue": {
+    "_machine": true,
+    "text": "Problema de cobrança"
+  },
+  "support.topic.bug_report": {
+    "_machine": true,
+    "text": "Reportar bug"
+  },
+  "support.topic.other": {
+    "_machine": true,
+    "text": "Outro"
+  },
+  "support.topic.token_lost": {
+    "_machine": true,
+    "text": "Token perdido"
+  },
+  "terms.table_of_contents": {
+    "_machine": true,
+    "text": "Sumário"
+  }
 }

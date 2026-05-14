@@ -1,158 +1,1029 @@
 {
+  "admin.affiliate.contact_example": {
+    "_machine": true,
+    "text": "z. B. betreibt PredictionMarkets-Newsletter, 8k Abonnent:innen"
+  },
+  "admin.analytics.title": {
+    "_machine": true,
+    "text": "Analytics"
+  },
+  "admin.enquiries.title": {
+    "_machine": true,
+    "text": "Anfragen"
+  },
+  "admin.feedback.title": {
+    "_machine": true,
+    "text": "Feedback"
+  },
+  "admin.filter.active": {
+    "_machine": true,
+    "text": "Aktiv"
+  },
+  "admin.filter.all": {
+    "_machine": true,
+    "text": "Alle"
+  },
+  "admin.filter.claimed": {
+    "_machine": true,
+    "text": "Eingelöst"
+  },
+  "admin.filter.revoked": {
+    "_machine": true,
+    "text": "Widerrufen"
+  },
+  "admin.flag.description_hint": {
+    "_machine": true,
+    "text": "Optional — was diese Flag schaltet"
+  },
+  "admin.flag.label_hint": {
+    "_machine": true,
+    "text": "Lesbares Label"
+  },
+  "admin.flag.name_example": {
+    "_machine": true,
+    "text": "z. B. insider_signals"
+  },
+  "admin.forensics.paste_placeholder": {
+    "_machine": true,
+    "text": "Den unbearbeiteten Leak-Text hier einfügen — Chatverlauf, Forenpost, OCR-Ausgabe von Screenshots, alles."
+  },
+  "admin.gifts.title": {
+    "_machine": true,
+    "text": "Geschenke"
+  },
+  "admin.note_placeholder": {
+    "_machine": true,
+    "text": "Notiz (optional) — z. B. Für John, Stripe #123"
+  },
+  "admin.search_all": {
+    "_machine": true,
+    "text": "Suchen"
+  },
+  "admin.status.notes_placeholder": {
+    "_machine": true,
+    "text": "Erste Untersuchungsnotizen. Markdown ist erlaubt."
+  },
+  "admin.status.title_example": {
+    "_machine": true,
+    "text": "z. B. Scraper-Dienst vorübergehend nicht verfügbar"
+  },
+  "admin.tokens.title": {
+    "_machine": true,
+    "text": "Token"
+  },
+  "admin.users.bulk.delete": {
+    "_machine": true,
+    "text": "Löschen"
+  },
+  "admin.users.bulk.demote": {
+    "_machine": true,
+    "text": "Zurückstufen"
+  },
+  "admin.users.bulk.promote": {
+    "_machine": true,
+    "text": "Befördern"
+  },
+  "admin.users.bulk.selected": {
+    "_machine": true,
+    "text": "{n} ausgewählt"
+  },
+  "admin.users.bulk.suspend": {
+    "_machine": true,
+    "text": "Sperren"
+  },
+  "admin.users.bulk.unsuspend": {
+    "_machine": true,
+    "text": "Entsperren"
+  },
+  "admin.users.search_placeholder": {
+    "_machine": true,
+    "text": "Nutzer:innen nach Name oder E-Mail durchsuchen"
+  },
+  "admin.users.select_all": {
+    "_machine": true,
+    "text": "Alle auswählen"
+  },
+  "admin.users.title": {
+    "_machine": true,
+    "text": "Nutzer:innen"
+  },
+  "auth.err.password_complexity": {
+    "_machine": true,
+    "text": "Das Passwort muss Groß-, Kleinbuchstaben, Zahl und Sonderzeichen enthalten."
+  },
+  "auth.err.password_min_length": {
+    "_machine": true,
+    "text": "Das Passwort muss mindestens 12 Zeichen lang sein."
+  },
+  "auth.err.password_too_long": {
+    "_machine": true,
+    "text": "Das Passwort ist zu lang."
+  },
+  "auth.err.passwords_dont_match": {
+    "_machine": true,
+    "text": "Die Passwörter stimmen nicht überein."
+  },
+  "auth.err.reset_link_expired": {
+    "_machine": true,
+    "text": "Dieser Reset-Link ist ungültig oder abgelaufen. Bitte fordere einen neuen an."
+  },
+  "auth.err.reset_link_used": {
+    "_machine": true,
+    "text": "Dieser Reset-Link wurde bereits verwendet."
+  },
+  "auth.err.reset_rate_limited": {
+    "_machine": true,
+    "text": "Zu viele Passwort-Reset-Versuche. Bitte warte und versuche es später erneut."
+  },
+  "auth.login.email": {
+    "_machine": true,
+    "text": "E-Mail"
+  },
+  "auth.login.forgot": {
+    "_machine": true,
+    "text": "Passwort vergessen?"
+  },
+  "auth.login.password": {
+    "_machine": true,
+    "text": "Passwort"
+  },
+  "auth.login.submit": {
+    "_machine": true,
+    "text": "Anmelden"
+  },
+  "auth.login.title": {
+    "_machine": true,
+    "text": "Anmelden"
+  },
+  "auth.logout.confirm": {
+    "_machine": true,
+    "text": "Von narve.ai abmelden?"
+  },
+  "auth.msg.email_mismatch": {
+    "_machine": true,
+    "text": "Die E-Mail stimmt nicht mit dem Konto überein, das mit diesem Token verknüpft ist."
+  },
+  "auth.msg.gate_not_configured": {
+    "_machine": true,
+    "text": "Gate nicht konfiguriert. Wende dich an die Admins."
+  },
+  "auth.msg.invite_prompt": {
+    "_machine": true,
+    "text": "Du hast ein Einladungstoken? Hier eingeben."
+  },
+  "auth.msg.password_reset_all_logged_out": {
+    "_machine": true,
+    "text": "Passwort erfolgreich zurückgesetzt. Alle Sitzungen wurden abgemeldet. Du kannst dich jetzt mit deinem neuen Passwort anmelden."
+  },
+  "auth.msg.password_reset_success": {
+    "_machine": true,
+    "text": "Passwort erfolgreich zurückgesetzt. Du kannst dich jetzt anmelden."
+  },
+  "auth.msg.reset_check_your_email": {
+    "_machine": true,
+    "text": "Wenn das Konto existiert, wurde ein Link zum Zurücksetzen des Passworts gesendet."
+  },
+  "auth.msg.token_invalid": {
+    "_machine": true,
+    "text": "Ungültiges Token."
+  },
+  "auth.msg.token_invalid_unclaimed": {
+    "_machine": true,
+    "text": "Ungültiges oder nicht eingelöstes Token."
+  },
+  "auth.msg.token_or_email_invalid": {
+    "_machine": true,
+    "text": "Token oder E-Mail ungültig."
+  },
+  "auth.register.submit": {
+    "_machine": true,
+    "text": "Konto erstellen"
+  },
+  "auth.register.title": {
+    "_machine": true,
+    "text": "Konto erstellen"
+  },
+  "auth.token.checking": {
+    "_machine": true,
+    "text": "Prüfe"
+  },
+  "auth.token.placeholder": {
+    "_machine": true,
+    "text": "Zugangstoken"
+  },
+  "auth.token.subtitle": {
+    "_machine": true,
+    "text": "Token werden beim Kauf ausgegeben. Du brauchst eines? Preise anzeigen oder Support kontaktieren."
+  },
+  "auth.token.title": {
+    "_machine": true,
+    "text": "Zugangstoken eingeben"
+  },
+  "auth.token.too_many": {
+    "_machine": true,
+    "text": "Zu viele Versuche. Warte 60 Sekunden."
+  },
+  "billing.access.admin": {
+    "_machine": true,
+    "text": "Voller Zugriff auf alle Dashboards über Admin-Rechte."
+  },
+  "billing.access.none": {
+    "_machine": true,
+    "text": "Abonniere oben einen Plan, um Dashboards freizuschalten."
+  },
+  "billing.access.pro": {
+    "_machine": true,
+    "text": "Alle Dashboards sind in deinem Pro-Abo enthalten."
+  },
+  "billing.access.trader": {
+    "_machine": true,
+    "text": "Du hast {remaining} von {total} Dashboard-Credits übrig."
+  },
+  "billing.action.add": {
+    "_machine": true,
+    "text": "Hinzufügen"
+  },
+  "billing.action.subscribe": {
+    "_machine": true,
+    "text": "Abonnieren"
+  },
+  "billing.dashboards_heading": {
+    "_machine": true,
+    "text": "Dashboard-Zugriff"
+  },
+  "billing.plan.active": {
+    "_machine": true,
+    "text": "Aktiv"
+  },
+  "billing.plan.expired": {
+    "_machine": true,
+    "text": "Abgelaufen"
+  },
+  "billing.plan.trial": {
+    "_machine": true,
+    "text": "Test"
+  },
+  "billing.status.added": {
+    "_machine": true,
+    "text": "Hinzugefügt"
+  },
+  "billing.status.available": {
+    "_machine": true,
+    "text": "Verfügbar"
+  },
+  "billing.status.credits_left": {
+    "_machine": true,
+    "text": "Keine Credits übrig"
+  },
+  "billing.subtitle": {
+    "_machine": true,
+    "text": "Verwalte deinen Plan und Dashboard-Zugriff."
+  },
+  "billing.title": {
+    "_machine": true,
+    "text": "Abrechnung & Abonnements"
+  },
   "brand.name": "narve.ai",
-  "brand.tagline": {"text": "Prediction-Market-Intelligence für Operator:innen.", "_machine": true},
-
-  "nav.dashboards": {"text": "Dashboards", "_machine": true},
-  "nav.feed": {"text": "Feed", "_machine": true},
-  "nav.predictions": {"text": "Vorhersagen", "_machine": true},
-  "nav.saved": {"text": "Gespeichert", "_machine": true},
-  "nav.sources": {"text": "Quellen", "_machine": true},
-  "nav.intelligence": {"text": "Intelligence", "_machine": true},
-  "nav.search": {"text": "Suche", "_machine": true},
-  "nav.billing": {"text": "Abrechnung", "_machine": true},
-  "nav.settings": {"text": "Einstellungen", "_machine": true},
-  "nav.admin": {"text": "Admin", "_machine": true},
-  "nav.profile": {"text": "Profil", "_machine": true},
-  "nav.sign_out": {"text": "Abmelden", "_machine": true},
-  "nav.sign_in": {"text": "Anmelden", "_machine": true},
-  "nav.get_started": {"text": "Loslegen", "_machine": true},
-
-  "btn.save": {"text": "Speichern", "_machine": true},
-  "btn.save_changes": {"text": "Änderungen speichern", "_machine": true},
-  "btn.cancel": {"text": "Abbrechen", "_machine": true},
-  "btn.confirm": {"text": "Bestätigen", "_machine": true},
-  "btn.retry": {"text": "Erneut versuchen", "_machine": true},
-  "btn.back_to_dashboard": {"text": "Zurück zum Dashboard", "_machine": true},
-  "btn.continue": {"text": "Weiter", "_machine": true},
-  "btn.send": {"text": "Senden", "_machine": true},
-  "btn.submit": {"text": "Absenden", "_machine": true},
-  "btn.delete": {"text": "Löschen", "_machine": true},
-  "btn.close": {"text": "Schließen", "_machine": true},
-  "btn.copy": {"text": "Kopieren", "_machine": true},
-  "btn.edit": {"text": "Bearbeiten", "_machine": true},
-  "btn.export": {"text": "Exportieren", "_machine": true},
-  "btn.apply": {"text": "Übernehmen", "_machine": true},
-  "btn.upgrade": {"text": "Upgraden", "_machine": true},
-  "btn.subscribe": {"text": "Abonnieren", "_machine": true},
-
-  "loading.default": {"text": "Lade", "_machine": true},
-  "loading.feed": {"text": "Lade den Feed", "_machine": true},
-  "loading.markets": {"text": "Lade Märkte", "_machine": true},
-  "loading.one_moment": {"text": "Einen Moment", "_machine": true},
-
-  "empty.feed.title": {"text": "Noch keine Aktivität", "_machine": true},
-  "empty.feed.body": {"text": "Sobald Quellen, denen du folgst, Vorhersagen posten, erscheinen sie hier.", "_machine": true},
-  "empty.feed.cta": {"text": "Quellen durchstöbern", "_machine": true},
-  "empty.saved.title": {"text": "Noch keine gespeicherten Vorhersagen", "_machine": true},
-  "empty.saved.body": {"text": "Wenn du eine Vorhersage findest, die du verfolgen willst, klick auf Speichern — sie landet hier.", "_machine": true},
-  "empty.saved.cta": {"text": "Vorhersagen durchstöbern", "_machine": true},
-  "empty.sources.title": {"text": "Keine Quellen abonniert", "_machine": true},
-  "empty.sources.body": {"text": "Folge Quellen, um ihre Vorhersagen in deinem Feed zu sehen.", "_machine": true},
-  "empty.billing.title": {"text": "Noch keine Dashboards verfügbar", "_machine": true},
-  "empty.billing.body": {"text": "Schau noch einmal vorbei, sobald dein Plan aktiv ist.", "_machine": true},
-  "empty.admin.tokens": {"text": "Noch keine Einladungstoken. Generiere oben eines, um Zugang zu teilen.", "_machine": true},
-  "empty.admin.users": {"text": "Keine Nutzer:innen passen zur Suche. Filter entfernen oder über den Tokens-Tab jemanden einladen.", "_machine": true},
-  "empty.admin.enquiries": {"text": "Noch keine Anfragen oder Support-Tickets.", "_machine": true},
-
-  "error.generic.title": {"text": "Etwas ist schiefgelaufen", "_machine": true},
-  "error.generic.body": {"text": "Da ist etwas hängengeblieben. Neu versuchen oder zurück zum Dashboard.", "_machine": true},
-  "error.load_failed.title": {"text": "Dieser Bereich konnte nicht geladen werden", "_machine": true},
-  "error.load_failed.body": {"text": "Prüfe deine Verbindung und versuche es erneut.", "_machine": true},
-  "error.paywall.title": {"text": "Das ist eine Bezahlfunktion", "_machine": true},
-  "error.paywall.body": {"text": "Upgrade, um Vorhersagen, Märkte und Intelligence über alle Dashboards hinweg zu nutzen.", "_machine": true},
-  "error.rate_limit.title": {"text": "Zu viele Anfragen", "_machine": true},
-  "error.rate_limit.body": {"text": "Warte einen Moment und versuche es erneut.", "_machine": true},
-  "error.invalid_token": {"text": "Ungültiges oder widerrufenes Token.", "_machine": true},
-  "error.network": {"text": "Netzwerkfehler. Versuche es erneut.", "_machine": true},
-  "error.unauthorized": {"text": "Bitte melde dich an, um fortzufahren.", "_machine": true},
-  "error.forbidden": {"text": "Dazu hast du keinen Zugriff.", "_machine": true},
-  "error.not_found": {"text": "Diese Seite konnten wir nicht finden.", "_machine": true},
-
-  "billing.title": {"text": "Abrechnung & Abonnements", "_machine": true},
-  "billing.subtitle": {"text": "Verwalte deinen Plan und Dashboard-Zugriff.", "_machine": true},
-  "billing.plan.active": {"text": "Aktiv", "_machine": true},
-  "billing.plan.trial": {"text": "Test", "_machine": true},
-  "billing.plan.expired": {"text": "Abgelaufen", "_machine": true},
-  "billing.access.admin": {"text": "Voller Zugriff auf alle Dashboards über Admin-Rechte.", "_machine": true},
-  "billing.access.pro": {"text": "Alle Dashboards sind in deinem Pro-Abo enthalten.", "_machine": true},
-  "billing.access.trader": {"text": "Du hast {remaining} von {total} Dashboard-Credits übrig.", "_machine": true},
-  "billing.access.none": {"text": "Abonniere oben einen Plan, um Dashboards freizuschalten.", "_machine": true},
-  "billing.dashboards_heading": {"text": "Dashboard-Zugriff", "_machine": true},
-  "billing.status.added": {"text": "Hinzugefügt", "_machine": true},
-  "billing.status.available": {"text": "Verfügbar", "_machine": true},
-  "billing.status.credits_left": {"text": "Keine Credits übrig", "_machine": true},
-  "billing.action.add": {"text": "Hinzufügen", "_machine": true},
-  "billing.action.subscribe": {"text": "Abonnieren", "_machine": true},
-
-  "admin.tokens.title": {"text": "Token", "_machine": true},
-  "admin.users.title": {"text": "Nutzer:innen", "_machine": true},
-  "admin.enquiries.title": {"text": "Anfragen", "_machine": true},
-  "admin.feedback.title": {"text": "Feedback", "_machine": true},
-  "admin.analytics.title": {"text": "Analytics", "_machine": true},
-  "admin.gifts.title": {"text": "Geschenke", "_machine": true},
-  "admin.filter.all": {"text": "Alle", "_machine": true},
-  "admin.filter.active": {"text": "Aktiv", "_machine": true},
-  "admin.filter.claimed": {"text": "Eingelöst", "_machine": true},
-  "admin.filter.revoked": {"text": "Widerrufen", "_machine": true},
-  "admin.users.search_placeholder": {"text": "Nutzer:innen nach Name oder E-Mail durchsuchen", "_machine": true},
-  "admin.users.select_all": {"text": "Alle auswählen", "_machine": true},
-  "admin.users.bulk.selected": {"text": "{n} ausgewählt", "_machine": true},
-  "admin.users.bulk.promote": {"text": "Befördern", "_machine": true},
-  "admin.users.bulk.demote": {"text": "Zurückstufen", "_machine": true},
-  "admin.users.bulk.suspend": {"text": "Sperren", "_machine": true},
-  "admin.users.bulk.unsuspend": {"text": "Entsperren", "_machine": true},
-  "admin.users.bulk.delete": {"text": "Löschen", "_machine": true},
-
-  "settings.title": {"text": "Einstellungen", "_machine": true},
-  "settings.language.heading": {"text": "Sprache", "_machine": true},
-  "settings.language.body": {"text": "Wähle die Sprache, in der du die Oberfläche sehen willst. Marktdaten bleiben Englisch — so kommen sie von der Quelle.", "_machine": true},
-  "settings.email.heading": {"text": "E-Mail-Einstellungen", "_machine": true},
-  "settings.email.digest": {"text": "Wochenzusammenfassung", "_machine": true},
-  "settings.email.marketing": {"text": "Produkt-Updates", "_machine": true},
-  "settings.theme.heading": {"text": "Design", "_machine": true},
-  "settings.theme.light": {"text": "Hell", "_machine": true},
-  "settings.theme.dark": {"text": "Dunkel", "_machine": true},
-  "settings.privacy.heading": {"text": "Datenschutz", "_machine": true},
-  "settings.privacy.export": {"text": "Deine Daten herunterladen", "_machine": true},
-  "settings.privacy.delete_account": {"text": "Konto löschen", "_machine": true},
-
-  "auth.token.title": {"text": "Zugangstoken eingeben", "_machine": true},
-  "auth.token.subtitle": {"text": "Token werden beim Kauf ausgegeben. Du brauchst eines? Preise anzeigen oder Support kontaktieren.", "_machine": true},
-  "auth.token.placeholder": {"text": "Zugangstoken", "_machine": true},
-  "auth.token.checking": {"text": "Prüfe", "_machine": true},
-  "auth.token.too_many": {"text": "Zu viele Versuche. Warte 60 Sekunden.", "_machine": true},
-  "auth.login.title": {"text": "Anmelden", "_machine": true},
-  "auth.login.email": {"text": "E-Mail", "_machine": true},
-  "auth.login.password": {"text": "Passwort", "_machine": true},
-  "auth.login.submit": {"text": "Anmelden", "_machine": true},
-  "auth.login.forgot": {"text": "Passwort vergessen?", "_machine": true},
-  "auth.register.title": {"text": "Konto erstellen", "_machine": true},
-  "auth.register.submit": {"text": "Konto erstellen", "_machine": true},
-  "auth.logout.confirm": {"text": "Von narve.ai abmelden?", "_machine": true},
-
-  "enquire.title": {"text": "Zugang anfragen", "_machine": true},
-  "enquire.subtitle": {"text": "Sag uns, wer du bist und was du vorhast.", "_machine": true},
-  "enquire.email": {"text": "E-Mail", "_machine": true},
-  "enquire.role": {"text": "Rolle", "_machine": true},
-  "enquire.message": {"text": "Wofür würdest du narve.ai nutzen?", "_machine": true},
-  "enquire.submit": {"text": "Anfrage senden", "_machine": true},
-  "enquire.sending": {"text": "Sende", "_machine": true},
-  "enquire.success.title": {"text": "Danke — wir melden uns", "_machine": true},
-  "enquire.success.body": {"text": "Wir prüfen jede Anfrage. Antwort kommt innerhalb von 1–2 Werktagen.", "_machine": true},
-
-  "feed.X_predictions": {"text": "{count} Vorhersage{plural}", "_machine": true},
-  "feed.X_new": {"text": "{count} neu", "_machine": true},
-  "feed.loaded_at": {"text": "Geladen {time}", "_machine": true},
-  "feed.live": {"text": "Live", "_machine": true},
-
-  "market.edge_explainer": {"text": "Unser glaubwürdigkeitsgewichteter Konsens liegt {edge} vom Markt entfernt.", "_machine": true},
-  "market.open": {"text": "Markt öffnen", "_machine": true},
-  "market.closed": {"text": "Geschlossen", "_machine": true},
-  "market.yes": {"text": "Ja", "_machine": true},
-  "market.no": {"text": "Nein", "_machine": true},
-
+  "brand.tagline": {
+    "_machine": true,
+    "text": "Prediction-Market-Intelligence für Operator:innen."
+  },
+  "btn.apply": {
+    "_machine": true,
+    "text": "Übernehmen"
+  },
+  "btn.back_to_dashboard": {
+    "_machine": true,
+    "text": "Zurück zum Dashboard"
+  },
+  "btn.cancel": {
+    "_machine": true,
+    "text": "Abbrechen"
+  },
+  "btn.close": {
+    "_machine": true,
+    "text": "Schließen"
+  },
+  "btn.confirm": {
+    "_machine": true,
+    "text": "Bestätigen"
+  },
+  "btn.continue": {
+    "_machine": true,
+    "text": "Weiter"
+  },
+  "btn.copy": {
+    "_machine": true,
+    "text": "Kopieren"
+  },
+  "btn.delete": {
+    "_machine": true,
+    "text": "Löschen"
+  },
+  "btn.edit": {
+    "_machine": true,
+    "text": "Bearbeiten"
+  },
+  "btn.export": {
+    "_machine": true,
+    "text": "Exportieren"
+  },
+  "btn.retry": {
+    "_machine": true,
+    "text": "Erneut versuchen"
+  },
+  "btn.save": {
+    "_machine": true,
+    "text": "Speichern"
+  },
+  "btn.save_changes": {
+    "_machine": true,
+    "text": "Änderungen speichern"
+  },
+  "btn.send": {
+    "_machine": true,
+    "text": "Senden"
+  },
+  "btn.submit": {
+    "_machine": true,
+    "text": "Absenden"
+  },
+  "btn.subscribe": {
+    "_machine": true,
+    "text": "Abonnieren"
+  },
+  "btn.upgrade": {
+    "_machine": true,
+    "text": "Upgraden"
+  },
+  "common.loading_ellipsis": {
+    "_machine": true,
+    "text": "Lade"
+  },
+  "common.time_window": {
+    "_machine": true,
+    "text": "Zeitraum"
+  },
+  "empty.admin.enquiries": {
+    "_machine": true,
+    "text": "Noch keine Anfragen oder Support-Tickets."
+  },
+  "empty.admin.tokens": {
+    "_machine": true,
+    "text": "Noch keine Einladungstoken. Generiere oben eines, um Zugang zu teilen."
+  },
+  "empty.admin.users": {
+    "_machine": true,
+    "text": "Keine Nutzer:innen passen zur Suche. Filter entfernen oder über den Tokens-Tab jemanden einladen."
+  },
+  "empty.billing.body": {
+    "_machine": true,
+    "text": "Schau noch einmal vorbei, sobald dein Plan aktiv ist."
+  },
+  "empty.billing.title": {
+    "_machine": true,
+    "text": "Noch keine Dashboards verfügbar"
+  },
+  "empty.feed.body": {
+    "_machine": true,
+    "text": "Sobald Quellen, denen du folgst, Vorhersagen posten, erscheinen sie hier."
+  },
+  "empty.feed.cta": {
+    "_machine": true,
+    "text": "Quellen durchstöbern"
+  },
+  "empty.feed.title": {
+    "_machine": true,
+    "text": "Noch keine Aktivität"
+  },
+  "empty.saved.body": {
+    "_machine": true,
+    "text": "Wenn du eine Vorhersage findest, die du verfolgen willst, klick auf Speichern — sie landet hier."
+  },
+  "empty.saved.cta": {
+    "_machine": true,
+    "text": "Vorhersagen durchstöbern"
+  },
+  "empty.saved.title": {
+    "_machine": true,
+    "text": "Noch keine gespeicherten Vorhersagen"
+  },
+  "empty.sources.body": {
+    "_machine": true,
+    "text": "Folge Quellen, um ihre Vorhersagen in deinem Feed zu sehen."
+  },
+  "empty.sources.title": {
+    "_machine": true,
+    "text": "Keine Quellen abonniert"
+  },
+  "enquire.email": {
+    "_machine": true,
+    "text": "E-Mail"
+  },
+  "enquire.message": {
+    "_machine": true,
+    "text": "Wofür würdest du narve.ai nutzen?"
+  },
+  "enquire.role": {
+    "_machine": true,
+    "text": "Rolle"
+  },
+  "enquire.role.data_scientist": {
+    "_machine": true,
+    "text": "Data Scientist"
+  },
+  "enquire.role.financial_analyst": {
+    "_machine": true,
+    "text": "Finanzanalyst:in"
+  },
+  "enquire.role.fund_manager": {
+    "_machine": true,
+    "text": "Fondsmanager:in"
+  },
+  "enquire.role.journalist_media": {
+    "_machine": true,
+    "text": "Journalist:in / Medien"
+  },
+  "enquire.role.other": {
+    "_machine": true,
+    "text": "Andere"
+  },
+  "enquire.role.quantitative_analyst": {
+    "_machine": true,
+    "text": "Quantitative:r Analyst:in"
+  },
+  "enquire.role.researcher_academic": {
+    "_machine": true,
+    "text": "Forscher:in / Akademiker:in"
+  },
+  "enquire.role.software_engineer": {
+    "_machine": true,
+    "text": "Software-Engineer"
+  },
+  "enquire.role.trader_investor": {
+    "_machine": true,
+    "text": "Trader:in / Investor:in"
+  },
+  "enquire.sending": {
+    "_machine": true,
+    "text": "Sende"
+  },
+  "enquire.submit": {
+    "_machine": true,
+    "text": "Anfrage senden"
+  },
+  "enquire.subtitle": {
+    "_machine": true,
+    "text": "Sag uns, wer du bist und was du vorhast."
+  },
+  "enquire.success.body": {
+    "_machine": true,
+    "text": "Wir prüfen jede Anfrage. Antwort kommt innerhalb von 1–2 Werktagen."
+  },
+  "enquire.success.title": {
+    "_machine": true,
+    "text": "Danke — wir melden uns"
+  },
+  "enquire.title": {
+    "_machine": true,
+    "text": "Zugang anfragen"
+  },
+  "enquire.use_case_placeholder": {
+    "_machine": true,
+    "text": "Erzähl uns von deinem Anwendungsfall, was du lösen willst oder wie du uns gefunden hast."
+  },
+  "error.forbidden": {
+    "_machine": true,
+    "text": "Dazu hast du keinen Zugriff."
+  },
+  "error.generic.body": {
+    "_machine": true,
+    "text": "Da ist etwas hängengeblieben. Neu versuchen oder zurück zum Dashboard."
+  },
+  "error.generic.title": {
+    "_machine": true,
+    "text": "Etwas ist schiefgelaufen"
+  },
+  "error.invalid_token": {
+    "_machine": true,
+    "text": "Ungültiges oder widerrufenes Token."
+  },
+  "error.load_failed.body": {
+    "_machine": true,
+    "text": "Prüfe deine Verbindung und versuche es erneut."
+  },
+  "error.load_failed.title": {
+    "_machine": true,
+    "text": "Dieser Bereich konnte nicht geladen werden"
+  },
+  "error.network": {
+    "_machine": true,
+    "text": "Netzwerkfehler. Versuche es erneut."
+  },
+  "error.not_found": {
+    "_machine": true,
+    "text": "Diese Seite konnten wir nicht finden."
+  },
+  "error.paywall.body": {
+    "_machine": true,
+    "text": "Upgrade, um Vorhersagen, Märkte und Intelligence über alle Dashboards hinweg zu nutzen."
+  },
+  "error.paywall.title": {
+    "_machine": true,
+    "text": "Das ist eine Bezahlfunktion"
+  },
+  "error.rate_limit.body": {
+    "_machine": true,
+    "text": "Warte einen Moment und versuche es erneut."
+  },
+  "error.rate_limit.title": {
+    "_machine": true,
+    "text": "Zu viele Anfragen"
+  },
+  "error.unauthorized": {
+    "_machine": true,
+    "text": "Bitte melde dich an, um fortzufahren."
+  },
+  "feed.X_new": {
+    "_machine": true,
+    "text": "{count} neu"
+  },
+  "feed.X_predictions": {
+    "_machine": true,
+    "text": "{count} Vorhersage{plural}"
+  },
+  "feed.live": {
+    "_machine": true,
+    "text": "Live"
+  },
+  "feed.loaded_at": {
+    "_machine": true,
+    "text": "Geladen {time}"
+  },
+  "filter.filter_affiliates": {
+    "_machine": true,
+    "text": "Affiliates filtern"
+  },
+  "filter.filter_by_email_username_or_code": {
+    "_machine": true,
+    "text": "Nach E-Mail, Username oder Code filtern"
+  },
+  "filter.filter_by_position": {
+    "_machine": true,
+    "text": "Nach Position filtern"
+  },
+  "filter.filter_notifications": {
+    "_machine": true,
+    "text": "Benachrichtigungen filtern"
+  },
+  "filter.filter_predictions": {
+    "_machine": true,
+    "text": "Vorhersagen filtern"
+  },
+  "filter.filter_saved_predictions": {
+    "_machine": true,
+    "text": "Gespeicherte Vorhersagen filtern"
+  },
+  "filter.search_market_or_question": {
+    "_machine": true,
+    "text": "Markt oder Frage suchen"
+  },
+  "filter.search_prediction_text_or_source": {
+    "_machine": true,
+    "text": "Vorhersagetext oder Quelle suchen"
+  },
+  "filter.search_saved_predictions": {
+    "_machine": true,
+    "text": "Gespeicherte Vorhersagen suchen"
+  },
+  "filter.search_users_by_name_or_email": {
+    "_machine": true,
+    "text": "Nutzer:innen nach Name oder E-Mail suchen"
+  },
+  "filter.search_your_predictions": {
+    "_machine": true,
+    "text": "Deine Vorhersagen suchen"
+  },
+  "filter.sort_order": {
+    "_machine": true,
+    "text": "Sortierung"
+  },
+  "filter.time_window": {
+    "_machine": true,
+    "text": "Zeitraum"
+  },
+  "form.access_token": {
+    "_machine": true,
+    "text": "Zugangstoken"
+  },
+  "form.add_a_comment": {
+    "_machine": true,
+    "text": "Kommentar hinzufügen"
+  },
+  "form.dismiss": {
+    "_machine": true,
+    "text": "Schließen"
+  },
+  "form.email_address": {
+    "_machine": true,
+    "text": "E-Mail-Adresse"
+  },
+  "form.email_placeholder": "you@company.com",
+  "form.enter_email": {
+    "_machine": true,
+    "text": "Gib deine E-Mail ein"
+  },
+  "form.example_email": "you@example.com",
+  "form.hide_password": {
+    "_machine": true,
+    "text": "Passwort verbergen"
+  },
+  "form.how_should_we_greet_you": {
+    "_machine": true,
+    "text": "Wie sollen wir dich ansprechen?"
+  },
+  "form.paste_invite_token": {
+    "_machine": true,
+    "text": "Einladungstoken einfügen"
+  },
+  "form.show_password": {
+    "_machine": true,
+    "text": "Passwort anzeigen"
+  },
+  "form.the_email_linked_to_your_account": {
+    "_machine": true,
+    "text": "Die E-Mail, die mit deinem Konto verknüpft ist"
+  },
+  "form.your_32_char_token": {
+    "_machine": true,
+    "text": "Dein 32-Zeichen-Token"
+  },
+  "intelligence.prompt_placeholder": {
+    "_machine": true,
+    "text": "Frag zu jeder Vorhersage, Quelle oder jedem Markt."
+  },
+  "landing.features.eyebrow": {
+    "_machine": true,
+    "text": "Was drinsteckt"
+  },
+  "landing.features.sub": {
+    "_machine": true,
+    "text": "Jede Karte ist ein separates Abo. Fang mit einer an, füg weitere hinzu, wenn du willst, kündige einzeln."
+  },
+  "landing.features.title": {
+    "_machine": true,
+    "text": "Dashboards frei kombinieren"
+  },
+  "landing.hero.cta_login": {
+    "_machine": true,
+    "text": "Anmelden"
+  },
+  "landing.hero.cta_primary": {
+    "_machine": true,
+    "text": "Loslegen"
+  },
+  "landing.hero.eyebrow": {
+    "_machine": true,
+    "text": "{count} Dashboards · ein Login · jederzeit kündbar"
+  },
+  "landing.hero.headline_1": {
+    "_machine": true,
+    "text": "Die Signale,"
+  },
+  "landing.hero.headline_2": {
+    "_machine": true,
+    "text": "die Märkte dir nicht zeigen."
+  },
+  "landing.hero.sub": {
+    "_machine": true,
+    "text": "narve.ai macht aus rohen Polymarket-, Krypto-, Aktien-, Wetter- und Geopolitik-Daten fokussierte Dashboards, die du wirklich ansehen willst. Abonniere die, die deinen Edge schärfen. Ignoriere den Rest."
+  },
+  "landing.hero.trust": {
+    "_machine": true,
+    "text": "Keine Free-Tier-Tricks. Keine Werbung. Kein Datenverkauf."
+  },
+  "landing.nav.close_menu": {
+    "_machine": true,
+    "text": "Menü schließen"
+  },
+  "landing.nav.dashboards": {
+    "_machine": true,
+    "text": "Dashboards"
+  },
+  "landing.nav.open_menu": {
+    "_machine": true,
+    "text": "Menü öffnen"
+  },
+  "landing.nav.pricing": {
+    "_machine": true,
+    "text": "Preise"
+  },
+  "landing.pricing.compare_link": {
+    "_machine": true,
+    "text": "Vollständigen Funktionsvergleich ansehen →"
+  },
+  "landing.pricing.cta_contact": {
+    "_machine": true,
+    "text": "Kontakt aufnehmen"
+  },
+  "landing.pricing.cta_get_started": {
+    "_machine": true,
+    "text": "Loslegen"
+  },
+  "landing.pricing.currency_note": {
+    "_machine": true,
+    "text": "Preise in GBP und USD angezeigt. Abrechnung in GBP. USD nur zur Orientierung."
+  },
+  "landing.pricing.enterprise.desc": {
+    "_machine": true,
+    "text": "Für Fonds, Institutionen und individuelle Anwendungsfälle"
+  },
+  "landing.pricing.enterprise.features": {
+    "_machine": true,
+    "text": "Alles aus Pro · Vollständige Historie · API-Zugang · Custom-Integrationen · Unbegrenzte Themen · Trading inklusive"
+  },
+  "landing.pricing.enterprise.name": {
+    "_machine": true,
+    "text": "Enterprise"
+  },
+  "landing.pricing.enterprise.price": {
+    "_machine": true,
+    "text": "Preis auf Anfrage"
+  },
+  "landing.pricing.eyebrow": {
+    "_machine": true,
+    "text": "Preise"
+  },
+  "landing.pricing.most_popular": {
+    "_machine": true,
+    "text": "Am beliebtesten"
+  },
+  "landing.pricing.pro.desc": {
+    "_machine": true,
+    "text": "Für ernsthafte Trader:innen, die den vollen Edge wollen"
+  },
+  "landing.pricing.pro.features": {
+    "_machine": true,
+    "text": "Alles aus Trader · 6 Monate Daten · Unbegrenzte Märkte · Volle Credibility · Signal Search (KI) · Push-Benachrichtigungen"
+  },
+  "landing.pricing.pro.name": {
+    "_machine": true,
+    "text": "Pro"
+  },
+  "landing.pricing.title": {
+    "_machine": true,
+    "text": "Heb dein Polymarket-Trading heute auf ein neues Level"
+  },
+  "landing.pricing.trader.desc": {
+    "_machine": true,
+    "text": "Für aktive Trader:innen, die mit Signal-Intelligence starten"
+  },
+  "landing.pricing.trader.features": {
+    "_machine": true,
+    "text": "30-Tage-Datenfenster · 10 Märkte · Globale Credibility-Scores · Beste Wetten (Top 5) · Wahrscheinlichkeits-% bei allen Wetten"
+  },
+  "landing.pricing.trader.name": {
+    "_machine": true,
+    "text": "Trader"
+  },
+  "lang.de": "Deutsch",
   "lang.en": "English",
   "lang.es": "Español",
-  "lang.de": "Deutsch",
-  "lang.pt-br": "Português (Brasil)"
+  "lang.pt-br": "Português (Brasil)",
+  "loading.default": {
+    "_machine": true,
+    "text": "Lade"
+  },
+  "loading.feed": {
+    "_machine": true,
+    "text": "Lade den Feed"
+  },
+  "loading.markets": {
+    "_machine": true,
+    "text": "Lade Märkte"
+  },
+  "loading.one_moment": {
+    "_machine": true,
+    "text": "Einen Moment"
+  },
+  "market.closed": {
+    "_machine": true,
+    "text": "Geschlossen"
+  },
+  "market.edge_explainer": {
+    "_machine": true,
+    "text": "Unser glaubwürdigkeitsgewichteter Konsens liegt {edge} vom Markt entfernt."
+  },
+  "market.no": {
+    "_machine": true,
+    "text": "Nein"
+  },
+  "market.open": {
+    "_machine": true,
+    "text": "Markt öffnen"
+  },
+  "market.yes": {
+    "_machine": true,
+    "text": "Ja"
+  },
+  "market_detail.forecast_probability_over_time": {
+    "_machine": true,
+    "text": "Prognose-Wahrscheinlichkeit im Zeitverlauf"
+  },
+  "market_detail.post_your_take": {
+    "_machine": true,
+    "text": "Veröffentliche deine Einschätzung zu diesem Markt"
+  },
+  "market_detail.takes_filter_and_sort": {
+    "_machine": true,
+    "text": "Einschätzungen filtern und sortieren"
+  },
+  "market_detail.why_do_you_think_so": {
+    "_machine": true,
+    "text": "Warum denkst du das?"
+  },
+  "nav.admin": {
+    "_machine": true,
+    "text": "Admin"
+  },
+  "nav.billing": {
+    "_machine": true,
+    "text": "Abrechnung"
+  },
+  "nav.dashboards": {
+    "_machine": true,
+    "text": "Dashboards"
+  },
+  "nav.feed": {
+    "_machine": true,
+    "text": "Feed"
+  },
+  "nav.get_started": {
+    "_machine": true,
+    "text": "Loslegen"
+  },
+  "nav.intelligence": {
+    "_machine": true,
+    "text": "Intelligence"
+  },
+  "nav.predictions": {
+    "_machine": true,
+    "text": "Vorhersagen"
+  },
+  "nav.profile": {
+    "_machine": true,
+    "text": "Profil"
+  },
+  "nav.saved": {
+    "_machine": true,
+    "text": "Gespeichert"
+  },
+  "nav.search": {
+    "_machine": true,
+    "text": "Suche"
+  },
+  "nav.settings": {
+    "_machine": true,
+    "text": "Einstellungen"
+  },
+  "nav.sign_in": {
+    "_machine": true,
+    "text": "Anmelden"
+  },
+  "nav.sign_out": {
+    "_machine": true,
+    "text": "Abmelden"
+  },
+  "nav.sources": {
+    "_machine": true,
+    "text": "Quellen"
+  },
+  "privacy.table_of_contents": {
+    "_machine": true,
+    "text": "Inhaltsverzeichnis"
+  },
+  "settings.affiliate.label_placeholder": {
+    "_machine": true,
+    "text": "Bezeichnung (optional)"
+  },
+  "settings.affiliate.slug_placeholder": {
+    "_machine": true,
+    "text": "Kampagnen-Slug (z. B. podcast_ep_47)"
+  },
+  "settings.api_keys.name_example": {
+    "_machine": true,
+    "text": "z. B. backtest bot"
+  },
+  "settings.billing.interval": {
+    "_machine": true,
+    "text": "Abrechnungsintervall"
+  },
+  "settings.email.digest": {
+    "_machine": true,
+    "text": "Wochenzusammenfassung"
+  },
+  "settings.email.heading": {
+    "_machine": true,
+    "text": "E-Mail-Einstellungen"
+  },
+  "settings.email.marketing": {
+    "_machine": true,
+    "text": "Produkt-Updates"
+  },
+  "settings.language.body": {
+    "_machine": true,
+    "text": "Wähle die Sprache, in der du die Oberfläche sehen willst. Marktdaten bleiben Englisch — so kommen sie von der Quelle."
+  },
+  "settings.language.heading": {
+    "_machine": true,
+    "text": "Sprache"
+  },
+  "settings.offline.enable": {
+    "_machine": true,
+    "text": "Offline-Modus aktivieren"
+  },
+  "settings.offline.push": {
+    "_machine": true,
+    "text": "Push-Benachrichtigungen aktivieren"
+  },
+  "settings.privacy.delete_account": {
+    "_machine": true,
+    "text": "Konto löschen"
+  },
+  "settings.privacy.export": {
+    "_machine": true,
+    "text": "Deine Daten herunterladen"
+  },
+  "settings.privacy.heading": {
+    "_machine": true,
+    "text": "Datenschutz"
+  },
+  "settings.saved_views.scope": {
+    "_machine": true,
+    "text": "Sichtbarkeit der Ansicht"
+  },
+  "settings.theme.dark": {
+    "_machine": true,
+    "text": "Dunkel"
+  },
+  "settings.theme.heading": {
+    "_machine": true,
+    "text": "Design"
+  },
+  "settings.theme.light": {
+    "_machine": true,
+    "text": "Hell"
+  },
+  "settings.title": {
+    "_machine": true,
+    "text": "Einstellungen"
+  },
+  "signal_search.term_example": {
+    "_machine": true,
+    "text": "z. B. Wahl, Senat, Kongress"
+  },
+  "signal_search.topic_example": {
+    "_machine": true,
+    "text": "z. B. US-Wahlen 2026"
+  },
+  "source.key_statistics": {
+    "_machine": true,
+    "text": "Kennzahlen"
+  },
+  "status.feed_title": {
+    "_machine": true,
+    "text": "narve.ai Status-Feed"
+  },
+  "status.uptime_window": {
+    "_machine": true,
+    "text": "Uptime-Verlauf der letzten 90 Tage"
+  },
+  "support.body_placeholder": {
+    "_machine": true,
+    "text": "Bitte beschreibe, was passiert ist, deinen Nutzernamen oder deine E-Mail und alle relevanten Details."
+  },
+  "support.topic.account_suspension": {
+    "_machine": true,
+    "text": "Konto-Sperrung"
+  },
+  "support.topic.billing_issue": {
+    "_machine": true,
+    "text": "Abrechnungsproblem"
+  },
+  "support.topic.bug_report": {
+    "_machine": true,
+    "text": "Fehlermeldung"
+  },
+  "support.topic.other": {
+    "_machine": true,
+    "text": "Sonstiges"
+  },
+  "support.topic.token_lost": {
+    "_machine": true,
+    "text": "Token verloren"
+  },
+  "terms.table_of_contents": {
+    "_machine": true,
+    "text": "Inhaltsverzeichnis"
+  }
 }

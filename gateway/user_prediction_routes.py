@@ -34,7 +34,7 @@ EDIT_WINDOW_SECONDS = 24 * 60 * 60   # 24h from creation, direction-locked anywa
 
 # Allowed categories match those used by the market taxonomy. "other" is
 # the fallback when a market hasn't been categorised yet.
-_CATEGORIES = {"sports", "weather", "world", "crypto", "midterm", "traders", "other"}
+_CATEGORIES = {"sports", "weather", "world", "crypto", "midterm", "traders", "climate", "voters", "other"}
 
 
 # ── Deferred lookups into server.py (admin_routes.py pattern) ─────────────

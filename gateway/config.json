@@ -1,7 +1,9 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work. Dashboards are listed flagship-first (descending monthly price) — the order here determines the order of cards on /dashboards and /pricing.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
   "domain": "narve.ai",
-  "domain_aliases": ["habbig.com"],
+  "domain_aliases": [
+    "habbig.com"
+  ],
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
   "dashboards": {
@@ -13,6 +15,36 @@
       "accent": "#ef4444",
       "monthly_cents": 1999,
       "annual_cents": 19900,
+      "supports_websocket": true
+    },
+    "weather": {
+      "subdomain": "weather",
+      "target": 5050,
+      "display_name": "Polymarket Weather",
+      "description": "Weather market mispricings & rain forecasts",
+      "accent": "#3b82f6",
+      "monthly_cents": 799,
+      "annual_cents": 7900,
+      "supports_websocket": false
+    },
+    "world": {
+      "subdomain": "world",
+      "target": 7050,
+      "display_name": "World State",
+      "description": "Global conflicts, headlines, geopolitical feed",
+      "accent": "#8b5cf6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    },
+    "crypto": {
+      "subdomain": "crypto",
+      "target": 8000,
+      "display_name": "Crypto Edge",
+      "description": "BTC & crypto signals, ensemble ML predictor",
+      "accent": "#f59e0b",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
       "supports_websocket": true
     },
     "midterm": {
@@ -35,34 +67,64 @@
       "annual_cents": 12900,
       "supports_websocket": false
     },
-    "crypto": {
-      "subdomain": "crypto",
-      "target": 8000,
-      "display_name": "Crypto Edge",
-      "description": "BTC & crypto signals, ensemble ML predictor",
-      "accent": "#f59e0b",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
+    "whale": {
+      "subdomain": "whale",
+      "target": 8053,
+      "display_name": "Whale Watch",
+      "description": "Institutional whale flow — 13F, Form 4, 13D filings",
+      "accent": "#10b981",
+      "monthly_cents": 1799,
+      "annual_cents": 17900,
       "supports_websocket": true
     },
-    "weather": {
-      "subdomain": "weather",
-      "target": 5050,
-      "display_name": "Polymarket Weather",
-      "description": "Weather market mispricings & rain forecasts",
-      "accent": "#3b82f6",
-      "monthly_cents": 799,
-      "annual_cents": 7900,
-      "supports_websocket": false
-    },
-    "world": {
-      "subdomain": "world",
-      "target": 7050,
-      "display_name": "World State",
-      "description": "Global conflicts, headlines, geopolitical feed",
-      "accent": "#8b5cf6",
+    "voters": {
+      "subdomain": "voters",
+      "target": 7051,
+      "display_name": "Voters Atlas",
+      "description": "Voter sentiment, polling, election markets across countries",
+      "accent": "#a855f7",
       "monthly_cents": 599,
       "annual_cents": 5900,
+      "supports_websocket": false
+    },
+    "climate": {
+      "subdomain": "climate",
+      "target": 7052,
+      "display_name": "Climate Change",
+      "description": "Long-horizon climate markets — GISTEMP, CO2, sea ice, SST, ENSO, CH4",
+      "accent": "#34d399",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    },
+    "disasters": {
+      "subdomain": "disasters",
+      "target": 7060,
+      "display_name": "Eco Disasters",
+      "description": "Live ecological & environmental disaster feed (USGS, NASA EONET, GDACS, ReliefWeb, NOAA NWS, NASA FIRMS)",
+      "accent": "#22c55e",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    },
+    "centralbank": {
+      "subdomain": "cb",
+      "target": 7061,
+      "display_name": "Central Bank Tracker",
+      "description": "Fed, ECB, BoE rates - implied path - Polymarket FOMC edge",
+      "accent": "#14b8a6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false
+    },
+    "world_health": {
+      "subdomain": "health",
+      "target": 7053,
+      "display_name": "World Health",
+      "description": "508-disease atlas · WHO outbreaks · AMR globe · drug supply chains · prediction markets",
+      "accent": "#10b981",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
       "supports_websocket": false
     }
   }

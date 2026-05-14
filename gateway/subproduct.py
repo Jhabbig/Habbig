@@ -162,6 +162,136 @@ SUBPRODUCTS: dict[str, dict] = {
         "tabs": ["Leaderboard", "Wallet Activity", "Follow", "Settings"],
         "env_price_id": "STRIPE_PRICE_ID_TRADERS_MONTHLY",
     },
+    "whale": {
+        "slug": "whale",
+        "dashboard_key": "whale",
+        "name": "Whale Watch",
+        "tagline": "Institutional money movement",
+        "hero_headline": "Watch the / billion-dollar / footprints.",
+        "hero_sub": (
+            "Whale Watch surfaces every SEC filing from the institutions that move "
+            "markets — JPMorgan, BlackRock, Berkshire, Citadel, the activist funds — "
+            "and cross-references them against live Polymarket markets."
+        ),
+        "price_usd": 17.99,
+        "price_gbp": 13.99,
+        "floating_numbers": ["13F", "+5.2%", "13D", "$2.1B", "+$340M", "NEW", "−$120M",
+                             "BRK.B", "6.4%", "NVDA", "EXIT", "$8.7B", "ADD", "+12%", "PSHZF"],
+        "animation_style": "measured",
+        "stat_pills": ["{whales} mega-funds tracked", "latest 13D {recent_13d}", "updated hourly"],
+        "tabs": ["Live Feed", "Whales", "Activist", "Cluster Buys", "Consensus", "Watchlist"],
+        "env_price_id": "STRIPE_PRICE_ID_WHALE_MONTHLY",
+    },
+    "voters": {
+        "slug": "voters",
+        "dashboard_key": "voters",
+        "name": "Voters Atlas",
+        "tagline": "Voter sentiment, polling, election markets — country by country",
+        "hero_headline": "Politics is local. / The signal is global.",
+        "hero_sub": (
+            "Voters Atlas combines national polling, V-Dem democracy "
+            "indicators, World Bank data, Polymarket + Kalshi political "
+            "markets, and live news per country into a single atlas."
+        ),
+        "price_usd": 5.99,
+        "price_gbp": 4.99,
+        "floating_numbers": ["UK", "US", "DE", "FR", "IN", "BR", "MX", "AR",
+                             "+0.4", "−1.2", "0.71", "73%", "ES", "IT", "CA"],
+        "animation_style": "measured",
+        "stat_pills": ["{countries} countries", "{markets} markets", "{news}/h"],
+        "tabs": ["Atlas", "Markets", "News", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_VOTERS_MONTHLY",
+    },
+    "climate": {
+        "slug": "climate",
+        "dashboard_key": "climate",
+        "name": "Climate Change",
+        "tagline": "Long-horizon climate market signals",
+        "hero_headline": "The climate moves. / The market notices.",
+        "hero_sub": (
+            "Climate Change tracks long-horizon climate markets against live "
+            "GISTEMP, CO2, sea-ice, sea-surface temperature, ENSO and methane "
+            "indicators so you see when the data and the market disagree."
+        ),
+        "price_usd": 5.99,
+        "price_gbp": 4.99,
+        "floating_numbers": ["+1.2C", "424ppm", "ENSO+0.8", "-2.1%", "13.4Mkm2",
+                             "0.74", "+0.04", "29.1C", "-1.8%", "1947ppb",
+                             "0.92", "-0.6", "+0.3C", "421ppm", "ONI"],
+        "animation_style": "measured",
+        "stat_pills": ["{markets} climate markets", "GISTEMP {gistemp}", "CO2 {co2}ppm"],
+        "tabs": ["Markets", "Indicators", "Forecasts", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_CLIMATE_MONTHLY",
+    },
+    "disasters": {
+        "slug": "disasters",
+        "dashboard_key": "disasters",
+        "name": "Eco Disasters",
+        "tagline": "Live ecological & environmental disaster feed",
+        "hero_headline": "Earth shakes. / The map shows.",
+        "hero_sub": (
+            "Eco Disasters aggregates live feeds from USGS, NASA EONET, NOAA "
+            "NWS, GDACS, NASA FIRMS and ReliefWeb into one global map: "
+            "earthquakes, wildfires, storms, floods, volcanic activity and "
+            "more, so you see what is happening as it happens."
+        ),
+        "price_usd": 5.99,
+        "price_gbp": 4.99,
+        "floating_numbers": ["M6.4", "1,107", "FRP 565MW", "PM2.5 312",
+                             "M5.8", "+12%", "23 active", "M7.1",
+                             "Cat 3", "M4.8", "VEI 3", "0.61",
+                             "+0.04", "M5.0", "Severe"],
+        "animation_style": "measured",
+        "stat_pills": ["{markets} active events", "USGS · NASA · NOAA · GDACS", "Updated every 5 min"],
+        "tabs": ["Map", "Trend", "Sources", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_DISASTERS_MONTHLY",
+    },
+    "cb": {
+        "slug": "cb",
+        "dashboard_key": "centralbank",
+        "name": "Central Bank Tracker",
+        "tagline": "Fed, ECB, BoE rates, implied path, FOMC edge",
+        "hero_headline": "Rates today. / Path tomorrow.",
+        "hero_sub": (
+            "Central Bank Tracker pulls Fed, ECB and BoE policy rates plus "
+            "the OIS-implied path, then crosses them with Polymarket FOMC "
+            "markets to surface where the consensus and the bookmaker "
+            "diverge."
+        ),
+        "price_usd": 5.99,
+        "price_gbp": 4.99,
+        "floating_numbers": ["4.25", "+25bp", "FOMC", "5.00", "DEC", "0.61",
+                             "OIS", "3.75", "BoE", "ECB", "+0.04",
+                             "MAR", "Hike", "Cut", "Hold"],
+        "animation_style": "measured",
+        "stat_pills": ["Fed - ECB - BoE", "OIS implied path", "FOMC edge"],
+        "tabs": ["Rates", "Path", "Edge", "Settings"],
+        "env_price_id": "STRIPE_PRICE_ID_CENTRALBANK_MONTHLY",
+    },
+    "health": {
+        "slug": "health",
+        "dashboard_key": "world_health",
+        "name": "World Health",
+        "tagline": "Disease atlas, outbreak radar, drug supply chains",
+        "hero_headline": "508 diseases. / One globe.",
+        "hero_sub": (
+            "World Health stitches together WHO Disease Outbreak News, the "
+            "global AMR surveillance feed, the openFDA drug-shortage list, "
+            "and a 508-disease atlas with WHO Essential Medicines, brand-name "
+            "RxNorm resolution, and openFDA supply-chain weak-point scoring. "
+            "Click any country, any disease, any drug — see the whole picture."
+        ),
+        "price_usd": 9.99,
+        "price_gbp": 7.99,
+        "floating_numbers": ["MRSA 34%", "1,140", "H5N1", "508", "RR-TB", "DON",
+                             "PHEIC", "WHO PQ", "ACT", "Mpox", "RxNorm", "78.5y",
+                             "94%", "1.7M", "C. auris"],
+        "animation_style": "measured",
+        "stat_pills": ["{diseases} diseases tracked", "WHO · openFDA · GLASS",
+                       "{shortages} active FDA shortages"],
+        "tabs": ["Globe", "Outbreaks", "Atlas", "Shortages"],
+        "env_price_id": "STRIPE_PRICE_ID_HEALTH_MONTHLY",
+    },
 }
 
 # Bridge from SUBPRODUCT slug → subscriptions.dashboard_key. For five of the
