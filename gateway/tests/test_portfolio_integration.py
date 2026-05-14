@@ -112,6 +112,29 @@ def _auth(token: str) -> dict:
     return {"Cookie": f"pm_gateway_session={token}"}
 
 
+def _prime_csrf(token: str) -> str:
+    """Prime a CSRF cookie by issuing a GET and return the token value.
+
+    CSRFMiddleware (server.py:971) blocks JSON POSTs without a matching
+    ``X-CSRF-Token`` header and ``_csrf`` cookie. Mirror the pattern from
+    ``test_feedback_routes._prime_csrf`` so portfolio POSTs validate.
+    """
+    client.get("/feedback", cookies={"pm_gateway_session": token},
+               follow_redirects=False)
+    return client.cookies.get("_csrf") or ""
+
+
+def _post_json(path: str, token: str, json_body: dict | None = None):
+    """POST with session cookie + matching CSRF cookie/header pair."""
+    csrf = _prime_csrf(token)
+    return client.post(
+        path,
+        cookies={"pm_gateway_session": token, "_csrf": csrf},
+        headers={"X-CSRF-Token": csrf},
+        json=json_body if json_body is not None else {},
+    )
+
+
 # ── Kelly formula (pure) ───────────────────────────────────────────────────
 
 
@@ -314,15 +337,13 @@ class TestKellyEndpoint(unittest.TestCase):
         client.cookies.clear()
 
     def test_requires_market_id(self):
-        r = client.post("/api/kelly/calculate", headers=_auth(self.token), json={})
+        r = _post_json("/api/kelly/calculate", self.token, {})
         self.assertEqual(r.status_code, 400)
 
     def test_requires_bankroll(self):
         # No bankroll set, no bankroll in body → 400.
-        r = client.post(
-            "/api/kelly/calculate", headers=_auth(self.token),
-            json={"market_id": "poly:fake"},
-        )
+        r = _post_json("/api/kelly/calculate", self.token,
+                       {"market_id": "poly:fake"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("bankroll", r.json()["error"].lower())
 
@@ -332,10 +353,8 @@ class TestKellyEndpoint(unittest.TestCase):
             unified_markets, "fetch_single_market",
             new=AsyncMock(return_value=None),
         ):
-            r = client.post(
-                "/api/kelly/calculate", headers=_auth(self.token),
-                json={"market_id": "poly:missing"},
-            )
+            r = _post_json("/api/kelly/calculate", self.token,
+                           {"market_id": "poly:missing"})
         self.assertEqual(r.status_code, 404)
 
     def test_returns_three_tiers_with_signal(self):
@@ -348,10 +367,8 @@ class TestKellyEndpoint(unittest.TestCase):
             unified_markets, "enrich_markets_with_intelligence",
             return_value=[m],
         ):
-            r = client.post(
-                "/api/kelly/calculate", headers=_auth(self.token),
-                json={"market_id": "poly:fed-hold"},
-            )
+            r = _post_json("/api/kelly/calculate", self.token,
+                           {"market_id": "poly:fed-hold"})
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertTrue(body["has_signal"])
@@ -376,10 +393,8 @@ class TestKellyEndpoint(unittest.TestCase):
             unified_markets, "enrich_markets_with_intelligence",
             return_value=[m],
         ):
-            r = client.post(
-                "/api/kelly/calculate", headers=_auth(self.token),
-                json={"market_id": "poly:fed-hold"},
-            )
+            r = _post_json("/api/kelly/calculate", self.token,
+                           {"market_id": "poly:fed-hold"})
         self.assertEqual(r.status_code, 200)
         self.assertFalse(r.json()["has_signal"])
         self.assertEqual(r.json()["recommendations"], [])
@@ -387,10 +402,7 @@ class TestKellyEndpoint(unittest.TestCase):
     def test_requires_trading_addon(self):
         slug = _unique("kelly_noaddon")
         _, t2 = _make_plain_user(f"{slug}@test.com", slug)
-        r = client.post(
-            "/api/kelly/calculate", headers=_auth(t2),
-            json={"market_id": "poly:x"},
-        )
+        r = _post_json("/api/kelly/calculate", t2, {"market_id": "poly:x"})
         self.assertEqual(r.status_code, 403)
 
 
@@ -423,13 +435,17 @@ class TestSyncStats(unittest.TestCase):
     def test_sync_rate_limited_1_per_minute(self):
         # Stub out the expensive portfolio fetch so the test is fast and
         # deterministic — we're only checking the rate limiter.
+        # NOTE: _build_enriched_portfolio now lives in market_routes (the
+        # route module), not server.py — see market_routes.py:64.
+        import market_routes as _mr  # noqa: E402
+
         async def _fake_build(user_id):
             return {"combined_total_usd": 0, "polymarket": {"positions": []},
                     "kalshi": {"positions": []}}
 
-        with patch.object(server, "_build_enriched_portfolio", new=_fake_build):
-            r1 = client.post("/api/markets/sync", headers=_auth(self.token))
-            r2 = client.post("/api/markets/sync", headers=_auth(self.token))
+        with patch.object(_mr, "_build_enriched_portfolio", new=_fake_build):
+            r1 = _post_json("/api/markets/sync", self.token)
+            r2 = _post_json("/api/markets/sync", self.token)
         self.assertEqual(r1.status_code, 200)
         self.assertEqual(r2.status_code, 429)
 
