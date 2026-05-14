@@ -23,6 +23,11 @@ from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+try:
+    from gateway.subproduct import subproduct_for_host
+except ImportError:  # pragma: no cover — direct import path in tests
+    from subproduct import subproduct_for_host  # type: ignore
+
 
 # Cache-bust query for the assets we inject. We compute it once at import
 # time from the file's mtime — a bytewise mtime change (any edit) bumps
@@ -81,6 +86,26 @@ _OG_DEFAULT = (
     '<meta name="twitter:image" content="https://narve.ai/_gateway_static/og/default.png" />\n'
 )
 
+# Subproduct subdomains that have their own monochrome OG card under
+# gateway/static/og/<dashboard_key>.png. When the request host matches one
+# of these, we swap _OG_DEFAULT for a subproduct-specific block. The set is
+# derived at import time from SUBPRODUCTS, filtered to keys that actually
+# have a PNG on disk — so a new subproduct without a card silently falls
+# back to default.png instead of 404'ing the og:image.
+_OG_DIR = Path(__file__).parent / "static" / "og"
+
+
+def _og_block_for_key(key: str) -> str:
+    url = f"https://narve.ai/_gateway_static/og/{key}.png"
+    return (
+        f'<!--narve-og-{key}-->\n'
+        f'<meta property="og:image" content="{url}" />\n'
+        f'<meta property="og:image:width" content="1200" />\n'
+        f'<meta property="og:image:height" content="630" />\n'
+        f'<meta name="twitter:card" content="summary_large_image" />\n'
+        f'<meta name="twitter:image" content="{url}" />\n'
+    )
+
 _BODY_INJECT = (
     '<a class="narve-skip-link" href="#main">Skip to main content</a>\n'
     # Mobile sidebar drawer affordances. The hamburger + backdrop are
@@ -122,7 +147,7 @@ _MAIN_CLOSE_RE = re.compile(
 )
 
 
-def _inject_into_html(body: bytes) -> bytes:
+def _inject_into_html(body: bytes, host: str | None = None) -> bytes:
     """Apply the six PWA/a11y transforms to an HTML body. Idempotent."""
     # 1. PWA head block (before </head>)
     if b'narve-pwa-head' not in body:
@@ -130,13 +155,22 @@ def _inject_into_html(body: bytes) -> bytes:
         if idx != -1:
             body = body[:idx] + _PWA_HEAD.encode() + body[idx:]
 
-    # 1b. Default og:image — only when the page doesn't already declare
-    # one. Per-page cards (profile_public, shared_*, render_page _base
-    # head) keep theirs; the rest fall back to the monochrome wordmark.
-    if b'og:image' not in body and b'narve-og-default' not in body:
+    # 1b. og:image — only when the page doesn't already declare one. Per-page
+    # cards (profile_public, shared_*, render_page _base head) keep theirs.
+    # When the request host is a subproduct subdomain AND we have a PNG on
+    # disk for it, inject the subproduct-specific block; otherwise fall back
+    # to the apex default card.
+    if b'og:image' not in body and b'narve-og-' not in body:
+        og_block = _OG_DEFAULT
+        if host:
+            sub = subproduct_for_host(host)
+            if sub:
+                key = sub.get("dashboard_key")
+                if key and (_OG_DIR / f"{key}.png").exists():
+                    og_block = _og_block_for_key(key)
         idx = body.rfind(b'</head>')
         if idx != -1:
-            body = body[:idx] + _OG_DEFAULT.encode() + body[idx:]
+            body = body[:idx] + og_block.encode() + body[idx:]
 
     # 2. Viewport normalisation
     body = _VIEWPORT_RE.sub(
@@ -176,7 +210,8 @@ class PWAInjectionMiddleware(BaseHTTPMiddleware):
         async for chunk in response.body_iterator:
             chunks.append(chunk)
         body = b"".join(chunks)
-        new_body = _inject_into_html(body)
+        host = request.headers.get("host") or (request.url.hostname or "")
+        new_body = _inject_into_html(body, host=host)
 
         headers = dict(response.headers)
         # Content-Length has to be recomputed; let Starlette do it.
