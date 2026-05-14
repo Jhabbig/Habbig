@@ -104,6 +104,92 @@ def _clear_module_testclient_cookies(request):
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Cross-test state hygiene.
+#
+# The full-suite-only failure cohort traces back to module-level state
+# that leaks between tests when many request-driven tests (notably
+# gateway/tests/qa/qa_walk_*.py) run in-process:
+#
+#   1. **Module-level rate-limit / lockout dicts in server.py**
+#      (``_rate_store``, ``_login_failures``) — defaultdicts that never
+#      get cleared mid-process. After heavy walks run, every later test
+#      that depends on "this IP can still log in / hit /admin" trips a
+#      429 or the lockout threshold.
+#
+#   2. **In-process TTLCache** (``cache.ttl.ttl_cache``) — walks hit
+#      dashboard / admin routes and populate market / feed / source
+#      caches with rows that existed at walk time. Tests that
+#      subsequently mutate those rows and assert the fresh value get
+#      the stale cached value.
+#
+#   3. **Shared in-memory sqlite tables** (rate_limits, audit_log,
+#      engagement_events) — rows pile up. ``rate_limits`` is the worst
+#      because the persistent rate limiter cross-references it on
+#      every authenticated route.
+#
+# Surgical state-wipe after each function-scoped test gives us the
+# speed of in-process pytest with the isolation of a subprocess. Each
+# wipe is wrapped in try/except so a missing migration / different DB
+# layout never breaks a legacy test. The fixture only fires for tests
+# on the shared _testdb connection — legacy contextlib-fake modules
+# manage their own state.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+_POLLUTION_TABLES = (
+    "rate_limits",
+    "audit_log",
+    "engagement_events",
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_global_test_state(request):
+    """Reset module-level globals + transient DB rows between tests."""
+    yield
+    module_name = (
+        request.node.module.__name__
+        if hasattr(request.node, "module") else ""
+    )
+    if not _module_uses_testdb(module_name):
+        return
+
+    # ── Module-level rate-limit + lockout dicts in server.py ────────────
+    try:
+        import server as _server
+        try:
+            _server._rate_store.clear()
+        except Exception:
+            pass
+        try:
+            _server._login_failures.clear()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # ── In-process TTL cache ────────────────────────────────────────────
+    try:
+        from cache.ttl import ttl_cache as _ttl_cache
+        _ttl_cache.clear()
+    except Exception:
+        pass
+
+    # ── Transient DB rows that accumulate from request-driven tests ────
+    try:
+        with _SHARED_CONN_CM() as _c:
+            for _t in _POLLUTION_TABLES:
+                try:
+                    _c.execute(f"DELETE FROM {_t}")
+                except Exception:
+                    # Table may not exist in this build (e.g. early
+                    # migration state during a focused single-file run).
+                    pass
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Canonical fixtures — opt-in. Existing test files keep doing whatever they
 # do; new tests can lean on these to avoid re-writing boilerplate.
 #

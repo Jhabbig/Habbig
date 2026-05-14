@@ -1,0 +1,489 @@
+/* Per-page CSS for static/landing.html — extracted from gateway.css
+ * on 2026-05-14 to keep the shared bundle lean for logged-in users.
+ *
+ * Scope: `.landing-*`, `.enquire-cta`, `.client-login-link`,
+ * `.mobile-menu-toggle`, `.mobile-close-btn`. All selectors here are
+ * used ONLY on landing.html (verified by grep before extraction).
+ *
+ * Loaded by landing.html via:
+ *   <link rel="stylesheet" href="/_gateway_static/pages/landing.css">
+ * after gateway.css + components.css so cascade order is preserved. */
+
+/* Landing primary CTA must keep its CTA-text colour even when treated as
+ * a link (the global `a` rule in gateway.css would otherwise win). */
+a.landing-primary-cta,
+a.landing-primary-cta:hover { color: var(--cta-text); }
+
+/* ── Landing page (public, logged-out) ──────────────────────────── */
+
+.landing-body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(255, 255, 255, 0.03), transparent 60%),
+    radial-gradient(900px 500px at 10% 10%, rgba(255, 255, 255, 0.02), transparent 60%),
+    var(--bg);
+}
+
+.landing-header {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px 32px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.landing-nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.landing-nav a {
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.landing-nav a:hover { color: var(--text-primary); text-decoration: none; }
+
+.landing-nav-signin {
+  color: var(--text-secondary) !important;
+}
+
+.landing-nav-signin:hover {
+  color: var(--text-primary) !important;
+}
+
+.landing-nav-cta {
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  background: var(--cta-bg);
+  color: var(--cta-text) !important;
+  font-weight: 600;
+  transition: transform 0.1s, box-shadow 0.2s;
+}
+
+.landing-nav-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  text-decoration: none;
+}
+
+.landing-hero {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 100px 32px 120px;
+  text-align: center;
+}
+
+.landing-eyebrow {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 6px 14px;
+  border-radius: var(--radius-xl);
+  margin-bottom: 28px;
+}
+
+.landing-headline {
+  font-size: clamp(40px, 7vw, 76px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  margin-bottom: 28px;
+  color: var(--text-primary);
+}
+
+.landing-gradient {
+  background: var(--cta-bg);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.landing-sub {
+  max-width: 640px;
+  margin: 0 auto 40px;
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.landing-cta-row {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+
+.landing-primary-cta {
+  padding: 14px 28px;
+  border-radius: var(--radius-sm);
+  background: var(--cta-bg);
+  color: var(--cta-text);
+  font-weight: 600;
+  font-size: 15px;
+  transition: transform 0.1s, box-shadow 0.2s;
+}
+
+.landing-primary-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}
+
+.landing-secondary-cta {
+  padding: 14px 28px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.landing-secondary-cta:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.landing-trust {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.landing-trust-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
+}
+
+.landing-section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 80px 32px;
+}
+
+.landing-section-dark {
+  background: var(--surface);
+  max-width: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-top: 40px;
+  padding: 80px 32px;
+}
+
+.landing-section-dark > .landing-section-head,
+.landing-section-dark > .landing-pricing-grid {
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.landing-section-head {
+  text-align: center;
+  margin-bottom: 56px;
+}
+
+.landing-eyebrow-sm {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.landing-section-title {
+  font-size: clamp(28px, 4.5vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.landing-section-sub {
+  max-width: 560px;
+  margin: 0 auto;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.landing-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.landing-dash {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.landing-dash::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent);
+}
+
+.landing-dash:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+.landing-dash-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-bottom: 14px;
+}
+
+.landing-dash-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+
+.landing-dash-desc {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 14px;
+  min-height: 36px;
+}
+
+.landing-dash-price {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.landing-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.landing-pricing-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+}
+
+.landing-pricing-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--cta-bg);
+  color: var(--cta-text);
+  font-weight: 700;
+  font-size: var(--text-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.landing-pricing-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.landing-pricing-desc {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.landing-footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.landing-footer-right {
+  display: flex;
+  gap: 20px;
+}
+
+.landing-footer a {
+  color: var(--text-secondary);
+}
+
+/* ── Enquire Now CTA ────────────────────────────────────────────── */
+
+.enquire-cta {
+  display: inline-block;
+  padding: 16px 40px;
+  border-radius: var(--radius-sm);
+  background: var(--cta-bg);
+  color: var(--cta-text);
+  font-weight: 600;
+  font-size: var(--text-md);
+  text-decoration: none;
+  transition: transform 0.1s, box-shadow 0.2s;
+  min-height: 48px;
+  text-align: center;
+}
+
+.enquire-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}
+
+/* ── Client Login link (nav) ───────────────────────────────────── */
+
+.client-login-link {
+  color: var(--text-muted) !important;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  transition: color 0.15s, border-color 0.15s;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.client-login-link:hover {
+  color: var(--text-primary) !important;
+  border-color: var(--text-muted);
+}
+
+/* ── Mobile hamburger ──────────────────────────────────────────── */
+
+.mobile-menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-menu-toggle svg { width: 24px; height: 24px; }
+
+.landing-nav-mobile-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dropdown);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.landing-nav-mobile-overlay.open { display: block; }
+
+.landing-nav-mobile-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 280px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 24px;
+  z-index: calc(var(--z-dropdown) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landing-nav-mobile-panel a {
+  display: block;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  min-height: 44px;
+  line-height: 1.2;
+}
+
+.landing-nav-mobile-panel a:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+
+.mobile-close-btn {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  margin-bottom: 8px;
+}
+
+.mobile-close-btn svg { width: 24px; height: 24px; }
+
+/* ── Responsive (extracted from gateway.css @media blocks) ─────── */
+
+@media (max-width: 720px) {
+  .landing-hero { padding: 60px 20px 80px; }
+  .landing-section { padding: 56px 20px; }
+  .landing-section-dark { padding: 56px 20px; }
+  .landing-header { padding: 20px 20px 0; }
+  .landing-nav a:not(.client-login-link) { display: none; }
+  .landing-nav .client-login-link { display: inline-block; }
+  .mobile-menu-toggle { display: flex; }
+  .enquire-cta {
+    display: block;
+    width: 100%;
+  }
+  .landing-cta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-hero {
+    text-align: center;
+  }
+  .landing-hero h1 {
+    font-size: 34px !important;
+    line-height: 1.15;
+  }
+}
