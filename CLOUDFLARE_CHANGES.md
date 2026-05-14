@@ -312,3 +312,116 @@ wide token here.
 
 Replaces the "DNS records added (manual, Cloudflare dashboard)" task in
 the 2026-05-14 entry above.
+
+---
+
+## 2026-05-14 — WAF + rate-limit posture audit
+
+End-to-end audit of edge rules vs. app-side enforcement (see
+`/tmp/narve_cloudflare_audit_20260514_1708.md` for the working copy that
+generated this entry). No new edge rules pushed this pass — the items
+below are the **current reality** so future audits can diff against
+something concrete, plus the **gaps still open**.
+
+### App-side rate-limit reality (cross-reference)
+
+Source: `gateway/security/rate_limiter.py` (`SlidingWindowRateLimiter`,
+`@rate_limit` decorator, shared `auth:<ip>` bucket) plus inline
+`server._is_rate_limited(...)` calls in `server.py` and
+`server_features.py`.
+
+| Endpoint group         | App-side limit                                   | Where                                                                              |
+|------------------------|--------------------------------------------------|------------------------------------------------------------------------------------|
+| `/auth/login`          | 10/5min/IP **plus** 5/15min shared `auth:<ip>`   | `server_features.py:1714`, plus `_auth_rate_limited` in `server.py:1623`           |
+| `/auth/register`       | 5/10min/IP **plus** 5/15min shared `auth:<ip>`   | `server_features.py:1554`                                                          |
+| `/auth/forgot-password`| 3/hour/IP **and** 3/hour/email                   | `server_features.py:248,258`                                                       |
+| `/auth/reset-password` | 5/hour/IP                                        | `server_features.py:307`                                                           |
+| `/auth/logout`         | 20/min/IP                                        | `server_features.py:1810`                                                          |
+| `/api/markets/connect/*` | **5/min per-user** (NOT per-IP)                | `market_routes.py:286,329,364`                                                     |
+| `/admin/jobs/*`        | 30–120/min/admin (varies by sub-route)           | `admin_jobs_routes.py:85,107,121,133,145`                                          |
+| `/admin/*` (general)   | No blanket limit — admin gating via `_require_admin_user` | `admin_routes.py`                                                          |
+| `/api/embed/*`         | **None at app layer**                            | `embed_routes.py` (no `@rate_limit`)                                               |
+| `/api/scraper/ingest`  | **None at app layer**; HMAC API-key gates access | `scraper/transmission/pusher.py:6`                                                 |
+| `/api/search/*`        | 120–180/min per `_search_rate_key`               | `search_routes.py:162,344,390`                                                     |
+| `/api/notifications/*` | 20–240/min/user                                  | `notification_routes.py:62,125,139,175,183,191,203,211`                            |
+| `/api/push/*`          | 5–60/min/user                                    | `push_routes.py:44,65,111,131,158`                                                 |
+
+Client IP at the app layer comes from `CF-Connecting-IP` first, then
+`X-Forwarded-For[0]`, then `request.client.host`. Anything that bypasses
+the tunnel (direct origin hits via Tailscale) is rejected by
+`SubproductMiddleware` because `CF-Connecting-IP` is absent.
+
+### Edge limit ↔ app limit interaction
+
+The documented edge rules (Rule D `/auth/*` at 20/min/IP, Rule E
+`/admin/*` at 60/min/IP) are intentionally **laxer** than the app
+limits. The edge is the noise floor that filters out scripted abuse
+before it reaches uvicorn; the app limits are the real enforcement and
+are calibrated tighter (e.g. 5/15min shared auth bucket vs. 20/min edge
+auth limit). Do not relax app limits assuming edge will catch — they're
+both load-bearing.
+
+### Forensic / sensitive admin endpoints (no special edge rule yet)
+
+- `GET /admin/health-monitor`, `GET /api/admin/health-monitor`
+  (`admin_health_monitor_routes.py`) — single-pane status of all 13
+  services. Admin-gated app-side; no edge admin-IP allowlist.
+- `GET /admin/trace-watermark?id=<wm>` (`admin_routes.py:712`) — reverse
+  lookup for per-recipient email watermarks. Every hit (including
+  misses on forged fingerprints) is audit-logged via
+  `EMAIL_WATERMARK_TRACE`. No edge rule alerts on access.
+
+Both endpoints rely entirely on `_require_admin_user` today; if the edge
+ever lets traffic reach them without admin session cookies, the app
+returns 403, but the access attempt is not surfaced to ops outside the
+in-database audit log.
+
+### Gaps still open (edge work TODO)
+
+1. **`/api/embed/*` edge limit + Rule B exception.** Embed widgets are
+   served cross-origin to customer sites, so Rule B's referer check
+   (managed challenge if referer doesn't contain `narve.ai`) will
+   challenge legit traffic. Need: edge rate limit of 1000/min/IP scoped
+   to `/api/embed/*` AND an explicit Rule B carve-out for that prefix.
+2. **`/api/scraper/*` edge limit.** Spec calls for 30/min/IP with
+   API-key bypass. Currently only HMAC gating at app. Recommended CF
+   rule: rate-limit when `http.request.headers["authorization"]` is
+   missing or doesn't match the expected pattern.
+3. **`/stripe/webhook` Stripe IP allowlist.** Path is CSRF-exempt
+   (`security/csrf.py:50`) but no edge rule restricts who may POST to
+   it. Add WAF rule: allow only `ip.src in $stripe_webhook_ips`,
+   block everything else. Stripe publishes the list at
+   <https://stripe.com/files/ips/ips_webhooks.json>.
+4. **Datacenter-IP managed challenge on `/auth/*`.** Cloudflare bot
+   management exposes a "datacenter" IP category — challenge every
+   `/auth/*` request whose source is a known hosting provider. Stops
+   credential-stuffing from rented infra.
+5. **Bot-management ASN/score block.** Rule C currently filters by
+   user-agent string only (trivially spoofed). Add a rule using
+   `cf.bot_management.score < 30` (definite bot) → Block.
+6. **Admin-IP allowlist for `/admin/health-monitor` +
+   `/api/admin/health-monitor`.** App auth is sufficient functionally,
+   but edge restriction adds defence in depth for a high-signal
+   reconnaissance target (it enumerates 13 services).
+7. **Alert on every `/admin/trace-watermark` access.** Add a Logpush
+   filter or Cloudflare Notifications rule that pings ops on every
+   request to this path (including 403s). The endpoint should fire
+   rarely; volume = possible compromise.
+8. **Per-IP limit on `/api/markets/connect/*`.** App limit is per-user,
+   so an attacker with N accounts on one IP gets N × the limit. Add CF
+   rate limit of 120/min/IP to bound the IP regardless of account
+   rotation.
+9. **DDoS incident-response runbook.** Document the procedure for
+   flipping to "Under Attack" mode (zone-level toggle) and rolling
+   back. Cross-link from `RUNBOOK.md`.
+10. **General fallback limit.** Spec asks for 600/min/IP apex-wide;
+    currently no such rule exists. Add as last rate-limit rule (lowest
+    priority) so unhandled paths still have a noise-floor cap.
+
+### Tasks remaining (this audit)
+
+- [ ] Land items 1–10 above as edge rules (probably across 2–3
+      deploy passes; items 3 and 7 are highest priority — webhook
+      origin spoofing and forensic-endpoint silent access).
+- [ ] Re-run audit after each batch; append a new dated entry to this
+      file with the diff.
