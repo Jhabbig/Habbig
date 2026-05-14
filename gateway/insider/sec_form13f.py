@@ -39,16 +39,20 @@ class SecForm13FFetcher(BaseFetcher):
             log.warning("httpx not installed — skipping sec_form13f")
             return
 
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": self.user_agent}) as client:
-            for cik in ciks[:25]:
+        # SEC rate limit is 10 req/s; sleep 150ms between CIKs and back
+        # off exponentially on 429/403. Accept-Encoding: gzip per SEC
+        # fair-use recommendation.
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Encoding": "gzip",
+        }
+        async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+            for i, cik in enumerate(ciks[:25]):
+                if i > 0:
+                    await _async_sleep(0.15)
                 url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                except Exception as exc:
-                    log.warning("sec_form13f fetch %s failed: %s", cik, exc)
+                data = await _get_with_backoff(client, url, cik)
+                if data is None:
                     continue
 
                 filings = (data.get("filings", {}).get("recent") or {})
@@ -81,6 +85,32 @@ class SecForm13FFetcher(BaseFetcher):
                         "relevant_sectors": [],
                         "raw_payload": {"accession": accession, "filingDate": dates[idx]},
                     }
+
+
+async def _async_sleep(s: float) -> None:
+    import asyncio
+    await asyncio.sleep(s)
+
+
+async def _get_with_backoff(client, url: str, label: str) -> Optional[dict]:
+    """Single GET with exponential backoff on SEC 429/403. Returns parsed
+    JSON on success or None on permanent failure / non-JSON body."""
+    for attempt in range(3):
+        try:
+            resp = await client.get(url)
+        except Exception as exc:
+            log.warning("sec_form13f fetch %s failed: %s", label, exc)
+            return None
+        if resp.status_code in (429, 403):
+            await _async_sleep(2 ** attempt)
+            continue
+        if resp.status_code != 200:
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return None
+    return None
 
 
 def _parse_ymd(val) -> Optional[int]:

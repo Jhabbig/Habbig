@@ -46,21 +46,21 @@ class SecForm4Fetcher(BaseFetcher):
             return
 
         # Lightweight: one request per ticker (max 10 tickers). The SEC
-        # rate limit is 10 req/s; we sleep 100ms between calls.
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": self.user_agent}) as client:
+        # rate limit is 10 req/s; we sleep 150ms between calls and back
+        # off exponentially on 429/403.
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Encoding": "gzip",
+        }
+        async with httpx.AsyncClient(timeout=20, headers=headers) as client:
             for ticker in tickers[:10]:
                 cik = await _cik_for_ticker(client, ticker, self.user_agent)
                 if not cik:
                     continue
-                await _async_sleep(0.1)
+                await _async_sleep(0.15)
                 url = SUBMISSIONS_URL_TEMPLATE.format(cik=cik.zfill(10))
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                except Exception as exc:
-                    log.warning("sec_form4 fetch %s failed: %s", ticker, exc)
+                data = await _get_with_backoff(client, url, ticker)
+                if data is None:
                     continue
 
                 filings = (data.get("filings", {}).get("recent") or {})
@@ -109,6 +109,27 @@ async def _async_sleep(s: float) -> None:
     await asyncio.sleep(s)
 
 
+async def _get_with_backoff(client, url: str, label: str) -> Optional[dict]:
+    """Single GET with exponential backoff on SEC 429/403. Returns parsed
+    JSON on success or None on permanent failure / non-JSON body."""
+    for attempt in range(3):
+        try:
+            resp = await client.get(url)
+        except Exception as exc:
+            log.warning("sec_form4 fetch %s failed: %s", label, exc)
+            return None
+        if resp.status_code in (429, 403):
+            await _async_sleep(2 ** attempt)
+            continue
+        if resp.status_code != 200:
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return None
+    return None
+
+
 _cik_cache: dict[str, str] = {}
 
 
@@ -118,7 +139,7 @@ async def _cik_for_ticker(client, ticker: str, user_agent: str) -> Optional[str]
     try:
         resp = await client.get(
             "https://www.sec.gov/files/company_tickers.json",
-            headers={"User-Agent": user_agent},
+            headers={"User-Agent": user_agent, "Accept-Encoding": "gzip"},
         )
         if resp.status_code != 200:
             return None
