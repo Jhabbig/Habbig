@@ -117,7 +117,7 @@ def register(app) -> None:
 
     # One route per subproduct. Duplicated bodies are fine: there are
     # only six, and a factory would tangle the FastAPI decorators.
-    for _slug in ("sports", "weather", "world", "crypto", "midterm", "traders"):
+    for _slug in ("sports", "weather", "world", "crypto", "midterm", "traders", "climate", "voters"):
         dep = require_subproduct_access(_slug)
 
         @app.get(f"/dashboard/{_slug}", response_class=HTMLResponse, dependencies=[Depends(dep)])  # noqa: B008

@@ -77,16 +77,6 @@
       "annual_cents": 17900,
       "supports_websocket": true
     },
-    "voters": {
-      "subdomain": "voters",
-      "target": 7051,
-      "display_name": "Voters Atlas",
-      "description": "Voter sentiment, polling, election markets across countries",
-      "accent": "#a855f7",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
-      "supports_websocket": false
-    },
     "climate": {
       "subdomain": "climate",
       "target": 7052,
@@ -95,36 +85,6 @@
       "accent": "#34d399",
       "monthly_cents": 599,
       "annual_cents": 5900,
-      "supports_websocket": false
-    },
-    "disasters": {
-      "subdomain": "disasters",
-      "target": 7060,
-      "display_name": "Eco Disasters",
-      "description": "Live ecological & environmental disaster feed (USGS, NASA EONET, GDACS, ReliefWeb, NOAA NWS, NASA FIRMS)",
-      "accent": "#22c55e",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
-      "supports_websocket": false
-    },
-    "centralbank": {
-      "subdomain": "cb",
-      "target": 7061,
-      "display_name": "Central Bank Tracker",
-      "description": "Fed, ECB, BoE rates - implied path - Polymarket FOMC edge",
-      "accent": "#14b8a6",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
-      "supports_websocket": false
-    },
-    "world_health": {
-      "subdomain": "health",
-      "target": 7053,
-      "display_name": "World Health",
-      "description": "508-disease atlas · WHO outbreaks · AMR globe · drug supply chains · prediction markets",
-      "accent": "#10b981",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
       "supports_websocket": false
     }
   }

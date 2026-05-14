@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Eco Disasters — narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #22c55e; --hot: #f87171; --warn: #fbbf24; --good: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0)); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { margin-top: 3px; color: var(--text-2); font-size: 12px; }
+  main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+  .grid { display: grid; gap: 14px; margin-bottom: 22px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; }
+  .card .big { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+  .card .sub { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    font-weight: 600; background: var(--bg-2); color: var(--text-2); }
+  .pill.hot { background: rgba(248, 113, 113, 0.15); color: var(--hot); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-3); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg-1); }
+  tr:hover td { background: var(--bg-2); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .section-title { margin: 28px 0 10px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; }
+  .empty { color: var(--text-3); font-style: italic; padding: 20px; text-align: center; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  .quake-place { color: var(--text-1); font-size: 13px; }
+  .quake-meta { color: var(--text-3); font-size: 11px; margin-top: 2px; }
+  .by-cat { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .by-cat .b { background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 7px; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .by-cat .b b { color: var(--text-1); }
+  .alert-extreme { color: var(--hot); font-weight: 600; }
+  .alert-severe { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Eco Disasters</h1>
+  <div class="sub">Live ecological & environmental disaster feed · USGS · NASA EONET · GDACS · NOAA NWS</div>
+</header>
+<main>
+
+<div class="grid" id="cards"></div>
+
+<div class="section-title">Recent earthquakes (M2.5+, last 24h)</div>
+<div id="quakes-table" class="card" style="padding: 0; overflow: auto"></div>
+
+<div class="section-title">Active US severe alerts (NOAA NWS)</div>
+<div id="nws-table" class="card" style="padding: 0; overflow: auto"></div>
+
+<div class="section-title">Sources</div>
+<div class="card" style="font-size:12px;color:var(--text-2);line-height:1.7">
+  Earthquakes: <a href="https://earthquake.usgs.gov/earthquakes/feed/v1.0/" target="_blank">USGS Earthquake Hazards Program</a>.
+  Natural events: <a href="https://eonet.gsfc.nasa.gov/" target="_blank">NASA EONET</a>.
+  Multi-hazard alerts: <a href="https://www.gdacs.org/" target="_blank">GDACS</a>.
+  US severe weather: <a href="https://www.weather.gov/documentation/services-web-api" target="_blank">NOAA NWS</a>.
+</div>
+
+</main>
+<script>
+const fmt = (x, d=1) => x === null || x === undefined ? "—"
+  : Number(x).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+
+async function getJSON(url) {
+  try { const r = await fetch(url); if (!r.ok) throw new Error(r.status); return await r.json(); }
+  catch (e) { console.warn("fetch failed", url, e); return null; }
+}
+
+async function loadCards() {
+  const s = await getJSON("/api/summary");
+  if (!s) return;
+  const cards = [];
+
+  if (s.earthquakes) {
+    const e = s.earthquakes;
+    const big = e.biggest_24h || {};
+    cards.push(`
+      <div class="card">
+        <h3>Earthquakes (24h, M2.5+)</h3>
+        <div class="big">${e.count || 0}</div>
+        ${big.magnitude ? `
+          <div class="sub">Biggest: <b>M${fmt(big.magnitude, 1)}</b> ${big.place || ""}</div>
+          <div class="sub" style="margin-top:4px"><span class="pill ${big.magnitude >= 6 ? 'hot' : big.magnitude >= 5 ? 'warn' : 'good'}">${big.alert ? big.alert.toUpperCase() : 'no alert'}</span>
+            ${big.tsunami ? '<span class="pill hot" style="margin-left:6px">tsunami flag</span>' : ''}</div>
+        ` : '<div class="sub">No data.</div>'}
+        ${e.tsunami_warnings && e.tsunami_warnings.length ?
+          `<div class="sub" style="margin-top:6px"><span class="pill hot">${e.tsunami_warnings.length} tsunami flags</span></div>` : ''}
+      </div>`);
+  }
+
+  if (s.eonet) {
+    const e = s.eonet;
+    const cats = Object.entries(e.by_category || {});
+    cards.push(`
+      <div class="card">
+        <h3>NASA EONET — open events</h3>
+        <div class="big">${e.count || 0}</div>
+        <div class="sub">across ${cats.length} categories</div>
+        <div class="by-cat">
+          ${cats.slice(0, 8).map(([k, v]) => `<span class="b">${k} <b>${v}</b></span>`).join("")}
+        </div>
+      </div>`);
+  }
+
+  if (s.gdacs) {
+    const g = s.gdacs;
+    const lvls = g.by_alert_level || {};
+    const red = lvls["Red"] || 0, orange = lvls["Orange"] || 0, green = lvls["Green"] || 0;
+    cards.push(`
+      <div class="card">
+        <h3>GDACS — global alerts</h3>
+        <div class="big">${g.count || 0}</div>
+        <div class="by-cat">
+          ${red > 0 ? `<span class="b" style="border-color:rgba(248,113,113,0.4); color:var(--hot)">Red <b>${red}</b></span>` : ''}
+          ${orange > 0 ? `<span class="b" style="border-color:rgba(251,191,36,0.4); color:var(--warn)">Orange <b>${orange}</b></span>` : ''}
+          ${green > 0 ? `<span class="b" style="border-color:rgba(52,211,153,0.4); color:var(--good)">Green <b>${green}</b></span>` : ''}
+        </div>
+      </div>`);
+  }
+
+  if (s.nws) {
+    const n = s.nws;
+    cards.push(`
+      <div class="card">
+        <h3>NOAA NWS — active US alerts</h3>
+        <div class="big">${n.count || 0}</div>
+        <div class="sub">severe + extreme severity</div>
+        ${n.extreme && n.extreme.length ? `
+          <div class="sub" style="margin-top:6px"><span class="pill hot">${n.extreme.length} extreme</span></div>` : ''}
+      </div>`);
+  }
+
+  document.getElementById("cards").innerHTML = cards.join("");
+}
+
+async function loadQuakes() {
+  const r = await getJSON("/api/earthquakes");
+  const events = (r?.events || []).slice(0, 20);
+  const root = document.getElementById("quakes-table");
+  if (!events.length) { root.innerHTML = `<div class="empty">No quakes.</div>`; return; }
+  root.innerHTML = `
+    <table><thead><tr>
+        <th>Place</th><th class="num">Magnitude</th><th class="num">Depth km</th>
+        <th>Time</th><th>USGS</th>
+      </tr></thead>
+      <tbody>${events.map(e => `
+        <tr>
+          <td><div class="quake-place">${e.place || "—"}</div>
+              <div class="quake-meta">${e.lat?.toFixed(2) || "—"}, ${e.lon?.toFixed(2) || "—"}${e.tsunami ? ' · 🌊 tsunami flag' : ''}</div></td>
+          <td class="num">M${fmt(e.magnitude, 1)}</td>
+          <td class="num">${fmt(e.depth_km, 1)}</td>
+          <td>${e.ts_utc ? new Date(e.ts_utc).toUTCString().slice(5, 22) + " UTC" : "—"}</td>
+          <td>${e.url ? `<a href="${e.url}" target="_blank">→</a>` : "—"}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+}
+
+async function loadNWS() {
+  const r = await getJSON("/api/nws");
+  const events = (r?.events || []).slice(0, 30);
+  const root = document.getElementById("nws-table");
+  if (!events.length) { root.innerHTML = `<div class="empty">No active alerts.</div>`; return; }
+  root.innerHTML = `
+    <table><thead><tr>
+        <th>Event</th><th>Severity</th><th>Area</th><th>Expires</th>
+      </tr></thead>
+      <tbody>${events.map(e => `
+        <tr>
+          <td>${e.event || "—"}<div class="quake-meta">${e.headline || ""}</div></td>
+          <td><span class="${e.severity === 'Extreme' ? 'alert-extreme' : 'alert-severe'}">${e.severity || "—"}</span></td>
+          <td>${e.area || "—"}</td>
+          <td>${e.expires ? new Date(e.expires).toUTCString().slice(5, 22) + " UTC" : "—"}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+}
+
+loadCards(); loadQuakes(); loadNWS();
+setInterval(loadCards, 5 * 60 * 1000);
+setInterval(loadQuakes, 5 * 60 * 1000);
+setInterval(loadNWS, 5 * 60 * 1000);
+</script>
+</body>
+</html>

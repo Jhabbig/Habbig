@@ -268,30 +268,6 @@ SUBPRODUCTS: dict[str, dict] = {
         "tabs": ["Rates", "Path", "Edge", "Settings"],
         "env_price_id": "STRIPE_PRICE_ID_CENTRALBANK_MONTHLY",
     },
-    "health": {
-        "slug": "health",
-        "dashboard_key": "world_health",
-        "name": "World Health",
-        "tagline": "Disease atlas, outbreak radar, drug supply chains",
-        "hero_headline": "508 diseases. / One globe.",
-        "hero_sub": (
-            "World Health stitches together WHO Disease Outbreak News, the "
-            "global AMR surveillance feed, the openFDA drug-shortage list, "
-            "and a 508-disease atlas with WHO Essential Medicines, brand-name "
-            "RxNorm resolution, and openFDA supply-chain weak-point scoring. "
-            "Click any country, any disease, any drug — see the whole picture."
-        ),
-        "price_usd": 9.99,
-        "price_gbp": 7.99,
-        "floating_numbers": ["MRSA 34%", "1,140", "H5N1", "508", "RR-TB", "DON",
-                             "PHEIC", "WHO PQ", "ACT", "Mpox", "RxNorm", "78.5y",
-                             "94%", "1.7M", "C. auris"],
-        "animation_style": "measured",
-        "stat_pills": ["{diseases} diseases tracked", "WHO · openFDA · GLASS",
-                       "{shortages} active FDA shortages"],
-        "tabs": ["Globe", "Outbreaks", "Atlas", "Shortages"],
-        "env_price_id": "STRIPE_PRICE_ID_HEALTH_MONTHLY",
-    },
 }
 
 # Bridge from SUBPRODUCT slug → subscriptions.dashboard_key. For five of the

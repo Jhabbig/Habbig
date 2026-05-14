@@ -1,0 +1,4 @@
+flask>=3.0
+flask-compress>=1.15
+requests>=2.31
+python-dotenv>=1.0

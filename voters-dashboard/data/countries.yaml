@@ -1,0 +1,1998 @@
+# Curated countries for the Voters Dashboard.
+#
+# Tier A — full depth (demographics, issue salience, democracy, elections, comments)
+# Tier B — election-cycle deep (same fields, lighter polling history)
+# Tier C — watchlist stub (election dates only)
+#
+# All `issue_salience` percentages are best-effort curated from public polling
+# (Pew Global Attitudes, Eurobarometer, national pollsters, Edelman Trust
+# Barometer). Each carries a `source` and `as_of` date — UI displays both.
+# ETL scripts overwrite the demographics block with World Bank pulls; everything
+# else is hand-curated and version-controlled.
+#
+# Latitude/longitude are approximate country centroids for the map.
+
+schema_version: 1
+last_curated: "2026-04-15"
+
+countries:
+
+  # ─────────────────────────── TIER A ────────────────────────────────
+
+  - iso: USA
+    name: "United States"
+    tier: A
+    region: "North America"
+    centroid: [39.8, -98.6]
+    alliances: ["NATO", "G7", "USMCA", "Quad", "Five Eyes"]
+    commodities_export: ["natural gas", "soybeans", "corn", "semiconductors", "petroleum"]
+    commodities_import: ["crude oil", "rare earths", "consumer electronics"]
+    population_m: 335
+    median_age: 38.9
+    urban_pct: 83
+    democracy:
+      vdem_edi: 0.78
+      freedom_house_score: 83
+      press_freedom_rank: 55
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Inflation / cost of living"
+        pct: 41
+        source: "Pew, March 2026"
+      - issue: "Immigration"
+        pct: 37
+        source: "Pew, March 2026"
+      - issue: "Healthcare"
+        pct: 32
+        source: "Gallup, Feb 2026"
+      - issue: "Political dysfunction"
+        pct: 29
+        source: "Pew, March 2026"
+      - issue: "Crime"
+        pct: 24
+        source: "Gallup, Feb 2026"
+    elections:
+      - date: "2026-11-03"
+        type: "Midterms (House + 1/3 Senate)"
+        stakes: "House majority, Senate margin, governorships in 36 states"
+      - date: "2028-11-07"
+        type: "Presidential + House + 1/3 Senate"
+        stakes: "Open seat (Trump term-limited); Vance presumptive R nominee"
+    notes: "Existing midterm-dashboard covers race-by-race detail; this card links there."
+
+  - iso: GBR
+    name: "United Kingdom"
+    tier: A
+    region: "Europe"
+    centroid: [54.0, -2.0]
+    alliances: ["NATO", "G7", "Commonwealth", "AUKUS", "Five Eyes"]
+    commodities_export: ["financial services", "pharmaceuticals", "machinery"]
+    commodities_import: ["natural gas", "crude oil", "vehicles"]
+    population_m: 68
+    median_age: 40.6
+    urban_pct: 84
+    democracy:
+      vdem_edi: 0.81
+      freedom_house_score: 91
+      press_freedom_rank: 26
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "NHS / healthcare"
+        pct: 47
+        source: "Ipsos Issues Index, Mar 2026"
+      - issue: "Cost of living"
+        pct: 41
+        source: "Ipsos Issues Index, Mar 2026"
+      - issue: "Immigration"
+        pct: 39
+        source: "Ipsos Issues Index, Mar 2026"
+      - issue: "Economy"
+        pct: 28
+        source: "Ipsos Issues Index, Mar 2026"
+      - issue: "Housing"
+        pct: 22
+        source: "YouGov, Feb 2026"
+    elections:
+      - date: "2029-05-03"
+        type: "General election (latest possible)"
+        stakes: "Labour government testing reelection; Reform UK polling at historic high"
+
+  - iso: DEU
+    name: "Germany"
+    tier: A
+    region: "Europe"
+    centroid: [51.2, 10.5]
+    alliances: ["NATO", "EU", "G7"]
+    commodities_export: ["vehicles", "machinery", "chemicals"]
+    commodities_import: ["natural gas", "crude oil", "semiconductors"]
+    population_m: 84
+    median_age: 46.7
+    urban_pct: 78
+    democracy:
+      vdem_edi: 0.85
+      freedom_house_score: 93
+      press_freedom_rank: 10
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Immigration"
+        pct: 44
+        source: "Forschungsgruppe Wahlen, Mar 2026"
+      - issue: "Economy / industrial decline"
+        pct: 38
+        source: "Forschungsgruppe Wahlen, Mar 2026"
+      - issue: "Energy costs"
+        pct: 31
+        source: "Forschungsgruppe Wahlen, Mar 2026"
+      - issue: "Ukraine war / defense"
+        pct: 22
+        source: "ARD-DeutschlandTrend, Feb 2026"
+      - issue: "Housing"
+        pct: 19
+        source: "YouGov DE, Feb 2026"
+    elections:
+      - date: "2029-09-23"
+        type: "Bundestag (next regular)"
+        stakes: "AfD-CDU dynamic; Ukraine policy; energy transition pace"
+
+  - iso: FRA
+    name: "France"
+    tier: A
+    region: "Europe"
+    centroid: [46.6, 2.5]
+    alliances: ["NATO", "EU", "G7", "Francophonie"]
+    commodities_export: ["aerospace", "wine", "luxury goods", "nuclear technology"]
+    commodities_import: ["crude oil", "natural gas", "vehicles"]
+    population_m: 68
+    median_age: 42.6
+    urban_pct: 81
+    democracy:
+      vdem_edi: 0.79
+      freedom_house_score: 89
+      press_freedom_rank: 21
+      trend_10y: "slight decline"
+    issue_salience:
+      - issue: "Purchasing power"
+        pct: 49
+        source: "Ifop, Mar 2026"
+      - issue: "Immigration"
+        pct: 36
+        source: "Ifop, Mar 2026"
+      - issue: "Pensions / retirement"
+        pct: 28
+        source: "Ifop, Mar 2026"
+      - issue: "Public security"
+        pct: 27
+        source: "Elabe, Feb 2026"
+      - issue: "Healthcare"
+        pct: 22
+        source: "Ifop, Mar 2026"
+    elections:
+      - date: "2027-04-01"
+        type: "Presidential (1st round, approx)"
+        stakes: "Open seat (Macron term-limited); RN, far-left, centrist three-way"
+
+  - iso: IND
+    name: "India"
+    tier: A
+    region: "South Asia"
+    centroid: [22.0, 79.0]
+    alliances: ["Quad", "BRICS", "SCO", "Commonwealth", "G20"]
+    commodities_export: ["software services", "pharmaceuticals", "refined petroleum"]
+    commodities_import: ["crude oil", "gold", "coal", "semiconductors"]
+    population_m: 1438
+    median_age: 28.4
+    urban_pct: 36
+    democracy:
+      vdem_edi: 0.36
+      freedom_house_score: 66
+      press_freedom_rank: 159
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Unemployment / jobs"
+        pct: 52
+        source: "CSDS-Lokniti, Feb 2026"
+      - issue: "Inflation / prices"
+        pct: 41
+        source: "CSDS-Lokniti, Feb 2026"
+      - issue: "Corruption"
+        pct: 23
+        source: "CVoter, Mar 2026"
+      - issue: "Hindu-Muslim relations"
+        pct: 17
+        source: "Pew Spring 2025"
+      - issue: "China border / security"
+        pct: 14
+        source: "ORF, Feb 2026"
+    elections:
+      - date: "2026-04-01"
+        type: "State assembly elections (Tamil Nadu, West Bengal, Kerala, Assam)"
+        stakes: "BJP southern footprint; INDIA bloc cohesion test"
+      - date: "2029-05-01"
+        type: "Lok Sabha (general)"
+        stakes: "Modi's likely succession; UCC implementation; China policy"
+
+  - iso: BRA
+    name: "Brazil"
+    tier: A
+    region: "South America"
+    centroid: [-14.2, -51.9]
+    alliances: ["BRICS", "Mercosur", "G20"]
+    commodities_export: ["soybeans", "iron ore", "crude oil", "beef", "coffee"]
+    commodities_import: ["refined petroleum", "fertilizers", "vehicles"]
+    population_m: 217
+    median_age: 33.5
+    urban_pct: 88
+    democracy:
+      vdem_edi: 0.62
+      freedom_house_score: 72
+      press_freedom_rank: 92
+      trend_10y: "volatile"
+    issue_salience:
+      - issue: "Public security / crime"
+        pct: 51
+        source: "Datafolha, Mar 2026"
+      - issue: "Healthcare"
+        pct: 39
+        source: "Datafolha, Mar 2026"
+      - issue: "Unemployment"
+        pct: 32
+        source: "Quaest, Feb 2026"
+      - issue: "Corruption"
+        pct: 28
+        source: "Datafolha, Mar 2026"
+      - issue: "Inflation"
+        pct: 24
+        source: "Quaest, Feb 2026"
+    elections:
+      - date: "2026-10-04"
+        type: "Presidential + Congressional + Gubernatorial"
+        stakes: "Lula reelection bid vs. Bolsonaro-aligned right; Amazon policy; BRICS posture"
+
+  - iso: MEX
+    name: "Mexico"
+    tier: A
+    region: "North America"
+    centroid: [23.6, -102.5]
+    alliances: ["USMCA", "G20", "OECD"]
+    commodities_export: ["vehicles", "crude oil", "electronics", "produce"]
+    commodities_import: ["refined fuels", "machinery", "consumer goods"]
+    population_m: 130
+    median_age: 30.2
+    urban_pct: 81
+    democracy:
+      vdem_edi: 0.55
+      freedom_house_score: 60
+      press_freedom_rank: 121
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Public security / cartels"
+        pct: 58
+        source: "Mitofsky, Mar 2026"
+      - issue: "Economy / jobs"
+        pct: 34
+        source: "El Financiero, Feb 2026"
+      - issue: "Corruption"
+        pct: 27
+        source: "Mitofsky, Mar 2026"
+      - issue: "US relations / migration"
+        pct: 22
+        source: "Reforma, Feb 2026"
+      - issue: "Healthcare"
+        pct: 18
+        source: "Mitofsky, Mar 2026"
+    elections:
+      - date: "2027-06-06"
+        type: "Midterm (Chamber of Deputies + state)"
+        stakes: "Sheinbaum mid-term referendum; Morena supermajority test"
+
+  - iso: ARG
+    name: "Argentina"
+    tier: A
+    region: "South America"
+    centroid: [-38.4, -63.6]
+    alliances: ["Mercosur", "G20"]
+    commodities_export: ["soybeans", "beef", "lithium", "wine"]
+    commodities_import: ["refined fuels", "vehicles", "electronics"]
+    population_m: 46
+    median_age: 32.4
+    urban_pct: 92
+    democracy:
+      vdem_edi: 0.69
+      freedom_house_score: 84
+      press_freedom_rank: 66
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Inflation"
+        pct: 64
+        source: "Poliarquía, Mar 2026"
+      - issue: "Unemployment / poverty"
+        pct: 47
+        source: "Poliarquía, Mar 2026"
+      - issue: "Public security"
+        pct: 31
+        source: "Management & Fit, Feb 2026"
+      - issue: "Corruption"
+        pct: 22
+        source: "Poliarquía, Mar 2026"
+      - issue: "Education"
+        pct: 14
+        source: "Poliarquía, Mar 2026"
+    elections:
+      - date: "2027-10-24"
+        type: "Presidential + Congressional"
+        stakes: "Milei reelection bid; dollarization status; IMF program; lithium concessions"
+
+  - iso: TUR
+    name: "Türkiye"
+    tier: A
+    region: "Middle East / Europe"
+    centroid: [38.9, 35.2]
+    alliances: ["NATO", "G20", "Council of Europe"]
+    commodities_export: ["vehicles", "machinery", "textiles"]
+    commodities_import: ["natural gas", "crude oil", "gold"]
+    population_m: 85
+    median_age: 33.5
+    urban_pct: 77
+    democracy:
+      vdem_edi: 0.27
+      freedom_house_score: 33
+      press_freedom_rank: 158
+      trend_10y: "sharp decline"
+    issue_salience:
+      - issue: "Inflation / cost of living"
+        pct: 67
+        source: "MetroPOLL, Mar 2026"
+      - issue: "Unemployment"
+        pct: 41
+        source: "MetroPOLL, Mar 2026"
+      - issue: "Refugees (Syrian)"
+        pct: 35
+        source: "Areda, Feb 2026"
+      - issue: "Earthquake reconstruction"
+        pct: 24
+        source: "MetroPOLL, Mar 2026"
+      - issue: "Corruption"
+        pct: 19
+        source: "MetroPOLL, Mar 2026"
+    elections:
+      - date: "2028-06-18"
+        type: "Presidential + Parliamentary"
+        stakes: "Erdoğan succession question; CHP-İYİ-DEM alliance arithmetic; lira/IMF posture"
+
+  - iso: ISR
+    name: "Israel"
+    tier: A
+    region: "Middle East"
+    centroid: [31.0, 34.9]
+    alliances: ["Major non-NATO ally (US)", "OECD"]
+    commodities_export: ["semiconductors", "pharmaceuticals", "polished diamonds"]
+    commodities_import: ["crude oil", "natural gas", "vehicles"]
+    population_m: 9.9
+    median_age: 30.5
+    urban_pct: 93
+    democracy:
+      vdem_edi: 0.59
+      freedom_house_score: 73
+      press_freedom_rank: 101
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Hostages / Gaza war"
+        pct: 56
+        source: "Israel Democracy Institute, Mar 2026"
+      - issue: "Cost of living"
+        pct: 41
+        source: "Channel 12 / Mano Geva, Feb 2026"
+      - issue: "Judicial reform"
+        pct: 28
+        source: "IDI, Mar 2026"
+      - issue: "Iran threat"
+        pct: 27
+        source: "INSS, Feb 2026"
+      - issue: "Haredi conscription"
+        pct: 24
+        source: "IDI, Mar 2026"
+    elections:
+      - date: "2026-10-27"
+        type: "Knesset (next scheduled)"
+        stakes: "Netanyahu coalition vs. centrist opposition; post-war governance"
+
+  - iso: JPN
+    name: "Japan"
+    tier: A
+    region: "East Asia"
+    centroid: [36.2, 138.3]
+    alliances: ["G7", "Quad", "OECD", "US-Japan Treaty"]
+    commodities_export: ["vehicles", "machinery", "semiconductor equipment"]
+    commodities_import: ["crude oil", "LNG", "coal", "iron ore"]
+    population_m: 124
+    median_age: 49.5
+    urban_pct: 92
+    democracy:
+      vdem_edi: 0.74
+      freedom_house_score: 96
+      press_freedom_rank: 70
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Aging / pension sustainability"
+        pct: 49
+        source: "NHK, Mar 2026"
+      - issue: "Wages / inflation"
+        pct: 42
+        source: "Asahi, Feb 2026"
+      - issue: "China / Taiwan security"
+        pct: 31
+        source: "Yomiuri, Feb 2026"
+      - issue: "LDP corruption / slush funds"
+        pct: 28
+        source: "NHK, Mar 2026"
+      - issue: "Energy policy / nuclear restart"
+        pct: 18
+        source: "Asahi, Feb 2026"
+    elections:
+      - date: "2028-10-22"
+        type: "House of Representatives (latest)"
+        stakes: "LDP-Komeito coalition durability; defense spending pace"
+
+  - iso: KOR
+    name: "South Korea"
+    tier: A
+    region: "East Asia"
+    centroid: [36.5, 127.9]
+    alliances: ["US-ROK Treaty", "OECD"]
+    commodities_export: ["semiconductors", "vehicles", "ships", "displays"]
+    commodities_import: ["crude oil", "LNG", "coal", "iron ore"]
+    population_m: 51.7
+    median_age: 44.5
+    urban_pct: 81
+    democracy:
+      vdem_edi: 0.79
+      freedom_house_score: 83
+      press_freedom_rank: 47
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Housing prices"
+        pct: 45
+        source: "Gallup Korea, Mar 2026"
+      - issue: "Economy / jobs"
+        pct: 39
+        source: "Realmeter, Feb 2026"
+      - issue: "North Korea / security"
+        pct: 26
+        source: "Gallup Korea, Mar 2026"
+      - issue: "Birth rate / aging"
+        pct: 22
+        source: "Hankook Research, Feb 2026"
+      - issue: "Political polarization"
+        pct: 21
+        source: "Gallup Korea, Mar 2026"
+    elections:
+      - date: "2028-04-12"
+        type: "National Assembly"
+        stakes: "DPK-PPP balance; presidential succession dynamics"
+
+  - iso: IDN
+    name: "Indonesia"
+    tier: A
+    region: "Southeast Asia"
+    centroid: [-2.5, 118.0]
+    alliances: ["ASEAN", "G20", "OPEC+ (observer)"]
+    commodities_export: ["coal", "palm oil", "nickel", "natural gas"]
+    commodities_import: ["refined fuels", "machinery", "vehicles"]
+    population_m: 281
+    median_age: 30.2
+    urban_pct: 58
+    democracy:
+      vdem_edi: 0.49
+      freedom_house_score: 58
+      press_freedom_rank: 108
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Cost of living"
+        pct: 48
+        source: "Indikator, Mar 2026"
+      - issue: "Jobs / economy"
+        pct: 41
+        source: "LSI, Feb 2026"
+      - issue: "Corruption"
+        pct: 33
+        source: "Indikator, Mar 2026"
+      - issue: "Education access"
+        pct: 24
+        source: "LSI, Feb 2026"
+      - issue: "Capital relocation (Nusantara)"
+        pct: 18
+        source: "SMRC, Feb 2026"
+    elections:
+      - date: "2029-02-14"
+        type: "Presidential + Legislative"
+        stakes: "Prabowo first-term referendum; nickel policy; Nusantara fate"
+
+  - iso: ITA
+    name: "Italy"
+    tier: A
+    region: "Europe"
+    centroid: [41.9, 12.6]
+    alliances: ["NATO", "EU", "G7"]
+    commodities_export: ["machinery", "vehicles", "luxury goods", "wine"]
+    commodities_import: ["natural gas", "crude oil", "vehicles"]
+    population_m: 59
+    median_age: 48.4
+    urban_pct: 71
+    democracy:
+      vdem_edi: 0.74
+      freedom_house_score: 90
+      press_freedom_rank: 41
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Cost of living"
+        pct: 44
+        source: "SWG, Mar 2026"
+      - issue: "Immigration"
+        pct: 38
+        source: "Ipsos Italy, Feb 2026"
+      - issue: "Healthcare"
+        pct: 32
+        source: "SWG, Mar 2026"
+      - issue: "Jobs"
+        pct: 27
+        source: "Termometro Politico, Feb 2026"
+      - issue: "Public debt / EU rules"
+        pct: 16
+        source: "Ipsos Italy, Feb 2026"
+    elections:
+      - date: "2027-09-25"
+        type: "General election (latest scheduled)"
+        stakes: "Meloni reelection; FdI-Lega-FI cohesion; EU fiscal posture"
+
+  - iso: POL
+    name: "Poland"
+    tier: A
+    region: "Europe"
+    centroid: [51.9, 19.1]
+    alliances: ["NATO", "EU"]
+    commodities_export: ["vehicles", "machinery", "furniture"]
+    commodities_import: ["natural gas", "crude oil", "vehicles"]
+    population_m: 38
+    median_age: 41.9
+    urban_pct: 60
+    democracy:
+      vdem_edi: 0.61
+      freedom_house_score: 82
+      press_freedom_rank: 57
+      trend_10y: "recovered post-2023"
+    issue_salience:
+      - issue: "Cost of living"
+        pct: 46
+        source: "CBOS, Mar 2026"
+      - issue: "Healthcare"
+        pct: 41
+        source: "CBOS, Mar 2026"
+      - issue: "Ukraine war / refugees"
+        pct: 33
+        source: "IBRIS, Feb 2026"
+      - issue: "Rule of law / judiciary"
+        pct: 22
+        source: "CBOS, Mar 2026"
+      - issue: "Housing"
+        pct: 18
+        source: "United Surveys, Feb 2026"
+    elections:
+      - date: "2027-10-15"
+        type: "Sejm + Senate"
+        stakes: "Tusk coalition durability; PiS comeback; Ukraine support level"
+
+  - iso: CAN
+    name: "Canada"
+    tier: A
+    region: "North America"
+    centroid: [56.1, -106.3]
+    alliances: ["NATO", "G7", "USMCA", "Five Eyes", "Commonwealth"]
+    commodities_export: ["crude oil", "vehicles", "lumber", "potash"]
+    commodities_import: ["vehicles", "machinery", "consumer electronics"]
+    population_m: 40
+    median_age: 41.8
+    urban_pct: 82
+    democracy:
+      vdem_edi: 0.84
+      freedom_house_score: 97
+      press_freedom_rank: 14
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Cost of living / housing"
+        pct: 53
+        source: "Abacus Data, Mar 2026"
+      - issue: "Healthcare"
+        pct: 41
+        source: "Nanos, Feb 2026"
+      - issue: "Immigration levels"
+        pct: 32
+        source: "Abacus Data, Mar 2026"
+      - issue: "US tariffs / Trump policy"
+        pct: 28
+        source: "Angus Reid, Feb 2026"
+      - issue: "Climate / energy"
+        pct: 19
+        source: "Nanos, Feb 2026"
+    elections:
+      - date: "2029-10-15"
+        type: "Federal (latest)"
+        stakes: "Carney/Liberal vs. Conservative; US-Canada trade; pipeline approvals"
+
+  - iso: AUS
+    name: "Australia"
+    tier: A
+    region: "Oceania"
+    centroid: [-25.3, 133.8]
+    alliances: ["AUKUS", "Quad", "Five Eyes", "ANZUS", "Commonwealth"]
+    commodities_export: ["iron ore", "coal", "LNG", "gold"]
+    commodities_import: ["refined fuels", "vehicles", "machinery"]
+    population_m: 27
+    median_age: 38.3
+    urban_pct: 86
+    democracy:
+      vdem_edi: 0.83
+      freedom_house_score: 95
+      press_freedom_rank: 39
+      trend_10y: "stable"
+    issue_salience:
+      - issue: "Cost of living"
+        pct: 51
+        source: "Resolve, Mar 2026"
+      - issue: "Housing affordability"
+        pct: 39
+        source: "Essential, Feb 2026"
+      - issue: "Healthcare / Medicare"
+        pct: 31
+        source: "Resolve, Mar 2026"
+      - issue: "China relations / AUKUS"
+        pct: 22
+        source: "Lowy Institute, Feb 2026"
+      - issue: "Climate / energy transition"
+        pct: 21
+        source: "Resolve, Mar 2026"
+    elections:
+      - date: "2028-05-20"
+        type: "House of Representatives + half Senate (latest)"
+        stakes: "Labor reelection bid; AUKUS spend; net-zero pace; immigration cap"
+
+  # ─────────────────────────── TIER B ────────────────────────────────
+
+  - iso: NGA
+    name: "Nigeria"
+    tier: B
+    region: "Africa"
+    centroid: [9.1, 8.7]
+    alliances: ["African Union", "ECOWAS", "Commonwealth"]
+    commodities_export: ["crude oil", "LNG", "cocoa"]
+    commodities_import: ["refined fuels", "machinery", "wheat"]
+    population_m: 230
+    median_age: 17.9
+    urban_pct: 54
+    democracy:
+      vdem_edi: 0.41
+      freedom_house_score: 43
+      press_freedom_rank: 112
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Insecurity (Boko Haram, banditry)"
+        pct: 56
+        source: "NOIPolls, Mar 2026"
+      - issue: "Inflation / food prices"
+        pct: 51
+        source: "Afrobarometer, 2025"
+      - issue: "Unemployment"
+        pct: 44
+        source: "NOIPolls, Mar 2026"
+      - issue: "Corruption"
+        pct: 38
+        source: "Afrobarometer, 2025"
+      - issue: "Power supply"
+        pct: 31
+        source: "NOIPolls, Mar 2026"
+    elections:
+      - date: "2027-02-25"
+        type: "Presidential + National Assembly"
+        stakes: "Tinubu reelection; APC-PDP-LP three-way; subsidy reform durability"
+
+  - iso: ZAF
+    name: "South Africa"
+    tier: B
+    region: "Africa"
+    centroid: [-30.6, 22.9]
+    alliances: ["BRICS", "African Union", "G20", "Commonwealth"]
+    commodities_export: ["platinum", "gold", "iron ore", "coal"]
+    commodities_import: ["refined fuels", "vehicles", "machinery"]
+    population_m: 60
+    median_age: 28.0
+    urban_pct: 68
+    democracy:
+      vdem_edi: 0.64
+      freedom_house_score: 79
+      press_freedom_rank: 27
+      trend_10y: "slight decline"
+    issue_salience:
+      - issue: "Unemployment"
+        pct: 62
+        source: "Ipsos SA, Mar 2026"
+      - issue: "Crime / safety"
+        pct: 49
+        source: "Ipsos SA, Mar 2026"
+      - issue: "Power cuts / Eskom"
+        pct: 41
+        source: "Afrobarometer, 2025"
+      - issue: "Corruption"
+        pct: 38
+        source: "Ipsos SA, Mar 2026"
+      - issue: "Cost of living"
+        pct: 32
+        source: "Ipsos SA, Mar 2026"
+    elections:
+      - date: "2029-05-08"
+        type: "National Assembly + Provincial"
+        stakes: "GNU coalition durability; ANC sub-50% trajectory"
+
+  - iso: PHL
+    name: "Philippines"
+    tier: B
+    region: "Southeast Asia"
+    centroid: [12.9, 121.8]
+    alliances: ["US Mutual Defense Treaty", "ASEAN"]
+    commodities_export: ["semiconductors", "electronics", "tropical fruit"]
+    commodities_import: ["refined fuels", "machinery", "vehicles"]
+    population_m: 117
+    median_age: 25.7
+    urban_pct: 48
+    democracy:
+      vdem_edi: 0.42
+      freedom_house_score: 58
+      press_freedom_rank: 134
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Inflation / food prices"
+        pct: 57
+        source: "Pulse Asia, Mar 2026"
+      - issue: "Jobs"
+        pct: 41
+        source: "SWS, Feb 2026"
+      - issue: "South China Sea / China"
+        pct: 28
+        source: "Pulse Asia, Mar 2026"
+      - issue: "Drugs / public order"
+        pct: 24
+        source: "SWS, Feb 2026"
+      - issue: "Corruption"
+        pct: 22
+        source: "Pulse Asia, Mar 2026"
+    elections:
+      - date: "2028-05-08"
+        type: "Presidential + Senate + House"
+        stakes: "Marcos succession; Duterte dynasty fate; SCS posture"
+
+  - iso: PAK
+    name: "Pakistan"
+    tier: B
+    region: "South Asia"
+    centroid: [30.4, 69.4]
+    alliances: ["SCO", "OIC", "Commonwealth"]
+    commodities_export: ["textiles", "rice", "leather"]
+    commodities_import: ["crude oil", "LNG", "machinery"]
+    population_m: 240
+    median_age: 22.0
+    urban_pct: 38
+    democracy:
+      vdem_edi: 0.27
+      freedom_house_score: 35
+      press_freedom_rank: 152
+      trend_10y: "declining"
+    issue_salience:
+      - issue: "Inflation"
+        pct: 64
+        source: "Gallup Pakistan, Mar 2026"
+      - issue: "Unemployment"
+        pct: 47
+        source: "Gallup Pakistan, Mar 2026"
+      - issue: "Power outages"
+        pct: 35
+        source: "IPOR, Feb 2026"
+      - issue: "Terrorism / TTP"
+        pct: 28
+        source: "Gallup Pakistan, Mar 2026"
+      - issue: "Imran Khan / political crisis"
+        pct: 26
+        source: "IPOR, Feb 2026"
+    elections:
+      - date: "2029-02-08"
+        type: "National Assembly (next regular)"
+        stakes: "PML-N government durability; PTI status; military-civilian balance"
+
+  - iso: UKR
+    name: "Ukraine"
+    tier: B
+    region: "Europe"
+    centroid: [48.4, 31.2]
+    alliances: ["EU candidate", "NATO partner"]
+    commodities_export: ["grain", "iron ore", "vegetable oils"]
+    commodities_import: ["refined fuels", "machinery", "weapons"]
+    population_m: 36
+    median_age: 41.5
+    urban_pct: 70
+    democracy:
+      vdem_edi: 0.43
+      freedom_house_score: 50
+      press_freedom_rank: 79
+      trend_10y: "wartime suspension"
+    issue_salience:
+      - issue: "War conduct / negotiation terms"
+        pct: 71
+        source: "KIIS, Mar 2026"
+      - issue: "Reconstruction"
+        pct: 52
+        source: "KIIS, Mar 2026"
+      - issue: "Corruption"
+        pct: 41
+        source: "Razumkov, Feb 2026"
+      - issue: "EU accession"
+        pct: 33
+        source: "KIIS, Mar 2026"
+      - issue: "Demobilization / draft"
+        pct: 31
+        source: "Razumkov, Feb 2026"
+    elections:
+      - date: "TBD post-ceasefire"
+        type: "Presidential + Verkhovna Rada (suspended under martial law)"
+        stakes: "Zelenskyy successor; war-end terms; territorial settlement"
+
+  - iso: TWN
+    name: "Taiwan"
+    tier: B
+    region: "East Asia"
+    centroid: [23.7, 121.0]
+    alliances: ["US TRA partner (de facto)"]
+    commodities_export: ["semiconductors", "electronics", "machinery"]
+    commodities_import: ["crude oil", "natural gas", "machinery"]
+    population_m: 23.4
+    median_age: 43.8
+    urban_pct: 80
+    democracy:
+      vdem_edi: 0.81
+      freedom_house_score: 94
+      press_freedom_rank: 27
+      trend_10y: "improving"
+    issue_salience:
+      - issue: "China cross-strait tension"
+        pct: 49
+        source: "TPOF, Mar 2026"
+      - issue: "Cost of living / housing"
+        pct: 47
+        source: "TPOF, Mar 2026"
+      - issue: "Energy / nuclear policy"
+        pct: 26
+        source: "ETtoday, Feb 2026"
+      - issue: "Birth rate / aging"
+        pct: 24
+        source: "TPOF, Mar 2026"
+      - issue: "Wages stagnation"
+        pct: 22
+        source: "TPOF, Mar 2026"
+    elections:
+      - date: "2028-01-08"
+        type: "Presidential + Legislative Yuan"
+        stakes: "DPP three-peat or KMT/TPP comeback; cross-strait posture"
+
+  - iso: IRN
+    name: "Iran"
+    tier: B
+    region: "Middle East"
+    centroid: [32.4, 53.7]
+    alliances: ["SCO"]
+    commodities_export: ["crude oil (sanctioned)", "petrochemicals", "pistachios"]
+    commodities_import: ["machinery", "grain", "electronics"]
+    population_m: 89
+    median_age: 32.4
+    urban_pct: 76
+    democracy:
+      vdem_edi: 0.16
+      freedom_house_score: 12
+      press_freedom_rank: 176
+      trend_10y: "stable autocracy"
+    issue_salience:
+      - issue: "Inflation / sanctions impact"
+        pct: 68
+        source: "GAMAAN (diaspora poll), 2025"
+      - issue: "Hijab / social freedoms"
+        pct: 41
+        source: "GAMAAN, 2025"
+      - issue: "Water / drought"
+        pct: 31
+        source: "ISPA, 2025"
+      - issue: "Israel/regional war risk"
+        pct: 28
+        source: "GAMAAN, 2025"
+      - issue: "Succession (Khamenei)"
+        pct: 22
+        source: "Diaspora analysis"
+    elections:
+      - date: "2028-02-01"
+        type: "Majles (parliamentary, vetted)"
+        stakes: "Hardline-reformist balance under Guardian Council vetting; succession dynamics"
+
+  # ─────────────────────────── TIER C — watchlist stubs ──────────────
+
+  - iso: EGY
+    name: "Egypt"
+    tier: C
+    region: "Middle East / Africa"
+    centroid: [26.8, 30.8]
+    alliances: ["Arab League", "African Union"]
+    population_m: 110
+    elections:
+      - date: "2030-03-01"
+        type: "Presidential (next scheduled)"
+        stakes: "Sisi succession; IMF program"
+
+  - iso: VEN
+    name: "Venezuela"
+    tier: C
+    region: "South America"
+    centroid: [6.4, -66.6]
+    alliances: ["ALBA"]
+    population_m: 28
+    elections:
+      - date: "TBD"
+        type: "Presidential (next contested)"
+        stakes: "Maduro vs. opposition (González/Machado); oil sanctions"
+
+  - iso: THA
+    name: "Thailand"
+    tier: C
+    region: "Southeast Asia"
+    centroid: [15.9, 100.9]
+    alliances: ["ASEAN"]
+    population_m: 71
+    elections:
+      - date: "2027-05-14"
+        type: "House of Representatives"
+        stakes: "Pheu Thai-MFP/MP successor dynamic; military influence"
+
+  # ─────────────────────────── ADDITIONAL ────────────────────────────
+
+  - iso: ESP
+    name: "Spain"
+    tier: A
+    region: "Europe"
+    centroid: [40.4, -3.7]
+    alliances: ["EU", "NATO", "Eurozone", "OECD"]
+    commodities_export: ["vehicles", "agricultural products", "wine", "olive oil"]
+    commodities_import: ["natural gas", "crude oil", "machinery"]
+    population_m: 48.8
+    median_age: 44.9
+    urban_pct: 81
+    democracy:
+      vdem_edi: 0.73
+      freedom_house_score: 90
+      press_freedom_rank: 30
+      trend_10y: "stable"
+    issue_salience:
+      - { issue: "Cost of living / housing",  pct: 39, source: "CIS, Mar 2026" }
+      - { issue: "Unemployment",              pct: 31, source: "CIS, Mar 2026" }
+      - { issue: "Politicians / quality of govt", pct: 26, source: "CIS, Mar 2026" }
+      - { issue: "Immigration",               pct: 23, source: "Sigma Dos, Feb 2026" }
+      - { issue: "Catalan / regional issues", pct: 12, source: "Sigma Dos, Feb 2026" }
+    elections:
+      - date: "2027-12-12"
+        type: "General election (latest possible)"
+        stakes: "Sánchez seeks renewal of left+regionalist coalition vs PP+Vox right bloc"
+
+  - iso: SWE
+    name: "Sweden"
+    tier: A
+    region: "Europe"
+    centroid: [60.1, 18.6]
+    alliances: ["EU", "NATO", "OECD", "Nordic Council"]
+    commodities_export: ["machinery", "vehicles", "iron ore", "paper", "pharmaceuticals"]
+    commodities_import: ["crude oil", "machinery", "electronics"]
+    population_m: 10.6
+    median_age: 41.0
+    urban_pct: 88
+    democracy:
+      vdem_edi: 0.84
+      freedom_house_score: 100
+      press_freedom_rank: 4
+      trend_10y: "stable"
+    issue_salience:
+      - { issue: "Crime / gang violence",     pct: 49, source: "SOM Institute, Jan 2026" }
+      - { issue: "Healthcare",                pct: 36, source: "SOM Institute, Jan 2026" }
+      - { issue: "Education",                 pct: 28, source: "SOM Institute, Jan 2026" }
+      - { issue: "Immigration / integration", pct: 32, source: "Demoskop, Mar 2026" }
+      - { issue: "Climate / environment",     pct: 22, source: "SOM Institute, Jan 2026" }
+    elections:
+      - date: "2026-09-13"
+        type: "General election (Riksdag)"
+        stakes: "SD / M / KD / L government seeks renewal vs S-led red-green opposition"
+
+  - iso: HUN
+    name: "Hungary"
+    tier: A
+    region: "Europe"
+    centroid: [47.2, 19.5]
+    alliances: ["EU", "NATO", "Visegrád 4"]
+    commodities_export: ["vehicles", "machinery", "pharmaceuticals"]
+    commodities_import: ["natural gas", "crude oil", "electronics"]
+    population_m: 9.6
+    median_age: 43.7
+    urban_pct: 73
+    democracy:
+      vdem_edi: 0.43
+      freedom_house_score: 65
+      press_freedom_rank: 67
+      trend_10y: "declining sharply"
+    issue_salience:
+      - { issue: "Inflation / cost of living",   pct: 47, source: "Medián, Mar 2026" }
+      - { issue: "Healthcare crisis",            pct: 38, source: "Závecz, Feb 2026" }
+      - { issue: "Corruption / Fidesz dominance", pct: 31, source: "Medián, Mar 2026" }
+      - { issue: "Education reform",             pct: 24, source: "Závecz, Feb 2026" }
+      - { issue: "EU funds blocked",             pct: 19, source: "Republikon, Feb 2026" }
+    elections:
+      - date: "2026-04-12"
+        type: "Parliamentary election"
+        stakes: "Orbán's Fidesz vs Magyar's Tisza — first real challenge to Orbán since 2010"
+
+  - iso: COL
+    name: "Colombia"
+    tier: B
+    region: "South America"
+    centroid: [4.6, -74.1]
+    alliances: ["Pacific Alliance", "OAS", "OECD"]
+    commodities_export: ["crude oil", "coal", "coffee", "flowers"]
+    commodities_import: ["machinery", "chemicals", "vehicles"]
+    population_m: 52.3
+    median_age: 31.3
+    urban_pct: 81
+    democracy:
+      vdem_edi: 0.55
+      freedom_house_score: 70
+      press_freedom_rank: 119
+      trend_10y: "stable"
+    issue_salience:
+      - { issue: "Public security / violence", pct: 44, source: "Invamer, Mar 2026" }
+      - { issue: "Unemployment / cost of living", pct: 39, source: "Invamer, Mar 2026" }
+      - { issue: "Healthcare reform",         pct: 28, source: "Datexco, Feb 2026" }
+      - { issue: "Corruption",                pct: 23, source: "Invamer, Mar 2026" }
+      - { issue: "Migration (Venezuelan)",    pct: 18, source: "Datexco, Feb 2026" }
+    elections:
+      - date: "2026-05-31"
+        type: "Presidential election (1st round)"
+        stakes: "Petro term-limited; Pacto Histórico succession vs centre-right rebound"
+
+  - iso: CHL
+    name: "Chile"
+    tier: B
+    region: "South America"
+    centroid: [-35.7, -71.5]
+    alliances: ["Pacific Alliance", "OECD", "OAS"]
+    commodities_export: ["copper", "lithium", "fruit", "salmon"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 19.6
+    median_age: 36.0
+    urban_pct: 88
+    democracy:
+      vdem_edi: 0.71
+      freedom_house_score: 94
+      press_freedom_rank: 52
+      trend_10y: "stable"
+    issue_salience:
+      - { issue: "Public security / crime",   pct: 52, source: "CEP, Mar 2026" }
+      - { issue: "Pensions reform",           pct: 36, source: "CEP, Mar 2026" }
+      - { issue: "Cost of living",            pct: 31, source: "Cadem, Feb 2026" }
+      - { issue: "Migration / border",        pct: 27, source: "Cadem, Feb 2026" }
+      - { issue: "Healthcare (Isapres)",      pct: 22, source: "CEP, Mar 2026" }
+    elections:
+      - date: "2025-11-16"
+        type: "Presidential election (1st round) — recent"
+        stakes: "Boric term-limited; Kast (Republican) defeated Jara (Communist) in runoff"
+      - date: "2029-11-25"
+        type: "Presidential + congressional"
+        stakes: "Next cycle"
+
+  - iso: BGD
+    name: "Bangladesh"
+    tier: B
+    region: "South Asia"
+    centroid: [23.7, 90.4]
+    alliances: ["SAARC", "BIMSTEC"]
+    commodities_export: ["garments", "leather", "jute"]
+    commodities_import: ["crude oil", "natural gas", "machinery"]
+    population_m: 173
+    median_age: 27.9
+    urban_pct: 41
+    democracy:
+      vdem_edi: 0.20
+      freedom_house_score: 40
+      press_freedom_rank: 165
+      trend_10y: "declining; interim govt since Aug 2024"
+    issue_salience:
+      - { issue: "Inflation / food prices",   pct: 51, source: "BRAC IGS, Mar 2026" }
+      - { issue: "Corruption / state capture", pct: 45, source: "TIB, Feb 2026" }
+      - { issue: "Justice for July 2024 deaths", pct: 38, source: "BRAC IGS, Mar 2026" }
+      - { issue: "Unemployment (youth)",      pct: 32, source: "BRAC IGS, Mar 2026" }
+      - { issue: "Floods / climate",          pct: 24, source: "ICCCAD, Jan 2026" }
+    elections:
+      - date: "2026-02-28"
+        type: "General election (post-interim)"
+        stakes: "First election since Hasina ouster; AL banned, BNP + Jamaat + new student parties"
+
+  - iso: VNM
+    name: "Vietnam"
+    tier: B
+    region: "Southeast Asia"
+    centroid: [14.1, 108.3]
+    alliances: ["ASEAN", "CPTPP", "RCEP"]
+    commodities_export: ["electronics", "textiles", "footwear", "rice"]
+    commodities_import: ["crude oil", "machinery", "steel"]
+    population_m: 100.3
+    median_age: 33.7
+    urban_pct: 39
+    democracy:
+      vdem_edi: 0.14
+      freedom_house_score: 19
+      press_freedom_rank: 174
+      trend_10y: "stable autocracy"
+    issue_salience:
+      - { issue: "Cost of living / housing",  pct: 41, source: "(no independent polling); VNS estimates" }
+      - { issue: "Anti-corruption ('blazing furnace')", pct: 36, source: "Politburo declared priority" }
+      - { issue: "South China Sea / sovereignty", pct: 28, source: "VNS / Pew Asia 2024" }
+      - { issue: "Floods / climate",          pct: 22, source: "World Bank Vietnam climate" }
+      - { issue: "Education quality",         pct: 18, source: "VNS estimates" }
+    elections:
+      - date: "2026-01-20"
+        type: "14th National Party Congress"
+        stakes: "Tô Lâm consolidating power; new Politburo + General Secretary term"
+
+  - iso: ETH
+    name: "Ethiopia"
+    tier: C
+    region: "Africa"
+    centroid: [9.1, 40.5]
+    alliances: ["AU", "IGAD", "COMESA"]
+    commodities_export: ["coffee", "gold", "oilseeds", "khat"]
+    commodities_import: ["crude oil", "machinery", "wheat"]
+    population_m: 130
+    median_age: 19.8
+    urban_pct: 23
+    democracy:
+      vdem_edi: 0.16
+      freedom_house_score: 19
+      press_freedom_rank: 130
+      trend_10y: "war + collapse + tentative reopening"
+    issue_salience:
+      - { issue: "Inflation / food security", pct: 56, source: "Afrobarometer R10 (Ethiopia 2024)" }
+      - { issue: "Conflict (Amhara, Oromia)", pct: 43, source: "Afrobarometer R10" }
+      - { issue: "Currency / forex shortage", pct: 35, source: "IFPRI Ethiopia 2025" }
+      - { issue: "Tigray reconstruction",     pct: 28, source: "Afrobarometer R10" }
+      - { issue: "Unemployment",              pct: 24, source: "Afrobarometer R10" }
+    elections:
+      - date: "2026-06-01"
+        type: "General election (delayed)"
+        stakes: "Abiy's Prosperity Party vs return of TPLF + Amhara groups; war memory"
+
+  - iso: SAU
+    name: "Saudi Arabia"
+    tier: B
+    region: "Middle East"
+    centroid: [23.9, 45.1]
+    alliances: ["GCC", "Arab League", "OPEC", "G20", "OIC"]
+    commodities_export: ["crude oil", "petrochemicals", "plastics"]
+    commodities_import: ["machinery", "vehicles", "electronics", "wheat"]
+    population_m: 36.7
+    median_age: 30.8
+    urban_pct: 84
+    democracy:
+      vdem_edi: 0.04
+      freedom_house_score: 8
+      press_freedom_rank: 166
+      trend_10y: "Vision 2030 reforms; political space still closed"
+    issue_salience:
+      - { issue: "Cost of living / housing",  pct: 38, source: "Arab Barometer Wave 8 (Saudi 2024)" }
+      - { issue: "Jobs (Saudisation)",        pct: 32, source: "Arab Barometer Wave 8" }
+      - { issue: "Religion-state balance",    pct: 18, source: "Arab Barometer Wave 8" }
+      - { issue: "Yemen / regional security", pct: 15, source: "Arab Barometer Wave 8" }
+      - { issue: "Women's rights",            pct: 12, source: "Arab Barometer Wave 8" }
+    elections:
+      - date: "TBD"
+        type: "Municipal council (consultative only)"
+        stakes: "No national elections; absolute monarchy; Shura Council appointed"
+
+  - iso: ARE
+    name: "United Arab Emirates"
+    tier: C
+    region: "Middle East"
+    centroid: [24.0, 53.8]
+    alliances: ["GCC", "Arab League", "OPEC", "Abraham Accords"]
+    commodities_export: ["crude oil", "natural gas", "aluminum", "gold"]
+    commodities_import: ["machinery", "vehicles", "electronics", "food"]
+    population_m: 10.0
+    median_age: 33.5
+    urban_pct: 88
+    democracy:
+      vdem_edi: 0.05
+      freedom_house_score: 18
+      press_freedom_rank: 164
+      trend_10y: "stable monarchy; high foreign worker share"
+    issue_salience:
+      - { issue: "Economic diversification",  pct: 40, source: "(no independent polling); govt narrative" }
+      - { issue: "Cost of living (Dubai)",    pct: 32, source: "YouGov Gulf 2024" }
+      - { issue: "Regional security",         pct: 28, source: "YouGov Gulf 2024" }
+      - { issue: "Job-market competition",    pct: 22, source: "YouGov Gulf 2024" }
+      - { issue: "Climate (heat / water)",    pct: 18, source: "YouGov Gulf 2024" }
+    elections:
+      - date: "TBD"
+        type: "Federal National Council (half-elected, advisory)"
+        stakes: "No national elections; federation of seven emirates run by ruling families"
+
+  # ─────────────────────────── BATCH 2: 37 more ───────────────────────
+
+  # Latin America
+  - iso: PER
+    name: "Peru"
+    tier: B
+    region: "South America"
+    centroid: [-9.2, -75.0]
+    alliances: ["Pacific Alliance", "OAS", "APEC"]
+    commodities_export: ["copper", "gold", "zinc", "fish meal"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 33.7
+    median_age: 30.4
+    urban_pct: 79
+    democracy: { vdem_edi: 0.45, freedom_house_score: 71, press_freedom_rank: 125, trend_10y: "declining (institutional crisis)" }
+    issue_salience:
+      - { issue: "Crime / extortion",       pct: 51, source: "IEP / Ipsos, Mar 2026" }
+      - { issue: "Corruption (5 presidents in 5 yrs)", pct: 44, source: "Ipsos, Mar 2026" }
+      - { issue: "Cost of living",          pct: 33, source: "IEP, Feb 2026" }
+      - { issue: "Mining conflicts",        pct: 21, source: "Defensoría del Pueblo" }
+      - { issue: "Healthcare",              pct: 19, source: "Ipsos, Mar 2026" }
+    elections:
+      - { date: "2026-04-12", type: "Presidential + Congress 1st round", stakes: "Boluarte unpopular; fragmented field; Fujimorismo + Castillo successors" }
+
+  - iso: ECU
+    name: "Ecuador"
+    tier: B
+    region: "South America"
+    centroid: [-1.8, -78.2]
+    alliances: ["OAS", "CAN"]
+    commodities_export: ["crude oil", "bananas", "shrimp", "cocoa"]
+    commodities_import: ["machinery", "vehicles", "refined petroleum"]
+    population_m: 18.0
+    median_age: 28.8
+    urban_pct: 65
+    democracy: { vdem_edi: 0.49, freedom_house_score: 70, press_freedom_rank: 110, trend_10y: "declining (security crisis)" }
+    issue_salience:
+      - { issue: "Public security / cartel violence", pct: 67, source: "Cedatos, Mar 2026" }
+      - { issue: "Unemployment / cost of living",     pct: 38, source: "Cedatos, Mar 2026" }
+      - { issue: "Energy / blackouts",                pct: 31, source: "Comunicaliza, Feb 2026" }
+      - { issue: "Corruption",                        pct: 22, source: "Cedatos, Mar 2026" }
+    elections:
+      - { date: "2025-04-13", type: "Presidential runoff (recent)", stakes: "Noboa re-elected over González; mano dura mandate continued" }
+      - { date: "2029-02-11", type: "Presidential 1st round", stakes: "Next cycle" }
+
+  - iso: BOL
+    name: "Bolivia"
+    tier: B
+    region: "South America"
+    centroid: [-16.3, -63.6]
+    alliances: ["CAN", "ALBA"]
+    commodities_export: ["natural gas", "tin", "lithium concentrates", "soy"]
+    commodities_import: ["refined petroleum", "machinery"]
+    population_m: 12.1
+    median_age: 25.6
+    urban_pct: 70
+    democracy: { vdem_edi: 0.42, freedom_house_score: 60, press_freedom_rank: 124, trend_10y: "instability" }
+    issue_salience:
+      - { issue: "Dollar / fuel shortages",  pct: 58, source: "Tu Voto Cuenta, Mar 2026" }
+      - { issue: "Cost of living",           pct: 41, source: "Ipsos CIESMORI, Feb 2026" }
+      - { issue: "MAS internal split (Arce-Evo)", pct: 27, source: "Tu Voto Cuenta, Mar 2026" }
+      - { issue: "Unemployment",             pct: 22, source: "Ipsos CIESMORI" }
+    elections:
+      - { date: "2025-08-17", type: "General election (recent)", stakes: "Centrist Rodrigo Paz won; first non-MAS govt in 19y" }
+      - { date: "2030-08-19", type: "General", stakes: "Next cycle" }
+
+  - iso: URY
+    name: "Uruguay"
+    tier: B
+    region: "South America"
+    centroid: [-32.5, -55.8]
+    alliances: ["Mercosur", "OAS"]
+    commodities_export: ["beef", "soybeans", "cellulose", "rice"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 3.4
+    median_age: 36.0
+    urban_pct: 96
+    democracy: { vdem_edi: 0.83, freedom_house_score: 96, press_freedom_rank: 19, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Public security",          pct: 47, source: "Equipos, Mar 2026" }
+      - { issue: "Cost of living",           pct: 32, source: "Cifra, Feb 2026" }
+      - { issue: "Education reform",         pct: 21, source: "Equipos, Mar 2026" }
+      - { issue: "Pension system",           pct: 19, source: "Equipos, Mar 2026" }
+    elections:
+      - { date: "2024-11-24", type: "Presidential runoff (recent)", stakes: "Frente Amplio's Yamandú Orsi defeated Álvaro Delgado; left returns" }
+      - { date: "2029-10-28", type: "General", stakes: "Next cycle" }
+
+  - iso: CRI
+    name: "Costa Rica"
+    tier: C
+    region: "North America"
+    centroid: [9.9, -84.0]
+    alliances: ["OAS", "SICA"]
+    commodities_export: ["medical instruments", "bananas", "coffee", "pineapples"]
+    commodities_import: ["refined petroleum", "machinery"]
+    population_m: 5.2
+    median_age: 34.2
+    urban_pct: 81
+    democracy: { vdem_edi: 0.79, freedom_house_score: 90, press_freedom_rank: 26, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Crime / homicide spike",   pct: 49, source: "CIEP, Feb 2026" }
+      - { issue: "Cost of living",           pct: 32, source: "CIEP, Feb 2026" }
+      - { issue: "Political polarisation",   pct: 27, source: "CIEP, Feb 2026" }
+      - { issue: "Healthcare (CCSS)",        pct: 22, source: "Encuesta CIEP" }
+    elections:
+      - { date: "2026-02-01", type: "Presidential 1st round", stakes: "Chaves term-limited; PPSD continues vs traditional parties" }
+
+  # Europe (12)
+  - iso: NLD
+    name: "Netherlands"
+    tier: A
+    region: "Europe"
+    centroid: [52.1, 5.3]
+    alliances: ["EU", "NATO", "Eurozone", "OECD"]
+    commodities_export: ["machinery", "chemicals", "vegetables", "natural gas"]
+    commodities_import: ["crude oil", "vehicles", "electronics"]
+    population_m: 17.8
+    median_age: 42.7
+    urban_pct: 93
+    democracy: { vdem_edi: 0.81, freedom_house_score: 97, press_freedom_rank: 6, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Migration / asylum",         pct: 41, source: "Ipsos NL, Mar 2026" }
+      - { issue: "Housing affordability",      pct: 39, source: "Ipsos NL, Mar 2026" }
+      - { issue: "Healthcare",                 pct: 31, source: "Ipsos NL, Mar 2026" }
+      - { issue: "Climate / nitrogen",         pct: 24, source: "I&O Research, Feb 2026" }
+      - { issue: "Cost of living",             pct: 22, source: "Ipsos NL, Mar 2026" }
+    elections:
+      - { date: "2028-03-22", type: "General election (latest possible)", stakes: "Schoof technocrat-led PVV-VVD-NSC-BBB cabinet faces internal stress" }
+
+  - iso: BEL
+    name: "Belgium"
+    tier: B
+    region: "Europe"
+    centroid: [50.5, 4.5]
+    alliances: ["EU", "NATO", "Eurozone", "OECD", "Benelux"]
+    commodities_export: ["chemicals", "vehicles", "machinery", "diamonds"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 11.7
+    median_age: 41.8
+    urban_pct: 98
+    democracy: { vdem_edi: 0.80, freedom_house_score: 96, press_freedom_rank: 16, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Cost of living",           pct: 38, source: "Eurobarometer NL/FR Mar 2026" }
+      - { issue: "Migration",                pct: 32, source: "Ipsos BE, Feb 2026" }
+      - { issue: "Pensions / public finance", pct: 27, source: "Eurobarometer Mar 2026" }
+      - { issue: "Climate",                  pct: 21, source: "Eurobarometer" }
+    elections:
+      - { date: "2029-06-09", type: "Federal + EU + regional", stakes: "De Wever Arizona coalition tested; Vlaams Belang vs N-VA" }
+
+  - iso: GRC
+    name: "Greece"
+    tier: B
+    region: "Europe"
+    centroid: [39.1, 21.8]
+    alliances: ["EU", "NATO", "Eurozone", "OECD"]
+    commodities_export: ["refined petroleum", "olive oil", "aluminum"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 10.4
+    median_age: 46.0
+    urban_pct: 80
+    democracy: { vdem_edi: 0.66, freedom_house_score: 84, press_freedom_rank: 88, trend_10y: "stable; press freedom slipping" }
+    issue_salience:
+      - { issue: "Cost of living",           pct: 56, source: "Pulse, Mar 2026" }
+      - { issue: "Tempi rail-disaster justice", pct: 41, source: "Pulse, Feb 2026" }
+      - { issue: "Wages / 'brain drain'",    pct: 35, source: "ProRata, Feb 2026" }
+      - { issue: "Migration / borders",      pct: 28, source: "Pulse, Mar 2026" }
+    elections:
+      - { date: "2027-06-13", type: "General election (latest)", stakes: "Mitsotakis seeks third term; PASOK on the rise" }
+
+  - iso: PRT
+    name: "Portugal"
+    tier: B
+    region: "Europe"
+    centroid: [39.5, -8.0]
+    alliances: ["EU", "NATO", "Eurozone", "OECD"]
+    commodities_export: ["machinery", "vehicles", "agricultural products", "wine"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 10.6
+    median_age: 46.4
+    urban_pct: 67
+    democracy: { vdem_edi: 0.78, freedom_house_score: 95, press_freedom_rank: 7, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Housing affordability",    pct: 51, source: "Eurosondagem, Mar 2026" }
+      - { issue: "Healthcare (SNS)",         pct: 38, source: "Eurosondagem, Mar 2026" }
+      - { issue: "Cost of living",           pct: 33, source: "ICS-ISCTE, Feb 2026" }
+      - { issue: "Wages / emigration",       pct: 27, source: "Eurosondagem" }
+    elections:
+      - { date: "2028-03-12", type: "Legislative (latest)", stakes: "Montenegro's AD minority + Chega kingmaker" }
+
+  - iso: ROU
+    name: "Romania"
+    tier: B
+    region: "Europe"
+    centroid: [45.9, 24.9]
+    alliances: ["EU", "NATO", "OECD candidate"]
+    commodities_export: ["vehicles", "machinery", "natural gas"]
+    commodities_import: ["machinery", "vehicles", "crude oil"]
+    population_m: 19.0
+    median_age: 43.5
+    urban_pct: 54
+    democracy: { vdem_edi: 0.59, freedom_house_score: 81, press_freedom_rank: 49, trend_10y: "stable; 2024-25 anti-system surge" }
+    issue_salience:
+      - { issue: "Cost of living / wages",    pct: 47, source: "INSCOP, Mar 2026" }
+      - { issue: "Corruption",                pct: 38, source: "INSCOP, Feb 2026" }
+      - { issue: "Healthcare",                pct: 30, source: "Avangarde, Feb 2026" }
+      - { issue: "EU / NATO commitment vs Russia tilt", pct: 26, source: "INSCOP, Mar 2026" }
+    elections:
+      - { date: "2025-05-18", type: "Presidential runoff (re-run after 2024 annulment)", stakes: "Nicușor Dan defeated George Simion (AUR); pro-EU survived" }
+      - { date: "2028-12-08", type: "Parliamentary", stakes: "Next cycle" }
+
+  - iso: CZE
+    name: "Czech Republic"
+    tier: B
+    region: "Europe"
+    centroid: [49.8, 15.5]
+    alliances: ["EU", "NATO", "OECD", "Visegrád 4"]
+    commodities_export: ["vehicles", "machinery", "electronics"]
+    commodities_import: ["natural gas", "crude oil", "electronics"]
+    population_m: 10.5
+    median_age: 43.4
+    urban_pct: 74
+    democracy: { vdem_edi: 0.74, freedom_house_score: 91, press_freedom_rank: 17, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Cost of living / energy",   pct: 44, source: "STEM, Mar 2026" }
+      - { issue: "Migration",                 pct: 31, source: "Median, Feb 2026" }
+      - { issue: "Healthcare",                pct: 27, source: "STEM, Feb 2026" }
+      - { issue: "Pensions",                  pct: 24, source: "STEM, Mar 2026" }
+    elections:
+      - { date: "2025-10-04", type: "Chamber of Deputies (recent)", stakes: "Babiš's ANO returned; coalition with Motorists + SPD" }
+      - { date: "2029-10-06", type: "Parliamentary", stakes: "Next cycle" }
+
+  - iso: NOR
+    name: "Norway"
+    tier: B
+    region: "Europe"
+    centroid: [60.5, 8.5]
+    alliances: ["NATO", "EFTA", "EEA", "OECD", "Nordic Council"]
+    commodities_export: ["crude oil", "natural gas", "fish", "aluminum"]
+    commodities_import: ["machinery", "vehicles", "electronics"]
+    population_m: 5.5
+    median_age: 39.7
+    urban_pct: 84
+    democracy: { vdem_edi: 0.86, freedom_house_score: 100, press_freedom_rank: 1, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Electricity prices",        pct: 49, source: "Norstat, Mar 2026" }
+      - { issue: "Healthcare / GP shortage",  pct: 38, source: "Norstat, Mar 2026" }
+      - { issue: "Cost of living",            pct: 32, source: "Sentio, Feb 2026" }
+      - { issue: "Migration / integration",   pct: 23, source: "Norstat, Mar 2026" }
+      - { issue: "Climate + oil-fund politics", pct: 22, source: "Sentio, Feb 2026" }
+    elections:
+      - { date: "2025-09-08", type: "Storting election (recent)", stakes: "Støre's Labour returned; right bloc gained — minority" }
+      - { date: "2029-09-10", type: "Storting", stakes: "Next cycle" }
+
+  - iso: FIN
+    name: "Finland"
+    tier: B
+    region: "Europe"
+    centroid: [64.0, 26.0]
+    alliances: ["EU", "NATO", "Eurozone", "OECD", "Nordic Council"]
+    commodities_export: ["paper", "machinery", "electronics"]
+    commodities_import: ["crude oil", "machinery", "vehicles"]
+    population_m: 5.6
+    median_age: 43.0
+    urban_pct: 86
+    democracy: { vdem_edi: 0.88, freedom_house_score: 100, press_freedom_rank: 5, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Russia threat / defence",   pct: 44, source: "EVA, Mar 2026" }
+      - { issue: "Public spending cuts",      pct: 38, source: "EVA, Feb 2026" }
+      - { issue: "Healthcare reform",         pct: 31, source: "Taloustutkimus, Feb 2026" }
+      - { issue: "Migration",                 pct: 24, source: "EVA, Mar 2026" }
+    elections:
+      - { date: "2027-04-04", type: "Parliamentary", stakes: "Orpo's KOK-PS-KD-RKP coalition stress; SDP rebounding" }
+
+  - iso: DNK
+    name: "Denmark"
+    tier: B
+    region: "Europe"
+    centroid: [56.3, 9.5]
+    alliances: ["EU", "NATO", "OECD", "Nordic Council"]
+    commodities_export: ["machinery", "pharmaceuticals", "wind turbines", "pork"]
+    commodities_import: ["machinery", "vehicles", "electronics"]
+    population_m: 5.9
+    median_age: 42.0
+    urban_pct: 88
+    democracy: { vdem_edi: 0.86, freedom_house_score: 97, press_freedom_rank: 2, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Migration (tightest EU stance)", pct: 36, source: "Voxmeter, Mar 2026" }
+      - { issue: "Healthcare",                     pct: 33, source: "Voxmeter, Mar 2026" }
+      - { issue: "Cost of living",                 pct: 28, source: "Megafon, Feb 2026" }
+      - { issue: "Greenland / US relations",       pct: 24, source: "Voxmeter, Mar 2026" }
+    elections:
+      - { date: "2026-10-31", type: "Folketing (latest possible)", stakes: "Frederiksen's S+M+V grand coalition; Greenland sovereignty politics" }
+
+  - iso: CHE
+    name: "Switzerland"
+    tier: B
+    region: "Europe"
+    centroid: [46.8, 8.2]
+    alliances: ["EFTA", "OECD"]
+    commodities_export: ["pharmaceuticals", "machinery", "watches", "gold"]
+    commodities_import: ["machinery", "vehicles", "electronics"]
+    population_m: 8.8
+    median_age: 42.7
+    urban_pct: 74
+    democracy: { vdem_edi: 0.85, freedom_house_score: 96, press_freedom_rank: 9, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "EU bilateral treaties",     pct: 41, source: "GfS Bern, Mar 2026" }
+      - { issue: "Health-insurance premiums", pct: 38, source: "GfS Bern, Mar 2026" }
+      - { issue: "Migration",                 pct: 32, source: "Demoscope, Feb 2026" }
+      - { issue: "Pensions (AHV/AVS)",        pct: 24, source: "GfS Bern, Mar 2026" }
+      - { issue: "Energy security",           pct: 22, source: "GfS Bern, Mar 2026" }
+    elections:
+      - { date: "2027-10-24", type: "Federal Assembly", stakes: "SVP/UDC dominant; collegial Federal Council seat allocation contest" }
+
+  - iso: IRL
+    name: "Ireland"
+    tier: B
+    region: "Europe"
+    centroid: [53.4, -8.2]
+    alliances: ["EU", "Eurozone", "OECD"]
+    commodities_export: ["pharmaceuticals", "computer services", "medical devices"]
+    commodities_import: ["machinery", "vehicles", "fuel"]
+    population_m: 5.3
+    median_age: 38.8
+    urban_pct: 64
+    democracy: { vdem_edi: 0.81, freedom_house_score: 97, press_freedom_rank: 8, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Housing crisis",           pct: 58, source: "Red C, Mar 2026" }
+      - { issue: "Cost of living",           pct: 41, source: "Red C, Mar 2026" }
+      - { issue: "Healthcare (HSE)",         pct: 33, source: "Behaviour & Attitudes, Feb 2026" }
+      - { issue: "Migration / asylum",       pct: 28, source: "Red C, Mar 2026" }
+      - { issue: "United Ireland question",  pct: 19, source: "Red C, Feb 2026" }
+    elections:
+      - { date: "2029-11-29", type: "General (Dáil)", stakes: "FF-FG-Labour coalition; Sinn Féin's first majority govt path" }
+
+  - iso: AUT
+    name: "Austria"
+    tier: B
+    region: "Europe"
+    centroid: [47.5, 14.6]
+    alliances: ["EU", "Eurozone", "OECD"]
+    commodities_export: ["machinery", "vehicles", "iron + steel"]
+    commodities_import: ["machinery", "vehicles", "natural gas"]
+    population_m: 9.2
+    median_age: 44.0
+    urban_pct: 60
+    democracy: { vdem_edi: 0.74, freedom_house_score: 92, press_freedom_rank: 32, trend_10y: "stable; FPÖ resurgent" }
+    issue_salience:
+      - { issue: "Cost of living / inflation", pct: 47, source: "Unique research, Mar 2026" }
+      - { issue: "Migration / asylum",         pct: 41, source: "Unique, Feb 2026" }
+      - { issue: "Energy / Russia ties",       pct: 28, source: "Lazarsfeld, Feb 2026" }
+      - { issue: "Healthcare access",          pct: 24, source: "Unique, Mar 2026" }
+    elections:
+      - { date: "2029-09-30", type: "Nationalrat (latest)", stakes: "Stocker (ÖVP) + SPÖ + Neos coalition; FPÖ remains largest party in polls" }
+
+  # Asia (6)
+  - iso: MYS
+    name: "Malaysia"
+    tier: B
+    region: "Southeast Asia"
+    centroid: [4.2, 101.9]
+    alliances: ["ASEAN", "Commonwealth", "OIC"]
+    commodities_export: ["electronics", "palm oil", "natural gas", "rubber"]
+    commodities_import: ["machinery", "refined petroleum", "vehicles"]
+    population_m: 34.4
+    median_age: 31.0
+    urban_pct: 78
+    democracy: { vdem_edi: 0.50, freedom_house_score: 53, press_freedom_rank: 107, trend_10y: "improving (post-2018) then plateau" }
+    issue_salience:
+      - { issue: "Cost of living / subsidies",  pct: 52, source: "Merdeka Centre, Mar 2026" }
+      - { issue: "Race-religion politics",      pct: 36, source: "Merdeka Centre, Feb 2026" }
+      - { issue: "Corruption (1MDB legacy)",    pct: 31, source: "Ilham Centre, Feb 2026" }
+      - { issue: "Jobs / wages",                pct: 27, source: "Merdeka Centre, Mar 2026" }
+    elections:
+      - { date: "2027-11-30", type: "General election (15th GE latest)", stakes: "Anwar's PH-BN unity govt vs PN (PAS+Bersatu)" }
+
+  - iso: SGP
+    name: "Singapore"
+    tier: B
+    region: "Southeast Asia"
+    centroid: [1.35, 103.8]
+    alliances: ["ASEAN", "Commonwealth"]
+    commodities_export: ["electronics", "machinery", "refined petroleum", "pharmaceuticals"]
+    commodities_import: ["crude oil", "machinery", "electronics"]
+    population_m: 6.0
+    median_age: 42.8
+    urban_pct: 100
+    democracy: { vdem_edi: 0.39, freedom_house_score: 49, press_freedom_rank: 126, trend_10y: "stable hybrid" }
+    issue_salience:
+      - { issue: "Cost of living / GST",        pct: 51, source: "IPS Singapore, Mar 2026" }
+      - { issue: "Housing (HDB resale)",        pct: 41, source: "IPS, Mar 2026" }
+      - { issue: "Aging / TCM healthcare",      pct: 28, source: "IPS, Feb 2026" }
+      - { issue: "Foreign-talent policy",       pct: 24, source: "IPS, Mar 2026" }
+    elections:
+      - { date: "2025-05-03", type: "General election (recent)", stakes: "PAP under Lawrence Wong returned with 65.6%; WP holds 10 seats" }
+      - { date: "2030-05-04", type: "General", stakes: "Next cycle" }
+
+  - iso: KHM
+    name: "Cambodia"
+    tier: C
+    region: "Southeast Asia"
+    centroid: [12.6, 104.9]
+    alliances: ["ASEAN"]
+    commodities_export: ["garments", "footwear", "rice"]
+    commodities_import: ["machinery", "refined petroleum", "vehicles"]
+    population_m: 17.0
+    median_age: 26.4
+    urban_pct: 25
+    democracy: { vdem_edi: 0.16, freedom_house_score: 23, press_freedom_rank: 151, trend_10y: "consolidated authoritarianism" }
+    issue_salience:
+      - { issue: "Land disputes / forced evictions", pct: 41, source: "(no independent polling); LICADHO 2025" }
+      - { issue: "Cost of living / debt",            pct: 38, source: "MFI debt-trap reports 2024" }
+      - { issue: "Garment-factory wages",            pct: 28, source: "ILO Cambodia 2024" }
+      - { issue: "China-economic dependence",        pct: 22, source: "ASEAN Studies Centre 2024" }
+    elections:
+      - { date: "2028-07-23", type: "National Assembly", stakes: "Hun Manet (CPP) entrenched after father's 2023 handoff; opposition CNRP banned" }
+
+  - iso: LKA
+    name: "Sri Lanka"
+    tier: B
+    region: "South Asia"
+    centroid: [7.9, 80.8]
+    alliances: ["SAARC", "Commonwealth"]
+    commodities_export: ["garments", "tea", "rubber products"]
+    commodities_import: ["refined petroleum", "machinery", "vehicles"]
+    population_m: 22.0
+    median_age: 34.5
+    urban_pct: 19
+    democracy: { vdem_edi: 0.41, freedom_house_score: 53, press_freedom_rank: 150, trend_10y: "post-Aragalaya reset" }
+    issue_salience:
+      - { issue: "Cost of living / IMF programme", pct: 53, source: "IHP Sri Lanka, Mar 2026" }
+      - { issue: "Corruption / accountability",    pct: 45, source: "IHP, Mar 2026" }
+      - { issue: "Tamil reconciliation",           pct: 24, source: "CPA, Feb 2026" }
+      - { issue: "Cinnamon / tea sector wages",    pct: 19, source: "IHP, Mar 2026" }
+    elections:
+      - { date: "2024-09-21", type: "Presidential (recent)", stakes: "Anura Kumara Dissanayake (NPP) won — first leftist president; Aragalaya legacy" }
+      - { date: "2024-11-14", type: "Parliamentary (recent)", stakes: "NPP swept 159/225 — supermajority" }
+      - { date: "2029-09-21", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: NPL
+    name: "Nepal"
+    tier: C
+    region: "South Asia"
+    centroid: [28.4, 84.1]
+    alliances: ["SAARC", "BIMSTEC"]
+    commodities_export: ["carpets", "garments", "iron + steel"]
+    commodities_import: ["refined petroleum", "vehicles", "machinery"]
+    population_m: 30.5
+    median_age: 25.6
+    urban_pct: 22
+    democracy: { vdem_edi: 0.51, freedom_house_score: 63, press_freedom_rank: 74, trend_10y: "fragile coalition cycle" }
+    issue_salience:
+      - { issue: "Youth unemployment / migration", pct: 56, source: "CCWB, Mar 2026" }
+      - { issue: "Corruption",                     pct: 47, source: "TI Nepal, Feb 2026" }
+      - { issue: "India-China balance",            pct: 27, source: "Asia Foundation Nepal" }
+      - { issue: "Earthquake / climate vulnerability", pct: 22, source: "DRR Council 2024" }
+    elections:
+      - { date: "2027-11-15", type: "House of Representatives", stakes: "Oli/UML vs Deuba/NC vs Prachanda/Maoist Centre — perpetual coalition flux" }
+
+  - iso: MMR
+    name: "Myanmar"
+    tier: C
+    region: "Southeast Asia"
+    centroid: [19.8, 96.1]
+    alliances: ["ASEAN (suspended-de-facto)"]
+    commodities_export: ["natural gas", "garments", "jade", "rice"]
+    commodities_import: ["refined petroleum", "machinery", "vehicles"]
+    population_m: 54.5
+    median_age: 30.1
+    urban_pct: 32
+    democracy: { vdem_edi: 0.06, freedom_house_score: 9, press_freedom_rank: 171, trend_10y: "coup + civil war" }
+    issue_salience:
+      - { issue: "Civil war / displacement",   pct: 75, source: "(internal estimates); SAC won't poll" }
+      - { issue: "Economic collapse",          pct: 58, source: "World Bank Myanmar 2025" }
+      - { issue: "Junta vs PDF/EAO conflict",  pct: 51, source: "ACLED 2025" }
+      - { issue: "Forced conscription",        pct: 41, source: "USDP defectors / ICG 2025" }
+    elections:
+      - { date: "2025-12-28", type: "Sham election under junta (boycotted by opposition)", stakes: "USDP-aligned; only in junta-controlled areas; widely rejected" }
+
+  # Africa (10)
+  - iso: KEN
+    name: "Kenya"
+    tier: B
+    region: "Africa"
+    centroid: [-0.0, 37.9]
+    alliances: ["AU", "EAC", "Commonwealth"]
+    commodities_export: ["tea", "horticulture", "coffee"]
+    commodities_import: ["refined petroleum", "machinery", "vehicles"]
+    population_m: 55.1
+    median_age: 20.0
+    urban_pct: 29
+    democracy: { vdem_edi: 0.41, freedom_house_score: 51, press_freedom_rank: 102, trend_10y: "stable; 2024 Gen-Z protests" }
+    issue_salience:
+      - { issue: "Cost of living / Finance Bill", pct: 64, source: "Infotrak, Mar 2026" }
+      - { issue: "Corruption",                    pct: 49, source: "TIFA, Feb 2026" }
+      - { issue: "Unemployment (youth)",          pct: 41, source: "Infotrak, Mar 2026" }
+      - { issue: "Femicide / SGBV",               pct: 28, source: "TIFA, Feb 2026" }
+    elections:
+      - { date: "2027-08-10", type: "Presidential + parliamentary", stakes: "Ruto unpopular post-Finance Bill protests; Kenya Kwanza vs Azimio + Gen-Z bloc" }
+
+  - iso: GHA
+    name: "Ghana"
+    tier: B
+    region: "Africa"
+    centroid: [7.95, -1.0]
+    alliances: ["AU", "ECOWAS", "Commonwealth"]
+    commodities_export: ["gold", "crude oil", "cocoa"]
+    commodities_import: ["machinery", "refined petroleum", "vehicles"]
+    population_m: 33.5
+    median_age: 21.5
+    urban_pct: 59
+    democracy: { vdem_edi: 0.62, freedom_house_score: 80, press_freedom_rank: 50, trend_10y: "stable democracy" }
+    issue_salience:
+      - { issue: "Cedi crisis / cost of living", pct: 68, source: "Afrobarometer R10, 2024" }
+      - { issue: "Unemployment",                 pct: 47, source: "Afrobarometer R10" }
+      - { issue: "Illegal mining (galamsey)",    pct: 36, source: "GhanaThink 2025" }
+      - { issue: "Education + healthcare gaps",  pct: 28, source: "Afrobarometer R10" }
+    elections:
+      - { date: "2024-12-07", type: "Presidential + parliamentary (recent)", stakes: "Mahama (NDC) defeated Bawumia (NPP) — first sitting-VP loss" }
+      - { date: "2028-12-07", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: SEN
+    name: "Senegal"
+    tier: B
+    region: "Africa"
+    centroid: [14.5, -14.5]
+    alliances: ["AU", "ECOWAS", "OIF"]
+    commodities_export: ["fish", "gold", "phosphates"]
+    commodities_import: ["refined petroleum", "rice", "machinery"]
+    population_m: 17.7
+    median_age: 19.4
+    urban_pct: 49
+    democracy: { vdem_edi: 0.58, freedom_house_score: 71, press_freedom_rank: 94, trend_10y: "wobbled then stabilised 2024" }
+    issue_salience:
+      - { issue: "Youth unemployment",          pct: 61, source: "Afrobarometer Senegal 2024" }
+      - { issue: "Cost of living",              pct: 47, source: "Afrobarometer 2024" }
+      - { issue: "Sahel security spillover",    pct: 27, source: "Timbuktu Institute 2025" }
+      - { issue: "Reform of franc CFA",         pct: 22, source: "Africaobservatoire 2025" }
+    elections:
+      - { date: "2024-03-24", type: "Presidential (recent)", stakes: "Bassirou Diomaye Faye (PASTEF) won 1st round from prison release" }
+      - { date: "2029-02-25", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: TUN
+    name: "Tunisia"
+    tier: B
+    region: "Africa"
+    centroid: [33.9, 9.5]
+    alliances: ["AU", "Arab League", "OIF"]
+    commodities_export: ["machinery", "olive oil", "phosphates", "textiles"]
+    commodities_import: ["refined petroleum", "machinery", "vehicles"]
+    population_m: 12.0
+    median_age: 33.4
+    urban_pct: 70
+    democracy: { vdem_edi: 0.34, freedom_house_score: 49, press_freedom_rank: 118, trend_10y: "post-2021 self-coup; democracy reversed" }
+    issue_salience:
+      - { issue: "Cost of living / scarcity",   pct: 62, source: "Sigma Conseil, Mar 2026" }
+      - { issue: "Migration (Med crossings)",   pct: 38, source: "EMRH, Feb 2026" }
+      - { issue: "Youth unemployment",          pct: 37, source: "Sigma Conseil, Mar 2026" }
+      - { issue: "Saied authoritarian drift",   pct: 31, source: "Arab Barometer Tunisia 2024" }
+    elections:
+      - { date: "2024-10-06", type: "Presidential (recent)", stakes: "Saied 'won' 90.7% under detained-opponents conditions" }
+      - { date: "2029-10-08", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: MAR
+    name: "Morocco"
+    tier: B
+    region: "Africa"
+    centroid: [31.8, -7.1]
+    alliances: ["Arab League", "OIC", "AU"]
+    commodities_export: ["phosphates", "vehicles", "agricultural products"]
+    commodities_import: ["refined petroleum", "machinery", "wheat"]
+    population_m: 37.3
+    median_age: 30.0
+    urban_pct: 64
+    democracy: { vdem_edi: 0.31, freedom_house_score: 37, press_freedom_rank: 144, trend_10y: "consolidated monarchy + technocrats" }
+    issue_salience:
+      - { issue: "Cost of living",              pct: 51, source: "Arab Barometer Morocco 2024" }
+      - { issue: "Earthquake reconstruction (Atlas)", pct: 39, source: "L'Économiste, Feb 2026" }
+      - { issue: "Unemployment (youth)",        pct: 41, source: "HCP, Mar 2026" }
+      - { issue: "Western Sahara / FRONTPOLISARIO", pct: 24, source: "Arab Barometer 2024" }
+    elections:
+      - { date: "2026-09-30", type: "House of Representatives", stakes: "Akhannouch's RNI-PAM-Istiqlal coalition; opposition fragmented" }
+
+  - iso: DZA
+    name: "Algeria"
+    tier: C
+    region: "Africa"
+    centroid: [28.0, 1.7]
+    alliances: ["AU", "Arab League", "OPEC"]
+    commodities_export: ["natural gas", "crude oil", "petrochemicals"]
+    commodities_import: ["machinery", "wheat", "refined petroleum"]
+    population_m: 45.4
+    median_age: 28.9
+    urban_pct: 75
+    democracy: { vdem_edi: 0.18, freedom_house_score: 32, press_freedom_rank: 139, trend_10y: "Hirak suppressed; military-civilian autocracy" }
+    issue_salience:
+      - { issue: "Unemployment (youth)",        pct: 56, source: "Arab Barometer Algeria 2024" }
+      - { issue: "Cost of living",              pct: 47, source: "Arab Barometer 2024" }
+      - { issue: "Hirak repression / civil liberties", pct: 28, source: "MENA Rights Group 2024" }
+      - { issue: "Hydrocarbon dependence",      pct: 22, source: "EIA Algeria 2025" }
+    elections:
+      - { date: "2024-09-07", type: "Presidential (recent)", stakes: "Tebboune 84.3% — opposition contested figures, low official turnout" }
+      - { date: "2029-09-08", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: COD
+    name: "Democratic Republic of the Congo"
+    tier: C
+    region: "Africa"
+    centroid: [-2.9, 23.7]
+    alliances: ["AU", "SADC"]
+    commodities_export: ["copper", "cobalt", "diamonds", "gold"]
+    commodities_import: ["machinery", "refined petroleum", "food"]
+    population_m: 102.3
+    median_age: 16.7
+    urban_pct: 47
+    democracy: { vdem_edi: 0.27, freedom_house_score: 19, press_freedom_rank: 123, trend_10y: "fragile; eastern conflict" }
+    issue_salience:
+      - { issue: "M23 + eastern war",           pct: 71, source: "Bureau de Recherches DRC 2025" }
+      - { issue: "Cost of living",              pct: 56, source: "Afrobarometer DRC 2024" }
+      - { issue: "Corruption (cobalt rents)",   pct: 47, source: "EITI DRC 2024" }
+      - { issue: "Public services",             pct: 38, source: "Afrobarometer 2024" }
+    elections:
+      - { date: "2028-12-20", type: "Presidential + national assembly", stakes: "Tshisekedi term-limited; UDPS succession + Katumbi/Kabila opposition" }
+
+  - iso: RWA
+    name: "Rwanda"
+    tier: C
+    region: "Africa"
+    centroid: [-1.9, 29.9]
+    alliances: ["AU", "EAC", "Commonwealth"]
+    commodities_export: ["coffee", "tea", "minerals (incl conflict)"]
+    commodities_import: ["machinery", "vehicles", "refined petroleum"]
+    population_m: 13.9
+    median_age: 19.8
+    urban_pct: 18
+    democracy: { vdem_edi: 0.13, freedom_house_score: 21, press_freedom_rank: 144, trend_10y: "stable autocracy" }
+    issue_salience:
+      - { issue: "Cost of living",              pct: 41, source: "Afrobarometer Rwanda 2022 (last)" }
+      - { issue: "Youth unemployment",          pct: 36, source: "NISR 2025" }
+      - { issue: "Eastern DRC engagement / M23 backing", pct: 28, source: "(no independent polling)" }
+      - { issue: "Genocide memory + reconciliation", pct: 25, source: "IRDP / Never Again Rwanda" }
+    elections:
+      - { date: "2024-07-15", type: "Presidential (recent)", stakes: "Kagame 99.18% — fourth term" }
+      - { date: "2029-07-15", type: "Presidential", stakes: "Next cycle" }
+
+  - iso: UGA
+    name: "Uganda"
+    tier: C
+    region: "Africa"
+    centroid: [1.4, 32.3]
+    alliances: ["AU", "EAC", "Commonwealth", "OIC"]
+    commodities_export: ["coffee", "fish", "gold (re-exports)"]
+    commodities_import: ["machinery", "refined petroleum", "vehicles"]
+    population_m: 49.0
+    median_age: 17.2
+    urban_pct: 27
+    democracy: { vdem_edi: 0.18, freedom_house_score: 35, press_freedom_rank: 128, trend_10y: "consolidated Museveni rule" }
+    issue_salience:
+      - { issue: "Cost of living",              pct: 51, source: "Afrobarometer Uganda 2024" }
+      - { issue: "Unemployment (youth)",        pct: 47, source: "Afrobarometer 2024" }
+      - { issue: "Bobi Wine repression",        pct: 31, source: "(NUP rally turnouts; survey suppressed)" }
+      - { issue: "EACOP oil pipeline politics", pct: 24, source: "OilWatch + civil society" }
+    elections:
+      - { date: "2026-01-15", type: "Presidential + parliamentary", stakes: "Museveni vs Bobi Wine round 2; military deeply involved" }
+
+  - iso: TZA
+    name: "Tanzania"
+    tier: C
+    region: "Africa"
+    centroid: [-6.4, 34.9]
+    alliances: ["AU", "EAC", "SADC", "Commonwealth"]
+    commodities_export: ["gold", "tobacco", "cashew nuts"]
+    commodities_import: ["refined petroleum", "machinery", "vehicles"]
+    population_m: 67.4
+    median_age: 17.7
+    urban_pct: 37
+    democracy: { vdem_edi: 0.34, freedom_house_score: 35, press_freedom_rank: 97, trend_10y: "post-Magufuli moderate reopening" }
+    issue_salience:
+      - { issue: "Cost of living",              pct: 49, source: "Afrobarometer Tanzania 2024" }
+      - { issue: "Healthcare access",           pct: 36, source: "Afrobarometer 2024" }
+      - { issue: "Press freedom + political space", pct: 27, source: "MISA Tanzania 2025" }
+      - { issue: "Tanga / port-economy jobs",   pct: 23, source: "Tanzania Bureau of Statistics" }
+    elections:
+      - { date: "2025-10-29", type: "Presidential + parliamentary (recent)", stakes: "Samia (CCM) won — Chadema's Lissu disqualified, opposition crackdown" }
+
+  # Other (4)
+  - iso: NZL
+    name: "New Zealand"
+    tier: B
+    region: "Oceania"
+    centroid: [-41.0, 174.0]
+    alliances: ["Commonwealth", "Five Eyes", "Pacific Islands Forum", "OECD"]
+    commodities_export: ["dairy", "meat", "wood", "wine"]
+    commodities_import: ["machinery", "vehicles", "refined petroleum"]
+    population_m: 5.2
+    median_age: 38.1
+    urban_pct: 87
+    democracy: { vdem_edi: 0.86, freedom_house_score: 99, press_freedom_rank: 19, trend_10y: "stable" }
+    issue_salience:
+      - { issue: "Cost of living / housing",   pct: 49, source: "1News-Verian, Mar 2026" }
+      - { issue: "Healthcare + workforce",     pct: 36, source: "1News-Verian, Mar 2026" }
+      - { issue: "Crime / ram-raid era",       pct: 32, source: "Curia, Feb 2026" }
+      - { issue: "Treaty principles bill / Māori", pct: 24, source: "Curia, Feb 2026" }
+    elections:
+      - { date: "2026-11-21", type: "General election", stakes: "Luxon coalition (National + ACT + NZ First) vs Hipkins-led Labour" }
+
+  - iso: RUS
+    name: "Russia"
+    tier: B
+    region: "Europe"
+    centroid: [62.0, 96.0]
+    alliances: ["CSTO", "EAEU", "BRICS", "SCO"]
+    commodities_export: ["crude oil", "natural gas", "wheat", "fertilisers"]
+    commodities_import: ["machinery", "vehicles", "electronics"]
+    population_m: 144.0
+    median_age: 40.3
+    urban_pct: 75
+    democracy: { vdem_edi: 0.10, freedom_house_score: 13, press_freedom_rank: 171, trend_10y: "consolidated dictatorship" }
+    issue_salience:
+      - { issue: "Special-Operation / mobilisation", pct: 56, source: "Levada Center, Mar 2026" }
+      - { issue: "Inflation / wages",                pct: 49, source: "Levada, Mar 2026" }
+      - { issue: "Healthcare access",                pct: 32, source: "Levada, Feb 2026" }
+      - { issue: "Sanctions impact",                 pct: 26, source: "Levada, Mar 2026" }
+    elections:
+      - { date: "2030-03-17", type: "Presidential", stakes: "Putin term ends 2030 (next at 84); succession question" }
+      - { date: "2026-09-13", type: "Duma + regional", stakes: "United Russia + system parties; opposition banned/imprisoned/exiled" }
+
+  - iso: BLR
+    name: "Belarus"
+    tier: C
+    region: "Europe"
+    centroid: [53.7, 27.9]
+    alliances: ["CSTO", "EAEU"]
+    commodities_export: ["potash", "refined petroleum", "machinery"]
+    commodities_import: ["crude oil", "natural gas", "machinery"]
+    population_m: 9.2
+    median_age: 41.3
+    urban_pct: 80
+    democracy: { vdem_edi: 0.07, freedom_house_score: 8, press_freedom_rank: 167, trend_10y: "consolidated post-2020 dictatorship" }
+    issue_salience:
+      - { issue: "Cost of living",              pct: 47, source: "Chatham House 'Belarusian Tracker' 2025" }
+      - { issue: "Russia dependence / war involvement", pct: 38, source: "Chatham House 2025" }
+      - { issue: "Lukashenko succession",       pct: 27, source: "(no independent in-country polling)" }
+      - { issue: "Political-prisoner releases", pct: 23, source: "Viasna Human Rights" }
+    elections:
+      - { date: "2025-01-26", type: "Presidential (recent)", stakes: "Lukashenko 'won' 86.8% — opposition exiled (Tsikhanouskaya)" }
+
+  - iso: KAZ
+    name: "Kazakhstan"
+    tier: C
+    region: "Middle East / Europe"
+    centroid: [48.0, 66.9]
+    alliances: ["EAEU", "CSTO", "SCO", "BRICS partner"]
+    commodities_export: ["crude oil", "uranium", "wheat", "metals"]
+    commodities_import: ["machinery", "vehicles", "electronics"]
+    population_m: 19.9
+    median_age: 31.9
+    urban_pct: 58
+    democracy: { vdem_edi: 0.21, freedom_house_score: 23, press_freedom_rank: 142, trend_10y: "post-2022 Tokayev consolidation" }
+    issue_salience:
+      - { issue: "Cost of living / inflation",  pct: 41, source: "Demoscope KZ, Mar 2026" }
+      - { issue: "Corruption (Nazarbayev legacy)", pct: 36, source: "Demoscope, Feb 2026" }
+      - { issue: "Russia ties + Ukraine war",   pct: 27, source: "Central Asia Barometer 2024" }
+      - { issue: "Water / climate",             pct: 22, source: "Central Asia Barometer 2024" }
+    elections:
+      - { date: "2029-04-15", type: "Presidential", stakes: "Tokayev consolidating — Nur Otan / Amanat machine" }
+      - { date: "2027-03-21", type: "Mazhilis (lower house)", stakes: "Multiparty cosmetic; opposition restricted" }

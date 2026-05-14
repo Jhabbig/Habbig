@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Climate Change — narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220;
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --accent: #34d399;
+    --accent-2: #f87171;
+    --warn: #fbbf24;
+    --good: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-0);
+    color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  }
+  header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header .sub {
+    margin-top: 3px;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  main { padding: 18px 24px 80px; max-width: 1320px; margin: 0 auto; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .card .big {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .card .sub {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg-2);
+    color: var(--text-2);
+  }
+  .pill.hot { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
+  .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+
+  .regime {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 18px;
+    font-size: 12px;
+    color: var(--text-2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+  }
+  .regime .label {
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 10px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--text-3);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--bg-1);
+    position: sticky;
+    top: 0;
+  }
+  tr:hover td { background: var(--bg-2); }
+
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .edge-pos { color: var(--good); font-weight: 600; }
+  .edge-neg { color: var(--accent-2); font-weight: 600; }
+
+  .section-title {
+    margin: 28px 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+
+  .spark {
+    height: 56px;
+    width: 100%;
+    margin-top: 10px;
+  }
+  .empty {
+    color: var(--text-3);
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .market-q { font-weight: 500; color: var(--text-1); }
+  .market-event { color: var(--text-3); font-size: 11px; }
+
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar input {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    flex: 1;
+    min-width: 200px;
+  }
+  .toolbar select {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .thresholds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .threshold-pill {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+  .threshold-pill b { color: var(--text-1); }
+  .threshold-pill.hot { border-color: rgba(248,113,113,.4); color: var(--accent-2); }
+  .threshold-pill.hot b { color: var(--accent-2); }
+  .err-zero { color: var(--good); }
+  .err-pos { color: var(--accent-2); }
+  .err-neg { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ · NSIDC sea ice · OISST · ENSO · backtest</div>
+</header>
+<main>
+
+<div id="regime" class="regime" style="display:none"></div>
+
+<div class="grid" id="cards"></div>
+
+<div class="section-title">Climate markets</div>
+<div class="toolbar">
+  <input id="search" placeholder="Search markets…" />
+  <select id="sort">
+    <option value="edge">Sort: largest edge</option>
+    <option value="liquidity">Sort: most liquidity</option>
+    <option value="end">Sort: ends soonest</option>
+  </select>
+</div>
+<div id="markets"></div>
+
+<div class="section-title">Model performance — last 5 years</div>
+<div class="card" id="backtest" style="padding:0;overflow:auto">
+  <div class="empty">Loading backtest…</div>
+</div>
+
+<div class="section-title">Sources</div>
+<div class="card" style="font-size:12px;color:var(--text-2);line-height:1.7">
+  Temperature anomaly: <a href="https://data.giss.nasa.gov/gistemp/" target="_blank">NASA GISTEMP v4</a>
+  (baseline 1951–1980).
+  CO₂: <a href="https://gml.noaa.gov/ccgg/trends/" target="_blank">NOAA GML Mauna Loa</a>.
+  Methane (CH₄): <a href="https://gml.noaa.gov/ccgg/trends_ch4/" target="_blank">NOAA GML globally-averaged CH₄</a>.
+  Sea ice: <a href="https://nsidc.org/arcticseaicenews/" target="_blank">NSIDC G02135</a>.
+  SST: <a href="https://climatereanalyzer.org/clim/sst_daily/" target="_blank">Climate Reanalyzer / NOAA OISST 2.1</a>.
+  ENSO: <a href="https://origin.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php" target="_blank">NOAA CPC ONI</a>.
+  Markets: <a href="https://gamma-api.polymarket.com" target="_blank">Polymarket Gamma</a>.
+</div>
+
+</main>
+
+<script>
+const MONTH = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function fmt(x, dp = 2) {
+  if (x === null || x === undefined || Number.isNaN(x)) return "—";
+  return Number(x).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function pct(x) {
+  if (x === null || x === undefined) return "—";
+  return (x * 100).toFixed(0) + "%";
+}
+
+// Tiny inline SVG sparkline
+function sparkline(values, w = 260, h = 56, color = "#34d399") {
+  if (!values || values.length < 2) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max - min) || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - ((v - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}" />
+  </svg>`;
+}
+
+async function getJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    console.warn("fetch failed", url, e);
+    return null;
+  }
+}
+
+async function loadRegime() {
+  const oni = await getJSON("/api/regime");
+  if (!oni || !oni.latest) return;
+  const el = document.getElementById("regime");
+  el.style.display = "flex";
+  const cls = oni.state === "El Niño" ? "hot" : oni.state === "La Niña" ? "good" : "warn";
+  el.innerHTML = `
+    <span class="label">ENSO</span>
+    <span><span class="pill ${cls}">${oni.state}</span> &nbsp; ONI ${fmt(oni.latest.oni, 2)} (${MONTH[oni.latest.month - 1]} ${oni.latest.year})</span>
+    <span style="color:var(--text-3)">${oni.source}</span>
+  `;
+}
+
+async function loadCards() {
+  const s = await getJSON("/api/summary");
+  const tempData = await getJSON("/api/temperature");
+  const co2Data = await getJSON("/api/co2");
+  const seaData = await getJSON("/api/sea-ice");
+  const ch4Data = await getJSON("/api/methane");
+
+  const cards = [];
+
+  // Temperature anomaly card
+  if (s?.gistemp?.projection) {
+    const p = s.gistemp.projection;
+    const rec = p.current_record;
+    const sparkVals = (tempData?.annual || []).slice(-50).map(a => a.anomaly_c);
+    const cls = p.p_breaks_record > 0.7 ? "hot" : p.p_breaks_record > 0.4 ? "warn" : "good";
+    const thr = s.gistemp.thresholds;
+    const threshHtml = thr ? `
+      <div class="thresholds">
+        ${thr.thresholds.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_c.toFixed(1)}°C <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    cards.push(`
+      <div class="card">
+        <h3>Global temperature anomaly</h3>
+        <div class="big">+${fmt(p.ytd_anomaly_c, 2)}°C</div>
+        <div class="sub">${p.months_observed} mo of ${p.current_year} · projects to <b>+${fmt(p.projected_annual_anomaly_c, 2)}°C</b></div>
+        <div class="sub" style="margin-top:6px">Record: +${fmt(rec.anomaly_c, 2)}°C (${rec.year})
+          &nbsp; <span class="pill ${cls}">P(new record) ${pct(p.p_breaks_record)}</span></div>
+        ${threshHtml}
+        ${sparkline(sparkVals, 260, 56, "#f87171")}
+      </div>
+    `);
+  }
+
+  // CO2 card
+  if (s?.co2?.latest) {
+    const l = s.co2.latest;
+    const p = s.co2.projection;
+    const sparkVals = (co2Data?.monthly || []).slice(-120).map(m => m.ppm);
+    const thr = s.co2.thresholds;
+    // Show only the most "live" thresholds — those between 5-95% prob
+    const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
+    const threshHtml = liveThr.length ? `
+      <div class="thresholds">
+        ${liveThr.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppm} <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric CO₂ (Mauna Loa)</h3>
+        <div class="big">${fmt(l.ppm, 2)} ppm</div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppm_per_year ?? 0, 2)} ppm/yr · σ=${fmt(p?.residual_std_ppm ?? 0, 2)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppm ?? 0, 2)} ppm</b></div>
+        ${threshHtml}
+        ${sparkline(sparkVals, 260, 56, "#fbbf24")}
+      </div>
+    `);
+  }
+
+  // Methane card (CH₄)
+  if (s?.methane?.latest) {
+    const l = s.methane.latest;
+    const p = s.methane.projection;
+    const sparkVals = (ch4Data?.monthly || []).slice(-120).map(m => m.ppb);
+    const thr = s.methane.thresholds;
+    const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
+    const threshHtml = liveThr.length ? `
+      <div class="thresholds">
+        ${liveThr.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric methane (CH₄)</h3>
+        <div class="big">${fmt(l.ppb, 0)} <span style="font-size:14px;color:var(--text-2)">ppb</span></div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 1)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 1)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
+        ${threshHtml}
+        ${sparkline(sparkVals, 260, 56, "#a78bfa")}
+      </div>
+    `);
+  }
+
+  // Arctic sea ice card
+  if (s?.sea_ice?.record_check) {
+    const r = s.sea_ice.record_check;
+    const ap = s.sea_ice.arctic_projection;
+    const sparkVals = (seaData?.arctic_recent || []).slice(-365).map(d => d.extent_mkm2);
+    const cls = r.rank_lowest_in_record <= 3 ? "hot" : r.rank_lowest_in_record <= 10 ? "warn" : "good";
+    const projHtml = ap ? `<div class="sub" style="margin-top:4px">Summer min projection: <b>${fmt(ap.projected_min_mkm2, 2)} M km²</b> (σ ${fmt(ap.residual_std_mkm2, 2)}, trend ${ap.trend_mkm2_per_year >= 0 ? '+' : ''}${fmt(ap.trend_mkm2_per_year, 3)}/yr)</div>` : "";
+    cards.push(`
+      <div class="card">
+        <h3>Arctic sea ice extent</h3>
+        <div class="big">${fmt(r.extent_mkm2, 2)} <span style="font-size:14px;color:var(--text-2)">M km²</span></div>
+        <div class="sub">${r.date} · DOY mean ${fmt(r.doy_mean, 2)}, range ${fmt(r.doy_min, 2)}–${fmt(r.doy_max, 2)}</div>
+        <div class="sub" style="margin-top:6px">
+          <span class="pill ${cls}">#${r.rank_lowest_in_record} lowest of ${r.history_years} on this day</span>
+        </div>
+        ${projHtml}
+        ${sparkline(sparkVals, 260, 56, "#60a5fa")}
+      </div>
+    `);
+  }
+
+  // Antarctic sea ice card
+  if (s?.sea_ice?.antarctic_projection && (seaData?.antarctic_recent || []).length) {
+    const ap = s.sea_ice.antarctic_projection;
+    const recent = seaData.antarctic_recent;
+    const latest = recent[recent.length - 1];
+    const sparkVals = recent.slice(-365).map(d => d.extent_mkm2);
+    cards.push(`
+      <div class="card">
+        <h3>Antarctic sea ice extent</h3>
+        <div class="big">${fmt(latest.extent_mkm2, 2)} <span style="font-size:14px;color:var(--text-2)">M km²</span></div>
+        <div class="sub">${latest.year}-${String(latest.month).padStart(2,'0')}-${String(latest.day).padStart(2,'0')}</div>
+        <div class="sub" style="margin-top:6px">Summer min projection: <b>${fmt(ap.projected_min_mkm2, 2)} M km²</b> (σ ${fmt(ap.residual_std_mkm2, 2)}, trend ${ap.trend_mkm2_per_year >= 0 ? '+' : ''}${fmt(ap.trend_mkm2_per_year, 3)}/yr)</div>
+        ${sparkline(sparkVals, 260, 56, "#a5b4fc")}
+      </div>
+    `);
+  }
+
+  // SST card
+  const sst = await getJSON("/api/sst");
+  if (sst?.series) {
+    const cur = sst.series.find(s => /^\d{4}$/.test(s.name) && Number(s.name) === new Date().getUTCFullYear());
+    const mean = sst.series.find(s => /mean/i.test(s.name));
+    if (cur?.data) {
+      const lastIdx = cur.data.findIndex(v => v === null) - 1;
+      const idx = lastIdx > 0 ? lastIdx : cur.data.length - 1;
+      const v = cur.data[idx];
+      const baseline = mean?.data?.[idx];
+      const anom = v && baseline ? v - baseline : null;
+      cards.push(`
+        <div class="card">
+          <h3>Global SST (60°S–60°N)</h3>
+          <div class="big">${v ? fmt(v, 2) + "°C" : "—"}</div>
+          <div class="sub">DOY ${idx + 1} · 1982-2011 mean ${baseline ? fmt(baseline, 2) + "°C" : "—"}</div>
+          ${anom !== null ? `<div class="sub" style="margin-top:6px"><span class="pill ${anom > 0.5 ? 'hot' : 'warn'}">+${fmt(anom, 2)}°C anomaly</span></div>` : ""}
+          ${sparkline(cur.data.filter(x => x !== null), 260, 56, "#f87171")}
+        </div>
+      `);
+    }
+  }
+
+  document.getElementById("cards").innerHTML = cards.join("");
+}
+
+let _allMarkets = [];
+
+function renderMarkets() {
+  const q = document.getElementById("search").value.toLowerCase().trim();
+  const sortBy = document.getElementById("sort").value;
+  let rows = _allMarkets.slice();
+  if (q) {
+    rows = rows.filter(m => {
+      const t = ((m._event_title || "") + " " + (m.question || "")).toLowerCase();
+      return t.includes(q);
+    });
+  }
+  rows.sort((a, b) => {
+    if (sortBy === "edge") {
+      const ea = a._edge_pp === null ? -999 : Math.abs(a._edge_pp);
+      const eb = b._edge_pp === null ? -999 : Math.abs(b._edge_pp);
+      return eb - ea;
+    }
+    if (sortBy === "liquidity") {
+      return (Number(b.liquidity || 0) - Number(a.liquidity || 0));
+    }
+    if (sortBy === "end") {
+      return new Date(a.endDate || "9999") - new Date(b.endDate || "9999");
+    }
+    return 0;
+  });
+
+  if (!rows.length) {
+    document.getElementById("markets").innerHTML = `<div class="empty">No markets match.</div>`;
+    return;
+  }
+
+  const html = `
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th class="num">Implied</th>
+            <th class="num">Model</th>
+            <th class="num">Edge</th>
+            <th class="num">Liquidity</th>
+            <th>Ends</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(m => {
+            const slug = m.slug || (m._event_title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+            const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
+            const impl = m._implied_p !== null && m._implied_p !== undefined ? pct(m._implied_p) : "—";
+            const mp = m._model_p !== null && m._model_p !== undefined ? pct(m._model_p) : "—";
+            const edge = m._edge_pp;
+            const edgeHtml = edge === null || edge === undefined ? "—" :
+              edge > 0 ? `<span class="edge-pos">+${edge.toFixed(1)} pp</span>` :
+                          `<span class="edge-neg">${edge.toFixed(1)} pp</span>`;
+            const liq = m.liquidity ? Number(m.liquidity).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
+            const end = m.endDate ? new Date(m.endDate).toISOString().slice(0, 10) : "—";
+            const q = m.question || "";
+            const ev = m._event_title || "";
+            const title = url ? `<a href="${url}" target="_blank">${q}</a>` : q;
+            const rationale = m._rationale ? `<div class="market-event">${m._rationale}</div>` : "";
+            return `<tr>
+              <td>
+                <div class="market-q">${title}</div>
+                <div class="market-event">${ev}</div>
+                ${rationale}
+              </td>
+              <td class="num">${impl}</td>
+              <td class="num">${mp}</td>
+              <td class="num">${edgeHtml}</td>
+              <td class="num">${liq}</td>
+              <td>${end}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById("markets").innerHTML = html;
+}
+
+async function loadMarkets() {
+  document.getElementById("markets").innerHTML = `<div class="empty">Loading markets…</div>`;
+  const r = await getJSON("/api/markets");
+  _allMarkets = (r?.markets) || [];
+  renderMarkets();
+}
+
+async function loadBacktest() {
+  const b = await getJSON("/api/backtest");
+  const root = document.getElementById("backtest");
+  if (!b || (!b.gistemp?.length && !b.co2?.length)) {
+    root.innerHTML = `<div class="empty">Backtest unavailable.</div>`;
+    return;
+  }
+  const errCls = (e) => Math.abs(e) < 0.05 ? "err-zero" : e > 0 ? "err-pos" : "err-neg";
+  const tempRows = (b.gistemp || []).map(r => `
+    <tr>
+      <td>Temperature anomaly</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_c, 2)}°C</td>
+      <td class="num">${fmt(r.actual_c, 2)}°C</td>
+      <td class="num"><span class="${errCls(r.error_c)}">${r.error_c >= 0 ? '+' : ''}${fmt(r.error_c, 2)}°C</span></td>
+    </tr>
+  `).join("");
+  const co2Rows = (b.co2 || []).map(r => `
+    <tr>
+      <td>CO₂ year-end ppm</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_year_end_ppm, 2)}</td>
+      <td class="num">${fmt(r.actual_dec_ppm, 2)}</td>
+      <td class="num"><span class="${errCls(r.error_ppm / 5)}">${r.error_ppm >= 0 ? '+' : ''}${fmt(r.error_ppm, 2)} ppm</span></td>
+    </tr>
+  `).join("");
+  const ch4Rows = (b.methane || []).map(r => `
+    <tr>
+      <td>CH₄ year-end ppb</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_year_end_ppb, 1)}</td>
+      <td class="num">${fmt(r.actual_dec_ppb, 1)}</td>
+      <td class="num"><span class="${errCls(r.error_ppb / 10)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 1)} ppb</span></td>
+    </tr>
+  `).join("");
+  root.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Series</th>
+          <th class="num">Year</th>
+          <th class="num">Projected (Jun)</th>
+          <th class="num">Actual</th>
+          <th class="num">Error</th>
+        </tr>
+      </thead>
+      <tbody>${tempRows}${co2Rows}${ch4Rows}</tbody>
+    </table>
+    <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);line-height:1.5">
+      <b>Method:</b> ${b.method?.gistemp || ""} ${b.method?.co2 || ""} ${b.method?.methane || ""}
+    </div>
+  `;
+}
+
+document.getElementById("search").addEventListener("input", renderMarkets);
+document.getElementById("sort").addEventListener("change", renderMarkets);
+
+loadRegime();
+loadCards();
+loadMarkets();
+loadBacktest();
+
+// Auto-refresh markets every 5 min
+setInterval(loadMarkets, 5 * 60 * 1000);
+</script>
+</body>
+</html>

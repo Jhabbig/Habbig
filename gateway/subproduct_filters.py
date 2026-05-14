@@ -37,6 +37,10 @@ _CATEGORIES_BY_SUBPRODUCT: dict[str, set[str]] = {
     "crypto":  {"crypto"},
     "midterm": set(),
     "traders": set(),  # traders: all Polymarket markets; rank by top-trader activity
+    # Long-horizon climate markets (separate from short-term weather)
+    "climate": {"climate", "environment"},
+    # Voter sentiment / polling / election markets across countries
+    "voters": {"politics", "elections", "voters", "polling"},
 }
 
 
@@ -64,6 +68,14 @@ _KEYWORD_REGEX: dict[str, re.Pattern] = {
         r"congressional|congress|"
         r"election\s+\d{4}"
         r")\b",
+        re.IGNORECASE,
+    ),
+    "climate": re.compile(
+        r"(?:^|[^a-zA-Z])(climate|global temperature|global warming|"
+        r"greenhouse|co2|carbon dioxide|methane|sea ice|sea level|"
+        r"el nino|la nina|ipcc|paris agreement|warmest year|"
+        r"hottest year|arctic|antarctic|gistemp|enso|ppm)"
+        r"(?:[^a-zA-Z]|$)",
         re.IGNORECASE,
     ),
 }
