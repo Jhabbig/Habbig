@@ -48,8 +48,9 @@ button {
 button:hover { background: var(--bg-card-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-input, textarea {
+input, select, textarea {
   font: inherit;
+  font-size: 16px; /* iOS no-zoom threshold */
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1060,7 +1061,7 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .modal-row input, .modal-row textarea, .modal-row select {
   width: 100%;
-  font-size: 13px;
+  font-size: 16px; /* iOS no-zoom threshold */
 }
 .modal-row .hint { margin-top: 4px; font-size: 10px; color: var(--text-faint); }
 
@@ -1080,7 +1081,7 @@ textarea { resize: vertical; min-height: 70px; }
   gap: 8px;
 }
 .step-num { font-size: 11px; color: var(--text-faint); font-weight: 600; }
-.step-editor-head select { flex: 1; font-size: 12px; padding: 4px 8px; }
+.step-editor-head select { flex: 1; font-size: 16px; padding: 4px 8px; } /* iOS no-zoom threshold */
 .step-rm {
   width: 22px;
   height: 22px;
@@ -1135,6 +1136,7 @@ select {
   border-radius: 6px;
   padding: 6px 10px;
   font: inherit;
+  font-size: 16px; /* iOS no-zoom threshold */
 }
 
 /* ── Comments ────────────────────────────────────────────────────── */
