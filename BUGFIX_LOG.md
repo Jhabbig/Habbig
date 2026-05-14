@@ -5,6 +5,116 @@ and the file(s) touched. New entries at the top.
 
 ---
 
+## 2026-05-14 — b9ecfe6: `enqueue_email` kwarg mismatch silently dropped cancellation mail
+
+**Symptom:** Every subscription-cancellation email was silently failing in prod — customers got no notice that their plan had ended.
+**Root cause:** `stripe_webhook_hardening.apply_subscription_cancelled` (~line 235) called `enqueue_email(user_id=..., template=..., context=..., tags=...)` but the canonical signature is `enqueue_email(to, template, context, ...)`. Every call raised `TypeError` and was swallowed by the surrounding try/except.
+**Fix:** Resolve the user's email via `db.get_user_by_id(user_id)` and pass it as `to=`. Surface `cancel_at` / `canceled_at` / `ended_at` as `period_end_date` so the template renders a real date.
+**Lesson:** Catch-all `except` around fire-and-forget jobs hides signature drift forever. Add a structured-log line on failure, not a silent swallow.
+**Files touched:** `gateway/stripe_webhook_hardening.py`.
+
+---
+
+## 2026-05-14 — b9ecfe6: 6 email templates referenced in code but missing on disk
+
+**Symptom:** Any code path that triggered `winback_7d`, `winback_30d`, `saved_prediction_resolved`, `weekly_intelligence`, `admin_cost_alert`, or `admin_subscription_drift` raised `FileNotFoundError` deep inside the renderer.
+**Root cause:** These template names existed in call sites and the `_SUBJECTS` map but the `.html` files were never committed — missing artifact rather than logic bug.
+**Fix:** Created six new templates under `gateway/email_system/templates/`, each extending `base.html` and using only variables present at the matching call site. Added the six entries to `_SUBJECTS` in `service.py` so subjects don't fall back to plain "narve.ai".
+**Lesson:** A grep-for-`enqueue_email(template=`-vs-`ls templates/` CI check would have caught this years ago.
+**Files touched:** `gateway/email_system/service.py`, `gateway/email_system/templates/{winback_7d,winback_30d,saved_prediction_resolved,weekly_intelligence,admin_cost_alert,admin_subscription_drift}.html`.
+
+---
+
+## 2026-05-14 — ebf7401: `get_invite_token` hardcoded `status = 'unclaimed'` broke login
+
+**Symptom:** `POST /auth/login` always 401'd with "Session expired. Start again from /token." Login was unusable for any account whose invite had been claimed. Several auth-flow regressions (14 tests red).
+**Root cause:** `db.get_invite_token` in `gateway/queries/auth.py` baked `AND status = 'unclaimed'` into its SELECT. Every caller (`require_pending_token`, `/register`, `/login`, `/forgot-password`) explicitly branches on `invite["status"]` for claimed / revoked cases — those branches were dead because the row never came back.
+**Fix:** Drop the status filter from the SELECT. Callers already handle all three states correctly; the filter was lying about the contract.
+**Lesson:** A predicate at the data-access layer that the contract above it pretends doesn't exist is worse than no predicate at all.
+**Files touched:** `gateway/queries/auth.py`, `gateway/tests/test_auth_flow.py`, `gateway/tests/test_token_first_auth.py`.
+
+---
+
+## 2026-05-14 — f766fdb: sync `stripe.Subscription.retrieve()` inside async dep blocked event loop
+
+**Symptom:** Subproduct-protected API requests for non-Pro users (on cache miss) blocked the FastAPI event loop ~150-500 ms each. Concurrent requests queued behind the Stripe round-trip; p99 latency miserable.
+**Root cause:** `gateway/subproduct_access.py:177` called the synchronous Stripe SDK directly from an async dependency — every coroutine on the loop stalled for the full network round-trip.
+**Fix:** Convert `_live_stripe_status` to async, wrap the SDK call in `asyncio.to_thread()`. Bumped the verify cache TTL from 60s to 300s so cold-cache hits are 5x less frequent.
+**Lesson:** Any sync I/O inside an async route is a load-bearing tax on every other in-flight request. Grep for `stripe.` / `requests.` / `urllib` from inside async defs at audit time.
+**Files touched:** `gateway/subproduct_access.py`.
+
+---
+
+## 2026-05-14 — f766fdb: sync `stripe.checkout.Session.create()` inside async POST blocked event loop
+
+**Symptom:** Same shape as above — subproduct signup / checkout POST handlers blocked the loop for the duration of the Stripe round-trip.
+**Root cause:** `gateway/subproduct_signup_routes.py:117` called `stripe.checkout.Session.create()` synchronously inside an async handler.
+**Fix:** Convert `_build_checkout_session` to async and wrap the SDK call in `asyncio.to_thread()`.
+**Lesson:** Same as the Subscription.retrieve case above — there is no "just one place"; treat sync-in-async as a class of bug, not a one-off.
+**Files touched:** `gateway/subproduct_signup_routes.py`.
+
+---
+
+## 2026-05-14 — fed4f51: N+1 query in `/embed/best-bets` — 61 queries per request
+
+**Symptom:** Public embed endpoint hit the DB ~61 times per request (1 list + N detail queries). Cache-hostile, scraper-vulnerable, slow under load.
+**Root cause:** The route iterated a list of prediction ids and issued a separate SELECT for each — textbook N+1.
+**Fix:** Collapse to a single `SELECT ... WHERE id IN (...)` query, then in-memory join. Added a 120-second cache layer on the response since this endpoint is public and idempotent.
+**Lesson:** Public unauthenticated endpoints are the cheapest place for an attacker to spend our DB budget. Cap query count + cache hard.
+**Files touched:** `gateway/embed_routes.py`.
+
+---
+
+## 2026-05-14 — dbe9692: stale `gateway/requirements.lock` pinning CVE-vulnerable cryptography 44.0.1
+
+**Symptom:** Lock-file duplication meant the production deploy was pulling cryptography 44.0.1, which has unpatched CVEs CVE-2026-26007, CVE-2026-34073, CVE-2026-39892.
+**Root cause:** A historical refactor moved the lockfile to repo-root `requirements.lock` but left `gateway/requirements.lock` behind. The gateway Dockerfile still preferred the gateway-local one.
+**Fix:** Delete `gateway/requirements.lock`. Repo-root `requirements.lock` is the single source of truth and pins cryptography to a patched version.
+**Lesson:** Duplicate lockfiles are worse than no lockfile — they ship the older one silently.
+**Files touched:** `gateway/requirements.lock` (deleted), `requirements.lock`.
+
+---
+
+## 2026-05-14 — fff85c9: whale/centralbank/world-health trusted gateway headers without HMAC
+
+**Symptom:** Three new subproduct dashboards (whale, centralbank, world-health) bound `0.0.0.0` and trusted `X-Gateway-User-Id` / `X-Gateway-User-Email` headers verbatim. Anything on the same network — or anyone who reached the host before the firewall was right on deploy — could impersonate any subscriber.
+**Root cause:** New servers scaffolded from a template that predated the voters-dashboard HMAC hardening pattern.
+**Fix:** Each `server.py` now runs an HTTP middleware that rejects non-healthcheck requests whose `X-Gateway-Secret` doesn't match `GATEWAY_SSO_SECRET` via constant-time compare. Bind defaults to `127.0.0.1` so the gateway on the same host is the only ingress.
+**Lesson:** Scaffold templates carry forward both good and bad. Promote a hardened reference (voters-dashboard) and copy from it, not from the next-newest sibling.
+**Files touched:** `centralbank-dashboard/server.py`, `whale-dashboard/server.py`, `world-health-dashboard/server.py`.
+
+---
+
+## 2026-05-14 — 5460fa4: CSRF `/api/scraper/` prefix exempted every scraper subroute
+
+**Symptom:** `_CSRF_EXEMPT_PREFIXES` contained `/api/scraper/`, so every POST under that prefix bypassed CSRF — past, present, and any future subroute would inherit the bypass silently.
+**Root cause:** Prefix-based exemption was a convenience that became a footgun. Only `/api/scraper/ingest` (which uses `X-Scraper-API-Key`) needs the bypass.
+**Fix:** Move `/api/scraper/ingest` to `_CSRF_EXEMPT_PATHS` (exact match). Prefix list is now empty. Regression test asserts a non-listed sibling sub-path is NOT exempt.
+**Lesson:** Exempt by exact path, never by prefix. Future routes should fail closed.
+**Files touched:** `gateway/security/csrf.py`, `gateway/tests/test_csrf.py`.
+
+---
+
+## 2026-05-14 — 5460fa4: `set_user_role` didn't invalidate per-user cache — role-change leak risk
+
+**Symptom:** A user demoted from admin to free still saw the admin-cached payload of `/dashboards`, `/settings`, `/signal-search`, `/sources/{handle}` until their cache key expired. Today's payloads don't contain admin-only fields, so no live leak — but the write path was lying.
+**Root cause:** `set_user_role` updated the row + revoked sessions, but didn't touch the per-user async cache surfaces added in 463384e.
+**Fix:** Add `on_role_change(user_id)` to `cache/ttl.py` (mirror of `on_subscription_change`). `set_user_role` now fires it after the UPDATE. Two unit tests cover: sync TTL cache untouched; other users' keys survive.
+**Lesson:** Every write that changes an authorization-relevant field needs a cache-bust hook in the same function. Make it the function's responsibility, not the caller's.
+**Files touched:** `gateway/cache/ttl.py`, `gateway/queries/auth.py`, `gateway/tests/test_cache.py`.
+
+---
+
+## 2026-05-14 — 38a6593: voters CSP `unsafe-inline` in script-src was dead permission
+
+**Symptom:** voters-dashboard CSP included `'unsafe-inline'` in `script-src` even though no inline `<script>` blocks existed (frontend JS already lives in `/static/app.js`). Dead permission, bad shape — would mask any future inline injection.
+**Root cause:** Template-inherited permission that nobody pruned when the inline script was extracted.
+**Fix:** Drop `'unsafe-inline'` from `script-src`. Add `base-uri 'self'` and `form-action 'self'` to match the gateway's hardened CSP shape. `style-src` keeps `'unsafe-inline'` (lower-risk; voters has inline `style=` attributes on the timeline strip).
+**Lesson:** CSP audits should diff the policy against what the page actually uses. Permissions you don't need are attack surface you can't see.
+**Files touched:** `voters-dashboard/server.py`.
+
+---
+
 ## 2026-04-23 — Regression sweep (REGRESSION_SWEEP.md)
 
 ### 17a. `forecast_sync` nightly crash — `no such column: close_at`
