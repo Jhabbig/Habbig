@@ -1,14 +1,43 @@
 {% block content %}
 <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Welcome, {{ display_name }}.</h1>
+{% if is_pro_welcome %}
+<p style="margin:0 0 20px;color:#555;">Your account is active on the <strong style="color:#0d0d0d;">{{ tier }}</strong> plan &mdash; all 12 dashboards are unlocked.</p>
+<p style="margin:0 0 8px;color:#555;">Here's what to do next:</p>
+<ul style="margin:0 0 24px;padding-left:20px;color:#555;">
+  <li style="margin-bottom:6px;">Visit your dashboard hub to pick a starting point across all 12 sub-products</li>
+  <li style="margin-bottom:6px;">Browse Best Bets for the highest-EV opportunities across every market</li>
+  <li style="margin-bottom:6px;">Add Signal Search topics to track specific markets across sub-products</li>
+</ul>
+<div style="margin:24px 0;">
+  <a href="{{ app_url }}/dashboards" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Open your dashboards &rarr;</a>
+</div>
+{% endif %}
+{% if subproduct_name %}
+<p style="margin:0 0 20px;color:#555;">Your <strong style="color:#0d0d0d;">{{ subproduct_name }}</strong> subscription is active.</p>
+{% if subproduct_tagline %}
+<p style="margin:0 0 20px;color:#777;font-style:italic;">{{ subproduct_tagline }}</p>
+{% endif %}
+<p style="margin:0 0 8px;color:#555;">Here's what to do next:</p>
+<ul style="margin:0 0 24px;padding-left:20px;color:#555;">
+  <li style="margin-bottom:6px;">Open your {{ subproduct_name }} dashboard &mdash; fresh signals every 5 minutes</li>
+  <li style="margin-bottom:6px;">Check the high-edge feed for the day's strongest opportunities</li>
+  <li style="margin-bottom:6px;">Set up alerts so the dashboard nudges you when conditions shift</li>
+</ul>
+<div style="margin:24px 0;">
+  <a href="{{ subproduct_url }}" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Go to {{ subproduct_name }} &rarr;</a>
+</div>
+{% endif %}
+{% if is_generic_welcome %}
 <p style="margin:0 0 20px;color:#555;">Your account is active on the <strong style="color:#0d0d0d;">{{ tier }}</strong> plan.</p>
 <p style="margin:0 0 8px;color:#555;">Here's what to do next:</p>
 <ul style="margin:0 0 24px;padding-left:20px;color:#555;">
-  <li style="margin-bottom:6px;">Go to your feed — new predictions every 5 minutes</li>
+  <li style="margin-bottom:6px;">Go to your feed &mdash; new predictions every 5 minutes</li>
   <li style="margin-bottom:6px;">Check Best Bets for high-EV opportunities</li>
   <li style="margin-bottom:6px;">Add a Signal Search topic to track specific markets</li>
 </ul>
 <div style="margin:24px 0;">
-  <a href="{{ app_url }}/dashboards" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Go to dashboard →</a>
+  <a href="{{ app_url }}/dashboards" style="display:inline-block;background:#0d0d0d;color:#ffffff;padding:12px 24px;border-radius:6px;font-weight:500;text-decoration:none;">Go to dashboard &rarr;</a>
 </div>
+{% endif %}
 <p style="margin:24px 0 0;color:#555;font-size:13px;">If you have questions, reply to this email.</p>
 {% endblock %}

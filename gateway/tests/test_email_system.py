@@ -36,6 +36,9 @@ class TestRenderer(unittest.TestCase):
             "display_name": "Alice",
             "tier": "Pro",
             "app_url": "https://narve.ai",
+            # Welcome template now has three mutually-exclusive variants;
+            # the generic block matches the pre-subproduct copy.
+            "is_generic_welcome": True,
         })
         self.assertIn("Welcome, Alice.", html)
         self.assertIn("Pro", html)
@@ -61,6 +64,7 @@ class TestRenderer(unittest.TestCase):
             "display_name": "<script>",
             "tier": "Pro",
             "app_url": "https://narve.ai",
+            "is_generic_welcome": True,
         })
         self.assertIn("&lt;script&gt;", html)
         self.assertNotIn("<script>", html[: html.find("narve.ai")])

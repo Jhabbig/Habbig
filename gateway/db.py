@@ -968,6 +968,7 @@ from queries.subscriptions import (  # noqa: F401,E402
     upsert_subscription,
     cancel_subscription,
     list_all_subscriptions,
+    get_active_subscription_counts_by_dashboard,
     get_revenue_stats,
     create_gift,
     list_active_gifts,
@@ -976,6 +977,7 @@ from queries.subscriptions import (  # noqa: F401,E402
     get_user_intelligence_addon_active,
     set_user_intelligence_addon,
     get_user_subscription_tier,
+    get_user_primary_subscription,
     has_any_active_subscription,
 )
 from queries.intelligence import (  # noqa: F401,E402

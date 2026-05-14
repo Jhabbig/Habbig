@@ -94,13 +94,43 @@ def cancel_subscription(user_id: int, dashboard_key: str) -> None:
         )
 
 
-def list_all_subscriptions() -> list[sqlite3.Row]:
+def list_all_subscriptions(limit: int = 100, before_id: int | None = None) -> list[sqlite3.Row]:
+    """Cursor-paginated subscription list (newest id first).
+
+    Perf audit #5 — every admin revenue render was scanning the full
+    table. Default page is 100, hard-capped at 500. ORDER BY s.id DESC
+    keeps the cursor cheap (autoincrement PK).
+    """
+    capped = max(1, min(int(limit), 500))
+    args: list = []
+    q = (
+        "SELECT s.*, u.email, u.username FROM subscriptions s "
+        "JOIN users u ON u.id = s.user_id"
+    )
+    if before_id is not None:
+        q += " WHERE s.id < ?"
+        args.append(int(before_id))
+    q += " ORDER BY s.id DESC LIMIT ?"
+    args.append(capped)
     with db.conn() as c:
-        return c.execute(
-            "SELECT s.*, u.email, u.username FROM subscriptions s "
-            "JOIN users u ON u.id = s.user_id "
-            "ORDER BY s.started_at DESC"
+        return c.execute(q, args).fetchall()
+
+
+def get_active_subscription_counts_by_dashboard() -> dict[str, int]:
+    """Return {dashboard_key: active_count} for every dashboard.
+
+    Perf audit #5 — SQL-side aggregation. /admin/subproducts no longer
+    needs to pull every subscription row just to render counts.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT dashboard_key, COUNT(*) AS cnt FROM subscriptions "
+            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
+            "GROUP BY dashboard_key",
+            (now,),
         ).fetchall()
+    return {r["dashboard_key"]: int(r["cnt"]) for r in rows}
 
 
 def get_revenue_stats() -> dict:
@@ -255,6 +285,77 @@ def get_user_subscription_tier(user_id: int) -> str:
     return "none"
 
 
+def get_user_primary_subscription(user_id: int) -> Optional[dict]:
+    """Return the flagship active subproduct subscription for the user, or None.
+
+    Used by the welcome email (and any future "first run" surface) to tailor
+    copy to a specific sub-brand. The "primary" pick is:
+
+      - Skip the special ``__plan__`` row (it's the Trader bundle marker, not a
+        subproduct).
+      - Skip dashboard_keys that don't map to a known subproduct.
+      - Among the remaining active rows, prefer the highest-priced subproduct
+        (see ``subproduct.SUBPRODUCTS[*].price_usd``) so a multi-subscriber
+        sees their most-expensive product, not just the alphabetically first.
+      - Pro/enterprise bundles hold a row on every dashboard_key. Callers
+        that want bundle-aware copy should branch on ``get_user_subscription_tier``
+        first; this helper still returns a sensible flagship for them too.
+
+    Returns a dict with ``slug``, ``dashboard_key``, ``display_name``,
+    ``tagline``, ``subdomain``, and ``plan`` — everything the welcome
+    template needs without forcing the caller to round-trip the catalog.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT dashboard_key, plan FROM subscriptions "
+            "WHERE user_id = ? AND status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (user_id, now),
+        ).fetchall()
+    if not rows:
+        return None
+
+    # Catalog is import-time defensive: a missing subproduct module means
+    # we degrade to "no flagship" rather than crashing the welcome enqueue.
+    try:
+        from subproduct import SUBPRODUCTS, DASHBOARD_KEY_FOR_SLUG
+    except Exception:
+        return None
+
+    key_to_slug = {dk: slug for slug, dk in DASHBOARD_KEY_FOR_SLUG.items()}
+    candidates: list[tuple[float, str, str, str]] = []
+    for row in rows:
+        dk = row["dashboard_key"]
+        plan = row["plan"]
+        if dk == "__plan__":
+            continue
+        slug = key_to_slug.get(dk)
+        if not slug:
+            continue
+        cfg = SUBPRODUCTS.get(slug)
+        if not cfg:
+            continue
+        price = float(cfg.get("price_usd") or 0.0)
+        candidates.append((price, slug, dk, plan))
+
+    if not candidates:
+        return None
+
+    # Highest price wins; tie-break alphabetically by slug for determinism.
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    price, slug, dk, plan = candidates[0]
+    cfg = SUBPRODUCTS[slug]
+    return {
+        "slug": slug,
+        "dashboard_key": dk,
+        "display_name": cfg["name"],
+        "tagline": cfg["tagline"],
+        "subdomain": slug,
+        "plan": plan,
+    }
+
+
 def has_any_active_subscription(user_id: int) -> bool:
     """True if the user has at least one active subscription on any dashboard.
 
@@ -286,6 +387,7 @@ __all__ = [
     'upsert_subscription',
     'cancel_subscription',
     'list_all_subscriptions',
+    'get_active_subscription_counts_by_dashboard',
     'get_revenue_stats',
     'create_gift',
     'list_active_gifts',
@@ -294,5 +396,6 @@ __all__ = [
     'get_user_intelligence_addon_active',
     'set_user_intelligence_addon',
     'get_user_subscription_tier',
+    'get_user_primary_subscription',
     'has_any_active_subscription',
 ]

@@ -90,6 +90,14 @@ class EmailService:
         ctx = dict(context)
         ctx.setdefault("app_url", self.app_url)
 
+        # Welcome template has three mutually-exclusive variants
+        # (pro / subproduct / generic). If the caller didn't pick one,
+        # fall back to generic so existing call sites and admin overrides
+        # that pre-date subproduct-awareness still render a body.
+        if template == "welcome":
+            if not (ctx.get("is_pro_welcome") or ctx.get("subproduct_name")):
+                ctx.setdefault("is_generic_welcome", True)
+
         override_subject, override_html = _resolve_admin_override(template, ctx)
         if override_html is not None:
             return await self.send(
