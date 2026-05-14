@@ -50,6 +50,7 @@ from status_system import (
     COMPONENT_DISPLAY,
     INCIDENT_STATES,
     SEVERITIES,
+    TERMINAL_INCIDENT_STATES,
 )
 from status_system import db as status_db
 from status_system import feeds as status_feeds
@@ -164,10 +165,11 @@ def _incident_list_html(incidents: list[dict]) -> str:
         date_str = created.strftime("%b %-d, %Y")
         if inc["resolved_at"]:
             dur_min = max(1, (inc["resolved_at"] - inc["created_at"]) // 60)
+            verb = "Completed" if inc["status"] == "completed" else "Resolved"
             if dur_min >= 60:
-                dur_str = f"Resolved {dur_min // 60}h {dur_min % 60}m"
+                dur_str = f"{verb} {dur_min // 60}h {dur_min % 60}m"
             else:
-                dur_str = f"Resolved {dur_min}m"
+                dur_str = f"{verb} {dur_min}m"
         else:
             dur_str = f"Ongoing · {inc['status'].title()}"
         comps = ", ".join(
@@ -583,7 +585,7 @@ async def admin_post_incident_update(request: Request, incident_id: int):
     update_id = status_db.add_incident_update(
         incident_id, status=status, message=message,
     )
-    if status == "resolved":
+    if status in TERMINAL_INCIDENT_STATES:
         status_db.update_incident(incident_id, resolved_at=int(time.time()))
 
     fresh_inc = status_db.get_incident(incident_id)
@@ -594,7 +596,7 @@ async def admin_post_incident_update(request: Request, incident_id: int):
     log.info("admin %s posted update %d on incident %d: status=%s",
              user.get("email"), update_id, incident_id, status)
 
-    event = "resolved" if status == "resolved" else "updated"
+    event = "resolved" if status in TERMINAL_INCIDENT_STATES else "updated"
     try:
         await status_subs.notify_incident_event(
             fresh_inc, event_type=event, update=fresh_update,

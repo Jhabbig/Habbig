@@ -49,10 +49,20 @@ STATUSES: tuple[str, ...] = ("operational", "degraded", "outage")
 
 # Severity tiers for incidents. "critical" affects core user flows; "major"
 # is noticeable but bounded; "minor" is advisory (e.g. one background job
-# stalled, site still fully usable).
-SEVERITIES: tuple[str, ...] = ("minor", "major", "critical")
+# stalled, site still fully usable). "info" is reserved for non-outage
+# announcements — planned maintenance, deploys, feature launches — that
+# still belong on the status timeline.
+SEVERITIES: tuple[str, ...] = ("info", "minor", "major", "critical")
 
 
-# Incident lifecycle states. `resolved` is terminal; the others represent
-# work-in-progress.
-INCIDENT_STATES: tuple[str, ...] = ("investigating", "identified", "monitoring", "resolved")
+# Incident lifecycle states. `resolved` and `completed` are terminal; the
+# others represent work-in-progress. `resolved` is used for outages that
+# returned to normal; `completed` is used for planned events (deploys,
+# launches, maintenance) that finished as planned.
+INCIDENT_STATES: tuple[str, ...] = (
+    "investigating", "identified", "monitoring", "resolved", "completed",
+)
+
+# States that mark an incident as no longer open. Used by the route layer
+# to decide when to stamp `resolved_at` and stop rendering it as ongoing.
+TERMINAL_INCIDENT_STATES: frozenset[str] = frozenset({"resolved", "completed"})
