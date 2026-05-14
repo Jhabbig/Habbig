@@ -61,8 +61,10 @@ def _admin_client_with_csrf() -> tuple[TestClient, str]:
     session_token = db.create_session(user_id)
 
     client = TestClient(server.app)
-    # Narve's gate cookie — unlocks any non-PUBLIC path.
-    client.cookies.set("narve_gate_access", "granted")
+    # Narve's gate cookie — unlocks any non-PUBLIC path. The cookie
+    # format hardened to `<issued_at>:<HMAC>` for tamper-evidence, so
+    # mint via the server's own helper instead of hard-coding "granted".
+    client.cookies.set("narve_gate_access", server._mint_gate_cookie_value())
     # Session cookie — legacy fallback path in current_user().
     client.cookies.set("pm_gateway_session", session_token)
 
@@ -160,7 +162,10 @@ class TestAdminIncidentCrud(unittest.TestCase):
     def test_admin_page_renders(self):
         r = self.client.get("/admin/status")
         self.assertEqual(r.status_code, 200, f"body={r.text[:300]}")
-        self.assertIn("Status admin", r.text)
+        # Page title compressed from "Status admin" to "Status" in
+        # the admin-shell migration. Match the breadcrumb instead.
+        self.assertIn("admin-page-title", r.text)
+        self.assertIn(">Status<", r.text)
 
 
 class TestAdminAccessControl(unittest.TestCase):
