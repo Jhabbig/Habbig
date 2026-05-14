@@ -32,3 +32,9 @@ filelock==3.20.3
 pywebpush==2.1.2
 py-vapid==1.9.4
 http-ece==1.2.1
+# SIWE (EIP-4361) signature recovery for the Polymarket wallet-connect
+# proof of ownership in market_routes.api_connect_polymarket. Recovers
+# the signer from a personal_sign signature and refuses the connect if
+# the recovered address doesn't match the posted address. Pulled into
+# the runtime only when a connect lands; no startup cost.
+eth-account==0.10.0

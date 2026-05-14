@@ -16,8 +16,11 @@ here alongside the handlers that use them.
 from __future__ import annotations
 
 import logging
+import re
+import secrets
 import sys
 import time
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -30,6 +33,176 @@ from cache import ttl_cache, DEFAULT_TTLS
 
 
 log = logging.getLogger("gateway.market_routes")
+
+
+# ── SIWE (EIP-4361) wallet-connect proof of ownership ────────────────────────
+#
+# Before SIWE, ``POST /api/markets/connect/polymarket`` accepted any
+# 0x-prefixed 40-hex address with zero proof the caller controlled the
+# private key. An attacker who scraped a victim's public wallet could
+# attach it to their own narve.ai account, harvest the victim's
+# positions, and watch their signal-following behaviour through the
+# portfolio feed. Fix: require a signed SIWE message that pins the
+# narve.ai domain, the Ethereum chain id, and a server-issued nonce.
+#
+# The SIWE domain for the message is narve.ai — NOT the Polymarket CTF
+# Exchange's EIP-712 domain (which lives at POLY_DOMAIN_NAME above and
+# is used for order signing, a different problem). Here we just want
+# proof of key ownership on connect.
+SIWE_DOMAIN = "narve.ai"
+SIWE_URI = "https://narve.ai"
+SIWE_VERSION = "1"
+# Polymarket itself trades on Polygon (chain id 137 — see POLY_CHAIN_ID
+# above for the trading-domain constant). The wallet-connect ownership
+# proof is on Ethereum mainnet (chain id 1) — that's where SIWE was
+# specified and where wallets default. A signature recovered on chain
+# id 1 still proves ownership of the same secp256k1 keypair the user
+# trades with; there's no chain-id binding inside a personal_sign /
+# EIP-191 signature itself.
+SIWE_CHAIN_ID = 1
+SIWE_NONCE_TTL = 300            # 5 minutes — wallet UX latency budget
+SIWE_NONCE_CLEANUP_AGE = 3600   # 1 hour — used + unused both swept
+
+# Address format: 0x + 40 hex chars. Same regex the legacy connect path
+# already used; reused here so a malformed `address` field is rejected
+# before we touch the signature library.
+_EVM_ADDRESS_RE = re.compile(r"0x[a-fA-F0-9]{40}")
+
+
+def _siwe_build_message(address: str, nonce: str, issued_at: str) -> str:
+    """Construct the canonical SIWE message string the client must sign.
+
+    The string is byte-equal to what the browser produces in
+    ``trade.js``. The verify path rebuilds the same string from the
+    posted fields and uses it as the recovery input — if the client
+    sent a different message than it signed, recovery returns a
+    different address and the connect rejects.
+    """
+    return (
+        f"{SIWE_DOMAIN} wants you to sign in with your Ethereum account:\n"
+        f"{address}\n"
+        f"\n"
+        f"Verify wallet ownership for narve.ai portfolio sync.\n"
+        f"\n"
+        f"URI: {SIWE_URI}\n"
+        f"Version: {SIWE_VERSION}\n"
+        f"Chain ID: {SIWE_CHAIN_ID}\n"
+        f"Nonce: {nonce}\n"
+        f"Issued At: {issued_at}"
+    )
+
+
+def _siwe_parse_message(message: str) -> dict:
+    """Parse the fields out of a posted SIWE message.
+
+    Returns a dict with the keys we validate against (uri, version,
+    chain_id, nonce). Missing fields map to ``None`` so callers can
+    fail closed. Strict line-prefix matching — anything that wraps,
+    re-encodes, or reorders fields produces ``None`` for that field
+    and is rejected upstream.
+    """
+    out: dict[str, str | None] = {
+        "uri": None,
+        "version": None,
+        "chain_id": None,
+        "nonce": None,
+        "issued_at": None,
+    }
+    for line in message.splitlines():
+        if line.startswith("URI: "):
+            out["uri"] = line[len("URI: "):].strip()
+        elif line.startswith("Version: "):
+            out["version"] = line[len("Version: "):].strip()
+        elif line.startswith("Chain ID: "):
+            out["chain_id"] = line[len("Chain ID: "):].strip()
+        elif line.startswith("Nonce: "):
+            out["nonce"] = line[len("Nonce: "):].strip()
+        elif line.startswith("Issued At: "):
+            out["issued_at"] = line[len("Issued At: "):].strip()
+    return out
+
+
+def _siwe_issue_nonce(user_id: int) -> tuple[str, int]:
+    """Issue a fresh SIWE nonce bound to ``user_id``.
+
+    Returns (nonce_hex, issued_at_epoch). The nonce is 128 bits of
+    secrets.token_hex (32 hex chars) — well above the 2^96 birthday
+    bound for the few-thousand-nonces-per-day expected volume.
+    """
+    nonce = secrets.token_hex(16)
+    now = int(time.time())
+    with db.conn() as c:
+        c.execute(
+            "INSERT INTO wallet_connect_nonces "
+            "(nonce, user_id, created_at, used_at) "
+            "VALUES (?, ?, ?, NULL)",
+            (nonce, user_id, now),
+        )
+    return nonce, now
+
+
+def _siwe_consume_nonce(nonce: str, user_id: int) -> tuple[bool, str]:
+    """Validate-and-mark a nonce as used. Returns (ok, error_reason).
+
+    Atomic under SQLite's per-connection transaction: we read the row,
+    check freshness + unused, then UPDATE in the same connection. If
+    a concurrent verify lands on the same nonce, the second UPDATE
+    sees ``used_at IS NOT NULL`` and the check fails.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT user_id, created_at, used_at "
+            "FROM wallet_connect_nonces WHERE nonce = ?",
+            (nonce,),
+        ).fetchone()
+        if not row:
+            return False, "Unknown nonce"
+        if row["user_id"] != user_id:
+            # A nonce issued to user A cannot be redeemed for user B —
+            # blocks a stolen-nonce replay against a different session.
+            return False, "Nonce does not belong to this session"
+        if row["used_at"] is not None:
+            return False, "Nonce already used"
+        if now - int(row["created_at"]) > SIWE_NONCE_TTL:
+            return False, "Nonce expired"
+        cur = c.execute(
+            "UPDATE wallet_connect_nonces SET used_at = ? "
+            "WHERE nonce = ? AND used_at IS NULL",
+            (now, nonce),
+        )
+        if cur.rowcount != 1:
+            # Lost a race with a parallel consumer — treat as already
+            # used.
+            return False, "Nonce already used"
+    return True, ""
+
+
+def _siwe_recover_signer(message: str, signature: str) -> str | None:
+    """Recover the EVM address that signed ``message``.
+
+    Uses ``eth_account.messages.encode_defunct`` so the recovery path
+    matches MetaMask's ``personal_sign`` (EIP-191 ``\\x19Ethereum Signed
+    Message:\\n`` prefix). Returns ``None`` on any recovery failure —
+    malformed signature, wrong-length payload, library import error —
+    so callers can fail closed without leaking the underlying
+    exception.
+    """
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+    except Exception:
+        log.exception("SIWE verify: eth_account import failed")
+        return None
+    try:
+        encoded = encode_defunct(text=message)
+        recovered = Account.recover_message(encoded, signature=signature)
+        return recovered
+    except Exception:
+        # Recovery raises on malformed signatures / wrong length /
+        # invalid hex — swallow and let the route return a generic
+        # 400 so we don't leak which validation step failed.
+        return None
 
 
 def _srv():
@@ -322,7 +495,67 @@ async def api_connect_kalshi(request: Request):
     })
 
 
+async def api_connect_polymarket_nonce(request: Request):
+    """Issue a fresh SIWE nonce for the Polymarket wallet-connect flow.
+
+    The client GETs this endpoint first, gets back ``{nonce, message}``,
+    asks the user's wallet to sign ``message`` via ``personal_sign``,
+    then POSTs the signature to ``/api/markets/connect/polymarket``
+    along with the address it claims to own.
+
+    The nonce is bound to the calling session (``user_id`` on the row)
+    so a leaked nonce can't be redeemed against a different account —
+    see ``_siwe_consume_nonce``.
+    """
+    user = _require_markets_user(request)
+    srv = _srv()
+    # Same 5/min/user budget the connect+disconnect path uses — a
+    # cheaper rate for the nonce endpoint would let an attacker spam
+    # connect attempts without burning the same budget.
+    if srv._is_rate_limited(f"market_connect:{user['user_id']}", limit=5, window=60):
+        return JSONResponse(
+            {"error": "Too many connection attempts. Try again in a minute."},
+            status_code=429, headers={"Retry-After": "60"},
+        )
+    nonce, issued_ts = _siwe_issue_nonce(user["user_id"])
+    issued_at = (
+        datetime.fromtimestamp(issued_ts, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    # Hand the client a *template* address ``{address}`` so the
+    # browser can substitute the user's wallet address at sign-time
+    # without re-deriving the rest of the canonical body. The verify
+    # endpoint rebuilds the same string server-side from the posted
+    # address + the nonce row's metadata, so any tampering shifts the
+    # recovered signer.
+    message_template = _siwe_build_message("{address}", nonce, issued_at)
+    return JSONResponse({
+        "nonce": nonce,
+        "issued_at": issued_at,
+        "message_template": message_template,
+        "domain": SIWE_DOMAIN,
+        "uri": SIWE_URI,
+        "chain_id": SIWE_CHAIN_ID,
+        "version": SIWE_VERSION,
+    })
+
+
 async def api_connect_polymarket(request: Request):
+    """Verify a SIWE signature and attach the proven wallet to the user.
+
+    Accepts two body shapes for the 30-day legacy-compat window:
+
+    * **Signed (preferred):** ``{address, signature, message}`` — the
+      ``message`` is the canonical SIWE body the client signed, the
+      ``signature`` is a personal_sign hex string, and ``address`` is
+      the wallet they claim to own. We recover the signer from
+      (message, signature), match it case-insensitively against
+      ``address``, then validate the embedded nonce + URI + chain id.
+
+    * **Legacy unsigned:** ``{wallet_address}`` — accepted but logged
+      at WARN. Removed once the 30-day window closes (see changelog).
+    """
     user = _require_markets_user(request)
     # AUDIT 2026-05-14 — share the 5/min/user budget with Kalshi connect.
     srv = _srv()
@@ -335,24 +568,98 @@ async def api_connect_polymarket(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
-    address = (body.get("wallet_address") or "").strip()
-    # AUDIT #4 LOW #1 — require a real 0x-prefixed 40-hex-digit EVM address.
-    # The length-only check accepted any ≥10-char string and landed junk
-    # in ``user_market_credentials`` that only failed later on the
-    # Polymarket client. EIP-55 checksum is not enforced (users often
-    # paste lowercase addresses); case-insensitive hex is fine.
-    import re as _re
-    if not _re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
-        return JSONResponse(
-            {"error": "Valid wallet address required (0x followed by 40 hex characters)"},
-            status_code=400,
+
+    signature = (body.get("signature") or "").strip()
+    message = body.get("message") or ""
+    signed_address = (body.get("address") or "").strip()
+    legacy_address = (body.get("wallet_address") or "").strip()
+
+    if signature and message and signed_address:
+        # ── Signed (SIWE) path ───────────────────────────────────────
+        if not _EVM_ADDRESS_RE.fullmatch(signed_address):
+            return JSONResponse(
+                {"error": "Valid wallet address required (0x followed by 40 hex characters)"},
+                status_code=400,
+            )
+
+        parsed = _siwe_parse_message(message)
+        nonce = parsed["nonce"]
+        if not nonce:
+            return JSONResponse({"error": "Missing nonce in signed message"}, status_code=400)
+        if parsed["uri"] != SIWE_URI:
+            log.warning(
+                "SIWE connect: bad URI %r for user %s",
+                parsed["uri"], user.get("username"),
+            )
+            return JSONResponse({"error": "Signed message domain mismatch"}, status_code=400)
+        if parsed["chain_id"] != str(SIWE_CHAIN_ID):
+            return JSONResponse({"error": "Signed message chain id mismatch"}, status_code=400)
+        if parsed["version"] != SIWE_VERSION:
+            return JSONResponse({"error": "Signed message version mismatch"}, status_code=400)
+
+        recovered = _siwe_recover_signer(message, signature)
+        if not recovered:
+            return JSONResponse({"error": "Invalid signature"}, status_code=400)
+        if recovered.lower() != signed_address.lower():
+            log.warning(
+                "SIWE connect: signer mismatch for user %s — claimed %s, recovered %s",
+                user.get("username"), signed_address[:10] + "...", recovered[:10] + "...",
+            )
+            return JSONResponse(
+                {"error": "Signature does not match wallet address"},
+                status_code=400,
+            )
+
+        ok, reason = _siwe_consume_nonce(nonce, user["user_id"])
+        if not ok:
+            log.warning("SIWE connect: nonce check failed for user %s — %s",
+                        user.get("username"), reason)
+            return JSONResponse({"error": reason}, status_code=400)
+
+        # Canonicalise to lowercase 0x… before persisting — the rest
+        # of the codebase compares addresses lowercase.
+        address = signed_address.lower()
+        db.upsert_market_credential(
+            user["user_id"], "polymarket",
+            polymarket_wallet_address=address,
         )
-    db.upsert_market_credential(
-        user["user_id"], "polymarket",
-        polymarket_wallet_address=address,
+        log.info(
+            "SIWE connect: user %s connected Polymarket wallet %s",
+            user.get("username"), address[:10] + "...",
+        )
+        return JSONResponse({"connected": True, "address": address, "verified": True})
+
+    # ── Legacy unsigned path — 30-day deprecation window ─────────────
+    if legacy_address:
+        if not _EVM_ADDRESS_RE.fullmatch(legacy_address):
+            return JSONResponse(
+                {"error": "Valid wallet address required (0x followed by 40 hex characters)"},
+                status_code=400,
+            )
+        # AUDIT 2026-05-14 — see /changelog. Legacy non-SIWE connects
+        # are accepted for 30 days, logged at WARN so we can audit which
+        # accounts still need migration before the cutover.
+        log.warning(
+            "Legacy unsigned Polymarket connect for user %s — wallet %s. "
+            "Client must migrate to SIWE before deprecation window closes.",
+            user.get("username"), legacy_address[:10] + "...",
+        )
+        db.upsert_market_credential(
+            user["user_id"], "polymarket",
+            polymarket_wallet_address=legacy_address.lower(),
+        )
+        return JSONResponse({
+            "connected": True,
+            "address": legacy_address.lower(),
+            "verified": False,
+            "legacy": True,
+        })
+
+    return JSONResponse(
+        {"error": "Signature required: GET /api/markets/connect/polymarket/nonce first, "
+                  "then POST {address, signature, message}"},
+        status_code=400,
     )
-    log.info("User %s connected Polymarket wallet %s", user.get("username"), address[:10] + "...")
-    return JSONResponse({"connected": True, "address": address})
 
 
 async def api_disconnect_market(request: Request, source: str):
@@ -788,6 +1095,10 @@ def register(app) -> None:
     app.add_api_route("/api/markets/unified/{market_id:path}", api_market_detail, methods=["GET"])
     app.add_api_route("/api/markets/search", api_markets_search, methods=["GET"])
     app.add_api_route("/api/markets/connect/kalshi", api_connect_kalshi, methods=["POST"])
+    # Route ORDER: the /nonce GET must come before the catch-all
+    # /connect/{source} DELETE so FastAPI doesn't try to parse "nonce"
+    # as a {source} path param on a GET request.
+    app.add_api_route("/api/markets/connect/polymarket/nonce", api_connect_polymarket_nonce, methods=["GET"])
     app.add_api_route("/api/markets/connect/polymarket", api_connect_polymarket, methods=["POST"])
     app.add_api_route("/api/markets/connect/{source}", api_disconnect_market, methods=["DELETE"])
     app.add_api_route("/api/markets/connections", api_market_connections, methods=["GET"])

@@ -98,6 +98,18 @@ deploy commits on `feature/platform-build`.
   CVE-vulnerable `cryptography 44.0.1`).
 - **Subscription cancellation email** kwarg bug fixed — was
   silently failing to send.
+- **Polymarket wallet-connect now requires SIWE (EIP-4361)
+  signature** — the connect endpoint formerly accepted any
+  0x-prefixed address with zero proof of key ownership, letting an
+  attacker attach a victim's public wallet to their own account and
+  harvest positions through portfolio sync. The new flow issues a
+  one-time nonce, asks the wallet to `personal_sign` a canonical
+  SIWE message pinned to `narve.ai` + chain id 1, and recovers the
+  signer server-side via `eth_account`. Mismatched signers, replayed
+  nonces, stale nonces (>5 min), and tampered domains are all 400s.
+  Unsigned `wallet_address` POSTs are still accepted for a 30-day
+  migration window and flagged `verified=false` in the response;
+  clients must roll over to the signed flow before the cutoff.
 
 ### Fixed
 

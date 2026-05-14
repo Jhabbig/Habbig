@@ -1151,7 +1151,34 @@
         const address = accounts[0];
         if (!address) throw new Error('No account selected');
 
-        const data = await api('/api/markets/connect/polymarket', { method: 'POST', body: { wallet_address: address } });
+        // ── SIWE (EIP-4361) proof of ownership ───────────────────────
+        // Server issues a fresh nonce + canonical message template.
+        // We substitute the user's chosen address, ask the wallet to
+        // personal_sign it, then POST {address, signature, message}.
+        // The server recovers the signer and refuses the connect if
+        // it doesn't match `address`. Without this step anyone could
+        // claim any wallet — there was no proof of key ownership.
+        $('#hb-poly-submit').textContent = 'Requesting nonce...';
+        const nonceResp = await api('/api/markets/connect/polymarket/nonce', { method: 'GET' });
+        if (nonceResp._error) throw new Error(nonceResp._error);
+        const message = (nonceResp.message_template || '').replace('{address}', address);
+        if (!message) throw new Error('Server did not return a SIWE message');
+
+        $('#hb-poly-submit').textContent = 'Sign in wallet...';
+        // personal_sign on MetaMask: params are [message, address].
+        // The wallet wraps the bytes with the EIP-191 \x19 prefix
+        // before signing — matches eth_account.encode_defunct on the
+        // server, so recovery returns the signer address verbatim.
+        const signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [message, address],
+        });
+
+        $('#hb-poly-submit').textContent = 'Verifying...';
+        const data = await api('/api/markets/connect/polymarket', {
+          method: 'POST',
+          body: { address: address, signature: signature, message: message },
+        });
         if (data._error) {
           const r = $('#hb-poly-result');
           r.textContent = '';
