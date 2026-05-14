@@ -48,6 +48,22 @@ deploy commits on `feature/platform-build`.
   product surface.
 - **Web push notifications** — subscribe / unsubscribe / test flow
   with permission-gated UI.
+- **`/admin/jobs`** — background job queue dashboard with 5 s
+  polling, surfacing run history, status, and last-error for every
+  scheduled task.
+- **`/admin/users`** — paginated user-management surface with
+  promote / demote / suspend / revoke-token actions inline.
+- **`/changelog.rss`** — RSS feed for release-note subscriptions.
+- **`/api/docs`** — public API reference rendered from the
+  OpenAPI JSON, linkable for partners and integration developers.
+- **SIWE wallet-connect for Polymarket** — full EIP-4361 flow with
+  server-side signer recovery, one-time nonces, and anti-replay.
+- **API key rotation system** — `X-API-Key` auth with per-key
+  scopes and an origin allowlist; keys are rotatable without
+  downtime.
+- **Outbound webhooks** — 3-attempt retries, DLQ table for
+  permanent failures, per-endpoint circuit breaker, and HMAC-signed
+  timestamps to defeat replay.
 
 ### Changed
 
@@ -67,6 +83,39 @@ deploy commits on `feature/platform-build`.
 - **`requirements.lock`** regenerated from prod Python 3.12 —
   prior lockfile was built on Python 3.9 and was missing the
   CVE-patched `cryptography` release.
+- **Editorial design system** rolled out across 14 pages —
+  Source Serif 4 (with a Georgia fallback) for body, Inter for
+  navigation chrome and the wordmark, Instrument Serif Italic for
+  display heroes, and Geist Mono for code / numbers.
+- **Card layouts** now full-width responsive on every page, with
+  1 / 2 / 3-column breakpoints at 720 px / 1100 px.
+- **Padding standardised** — `--space-8` at page level,
+  `--space-6` inside cards.
+- **`/dashboards`** — hub cards reworked with the new responsive
+  grid and editorial typography.
+- **`/pricing`** — redesigned with a 13-tier grid and a Pro
+  feature banner.
+- **`/changelog`** — redesigned as an editorial week-card feed.
+- **`/login`, `/register`, `/token`** — editorial hero with Inter
+  form chrome.
+- **`/signal-search`** — two-column desktop layout with a
+  collapsible drawer on mobile.
+- **`/sources`** and source / user profile pages — full-width
+  layout with sticky tabs.
+- **`/predictions`, `/saved`, `/collections`** — share a single
+  `feeds.css` for the editorial serif feed.
+- **`/admin/*`** — every admin surface on the new admin-shell
+  typography contract.
+- **`/about`, `/how-it-works`, `/methodology`, `/faq`, `/terms`,
+  `/privacy`, `/dpa`** — editorial body across the full
+  marketing + legal surface.
+- **Error pages (401–503)** — 120 px Instrument Serif status
+  hero, editorial serif body.
+- **Subproduct landing template** — unified across all 13
+  subdomains.
+- **Status dots** — monochrome (opacity-based), no green / red.
+- **Pre-release page** — intentionally untouched (kept on the
+  prior template by design).
 
 ### Security
 
@@ -110,6 +159,16 @@ deploy commits on `feature/platform-build`.
   Unsigned `wallet_address` POSTs are still accepted for a 30-day
   migration window and flagged `verified=false` in the response;
   clients must roll over to the signed flow before the cutoff.
+- **`/admin/trace-watermark`** access now alerts via Sentry + email
+  with a 10/hour rate-limit on alerts to prevent flooding.
+- **Daily SQLite VACUUM + ANALYZE + WAL-truncate** wired into
+  startup hooks on `auth.db` and every subproduct database.
+- **Stripe webhook IP allowlist helpers** landed (route still
+  stubbed pending rollout) for defence-in-depth on
+  `/stripe/webhook`.
+- **`world-health-dashboard`** XML parsing migrated from the
+  stdlib `xml.etree` to `defusedxml` — closes the XXE class of
+  attacks on RSS ingest.
 
 ### Fixed
 
@@ -129,6 +188,9 @@ deploy commits on `feature/platform-build`.
 - **49+ pre-existing test failures** resolved.
 - **Migration filename mismatch** corrected
   (`175_trading_addon_settings.py` → `176_…`).
+- **Migration revision collisions** — `175_trading_addon` renumbered
+  to `176` and `181_api_keys_origins` renumbered to `180` so the
+  chain resolves cleanly after migration `179`.
 
 ## [Unreleased]
 
