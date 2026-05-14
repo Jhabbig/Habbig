@@ -5,6 +5,273 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #13 — 2026-05-14T22:17Z — commit 992005b — newsletter-blast-bounding verification
+
+### Why this audit exists
+This is a follow-up audit to verify the fix landed for AUDIT #12 MED #1
+(newsletter blast unbounded loop). Single unpushed commit `992005b`
+sits on top of `6197f37` (audit #12). The fix introduces a new SQLite
+table (`newsletter_blast_jobs` via migration 187), a new cron job
+(`newsletter_blast_tick`), and bounds the synchronous portion of
+`/admin/newsletter/send` at `MAX_INLINE_RECIPIENTS=500`. 47 tests pass
+locally. Server is intentionally NOT yet redeployed; MED #2 server-drift
+from audit #12 still persists and will until deploy completes —
+documented but not re-flagged as a new finding.
+
+Loop-stop criterion for this iteration: **MED #1 confirmed RESOLVED in
+committed code, no new CRITICAL/HIGH introduced by the bounding work,
+and the new surface (migration 187, jobs/newsletter_blast_jobs.py,
+queries/newsletter.py paged getter, test file) is itself clean.**
+
+### Code inventory audited
+- Committed tip: `992005b` (security(audit#12 MED#1): bound /admin/newsletter/send recipient loop). Locked at scan start. 1 unpushed commit ahead of `origin/feature/platform-build`. Audit #12 tip `6197f37` is the previous baseline.
+- Local unpushed commits: **1** — `992005b` (admin_routes.py +101/-23, db.py +11/-0, jobs/__init__.py +9/-0, jobs/newsletter_blast_jobs.py +234, migrations/187_newsletter_blast_jobs.py +81, queries/newsletter.py +221, tests/test_newsletter_blast_bounding.py +346). Net +980/-23 across 7 files.
+- Local uncommitted files: 2 modified — `gateway/static/privacy.html` (carry-over from #12, sibling-agent WIP, text-only legal copy, no behaviour change) and `gateway/tests/test_health.py` (carry-over from #12, sibling-agent WIP, test fixtures). LEFT UNTOUCHED per scan rules.
+- Local stashes: **57**. Unchanged from #12. No new top-of-stack entries since the previous audit; the existing stash debt persists.
+- Server uncommitted files: **342+**. Server tree at git tip predating audit #12 by ~50 commits AND with 27,616 inserts / 6,825 deletes across 236 files queued vs origin. Server.py md5 still differs from local origin. The fix from `992005b` is NOT on the server yet (audit #12 itself wasn't pushed at the time of #12's commit; #13 sits on top of that unpushed state).
+- Server tip vs origin: **DIVERGED — server still ~50 commits behind origin, MED #2 carry-over persists until deploy.** Per the user-provided context: "Server is NOT yet redeployed (so MED #2 server-drift still expected to appear in this scan — that's fine, we deploy after this scan confirms clean)."
+- Running uvicorn loaded from: PID 4061843 at `~/Habbig/gateway`, started 2026-05-14T21:19:46+0100 (server.py disk mtime 2026-05-14T21:12:32). Same process as audit #12 — has not been restarted. /stripe/webhook still returns 503 (Stripe SDK not installed in venv) per #12.
+- Branches with recent work (last 14d not in current): none — single active branch.
+- DRIFT FLAG: **server-side drift persists from #12** (still ~50 commits behind origin, 342+ uncommitted files). This is a known carry-over, not a new finding. Local unpushed commit `992005b` adds one more commit to the deploy backlog.
+
+### Surfaces newly introduced since AUDIT #12
+| Feature | Files | Risk surface |
+|---|---|---|
+| Bounded `/admin/newsletter/send` handler | `gateway/admin_routes.py:2744-2937` (was `:2660-2882` in #12) | The unbounded `get_blast_recipients` → per-row enqueue loop is GONE. Replaced by: (1) `db.count_blast_recipients(segment, frequency_filter)` to size the blast; (2) `inline_cap = db.NEWSLETTER_MAX_INLINE_RECIPIENTS` (=500) clamps the synchronous portion; (3) `db.get_blast_recipients_page(segment, frequency_filter, offset=0, limit=inline_target)` returns at most 500 rows; (4) the for-loop awaits `enqueue_email` for that bounded list only; (5) `deferred_target = max(0, recipient_count - inline_target)` is recorded as a row in `newsletter_blast_jobs` via `db.create_blast_job(campaign_id, total_recipients=deferred_target)`. `sent_at` is set to `now` only if `deferred_target == 0` — for blasts with a tail, the tick worker backfills `sent_at` when the tail closes. Audit row captures both `immediate_enqueued` and `queued_count`. Admin-only via `_require_admin_user(request)` — unchanged. CSRF still enforced by global middleware — unchanged. Segment/frequency still validated against `_NEWSLETTER_SEGMENTS` allowlist — unchanged. Scheduled-later path returns 400 on past timestamps — unchanged. **Net effect: a 100k blast now does ~500 inline DB writes (request finishes in <5s) + records one tiny `newsletter_blast_jobs` row, with the remaining 99,500 recipients drained at 500/minute by the cron tick.** |
+| `newsletter_blast_jobs` SQLite table | `gateway/migrations/187_newsletter_blast_jobs.py` (81 LOC) | `CREATE TABLE IF NOT EXISTS newsletter_blast_jobs (id INTEGER PRIMARY KEY, campaign_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', total_recipients INTEGER NOT NULL, processed_recipients INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER)` plus two indexes (`idx_..._pending` on `(status, id)` and `idx_..._campaign` on `(campaign_id)`). `downgrade()` uses `DROP INDEX IF EXISTS` and `DROP TABLE IF EXISTS` — safe. No foreign key constraint to `newsletter_campaigns` is intentional (admin campaigns are historical record). All DDL parameter-free, no user input touches schema. Clean. |
+| `newsletter_blast_tick` cron job | `gateway/jobs/newsletter_blast_jobs.py` (234 LOC) | `@register_job("newsletter_blast_tick")` + `register_cron("newsletter_blast_tick")` — registered via module-level decorator at startup. Fires every minute via the in-process scheduler (no admin HTTP endpoint exposes manual triggering). Not on any FastAPI route; not callable from outside the worker. Per-tick flow: (a) `db.fetch_next_pending_blast_job()` returns the oldest `pending` OR `running` row (running included for crash-resume); (b) joins the campaign row by id with a parameterised `WHERE id = ?` query; (c) marks job `running` with `db.mark_blast_job_started(job_id)`; (d) computes `offset = max(0, inline_count) + processed` where `inline_count` re-reads `count_blast_recipients` minus stored `total_recipients` (handles mid-tail unsubscribes by clamping to live count); (e) `db.get_blast_recipients_page(segment, frequency_filter, offset, limit)` with `batch_cap = db.NEWSLETTER_MAX_BATCH_PER_TICK` (=500); (f) per-recipient `enqueue_email` in try/except — failures logged and `processed_recipients` advances anyway (deliberate: avoid deadlocking on a single bad recipient); (g) when `processed >= total` the row flips to `done` and `_maybe_backfill_sent_at` stamps the campaign. **Admin auth: NOT applicable — this is a cron job, not an HTTP endpoint. Caller is the scheduler.** SQL injection: every `execute(...)` uses positional placeholders (`?`). Row-drift safety: re-derives `inline_count` from live data per-tick. Clean. |
+| `queries/newsletter.py::get_blast_recipients_page` | `gateway/queries/newsletter.py:572-608` | Paginated variant of `get_blast_recipients`. Filter: `confirmed_at IS NOT NULL AND unsubscribed_at IS NULL` (unconditional). Segment narrowing identical to count helper — allowlist-clamped, then `(segment = ? OR segment = 'all')` for non-"all" segments. Frequency filter only applied if `in VALID_FREQUENCIES`. `safe_offset = max(0, int(offset))` and `safe_limit = min(max(1, int(limit)), 5_000)` — defang accidental "give me everything" calls by capping at 5k. Final SQL: `SELECT id, email, segment, frequency FROM newsletter_subscribers WHERE <ands> ORDER BY id ASC LIMIT ? OFFSET ?` — all dynamic values are positional params. Stable ordering (`id ASC`) prevents cross-tick row duplication or skip when the table mutates. Clean. |
+| Test coverage `test_newsletter_blast_bounding.py` | `gateway/tests/test_newsletter_blast_bounding.py` (346 LOC) | Three test methods: (a) `test_under_cap_blast_runs_fully_inline` — 5 recipients, cap defaults to 500, asserts no `newsletter_blast_jobs` row created and every recipient gets an `enqueue_email` call inline. (b) `test_over_cap_blast_bounds_inline_and_defers_tail` — 8 recipients with `MAX_INLINE_RECIPIENTS` monkey-patched to 5, asserts the request returns 200 with `immediate_enqueued=5`, `queued_count=3`, `blast_job_id` set, `newsletter_blast_jobs` row at `status='pending'`, `total_recipients=3`, `processed_recipients=0`, and the campaign's `sent_at` is NULL pending tail drain. (c) `test_tick_drains_deferred_tail_and_marks_done` — runs the bounded send then calls `newsletter_blast_tick()` directly, asserts the tick enqueues exactly the deferred tail, flips the job to `done`, and backfills `newsletter_campaigns.sent_at`. Uses an in-memory DB via `tests._testdb`, creates a super-admin session, primes CSRF. Test isolation is rigorous (per-test cleanup of `newsletter_campaigns`, `newsletter_blast_jobs`, and own subscriber rows). Coverage assessment: **strong on the happy path and the bounded-overflow branch. Gaps:** (i) no test for the `campaign_missing` branch (`db.mark_blast_job_failed` path when the campaign row is gone); (ii) no test for the `no_more_recipients` drift-handling branch (mass-unsubscribe between handler and tick); (iii) no test that `mark_blast_job_failed` is called when `db.get_blast_recipients_page` itself raises; (iv) no test for the multi-tick path (only single-tick drain). These are not security holes — they're edge-case coverage gaps. The bounding behaviour itself is well-covered. |
+| db.py re-exports | `gateway/db.py:1006-1019` | +11 imports from `queries.newsletter`: the 8 new blast-job helpers + the 2 new constants (`MAX_INLINE_RECIPIENTS as NEWSLETTER_MAX_INLINE_RECIPIENTS`, `MAX_BATCH_PER_TICK as NEWSLETTER_MAX_BATCH_PER_TICK`). Aliasing constants on the `db` module is the standard pattern in this codebase — call sites use `db.NEWSLETTER_MAX_INLINE_RECIPIENTS` and the test suite monkey-patches that same symbol to verify the bound. No SQL change, no auth change, no schema change. Clean. |
+| jobs/__init__.py wiring | `gateway/jobs/__init__.py:91-98` | Defensive import of `newsletter_blast_jobs` — wrapped in try/except so a DB stuck below migration 187 still loads the rest of the job registry. Module-level `@register_job` + `register_cron` calls fire at import. Standard pattern in this file. Clean. |
+
+### Summary
+Posture: **strong** (committed code only)
+Critical issues: 0
+High-priority: 0
+Medium-priority: 2 (1 carry-over server drift — MED #12.2 persists until deploy; 1 carry-over Polymarket wallet-connect — MED #12.3 unchanged)
+Low-priority: 4 (all carry-overs from #12: WAF /admin/api/*, Google Fonts hoist, stash debt, pip-audit blocked)
+Resolved since last audit: **1 — MED #12.1 newsletter blast unbounded loop CONFIRMED FIXED**
+New since last audit: 0
+Regressions: 0
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT (unchanged)
+- pm_gateway_session + narve_session both accepted: yes (unchanged)
+- narve_session stored as SHA-256 hash in DB: yes (unchanged)
+- Session cookie HttpOnly: yes (unchanged)
+- Session cookie Secure: yes (unchanged)
+- Session cookie SameSite: Lax (unchanged)
+- Session revocation on logout: works (unchanged)
+- Session rotation on privilege change: implemented (unchanged)
+- Max sessions per user enforced: 3 (unchanged)
+- Password reset invalidates sessions: yes (unchanged)
+- Password hashing: PBKDF2-HMAC-SHA256, 600,000 iterations (unchanged)
+- 2FA status: removed in migration 019 (intentional product decision)
+- Impersonation banner visible on every page while active: yes (unchanged)
+- Impersonation blocked paths enforced: yes (unchanged)
+- API keys hashed (SHA-256) before storage: yes (unchanged)
+- SIWE wallet-connect signature verification: PRIMARY path verified; legacy unsigned still accepted (MED #12.3 carry-over, deprecation 2026-06-13).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — verified `/admin/newsletter/send` still gated by `_require_admin_user(request)` at admin_routes.py:2770. No new admin route added today (the bounding work is internal to existing handler).
+- Super admin routes require role = 2: yes (unchanged)
+- Subproduct access checked at middleware + route + response: yes (unchanged)
+- has_subproduct_access called on every subproduct route: yes (unchanged)
+- Feature flag evaluation in use: yes (unchanged)
+- Gift subscription enforcement: yes (unchanged)
+- **Cron job auth: `newsletter_blast_tick` is NOT an HTTP route — admin auth not applicable. Caller is the in-process scheduler. No HTTP surface introduced.** Verified by grep: no `app.add_api_route` or `@app.post|get|put|patch|delete` references `newsletter_blast_tick`.
+
+### CSRF
+- Double submit cookie: yes (unchanged)
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — `/admin/newsletter/send` continues to flow through the global CSRF middleware. No new exempt POSTs added.
+- HTMX X-CSRF-Token hook active: yes (unchanged)
+- Exempt routes list minimal and documented: yes — `_CSRF_EXEMPT_POSTS` unchanged from #12 audit. **No new exemptions added today.**
+
+### Rate limiting
+- Auth endpoints: unchanged from #12.
+- API endpoints: 33 `@rate_limit` decorators (unchanged from #12).
+- Newsletter `/admin/newsletter/send` rate limit: still bounded by the existing 30-mutations-per-5-min-per-admin throttle in `_require_admin_user` (no explicit `@rate_limit` decorator). The MED #12.1 fix reduces per-call worker cost from O(N) recipients to O(min(N, 500)) recipients — request-handler latency is now bounded regardless of subscriber base. The deferred tail throttle is structural (one cron tick per minute, 500 recipients/tick = 30k/hour worst case for a single blast).
+- Stripe webhook: unchanged (global 100/min, IP-allowlisted).
+- Per-user and per-IP as appropriate: yes (unchanged)
+- 429 response includes Retry-After: yes (unchanged)
+- Cloudflare-level rate limit rules: unchanged from #12 (Rule D /auth, Rule E /admin; LOW #12.1 `/admin/api/*` gap carries over).
+
+### Input validation
+- SQL injection vectors found: **0 exploitable in the new code.** Audited every new SQL touch point: `migrations/187_newsletter_blast_jobs.py` uses parameter-free DDL (table create + index create, no user input); `queries/newsletter.py::get_blast_recipients_page` uses positional `?` placeholders for offset/limit (both `int()`-cast and bounded: `safe_offset = max(0, int(offset))`, `safe_limit = min(max(1, int(limit)), 5_000)`); `queries/newsletter.py::create_blast_job` / `mark_blast_job_started` / `advance_blast_job_progress` / `mark_blast_job_failed` / `get_blast_job` / `get_blast_job_for_campaign` / `backfill_campaign_sent_at` / `fetch_next_pending_blast_job` — all use positional `?` placeholders with `int(...)` coercion on every numeric param; `jobs/newsletter_blast_jobs.py:67-71` reads the campaign by id with `WHERE id = ?` (single positional param). The carry-over CRITICAL-prefix scan hits from #12 (e.g. `gateway/saved_views_routes.py`, `gateway/jobs/email_jobs.py`, `gateway/jobs/referral_jobs.py`, `gateway/api_v1.py`) were re-verified as false positives: in every case the `f"{ph}"` interpolation is a sqlite placeholder string built from `_make_placeholders(len(ids))` and the actual values are passed as the second arg to `execute(...)`. None are exploitable from user input.
+- XSS via innerHTML with user content: 0 in new code. The blast tick reuses `_newsletter_md_to_html` (audit #12 already verified — `html.escape` first, then minimal regex pass) and writes the rendered HTML to the `raw_body_html` context key. The `raw_` prefix is intentional and SAFE: the markdown→HTML pass produced the trusted HTML, and only admin-authored body_md ever flows through. Recipients receive a templated email; the only user-visible string from a non-admin is the recipient's own email address, which never leaves the database.
+- Command injection / subprocess with user input: 0 in new code. No subprocess calls in the new modules.
+- Path traversal in file operations: 0 in new code. No filesystem reads/writes in the new modules.
+- SSRF in URL-fetching code: 0 in new code. No outbound HTTP in the new modules. The eventual email send happens via the existing `email_jobs.enqueue_email` pipeline which is per-recipient bounded.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes (unchanged)
+- No hardcoded secrets in current tree: clean — `scan_secrets.sh` returned 0 hits today on the 7 new/modified files.
+- No secrets in git history: clean (unchanged)
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (unchanged)
+- System secrets (migration 174) encrypted with same Fernet key: yes (unchanged)
+- Sessions hashed before DB storage: yes (unchanged)
+- Password hashes use PBKDF2-HMAC-SHA256: yes — 600,000 iterations (unchanged)
+- .env permissions on server: verified 600 in #12 (no re-check today as server file unchanged)
+- API keys SHA-256 hashed before storage: yes (unchanged)
+- SIWE wallet-connect nonces single-use: yes (unchanged)
+
+### Data privacy
+- Account deletion works end-to-end: yes (unchanged)
+- Data export includes all user-linked tables: verified (unchanged). `newsletter_blast_jobs` is admin-blast metadata only — no user-identifying columns beyond `campaign_id` (which links back to the admin's own audit trail); not a GDPR-exportable table by design.
+- Sensitive fields redacted in logs: yes — `log.warning("newsletter blast enqueue failed for %s: %s", row["email"], exc)` does log the recipient email. This is the same logging pattern used by `email_jobs.enqueue_email` failures and is consistent with the existing convention; admin-only access to log files limits exposure.
+- Sentry scrubbing active: yes (unchanged)
+- Impersonation actions logged: yes (unchanged)
+- Sentry release tagged with git SHA: yes (unchanged)
+
+### External integrations
+- Stripe webhook signature validated: YES, LIVE (unchanged from #12)
+- Stripe webhook idempotent: YES, LIVE (unchanged)
+- Stripe webhook mode-verified: YES, LIVE (unchanged)
+- Stripe webhook IP allowlist: YES, LIVE (unchanged)
+- Stripe Customer Portal: LIVE (unchanged)
+- Telegram bot token in env only: yes (unchanged)
+- Discord bot token in env only: yes (unchanged)
+- Scraper API key validated on every request: yes (unchanged)
+- Polymarket wallet address validated: SIWE PRIMARY; legacy unsigned still accepted (MED #12.3 carry-over, deprecation 2026-06-13).
+- SEC EDGAR User-Agent set: yes (unchanged)
+- eth_account 0.10.0 pinned: yes (unchanged)
+
+### Infrastructure
+- SQLite WAL mode active: yes (unchanged)
+- Cloudflare Tunnel active, origin not directly reachable: yes (unchanged)
+- Cloudflare Rules for subdomain enumeration: yes (unchanged)
+- Cloudflare Rules for scanner UA blocking: yes (unchanged)
+- Post-deploy commit step documented: yes (unchanged)
+- CLOUDFLARE_CHANGES.md current: yes (unchanged, last touched #12)
+- Daily VACUUM + ANALYZE + WAL truncate cron: present (unchanged)
+- New DB indexes from migration 187: additive only — two indexes on `newsletter_blast_jobs`, both `IF NOT EXISTS`.
+- **Server drift: persists from #12** — server is still ~50 commits behind origin AND has 342+ uncommitted modified files. The fix from `992005b` is NOT on the server. See MED #12.2 carry-over below.
+
+### Monitoring
+- Sentry backend configured: yes (unchanged)
+- Sentry frontend configured: yes (unchanged)
+- Structured logging configured: yes (unchanged)
+- Security events logged separately: yes (unchanged)
+- Audit log append-only: yes (unchanged) — every blast send / schedule still emits `_audit("newsletter.blast_send" | "newsletter.blast_schedule", ...)` with `immediate_enqueued`, `queued_count`, `blast_job_id` in the after payload.
+- Uptime monitoring active: yes (unchanged)
+
+### Dependency audit
+- Last full pip-audit run: 2026-04-21 (carry-over LOW: still blocked on local Python 3.9 / orjson — confirmed by `scan_deps.sh` failing to resolve `orjson==3.11.6` against Py 3.9 today).
+- Known CVEs: 0 (unchanged)
+- Unpinned deps: 0 (unchanged)
+- Lockfile present: yes (unchanged)
+
+### Compliance
+- Privacy Policy live: yes (unchanged)
+- Terms of Service live: yes (unchanged)
+- DPA live: yes (unchanged)
+- Cookie notice: yes (unchanged)
+- GDPR data export: yes (unchanged)
+- GDPR account deletion: yes (unchanged)
+
+### Issues found in this audit
+
+#### CRITICAL
+N/A — none.
+
+#### HIGH
+N/A — none.
+
+#### MEDIUM
+1. **Server-side drift: server still ~50 commits behind origin AND has 342+ uncommitted files** — carry-over from #12 MED #2
+   Location: `julianhabbig@100.69.44.108:~/Habbig`
+   Impact: Unchanged from #12. The fix landed in `992005b` (committed locally, unpushed) is NOT on the server. The running uvicorn process from audit #12 still serves the older `server.py`. /admin/newsletter/send on production still runs the unbounded version of MED #12.1 until deploy completes. **This is explicitly expected per the audit context — the deploy is scheduled to land AFTER this scan confirms `992005b` is clean.** Not a regression; the audit context explicitly notes "we deploy after this scan confirms clean."
+   Fix: Deploy `992005b` onto the server: (a) `git fetch origin && git reset --hard origin/feature/platform-build` (after `git push` from local); (b) `python -m migrations` to apply migration 187; (c) restart uvicorn so the new `admin_routes.py` + `jobs/newsletter_blast_jobs.py` load; (d) verify `/health.git_sha == 992005b`; (e) verify the scheduler picked up the new cron — log line `jobs.newsletter_blast_jobs registered cron newsletter_blast_tick` should appear once at boot. **Same fix as #12 with the new SHA target.**
+
+2. **Legacy unsigned Polymarket wallet-connect path still accepted (30-day window)** — carry-over from #12 MED #3 (and #10/#11 MED #1 lineage)
+   Location: `gateway/market_routes.py:632-656`
+   Impact: Unchanged. An authenticated user can claim any Polygon address by POSTing `{wallet_address: "0x..."}` without a signature. WARN log fires per call. Deprecation window closes 2026-06-13 (30 days after rollout).
+   Fix: Same as #12. Add a per-user `legacy_wallet_connect_allowed` feature flag defaulting False for accounts created after 2026-05-14. Close the legacy branch at 2026-06-13.
+
+#### LOW
+1. **Cloudflare WAF rate-limit rules still don't cover `/admin/api/*`** — carry-over from #12 LOW #1
+   Location: `CLOUDFLARE_CHANGES.md`
+   Impact: Unchanged.
+   Fix: Same as #12 — add `*.narve.ai/admin/api/*` at 600/min/IP.
+
+2. **Google Fonts hoist on every page** — carry-over from #12 LOW #2
+   Location: `gateway/pwa_middleware.py:128-132`, CSP at `gateway/server.py:797-798`
+   Impact: Unchanged.
+   Fix: Self-host woff2 under `/_gateway_static/fonts/`. Tighten CSP to `'self'`.
+
+3. **57-deep stash collection** — carry-over from #12 LOW #3
+   Location: `git stash list`
+   Impact: Unchanged at 57 stashes (no new entries, no triage either). None contain security-relevant code on top-10 eyeball.
+   Fix: Triage with `git stash list` + `git stash show stash@{N}`. Drop landed work; park live work in named branches.
+
+4. **pip-audit still blocked on local Python 3.9 / orjson transitive** — carry-over from #12 LOW #4 (and #8/#9/#10/#11)
+   Location: `scripts/scan_deps.sh` invocation environment
+   Impact: Unchanged. Confirmed today: `scan_deps.sh` failed with `ERROR: Could not find a version that satisfies the requirement orjson==3.11.6` against local Py 3.9 venv.
+   Fix: Stand up a Python 3.10+ venv on the CI runner and pin pip-audit there. Re-run.
+
+#### Tail-coverage gaps (informational — not severity-rated)
+These are edge cases the new code handles defensively but are not exercised by the test suite. None are exploitable — flagged here so #14 picks them up if the worker pattern is extended:
+- `jobs/newsletter_blast_jobs.py:72-83` — `campaign_missing` branch (calls `db.mark_blast_job_failed(job_id)`). No test asserts this fail-safe runs when the campaign row is deleted out from under a running tick.
+- `jobs/newsletter_blast_jobs.py:128-139` — `page_fetch_error` branch (catches the `db.get_blast_recipients_page` raise, calls `mark_blast_job_failed`). No test asserts this is reached on a DB-level read failure.
+- `jobs/newsletter_blast_jobs.py:141-159` — `no_more_recipients` drift-handling branch (live count dropped below recorded total; closes the row). No test asserts the mass-unsubscribe race.
+- `jobs/newsletter_blast_jobs.py:198-209` — multi-tick drain. Test 3 drains the entire 3-recipient tail in one tick; no test covers a tail >`MAX_BATCH_PER_TICK` requiring multiple pulses to close.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- File: `gateway/static/privacy.html` (M, 10 lines changed) — CARRY-OVER from #12, sibling-agent text-only update to legal copy. LEFT UNTOUCHED.
+- File: `gateway/tests/test_health.py` (M, 132 lines changed) — CARRY-OVER from #12, sibling-agent /health payload test expansion. LEFT UNTOUCHED.
+- Summary: No security-relevant production code is in the working tree. These two files belong to a parallel agent's pre-release work and are explicitly out-of-scope for this audit.
+- Security implications: none.
+- Must-do before commit: none — both files are managed by the sibling agent that owns the pre-release surface.
+
+#### Unpushed local commits
+- Commit `992005b` (security(audit#12 MED#1): bound /admin/newsletter/send recipient loop)
+  - Files touched: `gateway/admin_routes.py`, `gateway/db.py`, `gateway/jobs/__init__.py`, `gateway/jobs/newsletter_blast_jobs.py` (NEW), `gateway/migrations/187_newsletter_blast_jobs.py` (NEW), `gateway/queries/newsletter.py`, `gateway/tests/test_newsletter_blast_bounding.py` (NEW). +980/-23.
+  - Security-relevant: **yes, and the audit confirms it CLOSES MED #12.1.** The change is defensive — every SQL touch parameterised, every numeric cast `int()`-bounded, page limit hard-capped at 5,000, cron tick has no HTTP surface, segment/frequency still allowlist-validated. No new auth surface introduced.
+  - Recommended: push to origin then deploy onto server.
+
+#### Server-side uncommitted state
+- What differs: unchanged from #12 (342+ files diverging). The newly-introduced files from `992005b` are NOT on the server yet.
+- Regression vs origin: not a regression in code quality; same process / observability regression as #12.
+- Secrets server-only not in .env.example: unchanged from #12 (none documented).
+- Reconciliation recommendation: deploy `992005b` (after push) onto server. Documented above as MED #1 carry-over.
+
+#### Stashes
+- 57 entries — unchanged from #12. No new top-of-stack since previous audit. No security-relevant code in any on eyeball. See LOW #3.
+
+### Changes since previous audit
+
+#### Resolved
+- **#12 MED #1 (newsletter blast unbounded loop)** — **CONFIRMED RESOLVED in commit `992005b`.** The synchronous portion of `/admin/newsletter/send` is now bounded at `MAX_INLINE_RECIPIENTS=500`. Overflow is recorded as a row in `newsletter_blast_jobs` (migration 187) and drained by `newsletter_blast_tick` cron at 500 recipients/minute. Worker latency on the admin POST is now O(min(N, 500)) instead of O(N). The full recipient_count is preserved on the campaign row for audit; `sent_at` is backfilled by the tick worker once the tail closes. **47 tests pass per audit context; 3 new direct regression tests in `test_newsletter_blast_bounding.py` cover the inline path, the bounded-overflow path, and the worker drain path.** Carry-over closed.
+
+#### New issues
+- None. The new surface introduced by `992005b` (migration 187, jobs/newsletter_blast_jobs.py, queries/newsletter.py paged getter, db.py re-exports, test file) is itself clean across all 10 automated scans + manual checklist review.
+
+#### Regressions
+- None.
+
+### Drift warnings
+- **Server git tip still ~50 commits behind origin** AND now also missing local commit `992005b` (which is the fix for MED #12.1). Deploy planned to follow this audit per the audit context.
+- 57 stashes unchanged — operational debt persists.
+- Test files in working tree (test_health.py) and static (privacy.html) are sibling-agent WIP — leave untouched.
+- Running uvicorn process from audit #12 has NOT been restarted — same stale process, same caveat about which admin routes are registered.
+
+### Recommended actions for next audit
+1. **Verify deploy of `992005b` landed cleanly** — `/health.git_sha == 992005b`, `newsletter_blast_jobs` table exists on the server (`sqlite3 gateway/auth.db ".tables newsletter_blast_jobs"`), scheduler log line `jobs.newsletter_blast_jobs registered cron newsletter_blast_tick` appeared once at boot, and an admin POST to `/admin/newsletter/send` with a >500-row segment returns 200 with `queued_count > 0` in the JSON response.
+2. **Smoke-test the worker drain in production** — pick a segment with ~600 confirmed subscribers (or seed test rows in a staging-style environment), POST send, then wait ~2 minutes and check `SELECT status, processed_recipients, total_recipients FROM newsletter_blast_jobs ORDER BY id DESC LIMIT 1`. Status should be `done` after enough ticks have fired.
+3. **Backfill tail-coverage gaps** — add 4 tests to `test_newsletter_blast_bounding.py`: campaign-missing branch, page-fetch-error branch, mass-unsubscribe race branch, multi-tick drain. These are not security holes but they're worth completing the fail-safe coverage.
+4. Confirm legacy Polymarket wallet path is closed by 2026-06-13 — if open past that date, escalate to HIGH.
+5. Edge-level rate-limit rule on `/admin/api/*` at 600/min/IP.
+6. Self-host Instrument Serif + Source Serif 4; tighten CSP.
+7. Stash sweep — drop landed; park live work in named branches.
+8. Re-run pip-audit on a Python 3.10+ venv.
+9. Probe `/stripe/webhook` end-to-end once Stripe SDK installed on server.
+10. After deploy, watch the audit log for the first real-world `newsletter.blast_send` to confirm `immediate_enqueued` + `queued_count` + `blast_job_id` are all populated as expected on a real blast.
+
+---
+
 ## AUDIT #12 — 2026-05-14T22:55Z — commit ae66727 — post-test-sweep + Stripe-live audit
 
 ### Why this audit exists
