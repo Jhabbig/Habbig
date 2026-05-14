@@ -398,3 +398,14 @@ body {
 /* density variant — compact tightens row padding but keeps full-width */
 [data-density="compact"] .srcs-row { padding: var(--space-5); }
 [data-density="compact"] .srcs-shell { padding: var(--space-7) var(--space-5); }
+
+/* Focus ring — keyboard-only via :focus-visible */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--text-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

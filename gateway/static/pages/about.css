@@ -180,3 +180,14 @@ body {
 }
 .about-footer-nav a { color: var(--text-secondary); text-decoration: none; }
 .about-footer-nav a:hover { color: var(--text-primary); text-decoration: underline; }
+
+/* Focus ring — keyboard-only via :focus-visible */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--text-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

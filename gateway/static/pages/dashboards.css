@@ -215,3 +215,14 @@ body .status-bar .status-item__link:hover {
 body .status-bar .status-item--end {
   margin-left: auto;
 }
+
+/* Focus ring — keyboard-only via :focus-visible */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--text-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

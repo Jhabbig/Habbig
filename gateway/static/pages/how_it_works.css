@@ -208,3 +208,14 @@ body {
   transition: background var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
 }
 .hiw-cta:hover { background: var(--interactive-hover); }
+
+/* Focus ring — keyboard-only via :focus-visible */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--text-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
