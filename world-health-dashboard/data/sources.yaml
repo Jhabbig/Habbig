@@ -1,0 +1,76 @@
+# World Health data sources — documented endpoints for the fetcher.
+# Every entry has a stable key (used as cache key + route slug), the
+# canonical URL, refresh hint, and a one-line description.
+#
+# When a source can return raw JSON, prefer that over RSS/HTML scraping
+# wherever possible. WHO DON is RSS for now (no public JSON feed exists
+# as of 2026-05). openFDA and Polymarket are first-class JSON.
+
+sources:
+  who_don:
+    name: WHO Disease Outbreak News
+    url: https://www.who.int/feeds/entity/csr/don/en/rss.xml
+    format: rss
+    refresh_minutes: 60
+    description: |
+      Canonical WHO outbreak feed. New PHEIC declarations, country-level
+      disease outbreak reports, and verified case counts.
+
+  cdc_glass:
+    name: WHO GLASS (Global AMR Surveillance)
+    url: https://www.who.int/data/gho/info/glass
+    format: html
+    refresh_minutes: 1440
+    description: |
+      WHO's flagship AMR (antimicrobial resistance) surveillance programme.
+      No public REST API — the production fetcher will need to scrape the
+      country reports PDF or hit the WHO data warehouse export. Stubbed.
+
+  ecdc_atlas:
+    name: ECDC Surveillance Atlas of Infectious Diseases
+    url: https://atlas.ecdc.europa.eu/public/index.aspx
+    format: html
+    refresh_minutes: 1440
+    description: |
+      EU-level disease surveillance. Carbapenem resistance, MRSA, RSV, etc.
+      No public JSON API — production will need scraping. Stubbed.
+
+  cdc_amr:
+    name: CDC Antibiotic Resistance Threats
+    url: https://www.cdc.gov/drugresistance/biggest-threats.html
+    format: html
+    refresh_minutes: 10080
+    description: |
+      CDC's biennial AR Threats Report — 18 priority pathogens. Slow-moving;
+      cache for a week. Stubbed.
+
+  fda_shortages:
+    name: openFDA Drug Shortages
+    url: https://api.fda.gov/drug/shortages.json
+    backup_url: https://www.accessdata.fda.gov/scripts/drugshortages/
+    format: json
+    refresh_minutes: 360
+    description: |
+      Authoritative FDA drug-shortage list. JSON API is openFDA; the
+      scripted accessdata.fda.gov URL is the HTML fallback if openFDA
+      rate-limits. Returns currently active shortages with drug name,
+      reason, expected resupply date.
+
+  polymarket_gamma:
+    name: Polymarket Gamma API (health markets)
+    url: https://gamma-api.polymarket.com/events
+    format: json
+    refresh_minutes: 5
+    description: |
+      Polymarket events tagged with disease/pandemic/health. We compute
+      edge per market against a model probability where one exists,
+      otherwise we surface the implied price.
+
+  who_factsheets:
+    name: WHO Disease Factsheets (canonical reference URLs)
+    url: https://www.who.int/news-room/fact-sheets
+    format: html
+    refresh_minutes: 43200
+    description: |
+      Canonical landing pages per disease. Used as the "WHO factsheet URL"
+      in data/diseases.yaml. Refreshed monthly.

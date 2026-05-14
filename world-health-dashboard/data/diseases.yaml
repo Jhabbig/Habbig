@@ -1,0 +1,266 @@
+# 508-Disease Atlas — seed file.
+#
+# This is a scaffolded subset of the full 508-disease atlas. Each row has:
+#   - name:         common English name
+#   - icd10:        ICD-10 code (or "—" if not applicable / multiple)
+#   - category:     coarse bucket (viral, bacterial, parasitic, fungal,
+#                   prion, ncd, other)
+#   - prevalence:   rough global figure with units ("annual cases",
+#                   "people living with", "deaths/yr", etc.) — these are
+#                   order-of-magnitude WHO/Lancet estimates as of 2025.
+#   - who_url:      canonical WHO factsheet URL when one exists
+#   - status:       "tracked" (we have a model), "atlas" (atlas-only,
+#                   no model), "scaffolded" (placeholder row)
+#
+# Production will load the rest of the 508-disease list from a separate
+# build step; this file ships the most-asked-for diseases as a seed.
+
+generated_at: 2026-05-14
+disease_count_target: 508
+diseases:
+  - name: COVID-19
+    icd10: U07.1
+    category: viral
+    prevalence: ~7M cumulative deaths, ~775M cumulative cases
+    who_url: https://www.who.int/health-topics/coronavirus
+    status: tracked
+  - name: Mpox
+    icd10: B04
+    category: viral
+    prevalence: ~98k cases (2022-2024 outbreak); clade Ib ongoing
+    who_url: https://www.who.int/news-room/fact-sheets/detail/mpox
+    status: tracked
+  - name: Influenza A H5N1
+    icd10: J09
+    category: viral
+    prevalence: zoonotic, ~900 confirmed human cases since 2003
+    who_url: https://www.who.int/health-topics/influenza-avian-and-other-zoonotic
+    status: tracked
+  - name: Influenza A H7N9
+    icd10: J09
+    category: viral
+    prevalence: ~1,500 confirmed human cases since 2013
+    who_url: https://www.who.int/health-topics/influenza-avian-and-other-zoonotic
+    status: tracked
+  - name: Seasonal Influenza
+    icd10: J10
+    category: viral
+    prevalence: 290k-650k respiratory deaths/yr globally
+    who_url: https://www.who.int/news-room/fact-sheets/detail/influenza-(seasonal)
+    status: atlas
+  - name: Dengue
+    icd10: A90
+    category: viral
+    prevalence: ~390M infections/yr, ~96M symptomatic
+    who_url: https://www.who.int/news-room/fact-sheets/detail/dengue-and-severe-dengue
+    status: tracked
+  - name: Measles
+    icd10: B05
+    category: viral
+    prevalence: ~10M cases/yr, ~107k deaths/yr (mostly children)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/measles
+    status: tracked
+  - name: Poliomyelitis
+    icd10: A80
+    category: viral
+    prevalence: <30 wild cases/yr (endemic in Pakistan + Afghanistan)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/poliomyelitis
+    status: tracked
+  - name: Tuberculosis
+    icd10: A15
+    category: bacterial
+    prevalence: ~10M new cases/yr, ~1.25M deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/tuberculosis
+    status: tracked
+  - name: HIV/AIDS
+    icd10: B20
+    category: viral
+    prevalence: ~39M living with HIV, ~630k AIDS-related deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/hiv-aids
+    status: tracked
+  - name: Malaria
+    icd10: B54
+    category: parasitic
+    prevalence: ~249M cases/yr, ~608k deaths/yr (mostly sub-Saharan Africa)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/malaria
+    status: tracked
+  - name: Ebola Virus Disease
+    icd10: A98.4
+    category: viral
+    prevalence: episodic outbreaks; ~50% case-fatality untreated
+    who_url: https://www.who.int/news-room/fact-sheets/detail/ebola-virus-disease
+    status: tracked
+  - name: Marburg Virus Disease
+    icd10: A98.3
+    category: viral
+    prevalence: episodic outbreaks; up to 88% case-fatality
+    who_url: https://www.who.int/news-room/fact-sheets/detail/marburg-virus-disease
+    status: tracked
+  - name: Lassa Fever
+    icd10: A96.2
+    category: viral
+    prevalence: 100k-300k infections/yr in West Africa, ~5k deaths
+    who_url: https://www.who.int/news-room/fact-sheets/detail/lassa-fever
+    status: tracked
+  - name: Nipah Virus Infection
+    icd10: B33.8
+    category: viral
+    prevalence: episodic outbreaks in South Asia; 40-75% case-fatality
+    who_url: https://www.who.int/news-room/fact-sheets/detail/nipah-virus
+    status: tracked
+  - name: Cholera
+    icd10: A00
+    category: bacterial
+    prevalence: 1.3M-4M cases/yr, 21k-143k deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/cholera
+    status: tracked
+  - name: Yellow Fever
+    icd10: A95
+    category: viral
+    prevalence: ~200k cases/yr, ~30k deaths/yr (Africa + S. America)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/yellow-fever
+    status: tracked
+  - name: Zika Virus Disease
+    icd10: A92.5
+    category: viral
+    prevalence: episodic outbreaks; congenital syndrome risk
+    who_url: https://www.who.int/news-room/fact-sheets/detail/zika-virus
+    status: atlas
+  - name: Chikungunya
+    icd10: A92.0
+    category: viral
+    prevalence: ~3M reported cases since 2004
+    who_url: https://www.who.int/news-room/fact-sheets/detail/chikungunya
+    status: atlas
+  - name: Rabies
+    icd10: A82
+    category: viral
+    prevalence: ~59k deaths/yr globally (mostly India + Africa)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/rabies
+    status: tracked
+  - name: Diphtheria
+    icd10: A36
+    category: bacterial
+    prevalence: ~7k reported cases/yr
+    who_url: https://www.who.int/health-topics/diphtheria
+    status: atlas
+  - name: Pertussis (Whooping cough)
+    icd10: A37
+    category: bacterial
+    prevalence: ~24M cases/yr
+    who_url: https://www.who.int/health-topics/pertussis
+    status: atlas
+  - name: Tetanus
+    icd10: A35
+    category: bacterial
+    prevalence: ~25k deaths/yr (mostly neonatal)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/tetanus
+    status: atlas
+  - name: Hepatitis B
+    icd10: B16
+    category: viral
+    prevalence: ~254M chronic infections, ~820k deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/hepatitis-b
+    status: tracked
+  - name: Hepatitis C
+    icd10: B17.1
+    category: viral
+    prevalence: ~50M chronic infections, ~242k deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/hepatitis-c
+    status: tracked
+  - name: Meningococcal disease
+    icd10: A39
+    category: bacterial
+    prevalence: ~500k cases/yr in the meningitis belt
+    who_url: https://www.who.int/news-room/fact-sheets/detail/meningococcal-meningitis
+    status: atlas
+  - name: Pneumococcal disease
+    icd10: J13
+    category: bacterial
+    prevalence: leading cause of bacterial pneumonia + meningitis in children
+    who_url: https://www.who.int/teams/immunization-vaccines-and-biologicals/diseases/pneumococcal-disease
+    status: atlas
+  - name: Rotavirus diarrhoea
+    icd10: A08.0
+    category: viral
+    prevalence: ~200k deaths/yr in children <5
+    who_url: https://www.who.int/teams/immunization-vaccines-and-biologicals/diseases/rotavirus
+    status: atlas
+  - name: RSV (Respiratory syncytial virus)
+    icd10: J21.0
+    category: viral
+    prevalence: ~33M cases in children <5/yr, ~3.6M hospitalisations
+    who_url: https://www.who.int/teams/immunization-vaccines-and-biologicals/diseases/respiratory-syncytial-virus-disease
+    status: tracked
+  - name: Typhoid fever
+    icd10: A01.0
+    category: bacterial
+    prevalence: ~9M cases/yr, ~110k deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/typhoid
+    status: atlas
+  - name: Shigellosis
+    icd10: A03
+    category: bacterial
+    prevalence: ~165M cases/yr globally
+    who_url: https://www.who.int/health-topics/shigellosis
+    status: atlas
+  - name: MRSA (methicillin-resistant Staphylococcus aureus)
+    icd10: A41.0
+    category: bacterial
+    prevalence: priority AMR pathogen; ~100k US hospital infections/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/antimicrobial-resistance
+    status: tracked
+  - name: Multidrug-resistant TB (MDR-TB)
+    icd10: A15.0
+    category: bacterial
+    prevalence: ~410k cases/yr, ~160k deaths/yr
+    who_url: https://www.who.int/teams/global-tuberculosis-programme
+    status: tracked
+  - name: Candida auris
+    icd10: B37.7
+    category: fungal
+    prevalence: rising hospital outbreaks; ~30-60% case-fatality bloodstream
+    who_url: https://www.who.int/news-room/fact-sheets/detail/antimicrobial-resistance
+    status: tracked
+  - name: Schistosomiasis
+    icd10: B65
+    category: parasitic
+    prevalence: ~250M infected, ~200k deaths/yr
+    who_url: https://www.who.int/news-room/fact-sheets/detail/schistosomiasis
+    status: atlas
+  - name: Lymphatic filariasis
+    icd10: B74
+    category: parasitic
+    prevalence: ~51M infected
+    who_url: https://www.who.int/news-room/fact-sheets/detail/lymphatic-filariasis
+    status: atlas
+  - name: Leishmaniasis
+    icd10: B55
+    category: parasitic
+    prevalence: ~700k-1M cases/yr; 20k-30k deaths/yr (visceral form)
+    who_url: https://www.who.int/news-room/fact-sheets/detail/leishmaniasis
+    status: atlas
+  - name: Trachoma
+    icd10: A71
+    category: bacterial
+    prevalence: leading infectious cause of blindness
+    who_url: https://www.who.int/news-room/fact-sheets/detail/trachoma
+    status: atlas
+  - name: Onchocerciasis (river blindness)
+    icd10: B73
+    category: parasitic
+    prevalence: ~21M infected, ~14.6M with skin or eye disease
+    who_url: https://www.who.int/news-room/fact-sheets/detail/onchocerciasis
+    status: atlas
+  - name: Variant Creutzfeldt-Jakob Disease
+    icd10: A81.0
+    category: prion
+    prevalence: ~233 cases worldwide (1996-2019); near-zero ongoing
+    who_url: https://www.who.int/news-room/fact-sheets/detail/creutzfeldt-jakob-disease
+    status: scaffolded
+  - name: Crimean-Congo Haemorrhagic Fever
+    icd10: A98.0
+    category: viral
+    prevalence: ~1k confirmed cases/yr; up to 40% case-fatality
+    who_url: https://www.who.int/news-room/fact-sheets/detail/crimean-congo-haemorrhagic-fever
+    status: tracked

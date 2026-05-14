@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>World Health — narve.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@1&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg-base: #ffffff;
+    --bg-surface: #fafafa;
+    --bg-raised: #f3f3f3;
+    --bg-inset: #ebebeb;
+    --border-ghost: #ececec;
+    --border-subtle: #e2e2e2;
+    --border-default: #d4d4d4;
+    --border-strong: #a3a3a3;
+    --text-primary: #0a0a0a;
+    --text-secondary: #404040;
+    --text-tertiary: #737373;
+    --text-quaternary: #a3a3a3;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 14px;
+    --text-md: 16px;
+    --text-lg: 20px;
+    --text-xl: 28px;
+    --text-2xl: 40px;
+    --text-3xl: 56px;
+    --row-pad-y: 9px;
+    --row-pad-x: 14px;
+    --card-pad: 18px;
+    --duration-fast: 0.12s;
+    --duration-base: 0.2s;
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: var(--text-base);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .serif { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; }
+  a { color: var(--text-primary); text-decoration: none; border-bottom: 1px solid var(--border-default); transition: border-color var(--duration-fast) var(--ease); }
+  a:hover { border-color: var(--text-primary); }
+
+  header {
+    border-bottom: 1px solid var(--border-subtle);
+    padding: var(--space-6) var(--space-8);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-6);
+  }
+  header .brand {
+    font-size: var(--text-sm);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+  header h1 {
+    margin: 0;
+    font-size: var(--text-xl);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  header .crumbs { margin-left: auto; font-size: var(--text-sm); color: var(--text-tertiary); }
+
+  main { padding: var(--space-8); max-width: 1320px; margin: 0 auto; }
+
+  .hero { margin-bottom: var(--space-10); }
+  .hero h2 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: var(--text-3xl);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-4);
+  }
+  .hero .lede {
+    max-width: 720px;
+    color: var(--text-secondary);
+    font-size: var(--text-md);
+    line-height: 1.55;
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-3);
+    margin-bottom: var(--space-10);
+  }
+  .stat {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--card-pad);
+    background: var(--bg-surface);
+  }
+  .stat .label {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    font-weight: 500;
+  }
+  .stat .value {
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-top: var(--space-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .sub {
+    margin-top: var(--space-2);
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+  }
+
+  .section-title {
+    margin: var(--space-10) 0 var(--space-3);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+  }
+
+  .section-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+  .section-meta .meta {
+    font-size: var(--text-xs);
+    color: var(--text-quaternary);
+  }
+
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: var(--space-6);
+  }
+  .tab {
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    font: inherit;
+    font-size: var(--text-sm);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+  }
+  .tab:hover { color: var(--text-primary); }
+  .tab[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--text-primary); font-weight: 500; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .feed {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-base);
+    overflow: hidden;
+  }
+  .feed-item {
+    padding: var(--row-pad-y) var(--row-pad-x);
+    border-bottom: 1px solid var(--border-ghost);
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: var(--space-4);
+    align-items: baseline;
+  }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-item:hover { background: var(--bg-surface); }
+  .feed-item .when { font-family: 'Geist Mono', monospace; font-size: var(--text-xs); color: var(--text-tertiary); }
+  .feed-item .what .title { font-weight: 500; }
+  .feed-item .what .summary { color: var(--text-secondary); font-size: var(--text-sm); margin-top: var(--space-1); }
+
+  .search-row {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .search-row input, .search-row select {
+    font: inherit;
+    font-size: var(--text-base);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    min-width: 200px;
+  }
+  .search-row input:focus, .search-row select:focus {
+    outline: none;
+    border-color: var(--text-primary);
+  }
+  .search-row .count {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+    align-self: center;
+  }
+
+  .atlas-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-3);
+  }
+  .disease-card {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    background: var(--bg-surface);
+    transition: border-color var(--duration-fast) var(--ease);
+  }
+  .disease-card:hover { border-color: var(--border-strong); }
+  .disease-card .name { font-weight: 600; }
+  .disease-card .icd { font-family: 'Geist Mono', monospace; font-size: var(--text-xs); color: var(--text-tertiary); }
+  .disease-card .cat { display: inline-block; font-size: var(--text-xs); color: var(--text-secondary); margin-top: var(--space-2); padding: 2px 8px; border: 1px solid var(--border-default); border-radius: 999px; text-transform: capitalize; }
+  .disease-card .prev { color: var(--text-secondary); font-size: var(--text-sm); margin-top: var(--space-2); line-height: 1.4; }
+  .disease-card .who-link { font-size: var(--text-xs); margin-top: var(--space-3); display: inline-block; }
+  .disease-card .status { font-family: 'Geist Mono', monospace; font-size: var(--text-xs); color: var(--text-quaternary); text-transform: uppercase; letter-spacing: 0.05em; float: right; }
+
+  table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  th, td { text-align: left; padding: var(--row-pad-y) var(--row-pad-x); border-bottom: 1px solid var(--border-ghost); vertical-align: top; }
+  th { color: var(--text-tertiary); font-weight: 500; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); }
+  tbody tr:hover td { background: var(--bg-surface); }
+  td.mono, td.num { font-family: 'Geist Mono', monospace; font-variant-numeric: tabular-nums; }
+  td.num { text-align: right; }
+
+  .empty {
+    color: var(--text-tertiary);
+    font-style: italic;
+    padding: var(--space-8);
+    text-align: center;
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  footer {
+    margin-top: var(--space-12);
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+    line-height: 1.7;
+  }
+  footer a { color: var(--text-secondary); }
+
+  @media (max-width: 640px) {
+    header { padding: var(--space-4) var(--space-4); flex-wrap: wrap; gap: var(--space-2); }
+    main { padding: var(--space-4); }
+    .hero h2 { font-size: var(--text-2xl); }
+    .feed-item { grid-template-columns: 1fr; gap: var(--space-1); }
+    .feed-item .when { font-size: var(--text-xs); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">narve.ai</span>
+  <h1>World Health</h1>
+  <span class="crumbs mono">health.narve.ai</span>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>508 diseases. <br/>One globe.</h2>
+    <p class="lede">
+      Live WHO Disease Outbreak News, a 508-disease atlas with WHO factsheet
+      links, antimicrobial-resistance surveillance, openFDA drug-shortage
+      tracking, and Polymarket disease prediction markets — joined into one
+      surface. Built for power users who want to see the whole picture.
+    </p>
+  </section>
+
+  <div class="summary-grid" id="summary"></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="globe" aria-selected="false">Globe</button>
+    <button class="tab" role="tab" data-tab="outbreaks" aria-selected="true">Outbreaks</button>
+    <button class="tab" role="tab" data-tab="atlas" aria-selected="false">Atlas</button>
+    <button class="tab" role="tab" data-tab="shortages" aria-selected="false">Shortages</button>
+    <button class="tab" role="tab" data-tab="markets" aria-selected="false">Markets</button>
+  </div>
+
+  <section class="panel" id="panel-globe">
+    <div class="section-meta">
+      <div class="section-title">Globe</div>
+      <div class="meta mono">stub · pending interactive globe</div>
+    </div>
+    <div class="empty">
+      Interactive disease globe — country click-throughs, AMR overlay, supply-chain
+      stress heatmap. Ships in v0.2.
+    </div>
+  </section>
+
+  <section class="panel active" id="panel-outbreaks">
+    <div class="section-meta">
+      <div class="section-title">WHO Disease Outbreak News</div>
+      <div class="meta mono"><a href="https://www.who.int/emergencies/disease-outbreak-news" target="_blank" rel="noopener">who.int/don</a></div>
+    </div>
+    <div id="outbreaks-feed" class="feed"><div class="empty">Loading WHO outbreak feed…</div></div>
+  </section>
+
+  <section class="panel" id="panel-atlas">
+    <div class="section-meta">
+      <div class="section-title">508-Disease Atlas</div>
+      <div class="meta mono" id="atlas-meta">—</div>
+    </div>
+    <div class="search-row">
+      <input type="text" id="atlas-search" placeholder="Search by name, ICD-10, or category…" autocomplete="off" />
+      <select id="atlas-category">
+        <option value="">All categories</option>
+        <option value="viral">Viral</option>
+        <option value="bacterial">Bacterial</option>
+        <option value="parasitic">Parasitic</option>
+        <option value="fungal">Fungal</option>
+        <option value="prion">Prion</option>
+        <option value="ncd">NCD</option>
+      </select>
+      <select id="atlas-status">
+        <option value="">Any status</option>
+        <option value="tracked">Tracked (with model)</option>
+        <option value="atlas">Atlas (no model)</option>
+        <option value="scaffolded">Scaffolded</option>
+      </select>
+      <span class="count" id="atlas-count">—</span>
+    </div>
+    <div id="atlas-grid" class="atlas-grid"></div>
+  </section>
+
+  <section class="panel" id="panel-shortages">
+    <div class="section-meta">
+      <div class="section-title">openFDA Drug Shortages</div>
+      <div class="meta mono"><a href="https://www.accessdata.fda.gov/scripts/drugshortages/" target="_blank" rel="noopener">accessdata.fda.gov</a></div>
+    </div>
+    <div class="search-row">
+      <input type="text" id="shortage-search" placeholder="Filter by generic name (e.g. amoxicillin)…" autocomplete="off" />
+      <button class="tab" id="shortage-go" style="border-bottom-color: var(--border-default); background: var(--bg-base); padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">Search</button>
+    </div>
+    <div id="shortage-table"></div>
+  </section>
+
+  <section class="panel" id="panel-markets">
+    <div class="section-meta">
+      <div class="section-title">Polymarket — Health Markets</div>
+      <div class="meta mono"><a href="https://polymarket.com" target="_blank" rel="noopener">polymarket.com</a></div>
+    </div>
+    <div id="markets-table"></div>
+  </section>
+
+  <footer>
+    Sources:
+    <a href="https://www.who.int/emergencies/disease-outbreak-news" target="_blank" rel="noopener">WHO Disease Outbreak News</a>,
+    <a href="https://api.fda.gov/" target="_blank" rel="noopener">openFDA</a>,
+    <a href="https://www.who.int/data/gho/info/glass" target="_blank" rel="noopener">WHO GLASS</a>,
+    <a href="https://www.cdc.gov/drugresistance/" target="_blank" rel="noopener">CDC AR Threats</a>,
+    <a href="https://polymarket.com" target="_blank" rel="noopener">Polymarket Gamma</a>.
+    <br/>
+    AMR data is currently stubbed; production pull from GLASS/CDC/ECDC ships in v0.2.
+  </footer>
+</main>
+
+<script>
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+async function getJSON(url) {
+  try { const r = await fetch(url); if (!r.ok) throw new Error(r.status); return await r.json(); }
+  catch (e) { console.warn("fetch failed", url, e); return null; }
+}
+
+function fmtNum(n) { return (n === null || n === undefined) ? "—" : Number(n).toLocaleString(); }
+function fmtDate(s) { if (!s) return ""; try { return new Date(s).toUTCString().slice(5, 22) + " UTC"; } catch { return s; } }
+
+// ── Tabs ──
+$$(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.tab;
+    $$(".tab").forEach(b => b.setAttribute("aria-selected", String(b === btn)));
+    $$(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${target}`));
+  });
+});
+
+// ── Summary cards ──
+async function loadSummary() {
+  const s = await getJSON("/api/summary");
+  const root = $("#summary");
+  if (!s) { root.innerHTML = `<div class="empty">Summary unavailable.</div>`; return; }
+  const tiles = [
+    {
+      label: "Disease atlas",
+      value: `${s.diseases.tracked} / ${s.diseases.target}`,
+      sub: `${Math.round((s.diseases.tracked / s.diseases.target) * 100)}% of 508-disease atlas seeded`
+    },
+    {
+      label: "WHO outbreaks (live)",
+      value: fmtNum(s.outbreaks.count),
+      sub: s.outbreaks.latest ? `Latest: ${s.outbreaks.latest.title}` : "No items"
+    },
+    {
+      label: "FDA drug shortages",
+      value: fmtNum(s.shortages.count),
+      sub: s.shortages.stub ? "openFDA unreachable — showing stub" : "Currently active"
+    },
+    {
+      label: "AMR tracked",
+      value: s.amr.antibiotics_tracked.length,
+      sub: "antibiotics · stub data pending GLASS"
+    }
+  ];
+  root.innerHTML = tiles.map(t => `
+    <div class="stat">
+      <div class="label">${t.label}</div>
+      <div class="value">${t.value}</div>
+      <div class="sub">${t.sub}</div>
+    </div>`).join("");
+}
+
+// ── Outbreaks feed ──
+async function loadOutbreaks() {
+  const root = $("#outbreaks-feed");
+  const data = await getJSON("/api/outbreaks?limit=30");
+  if (!data || !data.items || !data.items.length) {
+    root.innerHTML = `<div class="empty">No WHO outbreak items available right now.</div>`;
+    return;
+  }
+  root.innerHTML = data.items.map(item => `
+    <div class="feed-item">
+      <div class="when">${fmtDate(item.published)}</div>
+      <div class="what">
+        <div class="title">${item.link ? `<a href="${item.link}" target="_blank" rel="noopener">${item.title || "(untitled)"}</a>` : (item.title || "(untitled)")}</div>
+        ${item.summary ? `<div class="summary">${item.summary}</div>` : ""}
+      </div>
+    </div>`).join("");
+}
+
+// ── Disease atlas (searchable grid) ──
+let ATLAS_CACHE = [];
+async function loadAtlas() {
+  const data = await getJSON("/api/diseases?limit=1000");
+  ATLAS_CACHE = (data && data.diseases) || [];
+  $("#atlas-meta").textContent = `${ATLAS_CACHE.length} seeded · ${data?.target || 508} target`;
+  renderAtlas();
+}
+function renderAtlas() {
+  const q = $("#atlas-search").value.trim().toLowerCase();
+  const cat = $("#atlas-category").value;
+  const stat = $("#atlas-status").value;
+  let rows = ATLAS_CACHE;
+  if (q) rows = rows.filter(d =>
+    (d.name || "").toLowerCase().includes(q) ||
+    (d.icd10 || "").toLowerCase().includes(q) ||
+    (d.category || "").toLowerCase().includes(q)
+  );
+  if (cat) rows = rows.filter(d => (d.category || "").toLowerCase() === cat);
+  if (stat) rows = rows.filter(d => (d.status || "").toLowerCase() === stat);
+  $("#atlas-count").textContent = `${rows.length} of ${ATLAS_CACHE.length}`;
+  const root = $("#atlas-grid");
+  if (!rows.length) { root.innerHTML = `<div class="empty">No diseases match.</div>`; return; }
+  root.innerHTML = rows.map(d => `
+    <div class="disease-card">
+      <span class="status">${d.status || "—"}</span>
+      <div class="name">${d.name || "—"}</div>
+      <div class="icd">${d.icd10 || "—"}</div>
+      <div class="cat">${d.category || "—"}</div>
+      ${d.prevalence ? `<div class="prev">${d.prevalence}</div>` : ""}
+      ${d.who_url ? `<a class="who-link" href="${d.who_url}" target="_blank" rel="noopener">WHO factsheet →</a>` : ""}
+    </div>`).join("");
+}
+["#atlas-search", "#atlas-category", "#atlas-status"].forEach(s => {
+  document.addEventListener("input", e => { if (e.target.closest(s)) renderAtlas(); });
+  document.addEventListener("change", e => { if (e.target.closest(s)) renderAtlas(); });
+});
+
+// ── Shortages ──
+async function loadShortages(q) {
+  const root = $("#shortage-table");
+  root.innerHTML = `<div class="empty">Loading shortages…</div>`;
+  const url = q ? `/api/supply-chains?drug=${encodeURIComponent(q)}` : "/api/supply-chains";
+  const data = await getJSON(url);
+  if (!data || !data.shortages || !data.shortages.length) {
+    root.innerHTML = `<div class="empty">${data?.stub ? "openFDA unreachable — try later." : "No active shortages."}</div>`;
+    return;
+  }
+  root.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Generic</th><th>Brand</th><th>Status</th><th>Reason</th><th>Posted</th><th>Resupply</th>
+      </tr></thead>
+      <tbody>
+        ${data.shortages.slice(0, 100).map(s => `
+          <tr>
+            <td>${s.generic_name || "—"}</td>
+            <td>${s.proprietary_name || "—"}</td>
+            <td>${s.status || "—"}</td>
+            <td>${s.shortage_reason || "—"}</td>
+            <td class="mono">${s.initial_posting_date || "—"}</td>
+            <td class="mono">${s.expected_resupply_date || "—"}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+$("#shortage-go").addEventListener("click", () => loadShortages($("#shortage-search").value.trim()));
+$("#shortage-search").addEventListener("keydown", e => { if (e.key === "Enter") loadShortages($("#shortage-search").value.trim()); });
+
+// ── Markets ──
+async function loadMarkets() {
+  const root = $("#markets-table");
+  root.innerHTML = `<div class="empty">Loading Polymarket health markets…</div>`;
+  const data = await getJSON("/api/markets");
+  if (!data || !data.markets || !data.markets.length) {
+    root.innerHTML = `<div class="empty">${data?.note || "No health markets currently active."}</div>`;
+    return;
+  }
+  root.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Market</th><th class="num">Implied</th><th class="num">Model</th><th class="num">Edge</th>
+      </tr></thead>
+      <tbody>
+        ${data.markets.slice(0, 80).map(m => `
+          <tr>
+            <td>${(m._event_title ? m._event_title + " — " : "")}${m.question || ""}</td>
+            <td class="num">${m._implied_p !== null && m._implied_p !== undefined ? (m._implied_p * 100).toFixed(1) + "%" : "—"}</td>
+            <td class="num">${m._model_p !== null && m._model_p !== undefined ? (m._model_p * 100).toFixed(1) + "%" : "—"}</td>
+            <td class="num">${m._edge_pp !== null && m._edge_pp !== undefined ? (m._edge_pp >= 0 ? "+" : "") + m._edge_pp + "pp" : "—"}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+// ── Boot ──
+loadSummary();
+loadOutbreaks();
+loadAtlas();
+loadShortages();
+loadMarkets();
+setInterval(loadSummary, 5 * 60 * 1000);
+setInterval(loadOutbreaks, 5 * 60 * 1000);
+setInterval(loadMarkets, 5 * 60 * 1000);
+</script>
+</body>
+</html>
