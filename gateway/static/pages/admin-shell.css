@@ -122,9 +122,9 @@
 .admin-body > .page-frame {
   background: var(--bg-surface, var(--surface));
   border: 2px solid var(--text-primary, #111);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   padding: var(--space-6);
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-md);
 }
 
 /* Every admin card + section inside the shell uses 32 px breathing room.
@@ -363,8 +363,10 @@
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
-.admin-tile__delta.up { color: var(--green, #10b981); }
-.admin-tile__delta.down { color: var(--red, #ef4444); }
+/* Monochrome deltas — direction conveyed by arrow glyph + WEIGHT, never hue.
+   "up" = active/positive (rank-1). "down" = needs attention (rank-1 + bold). */
+.admin-tile__delta.up { color: var(--rank-1); font-weight: 500; }
+.admin-tile__delta.down { color: var(--rank-1); font-weight: 700; }
 
 /* ── Generic content helpers ──────────────────────────────────────── */
 
