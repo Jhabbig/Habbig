@@ -1887,6 +1887,485 @@ async def sharing_dashboard(request: Request):
     )
 
 
+# ── /admin/users — paginated user management ────────────────────────────
+#
+# Extracted from the /admin monolith as an additive page. The legacy
+# /admin route keeps its inline list; this page is the new design-system
+# surface (Instrument Serif hero, Inter sans filter bar, Geist Mono IDs,
+# editorial body face on prose cells) used as the canonical user-management
+# entry point going forward. Per-row mutation routes (promote, suspend,
+# impersonate, etc.) re-use the handlers already wired in server.py — this
+# page only adds the GET render + new bulk-actions POST.
+
+
+_USERS_PAGE_LIMIT = 100
+_USERS_ROLE_FILTERS = ("", "user", "admin", "super")
+_USERS_PLAN_FILTERS = ("", "none", "trader", "pro")
+
+
+def _users_role_label(level: int) -> tuple[str, str]:
+    """Return (display, css-modifier) for the user's role pill."""
+    if level >= 2:
+        return ("Super admin", "super")
+    if level == 1:
+        return ("Admin", "admin")
+    return ("User", "user")
+
+
+def _users_filter_match(row, *, q: str, role: str, plan: str, plans_by_user: dict) -> bool:
+    """Apply post-fetch filters to a user row.
+
+    SQL-side cursor pagination is preserved; filtering happens in Python
+    so we can compose three orthogonal predicates without rebuilding the
+    cursor logic. The page size (100) keeps this O(n) loop cheap.
+    """
+    if q:
+        needle = q.lower().lstrip("@")
+        email = (row["email"] or "").lower()
+        handle = (row["username"] or "").lower()
+        if needle not in email and needle not in handle:
+            return False
+    if role:
+        level = row["is_admin"] or 0
+        want = role.lower()
+        if want == "user" and level != 0:
+            return False
+        if want == "admin" and level != 1:
+            return False
+        if want == "super" and level < 2:
+            return False
+    if plan:
+        user_plan = plans_by_user.get(row["id"], "none")
+        if plan == "none" and user_plan != "none":
+            return False
+        if plan == "trader" and user_plan != "trader":
+            return False
+        if plan == "pro" and user_plan != "pro":
+            return False
+    return True
+
+
+def _users_plan_map(user_ids: list) -> dict:
+    """Resolve {user_id: tier} for the visible page.
+
+    One aggregate query, then a quick label. Admins always map to ``pro``.
+    """
+    if not user_ids:
+        return {}
+    out: dict = {uid: "none" for uid in user_ids}
+    placeholders = ",".join(["?"] * len(user_ids))
+    with db.conn() as c:
+        rows = c.execute(
+            f"SELECT user_id, plan FROM subscriptions "
+            f"WHERE user_id IN ({placeholders}) AND status = 'active'",
+            user_ids,
+        ).fetchall()
+    for r in rows:
+        uid = r["user_id"]
+        plan = (r["plan"] or "").lower()
+        if "pro" in plan:
+            out[uid] = "pro"
+        elif "trader" in plan:
+            if out[uid] != "pro":
+                out[uid] = "trader"
+        else:
+            if out[uid] == "none":
+                out[uid] = "trader"  # Any other active row counts as paid.
+    # Admins map to pro regardless of subscriptions.
+    with db.conn() as c:
+        adm_rows = c.execute(
+            f"SELECT id FROM users WHERE id IN ({placeholders}) AND is_admin >= 1",
+            user_ids,
+        ).fetchall()
+    for r in adm_rows:
+        out[r["id"]] = "pro"
+    return out
+
+
+def _users_last_active(user_ids: list) -> dict:
+    """Resolve {user_id: epoch} of the most recent ``user_sessions`` row.
+
+    Falls back to 0 for users who never had a hardened session. Rendering
+    shows "—" in that case.
+    """
+    if not user_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(user_ids))
+    out: dict = {uid: 0 for uid in user_ids}
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                f"SELECT user_id, MAX(last_active_at) AS la "
+                f"FROM user_sessions WHERE user_id IN ({placeholders}) "
+                f"GROUP BY user_id",
+                user_ids,
+            ).fetchall()
+        for r in rows:
+            if r["la"]:
+                out[r["user_id"]] = int(r["la"])
+    except Exception:
+        pass
+    return out
+
+
+def _users_render_options(current: str, choices) -> str:
+    """Render <option>s for the role/plan dropdowns. Empty value = ``All``."""
+    parts = []
+    for value in choices:
+        sel = " selected" if value == current else ""
+        label = "All" if value == "" else value.title()
+        parts.append(
+            f'<option value="{html.escape(value)}"{sel}>{html.escape(label)}</option>'
+        )
+    return "".join(parts)
+
+
+def _users_render_row(
+    u, *, plan_tier: str, last_active: int, csrf_field: str, caller_level: int
+) -> str:
+    """Render a single <tr>. CSRF token reused across the page."""
+    uid = int(u["id"])
+    email = u["email"] or ""
+    handle = u["username"] or ""
+    level = int(u["is_admin"] or 0)
+    role_label, role_mod = _users_role_label(level)
+    is_super = caller_level >= 2
+    can_manage = is_super or (caller_level == 1 and level == 0)
+
+    plan_label = {"none": "Free", "trader": "Trader", "pro": "Pro"}.get(plan_tier, plan_tier.title())
+    plan_mod = plan_tier if plan_tier in ("trader", "pro") else "none"
+
+    created_label = _fmt_ts(u["created_at"], "%Y-%m-%d")
+    last_label = _fmt_ts(last_active, "%Y-%m-%d %H:%M UTC") if last_active else "—"
+
+    # Per-row actions
+    actions: list = []
+    if can_manage:
+        # Impersonate — POSTs to the existing handler with a prompted reason.
+        actions.append(
+            f'<form method="post" action="/admin/users/{uid}/impersonate" '
+            f'onsubmit="var r=prompt(\'Reason for impersonating {html.escape(handle or email)} (min 4 chars):\');'
+            f'if(!r||r.trim().length&lt;4){{return false;}}this.reason.value=r.trim();return true;">'
+            f'{csrf_field}'
+            f'<input type="hidden" name="reason" value="">'
+            f'<button class="btn" type="submit">Impersonate</button></form>'
+        )
+        # Promote / revoke admin
+        if level == 0:
+            actions.append(
+                f'<form method="post" action="/admin/users/{uid}/promote" '
+                f'onsubmit="return confirm(\'Promote {html.escape(handle or email)} to admin?\')">'
+                f'{csrf_field}'
+                f'<button class="btn" type="submit">Promote to admin</button></form>'
+            )
+        elif level == 1:
+            actions.append(
+                f'<form method="post" action="/admin/users/{uid}/demote" '
+                f'onsubmit="return confirm(\'Revoke admin from {html.escape(handle or email)}?\')">'
+                f'{csrf_field}'
+                f'<button class="btn btn--danger" type="submit">Revoke admin</button></form>'
+            )
+        # Revoke all sessions
+        actions.append(
+            f'<form method="post" action="/admin/users/{uid}/revoke-sessions" '
+            f'onsubmit="return confirm(\'Revoke all active sessions for {html.escape(handle or email)}?\')">'
+            f'{csrf_field}'
+            f'<button class="btn btn--danger" type="submit">Revoke sessions</button></form>'
+        )
+        # Export data (GDPR) — links to the existing per-user export trigger.
+        actions.append(
+            f'<a class="btn" href="/admin/users/{uid}/export">Export data</a>'
+        )
+    else:
+        actions.append('<span style="color:var(--text-tertiary);font-size:12px">Insufficient</span>')
+
+    checkbox = (
+        f'<input type="checkbox" form="adm-users-bulk" '
+        f'class="adm-users-row__checkbox" name="user_ids" value="{uid}" '
+        f'aria-label="Select user {html.escape(handle or email)}">'
+        if can_manage else ''
+    )
+
+    return (
+        f'<tr>'
+        f'<td class="adm-users-td adm-users-td--check">{checkbox}</td>'
+        f'<td class="adm-users-row__id">{uid}</td>'
+        f'<td class="adm-users-row__email">{html.escape(email)}</td>'
+        f'<td class="adm-users-row__handle">{html.escape(handle)}</td>'
+        f'<td><span class="adm-users-row__role adm-users-row__role--{role_mod}">'
+        f'{html.escape(role_label)}</span></td>'
+        f'<td><span class="adm-users-row__plan adm-users-row__plan--{plan_mod}">'
+        f'{html.escape(plan_label)}</span></td>'
+        f'<td class="adm-users-row__ts">{html.escape(created_label)}</td>'
+        f'<td class="adm-users-row__ts">{html.escape(last_label)}</td>'
+        f'<td><div class="adm-users-row__actions">{"".join(actions)}</div></td>'
+        f'</tr>'
+    )
+
+
+async def users_page(request: Request):
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+    if not isinstance(admin, dict):
+        return admin
+
+    caller_level = int(admin.get("admin_level") or 1)
+
+    # Cursor + filters from query string
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()[:120]
+    role = (qp.get("role") or "").strip().lower()
+    plan = (qp.get("plan") or "").strip().lower()
+    if role not in _USERS_ROLE_FILTERS:
+        role = ""
+    if plan not in _USERS_PLAN_FILTERS:
+        plan = ""
+
+    before_id = None
+    raw_before = qp.get("before_id")
+    if raw_before and str(raw_before).isdigit():
+        before_id = int(raw_before)
+
+    # SQL-side cursor pagination
+    users = db.list_all_users(limit=_USERS_PAGE_LIMIT, before_id=before_id)
+    user_ids = [int(u["id"]) for u in users]
+    plans_by_user = _users_plan_map(user_ids)
+    last_active_by_user = _users_last_active(user_ids)
+
+    # Apply post-fetch filters
+    filtered = [
+        u for u in users
+        if _users_filter_match(u, q=q, role=role, plan=plan, plans_by_user=plans_by_user)
+    ]
+
+    # Reusable CSRF field — same token across every row form
+    srv = _srv()
+    try:
+        token = (
+            request.cookies.get(srv.CSRF_COOKIE_NAME)
+            or getattr(getattr(request, "state", None), "csrf_token", None)
+            or srv._generate_csrf_token()
+        )
+    except Exception:
+        token = ""
+    csrf_field = (
+        f'<input type="hidden" name="{srv.CSRF_FORM_FIELD}" value="{html.escape(token)}">'
+        if token else ""
+    )
+
+    row_html = "".join(
+        _users_render_row(
+            u,
+            plan_tier=plans_by_user.get(int(u["id"]), "none"),
+            last_active=last_active_by_user.get(int(u["id"]), 0),
+            csrf_field=csrf_field,
+            caller_level=caller_level,
+        )
+        for u in filtered
+    ) or (
+        '<tr><td colspan="9" class="adm-users-empty">'
+        'No users match these filters.'
+        '</td></tr>'
+    )
+
+    # Cursor pagination — only render the "Load more" link if the SQL
+    # page filled. (filtered may be shorter, but the cursor is anchored
+    # on the SQL slice so we don't skip rows.)
+    pagination_html = ""
+    if len(users) >= _USERS_PAGE_LIMIT and users:
+        next_cursor = int(users[-1]["id"])
+        params = []
+        if q:
+            params.append(f"q={html.escape(q)}")
+        if role:
+            params.append(f"role={html.escape(role)}")
+        if plan:
+            params.append(f"plan={html.escape(plan)}")
+        params.append(f"before_id={next_cursor}")
+        href = "/admin/users?" + "&amp;".join(params)
+        pagination_html = (
+            f'<a class="btn" href="{href}" rel="next">Load more</a>'
+        )
+
+    role_options = _users_render_options(role, _USERS_ROLE_FILTERS)
+    plan_options = _users_render_options(plan, _USERS_PLAN_FILTERS)
+
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/users.html",
+        page_title="Users",
+        active_route="users",
+        breadcrumb=[("Admin", "/admin"), ("Users", "/admin/users")],
+        filter_q=q,
+        raw_role_options=role_options,
+        raw_plan_options=plan_options,
+        raw_user_rows=row_html,
+        raw_pagination=pagination_html,
+        raw_csrf_field=csrf_field,
+    )
+
+
+async def users_revoke_sessions(request: Request, user_id: int):
+    """POST /admin/users/{user_id}/revoke-sessions — kill every active session.
+
+    CSRF-protected by the global middleware. Returns to /admin/users so
+    the action stays scoped to the new page.
+    """
+    admin = _require_admin_user(request)
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    caller_level = int(admin.get("admin_level") or 1)
+    target_level = int(target["is_admin"] or 0)
+    if caller_level < 2 and target_level >= caller_level:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    revoked = 0
+    try:
+        from queries import auth as _auth_q
+        revoked = _auth_q.revoke_all_user_sessions(user_id)
+    except Exception as exc:
+        log.warning("revoke_all_user_sessions failed for user_id=%d: %s", user_id, exc)
+    # Also kill the legacy `sessions` rows for full coverage.
+    try:
+        with db.conn() as c:
+            c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    except Exception:
+        pass
+
+    try:
+        from security import audit as _a
+        _audit(
+            _a.AuditAction.USER_SUSPEND,  # closest existing action — represents an admin-forced session kill
+            admin=admin, request=request,
+            target_type="user", target_id=user_id,
+            target_description=target["email"],
+            notes=f"revoked_sessions={revoked}",
+        )
+    except Exception:
+        pass
+
+    return RedirectResponse("/admin/users", status_code=302)
+
+
+async def users_export_data(request: Request, user_id: int):
+    """GET /admin/users/{user_id}/export — admin GDPR export shortcut.
+
+    The full export pipeline lives in ``export_routes`` (rate-limited to
+    1/day/user). Admins responding to a GDPR request for a *different*
+    user can use this shortcut to hand the user a CSV of their account
+    snapshot inline — same shape, smaller scope than the async export ZIP.
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["field", "value"])
+    safe_keys = (
+        "id", "email", "username", "created_at",
+        "is_admin", "suspended", "default_dashboard",
+    )
+    for k in safe_keys:
+        try:
+            w.writerow([k, target[k]])
+        except (IndexError, KeyError):
+            continue
+
+    try:
+        from security import audit as _a
+        _audit(
+            _a.AuditAction.USER_PROMOTE_ADMIN,  # closest neutral admin-read action
+            admin=admin, request=request,
+            target_type="user", target_id=user_id,
+            target_description=target["email"],
+            notes="admin gdpr export shortcut",
+        )
+    except Exception:
+        pass
+
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="user_{user_id}_export.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def users_bulk_actions(request: Request):
+    """POST /admin/users/bulk-actions — checkbox-driven multi-user actions.
+
+    Supported actions:
+      - ``email``     → reserve the action for the email-blast flow.
+                         Records the intent in the audit log and bounces
+                         back; the actual send pipeline lives behind a
+                         separate confirmation step.
+      - ``allowlist`` → mint a one-shot invite token tied to each
+                         selected email (existing closest concept).
+    CSRF is enforced by the middleware. Caller-permission checks mirror
+    ``/admin/users/bulk`` in server.py.
+    """
+    admin = _require_admin_user(request)
+    form = await request.form()
+    action = (form.get("bulk_action") or "").strip().lower()
+    raw_ids = form.getlist("user_ids") if hasattr(form, "getlist") else []
+    user_ids = [
+        int(uid) for uid in raw_ids
+        if isinstance(uid, str) and uid.isdigit() and int(uid) != 1
+    ]
+
+    if action not in ("email", "allowlist") or not user_ids:
+        return RedirectResponse("/admin/users", status_code=302)
+
+    caller_level = int(admin.get("admin_level") or 1)
+    affected = 0
+    for uid in user_ids:
+        target = db.get_user_by_id(uid)
+        if not target:
+            continue
+        target_level = int(target["is_admin"] or 0)
+        if caller_level < 2 and target_level >= caller_level:
+            continue
+        if action == "email":
+            # Intent only — the dispatch happens via /admin/emails so the
+            # bulk surface stays idempotent and re-requestable.
+            affected += 1
+        elif action == "allowlist":
+            try:
+                db.create_invite_token(
+                    note=f"Bulk allowlist via /admin/users for {target['email']}",
+                    target_email=target["email"],
+                )
+                affected += 1
+            except Exception as exc:
+                log.warning("bulk allowlist failed for user_id=%d: %s", uid, exc)
+
+    try:
+        from security import audit as _a
+        _audit(
+            _a.AuditAction.USER_BULK_ACTION,
+            admin=admin, request=request,
+            target_type="user", target_id=None,
+            target_description=f"{affected} users",
+            after={"action": action, "user_ids": user_ids[:50]},
+        )
+    except Exception:
+        pass
+
+    return RedirectResponse("/admin/users", status_code=302)
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -1896,6 +2375,28 @@ def register(app) -> None:
     Called once during server.py import. Idempotent — FastAPI dedupes by
     (path, method) so re-registering just no-ops (with a logged warning).
     """
+    # /admin/users — new design-system user-management page (extracted
+    # from the /admin monolith). Per-row mutation routes (promote/demote/
+    # suspend/email/role/grant) stay on the existing server.py handlers;
+    # this surface adds the GET render plus the new revoke-sessions /
+    # export shortcuts and the bulk-actions POST.
+    app.add_api_route(
+        "/admin/users", users_page,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/users/{user_id}/revoke-sessions", users_revoke_sessions,
+        methods=["POST"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/users/{user_id}/export", users_export_data,
+        methods=["GET"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/users/bulk-actions", users_bulk_actions,
+        methods=["POST"], include_in_schema=False,
+    )
+
     app.add_api_route(
         "/admin/churn", churn_dashboard,
         methods=["GET"], response_class=HTMLResponse, include_in_schema=False,

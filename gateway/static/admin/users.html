@@ -1,0 +1,452 @@
+<!-- /admin/users — paginated user management.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Columns: ID, Email, Handle, Role, Plan, Created, Last Active, Actions.
+     IDs and timestamps in Geist Mono; email/handle in Inter sans;
+     prose-y cells inherit the body face from .admin-body.
+
+     Filters: free-text search (email/handle), role, plan. Filters round-trip
+     via querystring so cursor pagination works alongside them.
+
+     Bulk actions are wired through checkboxes; the form posts to
+     /admin/users/bulk-actions with the selected user_ids. Per-row action
+     buttons live in the rightmost cell and are scoped to that user_id.
+  -->
+
+<div class="adm-users-page">
+
+  <div class="adm-users-hero">
+    <h2 class="adm-users-hero__display">Users</h2>
+    <p class="adm-users-hero__lede">
+      Every account on narve.ai — search, filter, promote, impersonate, or
+      bulk-message in one place. Cursor pagination, newest signups first.
+    </p>
+  </div>
+
+  <!-- ── Filter bar ────────────────────────────────────────────────── -->
+  <form class="adm-users-filter" method="get" action="/admin/users" role="search" aria-label="Filter users">
+    <label class="adm-users-filter__field">
+      <span class="adm-users-filter__label">Search</span>
+      <input class="adm-users-filter__input" type="search" name="q"
+             value="{{ filter_q }}"
+             placeholder="email or @handle"
+             autocomplete="off"
+             inputmode="search"
+             minlength="0" maxlength="120">
+    </label>
+    <label class="adm-users-filter__field">
+      <span class="adm-users-filter__label">Role</span>
+      <select class="adm-users-filter__input" name="role">
+        {{ raw_role_options }}
+      </select>
+    </label>
+    <label class="adm-users-filter__field">
+      <span class="adm-users-filter__label">Plan</span>
+      <select class="adm-users-filter__input" name="plan">
+        {{ raw_plan_options }}
+      </select>
+    </label>
+    <div class="adm-users-filter__actions">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="/admin/users" class="btn btn-ghost">Reset</a>
+    </div>
+  </form>
+
+  <!-- ── Bulk action form (wraps the table) ───────────────────────── -->
+  <form id="adm-users-bulk" method="post" action="/admin/users/bulk-actions"
+        class="adm-users-bulk-form">
+    {{ raw_csrf_field }}
+
+    <!-- Sticky bulk action bar — only visible when rows are selected -->
+    <div class="adm-users-bulk-bar" id="adm-users-bulk-bar" hidden>
+      <span class="adm-users-bulk-bar__count">
+        <span id="adm-users-bulk-count">0</span> selected
+      </span>
+      <div class="adm-users-bulk-bar__actions">
+        <button type="submit" name="bulk_action" value="email"
+                class="btn btn-primary">Send email</button>
+        <button type="submit" name="bulk_action" value="allowlist"
+                class="btn btn-primary-outline">Add to allowlist</button>
+      </div>
+    </div>
+
+    <div class="adm-users-table-wrap nv-table-wrap">
+      <table class="adm-users-table admin-table">
+        <thead>
+          <tr>
+            <th scope="col" class="adm-users-th adm-users-th--check">
+              <input type="checkbox" id="adm-users-check-all"
+                     aria-label="Select all visible users">
+            </th>
+            <th scope="col" class="adm-users-th adm-users-th--id">ID</th>
+            <th scope="col" class="adm-users-th">Email</th>
+            <th scope="col" class="adm-users-th">Handle</th>
+            <th scope="col" class="adm-users-th">Role</th>
+            <th scope="col" class="adm-users-th">Plan</th>
+            <th scope="col" class="adm-users-th adm-users-th--ts">Created</th>
+            <th scope="col" class="adm-users-th adm-users-th--ts">Last active</th>
+            <th scope="col" class="adm-users-th adm-users-th--actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="adm-users-body">
+          {{ raw_user_rows }}
+        </tbody>
+      </table>
+    </div>
+  </form>
+
+  <!-- ── Cursor pagination ────────────────────────────────────────── -->
+  <nav class="adm-users-pagination" aria-label="Pagination">
+    {{ raw_pagination }}
+  </nav>
+</div>
+
+<style>
+  /* Page-scoped styles. Tokens only — no hardcoded colour. */
+  .adm-users-page { font-family: var(--font-body); }
+
+  .adm-users-hero { margin: 4px 0 28px; }
+  .adm-users-hero__display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(32px, 4vw, 44px);
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+    color: var(--text-primary);
+  }
+  .adm-users-hero__lede {
+    font-family: var(--font-body);
+    font-size: var(--text-md);
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 640px;
+    margin: 0;
+  }
+
+  /* Filter bar — Inter sans chrome, 16px inputs for iOS no-zoom. */
+  .adm-users-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 8px);
+    font-family: var(--font-ui);
+  }
+  .adm-users-filter__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .adm-users-filter__field:first-child { flex: 2 1 220px; }
+  .adm-users-filter__field:nth-child(2),
+  .adm-users-filter__field:nth-child(3) { flex: 1 1 140px; }
+  .adm-users-filter__label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+  }
+  .adm-users-filter__input {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    line-height: 1.3;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--bg-base, transparent);
+    color: var(--text-primary);
+  }
+  .adm-users-filter__input:focus {
+    outline: 2px solid var(--text-primary);
+    outline-offset: -1px;
+    border-color: var(--text-primary);
+  }
+  .adm-users-filter__actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .adm-users-filter__actions .btn {
+    min-height: 44px;
+    padding: 0 18px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    line-height: 1;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    background: transparent;
+  }
+  .adm-users-filter__actions .btn-primary {
+    background: var(--text-primary);
+    color: var(--interactive-text, #fff);
+    border-color: var(--text-primary);
+  }
+  .adm-users-filter__actions .btn-ghost {
+    color: var(--text-secondary);
+    border-color: transparent;
+  }
+  .adm-users-filter__actions .btn-ghost:hover { color: var(--text-primary); }
+
+  /* Bulk bar — sticks near the top of the table area when rows selected. */
+  .adm-users-bulk-form { display: contents; }
+  .adm-users-bulk-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    margin: 0 0 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 8px);
+    font-family: var(--font-ui);
+  }
+  .adm-users-bulk-bar__count {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    color: var(--text-secondary);
+  }
+  .adm-users-bulk-bar__count #adm-users-bulk-count {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+  .adm-users-bulk-bar__actions { display: flex; gap: 8px; }
+  .adm-users-bulk-bar .btn {
+    min-height: 44px;
+    padding: 0 16px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    border-radius: var(--radius-sm, 6px);
+    border: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  }
+  .adm-users-bulk-bar .btn-primary {
+    background: var(--text-primary);
+    color: var(--interactive-text, #fff);
+    border-color: var(--text-primary);
+  }
+
+  /* Table */
+  .adm-users-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface);
+  }
+  .adm-users-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+  }
+  .adm-users-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    text-align: left;
+    padding: 12px 14px;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--border-default);
+    white-space: nowrap;
+  }
+  .adm-users-table tbody td {
+    padding: 14px;
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+    vertical-align: middle;
+    font-family: var(--font-body);
+    font-size: var(--text-sm, 14px);
+    color: var(--text-primary);
+  }
+  .adm-users-table tbody tr:last-child td { border-bottom: none; }
+  .adm-users-table tbody tr:hover { background: var(--interactive-ghost, rgba(0,0,0,0.025)); }
+
+  .adm-users-row__id {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+  .adm-users-row__email {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .adm-users-row__handle {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    color: var(--text-secondary);
+  }
+  .adm-users-row__handle::before { content: "@"; color: var(--text-tertiary); }
+  .adm-users-row__ts {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .adm-users-row__role,
+  .adm-users-row__plan {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--border-default);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .adm-users-row__role--admin,
+  .adm-users-row__role--super {
+    color: var(--text-primary);
+    border-color: var(--text-primary);
+  }
+  .adm-users-row__plan--pro {
+    color: var(--text-primary);
+    border-color: var(--text-primary);
+  }
+
+  .adm-users-row__checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--text-primary);
+  }
+
+  /* Actions cell — small buttons, wrap onto next line on narrow widths. */
+  .adm-users-row__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+    align-items: center;
+  }
+  .adm-users-row__actions .btn,
+  .adm-users-row__actions a,
+  .adm-users-row__actions button {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 10px;
+    min-height: 32px;
+    border-radius: var(--radius-sm, 6px);
+    border: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .adm-users-row__actions form { display: inline-flex; margin: 0; }
+  .adm-users-row__actions .btn:hover { border-color: var(--text-primary); }
+  .adm-users-row__actions .btn--danger { color: var(--red, #b91c1c); }
+
+  /* Empty state */
+  .adm-users-empty {
+    padding: 32px 24px;
+    text-align: center;
+    color: var(--text-tertiary);
+    font-family: var(--font-body);
+    font-size: var(--text-sm, 14px);
+  }
+
+  /* Pagination */
+  .adm-users-pagination {
+    margin: 16px 0 0;
+    display: flex;
+    justify-content: center;
+  }
+  .adm-users-pagination .btn {
+    font-family: var(--font-ui);
+    font-size: var(--text-sm, 14px);
+    min-height: 44px;
+    padding: 0 22px;
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--text-primary);
+    background: transparent;
+  }
+  .adm-users-pagination .btn:hover { border-color: var(--text-primary); }
+
+  @media (max-width: 720px) {
+    .adm-users-table thead th { font-size: 10px; padding: 10px; }
+    .adm-users-table tbody td { padding: 12px 10px; font-size: 13px; }
+  }
+</style>
+
+<script>
+  (function () {
+    var bulkBar = document.getElementById('adm-users-bulk-bar');
+    var countEl = document.getElementById('adm-users-bulk-count');
+    var body = document.getElementById('adm-users-body');
+    var checkAll = document.getElementById('adm-users-check-all');
+    if (!bulkBar || !body || !countEl) return;
+
+    function refresh() {
+      var boxes = body.querySelectorAll('input.adm-users-row__checkbox');
+      var checked = 0;
+      boxes.forEach(function (b) { if (b.checked) checked++; });
+      countEl.textContent = String(checked);
+      if (checked > 0) {
+        bulkBar.removeAttribute('hidden');
+      } else {
+        bulkBar.setAttribute('hidden', '');
+      }
+      if (checkAll) {
+        checkAll.checked = boxes.length > 0 && checked === boxes.length;
+        checkAll.indeterminate = checked > 0 && checked < boxes.length;
+      }
+    }
+
+    body.addEventListener('change', function (evt) {
+      var t = evt.target;
+      if (t && t.classList && t.classList.contains('adm-users-row__checkbox')) refresh();
+    });
+
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        var boxes = body.querySelectorAll('input.adm-users-row__checkbox');
+        boxes.forEach(function (b) { b.checked = checkAll.checked; });
+        refresh();
+      });
+    }
+
+    refresh();
+  })();
+</script>

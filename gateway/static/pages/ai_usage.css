@@ -41,3 +41,166 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
     .stat-card { padding: 16px 20px; background: var(--bg-base); border: 1px solid var(--border-default); border-radius: 10px; }
     .stat-label { font-size: var(--text-xs); color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
     .stat-value { font-family: var(--font-display); font-size: 26px; font-weight: 500; }
+
+/* ── /admin/subproducts page ──────────────────────────────────────
+ * Scoped to .sp-* selectors so /admin/ai-usage (which shares this
+ * stylesheet via the ai_usage.html template shell) is untouched.
+ */
+.sp-page {
+  padding: var(--space-8) var(--space-6);
+}
+.sp-page-head { margin-bottom: var(--space-6); }
+.sp-hero {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(40px, 6vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-3);
+  color: var(--text-primary);
+}
+.sp-hero-sub {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 56ch;
+  margin: 0;
+}
+.sp-pro {
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+}
+.sp-pro-head { margin-bottom: var(--space-4); }
+.sp-pro-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 32px;
+  margin: 0 0 var(--space-2);
+  letter-spacing: -0.01em;
+}
+.sp-pro-sub {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+.sp-pro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+.sp-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+.sp-card {
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sp-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.sp-name {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text-primary);
+}
+.sp-deep {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-base) cubic-bezier(0.2, 0, 0, 1);
+}
+.sp-deep:hover { color: var(--text-primary); }
+.sp-slug { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; }
+.sp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+.sp-stat { display: flex; flex-direction: column; gap: 4px; }
+.sp-stat-label {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.sp-stat-value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.sp-stat-foot {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.sp-chart-wrap {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sp-chart-label {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.sp-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 48px;
+  width: 100%;
+}
+.sp-bar {
+  flex: 1 1 0;
+  min-height: 1px;
+  background: var(--text-primary);
+  opacity: 0.55;
+  border-radius: 1px 1px 0 0;
+  transition: opacity var(--duration-fast) cubic-bezier(0.2, 0, 0, 1);
+}
+.sp-bar:hover { opacity: 1; }
+@media (max-width: 640px) {
+  .sp-page { padding: var(--space-6) var(--space-4); }
+  .sp-list { grid-template-columns: 1fr; }
+  .sp-card { padding: var(--space-5); }
+}

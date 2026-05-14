@@ -6420,11 +6420,18 @@ async def admin_audit_log_csv(request: Request):
 
 # ── Subproducts admin (MRR per sub-brand) ─────────────────────────────────────
 #
-# Rolls up active subscriptions on the existing per-dashboard `subscriptions`
-# table, scoped to the six sub-brand dashboard_keys in subproduct.SUBPRODUCTS.
-# Main-apex narve.ai Pro subscriptions (dashboard_key = "__plan__") count
-# once in the "Bundle" row so the admin can see how many customers take the
-# all-in subscription vs how many stack individual sub-products.
+# Rolls up active subscriptions on the per-dashboard ``subscriptions`` table,
+# scoped to the thirteen sub-brand dashboard_keys in ``subproduct.SUBPRODUCTS``.
+# A separate hero summarises the main-apex narve.ai Pro bundle so admins can
+# see how many customers take the all-in subscription vs how many stack
+# individual sub-products.
+#
+# All aggregates are SQL-side via ``queries/subscriptions.py``:
+#   - ``get_active_subscription_counts_by_dashboard`` (active subscribers)
+#   - ``get_mrr_by_dashboard`` (MRR in cents per subproduct)
+#   - ``get_churn_rate`` (rolling 7-day churn)
+#   - ``get_new_signups`` (rolling 30-day new signups)
+#   - ``get_signups_daily_series`` (90-day sparkline)
 
 
 @app.get("/admin/subproducts", response_class=HTMLResponse)
@@ -6434,84 +6441,138 @@ async def admin_subproducts_page(request: Request):
         return _denied_response(request)
     from subproduct import SUBPRODUCTS as _SP, DASHBOARD_KEY_FOR_SLUG
 
-    now = int(time.time())
-    subs = db.list_all_subscriptions()
+    counts = db.get_active_subscription_counts_by_dashboard()
+    mrr_by_dk = db.get_mrr_by_dashboard()
 
-    # Active = status=='active' AND (expires_at is null OR in the future).
-    def _active(s) -> bool:
-        if s["status"] != "active":
-            return False
-        if s["expires_at"] and s["expires_at"] <= now:
-            return False
-        return True
+    # Pro tier rollup — main-apex bundle marker (dashboard_key="__plan__").
+    # Pro price is £180/mo per the platform plan in DASHBOARDS["pro"].
+    pro_active = int(counts.get("__plan__", 0))
+    pro_mrr_gbp = pro_active * 180
 
-    by_key: dict[str, list] = {}
-    for s in subs:
-        if not _active(s):
-            continue
-        by_key.setdefault(s["dashboard_key"], []).append(s)
+    # Symmetric chart range across all subproducts so visual heights are
+    # comparable. Capped at 1 so a brand-new product still renders bars.
+    series_by_slug: dict[str, list[int]] = {}
+    series_max = 1
+    for slug in _SP.keys():
+        dk = DASHBOARD_KEY_FOR_SLUG[slug]
+        series = db.get_signups_daily_series(window_days=90, dashboard_key=dk)
+        series_by_slug[slug] = series
+        if series:
+            series_max = max(series_max, max(series))
 
-    # Subproduct rows
     rows_html: list[str] = []
     total_active = 0
     total_mrr_cents = 0
     for slug, cfg in _SP.items():
         dk = DASHBOARD_KEY_FOR_SLUG[slug]
-        rows = by_key.get(dk, [])
-        active = len(rows)
-        # Per-product MRR: always the subproduct's monthly USD price — the
-        # main-apex DASHBOARDS pricing in config.json tracks the *bundle*
-        # tier and doesn't represent this sub-brand's standalone price.
-        mrr_cents = int(round(cfg["price_usd"] * 100)) * active
+        active = int(counts.get(dk, 0))
+        mrr_cents = int(mrr_by_dk.get(dk, 0))
+        churn = db.get_churn_rate(window_days=7, dashboard_key=dk)
+        new_signups = db.get_new_signups(window_days=30, dashboard_key=dk)
         total_active += active
         total_mrr_cents += mrr_cents
-        rows_html.append(
-            f'<tr>'
-            f'<td><span style="font-weight:500">{html.escape(cfg["name"])}</span>'
-            f' <span style="color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">'
-            f'{html.escape(slug)}.narve.ai</span></td>'
-            f'<td style="text-align:right">{active}</td>'
-            f'<td style="text-align:right;font-family:var(--font-mono)">${mrr_cents/100:,.2f}/mo</td>'
-            f'</tr>'
+
+        # 90-day signup sparkline — monochrome bars; height encodes count.
+        bars = []
+        series = series_by_slug.get(slug, [])
+        for v in series:
+            pct = 0 if series_max <= 0 else max(4, int(round((v / series_max) * 100)))
+            bars.append(
+                f'<span class="sp-bar" style="height:{pct}%" title="{v} new"></span>'
+            )
+        chart_html = (
+            '<div class="sp-chart" aria-label="90-day new signups, monochrome bars">'
+            + "".join(bars)
+            + '</div>'
         )
 
-    bundle_rows = [s for s in subs if _active(s) and s["dashboard_key"] == "__plan__"]
-    rows_html.append(
-        f'<tr style="background:var(--bg-surface)">'
-        f'<td><span style="font-weight:500">narve.ai Pro (bundle)</span>'
-        f' <span style="color:var(--text-tertiary);font-size:11px">all six sub-products included</span></td>'
-        f'<td style="text-align:right">{len(bundle_rows)}</td>'
-        f'<td style="text-align:right;font-family:var(--font-mono)">—</td>'
-        f'</tr>'
-    )
+        deep_link = f"https://{html.escape(slug)}.narve.ai/"
+        churn_pct = f"{churn * 100:.1f}%"
 
-    summary_cards = (
-        f'<div class="stat-card"><div class="stat-label">Active subproduct subs</div>'
-        f'<div class="stat-value">{total_active}</div></div>'
-        f'<div class="stat-card"><div class="stat-label">Subproduct MRR</div>'
-        f'<div class="stat-value">${total_mrr_cents/100:,.2f}</div></div>'
-        f'<div class="stat-card"><div class="stat-label">Bundle subs</div>'
-        f'<div class="stat-value">{len(bundle_rows)}</div></div>'
+        rows_html.append(
+            '<article class="sp-card">'
+            '<header class="sp-card-head">'
+            f'<h3 class="sp-name">{html.escape(cfg["name"])}</h3>'
+            f'<a class="sp-deep" href="{deep_link}" target="_blank" rel="noopener" '
+            f'aria-label="Open {html.escape(cfg["name"])}">'
+            f'<span class="sp-slug">{html.escape(slug)}.narve.ai</span>'
+            '<span aria-hidden="true"> &rarr;</span>'
+            '</a>'
+            '</header>'
+            '<div class="sp-grid">'
+            '<div class="sp-stat">'
+            '<div class="sp-stat-label">Active subscribers</div>'
+            f'<div class="sp-stat-value">{active}</div>'
+            '</div>'
+            '<div class="sp-stat">'
+            '<div class="sp-stat-label">MRR</div>'
+            f'<div class="sp-stat-value">${mrr_cents / 100:,.2f}</div>'
+            '</div>'
+            '<div class="sp-stat">'
+            '<div class="sp-stat-label">7-day churn</div>'
+            f'<div class="sp-stat-value">{churn_pct}</div>'
+            '</div>'
+            '<div class="sp-stat">'
+            '<div class="sp-stat-label">30-day new</div>'
+            f'<div class="sp-stat-value">{new_signups}</div>'
+            '</div>'
+            '</div>'
+            '<div class="sp-chart-wrap">'
+            '<div class="sp-chart-label">90-day new signups</div>'
+            f'{chart_html}'
+            '</div>'
+            '</article>'
+        )
+
+    sp_subs_total = total_active  # individual subproduct subscribers
+    if (sp_subs_total + pro_active) > 0:
+        mix_pro_pct = pro_active * 100.0 / (sp_subs_total + pro_active)
+    else:
+        mix_pro_pct = 0.0
+    pro_vs_individual = f"{pro_active} : {sp_subs_total}"
+
+    pro_rollup = (
+        '<section class="sp-pro">'
+        '<div class="sp-pro-head">'
+        '<h2 class="sp-pro-title">narve.ai Pro</h2>'
+        '<p class="sp-pro-sub">Bundle subscribers have access to every sub-product. '
+        'Per-product totals below count individual subscriptions only.</p>'
+        '</div>'
+        '<div class="sp-pro-grid">'
+        '<div class="sp-stat">'
+        '<div class="sp-stat-label">Active Pro subs</div>'
+        f'<div class="sp-stat-value">{pro_active}</div>'
+        '</div>'
+        '<div class="sp-stat">'
+        '<div class="sp-stat-label">Pro MRR</div>'
+        f'<div class="sp-stat-value">&pound;{pro_mrr_gbp:,}</div>'
+        '</div>'
+        '<div class="sp-stat">'
+        '<div class="sp-stat-label">Pro vs individual</div>'
+        f'<div class="sp-stat-value">{pro_vs_individual}</div>'
+        f'<div class="sp-stat-foot">{mix_pro_pct:.1f}% Pro share</div>'
+        '</div>'
+        '<div class="sp-stat">'
+        '<div class="sp-stat-label">Subproduct MRR (sum)</div>'
+        f'<div class="sp-stat-value">${total_mrr_cents / 100:,.2f}</div>'
+        '</div>'
+        '</div>'
+        '</section>'
     )
 
     body = (
-        '<div style="padding:24px">'
-        '<h2 style="font-family:var(--font-display);font-size:22px;margin:0 0 16px">Subproducts</h2>'
-        '<p style="color:var(--text-secondary);font-size:13px;margin:0 0 20px">'
-        'Active subscriptions and MRR for each narve.ai sub-brand. Bundle subscribers '
-        '(narve.ai Pro) have access to every sub-product automatically and are not counted '
-        'in the per-product totals.'
-        '</p>'
-        f'<div class="stat-grid" style="margin-bottom:28px">{summary_cards}</div>'
-        '<div style="overflow:auto;border:1px solid var(--border-default);border-radius:8px">'
-        '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-        '<thead><tr style="background:var(--bg-surface);color:var(--text-secondary);text-align:left">'
-        '<th style="padding:10px 12px">Product</th>'
-        '<th style="padding:10px 12px;text-align:right">Active subs</th>'
-        '<th style="padding:10px 12px;text-align:right">MRR</th>'
-        '</tr></thead>'
-        f'<tbody>{"".join(rows_html)}</tbody>'
-        '</table></div>'
+        '<div class="sp-page">'
+        '<header class="sp-page-head">'
+        '<h1 class="sp-hero">Subproducts</h1>'
+        '<p class="sp-hero-sub">13 sub-brands. Active subscriptions, MRR, '
+        '7-day churn, 30-day new signups, and a 90-day signup sparkline '
+        'for each. Pro bundle subscribers are tallied above and excluded '
+        'from the per-product totals.</p>'
+        '</header>'
+        f'{pro_rollup}'
+        '<section class="sp-list">'
+        + "".join(rows_html) +
+        '</section>'
         '</div>'
     )
 

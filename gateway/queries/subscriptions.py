@@ -133,6 +133,161 @@ def get_active_subscription_counts_by_dashboard() -> dict[str, int]:
     return {r["dashboard_key"]: int(r["cnt"]) for r in rows}
 
 
+def count_active_subscribers(dashboard_key: str) -> int:
+    """Count active subscribers for a specific subproduct dashboard_key.
+
+    "Active" means status='active' AND (expires_at IS NULL OR expires_at > now).
+    The synthetic ``__plan__`` row (Pro bundle marker) is treated like any
+    other dashboard_key — callers that want subproduct-only totals must
+    filter the key themselves.
+    """
+    now = int(time.time())
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS cnt FROM subscriptions "
+            "WHERE dashboard_key = ? AND status = 'active' "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (dashboard_key, now),
+        ).fetchone()
+    return int(row["cnt"]) if row else 0
+
+
+def get_mrr_by_dashboard() -> dict[str, int]:
+    """Return ``{dashboard_key: mrr_cents}`` keyed off the subproduct catalogue.
+
+    MRR is computed as ``active_subscribers * price_usd * 100`` (cents) for
+    each subproduct slug. The catalogue (``subproduct.SUBPRODUCTS``) is the
+    source of truth for per-product pricing; the main-apex ``__plan__``
+    bundle row is not included here — callers that want Pro MRR should
+    look up the ``__plan__`` count and apply the £180 bundle price separately.
+
+    Missing subproducts (no active subs) appear with an MRR of 0 so the
+    admin UI can render a complete row list.
+    """
+    counts = get_active_subscription_counts_by_dashboard()
+    try:
+        from subproduct import SUBPRODUCTS, DASHBOARD_KEY_FOR_SLUG
+    except Exception:
+        return {}
+    out: dict[str, int] = {}
+    for slug, cfg in SUBPRODUCTS.items():
+        dk = DASHBOARD_KEY_FOR_SLUG.get(slug, slug)
+        active = counts.get(dk, 0)
+        price_cents = int(round(float(cfg.get("price_usd") or 0.0) * 100))
+        out[dk] = active * price_cents
+    return out
+
+
+def get_churn_rate(window_days: int = 7, dashboard_key: Optional[str] = None) -> float:
+    """Return rolling churn rate over the last ``window_days`` as a float in [0, 1].
+
+    Churn here is defined operationally as the fraction of subscriptions
+    that became *inactive* during the window — i.e. rows with status
+    other than 'active', OR rows whose ``expires_at`` fell inside the
+    window — over the average active base during the window.
+
+    The schema lacks a ``cancelled_at`` column, so we use ``expires_at``
+    as a churn timestamp proxy: a row whose ``expires_at`` is in the
+    window is treated as having churned at that time. ``status =
+    'cancelled'`` rows with no ``expires_at`` count against the most
+    recent window so admins still see cancellations reflected.
+
+    Returns 0.0 when there is no denominator (e.g. brand-new product
+    with zero history) so callers can render the value without
+    branching.
+    """
+    if window_days <= 0:
+        return 0.0
+    now = int(time.time())
+    cutoff = now - window_days * 86400
+    where_dk = ""
+    args_dk: list = []
+    if dashboard_key is not None:
+        where_dk = " AND dashboard_key = ?"
+        args_dk = [dashboard_key]
+    with db.conn() as c:
+        # Active base now — denominator.
+        base_row = c.execute(
+            "SELECT COUNT(*) AS cnt FROM subscriptions "
+            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?)"
+            + where_dk,
+            [now] + args_dk,
+        ).fetchone()
+        base = int(base_row["cnt"]) if base_row else 0
+        # Churned in window — numerator. Either:
+        #   - expires_at fell inside (cutoff, now]
+        #   - status='cancelled' (no expiry timestamp to bucket — count once)
+        churn_row = c.execute(
+            "SELECT COUNT(*) AS cnt FROM subscriptions WHERE ("
+            "(expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?)"
+            " OR (status = 'cancelled' AND (expires_at IS NULL OR expires_at > ?))"
+            ")" + where_dk,
+            [cutoff, now, cutoff] + args_dk,
+        ).fetchone()
+        churned = int(churn_row["cnt"]) if churn_row else 0
+    denom = base + churned
+    if denom <= 0:
+        return 0.0
+    return churned / denom
+
+
+def get_new_signups(window_days: int = 30, dashboard_key: Optional[str] = None) -> int:
+    """Return the number of subscriptions whose ``started_at`` falls in the window."""
+    if window_days <= 0:
+        return 0
+    now = int(time.time())
+    cutoff = now - window_days * 86400
+    args: list = [cutoff]
+    where_dk = ""
+    if dashboard_key is not None:
+        where_dk = " AND dashboard_key = ?"
+        args.append(dashboard_key)
+    with db.conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS cnt FROM subscriptions WHERE started_at >= ?" + where_dk,
+            args,
+        ).fetchone()
+    return int(row["cnt"]) if row else 0
+
+
+def get_signups_daily_series(
+    window_days: int = 90, dashboard_key: Optional[str] = None
+) -> list[int]:
+    """Return a ``window_days``-long list of daily new-signup counts, oldest first.
+
+    Day buckets are calendar-day UTC sized; today is the last bucket. Output
+    length always equals ``window_days`` so the caller can render fixed-width
+    sparkline bars without padding logic.
+    """
+    if window_days <= 0:
+        return []
+    now = int(time.time())
+    # Anchor day buckets to UTC midnight so the series is stable across
+    # render times of day.
+    day_start = (now // 86400) * 86400
+    cutoff = day_start - (window_days - 1) * 86400
+    args: list = [cutoff]
+    where_dk = ""
+    if dashboard_key is not None:
+        where_dk = " AND dashboard_key = ?"
+        args.append(dashboard_key)
+    buckets = [0] * window_days
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT started_at FROM subscriptions WHERE started_at >= ?" + where_dk,
+            args,
+        ).fetchall()
+    for row in rows:
+        try:
+            ts = int(row["started_at"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        idx = (ts - cutoff) // 86400
+        if 0 <= idx < window_days:
+            buckets[int(idx)] += 1
+    return buckets
+
+
 def get_revenue_stats() -> dict:
     """Return subscription counts and breakdown by dashboard and plan."""
     now = int(time.time())
@@ -411,6 +566,11 @@ __all__ = [
     'cancel_subscription',
     'list_all_subscriptions',
     'get_active_subscription_counts_by_dashboard',
+    'count_active_subscribers',
+    'get_mrr_by_dashboard',
+    'get_churn_rate',
+    'get_new_signups',
+    'get_signups_daily_series',
     'get_revenue_stats',
     'create_gift',
     'list_active_gifts',
