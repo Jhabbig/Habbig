@@ -747,6 +747,31 @@ def health() -> dict[str, Any]:
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sentry deploy-verification endpoint.
+#
+# Raises a deliberate exception so an operator can confirm the subproduct's
+# Sentry DSN is wired correctly after a deploy. The gateway_auth HMAC
+# middleware above already gates every request, but we add a second check
+# here so a non-admin user with a valid session can't burn through Sentry
+# quota. Two ways to pass:
+#   1. NARVE_ADMIN_EMAIL set and matches the gateway-injected user email, OR
+#   2. Request comes directly from loopback (no gateway in front — useful
+#      for local debugging when DEV_MODE skips the HMAC check).
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/_sentry-test")
+async def _sentry_test(request: Request) -> dict[str, Any]:
+    admin_email = os.environ.get("NARVE_ADMIN_EMAIL", "").strip().lower()
+    gw_email = request.headers.get("x-gateway-user-email", "").strip().lower()
+    client_host = (request.client.host if request.client else "") or ""
+    is_admin = bool(admin_email) and gw_email == admin_email
+    is_local = client_host in ("127.0.0.1", "::1")
+    if not (is_admin or is_local):
+        raise HTTPException(status_code=403, detail="admin or loopback only")
+    raise RuntimeError("Sentry test event — this is intentional (centralbank-dashboard)")
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")

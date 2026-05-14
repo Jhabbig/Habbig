@@ -69,6 +69,12 @@ if not os.getenv("GATEWAY_SSO_SECRET"):
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("love")
 
+# ── Observability — init Sentry BEFORE FastAPI is constructed so the SDK can
+# instrument it. Fail-soft: if sentry-sdk is missing or no DSN is configured,
+# init_sentry() logs and continues.
+import observability as _observability  # noqa: E402
+_observability.init_sentry(platform="love")
+
 PORT = int(os.environ.get("PORT", "7062"))
 DATA_DIR = _DASHBOARD_DIR / "data"
 STATIC_DIR = _DASHBOARD_DIR / "static"
@@ -350,6 +356,31 @@ def health() -> dict:
 @app.get("/api/health")
 def api_health() -> dict:
     return health()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sentry deploy-verification endpoint.
+#
+# Raises a deliberate exception so an operator can confirm the subproduct's
+# Sentry DSN is wired correctly after a deploy. The gateway_auth HMAC
+# middleware above already gates every request, but we add a second check
+# here so a non-admin user with a valid session can't burn through Sentry
+# quota. Two ways to pass:
+#   1. NARVE_ADMIN_EMAIL set and matches the gateway-injected user email, OR
+#   2. Request comes directly from loopback (no gateway in front — useful
+#      for local debugging when DEV_MODE skips the HMAC check).
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/_sentry-test")
+async def _sentry_test(request: Request) -> dict:
+    admin_email = os.environ.get("NARVE_ADMIN_EMAIL", "").strip().lower()
+    gw_email = request.headers.get("x-gateway-user-email", "").strip().lower()
+    client_host = (request.client.host if request.client else "") or ""
+    is_admin = bool(admin_email) and gw_email == admin_email
+    is_local = client_host in ("127.0.0.1", "::1")
+    if not (is_admin or is_local):
+        raise HTTPException(status_code=403, detail="admin or loopback only")
+    raise RuntimeError("Sentry test event — this is intentional (love-dashboard)")
 
 
 @app.get("/")
