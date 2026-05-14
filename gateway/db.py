@@ -1086,10 +1086,17 @@ def list_api_keys(user_id: int) -> list:
     Returned rows include `scopes` as a comma-separated string; callers are
     expected to split it themselves when they need a list. The raw key is
     never persisted, so nothing sensitive is returned.
+
+    Also pulls the migration-180 columns (`allowed_origins`, `usage_count`)
+    so the settings page can render the origin badges + lifetime call
+    counter without a second round-trip. Both columns are NULL-tolerant
+    on older deploys where 180 hasn't yet run.
     """
     with conn() as c:
         return c.execute(
             "SELECT id, user_id, key_prefix, name, tier, scopes, "
+            "       COALESCE(allowed_origins, '') AS allowed_origins, "
+            "       COALESCE(usage_count, 0) AS usage_count, "
             "       rate_limit_hour, created_at, last_used_at, revoked_at "
             "FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
             (user_id,),

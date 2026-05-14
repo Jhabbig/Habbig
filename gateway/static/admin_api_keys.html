@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API keys (admin) · narve.ai</title>
+  <meta name="description" content="Admin oversight of every API key across the platform.">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
+  <link rel="stylesheet" href="{{ static: pages/settings_api_keys.css }}">
+</head>
+<body>
+  <main class="ak-wrap" id="main">
+    <div class="ak-head">
+      <div>
+        <a class="ak-backlink" href="/admin">← Admin</a>
+        <h1 class="ak-h1">All API keys {{ raw_nav_role }}</h1>
+      </div>
+    </div>
+
+    <p class="ak-lede">
+      Every API key minted on the platform, newest first.
+      <strong>{{ total }}</strong> total — including revoked. Use this
+      surface to force-revoke a key when a customer reports a leak or
+      when abuse triggers a manual override. Admin revocation is
+      audit-logged.
+    </p>
+
+    <div class="ak-list">{{ raw_key_rows }}</div>
+  </main>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
+</body>
+</html>

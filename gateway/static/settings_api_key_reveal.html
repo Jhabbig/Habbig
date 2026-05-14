@@ -9,31 +9,48 @@
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
   <link rel="icon" type="image/png" href="/_gateway_static/img/logo.png">
-  <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="{{ static: pages/settings_api_key_reveal.css }}">
 </head>
 <body>
-  <main class="wrap" id="main">
-    <div class="head"><h1>Key created: {{ key_name }}</h1></div>
-    <p class="note">This is the only time this key will be shown. If you lose it, revoke it and create a new one.</p>
+  <main class="akr-wrap" id="main">
+    <div class="akr-head"><h1 class="akr-h1">Key created: {{ key_name }}</h1></div>
+    <p class="akr-lede">
+      This is the only time this key will be shown. Copy it now — we
+      store only the SHA-256 hash and can't display it again. If you
+      lose it, revoke it and create a new one.
+    </p>
 
-    <div class="alert"><strong>Copy this key now.</strong> We store only the hash — we can't show it again.</div>
-
-    <div class="key-card">
-      <div class="raw-key" id="raw-key">{{ raw_key }}</div>
-      <div class="row">
-        <button class="btn btn-primary" type="button" onclick="copyKey()">Copy to clipboard</button>
-        <span id="copy-status" style="font-size:12px;opacity:0.65"></span>
-      </div>
-      <div class="meta">
-        Prefix: <code>{{ key_prefix }}</code><br>
-        Scopes: <code>{{ key_scopes }}</code><br>
-        Rate limit: {{ key_rate }}
-      </div>
+    <div class="akr-alert">
+      <strong>Copy this key now.</strong> We store only the hash — we
+      can't show it again.
     </div>
 
-    <p class="note">Use the key with <code>Authorization: Bearer narve_&lt;key&gt;</code> against <a href="/api/docs" style="color:inherit">/api/public/v1/*</a>.</p>
-    <a class="btn" href="/settings/api-keys">← Back to keys</a>
+    <div class="akr-key-card">
+      <div class="akr-raw-key" id="raw-key">{{ raw_key }}</div>
+      <div class="akr-row">
+        <button class="akr-btn akr-btn-primary" type="button" onclick="copyKey()">
+          Copy to clipboard
+        </button>
+        <span id="copy-status" class="akr-copy-status"></span>
+      </div>
+      <dl class="akr-meta">
+        <div><dt>Prefix</dt><dd><code class="akr-mono">{{ key_prefix }}</code></dd></div>
+        <div><dt>Scopes</dt><dd><code class="akr-mono">{{ key_scopes }}</code></dd></div>
+        <div><dt>Origins</dt><dd><code class="akr-mono">{{ key_origins }}</code></dd></div>
+        <div><dt>Rate limit</dt><dd>{{ key_rate }}</dd></div>
+      </dl>
+    </div>
+
+    <p class="akr-lede">
+      Use the key with
+      <code class="akr-mono">Authorization: Bearer &lt;key&gt;</code>
+      or
+      <code class="akr-mono">X-API-Key: &lt;key&gt;</code>
+      against <a class="akr-link" href="/api/docs">/api/public/v1/*</a>
+      and the embed API.
+    </p>
+
+    <a class="akr-btn" href="/settings/api-keys">← Back to keys</a>
   </main>
 
   <script>
@@ -46,7 +63,6 @@
           function() { status.textContent = 'Copy failed — select it manually.'; }
         );
       } else {
-        // Older browsers: make the key field the selection, let user ⌘C.
         var range = document.createRange();
         range.selectNode(document.getElementById('raw-key'));
         window.getSelection().removeAllRanges();

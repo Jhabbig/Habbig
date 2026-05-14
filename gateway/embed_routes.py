@@ -52,19 +52,99 @@ _DOMAIN_RE = re.compile(
 # ── Auth helpers ────────────────────────────────────────────────────────────
 
 
+def _extract_request_origin(request: Request) -> str:
+    """Hostname of the caller. Origin header wins; Referer is a fallback.
+
+    Used by the X-API-Key path to enforce the per-key origin allowlist.
+    Returns "" when neither header is present; the validator treats that
+    as "no origin" and rejects when the key has a non-empty allowlist.
+    """
+    origin = (request.headers.get("origin") or "").strip()
+    if origin:
+        return origin
+    return (request.headers.get("referer") or "").strip()
+
+
+def _api_key_auth(request: Request, *, required_scope: str | None = None) -> dict | None:
+    """X-API-Key (or Authorization: Bearer nv_emb_...) → user dict.
+
+    Returns the resolved user when a valid embed-API key is present,
+    or ``None`` when no key header is present. Raises HTTPException
+    when a key IS present but fails validation — so callers can use
+    the return value to distinguish "no key, try session" vs "401".
+
+    Honours ``allowed_origins`` per key — a request whose Origin /
+    Referer hostname isn't in the key's allowlist is rejected with 403.
+    """
+    raw = (request.headers.get("x-api-key") or "").strip()
+    if not raw:
+        auth = (request.headers.get("authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            candidate = auth[7:].strip()
+            # Only treat this as an embed-API key when it carries the
+            # ``nv_emb_`` prefix; ``narve_`` Bearer tokens belong to the
+            # public-API auth path in api_public/auth.py.
+            if candidate.startswith("nv_emb_"):
+                raw = candidate
+    if not raw:
+        return None
+
+    from queries import api_keys as q_api_keys
+    origin = _extract_request_origin(request)
+    key = q_api_keys.validate_api_key(
+        raw, required_scope=required_scope, origin=origin,
+    )
+    if key is None:
+        # We deliberately collapse "missing", "revoked", "wrong scope",
+        # "origin mismatch" into 403 so an attacker can't probe which
+        # one failed. (401 is reserved for "no credentials at all"; we
+        # got credentials, they just don't work here.)
+        raise HTTPException(
+            status_code=403,
+            detail="API key rejected (invalid, revoked, scope, or origin)",
+        )
+    # Resolve the owner. Embeds are tied to the user_id stored on the
+    # key — that's the account whose subscription gates this surface.
+    owner = db.get_user_by_id(int(key["user_id"])) if hasattr(db, "get_user_by_id") else None
+    if owner is None:
+        # Owner row was deleted but the key wasn't revoked. Fail closed.
+        raise HTTPException(status_code=403, detail="API key owner not found")
+    out = dict(owner) if not isinstance(owner, dict) else owner
+    out.setdefault("user_id", int(key["user_id"]))
+    out["_api_key_id"] = int(key["id"])
+    out["_api_key_scopes"] = set(key.get("scopes_list") or [])
+    return out
+
+
 def _require_paid_user(request: Request) -> dict:
     """Accept any active paid subscription (not just ``plan == "pro"``).
 
     Embed widgets aren't scoped to a single dashboard the way the
     intelligence / environmental-impact features are. Any paying narve.ai
-    customer qualifies. Admins always pass.
+    customer qualifies. Admins always pass. Also accepts a valid embed
+    API key (X-API-Key or `Authorization: Bearer nv_emb_…`) — the key's
+    owner_user_id is the account checked for an active subscription.
     """
+    via_key = _api_key_auth(request)
+    if via_key is not None:
+        if via_key.get("is_admin") or db.has_any_active_subscription(via_key["user_id"]):
+            return via_key
+        raise HTTPException(status_code=403, detail="Active subscription required")
+
     user = _require_authenticated(request)
     if user.get("is_admin"):
         return user
     if not db.has_any_active_subscription(user["user_id"]):
         raise HTTPException(status_code=403, detail="Active subscription required")
     return user
+
+
+def _require_authenticated_or_api_key(request: Request) -> dict:
+    """Session-auth OR an embed API key. Returns the resolved user."""
+    via_key = _api_key_auth(request)
+    if via_key is not None:
+        return via_key
+    return _require_authenticated(request)
 
 
 # ── Serialisation helpers ───────────────────────────────────────────────────
@@ -559,7 +639,7 @@ async def settings_embeds_page(request: Request):
 
 @app.get("/api/embeds")
 async def api_list_embeds(request: Request):
-    user = _require_authenticated(request)
+    user = _require_authenticated_or_api_key(request)
     widgets = db.list_user_embed_widgets(user["user_id"])
     return JSONResponse({
         "widgets": [_widget_to_api_dict(w, include_token=True) for w in widgets],
@@ -623,7 +703,7 @@ async def api_create_embed(request: Request):
 
 @app.delete("/api/embeds/{widget_id}")
 async def api_deactivate_embed(request: Request, widget_id: str):
-    user = _require_authenticated(request)
+    user = _require_authenticated_or_api_key(request)
     ok = db.deactivate_embed_widget(user["user_id"], widget_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Widget not found")

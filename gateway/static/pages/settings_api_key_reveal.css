@@ -1,19 +1,163 @@
-/* Per-page CSS for static/settings_api_key_reveal.html — extracted from the
- * previous inline <style> block by the foundation bundle
- * auto-migration. Rules live here unchanged; if anything in
- * this file should instead live in gateway.css or
- * components.css, lift it in a follow-up pass — but do NOT
- * rewrite selectors here without a visual QA pass. */
+/* Per-page CSS for static/settings_api_key_reveal.html.
+ *
+ * One-shot reveal screen: monospace key plus editorial copy explaining
+ * that it cannot be shown again. Buttons and the meta dl chrome stay
+ * Inter; the key string + scope / origin runs are Geist Mono.
+ */
 
-body { margin: 0; background: var(--bg, #0d0d0d); color: var(--text-primary, #fff); font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.55; }
-    .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
-    .head h1 { margin: 0 0 8px; font-size: 26px; font-weight: 600; }
-    .note { font-size: var(--text-sm); opacity: 0.6; margin: 6px 0 28px; line-height: 1.6; }
-    .alert { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.4); color: #fbbf24; border-radius: var(--radius-md); padding: 14px 18px; font-size: var(--text-sm); margin-bottom: 28px; line-height: 1.6; }
-    .key-card { background: var(--surface, #141414); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: var(--radius-md); padding: 22px 24px; margin-bottom: 28px; }
-    .raw-key { font-family: ui-monospace, Menlo, monospace; font-size: var(--text-base); padding: 14px 18px; background: #000; border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-sm); margin: 12px 0; word-break: break-all; user-select: all; }
-    .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
-    .btn { padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border, rgba(255,255,255,0.15)); background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: var(--text-sm); }
-    .btn-primary { background: var(--accent, #fff); color: var(--bg, #0d0d0d); border: 0; font-weight: 600; }
-    .meta { font-size: 12px; opacity: 0.6; line-height: 1.55; margin-top: 14px; }
-    code { font-family: ui-monospace, Menlo, monospace; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+body {
+  margin: 0;
+  background: var(--bg, #0d0d0d);
+  color: var(--text-primary, #fff);
+  font-family: var(--font-ui), -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.55;
+}
+
+.akr-wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.akr-head { margin-bottom: 8px; }
+
+.akr-h1 {
+  margin: 0 0 8px;
+  font-family: var(--font-ui);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.akr-lede {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.62;
+  opacity: 0.78;
+  margin: 6px 0 24px;
+  max-width: 65ch;
+}
+
+.akr-alert {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  border-radius: var(--radius-md, 10px);
+  padding: 14px 18px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  margin-bottom: 28px;
+  line-height: 1.6;
+}
+
+.akr-alert strong {
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+
+.akr-key-card {
+  background: var(--surface, #141414);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 10px);
+  padding: 22px 24px;
+  margin-bottom: 28px;
+}
+
+.akr-raw-key {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0;
+  padding: 14px 18px;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm, 6px);
+  margin: 4px 0 12px;
+  word-break: break-all;
+  user-select: all;
+}
+
+.akr-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.akr-copy-status {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.akr-btn {
+  display: inline-block;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.akr-btn:hover { border-color: rgba(255, 255, 255, 0.35); }
+
+.akr-btn-primary {
+  background: var(--accent, #fff);
+  color: var(--bg, #0d0d0d);
+  border: 0;
+  font-weight: 600;
+}
+
+.akr-btn-primary:hover { opacity: 0.9; }
+
+.akr-meta {
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.akr-meta > div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.akr-meta dt {
+  margin: 0;
+  width: 90px;
+  flex-shrink: 0;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.akr-meta dd { margin: 0; }
+
+.akr-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "calt" 0;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.akr-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+}
+
+.akr-link:hover { text-decoration-color: currentColor; }

@@ -12,29 +12,68 @@
   <link rel="stylesheet" href="{{ static: pages/settings_api_keys.css }}">
 </head>
 <body>
-  <main class="wrap" id="main">
-    <div class="head">
+  <main class="ak-wrap" id="main">
+    <div class="ak-head">
       <div>
-        <a class="backlink" href="/settings">← Settings</a>
-        <h1>API keys {{ raw_nav_role }}</h1>
+        <a class="ak-backlink" href="/settings">← Settings</a>
+        <h1 class="ak-h1">API keys {{ raw_nav_role }}</h1>
       </div>
     </div>
-    <p class="note">Your keys authenticate requests to the <a href="/api/docs" style="color:inherit">public API at /api/public/v1/*</a>. Keys are shown once at creation — copy them immediately; we only store the hash.</p>
-    <div class="quota-banner">{{ raw_quota_line }}</div>
 
-    <h2>Your keys</h2>
-    <div class="list">{{ raw_key_rows }}</div>
+    <p class="ak-lede">
+      Your keys authenticate requests to the
+      <a href="/api/docs" class="ak-link">embed API</a>
+      and the
+      <a href="/api/docs" class="ak-link">public API at <code class="ak-mono">/api/public/v1/*</code></a>.
+      Each key is shown <em>once</em> at creation — copy it immediately;
+      we only store the hash. Scope each key narrowly and pin it to the
+      origins that will use it.
+    </p>
 
-    <h2>Create a key</h2>
-    <div class="create-card">
-      <form method="post" action="/settings/api-keys">
+    <div class="ak-quota-banner">{{ raw_quota_line }}</div>
+
+    <h2 class="ak-h2">Your keys</h2>
+    <div class="ak-list">{{ raw_key_rows }}</div>
+
+    <h2 class="ak-h2">Create a key</h2>
+    <div class="ak-create-card">
+      <form method="post" action="/settings/api-keys" class="ak-form">
         {{ raw_csrf_field }}
-        <label>Name<input type="text" name="name" placeholder="e.g. backtest bot" maxlength="80"></label>
-        <div class="scope-toggle">
-          <label><input type="checkbox" name="scope_write" value="1"> Request <code>write</code> scope (POST /predictions). Granted automatically on pro/enterprise.</label>
+        <label class="ak-field">
+          <span class="ak-label">Name</span>
+          <input class="ak-input ak-input-chrome" type="text" name="name"
+                 placeholder="e.g. backtest bot · marketing site embed"
+                 maxlength="80">
+        </label>
+
+        <label class="ak-field">
+          <span class="ak-label">Allowed origins
+            <span class="ak-label-hint">(optional, comma-separated hostnames)</span>
+          </span>
+          <input class="ak-input ak-input-mono" type="text"
+                 name="allowed_origins"
+                 placeholder="example.com, www.example.com"
+                 autocomplete="off" spellcheck="false">
+          <span class="ak-hint">
+            Bare hostnames — no scheme, no path. Leave empty to allow any
+            origin. Requests with a non-matching Origin / Referer are
+            rejected with HTTP 403.
+          </span>
+        </label>
+
+        <div class="ak-scope-toggle">
+          <label class="ak-scope-row">
+            <input type="checkbox" name="scope_write" value="1">
+            <span>Request <code class="ak-mono">write</code> scope
+            (<code class="ak-mono">POST /predictions</code>). Granted
+            automatically on pro/enterprise tiers.</span>
+          </label>
         </div>
-        <button type="submit" class="btn btn-primary" {{ create_disabled }}>Create key</button>
-        <div class="disabled-note">{{ create_disabled_note }}</div>
+
+        <button type="submit" class="ak-btn ak-btn-primary" {{ create_disabled }}>
+          Create key
+        </button>
+        <div class="ak-disabled-note">{{ create_disabled_note }}</div>
       </form>
     </div>
   </main>
