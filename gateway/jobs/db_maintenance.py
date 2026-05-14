@@ -223,6 +223,40 @@ async def trim_perf_logs(days: int = 30) -> dict[str, Any]:
     return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
 
 
+@register_job("trim_job_runs")
+async def trim_job_runs(days: int = 30) -> dict[str, Any]:
+    """Trim ``job_runs`` rows older than ``days``.
+
+    Per the perf audit, the admin ``/admin/jobs`` page polls every 5s
+    and runs three full-table scans against ``job_runs`` per render
+    (last-run, avg-duration, recent-failures). With nothing bounding
+    the table, every scheduled job tick (hundreds per day across the
+    full registry) leaves a row that never goes away — the table will
+    eventually dominate scan cost. 30 days is plenty for week-over-week
+    failure-rate trends while keeping the table small enough that the
+    admin polling loop stays cheap.
+
+    The migration column is ``completed_at`` (not ``finished_at``); we
+    delete on that so still-running rows (NULL completed_at) are never
+    swept while they're active.
+    """
+    import db
+    cutoff = int(time.time()) - int(days) * 86400
+    try:
+        with db.conn() as c:
+            cur = c.execute(
+                "DELETE FROM job_runs WHERE completed_at IS NOT NULL "
+                "AND completed_at < ?",
+                (cutoff,),
+            )
+            removed = cur.rowcount or 0
+        log.info("trim_job_runs: removed %d rows < %d", removed, cutoff)
+        return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
+    except Exception as e:
+        log.warning("trim_job_runs: skipped — %s", e)
+        return {"ok": False, "error": str(e), "cutoff_ts": cutoff}
+
+
 @register_job("trim_wallet_connect_nonces")
 async def trim_wallet_connect_nonces(max_age_seconds: int = 3600) -> dict[str, Any]:
     """Sweep SIWE wallet-connect nonces older than ``max_age_seconds``.
@@ -277,6 +311,12 @@ register_cron("trim_perf_logs", hour=3, minute=40)
 # swept. Slotted between the perf-log trim and the WAL checkpoint so
 # the deletions land in the same nightly checkpoint cycle.
 register_cron("trim_wallet_connect_nonces", hour=3, minute=45)
+
+# 04:15 UTC daily — trims scheduled-job history. Slotted between the
+# 04:10 WAL checkpoint and the 04:30 source-summary regen so the
+# deletes land before the daily VACUUM at 05:00 reclaims the pages.
+# 30-day retention bounds /admin/jobs polling scans per the perf audit.
+register_cron("trim_job_runs", hour=4, minute=15)
 
 
 # ── Quarterly recovery drill ──────────────────────────────────────────────

@@ -222,5 +222,103 @@ class TestVacuumDbDailyRegistration(unittest.TestCase):
             self.assertIn(key, result)
 
 
+class TestTrimJobRuns(unittest.TestCase):
+    """``trim_job_runs`` removes old rows and keeps recent ones.
+
+    Per the perf audit, ``job_runs`` would otherwise grow unbounded
+    while ``/admin/jobs`` polls every 5s with three full-table scans —
+    so the retention contract (drop > 30d, keep ≤ 30d) is the load-
+    bearing behaviour to lock down.
+    """
+
+    def setUp(self) -> None:
+        # Clean slate per test — _testdb shares one in-memory connection
+        # across the whole suite so unrelated tests may have inserted
+        # rows we don't want to assert against.
+        with db.conn() as c:
+            c.execute("DELETE FROM job_runs")
+
+    def _insert(self, name: str, started_at: int, completed_at: int | None) -> None:
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO job_runs (job_name, started_at, completed_at, ok) "
+                "VALUES (?, ?, ?, ?)",
+                (name, started_at, completed_at, 1 if completed_at else None),
+            )
+
+    def _count(self) -> int:
+        with db.conn() as c:
+            row = c.execute("SELECT COUNT(*) FROM job_runs").fetchone()
+        return int(row[0])
+
+    def test_removes_rows_older_than_cutoff(self):
+        now = int(__import__("time").time())
+        # 40 days old — must be swept (default retention 30 days).
+        self._insert("old_job", started_at=now - 40 * 86400,
+                     completed_at=now - 40 * 86400 + 5)
+        result = _run(db_maintenance.trim_job_runs())
+        self.assertTrue(result["ok"], msg=f"trim returned: {result!r}")
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(self._count(), 0)
+
+    def test_keeps_rows_inside_retention_window(self):
+        now = int(__import__("time").time())
+        # 5 days old — well inside the 30-day window.
+        self._insert("recent_job", started_at=now - 5 * 86400,
+                     completed_at=now - 5 * 86400 + 5)
+        result = _run(db_maintenance.trim_job_runs())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_mixed_dataset_only_old_rows_swept(self):
+        now = int(__import__("time").time())
+        # Two old, one recent — only the two old rows go.
+        self._insert("a", now - 60 * 86400, now - 60 * 86400 + 1)
+        self._insert("b", now - 31 * 86400, now - 31 * 86400 + 1)
+        self._insert("c", now - 1 * 86400, now - 1 * 86400 + 1)
+        result = _run(db_maintenance.trim_job_runs())
+        self.assertEqual(result["removed"], 2)
+        with db.conn() as c:
+            remaining = [r[0] for r in c.execute(
+                "SELECT job_name FROM job_runs ORDER BY job_name"
+            ).fetchall()]
+        self.assertEqual(remaining, ["c"])
+
+    def test_in_flight_rows_never_swept(self):
+        """A row with ``completed_at IS NULL`` is still running — even
+        if ``started_at`` is ancient (a hung worker), we must not delete
+        it out from under the scheduler."""
+        now = int(__import__("time").time())
+        self._insert("hung_worker", started_at=now - 90 * 86400,
+                     completed_at=None)
+        result = _run(db_maintenance.trim_job_runs())
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_custom_days_parameter(self):
+        """A non-default ``days`` argument shifts the cutoff."""
+        now = int(__import__("time").time())
+        self._insert("seven_days_old", started_at=now - 7 * 86400,
+                     completed_at=now - 7 * 86400 + 1)
+        # 14-day window keeps it.
+        result = _run(db_maintenance.trim_job_runs(days=14))
+        self.assertEqual(result["removed"], 0)
+        # 3-day window sweeps it.
+        result = _run(db_maintenance.trim_job_runs(days=3))
+        self.assertEqual(result["removed"], 1)
+
+    def test_registered_in_job_registry(self):
+        from jobs.registry import job_registry
+        self.assertIn("trim_job_runs", job_registry)
+
+    def test_registered_in_cron_schedule(self):
+        from jobs.registry import cron_jobs
+        match = [j for j in cron_jobs if j["name"] == "trim_job_runs"]
+        self.assertEqual(len(match), 1, msg=f"cron_jobs={cron_jobs!r}")
+        self.assertEqual(match[0]["hour"], 4)
+        self.assertEqual(match[0]["minute"], 15)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
