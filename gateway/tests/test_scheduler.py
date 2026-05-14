@@ -63,6 +63,13 @@ class TestSchedulerRuns(unittest.IsolatedAsyncioTestCase):
     """Exercise the event loop — register a job, run a tick, verify audit."""
 
     def setUp(self):
+        import os
+        # The shared conftest sets NARVE_SKIP_SCHEDULER=1 to suppress the
+        # background scheduler thread during tests that don't actually
+        # exercise it. This suite DOES exercise it, so temporarily pop
+        # the flag so Scheduler().start() runs APScheduler's _impl.start
+        # rather than returning early.
+        self._prev_skip = os.environ.pop("NARVE_SKIP_SCHEDULER", None)
         from scheduler.scheduler import Scheduler
         self.sched = Scheduler()
 
@@ -71,6 +78,11 @@ class TestSchedulerRuns(unittest.IsolatedAsyncioTestCase):
             self.sched.shutdown(wait=False)
         except Exception:
             pass
+        # Restore the env so downstream tests see the same scheduler-off
+        # state the conftest installed.
+        import os
+        if self._prev_skip is not None:
+            os.environ["NARVE_SKIP_SCHEDULER"] = self._prev_skip
 
     def _count_runs(self, name: str) -> int:
         import db

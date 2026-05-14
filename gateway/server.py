@@ -8111,6 +8111,21 @@ except Exception as _exc:  # pragma: no cover
     log.warning("admin_test_emails_routes import failed: %s — continuing without it", _exc)
 
 
+# Single-pane external-integration health (/admin/integrations + /api/admin/integrations*).
+# Surfaces config + live state for every third-party SaaS (Stripe, Anthropic,
+# Polymarket, Kalshi, SMTP, Sentry, BetterStack, Cloudflare). Same reload-safe
+# side-effect pattern as admin_cost_alerts_routes above — must sit before the
+# catch-all so /admin/integrations isn't swallowed as a 404.
+try:
+    import admin_integrations_routes  # noqa: F401,E402
+    import sys as _ain_sys
+    if "admin_integrations_routes" in _ain_sys.modules:
+        import importlib as _ain_importlib
+        _ain_importlib.reload(_ain_sys.modules["admin_integrations_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_integrations_routes import failed: %s — continuing without it", _exc)
+
+
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern
 # as status_routes/embed_routes above; billing_routes registers its endpoints
 # on server.app via @app.get/@app.post decorators as a side effect of import.
