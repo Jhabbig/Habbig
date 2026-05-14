@@ -362,14 +362,44 @@ def revoke_invite_token(token_id: int) -> None:
         c.execute("UPDATE invite_tokens SET status = 'revoked' WHERE id = ? AND status = 'unclaimed'", (token_id,))
 
 
-def list_invite_tokens() -> list[sqlite3.Row]:
+def list_invite_tokens(limit: int = 50, before_id: Optional[int] = None) -> list[sqlite3.Row]:
+    """Cursor-paginated invite-token list (newest id first).
+
+    Perf audit #5 — admin tables grow unbounded, so callers MUST pass a
+    `limit`. Default 50 keeps the panel snappy; hard cap 500 prevents
+    `?limit=10000` abuse via query-string. `before_id` is the cursor
+    (last id on the previous page) — pass `None` for page 1.
+    """
+    capped = max(1, min(int(limit), 500))
+    args: list = []
+    q = "SELECT * FROM invite_tokens"
+    if before_id is not None:
+        q += " WHERE id < ?"
+        args.append(int(before_id))
+    q += " ORDER BY id DESC LIMIT ?"
+    args.append(capped)
     with db.conn() as c:
-        return c.execute("SELECT * FROM invite_tokens ORDER BY created_at DESC").fetchall()
+        return c.execute(q, args).fetchall()
 
 
-def list_all_users() -> list[sqlite3.Row]:
+def list_all_users(limit: int = 100, before_id: Optional[int] = None) -> list[sqlite3.Row]:
+    """Cursor-paginated user list (newest id first).
+
+    Perf audit #5 — historical signature returned every user; on a
+    large install that's a multi-second blocking read. Default page
+    is 100, hard-capped at 500. ORDER BY id DESC matches the admin UX
+    (recent signups first) and is cheap on an autoincrement PK.
+    """
+    capped = max(1, min(int(limit), 500))
+    args: list = []
+    q = "SELECT * FROM users"
+    if before_id is not None:
+        q += " WHERE id < ?"
+        args.append(int(before_id))
+    q += " ORDER BY id DESC LIMIT ?"
+    args.append(capped)
     with db.conn() as c:
-        return c.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+        return c.execute(q, args).fetchall()
 
 
 def set_user_role(user_id: int, level: int) -> None:

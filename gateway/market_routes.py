@@ -282,6 +282,12 @@ async def api_markets_search(request: Request, q: str = ""):
 async def api_connect_kalshi(request: Request):
     srv = _srv()
     user = _require_markets_user(request)
+    # AUDIT 2026-05-14 — 5 connect attempts per minute per user.
+    if srv._is_rate_limited(f"market_connect:{user['user_id']}", limit=5, window=60):
+        return JSONResponse(
+            {"error": "Too many connection attempts. Try again in a minute."},
+            status_code=429, headers={"Retry-After": "60"},
+        )
     try:
         body = await request.json()
     except Exception:
@@ -318,6 +324,13 @@ async def api_connect_kalshi(request: Request):
 
 async def api_connect_polymarket(request: Request):
     user = _require_markets_user(request)
+    # AUDIT 2026-05-14 — share the 5/min/user budget with Kalshi connect.
+    srv = _srv()
+    if srv._is_rate_limited(f"market_connect:{user['user_id']}", limit=5, window=60):
+        return JSONResponse(
+            {"error": "Too many connection attempts. Try again in a minute."},
+            status_code=429, headers={"Retry-After": "60"},
+        )
     try:
         body = await request.json()
     except Exception:

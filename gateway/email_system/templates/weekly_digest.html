@@ -1,6 +1,6 @@
 {% block content %}
-<h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your weekly signal digest</h1>
-<p style="margin:0 0 4px;color:#aaaaaa;font-size:13px;">Week of {{ week_start }} — {{ week_end }}</p>
+<h1 style="margin:0 0 4px;font-size:20px;font-weight:600;color:#0d0d0d;letter-spacing:-0.02em;">Your weekly signal digest<span style="font-size:0;line-height:0;">{{ watermark_zw }}</span></h1>
+<p style="margin:0 0 4px;color:#aaaaaa;font-size:13px;">Week of {{ week_start }} — {{ week_end }}<span style="font-size:0;line-height:0;">{{ watermark_zw }}</span></p>
 {% if subproduct_labels %}
 <p style="margin:0 0 24px;color:#666;font-size:12px;">Your digest for: {{ subproduct_labels|join(', ') }}</p>
 {% else %}
@@ -11,7 +11,7 @@
 {% for p in top_predictions %}
 <div style="padding:14px 0;border-bottom:1px solid #ebebeb;">
   <div style="font-size:13px;color:#555;margin-bottom:4px;">{{ p.source }} · {{ p.category }}</div>
-  <div style="font-size:14px;color:#0d0d0d;line-height:1.5;">{{ p.content }}</div>
+  <div style="font-size:14px;color:#0d0d0d;line-height:1.5;">{{ p.content }}<span style="font-size:0;line-height:0;">{{ watermark_zw }}</span></div>
   {% if p.credibility %}
   <div style="font-size:11px;color:#aaaaaa;margin-top:6px;">Credibility: {{ p.credibility }}</div>
   {% endif %}
