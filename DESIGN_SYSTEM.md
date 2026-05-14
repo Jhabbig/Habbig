@@ -1,6 +1,6 @@
 # narve.ai Design System
 
-Last updated: 2026-04-21
+Last updated: 2026-05-14
 
 Canonical source: [`gateway/static/tokens.css`](gateway/static/tokens.css)
 Repo-wide enforcement: see **Usage rules** at the bottom.
@@ -157,11 +157,27 @@ substitute arbitrary pixel values.
 
 ### Typography — family
 
+Three typefaces, no exceptions. The platform is monochrome and
+typography carries hierarchy, so adding a fourth face is a
+visual-identity regression — push back, don't reach for one.
+
 | Token | Stack | Use |
 |---|---|---|
 | `--font-ui` | `Inter` var, sys fallback | Everything by default |
 | `--font-display` | `Instrument Serif` | Landing heroes, wordmark |
-| `--font-mono` | `SF Mono`, `Menlo`, `Consolas` | Code, tabular numbers, hashes |
+| `--font-mono` | `Geist Mono` var, `SF Mono`, `Menlo`, `Consolas`, `ui-monospace` | Code, tabular numbers, hashes, market IDs |
+
+**`Geist Mono` is the canonical monospace face** (since 2026-05-14).
+Loaded via `@font-face` in `tokens.css` from
+`/_gateway_static/fonts/GeistMono-Variable.woff2` (~71 KB variable
+woff2). The fallback chain — `SF Mono → Menlo → Consolas →
+ui-monospace` — keeps tabular surfaces legible if the woff2 fails to
+load, but the deploy treats the woff2 as a required asset (see
+[RUNBOOK.md → Deploy tarball](RUNBOOK.md#deploy-tarball--required-paths)).
+
+Never use `font-family: "Geist Mono"` directly in component CSS —
+always go through `var(--font-mono)` so the fallback chain and any
+future swap stay in one place.
 
 ### Weights
 
@@ -208,8 +224,11 @@ doesn't require grepping a dozen files.
 
 ### Focus ring
 
-One token, one source of truth. Every interactive element's
-`:focus-visible` rule should compose from this:
+One token, one source of truth. **Always use `:focus-visible`, never
+`:focus`** — the platform suppresses focus rings on mouse activation
+and shows them only on keyboard navigation. Site-wide migration
+landed 2026-05-14; new code that ships a bare `:focus` rule is a
+visual-regression bug.
 
 ```css
 :focus-visible {
@@ -220,6 +239,11 @@ One token, one source of truth. Every interactive element's
 
 `--focus-ring` = `2px solid var(--border-strong)`. The 2-px offset
 keeps the ring off the element's own rounded border.
+
+If a component genuinely needs a styled state on mouse focus
+(e.g. a search input that stays "active-looking" while the cursor
+is in it), express that via `:focus-within` on a wrapper, not by
+reaching back to `:focus`.
 
 ### Shadows
 
@@ -535,6 +559,38 @@ and is the reason something drifted.
 4. Add the component's HTML + CSS example to this file under
    `## Components`.
 5. If you added new tokens, add rows to the `## Tokens` tables.
+
+---
+
+## Accessibility
+
+Load-bearing rules. Each has a corresponding token / pattern above —
+this section is the prose explanation of why.
+
+1. **`:focus-visible` is the only focus selector** (since
+   2026-05-14). `:focus` fires for every mouse click and leaves a
+   stale ring; `:focus-visible` only fires for keyboard /
+   assistive-tech activation. Site-wide migration landed in commit
+   `bd2d583`. If you need a permanent visual state on a focused
+   element, use `:focus-within` on a wrapper.
+2. **Contrast targets WCAG 2.1 AA on body text** — 4.5:1 minimum on
+   the theme's `--bg-base`. The token tables above call out the
+   ratio for every text token. `--text-quaternary` is decorative
+   only — never body.
+3. **No colour for hierarchy.** Differentiate by weight, size, and
+   position. Re-stated here because it is the single largest
+   accessibility win for colour-blind users: a green/red badge pair
+   is a regression even if the green hits AA.
+4. **Touch targets ≥ 44 × 44 px** on mobile surfaces. The
+   `mobile-a11y.css` overrides exist specifically to bump narrow
+   inputs / buttons up to this floor; do not "fix" them by shrinking
+   the override.
+5. **`prefers-reduced-motion`.** Skeletons and scroll-reveal
+   animations check the media query; new animations must do the
+   same.
+6. **axe pass before merge.** Zero serious / critical findings on
+   every new page. Run axe DevTools on both `[data-theme="light"]`
+   and `[data-theme="dark"]`.
 
 ---
 

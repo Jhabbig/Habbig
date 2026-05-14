@@ -21,6 +21,31 @@ procedures lives in [gateway/RUNBOOK.md](gateway/RUNBOOK.md).
 | Prod log | `/tmp/gateway.log` |
 | Branch | `feature/platform-build` |
 
+## Subproduct ports
+
+Every subproduct is a self-contained FastAPI app behind the gateway.
+Gateway proxies the matching subdomain to `127.0.0.1:<port>` on the
+prod host; each subproduct ships its own `server.py` (and, where
+applicable, its own SQLite store under the subproduct directory).
+
+| Subproduct | Subdomain | Port | Directory | Status |
+| --- | --- | --- | --- | --- |
+| Voters Atlas | `voters.narve.ai` | `7051` | `voters-dashboard/` | live |
+| Climate Change | `climate.narve.ai` | `7052` | `climate-dashboard/` | live |
+| World Health | `world-health.narve.ai` | `7053` | `world-health-dashboard/` | skeleton |
+| Eco Disasters | `disasters.narve.ai` | `7060` | `disasters-dashboard/` | live |
+| Central Bank Tracker | `centralbank.narve.ai` | `7061` | `centralbank-dashboard/` | skeleton |
+| Whale Watch | `whale.narve.ai` | `8053` | `whale-dashboard/` | skeleton |
+
+Subdomain routing is configured on the Cloudflare Tunnel; the
+tunnel forwards each hostname to `127.0.0.1:<port>` on
+`100.69.44.108`. To verify a subproduct is up:
+
+```bash
+ssh julianhabbig@100.69.44.108 \
+  "curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/health"
+```
+
 ## Deploy a change
 
 Every file goes as a separate `scp` — never `rsync` with multiple source
@@ -56,6 +81,33 @@ curl -sS -o /dev/null -w "%{http_code}\n" http://100.69.44.108:7000/health
 #    any git op on the server reverts your changes otherwise)
 ssh julianhabbig@100.69.44.108 "cd ~/Habbig/gateway && git add -A && git commit -m 'deploy: <summary>'"
 ```
+
+### Deploy tarball — required paths
+
+When packaging a full deploy bundle (e.g. fresh box, recovery, or
+shipping subproducts in lock-step with the gateway), the tarball
+MUST include:
+
+```
+gateway/                            # main app
+gateway/static/fonts/GeistMono-Variable.woff2   # 71 KB — required asset
+voters-dashboard/                   # port 7051
+climate-dashboard/                  # port 7052
+world-health-dashboard/             # port 7053
+disasters-dashboard/                # port 7060
+centralbank-dashboard/              # port 7061
+whale-dashboard/                    # port 8053
+```
+
+If `GeistMono-Variable.woff2` is missing, monospace surfaces (code
+blocks, tabular numbers, hashes, market IDs) silently regress to
+`SF Mono` / `Menlo`. The fallback chain in `tokens.css` prevents a
+hard failure but the visual identity drifts — treat the woff2 as a
+deploy-blocking asset, not a nice-to-have.
+
+Each subproduct directory needs its own venv install + uvicorn /
+`python3 server.py` launch on its own port. Restarting the gateway
+does NOT restart subproducts; each is its own process.
 
 ## Rollback
 
@@ -129,6 +181,45 @@ Cloudflare caches HTML. After a CSS or JS change:
    ```
    # on server, export a short site-access token and restart
    ```
+
+## Security headers
+
+Canonical values applied on every gateway response (defined in
+`gateway/server.py` ~ line 600, `SECURITY_HEADERS`). Pasted here in
+full for grep-ability during incident response — when a browser
+reports a feature blocked, search this file for the directive name
+to confirm it is intentional.
+
+```
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), midi=(), magnetometer=(), gyroscope=(), accelerometer=(), ambient-light-sensor=(), autoplay=(), encrypted-media=(), fullscreen=(self), picture-in-picture=(), publickey-credentials-get=(self), sync-xhr=(), bluetooth=(), display-capture=(), serial=(), hid=(), clipboard-read=(), clipboard-write=(self), idle-detection=(), interest-cohort=(), browsing-topics=()
+
+Cross-Origin-Resource-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+Referrer-Policy: strict-origin-when-cross-origin
+X-XSS-Protection: 0
+```
+
+In production only, additionally:
+
+```
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+```
+
+Notable allow-listed features (everything else is `()` = deny):
+
+| Feature | Allowance | Why |
+| --- | --- | --- |
+| `fullscreen` | `self` | Chart / image lightbox needs it on narve origin |
+| `clipboard-write` | `self` | Copy-to-clipboard buttons on takes / share dialogs |
+| `publickey-credentials-get` | `self` | WebAuthn / passkey login future-proofing |
+
+To add a new feature: edit `SECURITY_HEADERS["Permissions-Policy"]`
+in `gateway/server.py` and the matching row in the table above.
+Never silently widen — the row in this table is the audit trail.
+
+CSP is defined separately (same file, `CSP = "; ".join([...])`)
+and includes nonce-based `script-src` plus tight `connect-src` /
+`img-src` / `frame-ancestors 'none'`.
 
 ## Deploy policy
 

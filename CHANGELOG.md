@@ -5,6 +5,75 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is date-based (no semver yet); releases correspond to
 deploy commits on `feature/platform-build`.
 
+## Week of 2026-05-14
+
+### Added
+
+- **Voters Atlas** subproduct — election / electorate dashboard
+  (`voters-dashboard/`, port `7051`). Geo-segmented voter dynamics
+  and turnout signals served from its own SQLite store.
+- **Climate Change** subproduct — long-horizon climate indicator
+  dashboard (`climate-dashboard/`, port `7052`).
+- **Eco Disasters** subproduct — live natural-disaster feed +
+  probabilistic impact panels (`disasters-dashboard/`, port `7060`).
+  Stripe price-id env stub + Dockerfile shipped.
+- **Whale Watch** subproduct skeleton — large on-chain wallet
+  surveillance landing (`whale-dashboard/`, port `8053`).
+- **Central Bank Tracker** subproduct skeleton — rate-decision /
+  guidance dashboard (`centralbank-dashboard/`, port `7061`).
+- **World Health** subproduct skeleton — global health-indicator
+  dashboard (`world-health-dashboard/`, port `7053`).
+- `/settings/integrations` page — manage Polymarket wallet address,
+  Kalshi API token, and bankroll from a single settings surface.
+- Per-subproduct `og:image` PNGs for the six new dashboards so
+  shared links render their own card.
+- German, Spanish, and Brazilian Portuguese localisation complete
+  — all keys translated (`gateway/i18n/locales/de.json`,
+  `es.json`, `pt-br.json`); language switcher now ships three
+  additional fully-translated locales.
+
+### Changed
+
+- **Typography — monospace.** `Geist Mono` is now the canonical
+  monospace face across the platform; `var(--font-mono)` resolves to
+  `Geist Mono` with `SF Mono / Menlo / Consolas / ui-monospace` as
+  fallbacks. Variable woff2 ships at
+  `gateway/static/fonts/GeistMono-Variable.woff2` (~71 KB).
+- **Default share card.** Pages without a per-page `og:image` now
+  fall back to a default narve `og:image` so every shared link
+  renders a branded card instead of a generic preview.
+- **Focus styles — mouse-suppress.** Site-wide `:focus` rules
+  migrated to `:focus-visible`. Mouse clicks no longer leave a
+  lingering focus ring on buttons / inputs / nav; keyboard
+  navigation still gets the full ring.
+- Mobile collections: input font-size raised to 16px (suppresses
+  iOS auto-zoom); flagship subproducts sort first on the dashboards
+  hub.
+- Admin / settings: bankroll input + Polymarket / Kalshi credential
+  fields surfaced together under the new integrations page.
+
+### Security
+
+- **AUDIT #5 closed** — 0 critical / 0 high / 1 medium / 2 low,
+  0 regressions vs prior audits.
+- **Permissions-Policy hardened.** Default-deny on every browser
+  sensor and synced API: `camera=(), microphone=(), geolocation=(),
+  payment=(), usb=(), midi=(), magnetometer=(), gyroscope=(),
+  accelerometer=(), ambient-light-sensor=(), autoplay=(),
+  encrypted-media=(), fullscreen=(self), picture-in-picture=(),
+  publickey-credentials-get=(self), sync-xhr=(), bluetooth=(),
+  display-capture=(), serial=(), hid=(), clipboard-read=(),
+  clipboard-write=(self), idle-detection=(), interest-cohort=(),
+  browsing-topics=()`. Only `clipboard-write`, `fullscreen`, and
+  `publickey-credentials-get` are allowed and only on the page's
+  own origin.
+- **`Cross-Origin-Resource-Policy: same-origin`** added — blocks
+  attacker pages from reading narve responses via cross-origin
+  `<img>` / `<script>` probes and closes one Spectre-class
+  side-channel.
+- Transitive Python deps re-pinned via `requirements.lock`
+  regenerated from the prod-box environment.
+
 ## [Unreleased]
 
 Work in flight on `feature/platform-build` that hasn't been tagged.
