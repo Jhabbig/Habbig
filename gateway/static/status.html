@@ -88,7 +88,7 @@
       const fb = document.getElementById('subscribe-feedback');
       fb.textContent = 'Subscribing…';
       try {
-        const r = await fetch('/api/status/subscribe', {
+        const r = await fetch('/api/v1/status/subscribe', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({email: email, components: 'all'})
