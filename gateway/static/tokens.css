@@ -71,10 +71,15 @@
   /* ── Text — 4 levels + inverse ──────────────────────────── */
   --text-primary:    #0d0d0d;
   --text-secondary:  #4a4a4a;
-  --text-tertiary:   #858585;  /* 4.54:1 on #fff — AA body text */
+  /* Was #858585 (3.69:1 on #fff after axe re-measure → fails AA at
+     small sizes on #fafafa/#f5f5f5 backgrounds). Bumped to #6e6e6e
+     = 5.10:1 on #fff, 4.89:1 on #fafafa, 4.68:1 on #f5f5f5. */
+  --text-tertiary:   #6e6e6e;
   /* Quaternary is decorative-only — separators, divider glyphs,
      inactive ticks. Fails AA body-text contrast; never use for
-     meaningful copy. */
+     meaningful copy. (If you see a contrast violation pointing at
+     this variable, the fix is to switch the rule to --text-tertiary,
+     not to bump this token.) */
   --text-quaternary: #bbbbbb;
   /* Inverse = text that sits on --interactive-bg. Flipping it in
      dark theme is what lets a single CSS rule render correctly on

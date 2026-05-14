@@ -209,7 +209,10 @@ body .nav-section-header {
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-quaternary);
+  /* Was --text-quaternary (#bbbbbb on #fafafa = 1.83:1 — fails AA).
+     Switched to --text-tertiary (#6e6e6e = 4.74:1 on #fafafa) so the
+     sidebar section headings meet AA body contrast. */
+  color: var(--text-tertiary);
   padding: var(--space-3, 12px) var(--space-3, 12px) var(--space-1, 4px);
   margin-top: var(--space-3, 12px);
 }

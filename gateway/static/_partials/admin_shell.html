@@ -1,14 +1,9 @@
 <!-- Admin shell layout. Wrapped around every admin page by
-     render_admin_page() in gateway/admin_shell.py.
-
-     Required substitutions (all caller-supplied):
-       {{ page_title }}            plain text, HTML-escaped
-       {{ raw_admin_content }}     the page's own body HTML (trusted)
-       {{ raw_breadcrumb }}        optional trail; builder wraps in <ol>
-       {{ raw_page_actions }}      optional right-aligned button row
-       {{ raw_active_route }}      data-route value the <nav> should mark
-                                   aria-current="page"
--->
+     render_admin_page() in gateway/admin_shell.py. The substitution
+     placeholders the renderer fills are documented in that module's
+     docstring (intentionally not echoed here in literal {{ }} form,
+     so a substituted raw_admin_content cannot prematurely close this
+     comment via its own <!-- --> blocks and bleed into the DOM). -->
 <div class="admin-shell" data-active-route="{{ raw_active_route }}">
   <button type="button"
           class="admin-rail-toggle"

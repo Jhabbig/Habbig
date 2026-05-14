@@ -143,7 +143,7 @@
   font-size: var(--text-xs, 11px);
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--text-tertiary, #858585);
+  color: var(--text-tertiary, #6e6e6e);
   margin: 0 0 var(--space-4, 16px);
 }
 .nv-error__title {
