@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Love Atlas — narve.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@1&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--bg-base:#fff;--bg-surface:#fafafa;--border-ghost:#ececec;--border-subtle:#e2e2e2;--border-default:#d4d4d4;--border-strong:#a3a3a3;--text-primary:#0a0a0a;--text-secondary:#404040;--text-tertiary:#737373;--text-quaternary:#a3a3a3;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;--space-10:40px;--space-12:48px;--radius-sm:4px;--radius-md:8px;--text-xs:11px;--text-sm:12px;--text-base:14px;--text-md:16px;--text-xl:28px;--text-2xl:40px;--text-3xl:56px;--row-pad-y:9px;--row-pad-x:14px;--card-pad:18px}
+*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{background:var(--bg-base);color:var(--text-primary);font-family:'Inter',system-ui,sans-serif;font-size:var(--text-base);line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:'Geist Mono',ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+a{color:var(--text-primary);text-decoration:none;border-bottom:1px solid var(--border-default)}
+a:hover{border-color:var(--text-primary)}
+header{border-bottom:1px solid var(--border-subtle);padding:var(--space-6) var(--space-8);display:flex;align-items:baseline;gap:var(--space-6)}
+header .brand{font-size:var(--text-sm);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em;font-weight:500}
+header h1{margin:0;font-size:var(--text-xl);font-weight:600;letter-spacing:-.02em}
+header .crumbs{margin-left:auto;font-size:var(--text-sm);color:var(--text-tertiary)}
+main{padding:var(--space-8);max-width:1320px;margin:0 auto}
+.hero{margin-bottom:var(--space-10)}
+.hero h2{font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-weight:400;font-size:var(--text-3xl);line-height:1.05;letter-spacing:-.02em;margin:0 0 var(--space-4)}
+.hero .lede{max-width:720px;color:var(--text-secondary);font-size:var(--text-md);line-height:1.55}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-3);margin-bottom:var(--space-10)}
+.stat{border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--card-pad);background:var(--bg-surface)}
+.stat .label{font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);font-weight:500}
+.stat .value{font-size:var(--text-2xl);font-weight:600;letter-spacing:-.02em;line-height:1.1;margin-top:var(--space-2);font-variant-numeric:tabular-nums}
+.stat .sub{margin-top:var(--space-2);color:var(--text-tertiary);font-size:var(--text-sm)}
+.section-title{margin:var(--space-10) 0 var(--space-3);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary);font-weight:600}
+.section-meta{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-4)}
+.section-meta .meta{font-size:var(--text-xs);color:var(--text-quaternary)}
+.tabs{display:flex;gap:var(--space-1);border-bottom:1px solid var(--border-subtle);margin-bottom:var(--space-6)}
+.tab{padding:var(--space-3) var(--space-4);cursor:pointer;border:none;background:transparent;color:var(--text-tertiary);font:inherit;font-size:var(--text-sm);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--text-primary)}
+.tab[aria-selected="true"]{color:var(--text-primary);border-bottom-color:var(--text-primary);font-weight:500}
+.panel{display:none}.panel.active{display:block}
+.search-row{display:flex;gap:var(--space-2);margin-bottom:var(--space-4);flex-wrap:wrap}
+.search-row input,.search-row select{font:inherit;font-size:var(--text-base);padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);color:var(--text-primary);min-width:200px}
+.search-row input:focus,.search-row select:focus{outline:none;border-color:var(--text-primary)}
+.search-row .count{margin-left:auto;color:var(--text-tertiary);font-size:var(--text-sm);align-self:center}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-3)}
+.metric-card{border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-4);background:var(--bg-surface)}
+.metric-card:hover{border-color:var(--border-strong)}
+.metric-card .name{font-weight:600}
+.metric-card .id{font-family:'Geist Mono',monospace;font-size:var(--text-xs);color:var(--text-tertiary)}
+.metric-card .units{font-family:'Geist Mono',monospace;font-size:var(--text-xs);color:var(--text-secondary);margin-top:var(--space-2)}
+.metric-card .desc{color:var(--text-secondary);font-size:var(--text-sm);margin-top:var(--space-2);line-height:1.4}
+.metric-card .footer{display:flex;justify-content:space-between;align-items:baseline;margin-top:var(--space-3)}
+.metric-card .coverage{display:inline-block;font-size:var(--text-xs);color:var(--text-secondary);padding:2px 8px;border:1px solid var(--border-default);border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
+.metric-card .status{font-family:'Geist Mono',monospace;font-size:var(--text-xs);color:var(--text-quaternary);text-transform:uppercase;letter-spacing:.05em}
+table{width:100%;border-collapse:collapse;font-size:var(--text-sm)}
+th,td{text-align:left;padding:var(--row-pad-y) var(--row-pad-x);border-bottom:1px solid var(--border-ghost);vertical-align:top}
+th{color:var(--text-tertiary);font-weight:500;font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.06em;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle)}
+tbody tr:hover td{background:var(--bg-surface)}
+td.mono,td.num{font-family:'Geist Mono',monospace;font-variant-numeric:tabular-nums}td.num{text-align:right}
+.empty{color:var(--text-tertiary);font-style:italic;padding:var(--space-8);text-align:center;border:1px dashed var(--border-subtle);border-radius:var(--radius-md)}
+footer{margin-top:var(--space-12);padding-top:var(--space-6);border-top:1px solid var(--border-subtle);color:var(--text-tertiary);font-size:var(--text-sm);line-height:1.7}
+footer a{color:var(--text-secondary)}
+@media(max-width:640px){header{padding:var(--space-4);flex-wrap:wrap}main{padding:var(--space-4)}.hero h2{font-size:var(--text-2xl)}}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">narve.ai</span>
+  <h1>Love Atlas</h1>
+  <span class="crumbs mono">love.narve.ai</span>
+</header>
+<main>
+  <section class="hero">
+    <h2>Marriage. <br/>Divorce. <br/>Forever.</h2>
+    <p class="lede">
+      Every macro relationship metric — crude marriage rate, divorce rate,
+      median age at first marriage, cohabitation share, total fertility,
+      dating-app usage, sexless-marriage surveys, loneliness trends — joined
+      into one atlas across the World Bank, OECD, US Census, ONS UK,
+      Eurostat, Pew and Gallup. Country by country, year over year.
+    </p>
+  </section>
+  <div class="summary-grid" id="summary"></div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="trends" aria-selected="true">Trends</button>
+    <button class="tab" role="tab" data-tab="country" aria-selected="false">By Country</button>
+    <button class="tab" role="tab" data-tab="compare" aria-selected="false">Compare</button>
+    <button class="tab" role="tab" data-tab="markets" aria-selected="false">Markets</button>
+  </div>
+  <section class="panel active" id="panel-trends">
+    <div class="section-meta"><div class="section-title">Metric catalogue</div><div class="meta mono" id="trends-meta">—</div></div>
+    <div class="search-row">
+      <input type="text" id="trends-search" placeholder="Search marriage, divorce, fertility…" autocomplete="off" />
+      <select id="trends-coverage"><option value="">Any coverage</option><option value="global">Global</option><option value="oecd">OECD</option><option value="us">US</option><option value="uk">UK</option><option value="eu">EU</option></select>
+      <select id="trends-status"><option value="">Any status</option><option value="tracked">Tracked</option><option value="atlas">Atlas</option><option value="stub">Stub</option></select>
+      <span class="count" id="trends-count">—</span>
+    </div>
+    <div id="trends-grid" class="metric-grid"></div>
+  </section>
+  <section class="panel" id="panel-country">
+    <div class="section-meta"><div class="section-title">By country</div><div class="meta mono">single metric, time series</div></div>
+    <div class="search-row">
+      <select id="country-metric"></select>
+      <input type="text" id="country-iso" placeholder="ISO-2 (us, jp, de…)" maxlength="2" />
+      <input type="number" id="country-years" min="1" max="60" value="10" style="min-width:100px" />
+      <button class="tab" id="country-go" style="border-bottom-color:var(--border-default);background:var(--bg-base);padding:var(--space-2) var(--space-4);border-radius:var(--radius-sm);border:1px solid var(--border-default)">Load</button>
+    </div>
+    <div id="country-result"></div>
+  </section>
+  <section class="panel" id="panel-compare">
+    <div class="section-meta"><div class="section-title">Compare</div><div class="meta mono">side-by-side, one metric, two countries</div></div>
+    <div class="search-row">
+      <select id="compare-metric"></select>
+      <input type="text" id="compare-a" placeholder="A (us)" maxlength="2" />
+      <input type="text" id="compare-b" placeholder="B (jp)" maxlength="2" />
+      <input type="number" id="compare-years" min="1" max="60" value="20" style="min-width:100px" />
+      <button class="tab" id="compare-go" style="border-bottom-color:var(--border-default);background:var(--bg-base);padding:var(--space-2) var(--space-4);border-radius:var(--radius-sm);border:1px solid var(--border-default)">Load</button>
+    </div>
+    <div id="compare-result"></div>
+  </section>
+  <section class="panel" id="panel-markets">
+    <div class="section-meta"><div class="section-title">Polymarket — Love / Relationships / Family</div><div class="meta mono"><a href="https://polymarket.com" target="_blank" rel="noopener">polymarket.com</a></div></div>
+    <div id="markets-table"></div>
+  </section>
+  <footer>
+    Sources:
+    <a href="https://data.worldbank.org/" target="_blank" rel="noopener">World Bank</a>,
+    <a href="https://www.oecd.org/els/family/database.htm" target="_blank" rel="noopener">OECD Family Database</a>,
+    <a href="https://www.census.gov/" target="_blank" rel="noopener">US Census ACS</a>,
+    <a href="https://www.cdc.gov/nchs/nvss/marriage-divorce.htm" target="_blank" rel="noopener">CDC NVSS</a>,
+    <a href="https://www.ons.gov.uk/" target="_blank" rel="noopener">ONS UK</a>,
+    <a href="https://ec.europa.eu/eurostat/" target="_blank" rel="noopener">Eurostat</a>,
+    <a href="https://www.pewresearch.org/" target="_blank" rel="noopener">Pew Research</a>,
+    <a href="https://news.gallup.com/" target="_blank" rel="noopener">Gallup</a>,
+    <a href="https://gss.norc.org/" target="_blank" rel="noopener">GSS</a>,
+    <a href="https://polymarket.com" target="_blank" rel="noopener">Polymarket Gamma</a>.
+  </footer>
+</main>
+<script>
+const Q=(s,r=document)=>r.querySelector(s);const QA=(s,r=document)=>Array.from(r.querySelectorAll(s));
+async function getJSON(u){try{const r=await fetch(u);if(!r.ok)throw 0;return await r.json()}catch(e){return null}}
+function fmt(n){return n==null?"—":Number(n).toLocaleString()}
+QA(".tab[data-tab]").forEach(b=>b.addEventListener("click",()=>{const t=b.dataset.tab;QA(".tab[data-tab]").forEach(x=>x.setAttribute("aria-selected",String(x===b)));QA(".panel").forEach(p=>p.classList.toggle("active",p.id==="panel-"+t))}));
+async function loadSummary(){const s=await getJSON("/api/summary");const r=Q("#summary");if(!s){r.innerHTML='<div class="empty">Summary unavailable.</div>';return}const tr=(s.metrics.by_status&&s.metrics.by_status.tracked)||0;const at=(s.metrics.by_status&&s.metrics.by_status.atlas)||0;const st=(s.metrics.by_status&&s.metrics.by_status.stub)||0;const tiles=[{l:"Metric atlas",v:s.metrics.tracked+" / "+s.metrics.target,s:tr+" tracked · "+at+" atlas · "+st+" stub"},{l:"Sources",v:fmt(s.sources.count),s:"World Bank · OECD · Census · Eurostat · ONS · Pew · GSS"},{l:"Tracked",v:fmt(tr),s:"live time-series via scheduled scrape"},{l:"Atlas + stub",v:fmt(at+st),s:"documented; ingest pending"}];r.innerHTML=tiles.map(t=>'<div class="stat"><div class="label">'+t.l+'</div><div class="value">'+t.v+'</div><div class="sub">'+t.s+'</div></div>').join("")}
+let MC=[];async function loadMetrics(){const d=await getJSON("/api/metrics?limit=1000");MC=(d&&d.metrics)||[];Q("#trends-meta").textContent=MC.length+" seeded · "+(d&&d.target||30)+" target";populateSelects();renderGrid()}
+function renderGrid(){const q=Q("#trends-search").value.trim().toLowerCase();const cov=Q("#trends-coverage").value;const stat=Q("#trends-status").value;let rows=MC;if(q)rows=rows.filter(m=>(m.id||"").toLowerCase().includes(q)||(m.name||"").toLowerCase().includes(q)||(m.description||"").toLowerCase().includes(q));if(cov)rows=rows.filter(m=>(m.coverage||"").toLowerCase()===cov);if(stat)rows=rows.filter(m=>(m.status||"").toLowerCase()===stat);Q("#trends-count").textContent=rows.length+" of "+MC.length;const r=Q("#trends-grid");if(!rows.length){r.innerHTML='<div class="empty">No metrics match.</div>';return}r.innerHTML=rows.map(m=>'<div class="metric-card"><div class="name">'+(m.name||"—")+'</div><div class="id">'+(m.id||"—")+'</div><div class="units">'+(m.units||"")+'</div>'+(m.description?'<div class="desc">'+m.description.split("\n")[0]+'</div>':"")+'<div class="footer"><span class="coverage">'+(m.coverage||"—")+'</span><span class="status">'+(m.status||"—")+'</span></div></div>').join("")}
+["#trends-search","#trends-coverage","#trends-status"].forEach(s=>{document.addEventListener("input",e=>{if(e.target.closest(s))renderGrid()});document.addEventListener("change",e=>{if(e.target.closest(s))renderGrid()})});
+function populateSelects(){const o=MC.map(m=>'<option value="'+m.id+'">'+m.name+'</option>').join("");if(Q("#country-metric"))Q("#country-metric").innerHTML=o;if(Q("#compare-metric"))Q("#compare-metric").innerHTML=o}
+async function loadCountry(){const m=Q("#country-metric").value;const c=Q("#country-iso").value.trim()||"us";const y=Q("#country-years").value||10;const r=Q("#country-result");r.innerHTML='<div class="empty">Loading…</div>';const d=await getJSON("/api/trends?metric="+encodeURIComponent(m)+"&country="+encodeURIComponent(c)+"&years="+y);if(!d){r.innerHTML='<div class="empty">Fetch failed.</div>';return}if(d.stub||!d.rows||!d.rows.length){r.innerHTML='<div class="empty">'+(d.note||"No trend rows yet.")+'</div>';return}r.innerHTML='<table><thead><tr><th>Period</th><th class="num">Value</th><th>Source</th></tr></thead><tbody>'+d.rows.map(x=>'<tr><td class="mono">'+x.period+'</td><td class="num">'+x.value+'</td><td>'+(x.source||"—")+'</td></tr>').join("")+'</tbody></table>'}
+Q("#country-go").addEventListener("click",loadCountry);
+async function loadCompare(){const m=Q("#compare-metric").value;const a=(Q("#compare-a").value.trim()||"us").toLowerCase();const b=(Q("#compare-b").value.trim()||"jp").toLowerCase();const y=Q("#compare-years").value||20;const r=Q("#compare-result");r.innerHTML='<div class="empty">Loading…</div>';const d=await getJSON("/api/compare?country_a="+encodeURIComponent(a)+"&country_b="+encodeURIComponent(b)+"&metric="+encodeURIComponent(m)+"&years="+y);if(!d){r.innerHTML='<div class="empty">Fetch failed.</div>';return}if(d.stub){r.innerHTML='<div class="empty">No values yet — scheduled scrape pending.</div>';return}const periods=new Set([...(d.a||[]).map(x=>x.period),...(d.b||[]).map(x=>x.period)]);const ai=Object.fromEntries((d.a||[]).map(x=>[x.period,x.value]));const bi=Object.fromEntries((d.b||[]).map(x=>[x.period,x.value]));const sorted=Array.from(periods).sort();r.innerHTML='<table><thead><tr><th>Period</th><th class="num">'+a.toUpperCase()+'</th><th class="num">'+b.toUpperCase()+'</th><th class="num">Δ</th></tr></thead><tbody>'+sorted.map(p=>{const av=ai[p],bv=bi[p];const dlt=(av!==undefined&&bv!==undefined)?(av-bv).toFixed(2):"—";return'<tr><td class="mono">'+p+'</td><td class="num">'+(av!==undefined?av:"—")+'</td><td class="num">'+(bv!==undefined?bv:"—")+'</td><td class="num">'+dlt+'</td></tr>'}).join("")+'</tbody></table>'}
+Q("#compare-go").addEventListener("click",loadCompare);
+async function loadMarkets(){const r=Q("#markets-table");r.innerHTML='<div class="empty">Loading…</div>';const d=await getJSON("/api/markets");if(!d||!d.markets||!d.markets.length){r.innerHTML='<div class="empty">'+((d&&d.note)||"No markets active.")+'</div>';return}r.innerHTML='<table><thead><tr><th>Market</th><th class="num">Implied</th><th class="num">Model</th><th class="num">Edge</th></tr></thead><tbody>'+d.markets.slice(0,80).map(m=>'<tr><td>'+(m._event_title?m._event_title+" — ":"")+(m.question||"")+'</td><td class="num">'+(m._implied_p!=null?(m._implied_p*100).toFixed(1)+"%":"—")+'</td><td class="num">'+(m._model_p!=null?(m._model_p*100).toFixed(1)+"%":"—")+'</td><td class="num">'+(m._edge_pp!=null?(m._edge_pp>=0?"+":"")+m._edge_pp+"pp":"—")+'</td></tr>').join("")+'</tbody></table>'}
+loadSummary();loadMetrics();loadMarkets();
+setInterval(loadSummary,5*60*1000);setInterval(loadMarkets,5*60*1000);
+</script>
+</body>
+</html>

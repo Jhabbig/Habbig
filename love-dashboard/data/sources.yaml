@@ -1,0 +1,62 @@
+# Love Atlas data sources — documented endpoints for the fetcher.
+sources:
+  world_bank:
+    name: World Bank Open Data — Health & Population
+    url: https://api.worldbank.org/v2/country/all/indicator
+    format: json
+    refresh_minutes: 1440
+    description: Indicator-level cross-country panel from the World Bank.
+  oecd_family:
+    name: OECD Family Database
+    url: https://www.oecd.org/els/family/database.htm
+    format: html
+    refresh_minutes: 10080
+    description: OECD cross-country family-policy dataset (SF tables).
+  us_census_acs:
+    name: US Census American Community Survey
+    url: https://api.census.gov/data/2022/acs/acs1
+    format: json
+    refresh_minutes: 10080
+    description: US annual marriage/divorce/household microdata (B12001 + S1201).
+  cdc_nvss:
+    name: CDC National Vital Statistics System
+    url: https://www.cdc.gov/nchs/nvss/marriage-divorce.htm
+    format: html
+    refresh_minutes: 43200
+    description: Authoritative US marriage + divorce counts by state and year.
+  ons_uk:
+    name: UK Office for National Statistics — marriages & cohabitation
+    url: https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages
+    format: html
+    refresh_minutes: 10080
+    description: UK marriage/divorce rates, age at marriage, cohabitation estimates.
+  eurostat:
+    name: Eurostat — demography & marriage statistics
+    url: https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data
+    format: json-stat
+    refresh_minutes: 1440
+    description: EU-wide crude marriage/divorce rates, TFR, mean age at first marriage.
+  pew_research:
+    name: Pew Research Center — relationships & social trends
+    url: https://www.pewresearch.org/social-trends/
+    format: html
+    refresh_minutes: 43200
+    description: Pew American Trends Panel waves on cohabitation, dating, attitudes.
+  gallup:
+    name: Gallup — loneliness & relationship health polls
+    url: https://news.gallup.com/topic/category_well_being.aspx
+    format: html
+    refresh_minutes: 43200
+    description: Loneliness in America tracker, marriage importance index.
+  gss:
+    name: General Social Survey (NORC)
+    url: https://gss.norc.org/get-the-data
+    format: sav
+    refresh_minutes: 525600
+    description: Canonical academic source for sexless-marriage and marital happiness.
+  polymarket_gamma:
+    name: Polymarket Gamma API (love / relationships / family markets)
+    url: https://gamma-api.polymarket.com/events
+    format: json
+    refresh_minutes: 5
+    description: Polymarket events tagged with relationships/marriage/family/divorce.

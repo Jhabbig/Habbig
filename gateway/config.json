@@ -1,5 +1,5 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change \u2014 it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
   "domain": "narve.ai",
   "domain_aliases": [
     "habbig.com"
@@ -71,7 +71,7 @@
       "subdomain": "whale",
       "target": 8054,
       "display_name": "Whale Watch",
-      "description": "Institutional whale flow \u2014 13F, Form 4, 13D filings",
+      "description": "Institutional whale flow — 13F, Form 4, 13D filings",
       "accent": "#10b981",
       "monthly_cents": 1799,
       "annual_cents": 17900,
@@ -91,7 +91,7 @@
       "subdomain": "climate",
       "target": 7052,
       "display_name": "Climate Change",
-      "description": "Long-horizon climate markets \u2014 GISTEMP, CO2, sea ice, SST, ENSO, CH4",
+      "description": "Long-horizon climate markets — GISTEMP, CO2, sea ice, SST, ENSO, CH4",
       "accent": "#34d399",
       "monthly_cents": 599,
       "annual_cents": 5900,
@@ -121,10 +121,20 @@
       "subdomain": "health",
       "target": 7053,
       "display_name": "World Health",
-      "description": "508-disease atlas \u00b7 WHO outbreaks \u00b7 AMR globe \u00b7 drug supply chains \u00b7 prediction markets",
+      "description": "508-disease atlas · WHO outbreaks · AMR globe · drug supply chains · prediction markets",
       "accent": "#10b981",
       "monthly_cents": 999,
       "annual_cents": 9900,
+      "supports_websocket": false
+    },
+    "love": {
+      "subdomain": "love",
+      "target": 7062,
+      "display_name": "Love Atlas",
+      "description": "Marriage, divorce, fertility, dating — every macro relationship metric",
+      "accent": "#ec4899",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
       "supports_websocket": false
     }
   }

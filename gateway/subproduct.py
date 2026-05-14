@@ -292,6 +292,31 @@ SUBPRODUCTS: dict[str, dict] = {
         "tabs": ["Globe", "Outbreaks", "Atlas", "Shortages"],
         "env_price_id": "STRIPE_PRICE_ID_HEALTH_MONTHLY",
     },
+    "love": {
+        "slug": "love",
+        "dashboard_key": "love",
+        "name": "Love Atlas",
+        "tagline": "How love is changing",
+        "hero_headline": "Marriage. / Divorce. / Forever.",
+        "hero_sub": (
+            "Love Atlas tracks every macro relationship metric — crude "
+            "marriage rate, divorce rate, median age at first marriage, "
+            "cohabitation share, total fertility, dating-app DAU, "
+            "sexless-marriage surveys, loneliness trends — across the "
+            "World Bank, OECD, US Census, ONS UK, Eurostat, Pew and Gallup. "
+            "Country by country, year over year, with next-year projections."
+        ),
+        "price_usd": 7.99,
+        "price_gbp": 5.99,
+        "floating_numbers": ["2.1 kids", "$2,500 wedding", "32% married", "+4%",
+                             "1.6 TFR", "29.4y", "0.8 div", "21%",
+                             "$35k", "28%", "−1.2", "+2.7", "44%", "1.9", "18%"],
+        "animation_style": "measured",
+        "stat_pills": ["{metrics} metrics tracked", "World Bank · OECD · Census · Eurostat · Pew",
+                       "{countries} countries · {years}y horizon"],
+        "tabs": ["Trends", "By Country", "Compare", "Markets"],
+        "env_price_id": "STRIPE_PRICE_ID_LOVE_MONTHLY",
+    },
 }
 
 # Bridge from SUBPRODUCT slug → subscriptions.dashboard_key. For five of the
