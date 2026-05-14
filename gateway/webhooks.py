@@ -1,4 +1,4 @@
-"""Outbound webhook delivery — HMAC-signed, retrying, with auto-disable.
+"""Outbound webhook delivery — HMAC-signed, retrying, circuit-broken.
 
 Two entry points:
 
@@ -10,13 +10,39 @@ Two entry points:
     channels to webhook event types. Registered from server.py startup
     so every hub.broadcast() also reaches external subscribers.
 
-Retry schedule: 30s → 5min → 30min → 1h → 4h, then mark failed. Five
-consecutive failed deliveries (across any event) auto-deactivate the
-subscription and enqueue a `webhook_disabled` email to the owner.
+Hardening contract (post-2026-05-14):
+
+  * **Retry policy.** Three attempts with exponential backoff (2s/4s/8s).
+    Retried on 5xx responses, connection errors, and timeouts; **not**
+    retried on 4xx (the subscriber's URL is broken — bouncing five more
+    times won't fix it). Retries are intra-call only — no cross-call
+    queue.
+
+  * **Dead-letter queue.** A delivery that burns through every attempt
+    without a 2xx is written to ``webhook_dead_letter`` so the admin
+    panel at ``/admin/webhooks/dead-letter`` can show stuck deliveries
+    and re-queue them on the owner's request.
+
+  * **Circuit breaker.** Ten consecutive failures (across any event)
+    stamps ``disabled_until = now + 1h`` on the subscription and emails
+    the owner. The fan-out loop refuses to send while the breaker is
+    open. After the cooldown elapses, the next event triggers a probe
+    delivery; success resets the counter and re-arms the subscription.
+
+  * **HMAC signature.** ``X-Narve-Signature: sha256=<hex>`` where the
+    HMAC input is the **timestamp + "." + raw_body** (newline-free).
+    Including the timestamp in the signed payload defeats a MITM that
+    strips/replaces the timestamp header to slip past anti-replay.
+
+  * **Anti-replay timestamp.** ``X-Narve-Timestamp: <unix>`` accompanies
+    every delivery. Receivers should reject anything older than 5
+    minutes (``REPLAY_WINDOW_S``) to defeat captured-and-resent attacks.
+    ``verify_signature()`` below implements the receiver-side check so
+    consumers writing in-process tests have a canonical reference.
 
 Signatures: X-Narve-Signature = hex(HMAC-SHA256(subscription.secret,
-raw_body)). The raw body is the UTF-8 JSON string with separators
-``(",",":")`` so consumers can re-sign bit-for-bit.
+"<timestamp>.<raw_body>")). The raw body is the UTF-8 JSON string with
+separators ``(",",":")`` so consumers can re-sign bit-for-bit.
 """
 
 from __future__ import annotations
@@ -48,24 +74,83 @@ EVENT_TYPES: tuple[str, ...] = (
     "user.prediction.resolved",
 )
 
-# Cumulative retry schedule (seconds). Each index = attempt number - 1.
-RETRY_DELAYS: tuple[int, ...] = (30, 5 * 60, 30 * 60, 60 * 60, 4 * 60 * 60)
+# Intra-call retry schedule. Three attempts means two sleeps between them
+# (post-attempt-1 and post-attempt-2). Values are seconds — exponential 2/4/8.
+# Indexed by ``attempt - 1``; the final attempt's slot is never read.
+RETRY_DELAYS: tuple[int, ...] = (2, 4, 8)
+MAX_ATTEMPTS = 3
 
-# After this many consecutive failures we disable the subscription.
-AUTO_DISABLE_AFTER = 5
+# Circuit-breaker: after this many consecutive failures, we open the
+# breaker (stamp disabled_until) and notify the owner.
+CIRCUIT_BREAKER_THRESHOLD = 10
+
+# Cooldown — how long the breaker stays open before the next event is
+# allowed through as a probe.
+CIRCUIT_BREAKER_COOLDOWN_S = 60 * 60  # 1 hour
 
 # HTTP timeout per delivery attempt.
 DELIVERY_TIMEOUT_S = 10.0
+
+# Receiver-side anti-replay tolerance. Consumers reject deliveries whose
+# X-Narve-Timestamp is more than this many seconds in the past or future.
+REPLAY_WINDOW_S = 5 * 60
 
 # JSON separators tuned so consumers who re-sign get byte-identical input.
 _JSON_ARGS = {"separators": (",", ":"), "sort_keys": True, "default": str}
 
 
+# ── Signing ─────────────────────────────────────────────────────────────
+
+
+def _sign(secret: str, body: bytes, *, timestamp: Optional[int] = None) -> str:
+    """Return the hex HMAC-SHA256.
+
+    If ``timestamp`` is given, the input is ``"<ts>.<body>"`` (signs the
+    timestamp alongside the body so a MITM can't swap headers). If
+    omitted, signs the body alone — this two-mode shape lets the legacy
+    test path (which signs just the body) keep working.
+    """
+    if timestamp is None:
+        return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    signed = str(timestamp).encode() + b"." + body
+    return hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+
+
+def verify_signature(
+    *,
+    secret: str,
+    body: bytes,
+    signature_header: str,
+    timestamp_header: str,
+    now: Optional[int] = None,
+    tolerance_s: int = REPLAY_WINDOW_S,
+) -> bool:
+    """Receiver-side helper — verify an incoming webhook.
+
+    Returns True iff:
+      * the timestamp parses as an int,
+      * the timestamp is within ``tolerance_s`` of ``now`` (defaults to
+        wall clock — replay protection),
+      * the signature header is in the canonical ``sha256=<hex>`` form,
+      * the recomputed HMAC matches in constant time.
+
+    Consumers writing their own verifier can use this as a reference.
+    Tests use it directly to assert the produced headers round-trip.
+    """
+    try:
+        ts = int(timestamp_header)
+    except (TypeError, ValueError):
+        return False
+    now = int(time.time()) if now is None else int(now)
+    if abs(now - ts) > tolerance_s:
+        return False
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = _sign(secret, body, timestamp=ts)
+    return hmac.compare_digest(expected, signature_header[len("sha256="):])
+
+
 # ── Core delivery ───────────────────────────────────────────────────────
-
-
-def _sign(secret: str, body: bytes) -> str:
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
 async def _deliver_once(
@@ -76,18 +161,22 @@ async def _deliver_once(
     event_type: str,
     body_bytes: bytes,
     attempt: int,
+    timestamp: Optional[int] = None,
 ) -> tuple[Optional[int], Optional[str]]:
     """POST the payload once. Returns (status_code, error_string).
 
     Wraps any httpx exception in a readable error string so the delivery
     log stays useful — we never let an exception bubble out of here.
     """
-    signature = _sign(secret, body_bytes)
+    ts = int(time.time()) if timestamp is None else int(timestamp)
+    # Sign timestamp+body so the anti-replay header is itself authenticated.
+    signature = _sign(secret, body_bytes, timestamp=ts)
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "narve-webhooks/1",
         "X-Narve-Event": event_type,
-        "X-Narve-Delivery": f"wh_{webhook_id}_{int(time.time()*1000)}_{attempt}",
+        "X-Narve-Delivery": f"wh_{webhook_id}_{ts}_{attempt}",
+        "X-Narve-Timestamp": str(ts),
         "X-Narve-Signature": f"sha256={signature}",
     }
     try:
@@ -102,6 +191,27 @@ async def _deliver_once(
         return None, f"unknown: {exc.__class__.__name__}: {exc}"[:400]
 
 
+def _is_retryable(status: Optional[int], error: Optional[str]) -> bool:
+    """Decide whether an attempt result is worth retrying.
+
+    Retry on:
+      * 5xx (server is having a moment)
+      * connection / timeout errors (status is None, error is set)
+
+    Don't retry on:
+      * 2xx (we're done — caller treats this as success)
+      * 4xx (user's URL/auth is broken — five more 404s won't help)
+    """
+    if status is None:
+        # Connection-level failure — retry.
+        return error is not None
+    if 200 <= status < 300:
+        return False  # success — caller short-circuits before checking us
+    if 400 <= status < 500:
+        return False  # client error — terminal
+    return True  # 5xx and anything else weird — retry
+
+
 async def _deliver_with_retries(
     *,
     webhook_id: int,
@@ -114,15 +224,19 @@ async def _deliver_with_retries(
     """Attempt delivery with exponential backoff; return True if any attempt
     got a 2xx. Logs every attempt as a row in webhook_deliveries.
 
-    Side-effects on success: resets consecutive_failures, updates
-    last_delivered_at. Side-effects on final failure: increments
-    consecutive_failures; if that hits AUTO_DISABLE_AFTER, flips
-    is_active to 0 and enqueues the warning email.
+    Side-effects on success: resets consecutive_failures and disabled_until,
+    updates last_delivered_at. Side-effects on terminal failure: moves the
+    payload to ``webhook_dead_letter``, bumps consecutive_failures, and
+    opens the circuit breaker if the threshold is hit.
+
+    Returns False on terminal failure (whether reached by exhausting
+    retries or by a non-retryable 4xx).
     """
     body_bytes = json.dumps(payload, **_JSON_ARGS).encode()
-    attempts_cap = max_attempts or len(RETRY_DELAYS)
+    attempts_cap = max_attempts or MAX_ATTEMPTS
     last_status: Optional[int] = None
     last_error: Optional[str] = None
+    first_failed_at: Optional[int] = None
 
     for attempt in range(1, attempts_cap + 1):
         status, error = await _deliver_once(
@@ -148,10 +262,81 @@ async def _deliver_with_retries(
                 pass
             return True
 
+        # Record when this delivery first started failing (used by DLQ).
+        if first_failed_at is None:
+            first_failed_at = int(time.time())
+
+        # Non-retryable response → straight to DLQ without further attempts.
+        if not _is_retryable(status, error):
+            _drop_to_dlq(
+                webhook_id=webhook_id, event_type=event_type,
+                body_bytes=body_bytes, last_error=_compose_err(status, error),
+                attempts=attempt, first_failed_at=first_failed_at,
+            )
+            _bump_and_maybe_break(
+                webhook_id=webhook_id, event_type=event_type,
+                attempts_cap=attempt, last_status=last_status,
+                last_error=last_error,
+            )
+            return False
+
         if attempt < attempts_cap:
             await asyncio.sleep(RETRY_DELAYS[attempt - 1])
 
-    # All attempts exhausted → bump + maybe deactivate.
+    # All attempts exhausted → DLQ + bump + maybe open breaker.
+    _drop_to_dlq(
+        webhook_id=webhook_id, event_type=event_type,
+        body_bytes=body_bytes, last_error=_compose_err(last_status, last_error),
+        attempts=attempts_cap,
+        first_failed_at=first_failed_at or int(time.time()),
+    )
+    _bump_and_maybe_break(
+        webhook_id=webhook_id, event_type=event_type,
+        attempts_cap=attempts_cap, last_status=last_status,
+        last_error=last_error,
+    )
+    return False
+
+
+def _compose_err(status: Optional[int], error: Optional[str]) -> str:
+    if status is not None:
+        return f"http {status}" + (f": {error}" if error else "")
+    return error or "unknown"
+
+
+def _drop_to_dlq(
+    *,
+    webhook_id: int,
+    event_type: str,
+    body_bytes: bytes,
+    last_error: str,
+    attempts: int,
+    first_failed_at: int,
+) -> None:
+    """Best-effort insert into webhook_dead_letter."""
+    try:
+        db.record_webhook_dead_letter(
+            subscription_id=webhook_id,
+            event_type=event_type,
+            payload=body_bytes.decode(errors="replace"),
+            last_error=last_error[:1000],
+            attempts=attempts,
+            first_failed_at=first_failed_at,
+        )
+    except Exception as exc:
+        log.warning("DLQ insert failed wh=%s: %s", webhook_id, exc)
+
+
+def _bump_and_maybe_break(
+    *,
+    webhook_id: int,
+    event_type: str,
+    attempts_cap: int,
+    last_status: Optional[int],
+    last_error: Optional[str],
+) -> None:
+    """Increment consecutive_failures and trip the circuit breaker if
+    we've hit the threshold."""
     try:
         consecutive = db.bump_webhook_failure(webhook_id)
     except Exception:
@@ -161,20 +346,20 @@ async def _deliver_with_retries(
         webhook_id, event_type, attempts_cap, consecutive,
         last_status, last_error,
     )
-    if consecutive >= AUTO_DISABLE_AFTER:
+    if consecutive >= CIRCUIT_BREAKER_THRESHOLD:
+        cooldown_until = int(time.time()) + CIRCUIT_BREAKER_COOLDOWN_S
         try:
-            db.deactivate_webhook(webhook_id)
-        except Exception:
-            pass
+            db.open_webhook_circuit(webhook_id, cooldown_until)
+        except Exception as exc:
+            log.warning("open_webhook_circuit failed wh=%s: %s", webhook_id, exc)
         try:
             _enqueue_disabled_email(webhook_id, consecutive)
         except Exception:
             pass
-    return False
 
 
 def _enqueue_disabled_email(webhook_id: int, consecutive: int) -> None:
-    """Email the owner that we turned their webhook off.
+    """Email the owner that we opened the circuit breaker.
 
     Wrapped in its own helper so it can be stubbed in tests. Uses the
     background jobs registry if available; falls back to direct send.
@@ -193,6 +378,7 @@ def _enqueue_disabled_email(webhook_id: int, consecutive: int) -> None:
         "display_name": owner["username"] if "username" in owner.keys() else owner["email"],
         "webhook_url": sub["url"],
         "consecutive_failures": consecutive,
+        "cooldown_hours": CIRCUIT_BREAKER_COOLDOWN_S // 3600,
     }
     try:
         # Preferred: enqueue via ARQ / in-process worker.
@@ -221,12 +407,26 @@ def _enqueue_disabled_email(webhook_id: int, consecutive: int) -> None:
 # ── Public API ──────────────────────────────────────────────────────────
 
 
+def _circuit_open(sub) -> bool:
+    """Return True if the breaker is currently open on this subscription."""
+    try:
+        until = sub["disabled_until"]
+    except (KeyError, IndexError):
+        return False
+    if until is None:
+        return False
+    return int(until) > int(time.time())
+
+
 async def broadcast_event(event_type: str, payload: dict) -> int:
     """Fan *event_type* out to every active subscription listening for it.
 
     Returns the number of subscriptions dispatched to (not necessarily
     succeeded). Delivery is gathered with asyncio.gather so one slow
     subscriber never blocks another.
+
+    Subscriptions with an open circuit breaker are skipped without
+    counting toward the dispatched total.
     """
     if event_type not in EVENT_TYPES:
         log.debug("broadcast_event: unknown event_type=%s — ignoring", event_type)
@@ -236,6 +436,8 @@ async def broadcast_event(event_type: str, payload: dict) -> int:
     except Exception as exc:
         log.warning("list_active_webhooks_for_event failed: %s", exc)
         return 0
+    # Filter out subscriptions whose circuit breaker is open.
+    subs = [s for s in subs if not _circuit_open(s)]
     if not subs:
         return 0
 
@@ -341,3 +543,35 @@ async def fire_test_payload(webhook_id: int) -> dict:
         pass
     return {"ok": status is not None and 200 <= status < 300,
             "status_code": status, "error": err}
+
+
+# ── DLQ replay ──────────────────────────────────────────────────────────
+
+
+async def replay_dead_letter(dlq_id: int) -> dict:
+    """Re-deliver a DLQ entry. Marks the row as ``requeued_at`` regardless
+    of outcome — the goal is to clear the admin backlog, and a successful
+    replay shouldn't leave the entry visible alongside fresh failures.
+
+    Re-uses the standard retry path so a flaky-but-recovering subscriber
+    still gets the 2s/4s/8s ladder."""
+    row = db.get_webhook_dead_letter(dlq_id)
+    if not row:
+        return {"ok": False, "error": "dlq row not found"}
+    sub = db.get_webhook_subscription(row["subscription_id"])
+    if not sub:
+        return {"ok": False, "error": "subscription deleted"}
+    try:
+        payload = json.loads(row["payload"])
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "payload not parseable as JSON"}
+
+    ok = await _deliver_with_retries(
+        webhook_id=sub["id"], url=sub["url"], secret=sub["secret"],
+        event_type=row["event_type"], payload=payload,
+    )
+    try:
+        db.mark_webhook_dead_letter_requeued(dlq_id)
+    except Exception:
+        pass
+    return {"ok": ok}

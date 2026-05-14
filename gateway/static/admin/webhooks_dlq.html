@@ -1,0 +1,8 @@
+<!-- Body-only — wrapped by admin_shell. -->
+<div class="head">
+      <div>
+        <a class="backlink" href="/admin/webhooks">← Webhooks</a>
+        </div>
+    </div>
+    <p class="note">Deliveries that burned through every retry. The owner-side subscription's circuit breaker may also be open — see the main Webhooks page for status. Re-queue replays the payload through the standard retry ladder; success closes the entry, failure leaves it open with an updated timestamp.</p>
+    <div class="list">{{ raw_webhook_rows }}</div>

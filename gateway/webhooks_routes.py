@@ -333,6 +333,101 @@ async def admin_webhooks_page(request: Request):
     )
 
 
+# ── Admin DLQ ──────────────────────────────────────────────────────────
+
+
+async def admin_webhooks_dlq_page(request: Request):
+    """Inspect dead-lettered deliveries. Shows the open backlog by default —
+    re-queued rows can be surfaced with ?include_requeued=1."""
+    admin = _require_admin(request)
+    if admin is None:
+        if hasattr(_srv(), "_denied_response"):
+            return _srv()._denied_response(request)
+        raise HTTPException(403, "Admin required")
+
+    include_requeued = request.query_params.get("include_requeued") in ("1", "true")
+    rows = db.list_webhook_dead_letter(limit=500, include_requeued=include_requeued)
+    row_html: list[str] = []
+    for r in rows:
+        status_html = (
+            '<span class="badge badge-muted">Requeued</span>'
+            if r["requeued_at"] else
+            '<span class="badge badge-danger">Open</span>'
+        )
+        # Truncate the payload preview so a 50KB payload doesn't blow up the
+        # admin HTML. Full text is visible via a tooltip.
+        payload_preview = (r["payload"] or "")[:200]
+        row_html.append(
+            '<div class="row">'
+            '<div class="row-main">'
+            f'  <div><strong>{html.escape(r["owner_email"] or "(deleted)")}</strong> '
+            f'  → <code>{html.escape(r["subscription_url"] or "(deleted)")}</code> '
+            f'  {status_html}</div>'
+            f'  <div class="row-meta">'
+            f'  Event: <code>{html.escape(r["event_type"])}</code> · '
+            f'  Attempts: {r["attempts"]} · '
+            f'  First failed: {_fmt_ts(r["first_failed_at"])} · '
+            f'  Last error: <code>{html.escape((r["last_error"] or "")[:160])}</code>'
+            f'  </div>'
+            f'  <details><summary>Payload</summary>'
+            f'  <pre>{html.escape(payload_preview)}'
+            f'  {"…" if (r["payload"] or "") else ""}</pre></details>'
+            '</div>'
+            '<div class="row-actions">'
+            + (
+                f'<form method="post" action="/admin/webhooks/dead-letter/{r["id"]}/requeue" '
+                f'style="display:inline"><button class="btn" type="submit">Re-queue</button></form>'
+                if not r["requeued_at"] else ""
+            )
+            + '</div>'
+            '</div>'
+        )
+    if not row_html:
+        row_html.append(
+            '<div class="row"><div class="row-main"><div class="row-meta">'
+            'No dead-lettered deliveries.</div></div></div>'
+        )
+
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/webhooks_dlq.html",
+        page_title="Webhook DLQ",
+        active_route="webhooks",
+        breadcrumb=[("Admin", "/admin"), ("Webhooks", "/admin/webhooks"),
+                    ("DLQ", "/admin/webhooks/dead-letter")],
+        raw_webhook_rows="".join(row_html),
+    )
+
+
+async def admin_webhooks_dlq_requeue(request: Request, dlq_id: int):
+    """Re-deliver a DLQ entry. Admin-only — owner can't trigger this from
+    the user-facing settings page on purpose: the breaker exists to stop
+    the gateway hammering a flapping subscriber."""
+    admin = _require_admin(request)
+    if admin is None:
+        raise HTTPException(403, "Admin required")
+    try:
+        import webhooks as _w
+        result = await _w.replay_dead_letter(dlq_id)
+    except Exception as exc:
+        log.exception("replay_dead_letter failed dlq=%s: %s", dlq_id, exc)
+        result = {"ok": False, "error": str(exc)[:200]}
+
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=admin["user_id"], admin_email=admin["email"],
+            action="webhook.dlq.requeue",
+            target_type="webhook_dead_letter", target_id=dlq_id,
+            request=request, notes=str(result.get("ok")),
+        )
+    except Exception:
+        pass
+
+    return JSONResponse(result)
+
+
 # ── Registration ───────────────────────────────────────────────────────
 
 
@@ -349,3 +444,9 @@ def register(app) -> None:
     app.add_api_route("/admin/webhooks", admin_webhooks_page,
                       methods=["GET"], response_class=HTMLResponse,
                       include_in_schema=False)
+    app.add_api_route("/admin/webhooks/dead-letter", admin_webhooks_dlq_page,
+                      methods=["GET"], response_class=HTMLResponse,
+                      include_in_schema=False)
+    app.add_api_route("/admin/webhooks/dead-letter/{dlq_id}/requeue",
+                      admin_webhooks_dlq_requeue,
+                      methods=["POST"], include_in_schema=False)

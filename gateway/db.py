@@ -1314,13 +1314,97 @@ def bump_webhook_failure(webhook_id: int) -> int:
 
 
 def reset_webhook_failure(webhook_id: int) -> None:
-    """Zero the consecutive counter on a successful delivery + stamp time."""
+    """Zero the consecutive counter on a successful delivery + stamp time.
+
+    Also closes the circuit breaker — a probe delivery that goes through
+    after the cooldown should re-arm the subscription, not leave it in
+    half-open limbo."""
     with conn() as c:
         c.execute(
             "UPDATE webhook_subscriptions "
-            "SET consecutive_failures = 0, last_delivered_at = ? "
+            "SET consecutive_failures = 0, "
+            "    disabled_until = NULL, "
+            "    last_delivered_at = ? "
             "WHERE id = ?",
             (int(time.time()), webhook_id),
+        )
+
+
+def open_webhook_circuit(webhook_id: int, until_ts: int) -> None:
+    """Open the circuit breaker on a subscription — disables delivery until
+    ``until_ts`` (UNIX seconds). The breaker auto-heals; the next delivery
+    after that timestamp triggers a probe attempt."""
+    with conn() as c:
+        c.execute(
+            "UPDATE webhook_subscriptions "
+            "SET disabled_until = ? "
+            "WHERE id = ?",
+            (int(until_ts), webhook_id),
+        )
+
+
+# ── Webhook dead-letter queue ──────────────────────────────────────────
+
+
+def record_webhook_dead_letter(
+    *,
+    subscription_id: int,
+    event_type: str,
+    payload: str,
+    last_error: str | None,
+    attempts: int,
+    first_failed_at: int,
+) -> int:
+    """Insert a row into webhook_dead_letter for a permanently-failed delivery.
+
+    The admin panel reads these to surface stuck deliveries. ``payload`` is
+    stored verbatim so re-queueing is a straight POST without any
+    schema-versioning gymnastics."""
+    now = int(time.time())
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO webhook_dead_letter "
+            "(subscription_id, event_type, payload, last_error, attempts, "
+            " first_failed_at, last_attempt_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (subscription_id, event_type, payload, last_error,
+             attempts, int(first_failed_at), now),
+        )
+        return cur.lastrowid
+
+
+def get_webhook_dead_letter(dlq_id: int):
+    with conn() as c:
+        return c.execute(
+            "SELECT * FROM webhook_dead_letter WHERE id = ?",
+            (dlq_id,),
+        ).fetchone()
+
+
+def list_webhook_dead_letter(
+    *, limit: int = 200, include_requeued: bool = False
+) -> list:
+    """Admin-only: every DLQ row, newest first. Open entries (not yet
+    re-queued) come first by default."""
+    q = (
+        "SELECT d.*, w.url AS subscription_url, u.email AS owner_email "
+        "FROM webhook_dead_letter d "
+        "LEFT JOIN webhook_subscriptions w ON w.id = d.subscription_id "
+        "LEFT JOIN users u ON u.id = w.user_id "
+    )
+    if not include_requeued:
+        q += "WHERE d.requeued_at IS NULL "
+    q += "ORDER BY d.first_failed_at DESC LIMIT ?"
+    with conn() as c:
+        return c.execute(q, (int(limit),)).fetchall()
+
+
+def mark_webhook_dead_letter_requeued(dlq_id: int) -> None:
+    """Stamp ``requeued_at`` on a DLQ row so the open-only admin view drops it."""
+    with conn() as c:
+        c.execute(
+            "UPDATE webhook_dead_letter SET requeued_at = ? WHERE id = ?",
+            (int(time.time()), int(dlq_id)),
         )
 
 
