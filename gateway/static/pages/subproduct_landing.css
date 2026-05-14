@@ -564,6 +564,65 @@
 
 .sp-cta:hover .sp-cta-arrow { transform: translateX(2px); }
 
+/* ── Cross-link bar (Also on narve.ai) ──────────────────────────────────── */
+/* A five-up grid of other subproducts, picked randomly per-request, sits
+   just above the footer to encourage cross-subproduct discovery. Pure
+   monochrome — borders + type only, no accent reuse, no hover lift beyond
+   a 2 px translate. Collapses to single-column at < 720 px. */
+
+.sp-others {
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-8);
+}
+
+.sp-others__title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-6);
+}
+
+.sp-others__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+}
+
+@media (min-width: 720px) {
+  .sp-others__grid { grid-template-columns: repeat(5, 1fr); }
+}
+
+.sp-other-link {
+  display: block;
+  padding: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.sp-other-link:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.sp-other-name {
+  display: block;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-lg);
+}
+
+.sp-other-tagline {
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-2);
+}
+
 /* ── Footer ─────────────────────────────────────────────────────────────── */
 
 .sp-footer {
