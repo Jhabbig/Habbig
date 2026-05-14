@@ -25,6 +25,7 @@ Design:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -37,7 +38,7 @@ from typing import Any, Optional
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -104,6 +105,40 @@ app.add_middleware(
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# ── Gateway-SSO auth ─────────────────────────────────────────────────────────
+#
+# This service sits behind the narve gateway. Without verifying the shared
+# secret, anything that can reach this port can forge identity headers and
+# impersonate a subscriber. The middleware below 401s every request whose
+# ``X-Gateway-Secret`` header doesn't match the server-side secret (constant
+# time compare). Combined with binding 127.0.0.1, the dashboard is only
+# reachable through the gateway proxy on the same host.
+
+_SSO_SECRET = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+_AUTH_BYPASS_EXACT = {"/health", "/healthz", "/api/health"}
+
+if not _SSO_SECRET and not _DEV_MODE:
+    logger.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — every gateway-fronted request will 401.")
+
+
+@app.middleware("http")
+async def gateway_auth(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if path in _AUTH_BYPASS_EXACT or path.startswith("/static/"):
+        return await call_next(request)
+    if _DEV_MODE and not _SSO_SECRET:
+        return await call_next(request)
+    if not _SSO_SECRET:
+        return JSONResponse({"error": "service misconfigured"}, status_code=503)
+    client_secret = request.headers.get("x-gateway-secret", "")
+    if not hmac.compare_digest(client_secret, _SSO_SECRET):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 _cache: "OrderedDict[str, dict]" = OrderedDict()
@@ -629,5 +664,8 @@ async def api_summary() -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("Starting world-health-dashboard on :%d", PORT)
-    uvicorn.run("server:app", host="0.0.0.0", port=PORT, log_level="info")
+    # Loopback-only — the gateway is the sole ingress. Override with
+    # ``BIND_HOST`` if you need to expose this directly for debugging.
+    bind_host = os.environ.get("BIND_HOST", "127.0.0.1")
+    logger.info("Starting world-health-dashboard on %s:%d", bind_host, PORT)
+    uvicorn.run("server:app", host=bind_host, port=PORT, log_level="info")

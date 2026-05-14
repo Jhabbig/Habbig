@@ -23,6 +23,7 @@ cache; cold data lives in data/*.yaml.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import math
 import os
@@ -34,7 +35,7 @@ from typing import Any, Optional
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -442,6 +443,40 @@ app = FastAPI(title="Central Bank Tracker", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+# ─── Gateway-SSO auth ─────────────────────────────────────────────────────────
+#
+# This service is meant to sit behind the narve gateway. Without verifying the
+# shared secret, anything that can reach this port can forge identity headers
+# and impersonate any subscriber. The middleware below 401s every request
+# whose ``X-Gateway-Secret`` doesn't match the server-side secret (constant
+# time compare). Combined with binding 127.0.0.1, the dashboard is only
+# reachable through the gateway proxy on the same host.
+
+_SSO_SECRET = os.environ.get("GATEWAY_SSO_SECRET", "")
+_DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+_AUTH_BYPASS_EXACT = {"/health", "/healthz"}
+
+if not _SSO_SECRET and not _DEV_MODE:
+    logger.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — every gateway-fronted request will 401.")
+
+
+@app.middleware("http")
+async def gateway_auth(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if path in _AUTH_BYPASS_EXACT or path.startswith("/static/"):
+        return await call_next(request)
+    if _DEV_MODE and not _SSO_SECRET:
+        return await call_next(request)
+    if not _SSO_SECRET:
+        return JSONResponse({"error": "service misconfigured"}, status_code=503)
+    client_secret = request.headers.get("x-gateway-secret", "")
+    if not hmac.compare_digest(client_secret, _SSO_SECRET):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
 _refresh_task: Optional[asyncio.Task] = None
 
 
@@ -562,5 +597,8 @@ def api_banks() -> JSONResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting Central Bank Tracker on :%d", PORT)
-    uvicorn.run("server:app", host="0.0.0.0", port=PORT, reload=False)
+    # Loopback-only — the gateway is the sole ingress. Override with
+    # ``BIND_HOST`` if you need to expose this directly for debugging.
+    bind_host = os.environ.get("BIND_HOST", "127.0.0.1")
+    logger.info("Starting Central Bank Tracker on %s:%d", bind_host, PORT)
+    uvicorn.run("server:app", host=bind_host, port=PORT, reload=False)

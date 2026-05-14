@@ -24,6 +24,7 @@ Port: 8053 (matches gateway/config.json → whale.target).
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import sqlite3
@@ -73,18 +74,53 @@ if STATIC_DIR.exists():
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Auth (gateway SSO) — mirrors voters-dashboard pattern.
+#
+# Without HMAC verification of the gateway's shared secret, anything that can
+# reach this port can forge ``X-Gateway-User-Id`` / ``X-Gateway-User-Email``
+# and impersonate any user. The middleware below rejects every request whose
+# ``X-Gateway-Secret`` header doesn't match the server-side secret (constant
+# time compare), so identity headers can only originate from the gateway.
+# Combined with binding 127.0.0.1, the dashboard is only reachable through
+# the gateway proxy on the same host.
 # ──────────────────────────────────────────────────────────────────────────────
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 
 if not _sso_secret and not _DEV_MODE:
-    log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — write endpoints will reject.")
+    log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — every gateway-fronted request will 401.")
+
+
+# Paths that bypass auth: health probes for systemd/Docker + public static
+# assets. Everything else requires a verified gateway secret.
+_AUTH_BYPASS_EXACT = {"/health", "/healthz"}
+
+
+@app.middleware("http")
+async def gateway_auth(request: Request, call_next):
+    path = request.url.path
+    # Let CORS preflights through so CORSMiddleware can handle them.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if path in _AUTH_BYPASS_EXACT or path.startswith("/static/"):
+        return await call_next(request)
+    if _DEV_MODE and not _sso_secret:
+        # Local development without a gateway — synthetic user is fine.
+        return await call_next(request)
+    if not _sso_secret:
+        return JSONResponse({"error": "service misconfigured"}, status_code=503)
+    client_secret = request.headers.get("x-gateway-secret", "")
+    if not hmac.compare_digest(client_secret, _sso_secret):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 def _user_from_request(request: Request) -> Optional[dict[str, Any]]:
     """Return the authenticated user dict or None. Read endpoints tolerate
     anonymous; write endpoints call ``_require_user``.
+
+    The ``gateway_auth`` middleware has already verified ``X-Gateway-Secret``
+    by the time this runs, so the identity headers are trustworthy.
     """
     if _DEV_MODE and not _sso_secret:
         return {"user_id": 1, "email": "dev@local"}
@@ -471,5 +507,8 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", "8053"))
-    log.info("Starting Whale Watch on :%d", port)
-    uvicorn.run("server:app", host="0.0.0.0", port=port, log_level="info")
+    # Loopback-only — the gateway is the sole ingress. Override with
+    # ``BIND_HOST`` if you need to expose this directly for debugging.
+    bind_host = os.environ.get("BIND_HOST", "127.0.0.1")
+    log.info("Starting Whale Watch on %s:%d", bind_host, port)
+    uvicorn.run("server:app", host=bind_host, port=port, log_level="info")
