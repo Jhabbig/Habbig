@@ -71,6 +71,36 @@ def _maybe_force_shared_testdb(request):
 
 
 @pytest.fixture(autouse=True)
+def _scrub_site_access_token(request):
+    """Ensure ``server.SITE_ACCESS_TOKEN`` is empty for non-e2e tests.
+
+    ``tests/e2e/conftest.py`` sets the env var at module-import time so
+    its flow tests can walk past the gate. If e2e tests run first, the
+    gate middleware then redirects every subsequent admin/api request
+    to /gate (200 HTML) instead of letting CSRF + auth middleware run
+    — the test sees ``200 != 403`` and reports a CSRF failure that's
+    actually a gate-redirect. We override server.py's module constant
+    on every non-e2e test; e2e tests fix it back inside ``pass_gate``.
+    """
+    mod_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
+    is_e2e = mod_name.startswith("tests.e2e")
+    if not is_e2e:
+        try:
+            import server as _server
+            _prev = getattr(_server, "SITE_ACCESS_TOKEN", "")
+            _server.SITE_ACCESS_TOKEN = ""
+        except Exception:
+            _prev = None
+            _server = None
+    yield
+    if not is_e2e and _server is not None and _prev is not None:
+        try:
+            _server.SITE_ACCESS_TOKEN = _prev
+        except Exception:
+            pass
+
+
+@pytest.fixture(autouse=True)
 def _clear_module_testclient_cookies(request):
     """Clear cookies on any module-level TestClient between tests.
 
@@ -79,8 +109,8 @@ def _clear_module_testclient_cookies(request):
     httpx 0.27 silently persists those cookies on the underlying client
     (the suite emits a DeprecationWarning about exactly this). The next
     "anonymous request should 401" test inherits the previous test's
-    session cookie. Walk the module's globals, find any TestClient,
-    wipe state before the test runs.
+    session cookie. Walk the module's globals AND any TestCase class
+    attributes, find any TestClient, wipe state before the test runs.
     """
     import sys as _sys
     mod_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
@@ -93,13 +123,28 @@ def _clear_module_testclient_cookies(request):
     except Exception:
         yield
         return
-    for name in list(mod.__dict__):
-        obj = getattr(mod, name, None)
+    seen = set()
+
+    def _clear(obj):
+        if id(obj) in seen:
+            return
+        seen.add(id(obj))
         if isinstance(obj, _TC):
             try:
                 obj.cookies.clear()
             except Exception:
                 pass
+
+    # Module-level TestClient instances (the common pattern).
+    for name in list(mod.__dict__):
+        obj = getattr(mod, name, None)
+        _clear(obj)
+        # Class-level TestClient set in setUpClass (e.g.
+        # ``cls.client = TestClient(server.app)`` — admin suites use this
+        # pattern so the class TestClient persists cookies across tests).
+        if isinstance(obj, type):
+            for attr_name in list(vars(obj)):
+                _clear(getattr(obj, attr_name, None))
     yield
 
 
