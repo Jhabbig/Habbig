@@ -425,3 +425,55 @@ in-database audit log.
       origin spoofing and forensic-endpoint silent access).
 - [ ] Re-run audit after each batch; append a new dated entry to this
       file with the diff.
+
+---
+
+## 2026-05-14 evening — Cloudflare Tunnel ingress
+
+The narve.ai cloudflared config on the prod box (`~/.cloudflared/config.yml` or wherever)
+needs the 13 subdomains explicitly listed:
+
+```yaml
+tunnel: narve-prod-XXXX
+credentials-file: /home/julianhabbig/.cloudflared/narve-prod-XXXX.json
+
+ingress:
+  - hostname: narve.ai
+    service: http://localhost:7000
+  - hostname: sports.narve.ai
+    service: http://localhost:7000  # gateway multiplexes by Host
+  - hostname: weather.narve.ai
+    service: http://localhost:7000
+  - hostname: world.narve.ai
+    service: http://localhost:7000
+  - hostname: crypto.narve.ai
+    service: http://localhost:7000
+  - hostname: midterm.narve.ai
+    service: http://localhost:7000
+  - hostname: traders.narve.ai
+    service: http://localhost:7000
+  - hostname: voters.narve.ai
+    service: http://localhost:7000
+  - hostname: climate.narve.ai
+    service: http://localhost:7000
+  - hostname: disasters.narve.ai
+    service: http://localhost:7000
+  - hostname: whale.narve.ai
+    service: http://localhost:7000
+  - hostname: cb.narve.ai
+    service: http://localhost:7000
+  - hostname: health.narve.ai
+    service: http://localhost:7000
+  - hostname: love.narve.ai
+    service: http://localhost:7000
+  - service: http_status:404
+```
+
+After editing: `sudo systemctl reload cloudflared` (or `cloudflared --config <path> tunnel run` if running manually).
+
+Smoke: `curl -sI https://voters.narve.ai/` should return 200 from the gateway.
+
+**Tasks remaining:**
+- [ ] Update cloudflared config on prod
+- [ ] Reload service
+- [ ] Smoke each subdomain
