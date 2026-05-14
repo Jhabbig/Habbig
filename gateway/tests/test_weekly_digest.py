@@ -23,7 +23,42 @@ def _run(coro):
         loop.close()
 
 
+def _wipe_digest_state() -> None:
+    """Drop rows the digest tests touch so re-runs in the same suite
+    don't trip on UNIQUE(email) when an earlier test already seeded
+    the same fixture user. The shared in-memory DB persists for the
+    whole pytest session — without this, the second order pass sees
+    every fixture user already exists.
+
+    Each statement is tolerant of a missing table — depending on
+    which migrations have been applied at this point in the session
+    (e.g. when test_weekly_digest runs alone vs after another suite
+    that loaded extra migrations), some tables may not exist yet.
+    """
+    with db.conn() as c:
+        for stmt in (
+            "DELETE FROM background_jobs WHERE name = 'send_email'",
+            (
+                "DELETE FROM subscriptions WHERE user_id IN ("
+                "  SELECT id FROM users WHERE email LIKE '%@test.com'"
+                "    OR email LIKE '%@weekly.test'"
+                ")"
+            ),
+            (
+                "DELETE FROM users WHERE email LIKE '%@test.com'"
+                "  OR email LIKE '%@weekly.test'"
+            ),
+        ):
+            try:
+                c.execute(stmt)
+            except Exception:
+                pass
+
+
 class TestWeeklyDigestBatch(unittest.TestCase):
+    def setUp(self):
+        _wipe_digest_state()
+
     def test_job_registered_and_cron_scheduled(self):
         from jobs.registry import job_registry, cron_jobs
         self.assertIn("send_weekly_digest_batch", job_registry)
@@ -102,6 +137,9 @@ class TestSubproductFiltering(unittest.TestCase):
     Ticketed to the email audit HIGH #5 — pre-fix, a single-subproduct
     subscriber received content from the other 11 subproducts.
     """
+
+    def setUp(self):
+        _wipe_digest_state()
 
     def _make_user_with_sub(self, email: str, username: str, dashboard_key: str | None) -> int:
         import time as _t
