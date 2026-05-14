@@ -8,15 +8,16 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0d0d0d">
   <!-- Standalone page. Inline critical CSS only — no external fetches,
-       or the page itself fails when the user is actually offline. -->
-  <style>
-    /* Token fallbacks so the page renders without gateway.css. */
+       or the page itself fails when the user is actually offline.
+       data-keep tells the foundation lint to leave the style block alone. -->
+  <style data-keep>
+    /* Token fallbacks so the page renders without the bundled CSS. */
     :root { --text-xs: 12px; --text-base: 14px;
             --radius-sm: 6px; --radius-full: 999px; }
 /* Per-page CSS for static/offline.html — extracted from the
- * previous inline <style> block by the foundation bundle
+ * previous inline style block by the foundation bundle
  * auto-migration. Rules live here unchanged; if anything in
- * this file should instead live in gateway.css or
+ * this file should instead live in the bundled CSS or
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
