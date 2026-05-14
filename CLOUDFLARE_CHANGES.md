@@ -137,3 +137,125 @@ curl -sIL -o /dev/null -w "direct-origin: %{http_code}\n" http://100.69.44.108:7
 # If Tailscale-reachable: should be 403 from SubproductMiddleware
 # (cf-connecting-ip absent).
 ```
+
+---
+
+## 2026-05-14 — 7 new subdomains
+
+Added Cloudflare-side config for the new subproduct dashboards landed in
+commit f55d78f-onward.
+
+### DNS records (CNAME → narve.ai, proxied/orange-cloud)
+- voters.narve.ai
+- climate.narve.ai
+- disasters.narve.ai
+- whale.narve.ai
+- cb.narve.ai            (NOT "centralbank" — display_name is "Central Bank Tracker" but subdomain is shortened to fit the brand)
+- health.narve.ai        (NOT "world-health" — same shortening; dashboard_key in code is `world_health`)
+- love.narve.ai          (13th subproduct, MVP)
+
+**Terraform delta** (extend the `subproducts` local from the 2026-04-21
+entry — keep the original 6, append the 7 below):
+
+```hcl
+locals {
+  subproducts = [
+    # original 6 (see 2026-04-21 entry)
+    "sports", "weather", "world", "crypto", "midterm", "traders",
+    # new 7 (2026-05-14)
+    "voters", "climate", "disasters", "whale", "cb", "health", "love",
+  ]
+}
+```
+
+The existing `cloudflare_record.subproduct` `for_each` resource picks
+these up automatically — no new resource block needed.
+
+### Tunnel routes
+
+Update the cloudflared config (`~/.cloudflared/config.yml` on prod box)
+to include each new hostname pointed at `http://localhost:7000` (the
+gateway multiplexes by `Host` header, so all subdomains hit port 7000
+then proxy internally to the right subproduct port).
+
+Append under the existing `ingress:` block, before the catch-all
+`service: http_status:404` rule:
+
+```yaml
+  - hostname: voters.narve.ai
+    service: http://localhost:7000
+  - hostname: climate.narve.ai
+    service: http://localhost:7000
+  - hostname: disasters.narve.ai
+    service: http://localhost:7000
+  - hostname: whale.narve.ai
+    service: http://localhost:7000
+  - hostname: cb.narve.ai
+    service: http://localhost:7000
+  - hostname: health.narve.ai
+    service: http://localhost:7000
+  - hostname: love.narve.ai
+    service: http://localhost:7000
+```
+
+**Reload steps** (run on prod box as the `cloudflared` user):
+
+```bash
+# 1. Validate config syntax before reloading — bad YAML kills the tunnel.
+cloudflared tunnel ingress validate
+
+# 2. Dry-run match each new hostname against the rules.
+for h in voters climate disasters whale cb health love; do
+  cloudflared tunnel ingress rule "https://$h.narve.ai/" \
+    | grep -E "(matched|service)"
+done
+# Each should report `service: http://localhost:7000`.
+
+# 3. Graceful reload — picks up the new ingress without dropping conns.
+sudo systemctl reload cloudflared
+# (or: `cloudflared tunnel run --config ~/.cloudflared/config.yml` if not
+#  running as a systemd service — kill the old process after the new one
+#  reports `Registered tunnel connection`.)
+
+# 4. Confirm reload landed.
+sudo systemctl status cloudflared --no-pager | grep -E "(Active|Reloaded)"
+```
+
+### WAF / Rate limits
+
+No new WAF rules required — subdomains inherit the apex's existing rules.
+Rate limits propagate by Host pattern: configured `*.narve.ai` already
+covers them. Confirm in Cloudflare dashboard.
+
+**However:** the 2026-04-21 Rule A (block unknown narve subdomains) has
+a hard-coded allowlist. Extend it to include the 7 new hosts, otherwise
+they will be blocked at the edge before the tunnel sees the request:
+
+```
+(http.host matches "^[^.]+\\.narve\\.ai$"
+  and not http.host in {"www.narve.ai" "api.narve.ai" "admin.narve.ai"
+    "staging.narve.ai" "sports.narve.ai" "weather.narve.ai"
+    "world.narve.ai" "crypto.narve.ai" "midterm.narve.ai"
+    "traders.narve.ai" "voters.narve.ai" "climate.narve.ai"
+    "disasters.narve.ai" "whale.narve.ai" "cb.narve.ai"
+    "health.narve.ai" "love.narve.ai"})
+→ Block
+```
+
+### SSL
+
+Cloudflare Universal SSL covers all subdomains automatically — no action.
+
+### Verification
+
+```bash
+for h in voters climate disasters whale cb health love; do
+  curl -sIL -o /dev/null -w "$h: %{http_code}\n" "https://$h.narve.ai/health"
+done
+# All seven should 200.
+```
+
+### Tasks remaining
+- [ ] DNS records added (manual, Cloudflare dashboard)
+- [ ] Tunnel route added (manual, cloudflared config + reload)
+- [ ] Smoke test each subdomain returns 200 on `/health` after deploy
