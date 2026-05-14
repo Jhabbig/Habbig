@@ -5,19 +5,24 @@
  * components.css, lift it in a follow-up pass — but do NOT
  * rewrite selectors here without a visual QA pass. */
 
-body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-ui); }
-    .admin-shell { max-width: 1280px; margin: 0 auto; padding: 24px; }
+/* Editorial body face for the audit log content area; chrome (header,
+   nav, buttons) stays on Inter; row data + IPs / timestamps continue to
+   use Geist Mono via inline styling on the cells themselves. */
+body { background: var(--bg-void); color: var(--text-primary); font-family: var(--font-body); font-size: var(--text-md); line-height: 1.55; }
+    .admin-shell { max-width: 1280px; margin: 0 auto; padding: var(--space-8) var(--space-6); }
     .admin-header {
       display: flex; justify-content: space-between; align-items: center;
       padding: 16px 24px; margin-bottom: 12px;
       border-bottom: 1px solid var(--border-default);
+      font-family: var(--font-ui);
     }
     .admin-header h1 {
       font-family: var(--font-display);
-      font-size: 22px; font-weight: 500; margin: 0;
-      letter-spacing: -0.01em;
+      font-style: italic;
+      font-size: var(--text-3xl); font-weight: 400; margin: 0;
+      letter-spacing: -0.01em; line-height: 1.05;
     }
-    .admin-nav { display: flex; gap: 12px; align-items: center; font-size: var(--text-sm); }
+    .admin-nav { display: flex; gap: 12px; align-items: center; font-family: var(--font-ui); font-size: var(--text-sm); }
     .admin-nav a {
       color: var(--text-secondary);
       text-decoration: none;
@@ -28,11 +33,13 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
     .admin-nav a.active { color: var(--text-primary); background: var(--bg-overlay); }
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: var(--radius-lg);
+      font-family: var(--font-ui);
       font-size: var(--text-xs); font-weight: 500;
       background: var(--interactive-ghost); color: var(--text-primary);
     }
     .btn {
       display: inline-block; padding: 8px 14px; border-radius: var(--radius-sm);
+      font-family: var(--font-ui);
       font-size: 12px; font-weight: 500; cursor: pointer;
       background: var(--bg-overlay); color: var(--text-primary);
       border: 1px solid var(--border-default); text-decoration: none;
@@ -40,7 +47,18 @@ body { background: var(--bg-void); color: var(--text-primary); font-family: var(
     .btn:hover { background: var(--bg-float); }
     a { color: var(--text-secondary); }
     a:hover { color: var(--text-primary); }
-    table { background: var(--bg-base); }
+    /* Audit table — chrome header in Inter, data rows in Inter (every
+       column except the future "description" is short utility data:
+       timestamps, IPs, admin emails). The shell-level body face still
+       applies to the page intro copy outside the table. */
+    table { background: var(--bg-base); font-family: var(--font-ui); }
+    table thead th { font-family: var(--font-ui); }
     table tr:hover { background: var(--bg-overlay); }
     table td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    /* Form labels in the filter strip read editorial; the inputs they
+       wrap are Inter sans via the inline style attributes the renderer
+       emits. */
+    .audit-filters label { font-family: var(--font-body); font-size: var(--text-sm); }
+    .audit-filters input,
+    .audit-filters select { font-family: var(--font-ui); }
     summary::-webkit-details-marker { display: none; }

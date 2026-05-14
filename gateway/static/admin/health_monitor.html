@@ -1,24 +1,25 @@
 <!-- /admin/health-monitor — single-pane status for all 13 narve.ai services.
-     Wrapped by admin_shell. Body-only fragment; vanilla JS polls every 10s. -->
+     Wrapped by admin_shell. Body-only fragment; vanilla JS polls every 10s.
+     Body face inherits from .admin-body; the section copy reads editorial,
+     the polled grid stays dense. -->
 <div class="health-monitor" style="max-width:1200px">
 
-  <div class="settings-section" style="margin-bottom:20px">
-    <div class="settings-section-title">Service health</div>
-    <div class="settings-section-desc">
+  <div class="admin-section" style="margin-bottom:24px">
+    <p style="margin:0;color:var(--text-secondary);font-size:var(--text-md);line-height:1.55">
       HEAD <code>/health</code> on every backend port. Polls every 10s. UP = 2xx &lt;500ms,
       SLOW = 2xx &ge;500ms, DOWN = timeout / refused / 5xx. Cached 5s server-side.
-    </div>
+    </p>
   </div>
 
   <div id="hm-summary" class="health-summary"
-       style="display:flex;gap:24px;margin-bottom:20px;padding:14px 18px;
+       style="display:flex;gap:24px;margin-bottom:24px;padding:14px 18px;
               background:var(--bg-inset);border:1px solid var(--border-subtle);
-              border-radius:8px;font-size:13px;">
-    <span><strong id="hm-summary-up">&mdash;</strong> UP</span>
-    <span><strong id="hm-summary-slow">&mdash;</strong> SLOW</span>
-    <span><strong id="hm-summary-down">&mdash;</strong> DOWN</span>
+              border-radius:8px;font-family:var(--font-ui);font-size:13px;">
+    <span><strong id="hm-summary-up" class="hm-stat">&mdash;</strong> UP</span>
+    <span><strong id="hm-summary-slow" class="hm-stat">&mdash;</strong> SLOW</span>
+    <span><strong id="hm-summary-down" class="hm-stat">&mdash;</strong> DOWN</span>
     <span style="margin-left:auto;color:var(--text-tertiary);font-size:12px">
-      Last refresh: <span id="hm-last-refresh">never</span>
+      Last refresh: <span id="hm-last-refresh" class="hm-stat">never</span>
     </span>
   </div>
 
@@ -32,6 +33,9 @@
 </div>
 
 <style>
+  /* Tile chrome stays on Inter — short labels + status pills are UI, not
+     prose. The page hero ("Health Monitor") is rendered by admin_shell in
+     Instrument Serif Italic, so this is purely the polling grid. */
   .hm-tile {
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
@@ -41,6 +45,7 @@
     flex-direction: column;
     gap: 6px;
     min-height: 120px;
+    font-family: var(--font-ui);
   }
   .hm-tile-head {
     display: flex;
@@ -49,12 +54,13 @@
     gap: 8px;
   }
   .hm-tile-name {
+    font-family: var(--font-ui);
     font-weight: 600;
     font-size: 14px;
     color: var(--text-primary);
   }
   .hm-tile-port {
-    font-family: var(--font-mono, ui-monospace, monospace);
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-tertiary);
   }
@@ -64,11 +70,14 @@
     gap: 6px;
     padding: 2px 8px;
     border-radius: 4px;
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
     border: 1px solid var(--border-default);
   }
+  /* Number values in the summary read as data — Geist Mono. */
+  .hm-stat { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
   .hm-status-dot {
     display: inline-block;
     width: 8px;
@@ -91,6 +100,7 @@
   }
 
   .hm-meta {
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--text-tertiary);
     display: grid;
@@ -100,12 +110,18 @@
     margin-top: 4px;
   }
   .hm-meta dt { font-weight: 500; }
-  .hm-meta dd { margin: 0; font-family: var(--font-mono, ui-monospace, monospace); color: var(--text-primary); }
+  .hm-meta dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
   .hm-actions {
     margin-top: auto;
     padding-top: 8px;
   }
   .hm-actions a {
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--text-secondary);
     text-decoration: underline;

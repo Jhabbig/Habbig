@@ -3,6 +3,16 @@
  * Loaded on every /admin/* page by render_admin_page() via a
  * <link rel="stylesheet"> in the rendered <head>. Not auto-loaded on
  * non-admin pages so the surface stays lean.
+ *
+ * Typography contract (matches the platform-wide editorial pass):
+ *   - .admin-rail (nav chrome): Inter sans  — var(--font-ui)
+ *   - .admin-body (content area body text):  var(--font-body) Georgia
+ *   - .admin-page-title (heroes): Instrument Serif Italic — var(--font-display)
+ *   - Table headers: Inter sans (chrome).
+ *   - Table number cells: Geist Mono (var(--font-mono)).
+ *   - Table text cells inherit body face.
+ *   - Form labels: body face. Form inputs: Inter sans + 16px (no iOS zoom).
+ *   - Buttons: Inter sans.
  */
 
 .admin-shell {
@@ -12,7 +22,7 @@
   background: var(--bg-base, var(--bg-void));
 }
 
-/* ── Sidebar ──────────────────────────────────────────────────────── */
+/* ── Sidebar (Inter chrome, untouched by the editorial body switch) ─── */
 
 .admin-rail {
   width: 240px;
@@ -24,6 +34,7 @@
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  font-family: var(--font-ui);
 }
 
 .admin-rail__brand {
@@ -39,12 +50,15 @@
   color: var(--text-primary);
 }
 .admin-rail__wordmark {
-  font-size: 15px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 18px;
+  font-weight: 400;
   letter-spacing: -0.01em;
 }
 .admin-rail__wordmark-sub {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--text-tertiary);
   letter-spacing: 0.02em;
 }
@@ -53,6 +67,7 @@
   margin-bottom: 20px;
 }
 .admin-nav__heading {
+  font-family: var(--font-ui);
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
@@ -67,6 +82,7 @@
   color: var(--text-secondary);
   text-decoration: none;
   border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
   font-size: 13.5px;
   line-height: 1.3;
   transition: background 0.12s ease, color 0.12s ease;
@@ -83,12 +99,18 @@
 
 /* ── Body ─────────────────────────────────────────────────────────── */
 
+/* The content side of the shell — editorial body face by default. Inner
+   chrome (tables, forms, buttons) opt back into Inter via more specific
+   selectors below so labels read editorial and controls stay tight. */
 .admin-body {
   flex: 1;
   min-width: 0;
-  padding: 36px 48px 80px;
+  padding: var(--space-8) var(--space-6) var(--space-8);
   max-width: 1280px;
   box-sizing: border-box;
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.55;
 }
 /* Page frame for admin content — admin/*.html templates wrap the
    main body in <div class="admin-content"> (or .admin-section) below
@@ -101,8 +123,28 @@
   background: var(--bg-surface, var(--surface));
   border: 2px solid var(--text-primary, #111);
   border-radius: 14px;
-  padding: clamp(20px, 2.5vw, 32px);
+  padding: var(--space-6);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
+}
+
+/* Every admin card + section inside the shell uses 32 px breathing room.
+   Tables still own their dense 10/14 row padding for power-user scanning;
+   the airier outer padding is on the container, not the rows. .admin-card
+   resets to 0 when it directly wraps a table — tables paint their own
+   thead background, the card painting the same area causes a doubled
+   border. */
+.admin-body .admin-card {
+  padding: var(--space-6);
+}
+.admin-body .admin-card:has(> .admin-table),
+.admin-body .admin-card:has(> table.admin-table),
+.admin-body .admin-card:has(> .nv-table-wrap > .admin-table) {
+  padding: 0;
+}
+/* .admin-section is a grouping container — its header + card already
+   own their own padding, so the wrapper just owns vertical rhythm. */
+.admin-body .admin-section {
+  margin-bottom: var(--space-6);
 }
 
 .admin-page-header {
@@ -115,6 +157,7 @@
   border-bottom: 1px solid var(--border-ghost);
 }
 .admin-breadcrumb {
+  font-family: var(--font-ui);
   font-size: 12px;
   color: var(--text-tertiary);
   margin-bottom: 6px;
@@ -139,10 +182,17 @@
 .admin-breadcrumb a:hover { color: var(--text-secondary); }
 .admin-breadcrumb [aria-current="page"] { color: var(--text-secondary); }
 
+/* Page-level hero: Instrument Serif Italic, editorial scale. Sized so
+   "Health Monitor" / "Audit Log" feel like masthead heads rather than
+   utility labels — but kept tight (line-height 1.05) so the page chrome
+   below stays within a single fold. */
 .admin-page-title {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-3xl);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
   margin: 0;
   color: var(--text-primary);
 }
@@ -151,6 +201,7 @@
   gap: 10px;
   align-items: center;
   flex-shrink: 0;
+  font-family: var(--font-ui);
 }
 .admin-page-actions .btn {
   display: inline-flex;
@@ -161,6 +212,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
+  font-family: var(--font-ui);
   font-size: var(--text-sm);
   font-weight: 500;
   text-decoration: none;
@@ -172,6 +224,58 @@
   background: var(--text-primary);
   color: var(--interactive-text);
   border-color: var(--text-primary);
+}
+
+/* ── Tables inside the admin body ─────────────────────────────────── */
+/* Power-user density preserved — only typography swaps. Headers stay
+   on Inter (chrome). Text cells use the body face so prose-y columns
+   like "target description" read editorially. Numeric cells already
+   carry `class="num"` from authoring; we tighten those to Geist Mono
+   instead of the older ui-monospace fallback. */
+.admin-body .admin-table thead th {
+  font-family: var(--font-ui);
+}
+.admin-body .admin-table td {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+.admin-body .admin-table td.num,
+.admin-body .admin-table th.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+/* Identifier-shaped cells (slugs, IDs, ports) — opt-in via the existing
+   `.copyable-id` and `.mono` helpers. */
+.admin-body .admin-table td .copyable-id,
+.admin-body .admin-table td .mono,
+.admin-body .admin-table td code {
+  font-family: var(--font-mono);
+}
+
+/* ── Forms inside the admin body ──────────────────────────────────── */
+/* Labels in body face (reads like prose), inputs in Inter sans at
+   16 px (defeats iOS auto-zoom + matches the rest of the platform). */
+.admin-body label {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.admin-body input,
+.admin-body select,
+.admin-body textarea {
+  font-family: var(--font-ui);
+  font-size: 16px;
+}
+/* Compact inputs (filter bars, inline edits) stay sans but smaller —
+   they're paired with a search affordance, not a typing-heavy form. */
+.admin-body .admin-filter-bar input,
+.admin-body .admin-filter-bar select {
+  font-size: var(--text-sm);
+}
+.admin-body button,
+.admin-body .btn {
+  font-family: var(--font-ui);
 }
 
 /* ── Mobile drawer ────────────────────────────────────────────────── */
@@ -206,7 +310,7 @@
     box-shadow: 2px 0 12px rgba(0,0,0,0.12);
   }
   .admin-rail--open { transform: translateX(0); }
-  .admin-body { padding: 64px 20px 60px; }
+  .admin-body { padding: var(--space-7) var(--space-4) var(--space-7); }
   .admin-page-header { flex-direction: column; }
   .admin-page-actions { width: 100%; }
 }
@@ -228,9 +332,11 @@
   text-decoration: none;
   color: inherit;
   transition: border-color 0.12s ease;
+  font-family: var(--font-ui);
 }
 .admin-tile:hover { border-color: var(--text-primary); }
 .admin-tile__label {
+  font-family: var(--font-ui);
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
@@ -239,6 +345,7 @@
   margin-bottom: 10px;
 }
 .admin-tile__value {
+  font-family: var(--font-mono);
   font-size: var(--text-2xl);
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -246,6 +353,7 @@
   font-variant-numeric: tabular-nums;
 }
 .admin-tile__delta {
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-tertiary);
   margin-top: 4px;
@@ -258,6 +366,7 @@
 
 .admin-section { margin-bottom: 32px; }
 .admin-section-title {
+  font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: 600;
   margin-bottom: 12px;
@@ -265,7 +374,8 @@
   letter-spacing: -0.005em;
 }
 .admin-empty {
-  padding: 32px;
+  font-family: var(--font-body);
+  padding: var(--space-6);
   text-align: center;
   color: var(--text-tertiary);
   font-size: var(--text-sm);
