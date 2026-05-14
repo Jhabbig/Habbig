@@ -1,26 +1,26 @@
-"""Admin /admin/jobs page + pause/resume/trigger APIs.
+"""Admin /admin/jobs — background-job queue dashboard.
 
 Registered by being imported at the bottom of ``server.py`` (same pattern
-as ``notification_routes``, ``push_routes``, etc.).
+as ``admin_health_monitor_routes``, ``status_routes``, etc.).
 
 Routes exposed:
-    GET  /admin/jobs                       HTML page
-    GET  /admin/api/jobs                   JSON list (one row per job)
+    GET  /admin/jobs                       HTML page (admin shell)
+    GET  /admin/api/jobs/refresh           JSON snapshot (polled every 5s)
+    GET  /admin/api/jobs                   JSON list (one row per registered job)
     GET  /admin/api/jobs/{name}/history    last 50 runs for a job
     POST /admin/api/jobs/{name}/pause      pause schedule
     POST /admin/api/jobs/{name}/resume     resume schedule
     POST /admin/api/jobs/{name}/trigger    fire now (records triggered_by=admin)
 
 Every route goes through ``server._require_admin_user``. POSTs enforce
-the global CSRF middleware — no exemption. Rate limits are generous
-(the admin panel polls every 5s).
+the global CSRF middleware — no exemption.
 """
 
 from __future__ import annotations
 
-import datetime as _dt
 import html
 import logging
+import time
 from typing import Optional
 
 from fastapi import HTTPException, Request
@@ -28,6 +28,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 import server
+from admin_shell import render_admin_page
+from queries import jobs as job_queries
 from security.rate_limiter import rate_limit, get_client_ip
 
 log = logging.getLogger("admin_jobs")
@@ -40,17 +42,16 @@ def _admin_key(request: Request) -> str:
     return f"admin_jobs:anon:{get_client_ip(request)}"
 
 
-# ── Aggregated per-job stats from job_runs ───────────────────────────────
+# ── Legacy aggregated per-job stats (kept for backwards compat) ─────────
 
 def _job_stats() -> dict[str, dict]:
-    """Summarise job_runs for every registered job.
+    """Aggregate per-job stats. Used by the legacy /admin/api/jobs route.
 
-    Returns ``{job_name: {last_run, last_ok, last_duration_ms, avg_ms,
-    fail_count_24h, total_runs}}``. Runs only against ``job_runs``
-    (migration 105). If the table doesn't exist yet, returns empty.
+    The new dashboard reads :mod:`queries.jobs` directly; this is kept
+    so any external integration polling /admin/api/jobs keeps working.
     """
-    import time
-    now = int(time.time())
+    import time as _time
+    now = int(_time.time())
     cutoff_24h = now - 86400
     try:
         with db.conn() as c:
@@ -79,16 +80,156 @@ def _job_stats() -> dict[str, dict]:
     return {row["job_name"]: dict(row) for row in rows}
 
 
-# ── JSON API ─────────────────────────────────────────────────────────────
+# ── Rendering helpers (server-side snapshot) ─────────────────────────────
+
+def _esc(s) -> str:
+    return html.escape("" if s is None else str(s))
+
+
+def _fmt_ts(t: Optional[int]) -> str:
+    if not t:
+        return "—"
+    try:
+        delta = int(time.time()) - int(t)
+    except Exception:
+        return "—"
+    if delta < 0:
+        fwd = -delta
+        if fwd < 60: return f"in {fwd}s"
+        if fwd < 3600: return f"in {fwd // 60}m"
+        if fwd < 86400: return f"in {fwd // 3600}h"
+        return f"in {fwd // 86400}d"
+    if delta < 60: return f"{delta}s ago"
+    if delta < 3600: return f"{delta // 60}m ago"
+    if delta < 86400: return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+
+def _fmt_duration(ms: Optional[int]) -> str:
+    if ms is None:
+        return "—"
+    try:
+        ms = int(ms)
+    except Exception:
+        return "—"
+    if ms < 1000: return f"{ms}ms"
+    if ms < 60_000: return f"{ms / 1000:.1f}s"
+    return f"{ms // 1000}s"
+
+
+def _fmt_pct(p: Optional[float]) -> str:
+    if p is None: return "—"
+    return f"{p:.1f}%"
+
+
+def _render_running_rows(runs: list[dict]) -> str:
+    if not runs:
+        return '<tr><td colspan="4" class="jobs-empty">Nothing running right now.</td></tr>'
+    parts: list[str] = []
+    now = int(time.time())
+    for r in runs:
+        started = r.get("started_at") or 0
+        age_ms = max(0, (now - int(started)) * 1000) if started else None
+        parts.append(
+            "<tr>"
+            f'<td><span class="jobs-cell-name">{_esc(r.get("job_name"))}</span></td>'
+            f'<td class="jobs-cell-mono">{_esc(_fmt_ts(started))}</td>'
+            f'<td class="jobs-cell-mono">{_esc(_fmt_duration(age_ms))}</td>'
+            f'<td class="jobs-cell-mono">{_esc(r.get("triggered_by") or "schedule")}</td>'
+            "</tr>"
+        )
+    return "".join(parts)
+
+
+def _render_cron_rows(cron: list[dict]) -> str:
+    if not cron:
+        return '<tr><td colspan="6" class="jobs-empty">No jobs registered. Scheduler may be disabled.</td></tr>'
+    parts: list[str] = []
+    for c in cron:
+        paused = '<span class="jobs-paused-tag">paused</span>' if c.get("paused") else ""
+        rate = _fmt_pct(c.get("success_rate_24h"))
+        parts.append(
+            "<tr>"
+            f'<td><span class="jobs-cell-name">{_esc(c.get("name"))}</span>{paused}</td>'
+            f'<td><span class="jobs-cell-schedule">{_esc(c.get("schedule"))}</span></td>'
+            f'<td class="jobs-cell-mono">{_esc(_fmt_ts(c.get("next_run")))}</td>'
+            f'<td class="jobs-cell-mono">{_esc(_fmt_ts(c.get("last_run")))}</td>'
+            f'<td class="num">{_esc(rate)}</td>'
+            f'<td class="num">{int(c.get("runs_24h") or 0)}</td>'
+            "</tr>"
+        )
+    return "".join(parts)
+
+
+def _render_recent_rows(recent: list[dict]) -> str:
+    if not recent:
+        return '<tr><td colspan="5" class="jobs-empty">No runs in window.</td></tr>'
+    parts: list[str] = []
+    for r in recent:
+        status = (r.get("status") or "unknown").lower()
+        if status not in ("success", "failed", "running", "retrying", "unknown"):
+            status = "unknown"
+        err = r.get("error_message") or ""
+        err_html = (
+            f'<span class="jobs-cell-error">{_esc(str(err)[:200])}</span>'
+            if err else ""
+        )
+        finished = r.get("finished_at") or r.get("started_at")
+        parts.append(
+            "<tr>"
+            f'<td><span class="jobs-cell-name">{_esc(r.get("job_name"))}</span></td>'
+            f'<td><span class="jobs-status jobs-status--{status}">{_esc(status)}</span></td>'
+            f'<td class="num">{_esc(_fmt_duration(r.get("duration_ms")))}</td>'
+            f'<td class="jobs-cell-mono">{_esc(_fmt_ts(finished))}</td>'
+            f"<td>{err_html}</td>"
+            "</tr>"
+        )
+    return "".join(parts)
+
+
+def _render_filter_options(names: list[str]) -> str:
+    return "".join(
+        f'<option value="{_esc(n)}">{_esc(n)}</option>' for n in names
+    )
+
+
+# ── JSON: live snapshot for the 5s poll ──────────────────────────────────
+
+@server.app.get("/admin/api/jobs/refresh")
+@rate_limit(limit=300, window_seconds=60, key_func=_admin_key)
+async def admin_api_jobs_refresh(request: Request, job_name: Optional[str] = None) -> JSONResponse:
+    """Return everything the page needs in one round trip."""
+    user = server._require_admin_user(request)
+    if not isinstance(user, dict):  # pragma: no cover — defensive
+        raise HTTPException(status_code=403, detail="Admin required")
+    stats = job_queries.get_job_stats(window_hours=24)
+    running = job_queries.list_currently_running(limit=50)
+    cron = job_queries.list_cron_schedule()
+    recent = job_queries.list_recent_job_runs(limit=100, job_name=job_name or None)
+    return JSONResponse({
+        "stats": stats,
+        "running": running,
+        "cron": cron,
+        "recent": recent,
+        "generated_at": int(time.time()),
+    })
+
+
+# ── JSON API — preserved from the previous shape for back-compat ─────────
 
 @server.app.get("/admin/api/jobs")
 @rate_limit(limit=120, window_seconds=60, key_func=_admin_key)
 async def admin_api_jobs(request: Request) -> JSONResponse:
     server._require_admin_user(request)
-    from scheduler import scheduler as sched
+    try:
+        from scheduler import scheduler as sched
+        metadata = sched.jobs_metadata()
+    except Exception:
+        log.exception("admin_jobs: scheduler metadata failed")
+        metadata = []
     stats = _job_stats()
     out = []
-    for meta in sched.jobs_metadata():
+    for meta in metadata:
         name = meta["name"]
         s = stats.get(name, {})
         out.append({
@@ -155,218 +296,42 @@ async def admin_api_job_trigger(request: Request, name: str) -> JSONResponse:
 
 # ── HTML page ────────────────────────────────────────────────────────────
 
-_JOBS_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Jobs — Admin — narve.ai</title>
-  <link rel="stylesheet" href="/_gateway_static/gateway.css?v=7">
-  <style>
-    .jobs-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .jobs-table th, .jobs-table td {
-      padding: 10px 8px; text-align: left;
-      border-bottom: 1px solid var(--border-subtle);
-      vertical-align: top;
-    }
-    .jobs-table th {
-      font-weight: 600; color: var(--text-tertiary);
-      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-    }
-    .jobs-table tr[data-paused="1"] td { opacity: 0.55; }
-    .jobs-table tr[data-failing="1"] td { background: rgba(239, 68, 68, 0.06); }
-    .jobs-status-ok { color: var(--green, #15803d); }
-    .jobs-status-fail { color: var(--red, #dc2626); font-weight: 600; }
-    .jobs-status-pending { color: var(--text-tertiary); }
-    .jobs-btn {
-      padding: 4px 10px; font-size: 11px;
-      background: transparent;
-      border: 1px solid var(--border-default);
-      border-radius: 4px; cursor: pointer;
-      color: var(--text-primary);
-      font-family: inherit;
-      margin-right: 4px;
-    }
-    .jobs-btn:hover { background: var(--interactive-ghost); }
-    .jobs-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
-    .jobs-trigger { border-color: var(--text-primary); }
-    .jobs-name { font-family: var(--font-mono); font-size: 12px; }
-    .jobs-trigger-expr {
-      font-family: var(--font-mono); font-size: 11px;
-      color: var(--text-tertiary); margin-top: 2px;
-    }
-    .jobs-history {
-      margin: 8px 0 16px; padding: 10px 12px;
-      background: var(--bg-inset); border-radius: 6px;
-      font-size: 11px;
-    }
-    .jobs-history td { padding: 2px 8px 2px 0; }
-    .jobs-empty { color: var(--text-tertiary); padding: 24px; text-align: center; }
-    .jobs-failing-summary {
-      padding: 10px 14px; margin-bottom: 16px;
-      background: rgba(239, 68, 68, 0.08);
-      border: 1px solid rgba(239, 68, 68, 0.2);
-      border-radius: 6px; font-size: 13px;
-    }
-  </style>
-</head>
-<body>
-  <div class="app-shell">
-    {{ raw_admin_sidebar }}
-    <main class="main-content" id="main" tabindex="-1">
-      <div class="breadcrumb">
-        <a href="/admin" class="breadcrumb-item" style="text-decoration:none;color:inherit">Admin</a>
-        <span class="breadcrumb-separator">/</span>
-        <span class="breadcrumb-item current">Jobs</span>
-      </div>
-      <div class="page-header">
-        <h1 class="page-title">Scheduled jobs</h1>
-        <p class="page-subtitle">Every recurring job narve.ai runs, sourced from <code>scheduler.registry</code>. Rows with recent failures are highlighted.</p>
-      </div>
-      <div id="failing-summary" class="jobs-failing-summary" style="display:none"></div>
-      <div class="content-area">
-        <div class="nv-table-wrap"><table class="jobs-table">
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Trigger</th>
-              <th>Next run</th>
-              <th>Last run</th>
-              <th>Duration</th>
-              <th>24h fails</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="jobs-body">
-            <tr><td colspan="7" class="jobs-empty">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </main>
-  </div>
-<script>
-(function(){
-  function csrf(){var m=document.cookie.match(/(?:^|;\\s*)_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):"";}
-  function fmtTs(t){if(!t)return "—";var d=new Date(t*1000);var now=Date.now();var delta=(now-d.getTime())/1000;if(delta<0){var future=Math.abs(delta);if(future<60)return "in "+Math.round(future)+"s";if(future<3600)return "in "+Math.round(future/60)+"m";if(future<86400)return "in "+Math.round(future/3600)+"h";return d.toLocaleString();}if(delta<60)return Math.round(delta)+"s ago";if(delta<3600)return Math.round(delta/60)+"m ago";if(delta<86400)return Math.round(delta/3600)+"h ago";return d.toLocaleDateString();}
-  function fmtDur(ms){if(ms==null)return "—";if(ms<1000)return ms+"ms";if(ms<60000)return (ms/1000).toFixed(1)+"s";return Math.round(ms/1000)+"s";}
-  function fmtStatus(ok){if(ok==null)return '<span class="jobs-status-pending">—</span>';if(ok==1)return '<span class="jobs-status-ok">✓</span>';return '<span class="jobs-status-fail">✗</span>';}
-
-  function action(name, verb){
-    return fetch('/admin/api/jobs/'+encodeURIComponent(name)+'/'+verb, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {'X-CSRF-Token': csrf(), 'Content-Type': 'application/json'},
-    }).then(function(r){ if(!r.ok) throw new Error('status '+r.status); return load(); });
-  }
-
-  function toggleHistory(name, row){
-    var existing = row.nextElementSibling;
-    if (existing && existing.classList.contains('jobs-history-row')) { existing.remove(); return; }
-    fetch('/admin/api/jobs/'+encodeURIComponent(name)+'/history', {credentials:'same-origin'})
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        var tr = document.createElement('tr');
-        tr.className = 'jobs-history-row';
-        var runs = data.runs || [];
-        var html;
-        if (runs.length === 0) {
-          html = '<div class="jobs-history">No runs yet.</div>';
-        } else {
-          var rows = runs.map(function(r){
-            var status = fmtStatus(r.ok);
-            var err = r.error ? ' — <span style="color:var(--red,#dc2626)">'+escape(r.error)+'</span>' : '';
-            var who = r.triggered_by === 'admin' ? ' <em>(manual)</em>' : '';
-            return '<tr><td>'+status+'</td><td>'+fmtTs(r.started_at)+who+'</td><td>'+fmtDur(r.duration_ms)+'</td>'+(r.error ? '<td style="word-break:break-word">'+escape(r.error.slice(0,120))+'</td>':'<td></td>')+'</tr>';
-          }).join('');
-          html = '<div class="jobs-history"><table><tbody>'+rows+'</tbody></table></div>';
-        }
-        tr.innerHTML = '<td colspan="7">'+html+'</td>';
-        row.insertAdjacentElement('afterend', tr);
-      });
-  }
-
-  function escape(s){return String(s||'').replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
-
-  function load(){
-    return fetch('/admin/api/jobs', {credentials:'same-origin'})
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        var tbody = document.getElementById('jobs-body');
-        tbody.innerHTML = '';
-        var failing = (data.jobs || []).filter(function(j){ return (j.fail_count_24h||0) > 0; });
-        var fs = document.getElementById('failing-summary');
-        if (failing.length) {
-          fs.textContent = failing.length + ' job' + (failing.length === 1 ? '' : 's') + ' had failures in the last 24h: ' + failing.map(function(j){return j.name;}).join(', ');
-          fs.style.display = '';
-        } else { fs.style.display = 'none'; }
-        if (!data.jobs || data.jobs.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" class="jobs-empty">No jobs registered. Scheduler may be disabled.</td></tr>';
-          return;
-        }
-        data.jobs.forEach(function(j){
-          var tr = document.createElement('tr');
-          if (j.paused) tr.setAttribute('data-paused', '1');
-          if ((j.fail_count_24h||0) > 0) tr.setAttribute('data-failing', '1');
-          tr.innerHTML =
-            '<td><div class="jobs-name">'+escape(j.name)+'</div><div class="jobs-trigger-expr">'+escape(j.func_module+'.'+j.func_name)+'</div></td>'+
-            '<td class="jobs-trigger-expr">'+escape(j.trigger||'')+'</td>'+
-            '<td>'+fmtTs(j.next_run_time)+'</td>'+
-            '<td>'+fmtStatus(j.last_ok)+' '+fmtTs(j.last_run)+'</td>'+
-            '<td>'+fmtDur(j.last_duration_ms)+(j.avg_ms ? ' <span style="color:var(--text-tertiary)">avg '+fmtDur(j.avg_ms)+'</span>' : '')+'</td>'+
-            '<td>'+(j.fail_count_24h||0)+'</td>'+
-            '<td></td>';
-          var cell = tr.cells[6];
-          var mkBtn = function(label, verb){
-            var b = document.createElement('button');
-            b.className = 'jobs-btn' + (verb==='trigger' ? ' jobs-trigger' : '');
-            b.textContent = label;
-            b.addEventListener('click', function(e){ e.stopPropagation(); action(j.name, verb); });
-            cell.appendChild(b);
-          };
-          mkBtn(j.paused ? 'Resume' : 'Pause', j.paused ? 'resume' : 'pause');
-          mkBtn('Trigger', 'trigger');
-          tr.addEventListener('click', function(){ toggleHistory(j.name, tr); });
-          tr.style.cursor = 'pointer';
-          tbody.appendChild(tr);
-        });
-      })
-      .catch(function(err){
-        var tbody = document.getElementById('jobs-body');
-        tbody.innerHTML = '<tr><td colspan="7" class="jobs-empty">Failed to load: '+escape(err.message)+'</td></tr>';
-      });
-  }
-
-  load();
-  setInterval(load, 10000);
-})();
-</script>
-</body>
-</html>"""
-
-
 @server.app.get("/admin/jobs", response_class=HTMLResponse)
-async def admin_jobs_page(request: Request) -> HTMLResponse:
-    admin_or_redirect = server._require_admin_user(request, page=True)
-    if admin_or_redirect is None:
-        raise HTTPException(status_code=403, detail="Admin required")
-    if not isinstance(admin_or_redirect, dict):
-        # _require_admin_user returned a RedirectResponse during 2FA (now
-        # removed, but the signature still allows it). Pass it through.
-        return admin_or_redirect  # type: ignore[return-value]
+async def admin_jobs_page(request: Request):
+    """Render the /admin/jobs dashboard inside the admin shell."""
+    user = server._require_admin_user(request, page=True)
+    if user is None:
+        return server._denied_response(request)
+    if not isinstance(user, dict):
+        return user  # RedirectResponse for 2FA
 
-    admin = admin_or_redirect
-    # Reuse the existing admin sidebar rendering if it exists; otherwise
-    # inject a minimal link back to /admin.
+    # Snapshot for the initial paint. Polling JS upgrades from here.
     try:
-        sidebar = server._admin_sidebar_html(admin)  # type: ignore[attr-defined]
+        stats = job_queries.get_job_stats(window_hours=24)
+        running = job_queries.list_currently_running(limit=50)
+        cron = job_queries.list_cron_schedule()
+        recent = job_queries.list_recent_job_runs(limit=100)
+        names = job_queries.list_distinct_job_names()
     except Exception:
-        sidebar = (
-            '<aside class="sidebar">'
-            '<div class="sidebar-logo"><span class="sidebar-logo-text">narve.ai admin</span></div>'
-            '<nav class="sidebar-nav">'
-            '<a href="/admin" class="nav-item">← Admin home</a>'
-            '<a href="/admin/jobs" class="nav-item active">Jobs</a>'
-            '</nav>'
-            '</aside>'
-        )
-    page_html = _JOBS_PAGE.replace("{{ raw_admin_sidebar }}", sidebar)
-    return HTMLResponse(page_html)
+        log.exception("admin_jobs_page: initial snapshot failed")
+        stats = {"total_runs": 0, "success_count": 0, "failed_count": 0,
+                 "success_rate": None, "avg_duration_ms": None, "window_hours": 24}
+        running, cron, recent, names = [], [], [], []
+
+    return render_admin_page(
+        request,
+        "admin/jobs.html",
+        page_title="Background jobs",
+        active_route="jobs",
+        breadcrumb=[("Admin", "/admin"), ("Jobs", "/admin/jobs")],
+        raw_stat_total=str(stats.get("total_runs") or 0),
+        raw_stat_rate=_fmt_pct(stats.get("success_rate")),
+        raw_stat_avg=_fmt_duration(stats.get("avg_duration_ms")),
+        raw_stat_failed=str(stats.get("failed_count") or 0),
+        raw_running_count=str(len(running)),
+        raw_running_rows=_render_running_rows(running),
+        raw_cron_count=str(len(cron)),
+        raw_cron_rows=_render_cron_rows(cron),
+        raw_recent_rows=_render_recent_rows(recent),
+        raw_filter_options=_render_filter_options(names),
+    )

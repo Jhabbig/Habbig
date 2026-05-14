@@ -1,0 +1,506 @@
+<!-- /admin/jobs — background-job queue dashboard.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Three sections:
+       1. Stats bar (24h window) — total / success rate / avg / failed
+       2. Currently running — live, polled every 5s
+       3. Cron schedule — every registered job, name / schedule / next /
+          last / 24h success rate
+       4. Recent runs — last 100, filterable by job name
+
+     Backend renders the initial snapshot; the JS that follows polls
+     /admin/api/jobs/refresh every 5s for the live data. No websocket;
+     polling stays cheap because the queries hit indexed columns.
+  -->
+
+<div class="jobs-page">
+
+  <div class="jobs-hero">
+    <h2 class="jobs-hero__display">Background jobs</h2>
+    <p class="jobs-hero__lede">
+      Every recurring task narve.ai runs — scheduler audit trail, currently
+      executing runs, and the cron registry. Refreshes every 5 seconds.
+    </p>
+  </div>
+
+  <!-- ── Stats bar ─────────────────────────────────────────────────── -->
+  <section class="jobs-stats" aria-label="Job statistics, last 24 hours">
+    <div class="jobs-stat">
+      <div class="jobs-stat__label">Runs · 24h</div>
+      <div class="jobs-stat__value" id="jobs-stat-total">{{ raw_stat_total }}</div>
+    </div>
+    <div class="jobs-stat">
+      <div class="jobs-stat__label">Success rate</div>
+      <div class="jobs-stat__value" id="jobs-stat-rate">{{ raw_stat_rate }}</div>
+    </div>
+    <div class="jobs-stat">
+      <div class="jobs-stat__label">Avg duration</div>
+      <div class="jobs-stat__value" id="jobs-stat-avg">{{ raw_stat_avg }}</div>
+    </div>
+    <div class="jobs-stat">
+      <div class="jobs-stat__label">Failed</div>
+      <div class="jobs-stat__value" id="jobs-stat-failed">{{ raw_stat_failed }}</div>
+    </div>
+  </section>
+
+  <!-- ── Currently running ─────────────────────────────────────────── -->
+  <section class="jobs-card" aria-labelledby="jobs-running-title">
+    <header class="jobs-card__head">
+      <h3 id="jobs-running-title" class="jobs-card__title">Currently running</h3>
+      <span class="jobs-card__sub" id="jobs-running-count">{{ raw_running_count }} live</span>
+    </header>
+    <div class="jobs-table-wrap nv-table-wrap">
+      <table class="jobs-table" id="jobs-running-table">
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">Started</th>
+            <th scope="col">Age</th>
+            <th scope="col">Triggered by</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-running-body">{{ raw_running_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Cron schedule ─────────────────────────────────────────────── -->
+  <section class="jobs-card" aria-labelledby="jobs-cron-title">
+    <header class="jobs-card__head">
+      <h3 id="jobs-cron-title" class="jobs-card__title">Cron schedule</h3>
+      <span class="jobs-card__sub" id="jobs-cron-count">{{ raw_cron_count }} registered</span>
+    </header>
+    <div class="jobs-table-wrap nv-table-wrap">
+      <table class="jobs-table" id="jobs-cron-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Schedule</th>
+            <th scope="col">Next run</th>
+            <th scope="col">Last run</th>
+            <th scope="col" class="num">Success · 24h</th>
+            <th scope="col" class="num">Runs · 24h</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-cron-body">{{ raw_cron_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Recent runs ───────────────────────────────────────────────── -->
+  <section class="jobs-card" aria-labelledby="jobs-recent-title">
+    <header class="jobs-card__head">
+      <h3 id="jobs-recent-title" class="jobs-card__title">Recent runs</h3>
+      <div class="jobs-card__filters">
+        <label for="jobs-filter-name" class="jobs-filter__label">Filter</label>
+        <select id="jobs-filter-name" class="jobs-filter__select">
+          <option value="">All jobs</option>
+          {{ raw_filter_options }}
+        </select>
+      </div>
+    </header>
+    <div class="jobs-table-wrap nv-table-wrap">
+      <table class="jobs-table" id="jobs-recent-table">
+        <thead>
+          <tr>
+            <th scope="col">Job</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="num">Duration</th>
+            <th scope="col">Finished</th>
+            <th scope="col">Error</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-recent-body">{{ raw_recent_rows }}</tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<style>
+  /* ── Hero ───────────────────────────────────────────────────────── */
+  .jobs-page {
+    padding: var(--space-8) var(--space-6);
+    max-width: 1280px;
+    margin: 0 auto;
+    font-family: var(--font-body);
+  }
+  .jobs-hero {
+    margin-bottom: var(--space-8, 32px);
+  }
+  .jobs-hero__display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(40px, 5.5vw, 64px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--space-3, 12px);
+    color: var(--text-primary);
+  }
+  .jobs-hero__lede {
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  /* ── Stats ──────────────────────────────────────────────────────── */
+  .jobs-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3, 12px);
+    margin-bottom: var(--space-6, 24px);
+  }
+  .jobs-stat {
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .jobs-stat__label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--space-2, 8px);
+  }
+  .jobs-stat__value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  @media (max-width: 720px) {
+    .jobs-stats { grid-template-columns: repeat(2, 1fr); }
+    .jobs-stat__value { font-size: 22px; }
+  }
+
+  /* ── Card ───────────────────────────────────────────────────────── */
+  .jobs-card {
+    margin-bottom: var(--space-6, 24px);
+    padding: var(--space-6);
+    border: 1px solid var(--border-default, var(--border-strong));
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-surface, var(--bg-base));
+  }
+  .jobs-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4, 16px);
+    margin-bottom: var(--space-4, 16px);
+    flex-wrap: wrap;
+  }
+  .jobs-card__title {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+  .jobs-card__sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+  }
+  .jobs-card__filters {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 8px);
+  }
+  .jobs-filter__label {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .jobs-filter__select {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-default, var(--border-strong));
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+  }
+  .jobs-filter__select:focus {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+
+  /* ── Table ──────────────────────────────────────────────────────── */
+  .jobs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+  .jobs-table thead th {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    text-align: left;
+    padding: var(--space-2, 8px) var(--space-3, 12px);
+    border-bottom: 1px solid var(--border-default, var(--border-strong));
+  }
+  .jobs-table thead th.num { text-align: right; }
+  .jobs-table tbody td {
+    padding: var(--space-3, 12px);
+    border-bottom: 1px solid var(--border-ghost, var(--border-default));
+    color: var(--text-primary);
+    vertical-align: top;
+  }
+  .jobs-table tbody td.num {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .jobs-table tbody tr:last-child td { border-bottom: none; }
+  .jobs-table tbody tr:hover td { background: var(--bg-inset, transparent); }
+
+  .jobs-cell-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .jobs-cell-mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+  .jobs-cell-schedule {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    word-break: break-word;
+  }
+  .jobs-cell-error {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    word-break: break-word;
+    max-width: 320px;
+  }
+
+  /* Status — monochrome. Hierarchy via weight + dot + label. */
+  .jobs-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-transform: lowercase;
+  }
+  .jobs-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: 0 0 6px;
+  }
+  .jobs-status--success { color: var(--text-secondary); }
+  .jobs-status--success::before { background: var(--text-secondary); }
+  .jobs-status--failed { color: var(--text-primary); font-weight: 600; }
+  .jobs-status--failed::before { background: var(--text-primary); }
+  .jobs-status--running { color: var(--text-tertiary); }
+  .jobs-status--running::before {
+    background: var(--text-tertiary);
+    animation: jobs-pulse 1.4s ease-in-out infinite;
+  }
+  .jobs-status--retrying { color: var(--text-secondary); }
+  .jobs-status--unknown { color: var(--text-quaternary, var(--text-tertiary)); }
+
+  @keyframes jobs-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .jobs-status--running::before { animation: none; }
+  }
+
+  .jobs-empty {
+    padding: var(--space-6, 24px);
+    text-align: center;
+    color: var(--text-tertiary);
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+
+  .jobs-paused-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-family: var(--font-ui);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    border: 1px solid var(--border-default, var(--border-ghost));
+    border-radius: var(--radius-sm, 4px);
+  }
+
+  /* Compact density toggle support */
+  [data-density="compact"] .jobs-table tbody td { padding: 6px var(--space-3, 12px); }
+  [data-density="compact"] .jobs-card { padding: var(--space-4, 16px); }
+</style>
+
+<script>
+(function(){
+  /* Live refresh — polls /admin/api/jobs/refresh every 5s. The
+     initial render is server-side so the page is useful with JS off. */
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+
+  function fmtTs(t){
+    if(!t) return '—';
+    var d = new Date(Number(t) * 1000);
+    var now = Date.now();
+    var delta = (now - d.getTime()) / 1000;
+    if(delta < 0){
+      var fwd = Math.abs(delta);
+      if(fwd < 60) return 'in ' + Math.round(fwd) + 's';
+      if(fwd < 3600) return 'in ' + Math.round(fwd / 60) + 'm';
+      if(fwd < 86400) return 'in ' + Math.round(fwd / 3600) + 'h';
+      return d.toLocaleString();
+    }
+    if(delta < 60) return Math.round(delta) + 's ago';
+    if(delta < 3600) return Math.round(delta / 60) + 'm ago';
+    if(delta < 86400) return Math.round(delta / 3600) + 'h ago';
+    return d.toLocaleDateString();
+  }
+
+  function fmtDuration(ms){
+    if(ms == null) return '—';
+    if(ms < 1000) return ms + 'ms';
+    if(ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    return Math.round(ms / 1000) + 's';
+  }
+
+  function fmtPct(n){
+    if(n == null) return '—';
+    return Number(n).toFixed(1) + '%';
+  }
+
+  function renderStatus(s){
+    var safe = String(s || 'unknown').toLowerCase();
+    var allowed = {success:1, failed:1, running:1, retrying:1, unknown:1};
+    if(!allowed[safe]) safe = 'unknown';
+    return '<span class="jobs-status jobs-status--' + safe + '">' + esc(safe) + '</span>';
+  }
+
+  function renderStats(stats){
+    var rate = stats.success_rate == null ? '—' : fmtPct(stats.success_rate);
+    var avg  = stats.avg_duration_ms == null ? '—' : fmtDuration(stats.avg_duration_ms);
+    document.getElementById('jobs-stat-total').textContent = String(stats.total_runs || 0);
+    document.getElementById('jobs-stat-rate').textContent = rate;
+    document.getElementById('jobs-stat-avg').textContent = avg;
+    document.getElementById('jobs-stat-failed').textContent = String(stats.failed_count || 0);
+  }
+
+  function renderRunning(runs){
+    var body = document.getElementById('jobs-running-body');
+    var countEl = document.getElementById('jobs-running-count');
+    countEl.textContent = (runs.length || 0) + ' live';
+    if(!runs.length){
+      body.innerHTML = '<tr><td colspan="4" class="jobs-empty">Nothing running right now.</td></tr>';
+      return;
+    }
+    body.innerHTML = runs.map(function(r){
+      return '<tr>' +
+        '<td><span class="jobs-cell-name">' + esc(r.job_name) + '</span></td>' +
+        '<td class="jobs-cell-mono">' + esc(fmtTs(r.started_at)) + '</td>' +
+        '<td class="jobs-cell-mono">' + esc(fmtDuration((Date.now()/1000 - r.started_at) * 1000)) + '</td>' +
+        '<td class="jobs-cell-mono">' + esc(r.triggered_by || 'schedule') + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderCron(jobs){
+    var body = document.getElementById('jobs-cron-body');
+    var countEl = document.getElementById('jobs-cron-count');
+    countEl.textContent = (jobs.length || 0) + ' registered';
+    if(!jobs.length){
+      body.innerHTML = '<tr><td colspan="6" class="jobs-empty">No jobs registered. Scheduler may be disabled.</td></tr>';
+      return;
+    }
+    body.innerHTML = jobs.map(function(j){
+      var paused = j.paused ? '<span class="jobs-paused-tag">paused</span>' : '';
+      var rate = j.success_rate_24h == null ? '—' : fmtPct(j.success_rate_24h);
+      return '<tr>' +
+        '<td><span class="jobs-cell-name">' + esc(j.name) + '</span>' + paused + '</td>' +
+        '<td><span class="jobs-cell-schedule">' + esc(j.schedule) + '</span></td>' +
+        '<td class="jobs-cell-mono">' + esc(fmtTs(j.next_run)) + '</td>' +
+        '<td class="jobs-cell-mono">' + esc(fmtTs(j.last_run)) + '</td>' +
+        '<td class="num">' + esc(rate) + '</td>' +
+        '<td class="num">' + String(j.runs_24h || 0) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderRecent(runs){
+    var body = document.getElementById('jobs-recent-body');
+    if(!runs.length){
+      body.innerHTML = '<tr><td colspan="5" class="jobs-empty">No runs in window.</td></tr>';
+      return;
+    }
+    body.innerHTML = runs.map(function(r){
+      var err = r.error_message ? '<span class="jobs-cell-error">' + esc(String(r.error_message).slice(0, 200)) + '</span>' : '';
+      return '<tr>' +
+        '<td><span class="jobs-cell-name">' + esc(r.job_name) + '</span></td>' +
+        '<td>' + renderStatus(r.status) + '</td>' +
+        '<td class="num">' + esc(fmtDuration(r.duration_ms)) + '</td>' +
+        '<td class="jobs-cell-mono">' + esc(fmtTs(r.finished_at || r.started_at)) + '</td>' +
+        '<td>' + err + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function refresh(){
+    var name = document.getElementById('jobs-filter-name').value;
+    var url = '/admin/api/jobs/refresh' + (name ? ('?job_name=' + encodeURIComponent(name)) : '');
+    fetch(url, {credentials: 'same-origin', headers: {'Accept':'application/json'}})
+      .then(function(r){
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data){
+        renderStats(data.stats || {});
+        renderRunning(data.running || []);
+        renderCron(data.cron || []);
+        renderRecent(data.recent || []);
+      })
+      .catch(function(err){
+        // Silently swallow polling errors — leave the last good render
+        // intact. The next tick will retry.
+      });
+  }
+
+  document.getElementById('jobs-filter-name').addEventListener('change', refresh);
+  setInterval(refresh, 5000);
+  // Refresh once immediately to upgrade the durations / ages, even
+  // though the SSR snapshot is already on screen.
+  setTimeout(refresh, 500);
+})();
+</script>
