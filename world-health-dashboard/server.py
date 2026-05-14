@@ -88,6 +88,45 @@ if not os.getenv("GATEWAY_SSO_SECRET"):
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("world-health")
 
+
+# ── BetterStack / Logtail ─────────────────────────────────────────────────────
+# Ships structured logs to the central BetterStack source for the "world-health"
+# subproduct. Falls back to the apex LOGTAIL_TOKEN if the per-service variable
+# is unset. If neither is set we silently skip — stdout/stderr handlers stay
+# attached so logs are never lost.
+class _ServiceTagFilter(logging.Filter):
+    """Stamps every record with service=<name> so BetterStack can route/group."""
+
+    def __init__(self, service_name: str) -> None:
+        super().__init__()
+        self._service = service_name
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        if not hasattr(record, "service"):
+            record.service = self._service
+        return True
+
+
+_logtail_token = os.getenv("LOGTAIL_TOKEN_HEALTH", os.getenv("LOGTAIL_TOKEN", "")).strip()
+# Always tag local records with the service name so downstream aggregators
+# (docker logs -> vector -> wherever) can group correctly even without Logtail.
+logging.getLogger().addFilter(_ServiceTagFilter("world-health"))
+if _logtail_token:
+    try:
+        from logtail import LogtailHandler  # type: ignore
+
+        _handler = LogtailHandler(source_token=_logtail_token)
+        _handler.setLevel(logging.INFO)
+        _handler.addFilter(_ServiceTagFilter("world-health"))
+        logging.getLogger().addHandler(_handler)
+        logger.info("Logtail handler attached", extra={"service": "world-health"})
+    except ImportError:
+        logger.warning("logtail-python not installed; skipping BetterStack handler",
+                       extra={"service": "world-health"})
+    except Exception as _exc:  # pragma: no cover — defensive: never crash on log init
+        logger.warning("Logtail init failed: %s", _exc, extra={"service": "world-health"})
+
+
 PORT = int(os.environ.get("PORT", "7053"))
 DATA_DIR = _DASHBOARD_DIR / "data"
 STATIC_DIR = _DASHBOARD_DIR / "static"
