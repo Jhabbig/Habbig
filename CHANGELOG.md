@@ -9,70 +9,114 @@ deploy commits on `feature/platform-build`.
 
 ### Added
 
-- **Voters Atlas** subproduct — election / electorate dashboard
-  (`voters-dashboard/`, port `7051`). Geo-segmented voter dynamics
-  and turnout signals served from its own SQLite store.
-- **Climate Change** subproduct — long-horizon climate indicator
-  dashboard (`climate-dashboard/`, port `7052`).
-- **Eco Disasters** subproduct — live natural-disaster feed +
-  probabilistic impact panels (`disasters-dashboard/`, port `7060`).
-  Stripe price-id env stub + Dockerfile shipped.
-- **Whale Watch** subproduct skeleton — large on-chain wallet
-  surveillance landing (`whale-dashboard/`, port `8053`).
-- **Central Bank Tracker** subproduct skeleton — rate-decision /
-  guidance dashboard (`centralbank-dashboard/`, port `7061`).
-- **World Health** subproduct skeleton — global health-indicator
-  dashboard (`world-health-dashboard/`, port `7053`).
-- `/settings/integrations` page — manage Polymarket wallet address,
-  Kalshi API token, and bankroll from a single settings surface.
-- Per-subproduct `og:image` PNGs for the six new dashboards so
-  shared links render their own card.
-- German, Spanish, and Brazilian Portuguese localisation complete
-  — all keys translated (`gateway/i18n/locales/de.json`,
-  `es.json`, `pt-br.json`); language switcher now ships three
-  additional fully-translated locales.
+- **Voters Atlas** (`voters.narve.ai`) — election and polling data
+  across 27 countries, integrated with the V-Dem democracy index for
+  long-horizon governance signals.
+- **Climate Change** (`climate.narve.ai`) — NOAA CO2 / CH4 / SST /
+  ENSO + NASA GISTEMP + NSIDC sea-ice indicators with rolling
+  12-month forecasts.
+- **Eco Disasters** (`disasters.narve.ai`) — live disaster feed
+  fusing NASA EONET, USGS earthquakes, GDACS, NASA FIRMS, and
+  ReliefWeb into a single map + timeline.
+- **Whale Watch** (`whale.narve.ai`) — SEC EDGAR 13F / 13D / Form 4
+  ingest tracking 47 institutional investors with quarterly delta
+  views and concentration metrics.
+- **Central Bank Tracker** (`cb.narve.ai`) — FRED + ECB SDW + BoE
+  rate series with implied-path forecasts derived from market data.
+- **World Health** (`health.narve.ai`) — WHO outbreak alerts, FDA
+  drug shortages, and antimicrobial resistance (AMR) trend panels.
+- **Love Atlas** (`love.narve.ai`) — 30 macro relationship metrics
+  spanning marriage / divorce / fertility / cohabitation.
+- **Annoyance Happiness view** — ternary polarity classifier that
+  splits sentiment into positive / neutral / negative buckets and
+  visualises the mix over time.
+- **`/settings/integrations`** — Polymarket wallet, Kalshi API
+  token, and bankroll management consolidated under one settings
+  surface.
+- **`/settings/trading-addon`** — Kelly-criterion sizing config,
+  per-position risk limits, and auto-execute toggle (gated behind
+  the trading add-on).
+- **`/admin/health-monitor`** — single-pane status board for all
+  13 services with uptime, latency, and last-error visibility.
+- **`/api/docs`** — public API reference rendered from the OpenAPI
+  spec served at `/api/openapi.json`.
+- **`/changelog.rss`** — subscribe to release notes via RSS.
+- **Per-recipient email watermarks** on Pro intelligence emails —
+  forensic trace for leak investigation.
+- **Spanish (es) + Brazilian Portuguese (pt-br) + German (de)** —
+  262 keys each, native-quality translations across the entire
+  product surface.
+- **Web push notifications** — subscribe / unsubscribe / test flow
+  with permission-gated UI.
 
 ### Changed
 
-- **Typography — monospace.** `Geist Mono` is now the canonical
-  monospace face across the platform; `var(--font-mono)` resolves to
-  `Geist Mono` with `SF Mono / Menlo / Consolas / ui-monospace` as
-  fallbacks. Variable woff2 ships at
-  `gateway/static/fonts/GeistMono-Variable.woff2` (~71 KB).
+- **Typography — monospace.** `var(--font-mono)` switched from
+  `SF Mono` to **Geist Mono** as the brand monospace face.
 - **Default share card.** Pages without a per-page `og:image` now
-  fall back to a default narve `og:image` so every shared link
-  renders a branded card instead of a generic preview.
+  fall back to a default narve `og:image`; every one of the 13
+  subproducts ships its own per-subdomain OG card.
 - **Focus styles — mouse-suppress.** Site-wide `:focus` rules
   migrated to `:focus-visible`. Mouse clicks no longer leave a
-  lingering focus ring on buttons / inputs / nav; keyboard
-  navigation still gets the full ring.
-- Mobile collections: input font-size raised to 16px (suppresses
-  iOS auto-zoom); flagship subproducts sort first on the dashboards
-  hub.
-- Admin / settings: bankroll input + Polymarket / Kalshi credential
-  fields surfaced together under the new integrations page.
+  lingering ring; keyboard navigation still gets the full ring.
+- **Subscription welcome email** is now subproduct-aware — three
+  variants tailored to the user's primary subproduct.
+- **Weekly digest + morning briefing** filtered to the
+  subproducts each user actually subscribes to.
+- **Admin login** now redirects to `/gate` (previously `/token`).
+- **`requirements.lock`** regenerated from prod Python 3.12 —
+  prior lockfile was built on Python 3.9 and was missing the
+  CVE-patched `cryptography` release.
 
 ### Security
 
-- **AUDIT #5 closed** — 0 critical / 0 high / 1 medium / 2 low,
-  0 regressions vs prior audits.
-- **Permissions-Policy hardened.** Default-deny on every browser
-  sensor and synced API: `camera=(), microphone=(), geolocation=(),
-  payment=(), usb=(), midi=(), magnetometer=(), gyroscope=(),
-  accelerometer=(), ambient-light-sensor=(), autoplay=(),
-  encrypted-media=(), fullscreen=(self), picture-in-picture=(),
-  publickey-credentials-get=(self), sync-xhr=(), bluetooth=(),
-  display-capture=(), serial=(), hid=(), clipboard-read=(),
-  clipboard-write=(self), idle-detection=(), interest-cohort=(),
-  browsing-topics=()`. Only `clipboard-write`, `fullscreen`, and
-  `publickey-credentials-get` are allowed and only on the page's
-  own origin.
+- **Permissions-Policy expanded** — default-deny on camera,
+  microphone, payment, USB, MIDI, bluetooth, and every other
+  optional browser API.
 - **`Cross-Origin-Resource-Policy: same-origin`** added — blocks
-  attacker pages from reading narve responses via cross-origin
-  `<img>` / `<script>` probes and closes one Spectre-class
-  side-channel.
-- Transitive Python deps re-pinned via `requirements.lock`
-  regenerated from the prod-box environment.
+  cross-origin reads of narve responses.
+- **HMAC `X-Gateway-Secret` middleware** enforced on all 7 new
+  subproduct subdomains — direct hits to subproduct ports without
+  the gateway header are rejected.
+- **127.0.0.1 bind** on subproduct services (previously `0.0.0.0`)
+  — eliminates LAN exposure even if a firewall rule drifts.
+- **`/api/push/subscribe` host allowlist** — only FCM, Mozilla,
+  Apple, and WNS endpoints accepted as subscription targets.
+- **`world-health-dashboard`** RSS parsing migrated to
+  `defusedxml` — eliminates the XXE class of attacks.
+- **`love-dashboard`** innerHTML interpolations escaped — defuses
+  XSS via poisoned third-party API responses.
+- **CSRF middleware** now inspects PATCH / PUT / DELETE (behind a
+  soft-warn flag so we can monitor before enforcing).
+- **CSRF allowlist tightened** — removed the broad
+  `/api/scraper/*` prefix bypass.
+- **Stripe webhook hardening** — idempotency keys + signature
+  checks tested against real-world replay attempts.
+- **Audit-log forensic alerting** wired up at
+  `/admin/trace-watermark`.
+- **Stale `gateway/requirements.lock`** removed (it pinned the
+  CVE-vulnerable `cryptography 44.0.1`).
+- **Subscription cancellation email** kwarg bug fixed — was
+  silently failing to send.
+
+### Fixed
+
+- **`get_invite_token`** no longer hardcoded to filter
+  `status='unclaimed'` — claimed and revoked invites were breaking
+  session validation downstream.
+- **`/api/embed/best-bets`** no longer issues N+1 queries — 61
+  queries collapsed to 2, with a 120 s response cache layered on
+  top.
+- **4 hot routes** (`/dashboards`, `/settings`, `/signal-search`,
+  `/sources/{handle}`) now cache their DB reads.
+- **Sync Stripe calls** (`stripe.Subscription.retrieve()` and
+  `stripe.checkout.Session.create()`) wrapped for async execution
+  — no more event-loop block on payment paths.
+- **Admin unbounded SELECTs** paginated (`list_all_users`,
+  `list_invite_tokens`, `list_all_subscriptions`).
+- **49+ pre-existing test failures** resolved.
+- **Migration filename mismatch** corrected
+  (`175_trading_addon_settings.py` → `176_…`).
 
 ## [Unreleased]
 
