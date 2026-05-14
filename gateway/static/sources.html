@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sources · narve.ai</title>
+  <meta name="description" content="Credibility-scored prediction market sources tracked by narve.ai.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://narve.ai/sources">
+  <link rel="stylesheet" href="{{ static: gateway.css }}">
+  <link rel="stylesheet" href="{{ static: components.css }}">
+  <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- Source Serif 4 — editorial body typeface for source descriptions.
+       Nav, filter bar, follow button, and counts stay in Inter via
+       --font-ui. Hero + source names use Instrument Serif Italic via
+       --font-display. Credibility scores use Geist Mono via --font-mono. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static: pages/sources.css }}">
+<script>(function(){try{var m=document.cookie.match(/narve-theme=([^;]*)/)||document.cookie.match(/betyc-theme=([^;]*)/);var t=(m&&m[1])||localStorage.getItem("narve-theme")||localStorage.getItem("betyc-theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}try{var dm=document.cookie.match(/nv-density=([^;]*)/);var d=(dm&&dm[1])||localStorage.getItem("nv-density")||"comfortable";if(d!=="comfortable"&&d!=="compact"){d="comfortable";}document.documentElement.setAttribute("data-density",d);}catch(e2){document.documentElement.setAttribute("data-density","comfortable");}})();</script>
+  <link rel="icon" type="image/png" href="{{ static: img/logo.png }}">
+  <link rel="apple-touch-icon" href="{{ static: img/logo.png }}">
+</head>
+<body>
+  <div class="srcs-shell">
+    <a href="/" class="srcs-back">← narve.ai</a>
+
+    <header class="srcs-hero">
+      <div class="srcs-eyebrow">Credibility-scored directory</div>
+      <h1 class="srcs-title">Sources</h1>
+      <p class="srcs-lede">Every prediction market source narve.ai tracks, ranked by decay-weighted accuracy across Polymarket and Kalshi. Browse the full directory, filter by category, and follow the signal you trust.</p>
+    </header>
+
+    <form class="srcs-filters" method="get" action="/sources" role="search" aria-label="Filter sources">
+      <div class="srcs-filter-group">
+        <label class="srcs-filter-label" for="srcs-category">Category</label>
+        <select id="srcs-category" name="category" class="srcs-select">
+          <option value="">All categories</option>
+          {{ raw_category_options }}
+        </select>
+      </div>
+
+      <div class="srcs-filter-group" style="flex:1 1 240px">
+        <label class="srcs-filter-label" for="srcs-search">Search</label>
+        <input
+          id="srcs-search"
+          type="search"
+          name="q"
+          class="srcs-search"
+          placeholder="Search by handle, name, or topic"
+          value="{{ query }}"
+          autocomplete="off">
+      </div>
+
+      <span class="srcs-count" aria-live="polite">{{ total_count }} sources</span>
+    </form>
+
+    <main>
+      <!--
+        Server emits raw_sources_list as either:
+          <ul class="srcs-list"> … </ul>
+        or, when there are no matches:
+          <div class="srcs-empty">
+            <h2>No sources match</h2>
+            <p>Try clearing the filter or searching a different topic.</p>
+          </div>
+
+        Each <li> row in srcs-list follows this shape:
+
+          <li>
+            <a class="srcs-row" href="/sources/{handle}">
+              <span class="srcs-avatar" aria-hidden="true">{initial}</span>
+              <div class="srcs-body">
+                <h3 class="srcs-name">{name}<span class="srcs-handle">@{handle}</span></h3>
+                <p class="srcs-desc">{description}</p>
+              </div>
+              <div class="srcs-score">
+                <span class="srcs-score-value">{credibility}</span>
+                <span class="srcs-score-label">Credibility</span>
+              </div>
+              <button type="button" class="srcs-follow"
+                      data-follow data-handle="{handle}"
+                      aria-pressed="{is_following}">Follow</button>
+            </a>
+          </li>
+      -->
+      {{ raw_sources_list }}
+    </main>
+
+    {{ raw_pagination }}
+
+    <footer class="srcs-footer">
+      <div>
+        <a href="/">Home</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/sources/network">Network</a>
+      </div>
+      <div>narve.ai · {{ total_count }} sources tracked</div>
+    </footer>
+  </div>
+  <script src="/_gateway_static/js/cmdk.js" defer></script>
+</body>
+</html>
