@@ -271,9 +271,21 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 
 .dash-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  gap: 16px;
-  max-width: 1120px;
+  grid-template-columns: 1fr;
+  gap: var(--space-6, 24px);
+  width: 100%;
+  max-width: none;
+  padding: var(--space-8, 32px) var(--space-6, 24px);
+}
+@media (min-width: 720px) {
+  .dash-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1100px) {
+  .dash-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 /* Whole card is a click target; the foot just shows the open affordance.
@@ -288,7 +300,7 @@ a:hover { color: var(--text-primary); text-decoration: none; }
      edge instead of fading into the page. */
   border: 1px solid var(--border-strong, var(--border));
   border-radius: var(--radius);
-  padding: 22px 22px 18px;
+  padding: var(--space-6, 24px);
   box-shadow: var(--shadow-sm);
   transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   position: relative;
