@@ -351,8 +351,19 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     # Treat anything over 200 chars or containing trace-like substrings
     # as unsafe and fall back to the generic copy.
     message = _STATUS_TO_MESSAGE.get(status, "Something went wrong.")
+    details: Optional[Any] = None
     if isinstance(exc.detail, str) and exc.detail and not _looks_like_trace(exc.detail):
         message = exc.detail
+    elif isinstance(exc.detail, dict) and exc.detail:
+        # Structured input-hygiene errors come as {"error": "msg", "field": "x"}.
+        inner = exc.detail.get("error") or exc.detail.get("message")
+        if isinstance(inner, str) and inner and not _looks_like_trace(inner):
+            message = inner
+        # Pass through extra context (e.g. field name) without leaking the
+        # full dict — only fields the handler explicitly recognises.
+        extras = {k: v for k, v in exc.detail.items() if k in ("field", "code")}
+        if extras:
+            details = extras
     retry_after: Optional[int] = None
     headers = dict(exc.headers or {})
     if "Retry-After" in headers:
@@ -367,6 +378,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             slug=slug,
             message=message,
             request_id=request_id,
+            details=details,
             headers=headers,
         )
     return render_error_page(

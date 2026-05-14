@@ -127,7 +127,11 @@ class TestPaidGate(unittest.TestCase):
             cookies=_session_cookies(uid),
         )
         self.assertEqual(r.status_code, 402)
-        self.assertIn("subscription", r.json()["detail"].lower())
+        # Error envelope shape: {"error": slug, "message": ..., "request_id": ...}.
+        # Old shape was FastAPI's default {"detail": ...}.
+        body = r.json()
+        msg = (body.get("message") or body.get("detail") or "")
+        self.assertIn("subscription", msg.lower())
 
     def test_paid_user_can_post(self):
         uid = _make_user("paid", paid=True)
@@ -167,14 +171,21 @@ class TestInputValidation(unittest.TestCase):
         )
 
     def _err_text(self, r) -> str:
-        """Extract the human-readable error from either response shape.
+        """Extract the human-readable error from any of the three shapes
+        we have shipped over time:
 
-        The validation-error response format was tightened post-ship to
-        return `{"error": "…", "field": "…"}` instead of the FastAPI-
-        default `{"detail": "…"}`. Read both so this test survives either
-        version.
+          1. FastAPI default ``{"detail": "..."}`` — earliest builds.
+          2. Tightened ``{"error": "...", "field": "..."}`` — interim.
+          3. Current envelope ``{"error": "<slug>", "message": "...",
+             "request_id": "...", "details": {"field": "..."}}``.
+
+        Prefer ``message`` over ``error`` in (3) because ``error`` is
+        the machine slug (``bad_request``) rather than the human copy.
         """
         body = r.json() or {}
+        # Envelope shape (3): message is the human string; error is a slug.
+        if "message" in body and isinstance(body.get("message"), str):
+            return str(body["message"])
         return str(body.get("error") or body.get("detail") or body)
 
     def test_short_reasoning_rejected(self):
@@ -227,7 +238,9 @@ class TestDuplicatesAndEditing(unittest.TestCase):
             headers=_csrf_headers(), cookies=_session_cookies(uid),
         )
         self.assertEqual(r2.status_code, 400)
-        self.assertIn("already have a take", r2.json()["detail"])
+        body2 = r2.json()
+        msg2 = (body2.get("message") or body2.get("detail") or "")
+        self.assertIn("already have a take", msg2)
 
     def test_edit_within_window_works(self):
         uid = _make_user("ewin", paid=True)
@@ -261,7 +274,9 @@ class TestDuplicatesAndEditing(unittest.TestCase):
             headers=_csrf_headers(), cookies=_session_cookies(uid),
         )
         self.assertEqual(r.status_code, 409)
-        self.assertIn("edit window", r.json()["detail"])
+        body3 = r.json()
+        msg3 = (body3.get("message") or body3.get("detail") or "")
+        self.assertIn("edit window", msg3)
 
     def test_edit_by_non_owner_forbidden(self):
         owner = _make_user("owner", paid=True)
