@@ -1,5 +1,5 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai / *.habbig.com. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. 'domain' is the canonical apex used for switcher links, redirects, and anywhere the gateway generates a hostname. 'domain_aliases' lists additional apexes the gateway should still recognise so legacy habbig.com traffic continues to work. Dashboards are listed flagship-first (descending monthly price) — the order here determines the order of cards on /dashboards and /pricing.",
   "domain": "narve.ai",
   "domain_aliases": ["habbig.com"],
   "gateway_port": 7000,
@@ -13,36 +13,6 @@
       "accent": "#ef4444",
       "monthly_cents": 1999,
       "annual_cents": 19900,
-      "supports_websocket": true
-    },
-    "weather": {
-      "subdomain": "weather",
-      "target": 5050,
-      "display_name": "Polymarket Weather",
-      "description": "Weather market mispricings & rain forecasts",
-      "accent": "#3b82f6",
-      "monthly_cents": 799,
-      "annual_cents": 7900,
-      "supports_websocket": false
-    },
-    "world": {
-      "subdomain": "world",
-      "target": 7050,
-      "display_name": "World State",
-      "description": "Global conflicts, headlines, geopolitical feed",
-      "accent": "#8b5cf6",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
-      "supports_websocket": false
-    },
-    "crypto": {
-      "subdomain": "crypto",
-      "target": 8000,
-      "display_name": "Crypto Edge",
-      "description": "BTC & crypto signals, ensemble ML predictor",
-      "accent": "#f59e0b",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
       "supports_websocket": true
     },
     "midterm": {
@@ -63,6 +33,36 @@
       "accent": "#0ea5e9",
       "monthly_cents": 1299,
       "annual_cents": 12900,
+      "supports_websocket": false
+    },
+    "crypto": {
+      "subdomain": "crypto",
+      "target": 8000,
+      "display_name": "Crypto Edge",
+      "description": "BTC & crypto signals, ensemble ML predictor",
+      "accent": "#f59e0b",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": true
+    },
+    "weather": {
+      "subdomain": "weather",
+      "target": 5050,
+      "display_name": "Polymarket Weather",
+      "description": "Weather market mispricings & rain forecasts",
+      "accent": "#3b82f6",
+      "monthly_cents": 799,
+      "annual_cents": 7900,
+      "supports_websocket": false
+    },
+    "world": {
+      "subdomain": "world",
+      "target": 7050,
+      "display_name": "World State",
+      "description": "Global conflicts, headlines, geopolitical feed",
+      "accent": "#8b5cf6",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
       "supports_websocket": false
     }
   }

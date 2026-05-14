@@ -674,7 +674,10 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .c-form-field input, .c-form-field textarea, .c-form-field select {
   width: 100%; padding: 10px 12px; border: 1px solid var(--border);
   border-radius: 8px; background: var(--bg); color: var(--ink);
-  font-family: inherit; font-size: 14px;
+  font-family: inherit;
+  /* 16px is the iOS Safari auto-zoom threshold — anything smaller
+   * triggers an annoying input zoom on focus. Bump from 14px → 16px. */
+  font-size: 16px;
 }
 .c-bar { display: flex; justify-content: space-between; align-items: center;
          gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
