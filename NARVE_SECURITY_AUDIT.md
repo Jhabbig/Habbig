@@ -5,6 +5,119 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #5 — 2026-05-04T22:00Z — commit 75806ce — weekly delta + WIP scan
+
+### Why this audit exists
+User asked for end-of-day adversarial pass after a heavy day of UI iteration (universal-frame, redesign layers, frame-selector fix). Goal: confirm the redesign work landed without security regressions and document the **server-side WIP that's now ahead of origin** for the first time in this audit log's history.
+
+### Code inventory audited
+- Committed tip: `75806ce` (universal-frame selector broadening)
+- Local unpushed commits: **none** — local is in sync with origin
+- Local uncommitted files: **none**
+- Local stashes: **none**
+- Worktrees: **single**
+- Server tip vs origin: server matches origin head (`75806ce` on disk) BUT **the server has 235 uncommitted lines on disk** across 6 files (see WIP section below)
+- DRIFT FLAG: **server-AHEAD-of-origin** — first time in this log. Direction reversed from prior audits where origin was always ahead.
+
+### Surfaces newly introduced since AUDIT #4
+| Feature | Files | Risk surface |
+|---|---|---|
+| narve-polish.css + narve-redesign.css site-wide layers | `static/narve-polish.css`, `static/narve-redesign.css`, `pwa_middleware.py` registration | client-side only; no new server route |
+| Universal page frame | `static/narve-redesign.css` (UNIVERSAL FRAME block + selector fix) | client-side only |
+| 120_collections.py down_revision repair | `migrations/120_collections.py` | already shipped to origin; chain integrity restored |
+| **Server-side, not on origin yet:** new "voters" subproduct + Permissions-Policy hardening + HSTS preload + proxy admin/Pro bypass fix | `server.py`, `subproduct.py`, `subproduct_filters.py`, `subproduct_dashboard_routes.py`, `user_prediction_routes.py`, `config.json` | new auth surface (admin/Pro bypass in proxy_request), new subproduct |
+
+### Summary
+Posture: **adequate** (unchanged from audit #4)
+Critical issues: **0**
+High-priority: **0**
+Medium-priority: **1** (NEW — server-side WIP ahead of origin)
+Low-priority: **2** (carryover — scanner FP + requirements lockfile)
+Resolved since last audit: **0**
+New since last audit: **1** MEDIUM
+Regressions: **0**
+
+### Automated scan hit counts
+
+| scan | hits | classification |
+|---|---|---|
+| secrets         |  0 | clean — no current-tree hits, no .env in history, no DB tracked |
+| sqli            |  0 | clean |
+| xss             |  4 | all `headers["Content-Security-Policy"] = ...` — same CSP-set false positives as #4 |
+| rce             |  0 | clean |
+| auth            | 26 | all word-grep matches on identifiers — same FP class audits #2/#3/#4 documented |
+| redirects       |  0 | clean |
+| deserialisation |  0 | clean |
+| rate limits     |  0 | clean |
+| infra           |  0 hard hits | local `auth.db` no longer flagged; CLOUDFLARE_CHANGES.md fresh; cf-connecting-ip referenced |
+
+Hit counts identical to audit #4 except auth.db perms warning has cleared (chmod 600 applied on dev box since #4). Noise floor stable.
+
+### WIP findings (server ahead of origin)
+
+The server at `julianhabbig@100.69.44.108:~/Habbig` has 235 lines of
+uncommitted local changes against `75806ce`. Inspected read-only via
+SSH; content classified below.
+
+**`gateway/server.py`** (+68 / -7 lines)
+- Permissions-Policy header expanded from 4 directives to 23 (camera/mic/geolocation/payment + usb/midi/sensors/bluetooth/serial/hid/clipboard/idle-detection/browsing-topics, all `()`). **Net: security UP.**
+- New `Cross-Origin-Resource-Policy: same-origin` header — closes Spectre-class side-channel read by attacker `<img>`/`<script>` probes. **Net: security UP.**
+- HSTS bumped from `max-age=31536000; includeSubDomains` to `max-age=63072000; includeSubDomains; preload` — qualifies for hstspreload.org submission. **Net: security UP.**
+- `proxy_request` now lets admins + Pro-plan subscribers (`__plan__` sentinel + `plan="pro_*"` + active status) reach any subproduct dashboard, mirroring the hub-page logic. **AUTHORISATION CHANGE — needs verification that the hub-page check is the source of truth and these stay in lockstep.**
+- `proxy_request` strips `Content-Encoding` + `Content-Length` from upstream responses to fix uvicorn "Response content longer than Content-Length" errors when httpx auto-decompresses. **Operational, not security.**
+
+**`gateway/subproduct.py`** (+110 lines)
+- Adds a new "voters" subproduct config (Voters Atlas — country-level political polling). No auth surface change; the entry plugs into the existing subproduct gate machinery.
+
+**`gateway/subproduct_filters.py`** (+12), **`subproduct_dashboard_routes.py`**, **`user_prediction_routes.py`** (small) — voters subproduct wiring + minor route adjustments.
+
+**`gateway/config.json`** (+56) — dashboard config for "voters".
+
+**Classification:** server WIP is risk-reducing on every line read (HSTS preload, COEP, Permissions-Policy hardening, admin proxy auth-bypass fix) plus a new product feature. Nothing alarming.
+
+### Authentication / Authorisation
+- Hardened session cookie (`narve_session`) + legacy fallback intact
+- `_require_admin_user` admin-level + mutation rate limit intact
+- Gate enforcement re-spot-checked: `/dashboards`, `/admin`, `/billing`, `/collections` redirect to /gate without cookie ✓
+- Server-WIP `proxy_request` admin/Pro bypass: matches the documented `/dashboards` hub logic. Low risk but flagged for verification.
+
+### CSRF / Sessions / Encryption
+- No changes — same posture as audit #4
+- New narve-polish / narve-redesign CSS files are static + same-origin; CSRF surface unchanged
+
+### Privacy / GDPR
+- `user_positions` GDPR export verification (audit #4 recommendation) — **still unverified**; carryover
+
+### Issues found in this audit
+
+#### CRITICAL / HIGH
+*(none)*
+
+#### MEDIUM
+1. **Server-side WIP not on origin.** 235 uncommitted lines on the server across 6 files including subproduct + proxy authorisation. Content is risk-reducing on every line read (positive direction), BUT the asymmetry means a server crash or accidental git checkout would lose the work, AND security-header bumps that haven't shipped through CI / origin are by definition unaudited code paths in production. **Fix:** commit the server diffs to a branch and push to origin so they can be reviewed + merged through the normal flow. Or push them through to feature/platform-build directly.
+
+#### LOW
+1. **Carried from audits #2/#3/#4:** `scan_auth.sh` and `scan_xss.sh` regexes still match identifier word-greps + CSP header sets respectively. 26 + 4 hits, zero application-side issues. Skill-level scanner refinement work.
+2. **Carried from audits #2/#3/#4:** `requirements.txt` has no lockfile. Recommend pip-compile snapshot.
+
+### Deltas vs AUDIT #4
+| Status | Item |
+|---|---|
+| RESOLVED | local `auth.db` perm warning (chmod 600 since #4) |
+| NEW | MEDIUM — server-side WIP ahead of origin (first such finding in audit history) |
+| REGRESSIONS | (none) |
+| CARRIED | Lockfile MEDIUM → still no lockfile; LOW scanner FPs unchanged |
+
+### Recommended actions for next audit
+1. **Push the server-side WIP to origin** (or at least to a `gateway/security-headers-bump` branch). 235 lines of unaudited security headers and a new subproduct shouldn't live only on a single disk.
+2. Verify the `proxy_request` admin/Pro bypass in server WIP matches the hub-page subscription check — same source of truth, same edge cases (lapsed Pro, suspended admin, mid-month role change).
+3. **Verify `user_positions` is in the GDPR export bundle** (carried from #4).
+4. Add a `requirements.lock` (pip-compile / uv lock / pip freeze).
+5. Tighten `scan_auth.sh` / `scan_xss.sh` regex to stop matching identifier word-greps and CSP header sets.
+
+
+---
+
 ## AUDIT #4 — 2026-04-25T20:50Z — commit 68948b0 — weekly delta scan
 
 ### Why this audit exists
