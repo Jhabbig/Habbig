@@ -115,11 +115,16 @@ class TestHTMLTablesWrapped(unittest.TestCase):
     )
 
     def test_each_page_wraps_every_table(self) -> None:
+        # Allow either a bare wrapper or one that adds keyboard-scroll
+        # affordances (e.g. tabindex="0"). The lint only cares that the
+        # wrapper is there before each <table>.
+        import re
+        wrap_pat = re.compile(r'<div\s+class="nv-table-wrap"(?:\s[^>]*)?>')
         for fname in self.PAGES_WITH_WRAPPED_TABLES:
             with self.subTest(page=fname):
                 src = (STATIC / fname).read_text()
                 table_open_count = src.count("<table")
-                wrap_count = src.count('<div class="nv-table-wrap">')
+                wrap_count = len(wrap_pat.findall(src))
                 self.assertEqual(
                     wrap_count, table_open_count,
                     f"{fname}: {table_open_count} <table>(s) but only "
