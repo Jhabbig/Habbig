@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -142,8 +142,8 @@ if not _sso_secret and not _DEV_MODE:
 
 
 # Paths that bypass auth: health probes for systemd/Docker + public static
-# assets. Everything else requires a verified gateway secret.
-_AUTH_BYPASS_EXACT = {"/health", "/healthz"}
+# assets + PWA install probes. Everything else requires a verified gateway secret.
+_AUTH_BYPASS_EXACT = {"/health", "/healthz", "/favicon.ico", "/manifest.webmanifest"}
 
 
 @app.middleware("http")
@@ -481,6 +481,36 @@ def index() -> HTMLResponse:
     return HTMLResponse(
         "<html><body><h1>Whale Watch</h1><p>Frontend asset missing.</p></body></html>",
         status_code=200,
+    )
+
+
+# ── PWA: favicon + webmanifest ────────────────────────────────────────────────
+# Browsers auto-hit /favicon.ico on every tab and request /manifest.webmanifest
+# whenever the HTML <link rel="manifest"> resolves. Both point at the apex logo
+# so the subdomain inherits narve.ai branding without bundling its own assets.
+# Both paths are in _AUTH_BYPASS_EXACT so unauthenticated PWA install probes
+# succeed (iOS Add-to-Home fetches the manifest before the user logs in).
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(status_code=302, headers={"Location": "https://narve.ai/_gateway_static/img/logo.png"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest() -> JSONResponse:
+    return JSONResponse(
+        {
+            "name": "narve.ai — Whale Watch",
+            "short_name": "Whale",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#0d0d0d",
+            "icons": [
+                {"src": "https://narve.ai/_gateway_static/img/logo.png", "sizes": "256x256", "type": "image/png"}
+            ],
+        },
+        media_type="application/manifest+json",
     )
 
 

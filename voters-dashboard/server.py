@@ -548,6 +548,34 @@ async def root() -> HTMLResponse:
     return HTMLResponse("<h1>Voters Dashboard</h1><p>UI not yet built.</p>")
 
 
+# ── PWA: favicon + webmanifest ────────────────────────────────────────────────
+# Browsers auto-hit /favicon.ico on every tab and request /manifest.webmanifest
+# whenever the HTML <link rel="manifest"> resolves. Both point at the apex logo
+# so the subdomain inherits narve.ai branding without bundling its own assets.
+
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=302, headers={"Location": "https://narve.ai/_gateway_static/img/logo.png"})
+
+
+@app.get("/manifest.webmanifest")
+async def manifest() -> JSONResponse:
+    return JSONResponse(
+        {
+            "name": "narve.ai — Voters Atlas",
+            "short_name": "Voters",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#0d0d0d",
+            "icons": [
+                {"src": "https://narve.ai/_gateway_static/img/logo.png", "sizes": "256x256", "type": "image/png"}
+            ],
+        },
+        media_type="application/manifest+json",
+    )
+
+
 @app.get("/healthz")
 async def healthz() -> dict:
     return {"status": "ok", "service": "voters-dashboard", "ts": int(time.time())}

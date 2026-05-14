@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("climate")
@@ -1262,6 +1262,33 @@ def _oni_to_points(oni: dict) -> list[tuple[float, float]]:
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+# ── PWA: favicon + webmanifest ────────────────────────────────────────────────
+# Browsers auto-hit /favicon.ico on every tab and request /manifest.webmanifest
+# whenever the HTML <link rel="manifest"> resolves. Both point at the apex logo
+# so the subdomain inherits narve.ai branding without bundling its own assets.
+
+@app.route("/favicon.ico")
+def favicon():
+    return redirect("https://narve.ai/_gateway_static/img/logo.png", code=302)
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    resp = jsonify({
+        "name": "narve.ai — Climate Change",
+        "short_name": "Climate",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#0d0d0d",
+        "icons": [
+            {"src": "https://narve.ai/_gateway_static/img/logo.png", "sizes": "256x256", "type": "image/png"}
+        ],
+    })
+    resp.mimetype = "application/manifest+json"
+    return resp
 
 
 @app.route("/api/health")

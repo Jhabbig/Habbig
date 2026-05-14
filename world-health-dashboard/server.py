@@ -44,7 +44,7 @@ from typing import Any, Optional
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -185,7 +185,7 @@ if STATIC_DIR.is_dir():
 
 _SSO_SECRET = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
-_AUTH_BYPASS_EXACT = {"/health", "/healthz", "/api/health"}
+_AUTH_BYPASS_EXACT = {"/health", "/healthz", "/api/health", "/favicon.ico", "/manifest.webmanifest"}
 
 if not _SSO_SECRET and not _DEV_MODE:
     logger.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — every gateway-fronted request will 401.")
@@ -858,6 +858,36 @@ def index() -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="index.html not built")
     return FileResponse(str(path))
+
+
+# ── PWA: favicon + webmanifest ────────────────────────────────────────────────
+# Browsers auto-hit /favicon.ico on every tab and request /manifest.webmanifest
+# whenever the HTML <link rel="manifest"> resolves. Both point at the apex logo
+# so the subdomain inherits narve.ai branding without bundling its own assets.
+# Both paths are in _AUTH_BYPASS_EXACT so unauthenticated PWA install probes
+# succeed (iOS Add-to-Home fetches the manifest before the user logs in).
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(status_code=302, headers={"Location": "https://narve.ai/_gateway_static/img/logo.png"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest() -> JSONResponse:
+    return JSONResponse(
+        {
+            "name": "narve.ai — World Health",
+            "short_name": "World Health",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#0d0d0d",
+            "icons": [
+                {"src": "https://narve.ai/_gateway_static/img/logo.png", "sizes": "256x256", "type": "image/png"}
+            ],
+        },
+        media_type="application/manifest+json",
+    )
 
 
 @app.get("/api/outbreaks")

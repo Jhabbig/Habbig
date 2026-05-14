@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, redirect, send_from_directory
 
 # ── Layered .env loader (matches the rest of the suite) ──────────────────────
 try:
@@ -622,6 +622,33 @@ def start_warmup_thread() -> None:
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+# ── PWA: favicon + webmanifest ────────────────────────────────────────────────
+# Browsers auto-hit /favicon.ico on every tab and request /manifest.webmanifest
+# whenever the HTML <link rel="manifest"> resolves. Both point at the apex logo
+# so the subdomain inherits narve.ai branding without bundling its own assets.
+
+@app.route("/favicon.ico")
+def favicon():
+    return redirect("https://narve.ai/_gateway_static/img/logo.png", code=302)
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    resp = jsonify({
+        "name": "narve.ai — Eco Disasters",
+        "short_name": "Disasters",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#0d0d0d",
+        "icons": [
+            {"src": "https://narve.ai/_gateway_static/img/logo.png", "sizes": "256x256", "type": "image/png"}
+        ],
+    })
+    resp.mimetype = "application/manifest+json"
+    return resp
 
 
 @app.route("/api/health")
