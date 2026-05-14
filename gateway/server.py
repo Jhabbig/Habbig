@@ -2667,6 +2667,7 @@ def _sitemap_html() -> str:
             ("/enquire", "Enterprise contact", "Gate"),
             ("/subscribe", "Checkout flow", "Gate"),
             ("/support", "Support ticket", "Gate"),
+            ("/contact", "Contact form", "Gate"),
             ("/token", "Invite token gate (entry point)", "Public"),
             ("/register", "Create account (requires pending_token)", "Gated"),
             ("/login", "Sign in (requires pending_token)", "Gated"),
@@ -2924,14 +2925,31 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
     floating_html = "".join(
         f"<span>{html.escape(str(n))}</span>" for n in ctx["floating_numbers"]
     )
-    pills_html = "".join(
-        f'<span class="pill">{html.escape(p)}</span>' for p in ctx["stat_pills"]
+    # Stat pills: split each format string into literal label fragments
+    # and {placeholder} numeric values so the template can render labels
+    # in Inter and numbers in Geist Mono. Walking the catalogue template
+    # (not the formatted output) lets us know which spans came from
+    # `{...}` versus surrounding label text.
+    pills_html = _format_stat_pills(_SP[slug]["stat_pills"], stats)
+
+    # Tabs: each tab listed in SUBPRODUCTS[slug]["tabs"] becomes both a
+    # nav button and a paired panel. Panels carry a one-line description
+    # so the section is never empty before the per-tab content ships.
+    tab_buttons_html, tab_panels_html = _format_subproduct_tabs(
+        ctx["tabs"], ctx["name"]
     )
 
-    # Bundle-math figures for the price card's "or Pro" footnote. Summed
-    # once from the catalogue so the landing always shows the truthful
-    # total even if we add or re-price a subproduct later.
+    # Bundle-math figures for the Pro price card. Summed from the live
+    # catalogue so the page never lies if a subproduct's price changes.
     bundle_sum_usd = sum(float(v["price_usd"]) for v in _SP.values())
+    bundle_sum_gbp = sum(float(v["price_gbp"]) for v in _SP.values())
+    bundle_save_gbp = max(0.0, bundle_sum_gbp - 180.0)
+
+    # Per-slug accent from gateway/config.json (mapped via dashboard_key).
+    # This is the ONLY hue on the page — applied to the 10x10 hero dot via
+    # the inline --sp-accent CSS var on <body>. Fallback to neutral so a
+    # missing config entry never breaks the page.
+    accent_hex = (DASHBOARDS.get(dashboard_key) or {}).get("accent", "#000000")
 
     return render_page(
         "subproduct_landing",
@@ -2946,10 +2964,75 @@ def _render_subproduct_landing(request: Request, slug: str) -> HTMLResponse:
         subproduct_price_gbp=f"{ctx['price_gbp']:.2f}",
         subproduct_dashboard_key=dashboard_key,
         subproduct_animation_style=ctx.get("animation_style", "drift"),
+        subproduct_accent=accent_hex,
+        subproduct_count=str(len(_SP)),
         bundle_sum_usd=f"{bundle_sum_usd:.2f}",
+        bundle_sum_gbp=f"{bundle_sum_gbp:.2f}",
+        bundle_save_gbp=f"{bundle_save_gbp:.2f}",
         raw_floating_numbers=floating_html,
         raw_stat_pills=pills_html,
+        raw_tab_buttons=tab_buttons_html,
+        raw_tab_panels=tab_panels_html,
     )
+
+
+def _format_stat_pills(templates: list, stats: dict) -> str:
+    """Render the stat-pill row with typographic separation of labels and
+    numbers. Inter for the surrounding label text, Geist Mono for any
+    value coming from a {placeholder}. Missing stats fall back to an
+    em-dash so the page never 500s on a dry catalogue.
+    """
+    import string
+    parts: list[str] = []
+    for tpl in templates:
+        # Build piecewise HTML by walking literal/field-name pairs.
+        chunks: list[str] = ['<span class="sp-pill">']
+        for literal, field_name, _, _ in string.Formatter().parse(tpl):
+            if literal:
+                chunks.append(
+                    f'<span class="sp-pill-label">{html.escape(literal)}</span>'
+                )
+            if field_name:
+                value = stats.get(field_name, "—")
+                chunks.append(
+                    f'<span class="sp-pill-num">{html.escape(str(value))}</span>'
+                )
+        chunks.append("</span>")
+        parts.append("".join(chunks))
+    return "".join(parts)
+
+
+def _format_subproduct_tabs(tabs: list, product_name: str) -> tuple[str, str]:
+    """Render tab buttons + matching panels for the subproduct landing.
+
+    No per-tab content yet — each panel carries a placeholder card so the
+    section reads as intentional ("Coming soon — preview the [tab]") rather
+    than empty. Returns ``(buttons_html, panels_html)``.
+    """
+    buttons: list[str] = []
+    panels: list[str] = []
+    for i, label in enumerate(tabs):
+        safe = html.escape(str(label))
+        tab_id = f"sp-tab-{i}"
+        panel_id = f"sp-panel-{i}"
+        buttons.append(
+            f'<button type="button" class="sp-tab" role="tab" '
+            f'id="{tab_id}" aria-controls="{panel_id}" '
+            f'aria-selected="{"true" if i == 0 else "false"}" '
+            f'tabindex="{0 if i == 0 else -1}">{safe}</button>'
+        )
+        hidden_attr = "" if i == 0 else " hidden"
+        panels.append(
+            f'<div class="sp-tab-panel" id="{panel_id}" role="tabpanel" '
+            f'aria-labelledby="{tab_id}"{hidden_attr}>'
+            f'<div class="sp-tab-card">'
+            f'<h3>{safe}</h3>'
+            f'<p>The {safe.lower()} view inside {html.escape(product_name)} — '
+            f'live data, dense tables, no clutter. Sign in to open.</p>'
+            f'<span class="sp-tab-meta">Available with access</span>'
+            f'</div></div>'
+        )
+    return "".join(buttons), "".join(panels)
 
 
 def _format_hero_headline(text: str) -> str:
@@ -6098,12 +6181,19 @@ async def admin_audit_log_page(request: Request):
     pagination += '</div>'
 
     body = (
-        '<div style="padding:24px">'
-        '<h2 style="font-family:var(--font-display);font-size:22px;margin:0 0 16px">Audit Log</h2>'
+        '<div style="padding:var(--space-6)">'
+        '<h2 style="font-family:var(--font-display);font-style:italic;'
+        'font-size:var(--text-3xl);font-weight:400;letter-spacing:-0.01em;'
+        'line-height:1.05;margin:0 0 8px;color:var(--text-primary)">Audit log</h2>'
+        '<p style="font-family:var(--font-body);font-size:var(--text-md);'
+        'color:var(--text-secondary);margin:0 0 24px;max-width:64ch">'
+        'Append-only record of every administrative action. '
+        'Filter, export, or open a diff to inspect before/after state.</p>'
         f'{filters_html}'
         '<div style="overflow:auto;border:1px solid var(--border-default);border-radius:8px">'
         '<table style="width:100%;border-collapse:collapse;font-size:13px">'
-        '<thead><tr style="background:var(--bg-surface);color:var(--text-secondary);text-align:left">'
+        '<thead><tr style="background:var(--bg-surface);color:var(--text-tertiary);text-align:left;'
+        'font-family:var(--font-ui);text-transform:uppercase;letter-spacing:0.06em;font-size:11px">'
         '<th style="padding:10px 12px">Timestamp</th>'
         '<th style="padding:10px 12px">Admin</th>'
         '<th style="padding:10px 12px">Action</th>'
@@ -6114,7 +6204,8 @@ async def admin_audit_log_page(request: Request):
         f'<tbody>{table_rows}</tbody>'
         '</table></div>'
         f'{pagination}'
-        '<p style="margin-top:24px;font-size:11px;color:var(--text-tertiary)">Audit log is append-only. Entries cannot be deleted or edited.</p>'
+        '<p style="margin-top:24px;font-family:var(--font-body);font-size:var(--text-sm);'
+        'color:var(--text-tertiary)">Audit log is append-only. Entries cannot be deleted or edited.</p>'
         '</div>'
     )
 

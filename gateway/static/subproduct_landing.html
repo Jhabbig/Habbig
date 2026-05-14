@@ -21,54 +21,126 @@
   <link rel="preload" href="/_gateway_static/fonts/Inter-Variable-subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ static: pages/subproduct_landing.css }}">
 </head>
-<body>
-  <div class="shell">
-    <div class="topbar">
-      <div class="wordmark">
-        <span>narve.ai</span>
-        <span class="wordmark-divider">/</span>
-        <span class="wordmark-slug">{{ subproduct_slug }}</span>
+<body class="sp-body" style="--sp-accent: {{ subproduct_accent }};">
+  <div class="sp-page">
+
+    <header class="sp-topbar">
+      <div class="sp-wordmark">
+        <span class="sp-wordmark-apex">narve.ai</span><span class="sp-wordmark-divider"> / </span><span class="sp-wordmark-slug">{{ subproduct_slug }}</span>
       </div>
-      <div class="top-note">
+      <div class="sp-top-note">
         Part of <a href="https://narve.ai/">narve.ai</a>
       </div>
-    </div>
+    </header>
 
-    <div class="hero-grid">
-      <div>
-        <p class="hero-label">{{ subproduct_slug_upper }} · A NARVE.AI PRODUCT</p>
-        <h1>{{ raw_hero_headline }}</h1>
-        <p class="sub">{{ subproduct_hero_sub }}</p>
+    <section class="sp-hero">
+      <div class="sp-hero-lead">
+        <div class="sp-hero-eyebrow">
+          <span class="sp-accent-dot" aria-hidden="true"></span>
+          <span class="sp-hero-eyebrow-text">{{ subproduct_slug_upper }} · A NARVE.AI PRODUCT</span>
+        </div>
+        <h1 class="sp-hero-headline">{{ raw_hero_headline }}</h1>
+        <p class="sp-hero-sub">{{ subproduct_hero_sub }}</p>
 
-        <div class="price-card">
-          <h2>{{ subproduct_name }}</h2>
-          <div class="price-row">
-            <span class="price-usd">${{ subproduct_price_usd }}/month</span>
-            <span class="price-gbp">£{{ subproduct_price_gbp }}/month</span>
-          </div>
-          <a class="cta" href="/gate?next=/billing%3Fdashboard%3D{{ subproduct_dashboard_key }}">Get access →</a>
-
-          <div class="or-divider">or</div>
-
-          <div class="bundle-card">
-            <strong>narve.ai Pro · £180/month</strong><br>
-            Every sub-product plus the full narve.ai platform.
-            <a href="https://narve.ai/pricing">See what's included →</a>
-            <span class="bundle-math">Individual products sum to ${{ bundle_sum_usd }}/mo · Pro ≈ $229/mo incl. platform</span>
-          </div>
+        <div class="sp-stat-pills">
+          {{ raw_stat_pills }}
         </div>
       </div>
 
-      <div class="numbers anim-{{ subproduct_animation_style }}">
+      <div class="sp-hero-numbers anim-{{ subproduct_animation_style }}" aria-hidden="true">
         {{ raw_floating_numbers }}
       </div>
-    </div>
+    </section>
 
-    <div class="pills">
-      {{ raw_stat_pills }}
-    </div>
+    <section class="sp-tabs">
+      <nav class="sp-tab-bar" role="tablist" aria-label="{{ subproduct_name }} sections">
+        {{ raw_tab_buttons }}
+      </nav>
+      <div class="sp-tab-panels">
+        {{ raw_tab_panels }}
+      </div>
+    </section>
+
+    <section class="sp-pricing">
+      <div class="sp-pricing-grid">
+        <article class="sp-price-card sp-price-card--single">
+          <p class="sp-price-eyebrow">Just this product</p>
+          <h2 class="sp-price-name">{{ subproduct_name }}</h2>
+          <p class="sp-price-tagline">{{ subproduct_tagline }}</p>
+          <div class="sp-price-figures">
+            <span class="sp-price-major">${{ subproduct_price_usd }}</span>
+            <span class="sp-price-cadence">/ month</span>
+          </div>
+          <p class="sp-price-secondary">£{{ subproduct_price_gbp }} / month</p>
+          <a class="sp-cta sp-cta--primary" href="/gate?next=/billing%3Fdashboard%3D{{ subproduct_dashboard_key }}">
+            Get access
+            <span class="sp-cta-arrow" aria-hidden="true">→</span>
+          </a>
+        </article>
+
+        <article class="sp-price-card sp-price-card--bundle">
+          <p class="sp-price-eyebrow">Or every product</p>
+          <h2 class="sp-price-name">narve.ai Pro</h2>
+          <p class="sp-price-tagline">All {{ subproduct_count }} sub-products plus the full narve.ai platform.</p>
+          <div class="sp-price-figures">
+            <span class="sp-price-major">£180</span>
+            <span class="sp-price-cadence">/ month</span>
+          </div>
+          <p class="sp-price-secondary">
+            <span class="sp-price-strike">£{{ bundle_sum_gbp }}</span>
+            individual sum · save £{{ bundle_save_gbp }}
+          </p>
+          <a class="sp-cta sp-cta--ghost" href="https://narve.ai/pricing">
+            See what's included
+            <span class="sp-cta-arrow" aria-hidden="true">→</span>
+          </a>
+        </article>
+      </div>
+    </section>
+
+    <footer class="sp-footer">
+      <span class="sp-footer-mark">narve.ai</span>
+      <span class="sp-footer-sep">·</span>
+      <a href="https://narve.ai/terms">Terms</a>
+      <span class="sp-footer-sep">·</span>
+      <a href="https://narve.ai/privacy">Privacy</a>
+      <span class="sp-footer-sep">·</span>
+      <a href="https://narve.ai/dpa">DPA</a>
+      <span class="sp-footer-sep">·</span>
+      <a href="https://narve.ai/support">Support</a>
+    </footer>
+
   </div>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
+  <script>
+    // Tab switching — no framework, no third-party JS, just toggling
+    // aria-selected and the matching panel. Falls back to a single
+    // visible panel if JS is disabled (CSS shows panel 1 by default).
+    (function () {
+      var bar = document.querySelector('.sp-tab-bar');
+      if (!bar) return;
+      var tabs = Array.prototype.slice.call(bar.querySelectorAll('[role="tab"]'));
+      var panels = Array.prototype.slice.call(document.querySelectorAll('.sp-tab-panel'));
+      function activate(idx) {
+        tabs.forEach(function (t, i) {
+          var active = i === idx;
+          t.setAttribute('aria-selected', active ? 'true' : 'false');
+          t.tabIndex = active ? 0 : -1;
+        });
+        panels.forEach(function (p, i) {
+          p.hidden = i !== idx;
+        });
+      }
+      tabs.forEach(function (tab, i) {
+        tab.addEventListener('click', function () { activate(i); });
+        tab.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowRight') { activate((i + 1) % tabs.length); tabs[(i + 1) % tabs.length].focus(); }
+          if (e.key === 'ArrowLeft')  { activate((i - 1 + tabs.length) % tabs.length); tabs[(i - 1 + tabs.length) % tabs.length].focus(); }
+        });
+      });
+      activate(0);
+    })();
+  </script>
 </body>
 </html>
