@@ -26,3 +26,9 @@ pillow==12.2.0
 python-dotenv==1.2.2
 requests==2.33.0
 filelock==3.20.3
+# Web Push (VAPID-signed notifications). Required for /api/push/* and the
+# settings push toggle to work in production. push.py degrades to 503 if
+# pywebpush is missing, so dev installs that skip these still boot.
+pywebpush==2.1.2
+py-vapid==1.9.4
+http-ece==1.2.1
