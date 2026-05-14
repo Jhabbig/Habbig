@@ -77,7 +77,12 @@ class TestSEOTags(unittest.TestCase):
 
     def test_meta_description_includes_score_and_accuracy(self):
         r = client.get("/sources/seo_user")
-        self.assertIn("<meta name='description'", r.text)
+        # Either quote style is fine — both render identically.
+        self.assertTrue(
+            "<meta name='description'" in r.text
+            or '<meta name="description"' in r.text,
+            "missing meta description tag",
+        )
         self.assertIn("0.74", r.text)
         # 28/40 = 70% accuracy
         self.assertIn("70%", r.text)
@@ -85,7 +90,11 @@ class TestSEOTags(unittest.TestCase):
     def test_schema_org_person_json_ld(self):
         r = client.get("/sources/seo_user")
         self.assertIn("application/ld+json", r.text)
-        self.assertIn('"@type": "Person"', r.text)
+        # Accept either spaced or compact JSON serialisation.
+        self.assertTrue(
+            '"@type": "Person"' in r.text or '"@type":"Person"' in r.text,
+            "missing schema.org Person @type",
+        )
 
     def test_robots_index_follow(self):
         r = client.get("/sources/seo_user")

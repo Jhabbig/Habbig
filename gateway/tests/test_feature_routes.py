@@ -145,8 +145,18 @@ class TestSourceProfile(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("@seotest", r.text)
         self.assertIn("0.74", r.text)
-        self.assertIn("<meta name='description'", r.text)
-        self.assertIn("<meta property='og:type'", r.text)
+        # Quote style varies between the base layout (double) and the
+        # per-page SEO block (single); both are valid HTML.
+        self.assertTrue(
+            "<meta name='description'" in r.text
+            or '<meta name="description"' in r.text,
+            "missing meta description tag",
+        )
+        self.assertTrue(
+            "<meta property='og:type'" in r.text
+            or '<meta property="og:type"' in r.text,
+            "missing og:type tag",
+        )
         self.assertIn("application/ld+json", r.text)
 
 
