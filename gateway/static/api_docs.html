@@ -37,6 +37,7 @@
         <a class="apidoc-meta__chip" href="/api/openapi.json">OpenAPI schema</a>
         <a class="apidoc-meta__chip" href="/settings/api-keys">Manage keys</a>
         <a class="apidoc-meta__chip" href="/changelog">Changelog</a>
+        <a class="apidoc-meta__chip" href="https://github.com/narve-ai/narve/blob/main/API_STABILITY.md">Stability policy</a>
         <a class="apidoc-meta__chip" href="mailto:hello@narve.ai">Email support</a>
       </div>
     </header>
@@ -44,6 +45,7 @@
     <nav class="apidoc-toc" aria-label="Sections">
       <h2 class="apidoc-toc__heading">Contents</h2>
       <ol class="apidoc-toc__list">
+        <li><a href="#stability">Stability &amp; versioning</a></li>
         <li><a href="#auth">Authentication</a></li>
         <li><a href="#limits">Rate limits</a></li>
         <li><a href="#group-public">Public endpoints</a></li>
@@ -55,6 +57,50 @@
         <li><a href="#openapi">Machine-readable schema</a></li>
       </ol>
     </nav>
+
+    <!-- ───────── Stability & versioning ───────── -->
+    <section class="apidoc-section" id="stability">
+      <h2 class="apidoc-section__title">Stability &amp; versioning</h2>
+      <p class="apidoc-section__lede">What you can rely on, and what may move. Canonical reference: <a class="apidoc-link" href="https://github.com/narve-ai/narve/blob/main/API_STABILITY.md"><code class="apidoc-mono">API_STABILITY.md</code></a> at the repo root.</p>
+
+      <h3 class="apidoc-subhead">Path conventions</h3>
+      <ul class="apidoc-list">
+        <li><code class="apidoc-mono">/api/v1/*</code> — <strong>stable</strong>. Backward-compatible changes only.</li>
+        <li><code class="apidoc-mono">/api/internal/*</code> — internal use; may change without notice.</li>
+        <li><code class="apidoc-mono">/api/*</code> (no version) — <strong>deprecated</strong> for new consumers; will sunset after v1 fully covers it.</li>
+      </ul>
+
+      <h3 class="apidoc-subhead">Breaking change policy</h3>
+      <ul class="apidoc-list">
+        <li>6-month deprecation notice via <a class="apidoc-link" href="/changelog">/changelog</a> + email to API key owners.</li>
+        <li><code class="apidoc-mono">Sunset</code> HTTP header on deprecated endpoints (per RFC 8594).</li>
+        <li>Old version stays live for 12 months after deprecation announcement.</li>
+      </ul>
+
+      <h3 class="apidoc-subhead">SLA</h3>
+      <ul class="apidoc-list">
+        <li>99.5% uptime target.</li>
+        <li>Response time: p99 &lt; 500&nbsp;ms for read endpoints.</li>
+        <li>Bulk endpoints rate-limited per the table below.</li>
+      </ul>
+
+      <h3 class="apidoc-subhead">Endpoint stability matrix</h3>
+      <div class="apidoc-table-wrap">
+        <table class="apidoc-table">
+          <thead>
+            <tr><th>Endpoint</th><th>Version</th><th>Stability</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code class="apidoc-mono">/api/v1/markets</code></td><td>v1</td><td>stable</td></tr>
+            <tr><td><code class="apidoc-mono">/api/v1/sources/{handle}</code></td><td>v1</td><td>stable</td></tr>
+            <tr><td><code class="apidoc-mono">/api/v1/predictions/{id}</code></td><td>v1</td><td>stable</td></tr>
+            <tr><td><code class="apidoc-mono">/api/v1/feed</code></td><td>v1</td><td>experimental — may change shape before 2026-12</td></tr>
+            <tr><td><code class="apidoc-mono">/api/embed/*</code></td><td>v1</td><td>stable</td></tr>
+            <tr><td><code class="apidoc-mono">/api/me/*</code></td><td>unversioned</td><td>stable — session auth, web-app use only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <!-- ───────── Authentication ───────── -->
     <section class="apidoc-section" id="auth">
