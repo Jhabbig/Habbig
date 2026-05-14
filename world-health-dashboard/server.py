@@ -8,18 +8,20 @@ Polymarket disease/health prediction markets with computed edge.
 Sits on port 7053 behind the narve.ai gateway as ``health.narve.ai``.
 
 Data sources (documented in data/sources.yaml):
-  - WHO Disease Outbreak News         (RSS)
+  - WHO Disease Outbreak News         (RSS, parsed via feedparser)
   - openFDA Drug Shortages            (JSON)
   - Polymarket Gamma API              (JSON, health/pandemic tags)
   - GLASS / CDC / ECDC AMR feeds      (stubbed — no public JSON yet)
 
 Design:
   - Real-network calls live in fetcher functions; each is gated by an
-    on-disk cache with per-key TTLs so we don't hammer WHO etc.
-  - When upstreams 5xx or rate-limit, we degrade gracefully: stubs
-    return the documented shape with ``"stub": true``.
-  - The build itself does NOT hit any live network — caches are empty
-    until something asks for them.
+    in-memory cache with per-key TTLs so we don't hammer WHO etc.
+  - When upstreams 5xx, rate-limit, or time out we degrade gracefully:
+    serve the last cached snapshot (stale-while-error) and, if no entry
+    has ever been cached, fall back to a documented stub with
+    ``"stub": true``. Endpoints always stay 200.
+  - A background refresher pre-warms WHO + FDA caches every hour so the
+    first user request after boot is instant.
 """
 
 from __future__ import annotations
@@ -46,6 +48,16 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+# feedparser is the canonical WHO RSS parser. Treat it as optional — if the
+# import fails for any reason, the fetcher falls back to a minimal regex
+# parser so the service still boots.
+try:
+    import feedparser  # type: ignore
+    _HAS_FEEDPARSER = True
+except Exception:  # pragma: no cover — best-effort fallback path
+    feedparser = None  # type: ignore[assignment]
+    _HAS_FEEDPARSER = False
 
 # ── Layered .env loader (matches the rest of the suite) ──────────────────────
 try:
@@ -188,12 +200,22 @@ _cache: "OrderedDict[str, dict]" = OrderedDict()
 _cache_lock = threading.Lock()
 _TTL_DEFAULT = 10 * 60
 _TTL: dict[str, int] = {
-    "who_don":     60 * 60,         # WHO outbreak feed — refresh hourly
+    "who_don":     60 * 60,         # WHO DON RSS — refresh hourly
     "diseases":    60 * 60 * 24,    # YAML on disk — re-read daily
-    "fda":         60 * 30,         # openFDA — every 30 min
+    "fda":         60 * 60 * 4,     # openFDA drug shortages — every 4h
     "polymarket":  60 * 5,          # markets move — every 5 min
     "amr":         60 * 60 * 24,    # AMR — stub for now, daily would be plenty
 }
+
+
+def _ttl_for(key: str) -> int:
+    """TTL lookup that honours prefixes — ``fda::aspirin`` shares the
+    ``fda`` TTL so we can cache per-drug variants without listing each.
+    """
+    if key in _TTL:
+        return _TTL[key]
+    head = key.split("::", 1)[0]
+    return _TTL.get(head, _TTL_DEFAULT)
 
 
 def cache_get(key: str) -> Optional[Any]:
@@ -201,12 +223,21 @@ def cache_get(key: str) -> Optional[Any]:
         entry = _cache.get(key)
         if not entry:
             return None
-        ttl = _TTL.get(key, _TTL_DEFAULT)
-        if time.time() - entry["t"] > ttl:
-            _cache.pop(key, None)
+        if time.time() - entry["t"] > _ttl_for(key):
+            # Expired — but keep the entry so ``cache_get_stale`` can serve
+            # it as a fallback if the next live fetch fails.
             return None
         _cache.move_to_end(key)
         return entry["data"]
+
+
+def cache_get_stale(key: str) -> Optional[Any]:
+    """Return the cached value ignoring TTL — used as the failover when an
+    upstream fetch errors. Returns ``None`` if nothing was ever cached.
+    """
+    with _cache_lock:
+        entry = _cache.get(key)
+        return entry["data"] if entry else None
 
 
 def cache_set(key: str, data: Any) -> None:
@@ -217,8 +248,10 @@ def cache_set(key: str, data: Any) -> None:
 
 
 # ── HTTP helper ───────────────────────────────────────────────────────────────
-_USER_AGENT = "narve-world-health-dashboard/0.1 (+https://health.narve.ai)"
-_HTTP_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
+_USER_AGENT = "narve.ai world-health-dashboard"
+# 30s per-call budget per the upstream contract; connect cap stays tight so a
+# dead resolver fails fast rather than burning the whole budget on DNS.
+_HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 async def _http_get(url: str, *, params: Optional[dict] = None) -> Optional[httpx.Response]:
@@ -276,108 +309,177 @@ def load_sources() -> dict:
 
 # ── WHO Disease Outbreak News (RSS) ───────────────────────────────────────────
 WHO_DON_URL = "https://www.who.int/feeds/entity/csr/don/en/rss.xml"
+WHO_DON_CACHE_KEY = "who_don"
+
+# Disease-keyword vocabulary used to tag DON items. Order matters — longer /
+# more specific matches go first so e.g. "yellow fever" wins over "fever".
+_DISEASE_KEYWORDS: list[str] = [
+    "avian influenza", "bird flu", "h5n1", "h7n9",
+    "monkeypox", "mpox",
+    "yellow fever",
+    "marburg virus disease", "marburg",
+    "ebola virus disease", "ebola",
+    "lassa fever", "lassa",
+    "crimean-congo", "rift valley",
+    "middle east respiratory syndrome", "mers-cov", "mers",
+    "severe acute respiratory syndrome", "sars-cov-2", "sars",
+    "covid-19", "covid",
+    "nipah virus", "nipah",
+    "hendra", "chikungunya", "dengue", "zika",
+    "chapare", "machupo", "junin",
+    "plague",
+    "diphtheria", "tetanus", "pertussis",
+    "polio", "poliomyelitis",
+    "measles", "rubella",
+    "cholera",
+    "typhoid", "paratyphoid",
+    "meningococcal disease", "meningitis",
+    "anthrax", "botulism", "tularemia", "brucellosis",
+    "rabies",
+    "tuberculosis",
+    "leishmaniasis", "trypanosomiasis",
+    "schistosomiasis",
+    "leptospirosis", "legionellosis",
+    "hepatitis a", "hepatitis b", "hepatitis c", "hepatitis e", "hepatitis",
+    "influenza",
+    "respiratory syncytial virus", "rsv",
+    "hand foot and mouth",
+    "scarlet fever", "streptococcal",
+    "salmonellosis", "shigellosis", "listeriosis", "campylobacteriosis",
+    "norovirus",
+    "haemorrhagic fever",
+    "acute flaccid", "encephalitis",
+    "oropouche",
+    "unknown etiology",
+]
+
+
+def _extract_disease(title: str) -> Optional[str]:
+    """Pick a disease keyword out of a DON headline. Returns the matched
+    canonical token (e.g. ``"ebola"``) or ``None`` if nothing matches.
+    """
+    if not title:
+        return None
+    tl = title.lower()
+    for kw in _DISEASE_KEYWORDS:
+        if kw in tl:
+            return kw
+    return None
 
 
 def _strip_html(text: str) -> str:
-    """Cheap HTML/CDATA stripper for RSS descriptions."""
+    """Cheap HTML/CDATA stripper for RSS descriptions (fallback path)."""
     text = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
+def _parse_who_feed_with_feedparser(text: str) -> list[dict]:
+    parsed = feedparser.parse(text)  # type: ignore[union-attr]
+    items: list[dict] = []
+    for entry in parsed.entries:
+        title = (entry.get("title") or "").strip()
+        link = (entry.get("link") or "").strip()
+        published = (entry.get("published") or entry.get("updated") or "").strip()
+        summary_raw = entry.get("summary") or entry.get("description") or ""
+        summary = _strip_html(summary_raw)[:500]
+        items.append({
+            "title": title,
+            "link": link,
+            "published": published,
+            "summary": summary,
+            "disease": _extract_disease(title),
+        })
+    return items
+
+
+def _parse_who_feed_with_regex(text: str) -> list[dict]:
+    items: list[dict] = []
+    for raw in re.findall(r"<item[^>]*>(.*?)</item>", text, flags=re.DOTALL):
+        def grab(tag: str) -> str:
+            m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", raw, flags=re.DOTALL)
+            return _strip_html(m.group(1)) if m else ""
+        title = grab("title")
+        items.append({
+            "title": title,
+            "link": grab("link"),
+            "published": grab("pubDate"),
+            "summary": grab("description")[:500],
+            "disease": _extract_disease(title),
+        })
+    return items
+
+
 async def fetch_who_outbreaks() -> dict:
     """Parse the WHO Disease Outbreak News RSS feed into structured items.
 
-    No third-party XML dep — the feed is well-formed enough that regex
-    parsing is fine for our needs (~50 items/feed).
+    Uses ``feedparser`` when available; falls back to a regex parser if not.
+    On HTTP failure, returns the last cached snapshot (stale) — and only if
+    no entry has ever been cached does it emit a ``stub`` shape.
     """
-    cached = cache_get("who_don")
+    cached = cache_get(WHO_DON_CACHE_KEY)
     if cached is not None:
         return cached
     r = await _http_get(WHO_DON_URL)
     if not r:
-        out = {
+        stale = cache_get_stale(WHO_DON_CACHE_KEY)
+        if stale is not None:
+            return {**stale, "served_stale": True}
+        return {
             "source": "WHO Disease Outbreak News",
             "url": WHO_DON_URL,
             "items": [],
             "count": 0,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "stub": True,
-            "note": "WHO RSS fetch failed — empty list returned.",
+            "error": "WHO RSS fetch failed and no cached snapshot available.",
         }
-        cache_set("who_don", out)
-        return out
     text = r.text
-    items = []
-    for raw in re.findall(r"<item[^>]*>(.*?)</item>", text, flags=re.DOTALL):
-        def grab(tag: str) -> str:
-            m = re.search(rf"<{tag}[^>]*>(.*?)</{tag}>", raw, flags=re.DOTALL)
-            return _strip_html(m.group(1)) if m else ""
-        title = grab("title")
-        link = grab("link")
-        pubdate = grab("pubDate")
-        desc = grab("description")
-        guid = grab("guid")
-        items.append({
-            "title": title,
-            "link": link,
-            "published": pubdate,
-            "summary": desc[:500],
-            "guid": guid,
-        })
+    try:
+        if _HAS_FEEDPARSER:
+            items = _parse_who_feed_with_feedparser(text)
+        else:
+            items = _parse_who_feed_with_regex(text)
+    except Exception as e:
+        logger.warning("WHO RSS parse error: %s", e)
+        stale = cache_get_stale(WHO_DON_CACHE_KEY)
+        if stale is not None:
+            return {**stale, "served_stale": True}
+        return {
+            "source": "WHO Disease Outbreak News",
+            "url": WHO_DON_URL,
+            "items": [],
+            "count": 0,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "stub": True,
+            "error": f"parse error: {e}",
+        }
     out = {
         "source": "WHO Disease Outbreak News",
         "url": WHO_DON_URL,
+        "parser": "feedparser" if _HAS_FEEDPARSER else "regex-fallback",
         "items": items,
         "count": len(items),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
-    cache_set("who_don", out)
+    cache_set(WHO_DON_CACHE_KEY, out)
     return out
 
 
 # ── openFDA Drug Shortages ────────────────────────────────────────────────────
 OPENFDA_SHORTAGES_URL = "https://api.fda.gov/drug/shortages.json"
+# Default page size when no drug filter is set. 50 keeps payloads small for
+# the landing-page summary card; per-drug queries reuse the same cap because
+# openFDA returns at most a few records per generic name.
+FDA_DEFAULT_LIMIT = 50
 
 
-async def fetch_fda_shortages(search: Optional[str] = None) -> dict:
-    """Pull the openFDA drug-shortage list.
+def _fda_cache_key(search: Optional[str]) -> str:
+    return f"fda::{(search or '').lower()}"
 
-    ``search`` is a generic drug name filter — passed through as an
-    openFDA search expression on the ``generic_name`` field.
-    """
-    cache_key = f"fda::{(search or '').lower()}"
-    cached = cache_get(cache_key)
-    if cached is not None:
-        return cached
-    params: dict[str, Any] = {"limit": 200}
-    if search:
-        params["search"] = f"generic_name:{search}"
-    r = await _http_get(OPENFDA_SHORTAGES_URL, params=params)
-    if not r:
-        out = {
-            "source": "openFDA Drug Shortages",
-            "url": OPENFDA_SHORTAGES_URL,
-            "query": search,
-            "shortages": [],
-            "count": 0,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "stub": True,
-            "note": "openFDA fetch failed — empty list returned.",
-        }
-        _cache_lock.acquire()
-        try:
-            _cache[cache_key] = {"t": time.time(), "data": out}
-        finally:
-            _cache_lock.release()
-        return out
-    try:
-        data = r.json()
-    except Exception as e:
-        logger.warning("openFDA JSON parse error: %s", e)
-        data = {}
-    raw_results = data.get("results", []) if isinstance(data, dict) else []
+
+def _normalize_fda_results(raw_results: list[Any]) -> list[dict]:
     shortages: list[dict] = []
     for item in raw_results:
         if not isinstance(item, dict):
@@ -387,13 +489,60 @@ async def fetch_fda_shortages(search: Optional[str] = None) -> dict:
             "proprietary_name": item.get("proprietary_name"),
             "company_name": item.get("company_name"),
             "status": item.get("status"),
-            "shortage_reason": item.get("shortage_reason"),
+            "shortage_reason": item.get("shortage_reason") or item.get("reason"),
+            "related_info": item.get("related_info"),
             "initial_posting_date": item.get("initial_posting_date"),
             "update_date": item.get("update_date"),
             "expected_resupply_date": item.get("expected_resupply_date"),
             "therapeutic_category": item.get("therapeutic_category"),
             "presentation": item.get("presentation"),
         })
+    return shortages
+
+
+async def fetch_fda_shortages(search: Optional[str] = None) -> dict:
+    """Pull the openFDA drug-shortage list.
+
+    ``search`` is a generic drug name. When set, the openFDA search
+    expression filters on ``generic_name`` with a quoted exact-phrase match
+    so multi-word drug names ("sodium chloride") aren't tokenized.
+    """
+    cache_key = _fda_cache_key(search)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    params: dict[str, Any] = {
+        "limit": FDA_DEFAULT_LIMIT,
+        "sort": "update_date:desc",
+    }
+    if search:
+        # Quote the query so multi-word generics survive openFDA's tokenizer.
+        params["search"] = f'generic_name:"{search}"'
+    r = await _http_get(OPENFDA_SHORTAGES_URL, params=params)
+    if not r:
+        stale = cache_get_stale(cache_key)
+        if stale is not None:
+            return {**stale, "served_stale": True}
+        return {
+            "source": "openFDA Drug Shortages",
+            "url": OPENFDA_SHORTAGES_URL,
+            "query": search,
+            "shortages": [],
+            "count": 0,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "stub": True,
+            "error": "openFDA fetch failed and no cached snapshot available.",
+        }
+    try:
+        data = r.json()
+    except Exception as e:
+        logger.warning("openFDA JSON parse error: %s", e)
+        stale = cache_get_stale(cache_key)
+        if stale is not None:
+            return {**stale, "served_stale": True}
+        data = {}
+    raw_results = data.get("results", []) if isinstance(data, dict) else []
+    shortages = _normalize_fda_results(raw_results)
     out = {
         "source": "openFDA Drug Shortages",
         "url": OPENFDA_SHORTAGES_URL,
@@ -402,10 +551,7 @@ async def fetch_fda_shortages(search: Optional[str] = None) -> dict:
         "count": len(shortages),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
-    with _cache_lock:
-        _cache[cache_key] = {"t": time.time(), "data": out}
-        while len(_cache) > 64:
-            _cache.popitem(last=False)
+    cache_set(cache_key, out)
     return out
 
 
@@ -601,6 +747,62 @@ def _attach_edges(markets: list[dict]) -> list[dict]:
     return out
 
 
+# ── Background refresher ─────────────────────────────────────────────────────
+#
+# Pre-warm WHO + FDA caches on a fixed interval so the first user request
+# after boot is instant and so a transient upstream blip can be ridden out
+# by the stale-fallback. Cadence is hourly: it's the gating TTL (WHO) and
+# safely under FDA's 4h TTL.
+_REFRESH_INTERVAL_SECONDS = 60 * 60
+_refresher_task: Optional[asyncio.Task] = None
+
+
+async def _refresh_caches_once() -> None:
+    logger.info("background refresh: WHO DON + FDA shortages")
+    try:
+        await fetch_who_outbreaks()
+    except Exception as e:  # never raise out of the refresher
+        logger.warning("background refresh WHO failed: %s", e)
+    try:
+        await fetch_fda_shortages(None)
+    except Exception as e:
+        logger.warning("background refresh FDA failed: %s", e)
+
+
+async def _refresher_loop() -> None:
+    # Short initial delay so startup isn't blocked behind two slow upstreams.
+    await asyncio.sleep(2.0)
+    while True:
+        await _refresh_caches_once()
+        try:
+            await asyncio.sleep(_REFRESH_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
+
+@app.on_event("startup")
+async def _start_refresher() -> None:
+    global _refresher_task
+    if os.environ.get("DISABLE_BG_REFRESH", "").strip() == "1":
+        logger.info("background refresher disabled via DISABLE_BG_REFRESH=1")
+        return
+    if _refresher_task is None or _refresher_task.done():
+        _refresher_task = asyncio.create_task(_refresher_loop(), name="world-health-refresher")
+        logger.info("background refresher started (interval=%ds)", _REFRESH_INTERVAL_SECONDS)
+
+
+@app.on_event("shutdown")
+async def _stop_refresher() -> None:
+    global _refresher_task
+    if _refresher_task is not None and not _refresher_task.done():
+        _refresher_task.cancel()
+        try:
+            await _refresher_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _refresher_task = None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health() -> dict:
@@ -690,6 +892,7 @@ async def api_summary() -> dict:
         "outbreaks": {
             "count": outbreaks.get("count", 0),
             "latest": (outbreaks.get("items") or [None])[0],
+            "stub": outbreaks.get("stub", False),
         },
         "shortages": {
             "count": shortages.get("count", 0),

@@ -7325,6 +7325,20 @@ except Exception as _exc:  # pragma: no cover
     log.warning("admin_jobs_routes import failed: %s — continuing without it", _exc)
 
 
+# Service health monitor (/admin/health-monitor + /api/admin/health-monitor).
+# Single-pane status board for the gateway + 12 subproducts. Same reload-safe
+# side-effect pattern — must sit before the catch-all so /admin/health-monitor
+# isn't swallowed as a 404.
+try:
+    import admin_health_monitor_routes  # noqa: F401,E402
+    import sys as _ahm_sys
+    if "admin_health_monitor_routes" in _ahm_sys.modules:
+        import importlib as _ahm_importlib
+        _ahm_importlib.reload(_ahm_sys.modules["admin_health_monitor_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_health_monitor_routes import failed: %s — continuing without it", _exc)
+
+
 # Billing UI — /settings/billing + /api/v1/billing/*. Same reload-safe pattern
 # as status_routes/embed_routes above; billing_routes registers its endpoints
 # on server.app via @app.get/@app.post decorators as a side effect of import.
