@@ -24,6 +24,10 @@ Design:
 
 from __future__ import annotations
 
+# ── Observability — init Sentry FIRST, before FastAPI touches anything ───────
+import observability as _observability
+_observability.init_sentry(platform="world-health")
+
 import asyncio
 import hmac
 import logging

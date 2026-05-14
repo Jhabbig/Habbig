@@ -259,3 +259,56 @@ done
 - [ ] DNS records added (manual, Cloudflare dashboard)
 - [ ] Tunnel route added (manual, cloudflared config + reload)
 - [ ] Smoke test each subdomain returns 200 on `/health` after deploy
+
+---
+
+## 2026-05-14 — idempotent DNS sync script
+
+`scripts/cloudflare_dns_sync.py` replaces the manual Cloudflare-dashboard
+walk for the 13 subproduct subdomains. It reads `gateway/config.json` as
+the source of truth, diffs against the live zone via Cloudflare's REST
+API, and reports/creates missing CNAMEs.
+
+### Usage
+
+```bash
+# Dry-run (read-only — default; safe to run anywhere).
+python3 scripts/cloudflare_dns_sync.py
+
+# Apply: create any missing CNAMEs (proxied=true, ttl=1, content=narve.ai).
+python3 scripts/cloudflare_dns_sync.py --apply
+```
+
+### Env vars
+
+Added to `gateway/.env.example`:
+
+```
+CLOUDFLARE_API_TOKEN=     # scoped: Zone:DNS:Edit on narve.ai
+CLOUDFLARE_ZONE_ID=       # narve.ai zone identifier
+```
+
+Token must be zone-scoped — create at
+<https://dash.cloudflare.com/profile/api-tokens> with the "Edit zone DNS"
+template restricted to the `narve.ai` zone. Never use a global / account-
+wide token here.
+
+### Safety
+
+- **Dry-run is the default.** `--apply` must be passed explicitly.
+- **The script never deletes records.** "Extra" subdomains in the zone
+  but absent from `gateway/config.json` are surfaced for manual review
+  only — leave deletions to a human via the Cloudflare dashboard.
+- **30s timeout** per HTTP request (avoids hanging in CI).
+- **Idempotent:** running it repeatedly is a no-op once the zone is in
+  sync. Re-run after adding a subproduct to `gateway/config.json`.
+
+### When to run
+
+- After adding/renaming a subproduct in `gateway/config.json`.
+- As a periodic drift check (cron / monthly manual run).
+- Before/after a Cloudflare dashboard-side change, to confirm reality
+  matches the code-defined expectation.
+
+Replaces the "DNS records added (manual, Cloudflare dashboard)" task in
+the 2026-05-14 entry above.
