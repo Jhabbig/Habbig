@@ -1,0 +1,222 @@
+<!-- Body-only — wrapped by admin_shell. -->
+<div class="newsletter-page">
+
+  <section class="admin-section newsletter-history">
+    <div class="admin-section-head">
+      <h2 class="admin-section-title">Past campaigns</h2>
+      <span class="admin-section-count">latest 50</span>
+    </div>
+    <div class="admin-card newsletter-history__card">
+      {{ raw_history_rows }}
+    </div>
+  </section>
+
+  <section class="admin-section newsletter-compose">
+    <div class="admin-section-head">
+      <h2 class="admin-section-title">Compose new blast</h2>
+      <span class="admin-section-count">to confirmed subscribers</span>
+    </div>
+
+    <form id="newsletter-form"
+          method="post"
+          action="/admin/newsletter/send"
+          class="newsletter-form"
+          autocomplete="off">
+      {{ raw_csrf_field }}
+
+      <div class="newsletter-form__grid">
+        <!-- Compose column ─────────────────────────────────────────── -->
+        <div class="newsletter-form__col newsletter-form__col--compose">
+
+          <label class="newsletter-field">
+            <span class="newsletter-field__label">Subject</span>
+            <input id="subject"
+                   name="subject"
+                   type="text"
+                   class="newsletter-input"
+                   maxlength="200"
+                   placeholder="A short, scannable subject line"
+                   required>
+          </label>
+
+          <label class="newsletter-field">
+            <span class="newsletter-field__label">Body (markdown)</span>
+            <textarea id="body_md"
+                      name="body_md"
+                      class="newsletter-textarea"
+                      rows="14"
+                      placeholder="## Headline&#10;&#10;Body copy. Supports **bold**, *italic*, `code`, [links](https://narve.ai), bulleted lists, and ## / ### headings."
+                      required></textarea>
+            <span class="newsletter-field__hint">
+              Supports a minimal subset of markdown:
+              <code>**bold**</code>, <code>*italic*</code>, <code>`code`</code>,
+              <code>[text](url)</code>, <code>## Heading</code>,
+              <code>- bullet</code>. Raw HTML is escaped.
+            </span>
+          </label>
+
+          <button type="button"
+                  id="newsletter-preview-btn"
+                  class="btn newsletter-preview-btn">
+            Preview body
+          </button>
+
+          <div id="newsletter-preview-pane"
+               class="newsletter-preview-pane"
+               aria-live="polite"
+               hidden>
+          </div>
+        </div>
+
+        <!-- Audience / schedule column ──────────────────────────────── -->
+        <aside class="newsletter-form__col newsletter-form__col--sidebar">
+
+          <div class="newsletter-card">
+            <div class="newsletter-card__label">Audience</div>
+
+            <label class="newsletter-field">
+              <span class="newsletter-field__label">Segment</span>
+              {{ raw_segment_select }}
+            </label>
+
+            <label class="newsletter-field">
+              <span class="newsletter-field__label">Frequency filter</span>
+              {{ raw_frequency_select }}
+            </label>
+
+            <div class="newsletter-recipient-count">
+              <span class="newsletter-recipient-count__label">
+                Recipients
+              </span>
+              <span class="newsletter-recipient-count__value"
+                    id="newsletter-recipient-count"
+                    data-default="{{ recipient_count }}">{{ recipient_count }}</span>
+            </div>
+          </div>
+
+          <div class="newsletter-card">
+            <div class="newsletter-card__label">Schedule</div>
+
+            <label class="newsletter-radio">
+              <input type="radio"
+                     name="schedule"
+                     value="now"
+                     id="schedule-now"
+                     checked>
+              <span>Send now</span>
+            </label>
+
+            <label class="newsletter-radio">
+              <input type="radio"
+                     name="schedule"
+                     value="later"
+                     id="schedule-later">
+              <span>Schedule for later (UTC)</span>
+            </label>
+
+            <input id="scheduled_at"
+                   name="scheduled_at"
+                   type="datetime-local"
+                   class="newsletter-input newsletter-input--datetime"
+                   disabled>
+          </div>
+
+          <button type="submit"
+                  class="btn btn-primary newsletter-send-btn">
+            Send blast
+          </button>
+        </aside>
+      </div>
+    </form>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  // Live recipient count — refresh on segment/frequency change.
+  var countEl = document.getElementById("newsletter-recipient-count");
+  var segmentSel = document.getElementById("segment");
+  var freqSel = document.getElementById("frequency_filter");
+
+  function refreshCount() {
+    if (!countEl || !segmentSel || !freqSel) return;
+    var params = new URLSearchParams({
+      segment: segmentSel.value,
+      frequency_filter: freqSel.value,
+    });
+    fetch("/admin/newsletter/recipients?" + params.toString(), {
+      credentials: "same-origin",
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && typeof data.count === "number") {
+          countEl.textContent = data.count.toLocaleString();
+        }
+      })
+      .catch(function () { /* keep previous value */ });
+  }
+
+  if (segmentSel) segmentSel.addEventListener("change", refreshCount);
+  if (freqSel) freqSel.addEventListener("change", refreshCount);
+
+  // Schedule radio toggle — enable the datetime input only when "later".
+  var schedNow = document.getElementById("schedule-now");
+  var schedLater = document.getElementById("schedule-later");
+  var schedAt = document.getElementById("scheduled_at");
+  function syncScheduleInput() {
+    if (!schedAt) return;
+    schedAt.disabled = !(schedLater && schedLater.checked);
+    if (schedAt.disabled) {
+      schedAt.removeAttribute("required");
+    } else {
+      schedAt.setAttribute("required", "required");
+    }
+  }
+  if (schedNow) schedNow.addEventListener("change", syncScheduleInput);
+  if (schedLater) schedLater.addEventListener("change", syncScheduleInput);
+  syncScheduleInput();
+
+  // Markdown preview.
+  var previewBtn = document.getElementById("newsletter-preview-btn");
+  var previewPane = document.getElementById("newsletter-preview-pane");
+  if (previewBtn && previewPane) {
+    previewBtn.addEventListener("click", function () {
+      var form = document.getElementById("newsletter-form");
+      if (!form) return;
+      var fd = new FormData(form);
+      // Only the fields the preview endpoint cares about.
+      var body = new URLSearchParams();
+      body.set("subject", fd.get("subject") || "");
+      body.set("body_md", fd.get("body_md") || "");
+      var csrf = fd.get("_csrf");
+      if (csrf) body.set("_csrf", csrf);
+      fetch("/admin/newsletter/preview", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: body.toString(),
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data) return;
+          previewPane.innerHTML = data.body_html || "<em>(empty)</em>";
+          previewPane.hidden = false;
+        })
+        .catch(function () { /* leave previous content */ });
+    });
+  }
+
+  // Confirm-on-send to guard against accidental blasts.
+  var form = document.getElementById("newsletter-form");
+  if (form) {
+    form.addEventListener("submit", function (ev) {
+      var n = (countEl && countEl.textContent) || "0";
+      var ok = window.confirm(
+        "Send to " + n + " recipients?"
+      );
+      if (!ok) ev.preventDefault();
+    });
+  }
+})();
+</script>

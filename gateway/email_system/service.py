@@ -214,6 +214,9 @@ _SUBJECTS = {
     "admin_cost_alert": "[admin] narve.ai Claude spend alert",
     "admin_subscription_drift": "[admin] narve.ai subscription drift detected",
     "admin_forensic_alert": "[narve.ai] Watermark trace used",
+    # newsletter_blast: subject is admin-composed per send, but a fallback
+    # subject is required in case the admin somehow leaves it blank.
+    "newsletter_blast": "narve.ai — newsletter",
 }
 
 

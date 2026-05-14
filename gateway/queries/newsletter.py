@@ -408,11 +408,155 @@ def unsubscribe_newsletter(email: str) -> bool:
         return result.rowcount > 0
 
 
+# ── admin blast campaigns ──────────────────────────────────────────────────
+#
+# These power /admin/newsletter — one-off composed blasts to confirmed
+# subscribers, filtered by segment + (optional) frequency. The recurring
+# weekly digest cron is a separate path; this is the manual "we have a
+# launch announcement to send" surface.
+
+
+def list_newsletter_campaigns(limit: int = 50) -> list[dict]:
+    """Return the most recent campaigns, newest first. Used by the
+    /admin/newsletter index page to show send history.
+
+    Includes both already-sent and pending-scheduled rows so an admin
+    can see what's queued. The page splits them visually.
+    """
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT id, admin_user_id, subject, segment, frequency_filter, "
+            "scheduled_at, sent_at, recipient_count, created_at "
+            "FROM newsletter_campaigns "
+            "ORDER BY scheduled_at DESC, id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_blast_recipients(segment: str, frequency_filter: Optional[str]) -> int:
+    """Return how many confirmed subscribers match the (segment, frequency)
+    filter. Used both for live previews on the compose form and for the
+    recipient_count audit field on each campaign row.
+
+    Filter semantics:
+      * ``segment == 'all'``      — match any segment value.
+      * ``segment == 'markets'``  — match rows where segment is 'markets' OR
+                                     'all' (the catch-all bucket gets every
+                                     blast regardless of segment).
+      * ``frequency_filter`` NULL — no frequency filter, every confirmed row
+                                     matches.
+      * ``frequency_filter`` set  — strict equality on the frequency column.
+
+    Confirmed + not unsubscribed is enforced unconditionally — we never
+    blast an unconfirmed row or someone who hit unsubscribe.
+    """
+    seg = segment if segment in VALID_SEGMENTS else "all"
+    where = ["confirmed_at IS NOT NULL", "unsubscribed_at IS NULL"]
+    params: list = []
+
+    if seg == "all":
+        # No segment narrowing — every confirmed row.
+        pass
+    else:
+        # Targeted blast: include both the explicit segment and the
+        # catch-all 'all' bucket (those subscribers opted into every
+        # segment by definition).
+        where.append("(segment = ? OR segment = 'all')")
+        params.append(seg)
+
+    if frequency_filter and frequency_filter in VALID_FREQUENCIES:
+        where.append("frequency = ?")
+        params.append(frequency_filter)
+
+    sql = "SELECT COUNT(*) FROM newsletter_subscribers WHERE " + " AND ".join(where)
+    with db.conn() as c:
+        return int(c.execute(sql, params).fetchone()[0])
+
+
+def get_blast_recipients(
+    segment: str,
+    frequency_filter: Optional[str],
+) -> list[dict]:
+    """Return the email + segment + frequency of every confirmed subscriber
+    matching the filter. Used by the send handler to drive the enqueue loop.
+
+    Same filter semantics as ``count_blast_recipients``. Returned in
+    deterministic order (id ASC) so retries enqueue identically.
+    """
+    seg = segment if segment in VALID_SEGMENTS else "all"
+    where = ["confirmed_at IS NOT NULL", "unsubscribed_at IS NULL"]
+    params: list = []
+
+    if seg != "all":
+        where.append("(segment = ? OR segment = 'all')")
+        params.append(seg)
+
+    if frequency_filter and frequency_filter in VALID_FREQUENCIES:
+        where.append("frequency = ?")
+        params.append(frequency_filter)
+
+    sql = (
+        "SELECT id, email, segment, frequency FROM newsletter_subscribers "
+        "WHERE " + " AND ".join(where) + " ORDER BY id ASC"
+    )
+    with db.conn() as c:
+        return [dict(r) for r in c.execute(sql, params).fetchall()]
+
+
+def record_newsletter_campaign(
+    *,
+    admin_user_id: int,
+    subject: str,
+    body_md: str,
+    segment: str,
+    frequency_filter: Optional[str],
+    scheduled_at: int,
+    sent_at: Optional[int],
+    recipient_count: int,
+) -> int:
+    """Insert a campaign row and return its id.
+
+    ``sent_at`` is None for future-scheduled blasts (dispatched later) and
+    the actual unix seconds for "send now" blasts (we set it at enqueue
+    time — every recipient job is on the queue, retries are the queue's
+    responsibility, so the campaign is "sent" once enqueued).
+    """
+    now = int(time.time())
+    seg = segment if segment in VALID_SEGMENTS else "all"
+    freq = frequency_filter if (
+        frequency_filter and frequency_filter in VALID_FREQUENCIES
+    ) else None
+    with db.conn() as c:
+        cur = c.execute(
+            "INSERT INTO newsletter_campaigns "
+            "(admin_user_id, subject, body_md, segment, frequency_filter, "
+            " scheduled_at, sent_at, recipient_count, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                int(admin_user_id),
+                (subject or "").strip(),
+                body_md or "",
+                seg,
+                freq,
+                int(scheduled_at),
+                int(sent_at) if sent_at is not None else None,
+                int(recipient_count),
+                now,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
 __all__ = [
     'subscribe_newsletter',
     'get_newsletter_position',
     'confirm_newsletter',
     'unsubscribe_newsletter',
+    'list_newsletter_campaigns',
+    'count_blast_recipients',
+    'get_blast_recipients',
+    'record_newsletter_campaign',
     'VALID_SEGMENTS',
     'VALID_FREQUENCIES',
     'CONFIRMATION_RESEND_COOLDOWN_S',

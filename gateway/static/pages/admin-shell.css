@@ -400,3 +400,212 @@ textarea:focus-visible {
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
+
+/* ── /admin/newsletter ──────────────────────────────────────────────
+ *
+ * Compose + schedule the one-off blast page. Two-column layout: editor
+ * on the left, audience/schedule sidecar on the right. Monochrome
+ * surface, Inter for body, Geist Mono for the recipient count + history
+ * count badges. Honours the page-level var(--space-8) var(--space-6)
+ * padding already provided by .admin-page-body. */
+
+.newsletter-page {
+  padding: var(--space-8) var(--space-6);
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.newsletter-history__card {
+  display: flex;
+  flex-direction: column;
+}
+
+.newsletter-form {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: var(--space-6);
+}
+
+.newsletter-form__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-6);
+}
+
+@media (max-width: 900px) {
+  .newsletter-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.newsletter-form__col--compose {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.newsletter-form__col--sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.newsletter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.newsletter-field__label {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.newsletter-field__hint {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.newsletter-field__hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+
+.newsletter-input,
+.newsletter-select,
+.newsletter-textarea {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.newsletter-textarea {
+  font-family: "JetBrains Mono", var(--font-mono);
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 280px;
+}
+
+.newsletter-input:focus,
+.newsletter-select:focus,
+.newsletter-textarea:focus {
+  border-color: var(--text-primary);
+  outline: none;
+}
+
+.newsletter-input--datetime {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.newsletter-card {
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.newsletter-card__label {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.newsletter-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.newsletter-radio input {
+  accent-color: var(--text-primary);
+  width: 16px;
+  height: 16px;
+}
+
+.newsletter-recipient-count {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-default);
+}
+
+.newsletter-recipient-count__label {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.newsletter-recipient-count__value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.newsletter-send-btn {
+  align-self: stretch;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 12px 18px;
+}
+
+.newsletter-preview-btn {
+  align-self: flex-start;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 8px 14px;
+}
+
+.newsletter-preview-pane {
+  background: var(--bg-page);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 18px 20px;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  line-height: 1.6;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.newsletter-count {
+  font-variant-numeric: tabular-nums;
+}
