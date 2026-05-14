@@ -110,7 +110,9 @@ def require_hardened_admin(request: Request) -> Optional[RedirectResponse]:
             return None
     except Exception:
         pass
-    return RedirectResponse("/token", status_code=302)
+    # Admins land on /gate (SITE_ACCESS_TOKEN), not /token (invite-flow) —
+    # admins authenticate via the site-access gate, not invite tokens.
+    return RedirectResponse("/gate", status_code=302)
 
 
 # ── Spec-exact aliases ──────────────────────────────────────────────────
