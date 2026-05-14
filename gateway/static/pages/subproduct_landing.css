@@ -154,7 +154,7 @@
   font-family: var(--font-display);
   font-style: italic;
   font-weight: 400;
-  font-size: 80px;
+  font-size: var(--text-5xl);
   line-height: 0.98;
   letter-spacing: -0.035em;
   margin: 0 0 var(--space-5);
@@ -164,11 +164,11 @@
 .sp-hero-headline br { display: inline; }
 
 @media (max-width: 900px) {
-  .sp-hero-headline { font-size: 56px; line-height: 1.0; }
+  .sp-hero-headline { font-size: var(--text-4xl); line-height: 1.0; }
 }
 
 @media (max-width: 480px) {
-  .sp-hero-headline { font-size: 48px; }
+  .sp-hero-headline { font-size: var(--text-4xl); }
 }
 
 .sp-hero-sub {

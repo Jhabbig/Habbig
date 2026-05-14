@@ -212,6 +212,10 @@
   }
 
   function load(){
+    // Skip polling when the tab is hidden — saves wasted req/DB scans
+    // for stale tabs left open overnight. The visibilitychange listener
+    // below resumes immediately when the tab is foregrounded again.
+    if (document.visibilityState !== 'visible') return;
     return fetch('/api/admin/health-monitor', {credentials:'same-origin'})
       .then(function(r){
         if (!r.ok) throw new Error('status ' + r.status);
@@ -226,5 +230,10 @@
 
   load();
   setInterval(load, 10000);
+  // Resume immediately when the tab becomes visible so the user doesn't
+  // stare at stale data for up to 10s after switching back.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') load();
+  });
 })();
 </script>

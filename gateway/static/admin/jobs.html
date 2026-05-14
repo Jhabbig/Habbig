@@ -478,6 +478,10 @@
   }
 
   function refresh(){
+    // Skip polling when the tab is hidden — saves ~17k req/day per stale
+    // tab. The visibilitychange listener below resumes immediately when
+    // the tab is foregrounded again.
+    if (document.visibilityState !== 'visible') return;
     var name = document.getElementById('jobs-filter-name').value;
     var url = '/admin/api/jobs/refresh' + (name ? ('?job_name=' + encodeURIComponent(name)) : '');
     fetch(url, {credentials: 'same-origin', headers: {'Accept':'application/json'}})
@@ -499,6 +503,11 @@
 
   document.getElementById('jobs-filter-name').addEventListener('change', refresh);
   setInterval(refresh, 5000);
+  // Resume immediately when the tab becomes visible so the user doesn't
+  // stare at stale data for up to 5s after switching back.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') refresh();
+  });
   // Refresh once immediately to upgrade the durations / ages, even
   // though the SSR snapshot is already on screen.
   setTimeout(refresh, 500);

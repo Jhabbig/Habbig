@@ -19,7 +19,6 @@ body {
 
 /* ---------- page wrapper ---------- */
 .src-shell {
-  max-width: 960px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-6);
 }
