@@ -783,31 +783,51 @@ EMAIL_SOURCE_LABELS = (
 )
 
 
-def _aggregate_email_rows(c) -> list[dict]:
+def _aggregate_email_rows(c, status: Optional[str] = None) -> list[dict]:
     """Internal — pull every email-bearing row from each of the 9 sources.
 
     Each row carries a ``source`` discriminator, a ``ts`` (unix seconds for
     last activity), an ``email``, and optional ``user_id``/``status`` fields.
     The UNION is materialised in-Python (rather than SQL UNION ALL) because
-    one of the sources — the outbound queue — stores the recipient inside a
-    JSON payload column and SQLite's json1 isn't guaranteed to be compiled
-    in on every host. Doing the parse in Python keeps the query portable.
+    every source has a different shape and dedupe across sources is easier
+    in-Python than as a CTE. Per-source SQL is still pushed down where
+    cheap, including the optional ``status`` filter below.
+
+    ``status`` (when given) is matched against each source's own concept of
+    status — newsletter rows fork to confirmed/pending/unsubscribed based on
+    ``confirmed_at``/``unsubscribed_at``; users use the ``suspended`` flag;
+    outbound + invite have their own ``status`` columns. Sources with no
+    concept of the requested status (enquiry, feedback when status≠active)
+    are skipped entirely so they don't waste a round trip.
 
     Returns rows roughly newest-first per source. The caller is expected
-    to apply final ordering / dedupe / filtering.
+    to apply final ordering / dedupe.
     """
-    import json as _json
-
     rows: list[dict] = []
+    st = (status or "").strip().lower() or None
 
     # 1) Newsletter subscribers — both prerelease and post-launch live here;
     #    the ``source`` column on the table itself tells us which surface
     #    captured them. Unsubscribed rows fork to the 'unsubscribe' bucket.
+    #    Status filter pushed into SQL: confirmed/pending/unsubscribed each
+    #    map to a distinct WHERE clause; anything else means "don't emit".
+    ns_sql = (
+        "SELECT email, subscribed_at, confirmed_at, unsubscribed_at, source "
+        "FROM newsletter_subscribers"
+    )
+    ns_skip = False
+    if st == "confirmed":
+        ns_sql += " WHERE unsubscribed_at IS NULL AND confirmed_at IS NOT NULL"
+    elif st == "pending":
+        ns_sql += " WHERE unsubscribed_at IS NULL AND confirmed_at IS NULL"
+    elif st == "unsubscribed":
+        ns_sql += " WHERE unsubscribed_at IS NOT NULL"
+    elif st in ("active", "suspended", "queued", "sent", "failed",
+                "scheduled", "unclaimed", "claimed", "revoked"):
+        # No newsletter row carries any of these statuses.
+        ns_skip = True
     try:
-        ns = c.execute(
-            "SELECT email, subscribed_at, confirmed_at, unsubscribed_at, source "
-            "FROM newsletter_subscribers"
-        ).fetchall()
+        ns = [] if ns_skip else c.execute(ns_sql).fetchall()
     except Exception:
         ns = []
     for r in ns:
@@ -838,12 +858,18 @@ def _aggregate_email_rows(c) -> list[dict]:
 
     # 2 + 6) Users — registered accounts vs admin-created shell rows
     #        (password_hash == '' means the row was provisioned but the
-    #        user never set a password).
+    #        user never set a password). Status filter maps to ``suspended``.
+    us_sql = "SELECT id, email, created_at, password_hash, suspended FROM users"
+    us_skip = False
+    if st == "active":
+        us_sql += " WHERE suspended = 0"
+    elif st == "suspended":
+        us_sql += " WHERE suspended = 1"
+    elif st in ("confirmed", "pending", "unsubscribed", "queued", "sent",
+                "failed", "scheduled", "unclaimed", "claimed", "revoked"):
+        us_skip = True
     try:
-        us = c.execute(
-            "SELECT id, email, created_at, password_hash, suspended "
-            "FROM users"
-        ).fetchall()
+        us = [] if us_skip else c.execute(us_sql).fetchall()
     except Exception:
         us = []
     for r in us:
@@ -860,9 +886,11 @@ def _aggregate_email_rows(c) -> list[dict]:
             "status": "suspended" if r["suspended"] else "active",
         })
 
-    # 3) Enquiries (contact/support form).
+    # 3) Enquiries (contact/support form). Always status='active' — skip
+    #    the round trip if the caller asked for anything else.
+    eq_skip = bool(st) and st != "active"
     try:
-        eq = c.execute(
+        eq = [] if eq_skip else c.execute(
             "SELECT email, created_at FROM enquiries"
         ).fetchall()
     except Exception:
@@ -882,9 +910,11 @@ def _aggregate_email_rows(c) -> list[dict]:
 
     # 4) Feedback submitters — linked back to users.email by user_id. Anonymous
     #    feedback (user_id IS NULL) does not surface here since there's no
-    #    email captured server-side.
+    #    email captured server-side. Always status='active' — same skip as
+    #    enquiry.
+    fb_skip = bool(st) and st != "active"
     try:
-        fb = c.execute(
+        fb = [] if fb_skip else c.execute(
             "SELECT f.user_id, f.created_at, u.email "
             "FROM feedback_submissions f "
             "JOIN users u ON f.user_id = u.id "
@@ -907,22 +937,28 @@ def _aggregate_email_rows(c) -> list[dict]:
 
     # 7) Outbound queue recipients — inside JSON payload on background_jobs
     #    rows where name='send_email'. We cap at 2000 most-recent rows to
-    #    bound the in-Python loop on production-size databases. SQLite's
-    #    json_extract pulls the 'to' field directly so we avoid parsing
-    #    each payload in Python.
+    #    bound the result set. SQLite's json_extract pulls the 'to' field
+    #    directly so we avoid parsing each payload in Python. Status filter
+    #    maps to the background_jobs ``status`` column directly.
+    ob_sql = (
+        "SELECT json_extract(payload, '$.to') AS recipient, "
+        "       enqueued_at, status "
+        "FROM background_jobs "
+        "WHERE name = 'send_email' "
+        "  AND json_valid(payload) = 1 "
+        "  AND json_extract(payload, '$.to') IS NOT NULL"
+    )
+    ob_params: tuple = ()
+    ob_skip = False
+    if st in ("queued", "sent", "failed", "scheduled"):
+        ob_sql += " AND status = ?"
+        ob_params = (st,)
+    elif st in ("confirmed", "pending", "unsubscribed", "active",
+                "suspended", "unclaimed", "claimed", "revoked"):
+        ob_skip = True
+    ob_sql += " ORDER BY enqueued_at DESC LIMIT 2000"
     try:
-        ob = c.execute(
-            "SELECT\n"
-            "    json_extract(payload, '$.to') AS recipient,\n"
-            "    enqueued_at,\n"
-            "    status\n"
-            "FROM background_jobs\n"
-            "WHERE name = 'send_email'\n"
-            "  AND json_valid(payload) = 1\n"
-            "  AND json_extract(payload, '$.to') IS NOT NULL\n"
-            "ORDER BY enqueued_at DESC\n"
-            "LIMIT 2000"
-        ).fetchall()
+        ob = [] if ob_skip else c.execute(ob_sql, ob_params).fetchall()
     except Exception:
         ob = []
     for r in ob:
@@ -939,13 +975,23 @@ def _aggregate_email_rows(c) -> list[dict]:
         })
 
     # 9) Invite token targets. Only rows that captured a target_email at
-    #    creation surface here; legacy invites had no target email.
+    #    creation surface here; legacy invites had no target email. Status
+    #    filter maps to the invite_tokens ``status`` column directly.
+    iv_sql = (
+        "SELECT target_email, created_at, status, claimed_by_user_id "
+        "FROM invite_tokens "
+        "WHERE target_email IS NOT NULL AND target_email != ''"
+    )
+    iv_params: tuple = ()
+    iv_skip = False
+    if st in ("unclaimed", "claimed", "revoked"):
+        iv_sql += " AND status = ?"
+        iv_params = (st,)
+    elif st in ("confirmed", "pending", "unsubscribed", "active",
+                "suspended", "queued", "sent", "failed", "scheduled"):
+        iv_skip = True
     try:
-        iv = c.execute(
-            "SELECT target_email, created_at, status, claimed_by_user_id "
-            "FROM invite_tokens WHERE target_email IS NOT NULL "
-            "AND target_email != ''"
-        ).fetchall()
+        iv = [] if iv_skip else c.execute(iv_sql, iv_params).fetchall()
     except Exception:
         iv = []
     for r in iv:
@@ -1033,7 +1079,11 @@ def aggregate_email_addresses(
                 sort=sort, sort_dir=sort_dir,
             )
 
-    raw_rows = _aggregate_email_rows(c)
+    # Push the status filter into the per-source SQL when we can — saves
+    # SELECTing rows we're about to drop anyway. The Python tail below
+    # still re-applies the filter so any source whose status concept we
+    # don't model in SQL is still handled correctly.
+    raw_rows = _aggregate_email_rows(c, status=status)
 
     # Group by lower(email). Keep the row from the most recent source; track
     # every other source for the all_sources stack; track first_seen across
