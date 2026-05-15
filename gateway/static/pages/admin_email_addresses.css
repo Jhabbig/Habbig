@@ -397,6 +397,70 @@
   opacity: 0.5;
 }
 
+/* ── Per-row copy-email button ────────────────────────────────────
+ *
+ * Server emits `<button data-copy-email="…" class="adm-ea-copy-btn">`
+ * inside the email cell of every row. The button is invisible until
+ * the row is hovered so the dense email column stays uncluttered.
+ *
+ * Strictly monochrome, Inter font, no emoji, no colour. The 44×44
+ * tap-target only kicks in at touch widths so desktop hover affordance
+ * stays compact and unobtrusive.
+ */
+
+.adm-ea-copy-btn {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: var(--bg-base, transparent);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast, .12s) cubic-bezier(0.2, 0, 0, 1),
+    color var(--duration-fast, .12s) cubic-bezier(0.2, 0, 0, 1),
+    border-color var(--duration-fast, .12s) cubic-bezier(0.2, 0, 0, 1);
+  vertical-align: baseline;
+}
+.adm-ea-copy-btn:hover,
+.adm-ea-copy-btn:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+  opacity: 1;
+}
+.adm-ea-copy-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+}
+.adm-ea-copy-btn:active {
+  background: var(--interactive-ghost, rgba(0,0,0,0.04));
+}
+.adm-ea-table tbody tr:hover .adm-ea-copy-btn,
+.adm-ea-table tbody tr:focus-within .adm-ea-copy-btn {
+  opacity: 1;
+}
+
+/* Touch widths — buttons are always visible and meet the 44×44 tap
+ * target Apple/WCAG recommend. Hover-only affordance doesn't make
+ * sense on touch devices. */
+@media (hover: none), (max-width: 720px) {
+  .adm-ea-copy-btn {
+    opacity: 1;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+}
+
 /* ── Empty state ──────────────────────────────────────────────────── */
 
 .adm-ea-empty {
@@ -417,7 +481,26 @@
   font-size: var(--text-sm);
 }
 
-/* ── Responsive: collapse filter columns at narrow widths ────────── */
+/* ── Responsive: collapse filter columns at narrow widths ──────────
+ *
+ * Mobile contract (≤720px, optimised for 375×812 / iPhone 14):
+ *   - Always visible: email (primary key), source (categorical),
+ *     last-activity timestamp (recency signal).
+ *   - Hidden: user_id (rarely scanned on phone), status (low-cardinality
+ *     duplicate of source), first_seen (second timestamp redundant with
+ *     last-activity).
+ *   - Filter inputs stack full-width; 16px font-size already set above
+ *     defeats iOS auto-zoom on focus. Min-height 44px keeps tap targets
+ *     in the WCAG 2.5.5 minimum. Export links get extra padding for the
+ *     same reason.
+ *   - Table wrap retains overflow-x: auto from the base rule so any
+ *     residual overflow scrolls instead of breaking the page.
+ *
+ * Column index note: first_seen is the 3rd column (.adm-ea-th--ts
+ * appears twice — first as last-activity, second as first-seen). We
+ * target the 3rd <th>/<td> via :nth-of-type(3) to hide first_seen only,
+ * leaving last-activity visible.
+ */
 
 @media (max-width: 720px) {
   .adm-ea-filter__field { flex-basis: 100%; }
@@ -427,8 +510,40 @@
     align-items: flex-start;
     gap: 8px;
   }
+
+  /* Hide low-priority columns: first_seen (3rd col), user_id, status. */
+  .adm-ea-th--ts:nth-of-type(3),
+  .adm-ea-td--ts:nth-of-type(3),
   .adm-ea-th--uid,
-  .adm-ea-td--uid {
+  .adm-ea-td--uid,
+  .adm-ea-th--status,
+  .adm-ea-td--status {
     display: none;
+  }
+
+  /* Horizontal-scroll fallback if remaining cols still overflow. */
+  .adm-ea-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .adm-ea-table {
+    min-width: 0;
+  }
+
+  /* iOS no-zoom on input focus + 44×44px tap targets. */
+  .adm-ea-filter__input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  /* Export links need padding to reach the 44px tap-target minimum. */
+  .adm-ea-export {
+    display: inline-block;
+    min-height: 44px;
+    line-height: 44px;
+    padding: 0 4px;
+  }
+  .adm-ea-summary__exports {
+    gap: 16px;
   }
 }
