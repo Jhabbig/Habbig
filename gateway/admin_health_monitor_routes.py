@@ -92,15 +92,24 @@ def _uptime_24h(slug: str) -> Optional[float]:
 
 
 def _probe(service: dict, client: httpx.Client) -> dict:
-    """GET http://localhost:<port>/health with a 2s timeout.
+    """GET http://localhost:<port>/health with a 2s timeout, then fall back
+    to GET / if /health 404s.
 
     Returns the public-facing dict shape: ``{name, slug, port, status,
     latency_ms, last_check, uptime_24h}``.
 
-    Uses GET (not HEAD): the gateway's /health is registered as @app.get
-    and some subproduct backends similarly only accept GET. HEAD returns
-    404 against those routes, which produced a false-positive "DOWN"
-    status across every service in the dashboard (2026-05-15 fix).
+    Status semantics tuned for "is this service alive":
+      * 2xx / 3xx / 401 / 403 → UP (process alive, just route gating differs)
+      * 4xx (other) → UP if a fallback probe of / also responds, else DOWN
+      * 5xx → degraded (we report `down` so the dashboard flags it)
+      * timeout / connection refused → DOWN (process not listening)
+
+    History: an earlier rev probed with HEAD which 404s on @app.get-only
+    routes, producing a false-positive DOWN across every service. The
+    current rev probes with GET and accepts non-5xx responses as alive,
+    because subproduct dashboards have different /health implementations
+    (some don't expose it, some require auth) and the monitor's actual
+    job is "is the process up", not "is /health 200".
     """
     port = service["port"]
     url = f"http://localhost:{port}/health"
@@ -110,8 +119,23 @@ def _probe(service: dict, client: httpx.Client) -> dict:
     try:
         resp = client.get(url, timeout=2.0)
         latency_ms = int((time.monotonic() - started) * 1000)
-        if 200 <= resp.status_code < 300:
+        code = resp.status_code
+        if 200 <= code < 400 or code in (401, 403):
             status = "slow" if latency_ms >= 500 else "up"
+        elif code == 404:
+            # No /health route. Fall back to root — any non-5xx means
+            # the process is alive and serving HTTP.
+            try:
+                fallback = client.get(f"http://localhost:{port}/", timeout=2.0)
+                latency_ms = int((time.monotonic() - started) * 1000)
+                if fallback.status_code < 500:
+                    status = "slow" if latency_ms >= 500 else "up"
+                else:
+                    status = "down"
+            except Exception:
+                status = "down"
+        elif code >= 500:
+            status = "down"
         else:
             status = "down"
     except httpx.TimeoutException:
