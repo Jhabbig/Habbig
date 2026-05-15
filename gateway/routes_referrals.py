@@ -45,6 +45,65 @@ def _current_user(request: Request):
     return _cu(request)
 
 
+def _require_paid_user(request: Request):
+    """Audit HIGH (2026-05-15) — leaderboard surfaces are paying-only.
+
+    Mirrors routes_sharing._require_paid: returns the user dict if the
+    caller has an active paid tier (trader/pro/enterprise) or is admin;
+    returns None for free / trial / suspended / paused users so the
+    caller can reply 402.
+
+    Lazy import keeps this file free of a hard dependency on the queries
+    package at module load (server.py is the one that wires routers).
+    """
+    user = _current_user(request)
+    if not user:
+        return None
+    if user.get("is_admin"):
+        return {**user, "tier": "pro"}
+    from queries.subscriptions import get_user_subscription_tier
+    tier = get_user_subscription_tier(user["user_id"])
+    if tier in ("trader", "pro", "enterprise"):
+        return {**user, "tier": tier}
+    return None
+
+
+def _band_user_count(n: int) -> str:
+    """Audit HIGH (2026-05-15) — never publish the exact user count to
+    paying customers. A banded approximation removes the side-channel
+    that lets a logged-in user track headcount growth day-over-day.
+
+    Bands:
+      < 100    -> "<100"
+      < 1_000  -> "100+"
+      < 10_000 -> rounded to nearest 1_000 with a "+" suffix
+      ≥ 10_000 -> rounded to nearest 10_000 with a "+" suffix
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "<100"
+    if n < 100:
+        return "<100"
+    if n < 1_000:
+        return "100+"
+    if n < 10_000:
+        rounded = (n // 1_000) * 1_000
+        return f"{rounded:,}+"
+    rounded = (n // 10_000) * 10_000
+    return f"{rounded:,}+"
+
+
+def _participate_rate_limited(user_id: int) -> bool:
+    """Audit HIGH (2026-05-15) — cap participate POST/DELETE at 5 per
+    hour per user so a paying account can't churn the leaderboard
+    handle (or its opt-in state) into a spam vector. Uses the same
+    Redis-backed sliding window as the rest of the gateway via
+    server._is_rate_limited."""
+    from server import _is_rate_limited as _irl
+    return _irl(f"leaderboard-write:{user_id}", 5, 3600)
+
+
 def _render_page(name: str, request: Request, **context):
     from server import render_page as _rp
     return _rp(name, request=request, **context)
@@ -284,10 +343,25 @@ async def leaderboard_page(request: Request):
 async def api_leaderboard(
     request: Request, period: str = "all", limit: int = 100,
 ):
-    """Opt-in users ranked by accuracy. Paid-only — same guard as the page."""
-    user = _current_user(request)
-    if not user:
+    """Opt-in users ranked by accuracy. Paid-only — same guard as the page.
+
+    Audit HIGH (2026-05-15) — previously this endpoint only checked
+    authentication, contradicting the docstring and leaking the
+    competitive leaderboard to free / trial accounts. Now gated by
+    ``_require_paid_user`` and replies 402 for non-paying callers. The
+    user count returned is now banded (never the exact integer) and
+    the per-row handle fallback no longer leaks raw ``user_id`` values
+    when a participant opted in without setting a display name.
+    """
+    # Identity layer first so the 401/402 boundary is unambiguous.
+    if not _current_user(request):
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    user = _require_paid_user(request)
+    if not user:
+        return JSONResponse(
+            {"error": "paid subscription required"},
+            status_code=402,
+        )
 
     if period not in ("all", "90d", "30d", "7d"):
         period = "all"
@@ -303,10 +377,15 @@ async def api_leaderboard(
             "SELECT COUNT(*) AS n FROM users "
             "WHERE COALESCE(is_deleted, 0) = 0 AND COALESCE(suspended, 0) = 0"
         ).fetchone()
+    raw_total = int(total_users_row["n"] if total_users_row else 0)
 
     out = []
     for i, r in enumerate(rows, start=1):
-        handle = (r["handle"] or "").strip() or f"user_{r['user_id']}"
+        # Never echo back the raw user_id — that's a stable internal
+        # identifier and lets the leaderboard be used as a directory of
+        # account numbers. If the participant never set a handle, render
+        # them as "anonymous" instead.
+        handle = (r["handle"] or "").strip() or "anonymous"
         out.append({
             "rank": i,
             "is_you": r["user_id"] == user["user_id"],
@@ -321,17 +400,34 @@ async def api_leaderboard(
         "period": period,
         "rows": out,
         "participants": participants,
-        "total_users_approx": int(total_users_row["n"] if total_users_row else 0),
+        # Banded — clients should treat this as a display string, not
+        # an integer. The old key name is preserved for client compat.
+        "total_users_approx": _band_user_count(raw_total),
         "my_rank": my_rank,
     })
 
 
 @router.post("/api/leaderboard/participate")
 async def api_leaderboard_participate(request: Request):
-    """Opt-in or update display name. Body: {display_name: str}."""
-    user = _current_user(request)
-    if not user:
+    """Opt-in or update display name. Body: {display_name: str}.
+
+    Audit HIGH (2026-05-15) — paid-only + per-user write rate limit
+    (5/hour) so a hijacked or abusive account can't burn through
+    handle changes / opt-flips on the public leaderboard.
+    """
+    if not _current_user(request):
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    user = _require_paid_user(request)
+    if not user:
+        return JSONResponse(
+            {"error": "paid subscription required"},
+            status_code=402,
+        )
+    if _participate_rate_limited(user["user_id"]):
+        return JSONResponse(
+            {"error": "leaderboard write limit reached — try again later"},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:
@@ -364,10 +460,24 @@ async def api_leaderboard_participate(request: Request):
 
 @router.delete("/api/leaderboard/participate")
 async def api_leaderboard_opt_out(request: Request):
-    """Opt out. Idempotent."""
-    user = _current_user(request)
-    if not user:
+    """Opt out. Idempotent.
+
+    Audit HIGH (2026-05-15) — same paywall + 5/hour write quota as the
+    POST companion.
+    """
+    if not _current_user(request):
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    user = _require_paid_user(request)
+    if not user:
+        return JSONResponse(
+            {"error": "paid subscription required"},
+            status_code=402,
+        )
+    if _participate_rate_limited(user["user_id"]):
+        return JSONResponse(
+            {"error": "leaderboard write limit reached — try again later"},
+            status_code=429,
+        )
     dbr.set_leaderboard_participation(user["user_id"], participate=False)
     return JSONResponse({"ok": True})
 
