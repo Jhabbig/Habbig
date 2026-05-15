@@ -658,6 +658,12 @@ def _auth_page(error=""):
 </body></html>"""
 
 
+@app.get("/health")
+def health() -> dict:
+    """Liveness probe for the admin health monitor."""
+    return {"ok": True, "service": "crypto-dashboard", "ts": time.time()}
+
+
 @app.get("/login")
 async def login_page(request: Request):
     if _check_auth(request):

@@ -410,6 +410,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health")
+def health() -> dict:
+    """Liveness probe for the admin health monitor."""
+    return {"ok": True, "service": "sports-dashboard", "ts": time.time()}
+
+
 # In-memory state
 dashboard_data = {
     "comparisons": [],

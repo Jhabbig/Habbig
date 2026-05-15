@@ -973,6 +973,12 @@ def log_signal(market_id: str, question: str, category: str,
 
 # ─── API ───────────────────────────────────────────────────────────────────────
 
+@app.route("/health")
+def health():
+    """Liveness probe for the admin health monitor."""
+    return jsonify({"ok": True, "service": "weather-dashboard", "ts": time.time()})
+
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")

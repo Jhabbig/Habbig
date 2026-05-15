@@ -1291,9 +1291,15 @@ def manifest():
     return resp
 
 
+@app.route("/health")
+def health():
+    """Liveness probe for the admin health monitor."""
+    return jsonify({"ok": True, "service": "climate-dashboard", "ts": time.time()})
+
+
 @app.route("/api/health")
 def api_health():
-    return jsonify({"ok": True, "service": "climate-dashboard", "ts": time.time()})
+    return health()
 
 
 @app.route("/api/markets")
