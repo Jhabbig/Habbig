@@ -907,21 +907,26 @@ def _aggregate_email_rows(c) -> list[dict]:
 
     # 7) Outbound queue recipients — inside JSON payload on background_jobs
     #    rows where name='send_email'. We cap at 2000 most-recent rows to
-    #    bound the in-Python loop on production-size databases.
+    #    bound the in-Python loop on production-size databases. SQLite's
+    #    json_extract pulls the 'to' field directly so we avoid parsing
+    #    each payload in Python.
     try:
         ob = c.execute(
-            "SELECT payload, enqueued_at, status FROM background_jobs "
-            "WHERE name = 'send_email' "
-            "ORDER BY enqueued_at DESC LIMIT 2000"
+            "SELECT\n"
+            "    json_extract(payload, '$.to') AS recipient,\n"
+            "    enqueued_at,\n"
+            "    status\n"
+            "FROM background_jobs\n"
+            "WHERE name = 'send_email'\n"
+            "  AND json_valid(payload) = 1\n"
+            "  AND json_extract(payload, '$.to') IS NOT NULL\n"
+            "ORDER BY enqueued_at DESC\n"
+            "LIMIT 2000"
         ).fetchall()
     except Exception:
         ob = []
     for r in ob:
-        try:
-            data = _json.loads(r["payload"] or "{}")
-        except Exception:
-            continue
-        to = (data.get("to") or "").strip()
+        to = (r["recipient"] or "").strip()
         if not to:
             continue
         rows.append({
@@ -980,6 +985,7 @@ def aggregate_email_addresses(
     q=None,
     since=None,
     until=None,
+    status=None,
     limit=200,
     offset=0,
     sort="ts",
@@ -1023,7 +1029,7 @@ def aggregate_email_addresses(
         with db.conn() as new_c:
             return aggregate_email_addresses(
                 new_c, source=source, q=q, since=since, until=until,
-                limit=limit, offset=offset,
+                status=status, limit=limit, offset=offset,
                 sort=sort, sort_dir=sort_dir,
             )
 
@@ -1092,6 +1098,10 @@ def aggregate_email_addresses(
             out = [r for r in out if (r["ts"] or 0) <= until_i]
         except (TypeError, ValueError):
             pass
+    if status:
+        st = str(status).strip().lower()
+        if st:
+            out = [r for r in out if (r.get("status") or "").lower() == st]
 
     # Sort. Whitelist the field so a malicious ?sort= can't crash the page
     # or expose dict internals. Fall back to ts/desc on anything unknown.
