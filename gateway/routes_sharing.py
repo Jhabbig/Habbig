@@ -538,7 +538,7 @@ async def api_share_prediction(request: Request):
 async def settings_invites(request: Request):
     user = _require_paid(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     return _render_page("invites_settings", request)
 
 

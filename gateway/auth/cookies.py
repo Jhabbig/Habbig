@@ -115,8 +115,14 @@ def clear_pending_token_cookie(response: Response, request: Request) -> None:
 
 
 def read_pending_token(request: Request) -> Optional[str]:
-    """Return the raw invite token from the pending cookie, or None."""
-    return verify_pending_token(request.cookies.get(PENDING_TOKEN_COOKIE, ""))
+    """Return the raw invite token from the pending cookie, or None.
+
+    NOTE: invite-token system retired 2026-05-15. This stub remains so any
+    caller that still imports the name doesn't break, but it always returns
+    None. set_pending_token_cookie/clear_pending_token_cookie are likewise
+    kept as no-op-safe stubs (they still touch cookies, harmlessly).
+    """
+    return None
 
 
 def set_session_cookie_hardened(response: Response, raw_session_token: str, request: Request) -> None:

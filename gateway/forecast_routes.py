@@ -205,7 +205,7 @@ async def dashboard_models(request: Request):
     user = current_user(request)
     if not user:
         from fastapi.responses import RedirectResponse
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if not _user_is_pro(user) and not user.get("is_admin"):
         from fastapi.responses import RedirectResponse
         return RedirectResponse("/billing?upgrade=models", status_code=302)
@@ -379,7 +379,7 @@ async def admin_equivalences(request: Request):
         # _require_admin_user returned a RedirectResponse or None
         from fastapi.responses import RedirectResponse
         if user is None:
-            return RedirectResponse("/token", status_code=303)
+            return RedirectResponse("/login", status_code=303)
         return user
 
     summary = db_forecasts.equivalence_summary()

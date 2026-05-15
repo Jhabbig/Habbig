@@ -614,7 +614,7 @@ async def settings_embeds_page(request: Request):
         return await proxy_request(request, "/settings/embeds")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     username = user["username"] or (user["email"] or "").split("@")[0]
     role_badge = _role_badge(user)
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""

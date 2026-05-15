@@ -70,10 +70,11 @@ def require_pending_token(request: Request) -> Optional[RedirectResponse]:
     """
     raw = read_pending_token(request)
     if not raw:
-        return RedirectResponse("/token", status_code=302)
-    invite = db.get_invite_token(raw)
-    if not invite or invite["status"] == "revoked":
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
+    # REMOVED: invite-token system retired 2026-05-15
+    # invite = db.get_invite_token(raw)
+    # if not invite or invite["status"] == "revoked":
+    #     return RedirectResponse("/login", status_code=302)
     return None
 
 
@@ -95,7 +96,7 @@ def require_hardened_session(request: Request) -> Optional[RedirectResponse]:
             return None
     except Exception:
         pass
-    return RedirectResponse("/token", status_code=302)
+    return RedirectResponse("/login", status_code=302)
 
 
 def require_hardened_admin(request: Request) -> Optional[RedirectResponse]:

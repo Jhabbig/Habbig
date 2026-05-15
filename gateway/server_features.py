@@ -1158,7 +1158,7 @@ async def api_update_saved_notes(request: Request, prediction_id: int):
 async def saved_page(request: Request):
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     from server import _role_badge  # type: ignore
     admin_link = '<a href="/admin" class="nav-item">Admin</a>' if user.get("is_admin") else ""
     nav_role = _role_badge(user)
@@ -1457,14 +1457,16 @@ async def auth_validate_token(request: Request):
             headers={"Retry-After": "600"},
         )
 
-    invite = db.get_invite_token(raw_token)
-    if not invite or invite["status"] == "revoked":
-        return JSONResponse({"valid": False})
-
-    claimed = invite["status"] == "claimed"
-    email_hint = ""
-    if claimed and invite["claimed_by_email"]:
-        email_hint = db.mask_email(invite["claimed_by_email"])
+    # REMOVED: invite-token system retired 2026-05-15
+    # invite = db.get_invite_token(raw_token)
+    # if not invite or invite["status"] == "revoked":
+    #     return JSONResponse({"valid": False})
+    #
+    # claimed = invite["status"] == "claimed"
+    # email_hint = ""
+    # if claimed and invite["claimed_by_email"]:
+    #     email_hint = db.mask_email(invite["claimed_by_email"])
+    return JSONResponse({"valid": False})
 
     resp = JSONResponse({
         "valid": True,
@@ -1488,12 +1490,14 @@ async def register_page(request: Request):
     if redirect:
         return redirect
     raw_token = read_pending_token(request)
-    invite = db.get_invite_token(raw_token) if raw_token else None
+    # REMOVED: invite-token system retired 2026-05-15
+    # invite = db.get_invite_token(raw_token) if raw_token else None
+    invite = None
     if not invite or invite["status"] != "unclaimed":
         # Claimed tokens go to /login instead
         if invite and invite["status"] == "claimed":
             return RedirectResponse("/login", status_code=302)
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     target_email = ""
     try:
         target_email = invite["target_email"] or ""
@@ -1604,7 +1608,9 @@ async def auth_register(request: Request):
         return JSONResponse({"error": pw_err, "field": "password"}, status_code=400)
 
     # Token must still be valid and unclaimed at write time.
-    invite = db.get_invite_token(raw_token)
+    # REMOVED: invite-token system retired 2026-05-15
+    # invite = db.get_invite_token(raw_token)
+    invite = None
     if not invite or invite["status"] != "unclaimed":
         return JSONResponse(
             {"error": "This token has already been claimed."},
@@ -1763,7 +1769,9 @@ async def auth_login(request: Request):
     if not password or len(password) > 256:
         return JSONResponse({"error": "Incorrect password."}, status_code=401)
 
-    invite = db.get_invite_token(raw_token)
+    # REMOVED: invite-token system retired 2026-05-15
+    # invite = db.get_invite_token(raw_token)
+    invite = None
     if not invite or invite["status"] != "claimed":
         return JSONResponse(
             {"error": "This token is not linked to an account."},

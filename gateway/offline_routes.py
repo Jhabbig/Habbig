@@ -67,7 +67,7 @@ async def settings_offline_page(request: Request):
     """
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     return render_page(
         "settings_offline",
         request=request,

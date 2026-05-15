@@ -281,7 +281,7 @@ async def affiliate_dashboard(request: Request):
     active ``AffiliateAccount``."""
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     aff = da.get_affiliate_by_user_id(user["user_id"])
     if not aff or not aff["is_active"]:

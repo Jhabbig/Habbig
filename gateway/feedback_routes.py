@@ -307,7 +307,7 @@ async def feedback_list_page(request: Request):
         return await proxy_request(request, "/feedback")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     status = request.query_params.get("status")
     type_ = request.query_params.get("type")
@@ -399,7 +399,7 @@ async def feedback_detail_page(request: Request, item_id: int):
         return await proxy_request(request, f"/feedback/{item_id}")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     with db.conn() as c:
         row = c.execute("SELECT * FROM feedback_items WHERE id = ?", (item_id,)).fetchone()
@@ -724,7 +724,7 @@ def _require_admin(request: Request) -> dict:
 async def admin_feedback_page(request: Request):
     user = current_user(request)
     if not user or not user.get("is_admin"):
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     filter_status = request.query_params.get("status")
     items = _list_items(

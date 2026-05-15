@@ -212,8 +212,10 @@ async def api_invite_accept(code: str, request: Request):
         note=f"via referral code {referrer['referral_code']}",
         target_email=email,
     )
-    token_row = db.get_invite_token(token_str)
-    token_id = token_row["id"] if token_row else None
+    # REMOVED: invite-token system retired 2026-05-15
+    # token_row = db.get_invite_token(token_str)
+    # token_id = token_row["id"] if token_row else None
+    token_id = None
 
     referral_id = dbr.create_referral(
         referrer_user_id=referrer["id"],
@@ -255,7 +257,7 @@ async def settings_referrals_page(request: Request):
     """Private referrer panel. Paid subscribers only."""
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     # Lazy-assign the user's referral_code the first time they visit.
     dbr.ensure_user_referral_code(user["user_id"])
     return _render_page(
@@ -329,7 +331,7 @@ async def leaderboard_page(request: Request):
     """Private leaderboard page. Paying subscribers only."""
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     return _render_page(
         "leaderboard", request,
         breadcrumb=[

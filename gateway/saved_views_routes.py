@@ -377,7 +377,7 @@ async def page_settings(request: Request):
     import server
     user = server.current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     username = user.get("username") or (user.get("email") or "").split("@")[0]
     role_badge = ""

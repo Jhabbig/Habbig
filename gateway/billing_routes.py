@@ -485,7 +485,7 @@ async def settings_billing_page(request: Request):
         return await proxy_request(request, "/settings/billing")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     subs_dict = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     now_ts = int(time.time())
@@ -854,7 +854,7 @@ async def settings_billing_cancel_flow(request: Request):
     """
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     pinfo = _user_plan_info(user, subs, int(time.time()))
@@ -924,7 +924,7 @@ async def settings_billing_cancel(
     user = current_user(request)
     _billing_rate_limit(user, "cancel")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     try:
         attempt_id_int = int(attempt_id)
@@ -1035,7 +1035,7 @@ async def settings_billing_pause(
     user = current_user(request)
     _billing_rate_limit(user, "pause")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     try:
         pause_days = max(7, min(90, int(days)))
@@ -1077,7 +1077,7 @@ async def settings_billing_resume(request: Request):
     user = current_user(request)
     _billing_rate_limit(user, "resume")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     with db.conn() as c:
         c.execute(
             "UPDATE users SET subscription_paused_until = NULL WHERE id = ?",
@@ -1099,7 +1099,7 @@ async def settings_billing_resubscribe(request: Request):
     user = current_user(request)
     _billing_rate_limit(user, "resubscribe")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     now = int(time.time())
     with db.conn() as c:
         c.execute(
@@ -1144,7 +1144,7 @@ async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
     user = current_user(request)
     _billing_rate_limit(user, "addon")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if addon != "trading":
         return RedirectResponse("/settings/billing", status_code=302)
     uid = user["user_id"]
@@ -1254,7 +1254,7 @@ async def settings_billing_addon_cancel(request: Request, addon: str = Form(...)
     user = current_user(request)
     _billing_rate_limit(user, "addon_cancel")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if addon != "trading":
         return RedirectResponse("/settings/billing", status_code=302)
     db.set_trading_addon(user["user_id"], False, None)
@@ -1299,7 +1299,7 @@ async def api_billing_portal(request: Request):
     user = current_user(request)
     _billing_rate_limit(user, "portal")
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     log.info(
         "User %s requested Stripe portal (stubbed)",
         user.get("username", user["email"]),
