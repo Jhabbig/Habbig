@@ -2556,7 +2556,18 @@ def _newsletter_md_to_html(body_md: str) -> str:
     (some support raw HTML by default). The set below covers the 95% of
     what an announcement actually needs and lets us escape everything
     else, so a runaway "<script>" in a body never reaches a recipient.
+
+    HIGH fix (XSS via raw_body_html in newsletter_blast.html): every
+    return path here is fed into the email template via the ``raw_``
+    prefix that skips HTML-escape, so a compromised admin account could
+    otherwise mass-phish the subscriber list. The final pass runs the
+    rendered HTML through ``sanitize_newsletter_html`` — an allowlist
+    sanitizer that drops script/iframe/on*/javascript:/data: — so the
+    outbound body is constrained to a tiny audited tag set regardless of
+    what an attacker stuffs into the upstream markdown or what bugs
+    sneak into the regex pipeline above.
     """
+    from email_system.sanitizer import sanitize_newsletter_html
     safe = html.escape(body_md or "")
 
     # Headings — must run before paragraph wrapping.
@@ -2623,7 +2634,16 @@ def _newsletter_md_to_html(body_md: str) -> str:
                 f'<p style="margin:0 0 16px;color:#0d0d0d;line-height:1.6;">'
                 f'{block}</p>'
             )
-    return "\n".join(blocks)
+    # Final allowlist pass. ``sanitize_newsletter_html`` only keeps
+    # p/a/strong/em/ul/ol/li/br/h2/h3/img and drops the inline ``style``
+    # attribute. The wrapper template in newsletter_blast.html owns the
+    # visual frame, so losing per-tag inline styling here is intentional
+    # — the email still renders, just without the markdown-renderer's
+    # opinionated colors/padding on individual nodes. The win is that
+    # ANYTHING that slipped through the regex pipeline above (script,
+    # iframe, onclick, javascript: href, …) is now stripped before
+    # reaching ``raw_body_html`` in the email template.
+    return sanitize_newsletter_html("\n".join(blocks))
 
 
 def _render_newsletter_history_rows(campaigns: list[dict]) -> str:
@@ -2787,6 +2807,9 @@ async def newsletter_preview(request: Request):
 
     Used by the inline "Preview" button on the compose form. Returns
     the rendered HTML body so the admin can sanity-check before sending.
+    The sanitizer runs inside ``_newsletter_md_to_html`` so the preview
+    matches what every recipient (inline send + deferred-tail worker)
+    actually receives.
     """
     _require_admin_user(request)
     form = await request.form()
@@ -2903,6 +2926,11 @@ async def newsletter_send(request: Request):
     if schedule == "now":
         # Render the markdown body once — every enqueued recipient gets
         # the same HTML so we don't repeat the regex passes per send.
+        # ``_newsletter_md_to_html`` now runs the rendered HTML through
+        # ``sanitize_newsletter_html`` (HIGH XSS fix), so the body that
+        # lands in ``raw_body_html`` is constrained to the allowlist
+        # even though the email template skips HTML-escape via the
+        # ``raw_`` prefix convention.
         body_html_str = _newsletter_md_to_html(body_md)
         from jobs.email_jobs import enqueue_email
 

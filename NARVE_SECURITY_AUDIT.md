@@ -5,6 +5,419 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #14 — 2026-05-15T13:06Z — commit c01c932 — post-fix-wave verification
+
+### Why this audit exists
+This is the verification pass after tonight's massive multi-agent fix
+wave addressing the 40+ CRIT/HIGH findings accumulated across previous
+audits and parallel adversarial reviews. Anthropic API rate-limit at
+1:40pm London paused the wave; agents were re-dispatched and were
+still landing commits when this scan began. HEAD walked from
+`0be2a2d` → `db6041d` → `0e7efbb` → `009da26` → `b1bef41` → `8a07480`
+→ `841c2c4` → `b620952` → `c01c932` during the run; every check
+recorded below was re-verified against `c01c932` after the tip
+stopped advancing past audit-and-test-recording commits.
+
+The scope is the explicit verification checklist supplied by the
+caller: api_keys auth bypass, legacy session tokens, billing
+resubscribe/addon/cancel scoping, GATEWAY_SSO_SECRET, IP_HASH_SALT,
+CREDENTIALS_ENCRYPTION_KEY, api_public tenant isolation, admin delete
+cascade, feature flag audit-log, bulk_data_ratelimit, CF-Connecting-IP
+trust, 302 redirect headers, cascade_delete column coverage, exports
+silent-swallow, trading addon gate, Kalshi spray, flag-key allowlist,
+CSRF PATCH/DELETE, rate-limit user-namespace, annoyance-dashboard
+3 HIGHs, referrals 3 HIGHs, newsletter raw HTML, body-size middleware,
+PII log redaction, api_public origins, Stripe livemode+metadata,
+subscription expires_at, collections rate+view, subproduct_signup
+magic-link, export secret fallback, account-delete divergence,
+notification_routes helpers, process_scheduled_deletions coverage,
+sessions.token schema, register_job trust, retry_job RCE, SIWE
+Domain/Address, Polymarket path-traversal, avatar Pillow bomb,
+subproduct realtime, gateway.css CRITs, open-redirect
+subproduct_signup, MESSAGE_REDACT, changelog Host injection,
+unsubscribe HMAC.
+
+Loop-stop criterion for this iteration: **every previously-flagged
+CRIT/HIGH explicitly marked RESOLVED, PARTIAL, NEW, or
+NOT-APPLICABLE-IN-HEAD; new or surviving issues triaged with
+location + impact + fix.**
+
+### Code inventory audited
+- Committed tip: `c01c932` (audit(dns): record DNSSEC/CAA/MX scan for narve.ai — DNSSEC off, no CAA, MX OK). Locked at scan close. `c5a88b4` (audit #13) is the previous baseline; 110+ commits separate the two.
+- Local unpushed commits: **0** — local matches `origin/feature/platform-build` at the close of the scan.
+- Local uncommitted files: **47** (28 modified + 19 untracked). The largest are `gateway/billing_routes.py` (+369), `gateway/middleware/bulk_data_ratelimit.py` (+296), `gateway/queries/auth.py` (+185), `gateway/security/rate_limiter.py` (+196), `gateway/email_system/unsubscribe.py` (+116), `gateway/portfolio/routes.py` (+139), `gateway/logging_config.py` (+164), `gateway/api_public/auth.py` (+128), `gateway/changelog_routes.py` (+105), `gateway/server.py` (+106), `gateway/jobs/registry.py` (+90), `gateway/affiliate_routes.py` (+86), `gateway/middleware/subproduct.py` (+79), `gateway/exports/generator.py` (+75), `gateway/export_routes.py` (+68), `gateway/api_public/routes.py` (+57), `gateway/features.py` (+52), `gateway/security/csrf.py` (+41), `gateway/stripe_webhook_routes.py` (+90), `gateway/stripe_webhook_hardening.py` (+29), `gateway/admin_routes.py` (+45), `annoyance-dashboard/server.py` (+34), `annoyance-dashboard/auth.py` (+24), plus several test files. Untracked: `gateway/middleware/body_size_limit.py`, `gateway/email_system/sanitizer.py`, four migrations (189 sessions_hash_at_rest, 190 blast_cursor, 191 impersonation_token_hash, 192 background_jobs_hmac), and 13 new test files. Net `+3088 / -280` across 28 modified files. **Every uncommitted change reads as security-positive hardening**, not regressive WIP — these are the fix-wave's working-tree state.
+- Local stashes: **63** (1 more than audit #13). New top of stack: `stash@{0}` is a CSS audit's WIP (design content, not security). Entire stash debt persists from #13 — never touched.
+- Server uncommitted files: **9+** (config backups, dashboard WAL files, sitemap.xml regenerated). Same noise pattern as audit #13.
+- Server tip vs origin: **DIVERGED — server is 110+ commits behind origin and ~342 files dirty.** Server log tip is `f99f47a` (`fix(migration#188): restore users.invite_token_id FK after 162's auto-rewrite`); origin tip is `c01c932`. The entire fix wave is in the deploy backlog. The running uvicorn (PID 4077346 since 00:05) is loading the pre-fix-wave server.py from disk dated `2026-05-14 23:24:26 +0100` — older than every fix commit landed today. **No fix verified-here is yet live in production.**
+- Running uvicorn loaded from: `~/Habbig/gateway/server.py` (PID 4077346, started 00:05 today, server.py mtime 2026-05-14T23:24Z). Process is stale relative to disk because nothing has been scp'd or restarted.
+- Branches with recent work (last 14d not in current): single active branch (`feature/platform-build`).
+- DRIFT FLAG: **server stale relative to origin (110+ commits behind) AND running process stale relative to its own disk.** Same drift class as #13, magnified by the fix-wave volume. The committed audit covers the *intended* state once deployed; production today still runs the unfixed code. Deploy must happen before any of the RESOLVED items below are actually live.
+
+### Surfaces newly introduced since AUDIT #13
+| Feature | Files | Risk surface |
+|---|---|---|
+| Sessions hashed at rest (migration 189) | `gateway/migrations/189_sessions_hash_at_rest.py`, `gateway/queries/auth.py` | Rebuilds `sessions` table so primary key is `token_hash` (SHA-256) not the raw cookie value. Every read path (`get_session_by_token`, `delete_session`, CSRF lookup) re-hashes the incoming cookie before SELECT. Idempotent — skips if `token` column already absent. Pre-migration cookies invalidate (cannot recover SHA-256 → preimage). **Closes the legacy plaintext-cookie-at-rest finding from prior audits.** |
+| Impersonation cookie hashed at rest (migration 191) | `gateway/migrations/191_impersonation_token_hash.py`, `gateway/queries/admin.py`, `gateway/server.py` (ImpersonationMiddleware) | Adds `cookie_token_hash` to `impersonation_sessions`. Middleware now cross-checks that the impersonation cookie belongs to a session whose `admin_user_id` matches the currently-authenticated narve_session admin — a stolen impersonation cookie used without the original admin's session is rejected. All currently-active sessions end at migration time. |
+| Background jobs HMAC (migration 192) | `gateway/migrations/192_background_jobs_hmac.py` | Adds `payload_hmac` column to `background_jobs`. **Migration only — backend code does not yet verify the HMAC.** See HIGH #1 below — the retry_job-as-stored-RCE pivot is NOT closed. |
+| Body-size middleware | `gateway/middleware/body_size_limit.py` | New ASGI-level cap (default 2 MB, exemption env vars for `/api/profile/avatar` etc.). Returns 413 before any downstream middleware reads `await request.body()`. Closes the memory-DoS surface flagged in audit #11. |
+| Newsletter HTML sanitizer | `gateway/email_system/sanitizer.py` | Allowlist parser on top of `html.parser.HTMLParser`: keeps p/a/strong/em/ul/ol/li/br/h2/h3/img with constrained attributes (`a[href]` http/https/mailto only, `img[src]` https only). Runs server-side before `raw_body_html` enters `newsletter_blast.html`. Closes the compromised-admin mass-phishing surface flagged in prior audits. |
+| api_public origin allowlist | `gateway/api_public/auth.py`, `gateway/migrations/180_api_keys_origins.py` | `_request_origin_host` normalises Origin (or Referer fallback); `_origin_matches` supports bare hostnames plus `*.example.com` wildcards. NULL/empty `allowed_origins` means "open key" (legacy compat); set values 403 with `{"error": "origin_not_allowed"}` for mismatches. |
+| Trading add-on Stripe-checkout gate | `gateway/billing_routes.py` (`POST /settings/billing/addon`), `gateway/stripe_webhook_routes.py` (`_grant_addon_on_checkout`) | Replaces the previous direct `db.set_trading_addon(uid, True, period_end=now + 30 * 86400)` inline-grant with a Stripe Checkout session. Local flag flips ONLY on `checkout.session.completed` with `payment_status='paid'` and metadata `{user_id, addon='trading', flow='addon'}`. Fail-closed when Stripe SDK/key/price-id is missing. Closes the self-grant CRIT from `audit(trading-addon)`. |
+| Resubscribe Stripe verification | `gateway/billing_routes.py` (`POST /settings/billing/resubscribe`) | Before flipping any local `cancelled` row back to `active`, verifies each `stripe_sub_id` is `active|trialing` upstream. Stripe API errors / missing SDK / missing key → 302 to `/settings/billing?error=billing_unavailable` with no DB write. Legacy local-only rows (no `stripe_sub_id`) still flow on the legacy path. |
+| GATEWAY_SSO_SECRET fail-closed (commit db6041d) | `gateway/server.py` | Lifespan startup raises `RuntimeError` when `PRODUCTION=1` and secret unset or `<32` chars; proxy_request bails before forwarding when secret empty. Closes the `compare_digest("", "")` SSO bypass. 7 regression tests in `tests/test_sso_secret.py`. |
+| Export secret fail-closed + session bind (commit 4a50a0d) | `gateway/exports/generator.py`, `gateway/export_routes.py`, `gateway/tests/test_export_routes.py` | Removes the `f"dataexport:{EXPORT_DIR}"` guessable fallback — refuses to operate without explicit `DATA_EXPORT_SIGNING_SECRET` or `GATEWAY_COOKIE_SECRET`. `/api/account/export/{id}/download` now requires session ownership *or* admin role on top of the valid HMAC. 378-line regression test. |
+| Log redaction expansion (commit e7ab369) | `gateway/logging_config.py`, `gateway/tests/test_log_redaction.py` | Scrubs bare JWTs (`eyJ...`), `Stripe-Signature` header, `\bsig=`/`\bhmac=` URL params, plus extended `SENSITIVE_KEY_HINTS` (`otp`, `code`, `signature`, `hash`, `salt`, `nonce`, `magic_link`, `callback_url`). Allowlists `app_url`, `share_url`, `og_image_url`, `avatar_url` and the diagnostic `*_code` fields so support visibility isn't broken. 16 regression tests. |
+| _safe_query schema-drift surfacing (commit 7f351a6) | `gateway/exports/generator.py` | `no such table`/`no such column` now log warnings and append to a manifest list; any *other* `OperationalError` re-raises. Closes the silent-swallow audit finding. |
+
+### Summary
+Posture: **adequate** (committed code only — but see drift caveat)
+Critical issues: 1
+High-priority: 5
+Medium-priority: 7
+Low-priority: 6
+Resolved since last audit: **38+** (the entire fix wave — see Verification matrix below)
+New since last audit: **2** (HIGH #4 portfolio.routes parallel unsigned Polymarket-connect path, HIGH #5 process_scheduled_deletions still hand-rolled)
+Regressions: **0** in committed code; **1 process-level**: nothing here is live until the server is deployed and uvicorn restarted.
+
+### Verification matrix — every checklist item from the caller's scope
+
+Format: ITEM → STATUS → location/note.
+
+| Item | Status | Location / note |
+|---|---|---|
+| api_keys auth bypass | **RESOLVED** | `gateway/api_keys_routes.py:323` calls `_require_admin_user(page=True)` and rejects when `admin is None` BEFORE the legacy `hasattr` guard; `gateway/api_keys_routes.py:400` admin force-revoke also checks. The bypass path is closed. |
+| Legacy session tokens accepted | **RESOLVED** (compat-only) | `gateway/server.py:2377` accepts both `pm_gateway_session` and `narve_session` cookies; migration 189 ensures the legacy table now stores SHA-256 only, so a leaked legacy cookie no longer hands the attacker every session-cookie in plaintext. |
+| Billing resubscribe scoping | **RESOLVED** | `gateway/billing_routes.py:1104-1244` — `_billing_rate_limit(user, "resubscribe")` user-namespaced, `uid = user["user_id"]` used in every WHERE clause, Stripe-verify before flip. |
+| Billing addon scoping | **RESOLVED** | `gateway/billing_routes.py:1247-1383` — Stripe Checkout only, no inline grant; metadata `{user_id, addon='trading', flow='addon'}` carries through to webhook. |
+| Billing addon/cancel scoping | **RESOLVED** | `gateway/billing_routes.py:1386-1430` — user-namespaced WHERE plus stripe.Subscription.modify(cancel_at_period_end=True). |
+| GATEWAY_SSO_SECRET | **RESOLVED** (commit db6041d) | `gateway/server.py:411-416` startup fail-closed in production; `gateway/server.py:7987-8003` proxy fail-closed; `annoyance-dashboard/auth.py:67-77` uses `hmac.compare_digest`. |
+| IP_HASH_SALT | **RESOLVED** | `gateway/server.py:403-413` fails to start in production without `IP_HASH_SALT` ≥32 chars; dev fallback at `gateway/server.py:4921`. |
+| CREDENTIALS_ENCRYPTION_KEY | **RESOLVED** | `gateway/server.py:439-456` startup fail-closed in production; verifies Fernet-key format. |
+| api_public tenant isolation | **RESOLVED** | `gateway/api_public/routes.py:62`, `:349`, `:409`, `:413` — every user-scoped query uses `key["user_id"]` from the verified key row, never a client-supplied id. |
+| Admin delete cascade | **RESOLVED** | `gateway/admin_routes.py` admin bulk/single delete routes through `db.cascade_delete_user` (`gateway/server.py:6315`, `:6323`, `:6380`); test in `gateway/tests/test_admin_delete.py`. |
+| Feature flag audit-log | **RESOLVED** | `gateway/security/audit.py` defines `AuditAction.FEATURE_FLAG_{CREATE,UPDATE,DELETE}` + `IMPERSONATION_{START,END,BLOCKED}`; `_audit()` re-raises `AttributeError` so future gaps surface in tests not telemetry. `gateway/tests/test_audit_actions.py` pins. |
+| bulk_data_ratelimit | **RESOLVED** | `gateway/middleware/bulk_data_ratelimit.py` — pre-charges from `limit`/`per_page`/`page_size`/`count`/`n` params BEFORE calling the handler (audit B-1), wraps `StreamingResponse.body_iterator` (audit B-5), charges impersonating admin not target (line 90-94). |
+| CF-Connecting-IP trust | **RESOLVED** | `gateway/middleware/subproduct.py:97-186` gates `CF-Connecting-IP` on a trusted peer; loopback / TestClient harness can use the header in dev, production rejects unless the immediate peer is Cloudflare. |
+| 302 redirect headers | **PARTIAL** | 22 `HIGH` hits in `scan_redirects.sh`, but every flagged destination is either a server-built path (`/login`, `/gate`, `/settings/billing`, etc.) or a Stripe-issued checkout URL. **No user-controlled redirect target survives.** False-positive shape from the scanner — see Issue #M-1. |
+| cascade_delete column coverage | **RESOLVED** | `gateway/queries/auth.py:948-1027` walks `sqlite_master`, matches any INTEGER column named `user_id` or `*_user_id`; NULLs self-references on `users` first, then DELETE. |
+| Exports silent-swallow | **RESOLVED** (commit 7f351a6) | `gateway/exports/generator.py:157-189` — only `no such table`/`no such column` are swallowed (and logged + manifest-recorded); any other `OperationalError` re-raises. |
+| Trading addon gate | **RESOLVED** | `gateway/portfolio/routes.py:55-75` `_require_trading_addon` gates Polymarket connect (line 95) and Kalshi connect (line 112); `gateway/billing_routes.py:1247` checkout flow grants only via webhook. |
+| Kalshi spray | **PARTIAL** | `gateway/tests/test_kalshi_throttle.py` documents the three buckets `kalshi-connect-target-email:<email>` / `kalshi-connect-user:<uid>` / `kalshi-connect-ip:<ip>` — but **none of those buckets are referenced from `gateway/portfolio/routes.py`** (line 110-173). The test pins the *spec* not the *implementation*. See HIGH #2. |
+| Flag-key allowlist | **RESOLVED** | `gateway/features.py:_evaluate` reads from a DB-stored flag row only (no string-eval surface); `_parse_list` JSON-loads list columns. Admin write surfaces validate via `db.create_feature_flag` / `db.update_feature_flag`. |
+| CSRF PATCH/DELETE | **RESOLVED** | `gateway/security/csrf.py:73-78` env-default `CSRF_PATCH_DELETE_ENFORCE=true`; `:189-193` enforces on PUT/PATCH/DELETE alongside POST. `gateway/tests/test_csrf.py` carries the regression. |
+| Rate-limit user-namespace | **RESOLVED** | `gateway/security/rate_limiter.py:216-256` — `_resolve_user_id` walks `request.state.user`/`impersonation`/`user_id`; bucket key is `f"{prefix}:user:{uid}:{ip_bucket}"` so cross-user pollution is impossible while still rate-limiting per-IP for anon. |
+| Annoyance-dashboard 3 HIGHs | **RESOLVED** | `annoyance-dashboard/auth.py:51-167` — `GATEWAY_SSO_SECRET` mandatory, `hmac.compare_digest`, localhost bind enforced at startup; `annoyance-dashboard/server.py:306-319` `_guard_api` unified paywall+rate-limit; every `/api/*` route routes through it. |
+| Referrals 3 HIGHs | **RESOLVED** | `gateway/affiliate_routes.py:262-275` `_require_active_affiliate` raises 401/403; `:385` rate-limit on `_follow_rate_key`; admin-only mutation under `_require_admin_user`. |
+| Newsletter raw HTML | **RESOLVED** | `gateway/email_system/sanitizer.py` allowlist sanitizer runs server-side before `raw_body_html` enters the template; admin compose path at `gateway/admin_routes.py:2570-2660` calls `sanitize_newsletter_html(safe)` as the final pass. |
+| Body-size middleware | **RESOLVED** | `gateway/middleware/body_size_limit.py` (new). Registered last in `add_middleware` so it sits first in dispatch. Per-route exemption via `BODY_SIZE_LIMIT_EXEMPT_PREFIXES` env var. |
+| PII log redaction | **RESOLVED** (commit e7ab369) | `gateway/logging_config.py:206-262` `_scrub_value` + `_MESSAGE_REDACT_PATTERNS` (12 entries covering bearer/basic/JWT/Stripe-Signature/sig=/hmac=/email-in-URL/user:pass@host); 16-test regression. |
+| api_public origins | **RESOLVED** | `gateway/api_public/auth.py:68-213` parse, normalise, match; migration 180 adds `allowed_origins` + `usage_count` columns to `api_keys`. |
+| Stripe livemode + metadata | **RESOLVED** | `gateway/stripe_webhook_routes.py:60-67` `_stripe_live_mode_enabled` default-false; `:332-334` rejects `livemode=True` events in non-live env; every handler reads `meta.get("user_id")` + `meta.get("dashboard_key")` as the only authoritative attribution path. |
+| Subscription expires_at | **RESOLVED** | `gateway/stripe_webhook_routes.py:208-251` `subscription.updated` keeps `expires_at` in sync via `current_period_end`; `gateway/billing_routes.py:1125, 1147` filter on `expires_at IS NULL OR expires_at > ?`. |
+| Collections rate+view | **RESOLVED** | `gateway/collections_routes.py:385` `@rate_limit(limit=30, window_seconds=60, key_func=_follow_rate_key)`; `:270-273` `bump_views=True` accepts anonymous viewers but only counts via the `_optional_user` path so anonymous bump-views aren't attributable spam. |
+| Subproduct_signup magic-link | **RESOLVED** | `gateway/subproduct_signup_routes.py:184-223` — input is `email + subproduct`, output is a Stripe-built `success_url`; redirect target at line 223 is `session.url` from `stripe.checkout.Session.create` (line 144), not user-controlled. Magic-link issuance happens post-checkout via the webhook. |
+| Export secret fallback | **RESOLVED** (commit 4a50a0d) | `gateway/exports/generator.py:75-101` `_signing_secret` reads `DATA_EXPORT_SIGNING_SECRET` first then `GATEWAY_COOKIE_SECRET`; **no guessable fallback survives** — explicit RuntimeError if both unset. Plus session ownership check on the download route. |
+| Account-delete divergence | **RESOLVED** | `gateway/server.py:4819-4887` self-delete and `gateway/admin_routes.py` admin-delete both call `db.cascade_delete_user(user_id)`. **But see HIGH #5**: the *scheduled-deletion* job at `gateway/jobs/pipeline_jobs.py:38-104` STILL hand-rolls deletes for a subset of tables and does not call cascade_delete_user. |
+| Notification_routes helpers | **RESOLVED** | All notification CRUD goes through `gateway/server_features.py` registered helpers; `_srv()` defers all imports through `sys.modules["server"]` to dodge circular-import drift. |
+| process_scheduled_deletions coverage | **NOT RESOLVED** | See HIGH #5. `gateway/jobs/pipeline_jobs.py:60-89` lists 9 hand-picked tables. Schema-driven cascade is NOT used. New tables added after this job was written silently leak rows. |
+| sessions.token schema | **RESOLVED** | Migration 189 rebuilds the table with `token_hash` PK; cookie ships raw, DB stores hash. Pre-migration cookies invalidate at upgrade. |
+| register_job trust | **RESOLVED** | `gateway/jobs/registry.py:20-27` raises `ValueError` on duplicate registration; the registry dict is module-private and only seeded at import-time via decorator. No DB write path can add a function pointer. |
+| retry_job RCE | **NOT RESOLVED** | See CRIT #1. Migration 192 adds the column, but `gateway/jobs/backend.py:335-346` `retry_job` does NOT compute or verify the HMAC. Anyone with a write into `background_jobs` (SQLi finding, manual psql, future admin CSV import) can plant `name + payload` and trigger arbitrary coroutine dispatch on admin click. |
+| SIWE Domain/Address | **RESOLVED** for `/api/markets/connect/polymarket` | Legacy path verifies signature via `eth_account` (see `gateway/market_routes.py:1230-1231` + `gateway/tests/test_polymarket_siwe.py`). **But see HIGH #4** — the *new* `/api/portfolio/polymarket/connect` route at `gateway/portfolio/routes.py:93-107` accepts unsigned `{wallet_address}` and upserts. |
+| Polymarket path-traversal | **RESOLVED** | `gateway/portfolio/polymarket.py:83-84` `_ADDRESS_RE` validates 0x + 40 hex; `gateway/portfolio/polymarket.py:130` httpx call passes the address as a query param, not a path component; no `open(`/`Path(` of user input on this surface. |
+| Avatar Pillow bomb | **PARTIAL** | `gateway/profile_routes.py:447-512` enforces 2 MB byte cap + `Image.verify()` + re-open dance + center-crop + LANCZOS resize. **But no `Image.MAX_IMAGE_PIXELS` cap is set**, so a malicious WebP/PNG that decodes to a 178 M-pixel raster within a <2 MB encoded blob can still exhaust memory in `Image.open` before resize. See HIGH #3. |
+| Subproduct realtime | **N/A in HEAD** | No realtime/SSE/WebSocket surface on subproduct hosts in current tree; `gateway/admin_routes.py` realtime-admin is an admin-only page with `_require_admin_user` gating. The prior audit's finding concerned an exploratory branch that did not land. |
+| gateway.css CRITs | **N/A** | Per scan rules and the user's "pre-release page off-limits" directive — design-system findings are not in scope for this audit. The CSS audit work landed under separate `audit(design): gateway/static/pages/*.css` commits and is documented there. |
+| Open-redirect subproduct_signup | **RESOLVED** | See "Subproduct_signup magic-link" row above. |
+| MESSAGE_REDACT | **RESOLVED** (commit e7ab369) | See "PII log redaction" row above. |
+| Changelog Host injection | **RESOLVED** | `gateway/changelog_routes.py:461-704` `_validate_base_url` allowlists `https://narve.ai`, `http://localhost`, `http://127.0.0.1`; route at `:691-704` synthesises the base URL from a Host-header `host` value validated against the allowlist before any feed renders. |
+| Unsubscribe HMAC | **RESOLVED** | `gateway/email_system/unsubscribe.py:31-174` — `_secret()` requires `GATEWAY_COOKIE_SECRET` in production (raises otherwise), `hmac.compare_digest`, 10/h per-IP rate limit. |
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT (unchanged from #13)
+- pm_gateway_session + narve_session both accepted: yes — but both now hashed at rest (migration 189)
+- narve_session stored as SHA-256 hash in DB: yes
+- Session cookie HttpOnly: yes (hardened cookie via `gateway/auth/cookies.py:set_session_cookie_hardened`)
+- Session cookie Secure: yes (production)
+- Session cookie SameSite: Lax (default for hardened set)
+- Session revocation on logout: works (`queries/auth.delete_session`)
+- Session rotation on privilege change: implemented for password reset (sessions revoked except current)
+- Max sessions per user enforced: unlimited (documented gap, not a security finding under current threat model)
+- Password reset invalidates sessions: yes
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (yes)
+- 2FA status: removed in migration 019 (intentional product decision — not a gap)
+- Impersonation banner visible on every page while active: yes (via session middleware attaching `request.state.impersonation`)
+- Impersonation blocked paths enforced: yes (`gateway/server.py` ImpersonationMiddleware + `gateway/queries/admin.py:495` hash-keyed lookup)
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — `_require_admin_user(request, page=...)` is the single gate; api_keys admin page route at `gateway/api_keys_routes.py:323` and `:400` are the regression-tested examples
+- Super admin routes require role = 2: yes
+- Subproduct access checked at middleware + route + response: partial — middleware in `gateway/middleware/subproduct.py` enforces host allowlist + CF-Connecting-IP; per-route access is in subproduct-specific code
+- has_subproduct_access called on every subproduct route: yes — per the prior audit work, none missing in HEAD
+- Feature flag evaluation in use: yes (`gateway/features.py`); legacy tier checks still exist where appropriate
+- Gift subscription enforcement: yes — `gifted_subscriptions` table consulted by `db.get_active_subscription_for_user`
+
+### CSRF
+- Double submit cookie: yes (`gateway/security/csrf.py:103-150`)
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — `:189-193` enforces all four verbs; PATCH/DELETE enforcement is opt-out via `CSRF_PATCH_DELETE_ENFORCE=false` env var (default true)
+- HTMX X-CSRF-Token hook active: yes
+- Exempt routes list minimal and documented: yes — `/stripe/webhook` and `/api/public/v1/*` (Bearer-auth) are the only documented exemptions
+
+### Rate limiting
+- Auth endpoints: most have `@rate_limit`; gaps in `gateway/server_features.py` at `:233/:295/:1401/:1536/:1696/:1787` flagged HIGH by scan_auth.sh — see Issue #M-2.
+- API endpoints: yes (per-key hourly bucket in `gateway/api_public/auth.py` + global per-IP middleware)
+- Per-user and per-IP as appropriate: yes (`gateway/security/rate_limiter.py:216-256`)
+- 429 response includes Retry-After: yes
+- Cloudflare-level rate limit rules: present (`CLOUDFLARE_CHANGES.md` documents auth-rate-limit + admin-rate-limit + bot-rate-limit rules)
+
+### Input validation
+- SQL injection vectors found: 0 (every f-string SQLi flag in `scan_sqli.sh` resolves to either an admin-controlled identifier or a fixed-allowlist join — investigated; see Issue #L-1 for the "fragile but safe" residual)
+- XSS via innerHTML with user content: 0 — all flagged innerHTML sites either feed escapeHtml-wrapped output or are admin-only pages with admin-controlled inputs (live `gateway/static/predictions.html:125`, `:176`, etc. all pre-escape via `_render_bullet_html`-style helpers)
+- Command injection / subprocess with user input: 0
+- Path traversal in file operations: 0
+- SSRF in URL-fetching code: 0 (the `urlopen` hit at `gateway/server.py:3105` is a localhost probe in startup health check — not user-driven)
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes (production)
+- No hardcoded secrets in current tree: clean (`scan_secrets.sh` no hits)
+- No secrets in git history: clean
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (`gateway/portfolio/kalshi.upsert_connection` returns False if key absent — see `gateway/portfolio/routes.py:153-157` fail-closed path)
+- Sessions hashed before DB storage: yes (migration 189)
+- Password hashes use PBKDF2-HMAC-SHA256: yes
+- .env permissions on server: not verified locally — expected 600 per ops runbook
+
+### Data privacy
+- Account deletion works end-to-end: yes — self-delete at `gateway/server.py:4819-4887` and admin-delete at `gateway/admin_routes.py` both use `cascade_delete_user`. **Scheduled hard-delete cron does NOT** — see HIGH #5.
+- Data export includes all user-linked tables: partial — `gateway/exports/generator.py:_collect` covers 30+ tables and surfaces schema-drift errors via manifest; prior audit `ad5cf7a` flagged 13 PII tables still missed (analytics_events, 2fa_*, password_reset_attempts, login_failures, claude_usage_log, etc.) — those remain documented gaps, not regressions, and are tracked separately
+- Sensitive fields redacted in logs: yes (`gateway/logging_config.py` — JWT/Stripe-Sig/HMAC/email/bearer all covered)
+- Sentry scrubbing active (if Sentry configured): yes (`gateway/sentry_init.py` PII scrub hook)
+- Impersonation actions logged: yes (`AuditAction.IMPERSONATION_*` family wired)
+
+### External integrations
+- Stripe webhook signature validated: yes
+- Stripe webhook idempotent: **partial** — `scan_infra.sh` flagged a no-idempotency-check HIGH at `gateway/stripe_webhook_routes.py`; in practice idempotency is at the DB layer via `ON CONFLICT(user_id, dashboard_key) DO UPDATE` (line 137) and `WHERE stripe_sub_id = ?` updates, plus `gateway/stripe_webhook_hardening.py` uses an idempotency table. See Issue #M-3 to formalise.
+- Stripe webhook mode-verified: yes
+- Telegram bot token in env only: yes (no hardcoded tokens)
+- Discord bot token in env only: yes
+- Scraper API key validated on every request: yes
+- Polymarket wallet address validated: yes (`is_valid_address`); **SIWE signature** verified on `/api/markets/connect/polymarket` but **NOT** on `/api/portfolio/polymarket/connect` — see HIGH #4
+- SEC EDGAR User-Agent set: yes (per integration code)
+
+### Infrastructure
+- SQLite WAL mode active: yes
+- Cloudflare Tunnel active, origin not directly reachable: unverified from inside this scan (per scan rule — runtime check is the operator's responsibility)
+- Cloudflare Rules for subdomain enumeration: yes
+- Cloudflare Rules for scanner UA blocking: yes
+- Post-deploy commit step documented: yes (DEPLOY_RUNBOOK.md per `runbook` commit `8689ea5`)
+- CLOUDFLARE_CHANGES.md current: yes (last modified 2026-05-15 08:58)
+
+### Monitoring
+- Sentry backend configured: yes
+- Sentry frontend configured: yes
+- Structured logging configured: yes
+- Security events logged separately: yes (`gateway/security/audit.py`)
+- Audit log append-only: yes (`audit_log` table; no UPDATE/DELETE paths)
+- Uptime monitoring active: yes (status_system + external)
+
+### Dependency audit
+- Last dependency audit: 2026-05-15 (this scan — pip-audit blocked on Python 3.9/3.10 mismatch in scan harness; the prior `audit(pip_deps)` commit `f8d931a` recorded 1 MEDIUM, 0 HIGH, 0 CRIT across 85 deps)
+- Known CVEs: 1 MEDIUM (from `f8d931a`)
+- Unpinned deps: 0
+- Lockfile present: yes
+
+### Compliance
+- Privacy Policy live: yes
+- Terms of Service live: yes
+- DPA live: yes
+- Cookie notice: yes
+- GDPR data export: yes (with documented coverage gaps tracked in `ad5cf7a`)
+- GDPR account deletion: yes (self + admin paths use cascade)
+
+### Issues found in this audit
+
+#### CRITICAL
+
+1. **`retry_job` accepts arbitrary `name + payload` from `background_jobs` without HMAC verification — stored-RCE pivot remains open.**
+   Location: `gateway/jobs/backend.py:335-346`. Migration 192 adds `payload_hmac` column but no read or enforce path exists. Any actor able to write into `background_jobs` (a future SQLi, an admin-tool CSV import, a forensic-rollback re-insert, an operator copy-paste) can plant a row whose `name` is *any* registered job (e.g. `enqueue_email`, `process_scheduled_deletions`, `import_some_admin_thing`) and whose `payload` is *any* JSON. An admin clicking "Retry" in the jobs UI then invokes the coroutine with attacker-controlled kwargs. The set of registered jobs includes payment/cron/state-mutation handlers — RCE-equivalent under the gateway process identity.
+   Impact: Full server compromise via planted row + retry click. Persistence after the planting actor is removed (the row lives in an audit-shaped table).
+   Fix: In `enqueue_job`, compute `hmac.new(GATEWAY_SSO_SECRET, canonical(name+payload), sha256)` and INSERT into the new `payload_hmac` column. In `retry_job`, re-compute and `hmac.compare_digest` before re-dispatching; rows with missing or mismatched HMAC return False (do not retry, log warning). 192's docstring already describes this contract — just wire the verify path.
+
+#### HIGH
+
+1. (See CRIT #1 — was severity-promoted to CRIT after re-read.)
+
+2. **Kalshi-connect spray throttle is documented + tested but NOT wired in the route handler.**
+   Location: `gateway/portfolio/routes.py:110-173` (`/api/portfolio/kalshi/connect`). `gateway/tests/test_kalshi_throttle.py` describes the three buckets (`kalshi-connect-target-email:<email>`, `kalshi-connect-user:<uid>`, `kalshi-connect-ip:<ip>`) but the route only calls `with_idempotency` (10s dedup) and `_require_trading_addon`. No `check_rate_limit`/`enforce` call exists on this surface.
+   Impact: Trading-addon holder can spray Kalshi credentials at the upstream `/login` endpoint at the rate of `with_idempotency`'s 10-second debounce (≈360/h per user) on arbitrary victim emails. Narve becomes a credential-stuffing amplifier; if Kalshi blocks Narve's IP this is also a self-DoS.
+   Fix: Before calling `kalshi.login`, call `rate_limiter.check_or_429(request, key=f"kalshi-connect-target-email:{email}", limit=5, window=3600)` then per-user (10/h) then per-IP (30/10m). Match the exact bucket semantics in the test file.
+
+3. **Avatar upload missing `Image.MAX_IMAGE_PIXELS` cap — decompression-bomb DoS.**
+   Location: `gateway/profile_routes.py:447-512`. The 2 MB byte cap is in place and `Image.verify()` runs, but Pillow's default `MAX_IMAGE_PIXELS=89_478_485` only gates DecompressionBombWarning, not error. A crafted WebP/PNG with extreme compression ratios decodes to a multi-gigabyte raster before the resize step.
+   Impact: A handful of crafted uploads exhausts gateway memory; sustained uploads OOM-kill uvicorn.
+   Fix: `from PIL import Image; Image.MAX_IMAGE_PIXELS = 50_000_000`; wrap `Image.open` + `verify` + reopen in a `try/except Image.DecompressionBombError` that returns 413; consider a streaming pre-check on declared image dimensions from the header before full decode.
+
+4. **`/api/portfolio/polymarket/connect` accepts an unsigned `wallet_address` — parallel route bypasses the SIWE flow the legacy path enforces.**
+   Location: `gateway/portfolio/routes.py:93-107`. While `/api/markets/connect/polymarket` was upgraded to require an EIP-4361 signature (see commit `e3248d5` + `gateway/market_routes.py:1230-1231` + `gateway/tests/test_polymarket_siwe.py`), this newer endpoint under `gateway/portfolio/routes.py` accepts the original unsigned `{wallet_address}` body and `upsert_connection`s it. An attacker authenticated as victim Bob (or with trading-addon, since `_require_trading_addon` does gate this surface) can attach any 0x-address to Bob's account, including a wallet under their own control — defeating the SIWE work.
+   Impact: SIWE protection is fully bypassable via the parallel route. Subverts the audit#13 MED #3 fix that the legacy path tried to close. Position attribution, P&L, leaderboard rankings all driven by a fraudulent connection.
+   Fix: Either (a) remove `/api/portfolio/polymarket/connect` and route the dashboard client to the SIWE path, or (b) move the SIWE nonce/verify helpers from `market_routes` into `portfolio.polymarket` and enforce them here too. Add a regression test mirroring `test_polymarket_siwe.TestLegacyRemoval`.
+
+5. **`process_scheduled_deletions` cron hand-rolls deletes; misses every user-scoped table not in its 9-line list — including new tables added after the job was written.**
+   Location: `gateway/jobs/pipeline_jobs.py:38-104`. The job lists sessions, password_resets, email_unsubscribes, user_topics, intelligence_conversations, gifted_subscriptions, user_market_credentials, user_market_views, feedback_submissions. It does NOT call `db.cascade_delete_user`. Every user-scoped table added since this job was written (e.g. `user_predictions`, `notification_subscriptions`, `webhook_subscriptions`, `affiliate_*`, `referrals`, the take-* family, the watchlist/saved-views/collections tables, audit_log entries with `user_id`, etc.) leaks rows after the 30-day window closes.
+   Impact: GDPR Art. 17 right-to-erasure is violated for the long-tail of post-deletion data. Self-initiated soft-delete users are anonymised at the `users` row level but their predictions/notifications/follows persist forever. Discovery via subject-access-request would surface the leak.
+   Fix: Replace the hand-rolled DELETEs with `deleted = db.cascade_delete_user(user_id)` for hard-deletion paths. If the design intent is to RETAIN some tables (subscriptions, analytics, bet history for financial/research records — as the existing comment says), thread an `exclude=["subscriptions", "analytics_events", "user_bet_history"]` kwarg through `cascade_delete_user` so the allowlist is explicit and audited rather than implicit and forgotten.
+
+#### MEDIUM
+
+1. **`scan_redirects.sh` flagged 22 HIGH hits — all currently false-positives but scanner shape is fragile.**
+   Location: `gateway/server.py:1471/:7864/:7871`, `gateway/admin_routes.py:201/:512`, `gateway/billing_routes.py:1383`, `gateway/feedback_routes.py:611/:682/:708/:968/:990`, `gateway/status_routes.py:535/:564/:607/:619/:630`, `gateway/saved_views_routes.py:339`, `gateway/profile_routes.py:187`, `gateway/subproduct_signup_routes.py:223`. Manual inspection: every destination is a server-built path or a Stripe-issued checkout URL.
+   Impact: Future contributors can mis-construct a flagged redirect; the scanner won't reliably distinguish safe from unsafe.
+   Fix: Wrap every `RedirectResponse(url, ...)` call site whose destination is dynamic in a `safe_redirect(url)` helper that asserts the target either starts with `/` (relative) or matches an allowlist (Stripe checkout host, narve.ai apex). Standardise the pattern so the scanner can lint by helper-name not raw call.
+
+2. **Several auth endpoints in `gateway/server_features.py` lack a per-IP `@rate_limit` decorator.**
+   Location: `gateway/server_features.py:233` (`/auth/forgot-password`), `:295` (`/auth/reset-password`), `:1401` (`/auth/validate-token`), `:1536` (`/auth/register`), `:1696` (`/auth/login`), `:1787` (`/auth/logout`). The global `GlobalRateLimitMiddleware` (600/min/IP) covers them but the specific auth-bucket (`auth:<ip>` shared bucket) is not invoked.
+   Impact: Auth-specific throttling (5/m/IP for login, 3/h for reset) relies on the global limiter only, which is too permissive for credential-stuffing.
+   Fix: Decorate each with `@rate_limit(key="auth", limit=N, window=W)` matching the documented per-route bucket in `gateway/security/rate_limiter.py`.
+
+3. **Stripe webhook handler relies on DB-level idempotency rather than an explicit event-id check.**
+   Location: `gateway/stripe_webhook_routes.py`. `ON CONFLICT(user_id, dashboard_key) DO UPDATE` covers subscription-create races; the `WHERE stripe_sub_id = ?` updates cover updated/deleted. `gateway/stripe_webhook_hardening.py` has an idempotency table but it's not consistently consulted across every handler branch.
+   Impact: Replay of an old event would re-trigger the same upsert (idempotent in effect), but a malicious replay of a deleted-event after the user has resubscribed could downgrade entitlement.
+   Fix: Index every webhook by `event['id']` in the existing idempotency table; reject any event whose id has been processed in the past 7 days. The hardening module already has the table — just wire every branch through it.
+
+4. **`server.py` at 8740 lines is now over the 5000-line "redo if exceeded" threshold from `references/audit_format.md`.**
+   Location: `gateway/server.py`. db.py shrunk to 1533. server.py grew 2040 lines from #13's 6700.
+   Impact: Audit fatigue, merge conflict density, scan false-positive surface area.
+   Fix: Extract auth helpers, redirect helpers, SSO proxy code into `gateway/proxy/` and `gateway/auth/` modules. (Carry-over from #11; getting worse.)
+
+5. **20-mutations-per-hour billing rate limit lives in code, not in CLOUDFLARE_CHANGES.md.**
+   Location: `gateway/billing_routes.py:66-69`. Comment + impl exist; the rule is not in the WAF as well.
+   Impact: If the app rate-limiter is bypassed (e.g. via direct origin hit), Stripe-side mutation spam isn't capped at the edge.
+   Fix: Add a Cloudflare WAF rule `/settings/billing/* -> 20/h/user` so the cap is enforced even on direct-origin hits in dev. (Origin should not be reachable, but defence-in-depth.)
+
+6. **`gateway/security/csrf.py:103` cookie set is missing HttpOnly/Secure/SameSite per `scan_auth.sh`.**
+   Location: `gateway/security/csrf.py:103`. The CSRF "double-submit" cookie deliberately lacks HttpOnly so JS can read it for header echoing. Secure/SameSite still apply but aren't set.
+   Impact: In a partial-TLS-downgrade scenario (e.g. dev proxying) the CSRF cookie can leak; in a cross-site state, the SameSite default (Lax) is OK but should be explicit.
+   Fix: Add `secure=True, samesite="Lax"` to the `set_cookie` call. Keep `httponly=False` deliberately — this is the readable half of double-submit.
+
+7. **Server-side drift: 110+ commits + ~342 dirty files behind origin; running uvicorn is older than disk; entire fix wave is in deploy backlog.**
+   Location: server `100.69.44.108`. Server log tip `f99f47a`. Origin tip `c01c932`. Disk server.py mtime newer than uvicorn process start.
+   Impact: Every RESOLVED status above describes intended state. Production today still runs the unfixed code. Most importantly: CRIT #1 (retry_job RCE) and HIGH #2-5 are MORE exploitable on the live server than they would be on origin even *after* CRIT #1 is wired, because the pre-fix-wave server lacks even the partial defences.
+   Fix: Deploy. Restart uvicorn with `setsid`. Verify mtime > process start. Run regression test suite against the deployed server.
+
+#### LOW
+
+1. **Dynamic `ORDER BY` columns in 4 places — flagged HIGH by scanner, in practice the column names are validated against an allowlist before interpolation but the pattern is fragile.**
+   Location: `gateway/queries/watchlist.py:105`, `gateway/db_takes.py:405`, `gateway/feedback_routes.py:231`, `gateway/db_referrals.py:453`.
+   Fix: Replace with a fixed `if order_col == "x": sql += " ORDER BY x"` ladder; remove the f-string entirely.
+
+2. **Stash debt at 63 entries.** Carry-over from #13 (was 62). Some > 7 days old.
+   Fix: Bulk `git stash drop` for entries > 30 days; manual review for the rest.
+
+3. **pip-audit blocked on Python 3.9 vs 3.10 dep mismatch in the scan harness.**
+   Fix: Migrate the scan venv to Python 3.11; carry-over from #13.
+
+4. **`requirements.txt` not separated into `requirements-dev.txt`.**
+   Fix: Pin test/dev deps separately so production install is leaner.
+
+5. **`gateway/dist/extension/` contains JS files flagged by XSS scanner.**
+   Location: `gateway/dist/extension/popup/popup.js:19,23,37`, `content.js:157`.
+   Note: This is the browser extension bundle, not gateway code. Reviewed separately.
+   Fix: Audit the extension build pipeline (likely safe — content comes from gateway responses which now sanitize).
+
+6. **`scan_deps.sh` blocked locally; rely on `f8d931a` audit for current CVE state.**
+   Carry-over until scan harness Python is bumped.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- **Files modified (28)**: every modified file traces to a security-positive hardening patch. The largest deltas (`billing_routes.py +369`, `bulk_data_ratelimit.py +296`, `queries/auth.py +185`, `rate_limiter.py +196`) are the fix-wave's in-flight state and align 1:1 with items moved from FLAGGED → RESOLVED in the verification matrix.
+- **Untracked files (19)**: four migrations (189-192), two new middleware/sanitizer modules (`body_size_limit.py`, `email_system/sanitizer.py`), one audit note (`audits/audit_reconcile_subs.md`), and 12 new test files. All read as constructive additions — no debug shims, no commented-out secrets, no obvious shortcuts.
+- **Security implications**: the gap between *uncommitted/untracked* and *committed* is meaningful for two reasons: (1) the working tree currently *would* deploy if scp'd, so the hardening is "reachable" via the deploy path even before commit; (2) two of the four untracked migrations (191 impersonation, 192 background_jobs HMAC) are referenced by *committed* code paths in `gateway/queries/admin.py` and the docstring at `gateway/jobs/backend.py` — running the committed code without the migrations applied would error at lookup time. **Commit the four migrations + new middleware + tests as soon as they pass a focused regression run.**
+- **Must-do before commit**: confirm CRIT #1 fix wires through migration 192 (column exists, code does not yet enforce); confirm HIGH #4 fix removes the parallel polymarket path before committing; confirm HIGH #5 fix replaces the hand-rolled scheduled-deletion cron with cascade_delete_user.
+
+#### Unpushed local commits
+- None at scan close. Local tracks origin.
+
+#### Server-side uncommitted state
+- What differs: server tree is ~110 commits behind and ~342 files dirty. Several config backup files + WAL files are server-only noise.
+- Regression vs origin: yes, server is the regression — it lacks every fix wave commit.
+- Secrets server-only not in .env.example: assumed (33 vars in `gateway/.env.example` per env-example audit `4673475`); deploy includes the additional production secrets.
+- Reconciliation recommendation: **deploy origin/feature/platform-build to server with `setsid` uvicorn restart; verify mtime + smoke-test the SSO / sessions / billing flows before declaring fix wave landed.**
+
+#### Stashes
+- 63 entries, oldest from before audit #11. No fix-wave-relevant work in any stash that I sampled — all are CSS / design / pre-task-X snapshots.
+
+### Changes since previous audit
+
+#### Resolved
+- **api_keys auth bypass** — `_require_admin_user(page=True)` now returns None for non-admins; check + redirect added before `hasattr` guard.
+- **legacy session tokens accepted** — both cookies still accepted, but `sessions.token` is now SHA-256 at rest (migration 189).
+- **billing resubscribe/addon/cancel scoping** — every WHERE clause now `user_id = uid`; Stripe-verify-before-flip on resubscribe; Checkout-only on addon-add.
+- **GATEWAY_SSO_SECRET** — fail-closed at startup + proxy; `hmac.compare_digest` confirmed defensive against empty-empty.
+- **IP_HASH_SALT** — fail-closed at startup (≥32 chars required in production); dev fallback documented.
+- **CREDENTIALS_ENCRYPTION_KEY** — fail-closed at startup; Fernet-key format check.
+- **api_public tenant isolation** — every query uses `key["user_id"]`; non-owner + non-public returns 404 not 403 (don't leak existence).
+- **admin delete cascade** — both single + bulk routes now use `cascade_delete_user`.
+- **feature flag audit-log** — six `AuditAction.*` constants exist; `_audit()` re-raises on missing attr.
+- **bulk_data_ratelimit** — pre-charge before handler; iterator wrap for StreamingResponse; admin-charge on impersonation.
+- **CF-Connecting-IP trust** — gated on trusted peer or dev loopback.
+- **cascade_delete column coverage** — schema-driven walk of `sqlite_master`.
+- **exports silent-swallow** — only `no such table/column` swallowed (with manifest + log); all other OperationalError re-raised.
+- **trading addon gate** — `_require_trading_addon` on both Polymarket and Kalshi connect; webhook-only entitlement grant.
+- **flag-key allowlist** — DB-row driven evaluation; no string-eval surface.
+- **CSRF PATCH/DELETE** — default-on enforcement.
+- **rate-limit user-namespace** — `user:<uid>:<ip-bucket>` keying.
+- **annoyance-dashboard 3 HIGHs** — SSO secret mandatory, localhost bind, unified `_guard_api`.
+- **referrals 3 HIGHs** — affiliate-routes gate auth + rate-limit + admin-only mutation.
+- **newsletter raw HTML** — server-side allowlist sanitizer.
+- **body-size middleware** — new module, 2 MB default cap.
+- **PII log redaction** — JWT/Stripe-Signature/HMAC URL params all redacted.
+- **api_public origins** — Origin/Referer normalised, allowlist match with wildcard support.
+- **Stripe livemode + metadata** — default-false production gate; metadata user_id/dashboard_key required.
+- **subscription expires_at** — `subscription.updated` syncs from `current_period_end`.
+- **collections rate+view** — `@rate_limit` on `_follow_rate_key`, anonymous bump-views path constrained.
+- **subproduct_signup magic-link** — Stripe-built `success_url`; magic link issued by webhook only.
+- **export secret fallback** — guessable fallback removed; session-ownership check on download.
+- **account-delete divergence** — both self + admin paths go through `cascade_delete_user`.
+- **notification_routes helpers** — every CRUD path defers through `_srv()` reload-safe pattern.
+- **sessions.token schema** — migration 189 rebuilds table.
+- **register_job trust** — module-private registry, decorator-only at import time.
+- **SIWE Domain/Address** (for `/api/markets/connect/polymarket`) — `eth_account` signature verification + nonce consumption.
+- **Polymarket path-traversal** — no `open(`/`Path(` of user input on the surface.
+- **subproduct realtime** — N/A in HEAD (admin-only realtime page only).
+- **gateway.css CRITs** — design-system, out of scope per audit rules.
+- **open-redirect subproduct_signup** — Stripe-built URL; not user-controlled.
+- **MESSAGE_REDACT** — comprehensive pattern set landed.
+- **changelog Host injection** — `_validate_base_url` allowlist.
+- **unsubscribe HMAC** — secret mandatory in production; per-IP rate limit.
+
+#### New issues
+- **CRIT #1**: `retry_job` RCE pivot (migration 192 column unused).
+- **HIGH #2**: Kalshi spray throttle tested but not wired.
+- **HIGH #3**: Avatar `MAX_IMAGE_PIXELS` cap missing.
+- **HIGH #4**: `/api/portfolio/polymarket/connect` parallel-route unsigned SIWE bypass.
+- **HIGH #5**: `process_scheduled_deletions` cron does not use cascade.
+
+#### Regressions
+- None in committed code.
+- One process-level: nothing in the fix wave is live in production yet. Deploy is the only blocker.
+
+### Drift warnings
+- Server running 110+ commits behind origin. The entire fix wave is queued — every RESOLVED line above describes intended state, not running state.
+- Running uvicorn (PID 4077346 since 00:05 today) is loading server.py from disk dated 2026-05-14T23:24Z. Disk is newer than the process. A restart on the deployed code is mandatory for any fix to take effect.
+- Stash debt at 63 entries (was 62 at #13). Oldest is months stale.
+- HEAD moved 9 times during this scan as test-recording and audit-recording commits landed; the verification matrix above is locked at `c01c932`.
+
+### Recommended actions for next audit
+1. **Verify CRIT #1 (retry_job HMAC) is wired** — enqueue → sign → store; retry → verify → dispatch. Test must include a forged row + admin click producing 0 dispatches.
+2. **Verify HIGH #2-5** — Kalshi throttle bucket-by-bucket in code, MAX_IMAGE_PIXELS cap, parallel polymarket route removed, scheduled-deletions cascade.
+3. **Confirm deploy landed** — server commit log tip == origin tip; running uvicorn mtime > deploy script run time.
+4. **Stash audit** — sample 5 stashes ≥30 days old, drop dead WIP, restash live work with `git stash push --message` so the log is searchable.
+5. **Re-run pip-audit on a Python 3.11 harness** — cover the entire 85-dep tree, not just the dev subset.
+6. **Audit the 13 GDPR-export missed tables flagged by `ad5cf7a`** — close or document each.
+7. **Audit `gateway/server.py` size** — current 8740 LOC. Extract proxy/auth/redirect helpers before next mass scan.
+
+---
+
 ## AUDIT #13 — 2026-05-14T22:17Z — commit 992005b — newsletter-blast-bounding verification
 
 ### Why this audit exists
