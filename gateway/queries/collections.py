@@ -44,9 +44,12 @@ Routes translate HTTPException; this layer just raises
 
 from __future__ import annotations
 
+import hmac
+import os
 import re
 import sqlite3
 import time
+from hashlib import sha256
 from typing import Iterable, Optional
 
 import db
@@ -139,7 +142,14 @@ def _row_to_dict(r: sqlite3.Row, *, viewer_user_id: Optional[int] = None) -> dic
 
 def _can_view(row: sqlite3.Row, viewer_user_id: Optional[int]) -> bool:
     """Enforce visibility: private → owner-only; shared → any signed-in
-    user; public → everyone."""
+    user; public → everyone.
+
+    Note: ``shared`` here means "any signed-in user with a valid share
+    token". The route layer is responsible for token verification; this
+    helper only sees the row + viewer identity. Owners and public boards
+    bypass the token requirement entirely. Routes call
+    ``verify_share_token`` before treating a ``shared`` board as
+    visible to a non-owner viewer."""
     if viewer_user_id is not None and row["owner_user_id"] == viewer_user_id:
         return True
     vis = row["visibility"]
@@ -148,6 +158,83 @@ def _can_view(row: sqlite3.Row, viewer_user_id: Optional[int]) -> bool:
     if vis == "shared" and viewer_user_id is not None:
         return True
     return False
+
+
+# ── Share-token mint/verify (MED-3 enumeration fix) ──────────────────────
+
+
+# AUDIT (MED-3): pre-fix, a signed-in attacker could brute-force
+# ``/c/{victim}/{guess}`` because ``_can_view`` returns True for ``shared``
+# boards as long as the viewer is signed in. Status 200 vs 404 leaked
+# slug existence, and slugs are derived from titles. The fix: require a
+# signed share-token query param for shared boards; without it the route
+# returns the same 404 it returns for nonexistent boards. Public boards
+# are unaffected (they stay enumerable by design). The token commits to
+# (owner_user_id, collection_id), so a rename of a slug doesn't break
+# existing share links and a token for board A can't be replayed
+# against board B.
+_SHARE_TOKEN_PREFIX = "c1"  # version tag so we can rotate the format later
+
+
+def _share_token_secret() -> bytes:
+    """Lazy-load the HMAC secret. Prefers the share-token secret used
+    elsewhere in the codebase (``SHARE_TOKEN_SECRET``), falls back to the
+    cookie secret so a deploy without the new var still mints tokens.
+    The final dev-only fallback keeps unit tests runnable without env
+    setup; production callers always pass through one of the env vars."""
+    for env in ("SHARE_TOKEN_SECRET", "GATEWAY_COOKIE_SECRET"):
+        val = os.environ.get(env, "").strip()
+        if val:
+            return val.encode("utf-8")
+    return b"narve-collections-share-dev-secret"
+
+
+def _share_token_message(owner_user_id: int, collection_id: int) -> bytes:
+    """Canonicalised message we HMAC. The version prefix is included so
+    a future rotation can change the format without colliding with the
+    old MAC space."""
+    return f"{_SHARE_TOKEN_PREFIX}|{int(owner_user_id)}|{int(collection_id)}".encode("ascii")
+
+
+def mint_share_token(owner_user_id: int, collection_id: int) -> str:
+    """Mint a share-token string for ``/c/{handle}/{slug}?t=...``.
+
+    Stateless — derived from HMAC(secret, "{version}|{owner}|{cid}"), so
+    we don't need a new DB column. The token is stable for the lifetime
+    of the secret: rotating ``SHARE_TOKEN_SECRET`` invalidates every
+    previously-issued share link, which is the intended kill-switch.
+
+    Format: ``{version}.{hex_mac}`` — the version segment lets us add
+    a TTL or per-owner salt later without breaking parsing."""
+    mac = hmac.new(
+        _share_token_secret(),
+        _share_token_message(owner_user_id, collection_id),
+        sha256,
+    ).hexdigest()
+    return f"{_SHARE_TOKEN_PREFIX}.{mac}"
+
+
+def verify_share_token(
+    owner_user_id: int, collection_id: int, token: Optional[str],
+) -> bool:
+    """Return True iff ``token`` was minted for this (owner, collection)
+    pair under the current secret.
+
+    Constant-time comparison via ``hmac.compare_digest`` so a malicious
+    viewer can't probe the MAC byte-by-byte. Any malformed/wrong-version
+    token returns False without raising — the route layer maps False to
+    the same 404 it returns for nonexistent boards."""
+    if not token or not isinstance(token, str) or "." not in token:
+        return False
+    version, sep, mac = token.partition(".")
+    if version != _SHARE_TOKEN_PREFIX or not mac:
+        return False
+    expected = hmac.new(
+        _share_token_secret(),
+        _share_token_message(owner_user_id, collection_id),
+        sha256,
+    ).hexdigest()
+    return hmac.compare_digest(mac, expected)
 
 
 # ── Collections CRUD ─────────────────────────────────────────────────────
@@ -243,8 +330,18 @@ def get_collection_by_slug(
     *,
     viewer_user_id: Optional[int] = None,
     bump_views: bool = False,
+    share_token: Optional[str] = None,
 ) -> Optional[dict]:
-    """Resolve the public URL ``/c/{handle}/{slug}`` to a row."""
+    """Resolve the public URL ``/c/{handle}/{slug}`` to a row.
+
+    AUDIT (MED-3): ``shared`` boards require a valid ``share_token`` for
+    non-owner viewers; without one we raise ``PermissionError`` so the
+    route maps it to 404, indistinguishable from "no such slug". Owners
+    bypass the token, public boards bypass the token, and ``_can_view``
+    already kicks anonymous viewers out before we reach the gate. This
+    closes the slug-enumeration leak where a signed-in attacker could
+    brute-force ``/c/{victim}/{guess}`` and distinguish 200 vs 404.
+    """
     with db.conn() as c:
         row = c.execute(
             "SELECT c.* FROM collections c "
@@ -256,6 +353,19 @@ def get_collection_by_slug(
             return None
         if not _can_view(row, viewer_user_id):
             raise PermissionError("not visible to viewer")
+        # Token gate for shared boards. Owners bypass (they reach the
+        # board via /collections/{id} or via the Share button which mints
+        # the token client-side from the data attribute). A missing or
+        # malformed token short-circuits to PermissionError so the route
+        # surfaces a 404 indistinguishable from a nonexistent slug — that
+        # is the whole point of the fix: no oracle on slug existence for
+        # anyone other than the owner.
+        if (
+            row["visibility"] == "shared"
+            and viewer_user_id != row["owner_user_id"]
+            and not verify_share_token(row["owner_user_id"], row["id"], share_token)
+        ):
+            raise PermissionError("share token required")
         # AUDIT (MED): mirror the per-(viewer, collection) throttle from
         # get_collection so the public /c/{handle}/{slug} surface can't
         # be reload-spammed for popularity inflation either.

@@ -924,10 +924,16 @@ def _render_detail_page(
             ),
         )
 
-    # Action buttons
+    # Action buttons. AUDIT (MED-3): the share URL for ``shared`` boards
+    # carries a signed token so a non-owner with the link can reach the
+    # page — without it the route 404s indistinguishably from a bogus
+    # slug. Public URLs stay token-free since enumeration is by design.
     actions: list[str] = []
     if row["visibility"] in ("shared", "public"):
         share_url = f"/c/{owner_handle}/{row['slug']}"
+        if row["visibility"] == "shared":
+            token = coll.mint_share_token(row["owner_user_id"], row["id"])
+            share_url = f"{share_url}?t={token}"
         actions.append(
             f'<button type="button" class="feed-action feed-action--ghost" '
             f'id="c-share-btn" data-share-url="{_html.escape(share_url)}">Share</button>'
@@ -1050,11 +1056,26 @@ async def page_public(request: Request, handle: str, slug: str):
     so the editorial layout, type system, and monochrome treatment are
     identical between owner and reader. Sidebar is suppressed on the
     public page so SEO crawlers see a focused, sidebar-free document.
+
+    AUDIT (MED-3): ``shared`` boards require a valid ``?t=<token>`` query
+    param. Without it, this surface 404s indistinguishably from a board
+    that doesn't exist. The token is HMAC-bound to (owner_user_id,
+    collection_id), so a signed-in attacker can no longer enumerate a
+    victim's shared boards by brute-forcing kebab-cased slugs. Owners
+    bypass the token (they reach the page via /collections/{id} or via
+    the share-button which mints a fresh token). Public boards stay
+    fully enumerable by design — that's what ``public`` means.
     """
     viewer = _optional_user(request)
     vid = viewer["user_id"] if viewer else None
+    share_token = request.query_params.get("t")
     try:
-        row = coll.get_collection_by_slug(handle, slug, viewer_user_id=vid, bump_views=True)
+        row = coll.get_collection_by_slug(
+            handle, slug,
+            viewer_user_id=vid,
+            bump_views=True,
+            share_token=share_token,
+        )
     except PermissionError:
         raise HTTPException(status_code=404)
     if not row:

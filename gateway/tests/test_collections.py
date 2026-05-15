@@ -321,9 +321,14 @@ class TestCollectionsHttp(unittest.TestCase):
         with db.conn() as c:
             handle = c.execute("SELECT username FROM users WHERE id = ?",
                                (owner,)).fetchone()["username"]
-        # Shared boards need an authed viewer to even load the public URL.
+        # Shared boards need an authed viewer AND a valid share token (MED-3
+        # enumeration fix). With both, the page still loads but stays
+        # noindex.
         stranger, t = _mk("s3")
-        r = client.get(f"/c/{handle}/shared-board", headers=_auth(t))
+        token = coll.mint_share_token(owner, cid)
+        r = client.get(
+            f"/c/{handle}/shared-board?t={token}", headers=_auth(t),
+        )
         self.assertEqual(r.status_code, 200)
         self.assertIn('name="robots" content="noindex,nofollow"', r.text)
 
