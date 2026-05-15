@@ -92,6 +92,12 @@ class AuditAction:
     FEATURE_FLAG_UPDATE = "feature_flag.update"
     FEATURE_FLAG_DELETE = "feature_flag.delete"
 
+    # Newsletter (waitlist) lifecycle — distinct from admin actions because
+    # the actor is anonymous (a recipient clicking the one-click footer
+    # link). admin_user_id is NULL on these rows; the target column carries
+    # the email so the trail still resolves a who.
+    NEWSLETTER_UNSUBSCRIBE = "newsletter.unsubscribe"
+
     # Admin impersonation lifecycle. Same issue as feature flags above —
     # impersonate_start/end referenced these constants but the symbols
     # did not exist, so the audit trail had no record of any
@@ -155,6 +161,7 @@ ACTION_LABELS = {
     AuditAction.IMPERSONATION_BLOCKED: "Blocked mutating action during impersonation",
     AuditAction.MAGIC_LINK_MINT: "Minted subproduct magic-link token",
     AuditAction.MAGIC_LINK_REDEEM: "Redeemed subproduct magic-link token",
+    AuditAction.NEWSLETTER_UNSUBSCRIBE: "Unsubscribed from newsletter",
 }
 
 

@@ -535,10 +535,31 @@ async def api_newsletter_unsubscribe(request: Request, email: str = ""):
 
     # Best-effort unsubscribe. We don't surface the boolean to the UI —
     # the page is identical either way.
+    removed = False
     try:
-        db.unsubscribe_newsletter(email)
+        removed = bool(db.unsubscribe_newsletter(email))
     except Exception as exc:
         log.exception("unsubscribe_newsletter failed: %s", exc)
+
+    # Audit trail — admin visibility into who clicked the one-click footer
+    # link. Anonymous actor (admin_user_id=NULL); the email is the target.
+    # We log every hit, including misses, so an attacker iterating the
+    # endpoint shows up in the audit log too. log_action never raises, but
+    # double-wrap so a bad import can't break the response.
+    try:
+        from security import audit as _audit
+        _audit.log_action(
+            admin_user_id=None,
+            admin_email=None,
+            action=_audit.AuditAction.NEWSLETTER_UNSUBSCRIBE,
+            target_type="newsletter_subscriber",
+            target_id=email or None,
+            target_description=db.mask_email(email) if email else None,
+            request=request,
+            notes=("status=" + ("removed" if removed else "not_found")),
+        )
+    except Exception as exc:  # pragma: no cover — never block response
+        log.warning("newsletter unsubscribe audit log failed: %s", exc)
 
     apex = srv._request_apex(request) or srv.DOMAIN
     home = f"https://{apex}"

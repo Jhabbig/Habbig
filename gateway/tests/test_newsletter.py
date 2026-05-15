@@ -710,6 +710,33 @@ class TestNewsletterSegmentsAndConfirmation(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("unsubscribed", r.text.lower())
 
+    def test_unsubscribe_writes_audit_log_row(self):
+        """One-click unsubscribe MUST land an audit_log row so admins
+        can reconstruct who unsubscribed and from which IP. Regression
+        guard: the handler previously logged nothing, leaving no admin
+        trail for waitlist churn."""
+        import db
+        from urllib.parse import quote
+        from security.audit import AuditAction
+
+        email = "audit-unsub@x.com"
+        self.client.post("/api/newsletter", data={"email": email})
+        r = self.client.get(f"/api/newsletter/unsubscribe?email={quote(email)}")
+        self.assertEqual(r.status_code, 200)
+
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT action, target_type, target_id, notes "
+                "FROM audit_log WHERE action = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (AuditAction.NEWSLETTER_UNSUBSCRIBE,),
+            ).fetchone()
+        self.assertIsNotNone(row, "audit_log row missing for newsletter.unsubscribe")
+        self.assertEqual(row["action"], "newsletter.unsubscribe")
+        self.assertEqual(row["target_type"], "newsletter_subscriber")
+        self.assertEqual(row["target_id"], email)
+        self.assertIn("status=removed", row["notes"] or "")
+
 
 if __name__ == "__main__":
     unittest.main()
