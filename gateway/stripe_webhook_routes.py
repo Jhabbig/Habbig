@@ -87,7 +87,17 @@ def _grant_access(event: dict) -> None:
     Metadata contract: ``user_id`` + ``dashboard_key`` (or alias
     ``subproduct_slug``); ``plan`` optional. UPSERT on the
     (user_id, dashboard_key) unique key so a misordered Stripe event
-    sequence doesn't crash on duplicates."""
+    sequence doesn't crash on duplicates.
+
+    Audit MED-1 (queries/billing): we MUST persist
+    ``current_period_end`` as ``subscriptions.expires_at`` (Unix epoch
+    seconds, stored in the INTEGER column). Skipping it left the row at
+    NULL, which the access checks historically treated as "no expiry" —
+    so a missed ``customer.subscription.deleted`` event left the user
+    paid-up forever. ``has_active_subscription`` now fails closed on
+    NULL, but the webhook is the only writer that can populate the
+    value in the first place.
+    """
     obj = (event.get("data") or {}).get("object") or {}
     meta = obj.get("metadata") or {}
     user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
@@ -96,6 +106,7 @@ def _grant_access(event: dict) -> None:
     ).strip()
     plan = (meta.get("plan") or "default").strip() or "default"
     stripe_sub_id = obj.get("id") or ""
+    expires_at = _coerce_int(obj.get("current_period_end"))
 
     if not user_id or not dashboard_key:
         log.warning(
@@ -104,20 +115,32 @@ def _grant_access(event: dict) -> None:
         )
         return
 
+    if expires_at is None:
+        # Stripe always sends current_period_end on subscription.created;
+        # a missing value is a malformed event. Stamp a short fallback
+        # window so the row fails closed soon rather than living forever.
+        log.warning(
+            "subscription.created missing current_period_end: user_id=%s "
+            "key=%s id=%s — defaulting expires_at to now+1h",
+            user_id, dashboard_key, event.get("id"),
+        )
+        expires_at = int(time.time()) + 3600
+
     now = int(time.time())
     try:
         with db.conn() as c:
             c.execute(
                 "INSERT INTO subscriptions "
                 "(user_id, dashboard_key, plan, status, started_at, "
-                " stripe_sub_id, source) "
-                "VALUES (?, ?, ?, 'active', ?, ?, 'stripe') "
+                " expires_at, stripe_sub_id, source) "
+                "VALUES (?, ?, ?, 'active', ?, ?, ?, 'stripe') "
                 "ON CONFLICT(user_id, dashboard_key) DO UPDATE SET "
                 "  plan = excluded.plan, "
                 "  status = 'active', "
+                "  expires_at = excluded.expires_at, "
                 "  stripe_sub_id = excluded.stripe_sub_id, "
                 "  source = 'stripe'",
-                (user_id, dashboard_key, plan, now, stripe_sub_id),
+                (user_id, dashboard_key, plan, now, expires_at, stripe_sub_id),
             )
     except Exception as exc:
         log.warning("grant_access DB write failed: %s", exc)
@@ -128,7 +151,14 @@ def _update_plan(event: dict) -> None:
 
     Collapses any non-active Stripe lifecycle state ("incomplete",
     "past_due", "unpaid", etc.) to ``inactive`` locally — the UI only
-    needs to know "user has it" vs "user doesn't"."""
+    needs to know "user has it" vs "user doesn't".
+
+    Audit MED-1: always refresh ``expires_at`` from
+    ``current_period_end`` so renewals extend the window and downgrades
+    shorten it. A NULL ``current_period_end`` would normally only land
+    on malformed events; we leave the existing value alone in that case
+    rather than blank it (which would now flip the row to "expired"
+    under the closed-fail rule)."""
     obj = (event.get("data") or {}).get("object") or {}
     meta = obj.get("metadata") or {}
     user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
@@ -138,6 +168,7 @@ def _update_plan(event: dict) -> None:
     plan = (meta.get("plan") or "").strip()
     stripe_status = (obj.get("status") or "active").strip()
     local_status = "active" if stripe_status in {"active", "trialing"} else "inactive"
+    expires_at = _coerce_int(obj.get("current_period_end"))
 
     if not user_id or not dashboard_key:
         log.warning(
@@ -148,11 +179,14 @@ def _update_plan(event: dict) -> None:
 
     try:
         with db.conn() as c:
-            params = [local_status]
+            params: list = [local_status]
             sets = ["status = ?"]
             if plan:
                 sets.append("plan = ?")
                 params.append(plan)
+            if expires_at is not None:
+                sets.append("expires_at = ?")
+                params.append(expires_at)
             params.extend([user_id, dashboard_key])
             c.execute(
                 f"UPDATE subscriptions SET {', '.join(sets)} "
@@ -164,20 +198,52 @@ def _update_plan(event: dict) -> None:
 
 
 def _record_payment(event: dict) -> None:
-    """invoice.paid — flip a past_due subscription back to active.
-    Active subscriptions are left alone; the payment is the signal
-    that the dunning window has closed."""
+    """invoice.paid — flip a past_due subscription back to active and
+    extend the access window.
+
+    Audit MED-1: a renewal payment is the moment we know the new
+    ``current_period_end`` for the subscription. The invoice object
+    carries it on each line item as ``lines.data[].period.end``; we
+    pick the latest such value as the row's new ``expires_at``. Without
+    this, a renewing customer's ``expires_at`` froze at the original
+    period and the row flipped to "expired" mid-cycle under the
+    closed-fail rule introduced in MED-1.
+    """
     obj = (event.get("data") or {}).get("object") or {}
     customer = obj.get("customer") or ""
     sub_id = obj.get("subscription") or ""
     if not sub_id:
         return
+
+    # Stripe invoices may carry the period on the invoice itself, or
+    # nested per-line. Pick the latest non-null we find so a multi-line
+    # invoice (proration + base) lands on the longest window.
+    new_expires_at: Optional[int] = None
+    candidate = _coerce_int(obj.get("period_end"))
+    if candidate is not None:
+        new_expires_at = candidate
+    lines = (obj.get("lines") or {}).get("data") or []
+    for line in lines:
+        period = line.get("period") or {}
+        cand = _coerce_int(period.get("end"))
+        if cand is not None and (new_expires_at is None or cand > new_expires_at):
+            new_expires_at = cand
+
     try:
         with db.conn() as c:
+            params: list = []
+            sets = ["status = 'active'"]
+            if new_expires_at is not None:
+                sets.append("expires_at = ?")
+                params.append(new_expires_at)
+            params.append(sub_id)
+            # past_due + active both get the refreshed window. Stripe
+            # sends invoice.paid for normal renewals, not just dunning
+            # recoveries, so a healthy active row also needs the bump.
             c.execute(
-                "UPDATE subscriptions SET status = 'active' "
-                "WHERE stripe_sub_id = ? AND status = 'past_due'",
-                (sub_id,),
+                f"UPDATE subscriptions SET {', '.join(sets)} "
+                f"WHERE stripe_sub_id = ? AND status IN ('active', 'past_due')",
+                params,
             )
     except Exception as exc:
         log.warning(
