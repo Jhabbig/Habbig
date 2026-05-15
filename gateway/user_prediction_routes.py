@@ -374,8 +374,19 @@ async def public_profile_page(request: Request, user_id: int):
         # Don't leak user existence for users who have no public predictions.
         raise HTTPException(status_code=404, detail="No public predictions")
 
+    # If ANY public prediction on this page is anonymous, the page itself
+    # must not name the user — otherwise the URL→username binding on
+    # /predictions/public/{user_id} deanonymises every row underneath it,
+    # including the anonymous ones. Walking IDs would expose the account
+    # behind an "anonymous" prediction. The all-public-non-anonymous case
+    # is the only one where the header may safely display a handle.
+    any_anonymous = any(r["is_anonymous"] for r in rows)
+    if any_anonymous:
+        display_name = "Anonymous"
+    else:
+        display_name = u["username"] or f"user{user_id}"
+
     stats = db.get_user_prediction_stats(user_id)
-    display_name = u["username"] or f"user{user_id}"
 
     summary = ""
     if stats:
@@ -388,11 +399,13 @@ async def public_profile_page(request: Request, user_id: int):
             f'<div class="stat-card"><div class="stat-label">Avg Brier</div>'
             f'<div class="stat-value">{stats["avg_brier_score"] if stats["avg_brier_score"] is not None else "—"}</div></div>'
         )
+    # Note: we deliberately do not pass `email` here — the template doesn't
+    # consume it, and shipping PII into render context is a footgun waiting
+    # for the next template author to expose.
     return _render(
         "user_prediction_profile",
         request=request,
         username=display_name,
-        email=u["email"],
         raw_summary_cards=summary,
         raw_prediction_rows=_build_prediction_rows_html(rows),
     )
