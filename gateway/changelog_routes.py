@@ -426,6 +426,72 @@ def _rfc822(date_str: Optional[str]) -> str:
     return _email_utils.format_datetime(ts)
 
 
+def _allow_draft_entries() -> bool:
+    """Drafts ([Unreleased] / non-dated entries) are filtered from public
+    surfaces unless ``NARVE_CHANGELOG_ALLOW_DRAFTS`` is explicitly set.
+
+    Why this is here: ``## [Unreleased]`` blocks frequently document
+    work-in-progress, security fixes pending disclosure, or competitive
+    info that should not be public. Default to dropping them; an operator
+    must opt in by setting the env var.
+    """
+    val = (os.environ.get("NARVE_CHANGELOG_ALLOW_DRAFTS") or "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
+def _public_entries(
+    entries: Optional[list[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    """Return entries safe to ship to public consumers.
+
+    By default filters out anything without a date (Unreleased blocks).
+    Operators can override with ``NARVE_CHANGELOG_ALLOW_DRAFTS=1``.
+    """
+    if entries is None:
+        entries = _parsed_entries()
+    if _allow_draft_entries():
+        return list(entries)
+    return [
+        e for e in entries
+        if e.get("date")
+        and (e.get("version") or "").strip().lower() != "unreleased"
+    ]
+
+
+# Hosts allowed as ``base_url`` for the RSS feed. Anything else is
+# rejected at the route layer with 400 — a Host header pointing at
+# ``evil.com`` must never make it into the channel ``<link>`` /
+# ``atom:link href`` attributes, where it would otherwise become an XML
+# injection / SSRF vector for feed readers.
+_ALLOWED_RSS_HOSTS = ("narve.ai",)
+
+
+def _validate_base_url(base_url: str) -> str:
+    """Return ``base_url`` if it matches the allowlist, else raise 400.
+
+    Accepted:
+      * ``https://narve.ai``
+      * ``http://localhost`` (any port)
+      * ``http://127.0.0.1`` (any port)
+
+    Everything else (including subdomains other than ``narve.ai``) is
+    rejected. The result is also XML-escaped at every interpolation site
+    in ``render_rss`` as belt-and-suspenders defence.
+    """
+    u = (base_url or "").strip().rstrip("/")
+    if u == "https://narve.ai":
+        return u
+    if u.startswith("http://localhost") or u.startswith("http://127.0.0.1"):
+        # Allow ports / paths-free localhost variants. Reject anything that
+        # smuggles extra characters past the port (e.g. ``localhost.evil``).
+        rest = u[len("http://"):]
+        host_part = rest.split("/", 1)[0]
+        host_only = host_part.split(":", 1)[0]
+        if host_only in ("localhost", "127.0.0.1"):
+            return u
+    raise HTTPException(status_code=400, detail="invalid host")
+
+
 def render_rss(entries: Optional[list[dict[str, Any]]] = None,
                *, base_url: str = "https://narve.ai") -> str:
     """Render the parsed entries as an RSS 2.0 feed.
@@ -433,9 +499,19 @@ def render_rss(entries: Optional[list[dict[str, Any]]] = None,
     One ``<item>`` per entry; description is CDATA-wrapped HTML so feed
     readers can render bold/code/links. Channel ``<lastBuildDate>`` is
     set to the most recent entry's pubDate so caching proxies behave.
+
+    ``base_url`` is XML-escaped at every interpolation site so a
+    malformed value can't break out of an attribute / element. The
+    public route layer additionally enforces an allowlist via
+    ``_validate_base_url`` so untrusted ``Host:`` headers cannot pollute
+    the feed in the first place.
     """
     if entries is None:
         entries = _parsed_entries()
+    # Drafts ([Unreleased] / no-date) are filtered from the public feed
+    # unless an operator has explicitly opted in via env var.
+    entries = _public_entries(entries)
+    safe_base = _xml_escape(base_url.rstrip("/"))
 
     items: list[str] = []
     most_recent: Optional[str] = None
@@ -447,7 +523,7 @@ def render_rss(entries: Optional[list[dict[str, Any]]] = None,
             else f"narve.ai update — {version}"
         )
         anchor = _anchor_id(e)
-        link = f"{base_url}/changelog#{anchor}"
+        link = f"{safe_base}/changelog#{_xml_escape(anchor)}"
         # GUID: stable per-entry, non-permalink (since the link is an
         # anchor, not a unique URL). Falls back to the parser's hash key
         # for entries without a date so each Unreleased block still has a
@@ -501,11 +577,11 @@ def render_rss(entries: Optional[list[dict[str, Any]]] = None,
         '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">'
         "<channel>"
         "<title>narve.ai changelog</title>"
-        f"<link>{base_url}/changelog</link>"
+        f"<link>{safe_base}/changelog</link>"
         "<description>Product updates and release notes for narve.ai."
         "</description>"
         "<language>en-us</language>"
-        f'<atom:link href="{base_url}/changelog.rss" rel="self" '
+        f'<atom:link href="{safe_base}/changelog.rss" rel="self" '
         'type="application/rss+xml" />'
         f"<lastBuildDate>{last_build}</lastBuildDate>"
         f"{''.join(items)}"
@@ -575,9 +651,13 @@ async def changelog_entries(request: Request, limit: int = 3) -> JSONResponse:
     `limit` clamped to [1, 20]. When the request is authenticated, each
     entry's ``seen`` field reflects the user's `changelog_seen` row;
     otherwise ``seen`` is False everywhere.
+
+    ``[Unreleased]`` entries are filtered out of the public payload
+    unless ``NARVE_CHANGELOG_ALLOW_DRAFTS`` is set — see
+    ``_public_entries`` for why.
     """
     limit = max(1, min(int(limit or 3), 20))
-    entries = _parsed_entries()[:limit]
+    entries = _public_entries(_parsed_entries())[:limit]
 
     user = _current_user(request)
     seen = get_seen_keys(user["user_id"]) if user else set()
@@ -607,15 +687,22 @@ async def changelog_rss(request: Request) -> Response:
     Cached for 1 hour (entries only change on deploy). Feed readers fetch
     anonymously, so the path is added to ``_PUBLIC_PATHS`` in server.py
     alongside the other SEO routes so the gate doesn't 401 them.
+
+    The Host header is **not** trusted directly. We synthesise a
+    candidate ``base_url`` from it and then pass it through
+    ``_validate_base_url``, which raises HTTP 400 for anything outside
+    the allowlist (``https://narve.ai`` plus localhost / 127.0.0.1).
+    Audit medium finding: previously ``base_url`` was interpolated raw
+    into the feed channel + atom self-link, allowing XML injection /
+    feed-reader poisoning via a forged Host header.
     """
-    # Use the request's host so subdomain crawls return the right URLs in
-    # ``<link>``/``<guid>``. Fall back to the apex if the header is missing.
-    host = request.headers.get("host") or "narve.ai"
+    host = (request.headers.get("host") or "narve.ai").strip()
     scheme = (
         "http" if host.startswith("localhost") or host.startswith("127.")
         else "https"
     )
-    base_url = f"{scheme}://{host}"
+    candidate = f"{scheme}://{host}"
+    base_url = _validate_base_url(candidate)
     body = render_rss(base_url=base_url)
     headers = {
         "Cache-Control": "public, max-age=3600",
