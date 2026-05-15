@@ -37,7 +37,15 @@ log = logging.getLogger("gateway.og_routes")
 
 router = APIRouter()
 
-_CACHE_TTL = 3600
+# Source-of-truth for og_card TTL lives in ``cache/ttl.py`` so the
+# admin /admin/cache view and the invalidation helpers stay aligned
+# with what we actually cache. Drift between this constant and
+# ``DEFAULT_TTLS["og_card"]`` was the original audit bug — a
+# resolved-market card lingered for an hour while ops thought it was
+# 600s. Pull from the canonical dict so future tweaks land in one place.
+from cache import DEFAULT_TTLS  # noqa: E402
+
+_CACHE_TTL = DEFAULT_TTLS["og_card"]
 _HEADERS = {
     "Cache-Control": f"public, max-age={_CACHE_TTL}, stale-while-revalidate=86400",
     "Content-Type": "image/png",

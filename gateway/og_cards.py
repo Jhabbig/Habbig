@@ -18,6 +18,18 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
+# Pillow decompression-bomb guard (audit MED, 2026-05-15). Pillow's
+# default ``MAX_IMAGE_PIXELS`` (~89M) only warns, not raises. The
+# ``_paste_logo`` helper below opens ``LOGO_PATH`` straight off disk —
+# if the static logo asset is ever swapped for an attacker-controlled
+# PNG (e.g. via a future user-uploaded brand mark), a crafted file
+# inside a small envelope could balloon to multi-GB on decode and OOM
+# the worker. 16M pixels = 4096×4096, well above the 44px target size
+# we resize to. Matches the cap set in ``profile_routes.py`` for
+# avatars — both code paths now trip a hard
+# ``Image.DecompressionBombError`` on anything larger.
+Image.MAX_IMAGE_PIXELS = 16_000_000
+
 log = logging.getLogger("gateway.og_cards")
 
 CARD_W, CARD_H = 1200, 630

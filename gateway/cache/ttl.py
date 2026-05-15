@@ -29,7 +29,7 @@ Key-schema convention (canonical — change in one place, update docs):
   insider_leaderboard                                       ttl=600
   og_card:default                                           ttl=3600
   og_card:source:{handle}                                   ttl=3600
-  og_card:market:{slug}                                     ttl=600
+  og_card:market:{slug}                                     ttl=3600
   credibility_consensus:{slug}                              ttl=60
 
 Invalidate via `cache.delete(key)` for single-key writes or
@@ -245,23 +245,42 @@ class ttl_invalidate:
     @staticmethod
     def on_market_resolved(slug: str) -> int:
         """Market went YES/NO — flush market-scoped keys AND the feed
-        (resolution ribbons change what users see)."""
+        (resolution ribbons change what users see).
+
+        Also bust the OG card. The card embeds the live narve-vs-market
+        probabilities; resolution flips the headline number to 0% / 100%,
+        and a stale card would show pre-resolution odds for the next
+        hour. The card key in the TTL cache is namespaced
+        ``og_card:og:market:{slug}`` (og_cards.cached() prefixes
+        ``og_card:`` onto the ``og:market:{slug}`` key the route passes
+        in). Use a prefix delete so any future per-variant suffixes
+        (`:v2`, `:locale_en`) also get nuked.
+        """
         removed = 0
         removed += ttl_cache.delete(f"market:{slug}")
         removed += ttl_cache.delete(f"market_chart:{slug}")
         removed += ttl_cache.delete_prefix("feed:")
         removed += ttl_cache.delete(f"credibility_consensus:{slug}")
+        removed += ttl_cache.delete_prefix(f"og_card:og:market:{slug}")
         return removed
 
     @staticmethod
     def on_credibility_recompute() -> int:
         """Nightly cron finished rescoring sources — invalidate the whole
-        source namespace + the network graph."""
+        source namespace + the network graph.
+
+        Also bust every per-source OG card. The card prints the credibility
+        score, accuracy, and prediction count straight from the source
+        credibility table; after a recompute the displayed numbers are
+        wrong until the 1-hour TTL expires. Full-prefix wipe because we
+        don't know which sources moved.
+        """
         removed = 0
         removed += ttl_cache.delete_prefix("source:")
         removed += ttl_cache.delete_prefix("source_history:")
         removed += ttl_cache.delete_prefix("sources:")
         removed += ttl_cache.delete("source_network")
+        removed += ttl_cache.delete_prefix("og_card:og:source:")
         return removed
 
     @staticmethod
