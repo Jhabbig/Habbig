@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import sqlite3
 import time
 from typing import Optional
 
@@ -26,10 +27,30 @@ import db
 # ttl_invalidate.on_* helpers so callers don't see stale rows after a
 # credibility recompute or a new prediction landing.
 from cache import ttl_cache, DEFAULT_TTLS
+from security.rate_limiter import get_client_ip, is_rate_limited as _is_rate_limited
 
 log = logging.getLogger("api.v1")
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
+
+# ── Tier / scope policy ─────────────────────────────────────────────────────
+#
+# Free-tier keys (``tier='free'``) get read-only access to credibility +
+# prediction data. The unified-markets edge endpoint hits Polymarket and
+# Kalshi inline (see MED-4 in audits/audit_api_v1.md) and is gated to paid
+# tiers only. ``standard`` and ``enterprise`` are paid; ``free`` is not.
+_PAID_TIERS = frozenset({"standard", "enterprise"})
+
+# Pre-auth IP rate limit: 30 requests per 60s per source IP. Fires BEFORE
+# the DB lookup so an attacker probing random bearer tokens cannot burn
+# DB round-trips at line speed. See HIGH-2 in audits/audit_api_v1.md.
+_ANON_RATE_LIMIT = 30
+_ANON_RATE_WINDOW = 60
+
+# Bearer token length cap. Real narve keys are 'narve_' + token_urlsafe(32)
+# ≈ 49 chars. We accept up to 256 to leave headroom for future key formats
+# while keeping the SHA-256 work bounded. See HIGH-1.
+_MAX_BEARER_LENGTH = 256
 
 
 # ── API key helpers ─────────────────────────────────────────────────────────
@@ -47,9 +68,11 @@ def create_api_key(user_id: int, name: str = "", tier: str = "standard") -> tupl
     never be retrieved a second time — any GET handler that returns
     raw key material MUST refuse when this column is non-null (M16).
 
-    TODO: add first_displayed_at column to api_keys table (INTEGER
-    NULLABLE). Until the migration ships the INSERT below will fall
-    back to the legacy column set so existing deploys don't crash.
+    Migration 196 (``gateway/migrations/196_api_keys_first_displayed.py``)
+    adds the column. The narrow fallback below exists ONLY to keep
+    legacy pre-migration databases bootable; it catches the specific
+    "no such column" OperationalError and lets every other SQL error
+    propagate. See audits/audit_api_v1.md CRIT-1.
     """
     raw_key = f"narve_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(raw_key)
@@ -64,10 +87,18 @@ def create_api_key(user_id: int, name: str = "", tier: str = "standard") -> tupl
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (key_hash, prefix, user_id, name, tier, rate_limit, now, now),
             )
-        except Exception:
-            # Column not yet migrated — fall back. Remove this branch
-            # once 0XX_api_keys_first_displayed_at.py is shipped.
-            log.warning("api_keys.first_displayed_at column missing; falling back to legacy insert")
+        except sqlite3.OperationalError as exc:
+            # Narrow fallback: only fire when the column itself is
+            # missing on a legacy DB. Any other OperationalError
+            # (UNIQUE violation, locked DB, malformed row) propagates
+            # so the caller sees real failures. Once every deploy is
+            # past migration 196 this branch can be deleted entirely.
+            msg = str(exc).lower()
+            if "no such column" not in msg or "first_displayed_at" not in msg:
+                raise
+            log.debug(
+                "api_keys.first_displayed_at column missing; legacy insert (migration 196 not yet applied)"
+            )
             cur = c.execute(
                 "INSERT INTO api_keys (key_hash, key_prefix, user_id, name, tier, rate_limit_hour, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -110,11 +141,37 @@ def get_api_key_raw(key_id: int, user_id: int) -> Optional[str]:
 def _validate_key(request: Request) -> dict:
     """Validate the Bearer token. Returns the api_key row dict.
 
+    Order of checks (audits/audit_api_v1.md HIGH-1/HIGH-2):
+      1. Pre-auth per-IP rate limit (BEFORE any DB work) — caps the
+         cost of guessed-bearer probes.
+      2. Bearer presence + length cap — refuse oversized headers
+         before hashing.
+      3. SHA-256 lookup + revoked check.
+      4. Per-key rate limit (tier-aware).
+      5. ``last_used_at`` UPDATE.
+
     Raises HTTPException on failure.
     """
+    # 1. Pre-auth IP rate limit — fires BEFORE the DB lookup so
+    # anonymous traffic with random bearer tokens cannot burn a SQL
+    # round-trip + SHA-256 per request.
+    ip = get_client_ip(request)
+    if _is_rate_limited(f"apiv1_anon:{ip}", _ANON_RATE_LIMIT, _ANON_RATE_WINDOW):
+        raise HTTPException(
+            429,
+            "Too many requests from this IP. Slow down and try again.",
+            headers={"Retry-After": str(_ANON_RATE_WINDOW)},
+        )
+
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(401, "API key required. Use: Authorization: Bearer <key>")
+
+    # 2. Length cap — refuse oversized bearer tokens before we hash.
+    # A real narve key is ~49 chars; 256 is generous for future formats
+    # and bounds the SHA-256 work on the negative path.
+    if len(auth) > _MAX_BEARER_LENGTH:
+        raise HTTPException(401, "Invalid API key")
 
     raw_key = auth[7:]
     key_hash = _hash_key(raw_key)
@@ -129,7 +186,7 @@ def _validate_key(request: Request) -> dict:
     if row["revoked_at"]:
         raise HTTPException(401, "API key has been revoked")
 
-    # Rate limit
+    # 4. Per-key rate limit
     from security.rate_limiter import limiter
     allowed, remaining, retry_after = limiter.check(
         f"apiv1:{row['id']}", row["rate_limit_hour"], 3600
@@ -140,7 +197,7 @@ def _validate_key(request: Request) -> dict:
             headers={"Retry-After": str(retry_after), "X-RateLimit-Limit": str(row["rate_limit_hour"])},
         )
 
-    # Touch last_used_at
+    # 5. Touch last_used_at
     with db.conn() as c:
         c.execute(
             "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
@@ -148,6 +205,41 @@ def _validate_key(request: Request) -> dict:
         )
 
     return dict(row)
+
+
+def _key_tier(key: dict) -> str:
+    """Lowercased tier string; defaults to 'free' if absent."""
+    return (key.get("tier") or "free").strip().lower()
+
+
+def _key_scopes(key: dict) -> set[str]:
+    """Comma-separated scopes column → set. Defaults to {'read'} (M128)."""
+    raw = key.get("scopes")
+    if not raw:
+        return {"read"}
+    return {s.strip() for s in str(raw).split(",") if s.strip()}
+
+
+def _require_scope(key: dict, scope: str) -> None:
+    """403 if the API key does not have the named scope."""
+    if scope not in _key_scopes(key):
+        raise HTTPException(403, f"API key missing required scope: {scope}")
+
+
+def _require_paid_tier(key: dict) -> None:
+    """403 free-tier keys away from paid endpoints (audit HIGH-4).
+
+    Free-tier keys can still read sources / predictions / single-market
+    consensus. The unified-markets edge endpoint is paid-only because
+    every call instantiates Polymarket + Kalshi clients and burns
+    upstream rate budget — exactly the surface a free-tier abuser
+    would target. See audits/audit_api_v1.md HIGH-4 and MED-4.
+    """
+    if _key_tier(key) not in _PAID_TIERS:
+        raise HTTPException(
+            403,
+            "This endpoint requires a paid API key. Upgrade your plan to access /markets/edge.",
+        )
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
@@ -164,7 +256,8 @@ async def v1_list_sources(request: Request, limit: int = 100, offset: int = 0):
     SQL directly against ``source_credibility`` (optionally joined to
     ``source_category_credibility``). Malformed filters drop silently.
     """
-    _validate_key(request)
+    key = _validate_key(request)
+    _require_scope(key, "read")
     limit = max(1, min(limit, 500))
 
     try:
@@ -251,7 +344,8 @@ async def v1_list_sources(request: Request, limit: int = 100, offset: int = 0):
 async def v1_source_detail(request: Request, handle: str):
     """Full source profile with calibration data. Cached 300s per handle;
     invalidated on new prediction or credibility recompute."""
-    _validate_key(request)
+    key = _validate_key(request)
+    _require_scope(key, "read")
 
     def _compute() -> Optional[dict]:
         cred = db.get_source_credibility(handle)
@@ -306,7 +400,8 @@ async def v1_list_predictions(
     param are present, the saved-views param wins — simpler semantics than
     merging two worlds. Malformed filter values are dropped, never 500.
     """
-    _validate_key(request)
+    key = _validate_key(request)
+    _require_scope(key, "read")
     limit = max(1, min(limit, 500))
 
     # Legacy single-value params first — backwards compat.
@@ -408,7 +503,8 @@ async def v1_market_consensus(request: Request, slug: str):
     Returns 404 when no predictions exist for the slug (rather than an empty
     consensus object) so clients can distinguish "no data" from "zero edge".
     """
-    _validate_key(request)
+    key = _validate_key(request)
+    _require_scope(key, "read")
 
     def _compute() -> Optional[dict]:
         preds = db.get_predictions_for_market(slug)
@@ -464,8 +560,16 @@ async def v1_markets_edge(
     min_sources: int = 1,
     category: Optional[str] = None,
 ):
-    """Top edge markets — where credibility intelligence disagrees most with price."""
-    _validate_key(request)
+    """Top edge markets — where credibility intelligence disagrees most with price.
+
+    Paid-tier only: this endpoint instantiates Polymarket + Kalshi
+    clients on every request (see MED-4) and burns upstream rate
+    budget that free-tier abuse would exhaust. Free-tier keys get
+    a 403 here; standard / enterprise pass through.
+    """
+    key = _validate_key(request)
+    _require_scope(key, "read")
+    _require_paid_tier(key)
     limit = max(1, min(limit, 50))
 
     import os
