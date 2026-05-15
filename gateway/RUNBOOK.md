@@ -1,6 +1,6 @@
 # narve.ai Operations Runbook
 
-Last updated: 2026-04-08
+Last updated: 2026-05-15
 
 > **Note on stack reality.** narve.ai is a FastAPI + SQLite monolith running
 > behind a Cloudflare Tunnel on a single Ubuntu VM, NOT a Docker compose
@@ -84,13 +84,32 @@ work accordingly.
 
 ### Start the gateway (production)
 
+**Use `setsid` + `nohup`.** Plain `nohup` alone dies when the ssh session
+exits (the parent shell takes the process down with it). `setsid` puts
+uvicorn in a new session detached from the controlling terminal so it
+survives ssh disconnect. Confirmed 2026-05-15 — plain nohup repeatedly
+died on disconnect; `setsid` form has been stable.
+
 ```bash
 ssh julianhabbig@100.69.44.108
-cd ~/Habbig/gateway
+cd ~/Habbig
 set -a; . ~/.gateway_env; set +a
-nohup env PRODUCTION=1 python3 -m uvicorn server:app \
-    --host 127.0.0.1 --port 7000 > /tmp/gateway.log 2>&1 &
+pkill -f "uvicorn server:app.*7000" 2>&1 || true
+sleep 2
+setsid bash -c "nohup python3 -m uvicorn server:app \
+    --host 127.0.0.1 --port 7000 --app-dir gateway \
+    > /tmp/gateway.log 2>&1 &" < /dev/null
+sleep 6
+curl -s http://127.0.0.1:7000/health  # local check (subproduct mw will 403 — see note)
+curl -s https://narve.ai/health        # real check via Cloudflare
 ```
+
+Note `--app-dir gateway` lets you launch from `~/Habbig` instead of
+`cd`ing into `gateway/` first. Either works; pick one and stick with it.
+
+> ⚠️ The systemd unit `polymarket-gateway.service` is **masked** —
+> don't try `systemctl start polymarket-gateway`. Production runs
+> uvicorn via direct `nohup` + `setsid` only.
 
 ### Start the gateway (staging)
 
@@ -460,6 +479,129 @@ ssh julianhabbig@100.69.44.108 'ss -tlnp | grep 7000'
 # Health from the server itself (bypasses Cloudflare)
 ssh julianhabbig@100.69.44.108 'curl -s http://127.0.0.1:7000/health | python3 -m json.tool'
 ```
+
+## Safe deploy procedure (manual production deploys)
+
+The automated scripts (`scripts/deploy-production.sh`,
+`scripts/rollback.sh`) cover the common path. This section is the
+belt-and-braces checklist for when you're deploying manually over ssh —
+e.g. hotfixes, schema-changing migrations, or any deploy where you want
+to keep an explicit rollback handle. Codified after the 2026-05-15 deploy
+where divergent server history + pending migration nearly trashed
+`auth.db`.
+
+### Pre-flight on the server
+
+```bash
+ssh julianhabbig@100.69.44.108
+cd ~/Habbig
+
+# 1. Tag the current server HEAD as a rollback handle BEFORE doing anything
+#    destructive (git reset, pull --rebase, etc.). Force-overwrite is fine
+#    — the tag is local-only and only used to find your way back.
+git tag -f "server-snapshot-pre-deploy-$(date +%Y%m%d-%H%M)" HEAD
+
+# 2. If the server has uncommitted WIP you want to preserve before pulling,
+#    stash it. Otherwise it'll get clobbered by git reset / checkout.
+git status --short                # what's dirty?
+git stash push -m "server pre-deploy snapshot $(date +%Y%m%d-%H%M)"
+
+# 3. Check whether server has local commits not in origin (diverged history).
+git log --oneline HEAD ^origin/feature/platform-build
+#   → If non-empty, DON'T blindly reset. Read each local commit:
+git log -p HEAD ^origin/feature/platform-build
+#   Either cherry-pick them into a real PR, or — if confirmed stale —
+#   reset after tagging:
+git reset --hard origin/feature/platform-build
+```
+
+### Migration safety
+
+Production has no separate migration framework — schema lives in
+`db.init_db()`. **But** if you're running anything in `gateway/migrations/`
+that mutates `auth.db`, take a timestamped snapshot first:
+
+```bash
+cp gateway/auth.db gateway/auth.db.backup-pre-MIGRATION_ID-$(date +%Y%m%d-%H%M)
+# e.g. auth.db.backup-pre-105-20260515-2214
+```
+
+When systemd is not in use, run the migration head invocation directly:
+
+```bash
+cd ~/Habbig/gateway && python3 -c "import migrations; print(migrations.upgrade_to_head())"
+```
+
+If the migration fails or the app starts misbehaving, stop uvicorn, swap
+the backup back in, and restart:
+
+```bash
+fuser -k 7000/tcp; sleep 2
+mv gateway/auth.db gateway/auth.db.failed-$(date +%s)
+cp gateway/auth.db.backup-pre-MIGRATION_ID-* gateway/auth.db
+# then restart via the setsid command in "Start the gateway"
+```
+
+### Restart uvicorn (the proven incantation)
+
+This is the same command as **Start the gateway (production)** but it's
+worth repeating in the deploy flow because the `setsid` part is the
+non-obvious piece. Without it, uvicorn dies the moment your ssh session
+ends.
+
+```bash
+pkill -f "uvicorn server:app.*7000" 2>&1 || true
+sleep 2
+setsid bash -c "nohup python3 -m uvicorn server:app \
+    --host 127.0.0.1 --port 7000 --app-dir gateway \
+    > /tmp/gateway.log 2>&1 &" < /dev/null
+sleep 6
+```
+
+### Verify the deploy
+
+```bash
+# Local check FROM THE SERVER will hit the subproduct middleware, which
+# 403s requests with a localhost Host header in production. That's
+# expected — it's not a deploy failure. Test via Cloudflare instead.
+curl -s http://127.0.0.1:7000/health   # may 403 — DO NOT rely on this
+curl -s https://narve.ai/health | python3 -m json.tool   # real check
+```
+
+If `/health` is 200 via `https://narve.ai` but 403 via
+`http://127.0.0.1:7000`, the deploy is fine — the middleware is doing its
+job.
+
+### Stripe webhook smoke test
+
+When `STRIPE_IP_ALLOWLIST_ENFORCE=true` (the production default), the
+webhook endpoint will 403 every request not coming from the 12 published
+Stripe CIDR ranges. Test from a non-Stripe IP to confirm enforcement is
+on, **not** to verify a real webhook works — those have to come from
+Stripe's own infra (use Stripe CLI `stripe trigger` against a test
+account).
+
+```bash
+# Should return 403 from your laptop / a non-Stripe IP:
+curl -s -o /dev/null -w "%{http_code}\n" https://narve.ai/stripe/webhook
+```
+
+### Rollback path
+
+If the deploy turns out broken:
+
+```bash
+ssh julianhabbig@100.69.44.108
+cd ~/Habbig
+git tag --list "server-snapshot-pre-deploy-*" | tail -5
+git reset --hard server-snapshot-pre-deploy-YYYYMMDD-HHMM
+# If you snapshotted auth.db, restore it too:
+cp gateway/auth.db.backup-pre-MIGRATION_ID-* gateway/auth.db
+# Restart uvicorn via the setsid command.
+```
+
+Or, for the common case of "just go back one commit on origin":
+`bash scripts/rollback.sh` from your laptop.
 
 ## Emergency procedures
 
