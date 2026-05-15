@@ -39,6 +39,7 @@ class AuditAction:
     USER_REVOKE_GIFT        = "user.revoke_gift"
     USER_TRADING_ADDON      = "user.trading_addon"
     USER_BULK_ACTION        = "user.bulk_action"
+    USER_EXPORT_DATA        = "user.export_data"
 
     # Token management
     TOKEN_GENERATE    = "token.generate"
@@ -73,6 +74,20 @@ class AuditAction:
     ADMIN_2FA_SETUP   = "admin.2fa_setup"
     ADMIN_2FA_DISABLE = "admin.2fa_disable"
 
+    # Feature flag CRUD (referenced by admin_routes.flag_create/save/delete).
+    # These were missing — _audit() previously swallowed the AttributeError
+    # and ZERO audit rows landed for any flag write. CRITICAL fix.
+    FEATURE_FLAG_CREATE = "feature_flag.create"
+    FEATURE_FLAG_UPDATE = "feature_flag.update"
+    FEATURE_FLAG_DELETE = "feature_flag.delete"
+
+    # Admin impersonation lifecycle. Same issue as feature flags above —
+    # impersonate_start/end referenced these constants but the symbols
+    # did not exist, so the audit trail had no record of any
+    # impersonation session being opened or closed.
+    IMPERSONATION_START = "impersonation.start"
+    IMPERSONATION_END   = "impersonation.end"
+
 
 ALL_ACTIONS = tuple(
     v for k, v in vars(AuditAction).items()
@@ -94,6 +109,7 @@ ACTION_LABELS = {
     AuditAction.USER_REVOKE_GIFT: "Revoked gifted subscription",
     AuditAction.USER_TRADING_ADDON: "Granted trading add-on",
     AuditAction.USER_BULK_ACTION: "Bulk user action",
+    AuditAction.USER_EXPORT_DATA: "Exported user data (admin GDPR shortcut)",
     AuditAction.TOKEN_GENERATE: "Generated access token",
     AuditAction.TOKEN_REVOKE: "Revoked access token",
     AuditAction.TOKEN_VIEW_LIST: "Viewed token list",
@@ -113,6 +129,11 @@ ACTION_LABELS = {
     AuditAction.ADMIN_LOGOUT: "Admin logout",
     AuditAction.ADMIN_2FA_SETUP: "Set up 2FA",
     AuditAction.ADMIN_2FA_DISABLE: "Disabled 2FA",
+    AuditAction.FEATURE_FLAG_CREATE: "Created feature flag",
+    AuditAction.FEATURE_FLAG_UPDATE: "Updated feature flag",
+    AuditAction.FEATURE_FLAG_DELETE: "Deleted feature flag",
+    AuditAction.IMPERSONATION_START: "Started impersonation session",
+    AuditAction.IMPERSONATION_END: "Ended impersonation session",
 }
 
 

