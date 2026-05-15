@@ -166,9 +166,87 @@ def _set_goal(conn: sqlite3.Connection, user_id: int, goal_key: str) -> None:
 # ── /onboarding shell ───────────────────────────────────────────────────────
 
 
+async def _consume_magic_link(request: Request) -> Optional[dict]:
+    """If the request carries a valid ``?auth=...`` token, mint a session
+    cookie and return the user dict. Returns None when no token is present
+    or the token fails validation.
+
+    AUDIT 2026-05-15 — bridges the Stripe-Checkout-success → /onboarding
+    redirect. Without this, a paying user lands on /onboarding with no
+    cookie and is bounced to /token, forcing them to re-type their email.
+    Token is signed (HMAC-SHA256 with GATEWAY_COOKIE_SECRET), 1-hour TTL,
+    single-use (jti burnt via the gateway rate-limit store).
+    """
+    token = (request.query_params.get("auth") or "").strip()
+    if not token:
+        return None
+    try:
+        from subproduct_signup_routes import (
+            verify_magic_link_token, burn_magic_link_jti,
+        )
+    except Exception:  # pragma: no cover — degraded import
+        return None
+    payload = verify_magic_link_token(token)
+    if not payload:
+        log.info("onboarding: magic-link token rejected (bad sig / expired)")
+        return None
+    # Single-use: burn the jti BEFORE issuing the session so a refresh-back
+    # attack can't reuse the same token to mint a second cookie.
+    if burn_magic_link_jti(payload["jti"]):
+        log.info(
+            "onboarding: magic-link token already consumed jti=%s",
+            payload["jti"],
+        )
+        return None
+
+    import db
+    row = db.get_user_by_id(payload["user_id"])
+    if not row:
+        log.warning(
+            "onboarding: magic-link token referenced missing user_id=%d",
+            payload["user_id"],
+        )
+        return None
+    # Refuse soft-deleted accounts — the token was minted for a live row.
+    try:
+        if row["is_deleted"] or row["deletion_scheduled_for"]:
+            log.info(
+                "onboarding: magic-link refused for soft-deleted user_id=%d",
+                payload["user_id"],
+            )
+            return None
+    except (KeyError, IndexError):
+        # Older schemas lack these columns — fall through.
+        pass
+
+    session_token = db.create_session(int(row["id"]))
+    log.info(
+        "onboarding: magic-link consumed user_id=%d (subproduct signup)",
+        row["id"],
+    )
+    return {
+        "user_id": int(row["id"]),
+        "email": row["email"],
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]) if "is_admin" in row.keys() else False,
+        "_session_token": session_token,
+    }
+
+
 async def onboarding_page(request: Request):
-    user = _require_user(request)
     import server
+
+    # Magic-link exchange BEFORE _require_user. Stripe Checkout success
+    # redirects here with ?auth=<signed-token>; we mint a session cookie
+    # so the user doesn't have to re-type the email they just paid with.
+    minted_user = await _consume_magic_link(request)
+    if minted_user is not None:
+        user = minted_user
+        session_token = minted_user.pop("_session_token", None)
+    else:
+        user = _require_user(request)
+        session_token = None
+
     # Static template already lives at static/onboarding.html — reuse it.
     conn = _connect()
     try:
@@ -177,13 +255,19 @@ async def onboarding_page(request: Request):
         conn.close()
     username = user.get("username") or user.get("email", "").split("@")[0]
     first_name = username.split(".")[0].split("_")[0].title()
-    return server.render_page(
+    response = server.render_page(
         "onboarding",
         request=request,
         email=user.get("email", ""),
         username=username,
         first_name=first_name or username,
     )
+    if session_token is not None:
+        try:
+            server.set_session_cookie(response, session_token, request)
+        except Exception:
+            log.exception("onboarding: failed to set session cookie after magic-link")
+    return response
 
 
 async def advance_step(request: Request, step: int = Form(...)):

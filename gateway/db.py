@@ -1012,17 +1012,21 @@ from queries.newsletter import (  # noqa: F401,E402
     count_blast_recipients,
     get_blast_recipients,
     get_blast_recipients_page,
+    get_blast_recipients_after,
     record_newsletter_campaign,
     create_blast_job,
     fetch_next_pending_blast_job,
+    claim_blast_job,
     mark_blast_job_started,
     advance_blast_job_progress,
+    advance_blast_job_progress_with_cursor,
     mark_blast_job_failed,
     get_blast_job,
     get_blast_job_for_campaign,
     backfill_campaign_sent_at,
     MAX_INLINE_RECIPIENTS as NEWSLETTER_MAX_INLINE_RECIPIENTS,
     MAX_BATCH_PER_TICK as NEWSLETTER_MAX_BATCH_PER_TICK,
+    CLAIM_TTL_SECONDS as NEWSLETTER_CLAIM_TTL_SECONDS,
     VALID_SEGMENTS as NEWSLETTER_VALID_SEGMENTS,
     VALID_FREQUENCIES as NEWSLETTER_VALID_FREQUENCIES,
     CONFIRMATION_RESEND_COOLDOWN_S as NEWSLETTER_CONFIRMATION_RESEND_COOLDOWN_S,
@@ -1111,6 +1115,26 @@ from queries.audit import (  # noqa: F401,E402
     detect_suspicious_patterns,
     list_audit_admin_emails,
     export_audit_csv_stream,
+)
+
+# In-app notification bell — schema lives in migration 026, runtime in
+# notifications.py, HTTP routes in notification_routes.py. Re-exported
+# here so existing ``db.create_notification`` / ``db.get_notifications``
+# call sites work without rewiring. Before this re-export the routes
+# raised ``AttributeError: module 'db' has no attribute 'create_notification'``
+# at first request — see queries/notifications.py for the full surface.
+from queries.notifications import (  # noqa: F401,E402
+    NOTIFICATION_TYPES,
+    create_notification,
+    get_notifications,
+    get_unread_count,
+    mark_notification_read,
+    mark_all_notifications_read,
+    archive_notification,
+    delete_notification,
+    get_notification_preferences,
+    set_notification_preferences,
+    notification_type_enabled,
 )
 
 

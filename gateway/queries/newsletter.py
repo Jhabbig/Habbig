@@ -719,6 +719,183 @@ def mark_blast_job_failed(job_id: int) -> None:
         )
 
 
+# ── Cursor-pagination + atomic claim (migration 194) ────────────────────────
+#
+# AUDIT 2026-05-15 — the original tick worker used LIMIT/OFFSET and a
+# two-step fetch + ``mark_blast_job_started``. Both pieces are racy:
+#
+#   * OFFSET shifts when subscribers unsubscribe mid-blast — the next
+#     page either resends earlier rows or skips later ones.
+#   * Two scheduler instances can race the same row: both
+#     ``fetch_next_pending_blast_job`` return the same job, both call
+#     ``mark_blast_job_started``, both enqueue the same batch. Result:
+#     duplicate emails, double-spend on the provider quota.
+#
+# The cursor design fixes both:
+#
+#   * ``claim_blast_job`` does an atomic UPDATE ... RETURNING with a
+#     per-worker claim token. Only one worker wins.
+#   * ``get_blast_recipients_after`` paginates by ``id > last_recipient_id``.
+#     Stable across any concurrent mutation.
+#   * ``advance_blast_job_progress_with_cursor`` bumps ``processed`` AND
+#     ``last_recipient_id`` AND re-clears ``claim_token`` in one UPDATE.
+
+
+# Claim grace window. If a worker crashed mid-batch, its claim is
+# reclaimable after this many seconds. Long enough for a 500-row batch
+# to drain (each enqueue is ~50 ms in the email queue), short enough
+# that a real crash unblocks the queue inside the same admin polling
+# interval (60 s tick → 5 min grace = a 5-min visible stall, max).
+CLAIM_TTL_SECONDS = 300
+
+
+def claim_blast_job(claim_token: str) -> Optional[dict]:
+    """Atomically claim the next blast job for this worker.
+
+    Uses ``UPDATE ... RETURNING`` so the fetch + the status flip happen
+    inside one transaction. A second concurrent worker calling with its
+    own ``claim_token`` will see an empty result and back off.
+
+    Reclaim rule: a row whose ``claim_token`` was set more than
+    ``CLAIM_TTL_SECONDS`` ago counts as abandoned and can be taken over.
+    The ``started_at`` column is reused as the claim timestamp — it's
+    bumped to ``now`` on every successful claim.
+
+    Returns the claimed row (with cursor + status), or None when no
+    job is available right now.
+    """
+    if not claim_token or not isinstance(claim_token, str):
+        raise ValueError("claim_blast_job: claim_token must be a non-empty string")
+    now = int(time.time())
+    cutoff = now - CLAIM_TTL_SECONDS
+    with db.conn() as c:
+        # The atomic claim. RETURNING is required so we can read the
+        # row WITHOUT a second SELECT (which would lose the claim
+        # exclusivity guarantee). SQLite 3.35+ supports RETURNING.
+        cur = c.execute(
+            "UPDATE newsletter_blast_jobs "
+            "SET status = 'running', "
+            "    started_at = ?, "
+            "    claim_token = ? "
+            "WHERE id = ("
+            "    SELECT id FROM newsletter_blast_jobs "
+            "    WHERE status IN ('pending', 'running') "
+            "      AND (claim_token IS NULL "
+            "           OR claim_token = ? "
+            "           OR COALESCE(started_at, 0) < ?) "
+            "    ORDER BY id ASC LIMIT 1"
+            ") "
+            "RETURNING id, campaign_id, status, total_recipients, "
+            "          processed_recipients, created_at, started_at, "
+            "          finished_at, "
+            "          COALESCE(last_recipient_id, 0) AS last_recipient_id, "
+            "          claim_token",
+            (now, claim_token, claim_token, cutoff),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_blast_recipients_after(
+    segment: str,
+    frequency_filter: Optional[str],
+    *,
+    last_id: int,
+    limit: int,
+) -> list[dict]:
+    """Cursor-paginated recipient page. Uses ``WHERE id > last_id`` so
+    inserts / unsubscribes between ticks don't shift the cursor.
+
+    Same filter semantics as ``get_blast_recipients`` / ``_page``. Always
+    sorted by id ASC so callers can use ``last_recipient_id`` as the
+    monotonic cursor.
+    """
+    seg = segment if segment in VALID_SEGMENTS else "all"
+    where = [
+        "confirmed_at IS NOT NULL",
+        "unsubscribed_at IS NULL",
+        "id > ?",
+    ]
+    params: list = [int(last_id)]
+
+    if seg != "all":
+        where.append("(segment = ? OR segment = 'all')")
+        params.append(seg)
+    if frequency_filter and frequency_filter in VALID_FREQUENCIES:
+        where.append("frequency = ?")
+        params.append(frequency_filter)
+
+    safe_limit = min(max(1, int(limit)), 5_000)
+    params.append(safe_limit)
+
+    sql = (
+        "SELECT id, email, segment, frequency FROM newsletter_subscribers "
+        "WHERE " + " AND ".join(where)
+        + " ORDER BY id ASC LIMIT ?"
+    )
+    with db.conn() as c:
+        return [dict(r) for r in c.execute(sql, params).fetchall()]
+
+
+def advance_blast_job_progress_with_cursor(
+    job_id: int,
+    *,
+    batch_size: int,
+    last_recipient_id: int,
+    claim_token: str,
+) -> dict:
+    """Bump processed + last_recipient_id and release the claim atomically.
+
+    Returns the post-update row. If the row's ``claim_token`` doesn't
+    match the caller's, the UPDATE no-ops — a crashed-then-reclaimed
+    worker can't clobber the surviving worker's progress.
+
+    Hits ``processed_recipients >= total_recipients`` → flips status to
+    ``done`` and stamps ``finished_at``. Otherwise releases the claim
+    (claim_token = NULL) so the next tick can pick the row up cleanly.
+    """
+    if not claim_token:
+        raise ValueError(
+            "advance_blast_job_progress_with_cursor: claim_token required",
+        )
+    now = int(time.time())
+    with db.conn() as c:
+        # Bump processed + cursor, ONLY if the claim is still ours.
+        c.execute(
+            "UPDATE newsletter_blast_jobs "
+            "SET processed_recipients = processed_recipients + ?, "
+            "    last_recipient_id = MAX(COALESCE(last_recipient_id, 0), ?), "
+            "    claim_token = NULL "
+            "WHERE id = ? AND claim_token = ?",
+            (int(batch_size), int(last_recipient_id), int(job_id), claim_token),
+        )
+        row = c.execute(
+            "SELECT id, campaign_id, status, total_recipients, "
+            " processed_recipients, created_at, started_at, finished_at, "
+            " COALESCE(last_recipient_id, 0) AS last_recipient_id "
+            "FROM newsletter_blast_jobs WHERE id = ?",
+            (int(job_id),),
+        ).fetchone()
+        if row is None:
+            return {}
+        if int(row["processed_recipients"]) >= int(row["total_recipients"]):
+            c.execute(
+                "UPDATE newsletter_blast_jobs "
+                "SET status = 'done', finished_at = ? "
+                "WHERE id = ?",
+                (now, int(job_id)),
+            )
+            row = c.execute(
+                "SELECT id, campaign_id, status, total_recipients, "
+                " processed_recipients, created_at, started_at, "
+                " finished_at, "
+                " COALESCE(last_recipient_id, 0) AS last_recipient_id "
+                "FROM newsletter_blast_jobs WHERE id = ?",
+                (int(job_id),),
+            ).fetchone()
+    return dict(row) if row else {}
+
+
 def get_blast_job(job_id: int) -> Optional[dict]:
     """Look up a single blast job by id."""
     with db.conn() as c:
@@ -767,17 +944,21 @@ __all__ = [
     'count_blast_recipients',
     'get_blast_recipients',
     'get_blast_recipients_page',
+    'get_blast_recipients_after',
     'record_newsletter_campaign',
     'create_blast_job',
     'fetch_next_pending_blast_job',
+    'claim_blast_job',
     'mark_blast_job_started',
     'advance_blast_job_progress',
+    'advance_blast_job_progress_with_cursor',
     'mark_blast_job_failed',
     'get_blast_job',
     'get_blast_job_for_campaign',
     'backfill_campaign_sent_at',
     'MAX_INLINE_RECIPIENTS',
     'MAX_BATCH_PER_TICK',
+    'CLAIM_TTL_SECONDS',
     'VALID_SEGMENTS',
     'VALID_FREQUENCIES',
     'CONFIRMATION_RESEND_COOLDOWN_S',
