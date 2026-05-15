@@ -397,6 +397,20 @@ async def lifespan(app: FastAPI):
     if IS_PRODUCTION and len(os.environ.get("GATEWAY_COOKIE_SECRET", "")) < 32:
         log.error("FATAL: GATEWAY_COOKIE_SECRET is too short (<32 chars) — refusing to start.")
         raise RuntimeError("GATEWAY_COOKIE_SECRET must be at least 32 characters")
+    # AUDIT FIX (HIGH × 3, audit_extension_auth.md §1): EXTENSION_JWT_SECRET
+    # must be set in production. The previous code silently fell back to
+    # GATEWAY_COOKIE_SECRET (coupling two distinct secrets) and ultimately
+    # to the repo-committed literal ``"narve-extension-dev"``. A prod deploy
+    # that forgot the env var would boot cleanly and sign 7-day extension
+    # JWTs with a public string. Mirror the GATEWAY_COOKIE_SECRET pattern
+    # directly above and refuse to start. The defense-in-depth check in
+    # extension_routes._jwt_secret() also raises on every sign/verify call.
+    if IS_PRODUCTION and not os.environ.get("EXTENSION_JWT_SECRET"):
+        log.error("FATAL: PRODUCTION=1 but EXTENSION_JWT_SECRET is unset — refusing to start.")
+        raise RuntimeError("EXTENSION_JWT_SECRET must be set in production (signs 7-day Chrome extension JWTs)")
+    if IS_PRODUCTION and len(os.environ.get("EXTENSION_JWT_SECRET", "")) < 32:
+        log.error("FATAL: EXTENSION_JWT_SECRET is too short (<32 chars) — refusing to start.")
+        raise RuntimeError("EXTENSION_JWT_SECRET must be at least 32 characters")
     if IS_PRODUCTION and not SITE_ACCESS_TOKEN:
         log.error("FATAL: PRODUCTION=1 but SITE_ACCESS_TOKEN is unset — refusing to start.")
         raise RuntimeError("SITE_ACCESS_TOKEN must be set in production")
