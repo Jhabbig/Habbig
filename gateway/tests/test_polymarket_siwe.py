@@ -7,10 +7,12 @@ Surface under test:
   * POST /api/markets/connect/polymarket        — verifies signature +
                                                   consumes nonce
 
-The legacy unsigned ``{wallet_address: ...}`` path is also exercised
-to lock the 30-day backward-compat window in place — it must still
-work, but the response must flag ``verified=False`` so portfolio sync
-can quietly downgrade trust until SIWE rolls out everywhere.
+AUDIT 2026-05-15 (MED #3) — the legacy unsigned
+``{wallet_address: ...}`` body shape was removed inside the 30-day
+deprecation window. Requests using it now get a **410 Gone** with a
+pointer at the SIWE flow; ``TestLegacyRemoval`` below pins that
+contract so a future revert can't quietly re-enable the unsigned
+attach.
 
 Tests use a real ``eth_account`` keypair so the signature path is
 end-to-end. ``eth-account==0.10.0`` is a hard test-time dep — same
@@ -288,19 +290,39 @@ class TestSignedConnect(_SIWEBase):
         self.assertIn("nonce", r.json()["error"].lower())
 
 
-class TestLegacyCompat(_SIWEBase):
-    """30-day deprecation window — unsigned ``wallet_address`` still
-    works, but the response carries ``verified=False`` and the server
-    log entry is WARN-level so we can spot un-migrated clients."""
+class TestLegacyRemoval(_SIWEBase):
+    """Audit MED #3 — the legacy unsigned ``wallet_address`` body shape
+    is gone. Clients still POSTing it must get **410 Gone**, never a
+    200, so a regression that re-enables the unverified attach fails
+    the suite loudly. The DB must NOT carry a side-effect row from the
+    request: a 410 is a contract refusal, not a soft-accept."""
 
-    def test_legacy_unsigned_accepted_with_flag(self):
+    def test_legacy_unsigned_returns_410(self):
         addr = self.acct.address
         r = self._post_connect({"wallet_address": addr})
-        self.assertEqual(r.status_code, 200, r.text)
-        data = r.json()
-        self.assertTrue(data["connected"])
-        self.assertFalse(data["verified"])
-        self.assertTrue(data.get("legacy"))
+        self.assertEqual(r.status_code, 410, r.text)
+        err = (r.json().get("error") or "").lower()
+        # Body must point migrating clients at the SIWE surface — the
+        # noun "siwe" or the nonce sub-path is the canonical breadcrumb.
+        self.assertTrue(
+            "siwe" in err or "nonce" in err,
+            f"410 body should point at SIWE flow, got: {err!r}",
+        )
+
+    def test_legacy_unsigned_does_not_persist_wallet(self):
+        """Belt-and-braces — even when the legacy body is rejected, no
+        credential row should have been written. Prevents a future
+        regression where the 410 ships AFTER the upsert."""
+        addr = self.acct.address
+        r = self._post_connect({"wallet_address": addr})
+        self.assertEqual(r.status_code, 410, r.text)
+        cred = db.get_market_credential(self.uid, "polymarket")
+        # Either no row at all, or a row with no wallet attached.
+        if cred is not None:
+            self.assertFalse(
+                cred.get("polymarket_wallet_address"),
+                f"legacy 410 must not persist wallet, got: {cred!r}",
+            )
 
     def test_no_body_400(self):
         """Neither {address, signature, message} nor {wallet_address}
@@ -308,6 +330,25 @@ class TestLegacyCompat(_SIWEBase):
         r = self._post_connect({})
         self.assertEqual(r.status_code, 400)
         self.assertIn("nonce", r.json()["error"].lower())
+
+    def test_siwe_path_still_works_after_legacy_removal(self):
+        """Regression guard — removing the legacy branch must not
+        affect the signed path. Mirrors
+        TestSignedConnect.test_valid_signature_accepted but lives here
+        so a future refactor that breaks both can't quietly pass by
+        deleting only the legacy class."""
+        body = self._get_nonce()
+        msg = body["message_template"].replace("{address}", self.acct.address)
+        sig = _sign_personal(msg, self.acct.key.hex())
+
+        r = self._post_connect(
+            {"address": self.acct.address, "signature": sig, "message": msg},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        data = r.json()
+        self.assertTrue(data["connected"])
+        self.assertTrue(data["verified"])
+        self.assertEqual(data["address"], self.acct.address.lower())
 
 
 if __name__ == "__main__":

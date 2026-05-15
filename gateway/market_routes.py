@@ -544,17 +544,21 @@ async def api_connect_polymarket_nonce(request: Request):
 async def api_connect_polymarket(request: Request):
     """Verify a SIWE signature and attach the proven wallet to the user.
 
-    Accepts two body shapes for the 30-day legacy-compat window:
+    Body shape:
 
-    * **Signed (preferred):** ``{address, signature, message}`` — the
-      ``message`` is the canonical SIWE body the client signed, the
-      ``signature`` is a personal_sign hex string, and ``address`` is
-      the wallet they claim to own. We recover the signer from
-      (message, signature), match it case-insensitively against
-      ``address``, then validate the embedded nonce + URI + chain id.
+    * ``{address, signature, message}`` — the ``message`` is the
+      canonical SIWE body the client signed, the ``signature`` is a
+      personal_sign hex string, and ``address`` is the wallet they claim
+      to own. We recover the signer from (message, signature), match it
+      case-insensitively against ``address``, then validate the embedded
+      nonce + URI + chain id.
 
-    * **Legacy unsigned:** ``{wallet_address}`` — accepted but logged
-      at WARN. Removed once the 30-day window closes (see changelog).
+    AUDIT 2026-05-15 (MED #3) — the legacy unsigned
+    ``{wallet_address}`` path is gone. Requests using the legacy body
+    shape get **410 Gone** pointing them at the SIWE flow. The 30-day
+    deprecation window opened 2026-05-14; this commit lands within
+    the window so any straggling clients break loudly instead of
+    silently attaching unverified wallets.
     """
     user = _require_markets_user(request)
     # AUDIT 2026-05-14 — share the 5/min/user budget with Kalshi connect.
@@ -629,31 +633,29 @@ async def api_connect_polymarket(request: Request):
         )
         return JSONResponse({"connected": True, "address": address, "verified": True})
 
-    # ── Legacy unsigned path — 30-day deprecation window ─────────────
+    # ── Legacy unsigned path — REMOVED (audit MED #3, 2026-05-15) ────
+    # The unsigned ``{wallet_address}`` body shape previously attached
+    # any 0x-address to the account without proof of key ownership.
+    # Returning 410 (not 400) so clients can distinguish "you sent
+    # malformed input" from "this surface is gone — migrate to SIWE".
     if legacy_address:
-        if not _EVM_ADDRESS_RE.fullmatch(legacy_address):
-            return JSONResponse(
-                {"error": "Valid wallet address required (0x followed by 40 hex characters)"},
-                status_code=400,
-            )
-        # AUDIT 2026-05-14 — see /changelog. Legacy non-SIWE connects
-        # are accepted for 30 days, logged at WARN so we can audit which
-        # accounts still need migration before the cutover.
         log.warning(
-            "Legacy unsigned Polymarket connect for user %s — wallet %s. "
-            "Client must migrate to SIWE before deprecation window closes.",
-            user.get("username"), legacy_address[:10] + "...",
+            "Rejected legacy unsigned Polymarket connect for user %s — "
+            "client still POSTing wallet_address without SIWE signature.",
+            user.get("username"),
         )
-        db.upsert_market_credential(
-            user["user_id"], "polymarket",
-            polymarket_wallet_address=legacy_address.lower(),
+        return JSONResponse(
+            {
+                "error": (
+                    "The unsigned wallet-connect endpoint has been removed. "
+                    "Use SIWE wallet-connect: GET "
+                    "/api/markets/connect/polymarket/nonce, sign the returned "
+                    "message_template with personal_sign, then POST "
+                    "{address, signature, message} to this same path."
+                ),
+            },
+            status_code=410,
         )
-        return JSONResponse({
-            "connected": True,
-            "address": legacy_address.lower(),
-            "verified": False,
-            "legacy": True,
-        })
 
     return JSONResponse(
         {"error": "Signature required: GET /api/markets/connect/polymarket/nonce first, "

@@ -287,13 +287,17 @@ class TestCsrfAndAuth(_DbIsolation):
         self.assertEqual(r.status_code, 403)
 
     def test_post_connect_polymarket_requires_csrf(self):
+        """CSRF middleware fires before any body parsing happens, so we
+        just need a plausible POST payload. We use the live SIWE body
+        shape (the legacy ``{wallet_address}`` shape now 410's anyway —
+        see test_polymarket_siwe.TestLegacyRemoval)."""
         slug = _unique("si_csrf_poly")
         _, token = _make_trader_user(f"{slug}@test.com", slug)
         addr = "0x" + "ab" * 20
         r = client.post(
             "/api/markets/connect/polymarket",
             cookies={server.COOKIE_NAME: token},  # no _csrf cookie/header
-            json={"wallet_address": addr},
+            json={"address": addr, "signature": "0x" + "00" * 65, "message": "stub"},
         )
         self.assertEqual(r.status_code, 403)
 

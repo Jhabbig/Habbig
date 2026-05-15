@@ -7,12 +7,18 @@
  * for an encrypted session token server-side.
  *
  * Endpoints used:
- *   GET    /api/markets/connections           → current state
- *   POST   /api/markets/connect/polymarket    → save wallet address
- *   POST   /api/markets/connect/kalshi        → email+password → token
- *   DELETE /api/markets/connect/{source}      → disconnect
- *   GET    /api/user/bankroll                 → current bankroll
- *   PATCH  /api/user/bankroll                 → save bankroll
+ *   GET    /api/markets/connections                    → current state
+ *   GET    /api/markets/connect/polymarket/nonce       → SIWE nonce + template
+ *   POST   /api/markets/connect/polymarket             → SIWE-signed wallet attach
+ *   POST   /api/markets/connect/kalshi                 → email+password → token
+ *   DELETE /api/markets/connect/{source}               → disconnect
+ *   GET    /api/user/bankroll                          → current bankroll
+ *   PATCH  /api/user/bankroll                          → save bankroll
+ *
+ * AUDIT 2026-05-15 (MED #3): the legacy unsigned
+ * ``POST {wallet_address}`` shape is gone — server returns 410. Match
+ * the SIWE flow in trade.js: nonce → personal_sign → POST
+ * {address, signature, message}.
  *
  * All mutating requests carry the _csrf cookie + matching X-CSRF-Token
  * header — same pattern as feedback.js / collections_widget.js.
@@ -173,7 +179,12 @@
     }
   }
 
-  // ── Polymarket connect (MetaMask) ─────────────────────────────────────
+  // ── Polymarket connect (MetaMask + SIWE) ──────────────────────────────
+  // Two-step SIWE flow (matches trade.js): fetch a server-issued nonce
+  // and canonical message template, ask the wallet to personal_sign it,
+  // then POST {address, signature, message}. The server recovers the
+  // signer and refuses the connect if it doesn't match `address` — proof
+  // of private-key ownership, not just public-address knowledge.
   async function connectPolymarket() {
     if (typeof window.ethereum === 'undefined') {
       toastErr('MetaMask or a compatible wallet is required.');
@@ -187,9 +198,26 @@
       var accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       var address = accounts && accounts[0];
       if (!address) throw new Error('No account selected');
+
+      btn.textContent = 'Requesting nonce…';
+      var nonceResp = await api('/api/markets/connect/polymarket/nonce', { method: 'GET' });
+      var template = nonceResp && nonceResp.message_template;
+      if (!template) throw new Error('Server did not return a SIWE message');
+      var message = template.replace('{address}', address);
+
+      btn.textContent = 'Sign in wallet…';
+      // personal_sign params on MetaMask: [message, address]. The wallet
+      // wraps the bytes with the EIP-191 prefix before signing, matching
+      // eth_account.encode_defunct on the server.
+      var signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [message, address],
+      });
+
+      btn.textContent = 'Verifying…';
       await api('/api/markets/connect/polymarket', {
         method: 'POST',
-        body: { wallet_address: address },
+        body: { address: address, signature: signature, message: message },
       });
       toastOk('Polymarket wallet connected.');
       await refreshConnections();
