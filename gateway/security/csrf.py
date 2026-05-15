@@ -76,7 +76,7 @@ CSRF_ENABLED = os.environ.get("CSRF_ENABLED", "true").lower() not in ("0", "fals
 # on non-POST mutating requests. When true, behaves identically to POST.
 # Mirror of the same flag in gateway/server.py — keep the two in lockstep.
 CSRF_PATCH_DELETE_ENFORCE = os.environ.get(
-    "CSRF_PATCH_DELETE_ENFORCE", "false"
+    "CSRF_PATCH_DELETE_ENFORCE", "true"
 ).lower() in ("1", "true", "yes", "on")
 
 
@@ -219,7 +219,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     return JSONResponse(
                         {"error": "Invalid origin"},
                         status_code=403,
-                        headers={"X-CSRF-Error": "origin"},
+                        headers={"X-CSRF-Error": "invalid"},
                     )
 
             # Get session-based CSRF token if available
@@ -250,7 +250,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     return JSONResponse(
                         {"error": "CSRF validation failed"},
                         status_code=403,
-                        headers={"X-CSRF-Error": reason},
+                        headers={"X-CSRF-Error": "invalid"},
                     )
                 # Soft-warn mode: let PATCH/PUT/DELETE through during Phase 1
                 # rollout so we get telemetry without breaking clients that

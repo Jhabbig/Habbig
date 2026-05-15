@@ -25,6 +25,9 @@ import + call — no route code in server.py.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -36,6 +39,166 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 
 log = logging.getLogger("subproduct.signup")
+
+
+# ── Magic-link auth token ───────────────────────────────────────────────────
+#
+# A user who completes Stripe Checkout off-platform has no session cookie
+# when Stripe redirects them back to ``/onboarding``. The signed token
+# below lets the onboarding handler trust the redirect target and mint a
+# real session.
+#
+# Format: ``<user_id>.<jti>.<expires_at>.<hmac>`` (all URL-safe).
+# - Signed with ``GATEWAY_COOKIE_SECRET`` (same secret the gate cookie uses).
+# - 1-hour TTL — long enough to absorb webhook latency, short enough that
+#   a leaked Stripe success URL can't be replayed days later.
+# - Single-use: the ``jti`` is burned via the gateway-wide rate-limit
+#   store after first redemption, so refresh-back attacks can't re-exchange.
+
+MAGIC_LINK_TTL_SECONDS = 3600  # 1 hour
+_MAGIC_LINK_SEP = "."
+
+
+def _magic_link_secret() -> bytes:
+    """HMAC key for the magic-link auth token.
+
+    Falls back to ``SITE_ACCESS_TOKEN`` when ``GATEWAY_COOKIE_SECRET`` is
+    unset. server.py refuses to start in production with no
+    ``GATEWAY_COOKIE_SECRET``, so the dev-only fallback can never reach
+    production.
+    """
+    return (
+        os.environ.get("GATEWAY_COOKIE_SECRET")
+        or os.environ.get("SITE_ACCESS_TOKEN")
+        or "dev-subproduct-magic-link-secret"
+    ).encode()
+
+
+def mint_magic_link_token(user_id: int) -> str:
+    """Produce a signed, single-use, time-bounded magic-link token."""
+    expires_at = int(time.time()) + MAGIC_LINK_TTL_SECONDS
+    jti = secrets.token_urlsafe(12)
+    payload = f"{int(user_id)}{_MAGIC_LINK_SEP}{jti}{_MAGIC_LINK_SEP}{expires_at}"
+    mac = hmac.new(_magic_link_secret(), payload.encode(), hashlib.sha256).digest()
+    mac_b64 = base64.urlsafe_b64encode(mac).rstrip(b"=").decode("ascii")
+    return f"{payload}{_MAGIC_LINK_SEP}{mac_b64}"
+
+
+def verify_magic_link_token(token: str) -> Optional[dict]:
+    """Return the parsed payload if the token is valid, else None.
+
+    Does NOT consume the jti — the onboarding handler is responsible for
+    burning it via ``burn_magic_link_jti`` so we get an audit log entry
+    on first redemption.
+    """
+    if not token or _MAGIC_LINK_SEP not in token:
+        return None
+    parts = token.split(_MAGIC_LINK_SEP)
+    if len(parts) != 4:
+        return None
+    user_id_str, jti, expires_at_str, mac_b64 = parts
+    if (
+        not user_id_str.isdigit()
+        or not expires_at_str.isdigit()
+        or not jti
+        or not mac_b64
+    ):
+        return None
+    user_id = int(user_id_str)
+    expires_at = int(expires_at_str)
+    now = int(time.time())
+    if expires_at <= now:
+        return None
+    if expires_at > now + MAGIC_LINK_TTL_SECONDS + 60:
+        # Server-side TTL guard — even if an attacker controlled the
+        # signing key (they shouldn't), the token can't outlive the cap.
+        return None
+    payload = f"{user_id}{_MAGIC_LINK_SEP}{jti}{_MAGIC_LINK_SEP}{expires_at}"
+    expected_mac = hmac.new(
+        _magic_link_secret(), payload.encode(), hashlib.sha256,
+    ).digest()
+    expected_b64 = base64.urlsafe_b64encode(expected_mac).rstrip(b"=").decode("ascii")
+    if not hmac.compare_digest(expected_b64, mac_b64):
+        return None
+    return {"user_id": user_id, "jti": jti, "expires_at": expires_at}
+
+
+def burn_magic_link_jti(jti: str) -> bool:
+    """Mark ``jti`` as consumed. Returns True if it was already burnt.
+
+    Uses the gateway-wide rate-limit store as a single-use cache — keys
+    survive the TTL window in Redis (or the in-memory fallback). Calling
+    ``_is_rate_limited(key, 1, ttl)`` returns False the first time and
+    True for every subsequent call within the window, which matches the
+    Stripe-event idempotency pattern used elsewhere.
+    """
+    try:
+        import server  # local import; cycles if at module load time
+    except Exception:
+        log.warning(
+            "burn_magic_link_jti: server unavailable, skipping idempotency"
+        )
+        return False
+    return server._is_rate_limited(
+        f"magic-link-jti:{jti}", 1, MAGIC_LINK_TTL_SECONDS + 120,
+    )
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate-limit keys."""
+    try:
+        import server
+        return server._get_client_ip(request)
+    except Exception:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            return xff.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+
+def _is_production() -> bool:
+    return bool(
+        os.environ.get("PRODUCTION") or os.environ.get("IS_PRODUCTION"),
+    )
+
+
+def _check_origin(request: Request) -> bool:
+    """Origin/Referer apex-match guard for the public form post.
+
+    /subproduct-signup is necessarily exempt from the double-submit CSRF
+    cookie because the form is served from <slug>.narve.ai and the POST
+    lands on the apex — the cookie can't span the subdomain ↔ apex pair
+    in the way the middleware expects. We compensate by requiring the
+    Origin/Referer to resolve to narve.ai or a narve.ai subdomain.
+    """
+    if not _is_production():
+        return True
+    origin = request.headers.get("origin") or ""
+    referer = request.headers.get("referer") or ""
+    if not origin and not referer:
+        return False
+    from urllib.parse import urlparse
+    for raw in (origin, referer):
+        if not raw:
+            continue
+        host = (urlparse(raw).hostname or "").lower()
+        if not host:
+            continue
+        if host == "narve.ai" or host.endswith(".narve.ai"):
+            return True
+    return False
+
+
+def _mask_email_local(email: str) -> str:
+    """Fallback email masker for log lines."""
+    try:
+        import db
+        return db.mask_email(email)
+    except Exception:
+        if not email or "@" not in email:
+            return "(invalid)"
+        local, _, domain = email.partition("@")
+        return f"{local[:2]}***@{domain}"
 
 
 def _app_url() -> str:
@@ -118,12 +281,23 @@ async def _build_checkout_session(
     import stripe  # type: ignore[import]
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
+    # Mint a signed, single-use, 1-hour magic-link token. The post-checkout
+    # /onboarding handler validates this token and mints a real session
+    # cookie so the user who just paid isn't bounced to /token to re-type
+    # the same email — see _consume_magic_link in onboarding_routes.py.
+    auth_token = mint_magic_link_token(user_id)
+
     app_url = _app_url()
     session_params = dict(
         mode="subscription",
         customer_email=email,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{app_url}/onboarding?subproduct={slug}&session_id={{CHECKOUT_SESSION_ID}}",
+        success_url=(
+            f"{app_url}/onboarding"
+            f"?subproduct={slug}"
+            f"&session_id={{CHECKOUT_SESSION_ID}}"
+            f"&auth={auth_token}"
+        ),
         cancel_url=f"https://{slug}.narve.ai/?checkout_cancelled=1",
         metadata={
             "user_id": str(user_id),
@@ -194,21 +368,85 @@ def register(app) -> None:
         Preserves the subproduct attached by SubproductMiddleware when
         the visitor came in on <slug>.narve.ai — we trust it over the
         form field so a scraped form can't cross-buy.
+
+        AUDIT 2026-05-15 — this route is in ``_CSRF_EXEMPT_POSTS`` because
+        the <form> lives on a subdomain and the POST lands on the apex,
+        so the double-submit cookie can't bridge the boundary. We
+        compensate with:
+          1. Origin/Referer apex-match — blocks cross-site forgery.
+          2. Per-IP rate-limit (5/hour) — bounds shell-user spam.
+          3. Per-email rate-limit (3/day) — stops one address being
+             burned across many IPs.
+          4. SUBPRODUCTS slug whitelist — closes the open-redirect
+             primitive that interpolating raw ``{slug}`` into a 302
+             target otherwise exposes (``subproduct=evil.com#`` ->
+             ``https://evil.com#.narve.ai/?error=email``, a redirect to
+             attacker-controlled origin because ``#`` truncates the
+             netloc).
         """
+        try:
+            from subproduct import SUBPRODUCTS as _CATALOG
+        except Exception:  # pragma: no cover — degraded import
+            _CATALOG = {}
+
         attached = getattr(request.state, "subproduct", None)
-        slug = (attached or subproduct or "").strip()
-        email = (email or "").strip().lower()
-        if not email or "@" not in email:
+        raw_slug = (attached or subproduct or "").strip()
+        slug = raw_slug if raw_slug in _CATALOG else ""
+
+        def _safe_error_redirect(reason: str):
+            """302 with a slug-safe target. Apex "/" if slug is invalid."""
+            if not slug:
+                return RedirectResponse("/", status_code=302)
             return RedirectResponse(
-                f"https://{slug}.narve.ai/?error=email" if slug else "/",
+                f"https://{slug}.narve.ai/?error={reason}",
                 status_code=302,
             )
+
+        email = (email or "").strip().lower()
+
+        # Origin/Referer apex match before any work — cheapest reject.
+        if not _check_origin(request):
+            log.warning(
+                "subproduct-signup: rejected cross-origin POST ip=%s slug=%s",
+                _client_ip(request), raw_slug,
+            )
+            return RedirectResponse("/", status_code=302)
+
+        # Per-IP + per-email rate limits via the gateway-wide rate store.
+        try:
+            import server as _srv
+            ip = _client_ip(request)
+            if _srv._is_rate_limited(f"subproduct-signup-ip:{ip}", 5, 3600):
+                log.info("subproduct-signup: per-IP cap hit ip=%s", ip)
+                if slug:
+                    return _safe_error_redirect("rate_limit")
+                return RedirectResponse("/", status_code=302)
+            if email and _srv._is_rate_limited(
+                f"subproduct-signup-email:{email}", 3, 86400,
+            ):
+                log.info(
+                    "subproduct-signup: per-email cap hit email=%s",
+                    _mask_email_local(email),
+                )
+                if slug:
+                    return _safe_error_redirect("rate_limit")
+                return RedirectResponse("/", status_code=302)
+        except Exception:
+            # Rate-limit infra down (Redis + in-memory both unreachable)
+            # — fail-open rather than blocking legitimate signups; the
+            # CSRFMiddleware's per-IP global limit still bounds the
+            # blast radius.
+            log.exception("subproduct-signup: rate-limit check failed")
+
+        if not slug:
+            # Unknown subproduct — refuse outright. Don't leak the
+            # attacker's value back into a redirect path.
+            return RedirectResponse("/", status_code=302)
+        if not email or "@" not in email:
+            return _safe_error_redirect("email")
         price_id = _stripe_price_id(slug)
         if not price_id:
-            return RedirectResponse(
-                f"https://{slug}.narve.ai/?error=config" if slug else "/",
-                status_code=302,
-            )
+            return _safe_error_redirect("config")
         try:
             user_id = _create_or_get_shell_user(email)
             url = await _build_checkout_session(
@@ -216,8 +454,5 @@ def register(app) -> None:
             )
         except Exception as exc:
             log.exception("subproduct signup failed: %s", exc)
-            return RedirectResponse(
-                f"https://{slug}.narve.ai/?error=checkout",
-                status_code=302,
-            )
+            return _safe_error_redirect("checkout")
         return RedirectResponse(url, status_code=302)

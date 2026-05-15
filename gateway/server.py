@@ -4857,8 +4857,17 @@ async def account_self_delete(
     """User-initiated account deletion (GDPR Art. 17 — Right to Erasure).
 
     Requires the user to re-type their email + password to defuse accidental
-    clicks and confirm ownership. Cascades across every user-scoped table
-    and revokes all sessions before returning.
+    clicks and confirm ownership.
+
+    AUDIT 2026-05-15 — this route previously called ``cascade_delete_user``
+    immediately, which diverged from the JSON sibling ``/api/account/delete``
+    (server_features.py:531) which flips a 30-day soft-flag and waits for
+    the ``process_scheduled_deletions`` cron to anonymise. The split meant
+    the form variant skipped the recovery window, the deletion-confirmation
+    email, and the audit-friendly schedule. Now both routes set the same
+    30-day soft-flag, revoke sessions, cancel active subscriptions, and
+    rely on the daily cron (or the explicit super-admin
+    ``/admin/users/{id}/delete`` route) for the final hard delete.
     """
     sub = get_subdomain(request)
     if sub:
@@ -4894,15 +4903,46 @@ async def account_self_delete(
 
     user_id = db_user["id"]
     email = db_user["email"]
-    log.info("account.delete: user_id=%d email=%s initiated self-delete", user_id, email)
+    now = int(time.time())
+    deletion_scheduled_for = now + 30 * 86400
+    log.info(
+        "account.delete: user_id=%d email=%s initiated soft-delete (30-day window)",
+        user_id, email,
+    )
 
-    # Revoke sessions first so any outstanding cookie stops working mid-cascade.
+    with db.conn() as c:
+        # Soft-flag — anonymisation happens in process_scheduled_deletions.
+        c.execute(
+            "UPDATE users SET deletion_requested_at = ?, deletion_scheduled_for = ?, "
+            "deletion_cancelled_at = NULL, jwt_invalidated_before = ? WHERE id = ?",
+            (now, deletion_scheduled_for, now, user_id),
+        )
+        # Cancel any active subscriptions to stop further Stripe charges
+        # during the recovery window. The user can un-cancel via
+        # /api/account/delete/cancel within the 30-day grace period.
+        c.execute(
+            "UPDATE subscriptions SET status = 'cancelled' WHERE user_id = ? AND status = 'active'",
+            (user_id,),
+        )
+        # Revoke every existing session — JWT invalidation cutoff plus
+        # row-level deletion together stop outstanding cookies from working.
+        c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+    # Send deletion-confirmation email when templating + queue are available.
     try:
-        db.revoke_all_user_sessions(user_id)
-    except Exception:
-        pass
-
-    deleted = db.cascade_delete_user(user_id)
+        import datetime as _dt
+        from jobs.email_jobs import enqueue_email
+        await enqueue_email(
+            to=email,
+            template="account_deletion_confirmation",
+            context={
+                "display_name": db_user["username"] or email.split("@")[0],
+                "deletion_date": _dt.datetime.fromtimestamp(deletion_scheduled_for).strftime("%B %d, %Y"),
+            },
+            tags=["account_deletion", "transactional"],
+        )
+    except Exception as e:
+        log.warning("account.delete: deletion-confirmation enqueue failed: %s", e)
 
     try:
         from security import audit as _audit
@@ -4910,13 +4950,17 @@ async def account_self_delete(
             admin_user_id=user_id, admin_email=email,
             action=_audit.AuditAction.USER_DELETE_COMPLETED,
             target_type="user", target_id=user_id,
-            target_description="self-delete",
-            before={"email": email}, after=None, request=request,
+            target_description="self-delete (scheduled, 30-day window)",
+            before={"email": email},
+            after={"deletion_scheduled_for": deletion_scheduled_for},
+            request=request,
         )
     except Exception:
         pass
 
-    log.info("account.delete: user_id=%d cascade=%s", user_id, deleted)
+    log.info(
+        "account.delete: user_id=%d scheduled_for=%d", user_id, deletion_scheduled_for,
+    )
 
     response = RedirectResponse("/", status_code=302)
     try:

@@ -146,6 +146,54 @@ class TestSecurityLogger(unittest.TestCase):
             self.assertTrue(log_dir.exists())
 
 
+class TestSecurityHeadersOnRedirect(unittest.TestCase):
+    """Audit HIGH FIX C — empty-body 302 redirects must carry CSP / XFO.
+
+    A bare ``RedirectResponse(..., 302)`` from Starlette serialises with
+    ``Location`` + ``Content-Length: 0`` and nothing else. Without the
+    middleware applying the full ``SECURITY_HEADERS`` map to it,
+    attackers could frame the redirect, downgrade an HSTS-pinned hop,
+    or load mixed content via missing CSP. This pins the contract:
+    every 302 emitted by the app exits the middleware with the same
+    headers as any other response.
+    """
+
+    def test_302_redirect_carries_csp_xfo_xcto(self):
+        """Direct unit test against the middleware — hermetic, no FastAPI."""
+        # Spin up a minimal Starlette app and route a 302 through the
+        # extracted middleware in isolation.
+        from starlette.applications import Starlette
+        from starlette.responses import RedirectResponse
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+        import server as _server
+
+        async def redir(_request):
+            return RedirectResponse("/elsewhere", status_code=302)
+
+        app = Starlette(routes=[Route("/r", redir)])
+        app.add_middleware(_server.SecurityHeadersMiddleware)
+        client = TestClient(app, follow_redirects=False)
+        try:
+            r = client.get("/r")
+            self.assertEqual(r.status_code, 302)
+            # Empty-body redirect — Location is the only handler header.
+            self.assertEqual(r.headers.get("location"), "/elsewhere")
+            # The fix: middleware must have stamped each of these.
+            self.assertEqual(r.headers.get("x-content-type-options"), "nosniff")
+            self.assertEqual(r.headers.get("x-frame-options"), "DENY")
+            csp = r.headers.get("content-security-policy")
+            self.assertIsNotNone(csp, "CSP missing on empty-body 302")
+            self.assertIn("frame-ancestors 'none'", csp or "")
+            self.assertIn("default-src 'self'", csp or "")
+            self.assertEqual(
+                r.headers.get("referrer-policy"),
+                "strict-origin-when-cross-origin",
+            )
+        finally:
+            client.close()
+
+
 class TestSecurityIntegration(unittest.TestCase):
     """Integration-level sanity checks."""
 

@@ -188,18 +188,23 @@ class TestCSRFPatchDeleteEnforceFlag(unittest.TestCase):
             return importlib.reload(csrf_module)
 
     def tearDown(self):
-        # Reset to default false so other test classes see a clean module.
-        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+        # Reset to the secure default (env var absent) so other test
+        # classes see the production behaviour rather than the legacy
+        # opt-out mode.
+        env_without_flag = {k: v for k, v in os.environ.items()
+                            if k != "CSRF_PATCH_DELETE_ENFORCE"}
+        with patch.dict(os.environ, env_without_flag, clear=True):
             importlib.reload(csrf_module)
 
-    def test_flag_defaults_to_false(self):
-        """Absent env var means soft-warn mode (safe default)."""
+    def test_flag_defaults_to_true(self):
+        """Audit HIGH FIX A: absent env var means hard-enforce mode
+        (secure default). PATCH/PUT/DELETE behave like POST."""
         # Wipe the var if present so the reload sees no value at all.
         env_without_flag = {k: v for k, v in os.environ.items()
                             if k != "CSRF_PATCH_DELETE_ENFORCE"}
         with patch.dict(os.environ, env_without_flag, clear=True):
             mod = importlib.reload(csrf_module)
-            self.assertFalse(mod.CSRF_PATCH_DELETE_ENFORCE)
+            self.assertTrue(mod.CSRF_PATCH_DELETE_ENFORCE)
 
     def test_flag_true_parses_truthy_values(self):
         for v in ("1", "true", "TRUE", "yes", "on"):
@@ -328,8 +333,69 @@ class TestCSRFMiddlewareMethodDispatch(unittest.TestCase):
             self.assertTrue(passed)
             self.assertNotEqual(status, 403)
 
+    # ── Audit HIGH FIX A: secure-by-default + generic error header ──
+    #
+    # The two tests below pin the post-fix contract:
+    #
+    #   1. PATCH /api/X without a CSRF token → 403 by default (no env
+    #      override). DELETE with a wrong token → 403 + the GENERIC
+    #      ``X-CSRF-Error: invalid`` header (never the per-reason
+    #      "missing" / "mismatch" / "expired" / "origin" value, which
+    #      is a phishing/recon side-channel).
+    #   2. Explicit ``CSRF_PATCH_DELETE_ENFORCE=false`` opens the
+    #      legacy soft-warn escape hatch (emergency rollback only).
+
+    def test_patch_without_token_returns_403_by_default(self):
+        """PATCH must enforce CSRF by default (no env override)."""
+        import asyncio
+        env_without_flag = {k: v for k, v in os.environ.items()
+                            if k != "CSRF_PATCH_DELETE_ENFORCE"}
+        with patch.dict(os.environ, env_without_flag, clear=True):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request("PATCH")
+            status, passed = asyncio.run(self._dispatch(mw, req))
+            self.assertEqual(status, 403)
+            self.assertFalse(passed)
+
+    def test_csrf_error_header_is_generic_not_leaky(self):
+        """A failed DELETE returns 403 + ``X-CSRF-Error: invalid``.
+
+        The header MUST NOT reveal the precise validation step that
+        failed (missing / no_reference / mismatch / expired / origin)
+        — those leak phishing-relevant state to the client.
+        """
+        import asyncio
+        env_without_flag = {k: v for k, v in os.environ.items()
+                            if k != "CSRF_PATCH_DELETE_ENFORCE"}
+        with patch.dict(os.environ, env_without_flag, clear=True):
+            mod = importlib.reload(csrf_module)
+            mw = self._build_middleware(mod)
+            req = self._make_request(
+                "DELETE",
+                token_in_header="wrong_value",
+                cookie_token="cookie_value",
+            )
+
+            async def _grab_response(mw, request):
+                async def call_next(r):
+                    raise AssertionError("should not reach handler on 403")
+                return await mw.dispatch(request, call_next)
+
+            response = asyncio.run(_grab_response(mw, req))
+            self.assertEqual(response.headers.get("X-CSRF-Error"), "invalid")
+            for leaky in ("missing", "no_reference", "mismatch", "expired", "origin"):
+                self.assertNotEqual(
+                    response.headers.get("X-CSRF-Error"),
+                    leaky,
+                    f"X-CSRF-Error must not leak '{leaky}' to the client",
+                )
+
     def tearDown(self):
-        with patch.dict(os.environ, {"CSRF_PATCH_DELETE_ENFORCE": "false"}):
+        # Reset to secure default (env var absent) for other tests.
+        env_without_flag = {k: v for k, v in os.environ.items()
+                            if k != "CSRF_PATCH_DELETE_ENFORCE"}
+        with patch.dict(os.environ, env_without_flag, clear=True):
             importlib.reload(csrf_module)
 
 

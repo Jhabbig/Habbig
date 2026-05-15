@@ -70,6 +70,39 @@ _APEX_HOSTS = {
 _DEV_HOSTS = {"localhost", "127.0.0.1", "testserver"}
 
 
+# Trusted-proxy gate for CF-Connecting-IP (audit HIGH FIX B). Only the
+# loopback peer (cloudflared in prod) can attach a trustworthy
+# CF-Connecting-IP. Anything else is attacker-controlled.
+_TRUSTED_PROXY_HOSTS = frozenset({
+    "127.0.0.1",
+    "::1",
+    "localhost",
+    "testclient",
+})
+
+
+def trusted_client_ip(request) -> str:
+    """Real client IP, gating CF-Connecting-IP on a trusted peer.
+
+    See tests/test_cf_ip_trust.py — off-tunnel peer with a forged
+    CF-Connecting-IP returns the peer host (not the forged header), so
+    the downstream Stripe IP allowlist sees the real off-tunnel IP and
+    rejects.
+    """
+    try:
+        peer = (request.client.host if request.client else "") or ""
+    except AttributeError:
+        peer = ""
+    if peer in _TRUSTED_PROXY_HOSTS:
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            return xff.split(",")[0].strip()
+    return peer
+
+
 def _subproduct_hosts() -> set[str]:
     """Every {slug}.narve.ai host for a configured subproduct."""
     return {f"{slug}.narve.ai" for slug in _CATALOG}
@@ -124,12 +157,18 @@ class SubproductMiddleware(BaseHTTPMiddleware):
             )
 
         if _is_production():
-            # Cloudflare always sets CF-Connecting-IP on proxied requests.
-            # Its absence in prod means someone hit the origin directly.
-            if not request.headers.get("cf-connecting-ip"):
+            # Audit HIGH FIX B: gate on a trusted loopback peer attaching
+            # the CF header. Off-tunnel ingress with a forged header is
+            # rejected here instead of silently bypassing IP rate limits.
+            try:
+                peer = (request.client.host if request.client else "") or ""
+            except AttributeError:
+                peer = ""
+            cf_header = request.headers.get("cf-connecting-ip")
+            if peer not in _TRUSTED_PROXY_HOSTS or not cf_header:
                 log.warning(
-                    "subproduct: direct-origin request rejected host=%s path=%s",
-                    host, request.url.path,
+                    "subproduct: direct-origin request rejected host=%s path=%s peer=%s",
+                    host, request.url.path, peer or "?",
                 )
                 return JSONResponse(
                     {"error": "Forbidden"}, status_code=403,

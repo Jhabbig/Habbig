@@ -136,17 +136,19 @@ def reject_non_stripe_ip(client_ip: str) -> Optional[JSONResponse]:
 def extract_client_ip(request) -> str:
     """Pull the real client IP from a FastAPI ``Request``.
 
-    Prefers ``CF-Connecting-IP`` (set by Cloudflare on every request to
-    the origin) over ``request.client.host`` (which under Cloudflare
-    would be a Cloudflare edge IP, not the real source).
+    Audit HIGH FIX B: delegate to
+    ``middleware.subproduct.trusted_client_ip``. In production the
+    only legitimate peer is cloudflared on loopback; direct-to-origin
+    forgeries are recognised and we fall back to the actual peer IP.
     """
-    cf_ip = request.headers.get("CF-Connecting-IP") or ""
-    if cf_ip:
-        return cf_ip.strip()
     try:
-        return request.client.host or ""
-    except AttributeError:
-        return ""
+        from middleware.subproduct import trusted_client_ip
+    except Exception:  # pragma: no cover
+        try:
+            return (request.client.host if request.client else "") or ""
+        except AttributeError:
+            return ""
+    return trusted_client_ip(request)
 
 
 def reject_mode_mismatch(event: dict) -> Optional[JSONResponse]:
