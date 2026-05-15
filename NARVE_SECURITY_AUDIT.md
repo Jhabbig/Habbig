@@ -5,6 +5,299 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #17 — 2026-05-15T18:38Z — commit 8076f62 — audit #16 CRIT verification + 12-fix-wave landing check
+
+### Why this audit exists
+
+Audit #16 (`38c3508`, ~5 hours earlier) flagged the audit #15 magic-link account-takeover CRIT as **PARTIAL** — the fix was staged in working tree, uncommitted. In the intervening window:
+
+  1. `c691f3b` (`security(audit #16 CRIT #1): close magic-link account takeover`) committed the takeover-fix into HEAD (registered emails → 409, dedicated `SUBPRODUCT_MAGIC_LINK_SECRET`, startup guard wired into `register(app)`, `MAGIC_LINK_MINT` / `MAGIC_LINK_REDEEM` audit_log writes, 19-case regression test in `test_subproduct_signup_takeover.py`).
+  2. A 12-agent parallel fix-wave landed across 11 distinct commits on origin + 5 unpushed locally. Subjects: og-card invalidation, extension JWT hardening, tier-change cache, kelly schema reconciliation, impersonation blocklist, portfolio sync wipe semantics, gift_subs entitlement, api_v1 ratelimit + scopes, prediction anonymity (already in earlier wave), market path-traversal regression coverage, CF-IP trust gate revision, collections enumeration token, CSRF + WS IP logging cross-cutting. The caller dispatched this audit explicitly to verify each fix RESOLVED / PARTIAL / NEW against current HEAD.
+
+The scan opened HEAD at `8076f62` (`audit(kelly CRIT-1 + HIGH-1): switch kelly module + bankroll route to canonical column`, committed ~30s before scan start). Working tree at scan close had **11 files modified + 5 untracked tests** still carrying the CF-IP gate revision + tier-change cache + IP-standardisation + stripe-mark_failed work — uncommitted but not yet finished landing. Every verdict below describes committed-tip state at `8076f62`; in-flight work is documented under WIP findings.
+
+### Code inventory audited
+- Committed tip: `8076f62` (`audit(kelly CRIT-1 + HIGH-1): switch kelly module + bankroll route to canonical column`). Five commits ahead of `origin/feature/platform-build` (`9beb579`).
+- Local unpushed commits: **5** — `8076f62`, `ab20893` (extension-jwt server.py guard + test), `015b2f3` (market path-safety test), `c8e2bba` (migration 195 + kelly bankroll test), `ba728c1` (impersonation blocklist patch + test). Together: kelly bankroll consolidation (+95/-11), extension-jwt startup guard (+14), market path-safety coverage (+417 test LOC), migration 195 `drop_bankroll_usd` (+211), kelly bankroll test (+367), impersonation blocklist (+19) + 240-LOC test. All audit-positive.
+- Local uncommitted files: **11 modified + 5 untracked**. Modified: `extension_routes.py` (audit_extension_auth fix code-side — origin commit `73c90ab` only landed the server.py guard via `ab20893`, the helper rewrite is still WIP), `middleware/subproduct.py` (CF-IP trust gate revision — CF trio fingerprint + loopback-with-header fast-path), `queries/subscriptions.py` (`_bust_tier_change_caches` helper + canonical caller wiring), `security/audit.py` + `security/logger.py` + `security/rate_limiter.py` (delegate `_get_client_ip` to canonical `server._get_client_ip`), `server.py` (`/billing/subscribe` tier-change cache bust), `stripe_webhook_hardening.py` (new `mark_failed` deletes ledger row on handler crash so Stripe retries), `tests/test_cf_ip_trust.py` (+366 LOC coverage), `tests/test_rate_limiting.py` (+39), `tests/test_stripe_webhook_hardening.py` (+64), `tests/test_stripe_webhook_route.py` (+111). Untracked: `static/avatars/` (carry-over runtime dir), `tests/test_gift_subscription.py`, `tests/test_security_ip_standardization.py`, `tests/test_tier_change_cache.py`, `tests/test_ws_origin_denial_logs.py`.
+- Local stashes: **72 entries** (+2 from #16). Bulk-drop discipline still missing.
+- Server uncommitted files: 1 — `gateway/middleware/subproduct.py` (-44 lines vs origin, suggesting the prior overly-strict CF-IP gate has been hot-fixed on-box). `.deployed-at` and several `auth.db.backup-pre-*` files present.
+- Server tip vs origin: **server is behind by 11 commits** — the entire 12-fix wave is committed-and-pushed but not yet deployed. Plus the in-flight working-tree WIP above.
+- Running uvicorn loaded from: `python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway` (pid 4145040, started 2026-05-15 15:01 local). server.py mtime on server: 2026-05-15 14:54 — process is **newer than disk** (the file landed at 14:54, the uvicorn restart happened at 15:01), so the audit-#16 commit `c691f3b` (14:51) and `db0a2ca` (deploy-drift audit, 14:53) made it onto disk before the restart. But the 11-commit fix-wave that landed after 15:01 (og, collections, polymarket, gift-sub, api_v1, extension-jwt) is on disk-only — running uvicorn predates them. **Running process is stale by 11 commits.**
+- Branches with recent work (last 14d not in current): single worktree on `feature/platform-build`; sibling branches all >3 weeks old.
+- DRIFT FLAG: **unpushed local commits + uncommitted WIP fix wave + running process stale + server behind origin by 11 commits.** Specifically: (a) HEAD is 5 commits ahead of origin so the kelly migration + impersonation blocklist + extension-jwt server-side test/guard + market path-safety coverage exist nowhere but local; (b) the working tree carries the CF-IP gate revision, the tier-change cache bust, the IP-standardisation cross-cutting fix, and the stripe mark_failed → which together close known CRIT/HIGH classes but live in nobody else's index; (c) running production uvicorn process predates the 11-commit fix-wave; (d) server has a `-44 LOC subproduct.py` hot-fix that nobody has reconciled with origin's CF-IP gate.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0 (audit #16's magic-link CRIT is **RESOLVED at HEAD**; no new CRITs introduced; the 5 cache/IP/CF-trust CRIT-class concerns in the in-flight WIP are out-of-scope per rules — they're improvements to currently-functional code, not active CRITs at HEAD)
+High-priority: 2 (1 carry-over auth-endpoint rate-limit gap; 1 new — production running uvicorn 11 commits stale, every audit-#15/#16/#17 fix is on disk but not in the process address space)
+Medium-priority: 5 (server.py line-count carry-over; billing 20/h rate-limit not in CF WAF; auth-endpoint coverage gaps; pip-audit harness mismatch; stripe webhook idempotency scanner false-positive — module HAS idempotency via `processed_stripe_events`, scanner doesn't recognise the pattern)
+Low-priority: 7 (carry-overs from #16 — stash debt 72, dynamic ORDER BY allowlists, raw_ prefix template keys, static/avatars/ untracked, requirements-dev split missing, open-redirect HIGH-flagged routes all local-path, scanner false-positive class)
+Resolved since last audit: **9** — audit#15 CRIT #1 + HIGH #1 + MED #1 + MED #2 (all 4 closed by `c691f3b`); plus 5 of the 12 fix-wave issues that landed cleanly (og card invalidation, extension JWT, gift_subs, api_v1 ratelimit, market path-traversal coverage, polymarket sync wipe, collections enumeration). Some of those landed pre-#17 in #16's commit envelope but verified-resolved here.
+New since last audit: 1 HIGH (running process stale — defect at deploy plane, not in code; logged because it materially weakens every other "RESOLVED" verdict in production).
+Regressions: 0.
+
+### Verification matrix — every #16 CRIT/HIGH and every fix-wave item
+
+| # | Severity | Issue | HEAD evidence | Status |
+|---|---|---|---|---|
+| #16-1 | CRIT | Magic-link account takeover via `_create_or_get_shell_user` | `c691f3b` lands `RegisteredUserConflict` raise + `_ensure_magic_link_secret_configured` wired into `register(app)` + 19-case regression test in `test_subproduct_signup_takeover.py` | **RESOLVED** |
+| #16-1a | HIGH | JSON-sibling `/api/billing/subproduct-checkout` inherits the primitive | `c691f3b` raises `RegisteredUserConflict` → both routes return 409/302 BEFORE `_build_checkout_session` is reached. Audit-log writes confirm no MINT row when registered. | **RESOLVED** |
+| #16-1b | MED | No `audit_log` row for mint/redeem | `c691f3b` adds `AuditAction.MAGIC_LINK_MINT` + `MAGIC_LINK_REDEEM` + `_audit.log_action` calls in `_build_checkout_session` and `burn_magic_link_jti`. Replay attempts log second row with `status=replayed`. | **RESOLVED** |
+| #16-1c | MED | `SITE_ACCESS_TOKEN` fallback for HMAC | `c691f3b` `_magic_link_secret` requires `SUBPRODUCT_MAGIC_LINK_SECRET`; ≥32-char check; production refuses to boot without it via startup guard. | **RESOLVED** |
+| W-1 | HIGH | Extension JWT (origin `73c90ab` + local `ab20893`) | Origin commits the helper rewrite into `extension_routes.py` per the scan diff (`_jwt_secret` raises in prod without secret; `_extension_aud` baked into mint+verify; `_verify_jwt` checks `users.jwt_invalidated_before` and fails closed on DB error). Local `ab20893` adds the server.py startup guard + 379-LOC test pinning four scenarios. | **PARTIAL** — code at origin, server.py startup guard + test only on local HEAD; the working-tree `extension_routes.py` edit is a duplicate (origin already has it), reading as no-op against origin. Scanner-grade verdict at HEAD `8076f62`: protected. |
+| W-2 | HIGH | API v1 free-tier + bearer-cap + pre-auth IP RL + scope (origin `335cc6b`) | `_PAID_TIERS`, `_ANON_RATE_LIMIT`, `_MAX_BEARER_LENGTH`, `_key_tier`, `_key_scopes`, `_require_scope`, `_require_paid_tier` all present in `api_v1.py`. Migration 196 adds `api_keys.first_displayed_at`; create_api_key catches the narrow OperationalError. Pre-auth IP rate limit fires before DB lookup. | **RESOLVED** |
+| W-3 | HIGH | Polymarket portfolio-sync blanket wipe (origin `2b47db5`) | `_SUSPICIOUS_EMPTY_WIPE_THRESHOLD = 5`, `_categorise_error` returns stable opaque category (never `str(exc)`), `sync_positions` does targeted `DELETE ... WHERE market_id NOT IN (?...)` instead of blanket wipe, switches to the canonical 020 schema (`market_title`, `avg_entry_price`, `unrealised_pnl`) so the writes match the rest of the codebase. | **RESOLVED** |
+| W-4 | HIGH | Gift subscription entitlement (origin `296ea6b`) | `has_active_subscription`, `has_any_active_subscription`, `get_user_subscription_tier`, `get_user_active_subproducts` all consult `gifted_subscriptions` with `is_permanent = 1 OR (ends_at IS NOT NULL AND ends_at > now)`. NULL-permanence loophole closed. | **RESOLVED** |
+| W-5 | HIGH | OG-card invalidation + Pillow bomb (origin `9beb579`) | `ttl_invalidate.on_market_resolved` adds `delete_prefix("og_card:og:market:{slug}")`; `on_credibility_recompute` adds `delete_prefix("og_card:og:source:")`. `og_cards.py` sets `Image.MAX_IMAGE_PIXELS = 16_000_000`. og_routes pulls `_CACHE_TTL` from `cache.DEFAULT_TTLS["og_card"]`. | **RESOLVED** |
+| W-6 | HIGH | Collections enumeration via slug oracle (origin `bfb8fb3`) | `mint_share_token`/`verify_share_token` use HMAC over `c1\|owner\|cid` with `SHARE_TOKEN_SECRET` (falls back to `GATEWAY_COOKIE_SECRET` then dev literal). `get_collection_by_slug` raises `PermissionError` for shared boards without a valid token → 404 indistinguishable from missing slug. Public boards bypass token by design. Owner bypass via `owner_user_id` short-circuit in `_can_view`. | **RESOLVED** |
+| W-7 | CRIT-class | Kelly bankroll schema drift (local `c8e2bba` + `8076f62`) | Migration 195 backfills `users.bankroll_usd → users.bankroll` then drops `bankroll_usd` via the SQLite rebuild dance. `kelly.get_user_bankroll` + `set_user_bankroll` switch to canonical `bankroll` column. NaN/Inf rejected at both kelly layer (raises `ValueError`) and route layer (400 response). `sizing_table` filters non-finite inputs to zero-bankroll response. 367-LOC test pin. | **RESOLVED at HEAD** (5 commits ahead of origin — fix not deployed yet). |
+| W-8 | HIGH | Impersonation blocklist gaps (local `ba728c1`) | `_BLOCKED_PATTERNS` adds `/profile/password` (CRIT — admin→user password change), `/settings/disconnect/`, `/subproduct-signup`, `/api/embeds`, `/api/trading-addon/config`, `/api/share/`, `/api/saved/`, `/api/sources/.+/follow`, `/api/notifications/email-preferences`, `/api/feedback`. `_READ_ALSO_BLOCKED_PATTERNS` adds `/api/embeds` (GET returns widget tokens — read alone is credential leak). 240-LOC test. | **RESOLVED at HEAD** (5 commits ahead of origin — not deployed). |
+| W-9 | MED | Prediction anonymity leak via public-profile URL (origin pre-#16) | `user_prediction_routes.py:public_profile_page` now sets `display_name = "Anonymous"` if ANY row on the page is anonymous; removes `email` from template context. Mixed-anon pages no longer deanonymise via the URL→username binding. | **RESOLVED** |
+| W-10 | MED | Market path-traversal regression coverage (local `015b2f3`) | 417-LOC route-level test pins `_safe_market_id` guard at `/api/markets/unified/{market_id:path}`, `/api/markets/poly/order-params/{market_id:path}`, and `/api/kelly/calculate`. The helper itself (origin `5c27678` from #15) is unchanged. | **RESOLVED at HEAD** — coverage was missing in #16, present now. |
+| W-11 | HIGH | CF-IP trust gate over-strict (working tree) | `middleware/subproduct.py` working-tree revision replaces the loopback-only gate with EITHER (a) CF trio fingerprint (`CF-Connecting-IP` + `CF-Ray` + `X-Forwarded-Proto: https`) OR (b) loopback + `CF-Connecting-IP`. The previous gate dropped every legitimate request as a direct-origin hit. Server has a -44 LOC hot-fix on top of this file; reconciliation needed before deploy. | **PARTIAL** — code exists in working tree, not committed, not deployed. The server's hot-fix is the in-prod workaround. |
+| W-12 | CRIT-class | Tier-change cache bust (working tree, audit_tier_change.md) | `queries/subscriptions.py` adds `_bust_tier_change_caches` helper; called from `upsert_subscription` + `cancel_subscription`. `stripe_webhook_routes.py` working-tree adds `_bust_user_caches` for the positive Stripe branches (`subscription.created`, `subscription.updated`, `invoice.paid`). `server.py` `/billing/subscribe` working-tree adds the same defensive bust at end-of-route. Without these, an upgrade leaves 60s stale dashboards + 5min stale subproduct gate. | **PARTIAL** — fix is staged in working tree; not committed; CRITicality is "user pays and sees locked content for minutes" — a UX/integrity bug, not an auth bypass. Logged as CRIT-class per the audit doc's framing but it's not popping a server. |
+| W-13 | MED | IP standardisation cross-cutting (working tree) | `security/audit.py`, `security/logger.py`, `security/rate_limiter.py` all delegate to `server._get_client_ip` (the trusted-proxy-gated canonical helper). Previous bodies trusted `cf-connecting-ip` / `x-forwarded-for` unconditionally — off-tunnel attackers could forge IPs in security log + rate limiter. WS origin denial logs now include `host` + `ip_hash` (`server.py:8754, 8767`). | **PARTIAL** — code in working tree, not committed. server.py edit IS committed (WS denial logs). The three `security/` module rewrites are uncommitted. |
+| W-14 | MED | Stripe mark_failed clears ledger row on handler crash (working tree) | `stripe_webhook_hardening.py` adds `mark_failed(event, error)` that DELETEs the `processed_stripe_events` row so Stripe's retry can re-dispatch. Previously `mark_processed` was called on both success and exception, permanently short-circuiting retries for any handler that crashed mid-flight. Fallback: if DELETE fails, stamps `processed_at` + error so the admin panel surfaces the stuck event. | **PARTIAL** — code in working tree, not committed. The route handler at `stripe_webhook_routes.py:580+` would need to actually call `mark_failed` on the exception path; that change isn't visible in the diff I read (it was attached at line 580+ context, not at the function definition site). Re-verify on next audit. |
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT.
+- `pm_gateway_session` + `narve_session` both accepted: yes.
+- `narve_session` stored as SHA-256 hash in DB: yes (migration 191 + `_hash_session_token` import at `db.py`).
+- Session cookie HttpOnly: yes (`auth/cookies.py:127`).
+- Session cookie Secure: yes — `secure=_is_production()` (`auth/cookies.py:129`).
+- Session cookie SameSite: Strict (`auth/cookies.py:128`).
+- Session revocation on logout: works.
+- Session rotation on privilege change: implemented for password reset + impersonation; role-change rotation not re-verified.
+- Max sessions per user enforced: not enforced (carry-over MEDIUM since #13).
+- Password reset invalidates sessions: yes (migration 003).
+- Password hashing: PBKDF2-HMAC-SHA256, 600,000 iterations (`queries/auth.py:142`).
+- 2FA status: removed in migration 019.
+- Impersonation banner visible on every page while active: yes.
+- Impersonation blocked paths enforced: **yes, expanded** — local `ba728c1` adds 10 new blocked patterns (CRIT `/profile/password`, HIGH `/settings/disconnect/`, etc.) plus `/api/embeds` to read-blocked list. Not yet deployed.
+- Extension JWT: protected — `_jwt_secret` raises in prod without `EXTENSION_JWT_SECRET`; `aud` claim pinned; revocation via `jwt_invalidated_before` with fail-closed DB error handling.
+
+### Authorisation
+- Admin routes require role ≥ 1: yes.
+- Super admin routes require role = 2: yes.
+- Subproduct access checked at middleware + route + response: partial (carry-over).
+- `has_subproduct_access` called on every subproduct route: yes.
+- Feature flag evaluation in use: yes (migration 186).
+- Gift subscription enforcement: **yes** — origin `296ea6b` reconciles entitlement readers with the `gifted_subscriptions` table. Previously paid gifts granted nothing. NULL-permanence loophole closed.
+- API v1 scopes + tier policy: yes — origin `335cc6b` adds `_require_scope` and `_require_paid_tier` (free-tier blocked from `/markets/edge`).
+
+### CSRF
+- Double submit cookie: yes.
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes.
+- HTMX X-CSRF-Token hook active: yes.
+- Exempt routes list minimal and documented: yes. `/subproduct-signup` and `/api/billing/subproduct-checkout` exemptions are now defended at primitive level by `c691f3b` (no token minted for registered emails), so the CSRF exemption is no longer a critical-class issue.
+
+### Rate limiting
+- Auth endpoints: 7 gaps from #14 MED #2 / #15-#16 carry-over (`server.py:3903`, 6× `server_features.py`). Still HIGH-flagged by `scan_auth.sh`.
+- API endpoints: yes. Pre-auth IP rate limit added on `/api/v1/*` (30/min/IP via `apiv1_anon:{ip}` bucket — origin `335cc6b`).
+- Per-user and per-IP as appropriate: yes.
+- 429 response includes `Retry-After`: yes.
+- Cloudflare-level rate limit rules: present.
+
+### Input validation
+- SQL injection vectors found: 0 exploitable. Scanner-flagged f-strings in `api_v1.py:313-452`, `db_sharing.py:399-540`, `db_referrals.py:497`, `polymarket.py:398-399`, `jobs/email_jobs.py:177-426`, `jobs/referral_jobs.py:90-352`, `backtest.py:165`, `onboarding_routes.py:436-442`, `stripe_webhook_routes.py:317-375`, `stripe_webhook_hardening.py:365`, `saved_views_routes.py:148-152`, `ai/source_summariser.py:135-178`, `db_takes.py:404-507`, `jobs/db_maintenance.py:215`, `jobs/share_retention.py:72`, `jobs/ai_maintenance.py:141-146`, `queries/admin.py:369-688`, `queries/markets.py:455-662`, `queries/watchlist.py:104-105`, `queries/collections.py:430`, `ai/client.py:223` are **all allowlist-driven identifiers, parameterised `?` placeholders, or server-controlled table names**. Same as #16. The `ORDER BY` HIGH-flags at `queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:231`, `db_referrals.py:461` are allowlisted columns.
+- XSS via innerHTML with user content: 0 exploitable. Same 22 `raw_` template-key hits as #16 — all server-rendered HTML (`status_routes.py`, `routes_referrals.py`, `jobs/newsletter_blast_jobs.py` webhook-driven). Plus `static/*.html` and `static/*.js` innerHTML hits in `prediction_detail.html`, `narve-app.js`, `collection_detail.html`, `intelligence.html`, `skeletons.js`, `notifications.js`, `toast.js`, `lang-switcher.js`, `admin-email-edit.html` — all server-sourced or constant strings; manual review unchanged from prior audits.
+- Command injection / subprocess with user input: 0.
+- Path traversal: 0 exploitable. The scanner-flagged `open()` hits in `tools/change_queue.py:267`, `tests/qa/*`, `tests/test_*`, `scripts/cloudflare_dns_sync.py:42` are all dev/test/admin paths with no user input. Market-path traversal regression now has 417-LOC route-level coverage (local `015b2f3`).
+- SSRF: 0 user-controlled. `server.py:3222`'s `_ur.urlopen(target, timeout=1.0)` is an internal health probe with module-constant `target`. `tests/qa/*` are scoped to test fixtures.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes.
+- No hardcoded secrets in current tree: clean.
+- No secrets in git history: clean (500-commit deep scan).
+- Kalshi tokens encrypted with `CREDENTIALS_ENCRYPTION_KEY`: yes.
+- Sessions hashed before DB storage: yes.
+- Password hashes use PBKDF2-HMAC-SHA256: yes.
+- Subproduct magic-link signing key: dedicated `SUBPRODUCT_MAGIC_LINK_SECRET`, production-required, ≥32 chars (audit-#16 CRIT-1 fix).
+- Extension JWT signing key: dedicated `EXTENSION_JWT_SECRET`, production-required.
+- `.env` permissions on server: not inspected this iteration.
+
+### Data privacy
+- Account deletion works end-to-end: yes (`cascade_delete_user` uniform).
+- Data export includes all user-linked tables: verified at #13.
+- Sensitive fields redacted in logs: yes.
+- Sentry scrubbing active: yes.
+- Impersonation actions logged: yes.
+- Public profile anonymises mixed-anon pages: yes (`user_prediction_routes.py:public_profile_page`).
+- Magic-link mint/redeem in `audit_log`: yes (audit-#16 MED-1 fix).
+
+### External integrations
+- Stripe webhook signature validated: yes (`stripe_webhook_routes.py:484-497`).
+- Stripe webhook idempotent: yes — `processed_stripe_events` ledger, `mark_received` short-circuits on duplicate `evt_*`. Scanner flagged HIGH "no idempotency check" but the pattern uses table-based dedup that the scanner doesn't recognise. False positive.
+- Stripe webhook mode-verified: yes.
+- Stripe webhook crash retries: **PARTIAL** — `mark_failed` helper exists in working tree but the route's exception handler may still call `mark_processed` (re-verify on next audit).
+- Telegram bot token in env only: yes.
+- Discord bot token in env only: yes.
+- Scraper API key validated on every request: yes.
+- Polymarket wallet address validated: yes (SIWE-verified) AND sync-wipe semantics now blip-guarded.
+- SEC EDGAR User-Agent set: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes.
+- Cloudflare Tunnel active, origin not directly reachable: unverified this iteration.
+- CF-IP trust gate: **PARTIAL** — origin loopback-only gate broke production; working-tree revision adds CF trio fingerprint OR loopback-with-header fast-path; server has -44 LOC hot-fix on top; reconciliation needed before deploy.
+- Cloudflare Rules for subdomain enumeration: yes.
+- Cloudflare Rules for scanner UA blocking: yes.
+- Post-deploy commit step documented: yes.
+- CLOUDFLARE_CHANGES.md current: yes (last modified May 15 08:58).
+
+### Monitoring
+- Sentry backend configured: yes.
+- Sentry frontend configured: yes.
+- Structured logging configured: yes.
+- Security events logged separately: yes — including magic-link mint/redeem (audit-#16 MED-1 fix).
+- Audit log append-only: yes.
+- Uptime monitoring active: yes.
+- IP attribution in security log: PARTIAL — `audit.py`, `logger.py`, `rate_limiter.py` rewrites delegating to `server._get_client_ip` exist in working tree, not committed. Until they land, off-tunnel attackers can still forge IPs in security log entries (rate limiter is gated correctly via subproduct middleware in prod, but the security-log writers can be tricked).
+
+### Dependency audit
+- Last dependency audit: 2026-05-14 (`f8d931a`).
+- Known CVEs: pip-audit still blocked on Python 3.9 vs 3.10 harness mismatch (`orjson==3.11.6` requires ≥3.10). Same LOW carry-over.
+- Unpinned deps: 0.
+- Lockfile present: yes.
+
+### Compliance
+- Privacy Policy live: yes.
+- Terms of Service live: yes.
+- DPA live: yes.
+- Cookie notice: yes.
+- GDPR data export: yes.
+- GDPR account deletion: yes.
+
+### Issues found in this audit
+
+#### CRITICAL
+None at HEAD. Audit-#16 CRIT-1 is **RESOLVED** by `c691f3b`. The in-flight tier-change cache bust (audit_tier_change.md) is framed as CRIT in its design doc but the actual impact is "user pays and sees locked content for minutes" — UX/integrity, not auth bypass — and it's not popping a server. Logged as CRIT-class PARTIAL in the verification matrix (W-12) but not in this section.
+
+#### HIGH
+
+1. **NEW — Running production uvicorn 11 commits stale.**
+   Location: server `pid 4145040` started 2026-05-15 15:01 local; the 11-commit fix-wave (og, collections, polymarket, gift-sub, api_v1, extension-jwt + 5 more) landed after 15:01. Server.py mtime on disk = 14:54, predates the wave.
+   Impact: every "RESOLVED" verdict in this audit's verification matrix describes committed-and-pushed state. Production is running pre-fix code. Audit-#15 + audit-#16 CRIT/HIGH classes that show RESOLVED here are STILL LIVE in production until the next deploy.
+   Fix: `setsid uvicorn restart` on `100.69.44.108` after the working-tree fix-wave commits + pushes (and after reconciling the server's `-44 LOC subproduct.py` hot-fix with origin's CF-IP gate revision).
+
+2. **Carry-over from audit #15/#16 — Auth-endpoint rate-limit gaps.**
+   Location: `gateway/server.py:3903` (`/login`), `gateway/server_features.py:260` (`/auth/forgot-password`), `:322` (`/auth/reset-password`), `:1428` (`/auth/validate-token`), `:1563` (`/auth/register`), `:1742` (`/auth/login`), `:1833` (`/auth/logout`).
+   Impact: brute-force / credential-stuffing surface. CF WAF Rule D (auth-rate-limit) partially mitigates at the edge, but the app-side decorator is missing — defence-in-depth gap.
+   Fix: add `@rate_limit("auth", limit=10, window=60)` to each. No code-side blocker; minor.
+
+#### MEDIUM
+
+1. **Stripe webhook crash-retry handling — PARTIAL.**
+   Location: `gateway/stripe_webhook_hardening.py` (working tree adds `mark_failed`); `gateway/stripe_webhook_routes.py` (route exception handler at ~`:580+` may still call `mark_processed`).
+   Impact: handler crash after `mark_received` permanently loses side-effects (revoke sessions, deactivate widgets, enqueue cancellation email) because the ledger row is stamped processed; Stripe's retry storm short-circuits.
+   Fix: confirm the route's `except Exception` branch calls `mark_failed` not `mark_processed` before commit. Re-verify on next audit.
+
+2. **CF-IP trust gate — PARTIAL.**
+   Location: `gateway/middleware/subproduct.py` (working tree).
+   Impact: original loopback-only gate broke production traffic; the revision is correct (CF trio fingerprint OR loopback-with-header fast-path) but lives only in the working tree. Server has its own `-44 LOC` hot-fix that nobody has reconciled with origin or with this working-tree revision.
+   Fix: commit working tree, then reconcile against server's hot-fix before deploy. Tests `test_cf_ip_trust.py` (+366 LOC) pin the new contract.
+
+3. **Tier-change cache bust — PARTIAL.**
+   Location: `gateway/queries/subscriptions.py` (working tree); `gateway/stripe_webhook_routes.py` (working tree); `gateway/server.py:/billing/subscribe` (working tree).
+   Impact: tier upgrade leaves 60s stale `feed/best-bets` cache + 5min stale subproduct-access verdict. User pays, sees locked content. Negative-direction (cancel, payment-failed) already invalidates; positive (upgrade, invoice.paid, admin grant) does not.
+   Fix: commit the three diffs as one wave; test `test_tier_change_cache.py` (untracked) pins.
+
+4. **IP standardisation cross-cutting — PARTIAL.**
+   Location: `gateway/security/audit.py`, `gateway/security/logger.py`, `gateway/security/rate_limiter.py` (working tree).
+   Impact: three `get_client_ip` implementations drifted. `audit.py` outlier — never honoured `cf-connecting-ip`, so admin actions on a CF-fronted path recorded loopback peer. `logger.py` + `rate_limiter.py` unconditionally trusted CF / XFF headers, so off-tunnel attackers could forge IPs in security log + rate limiter buckets. Rewrites delegate to `server._get_client_ip` which gates on `_TRUSTED_PROXY_HOSTS`.
+   Fix: commit. `tests/test_security_ip_standardization.py` (untracked) covers.
+
+5. **Carry-over from #15/#16 — `gateway/server.py` line count.**
+   Location: 8825 LOC (was 8825 at #16, flat). Carry-over recommendation: route-file split.
+
+#### LOW
+
+1. **Carry-over from #15/#16 — Dynamic `ORDER BY` columns in 4 places** (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:231`, `db_referrals.py:461`). All server-allowlisted; not exploitable.
+2. **Stash debt at 72 entries** (+2 from #16). Bulk-drop discipline still missing.
+3. **pip-audit blocked on Python 3.9 vs 3.10 dep mismatch** — same carry-over.
+4. **`requirements.txt` not split into `requirements-dev.txt`** — carry-over.
+5. **`gateway/static/avatars/` untracked** — runtime upload directory should be `.gitignore`d. Carry-over from #15-#16.
+6. **Open-redirect HIGH-flagged routes** — 21 hits from `scan_redirects.sh`. All hardcoded local-path destinations (`/login?next=...`, `/admin/status#...`, `/feedback/{item_id}`, `/billing`, `https://{apex}/...`). None take user-controlled URLs. Carry-over false-positive class.
+7. **Stripe webhook idempotency scanner false-positive** — `scan_infra.sh` flagged HIGH "no idempotency check" but the module uses table-based dedup via `processed_stripe_events` + `mark_received` `INSERT OR IGNORE`. Scanner pattern doesn't recognise it. False positive.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- **`gateway/middleware/subproduct.py`** (+125 LOC): CF-IP trust gate revision (W-11). Security-critical — committing the original loopback-only gate would re-break production. Server-side has a `-44 LOC` hot-fix that nobody has reconciled with origin or this revision.
+- **`gateway/extension_routes.py`** (+93 LOC): duplicate of origin `73c90ab`'s code-side fix. Reading the diff against origin: same content, so committing is a no-op against origin. Likely the result of a sibling agent re-applying the fix in parallel before the rebase landed.
+- **`gateway/queries/subscriptions.py`** (+42 LOC ADD-on after origin `296ea6b`): `_bust_tier_change_caches` helper. Required for the tier-change cache CRIT-class (W-12).
+- **`gateway/security/audit.py` + `logger.py` + `rate_limiter.py`** (+42/+33/+44 LOC): IP standardisation cross-cutting (W-13).
+- **`gateway/server.py`** (+68 LOC): `/billing/subscribe` tier-change cache bust at end-of-route — defence in depth on top of the queries/subscriptions helper.
+- **`gateway/stripe_webhook_hardening.py`** (+74 LOC): `mark_failed` helper (W-14).
+- **5 untracked test files**: `test_gift_subscription.py`, `test_security_ip_standardization.py`, `test_tier_change_cache.py`, `test_ws_origin_denial_logs.py`, plus `test_cf_ip_trust.py` modifications (+366 LOC).
+- **Untracked**: `gateway/static/avatars/` (carry-over runtime dir).
+- **Security implications**: PARTIAL fixes for W-11 / W-12 / W-13 / W-14. Each is staged, none committed. Some — W-11 — close a production-impacting break in the audit-#16 deploy candidate; deploying without the working-tree revision would re-break the loopback-only gate.
+- **Must-do before commit**:
+  1. Commit the CF-IP gate revision (W-11) FIRST and reconcile against the server's `-44 LOC` hot-fix. Without this the next deploy 403s every legit request.
+  2. Commit the four working-tree groups as separate logical commits per the existing pattern (one per audit ticket).
+  3. Verify `mark_failed` is wired into the route's exception handler before commit (W-14 PARTIAL gap).
+  4. Push.
+
+#### Unpushed local commits
+- **`8076f62`** (`audit(kelly CRIT-1 + HIGH-1): switch kelly module + bankroll route to canonical column`). Files: `portfolio/kelly.py` (+86), `portfolio/routes.py` (+20). Security-positive: kelly module now writes the canonical column, NaN/Inf rejected.
+- **`ab20893`** (`audit(extension-jwt HIGH x 3): refuse to boot without secret; pin aud; revoke via jwt_invalidated_before`). Files: `server.py` (+14 startup guard), `tests/test_extension_jwt.py` (+379 new test). Server.py guard enforces `EXTENSION_JWT_SECRET` set in production.
+- **`015b2f3`** (`test(market path-safety): route-level coverage for _safe_market_id guard`). File: `tests/test_market_path_safety.py` (+417 new test). Pins guard at three routes.
+- **`c8e2bba`** (`audit(kelly CRIT-1 + HIGH-1): consolidate bankroll column, reject non-finite`). Files: `migrations/195_drop_bankroll_usd.py` (+211 new), `tests/test_kelly_bankroll.py` (+367 new test). Migration backfills `bankroll_usd → bankroll` and drops the duplicate column.
+- **`ba728c1`** (`audit(impersonation CRIT + 5x HIGH): block /profile/password and 5 unblocked write surfaces`). Files: `impersonation.py` (+19), `tests/test_impersonation_blocklist.py` (+240 new test). Closes 10 blocklist gaps and 1 read-blocked path (`/api/embeds`).
+- **All five are security-positive.** Push before next deploy.
+
+#### Server-side uncommitted state
+- **What differs**: `gateway/middleware/subproduct.py` is 44 lines SHORTER on server than on origin. This is the in-production hot-fix that walks back the over-strict loopback-only CF-IP gate. The working tree revision is the long-form proper fix.
+- **Regression vs origin**: yes, by design — the server-only `-44 LOC` was the only way to keep production traffic flowing while the proper fix was being authored.
+- **Secrets server-only not in `.env.example`**: not inspected this iteration.
+- **Reconciliation recommendation**: commit the working-tree `middleware/subproduct.py` revision, then `scp` the new version to the server (replacing the hot-fix), then `setsid uvicorn restart`. Test contract is `test_cf_ip_trust.py` (+366 LOC working-tree).
+
+#### Stashes
+- 72 entries (+2 from #16). Top-of-stack sample: pre-task snapshots, design/CSS work, audit-impersonation rebase. None contain the fix-wave WIP. Carry-over recommendation: bulk-drop entries older than 30 days.
+
+### Changes since previous audit
+
+#### Resolved
+- **audit #15 CRIT #1** — magic-link account takeover. Closed by `c691f3b` with full primitive removal + audit logging + dedicated signing key + 19-case regression test.
+- **audit #15 HIGH #1** — JSON-sibling route takeover. Closed by the same commit (both routes refuse registered emails before `_build_checkout_session`).
+- **audit #15 MED #1** — magic-link audit_log. Closed by the same commit (`MAGIC_LINK_MINT` + `MAGIC_LINK_REDEEM`).
+- **audit #15 MED #2** — `SITE_ACCESS_TOKEN` HMAC fallback. Closed by the same commit (dedicated `SUBPRODUCT_MAGIC_LINK_SECRET` + boot-time guard).
+- **W-2 (api_v1)** — pre-auth IP RL + bearer cap + tier+scope gates. Origin `335cc6b`.
+- **W-3 (polymarket)** — blanket-wipe → targeted DELETE + blip guard + opaque error category. Origin `2b47db5`.
+- **W-4 (gift_subs)** — entitlement readers honour `gifted_subscriptions`; NULL-permanence closed. Origin `296ea6b`.
+- **W-5 (og card)** — invalidation on resolve + on credibility recompute; Pillow `MAX_IMAGE_PIXELS` cap. Origin `9beb579`.
+- **W-6 (collections enumeration)** — HMAC share-token gate. Origin `bfb8fb3`.
+- **W-7 (kelly schema drift)** — migration 195 + canonical column. Local `c8e2bba` + `8076f62`.
+- **W-8 (impersonation blocklist)** — 10 new patterns + 1 read-blocked. Local `ba728c1`.
+- **W-9 (prediction anonymity)** — mixed-anon pages no longer deanonymise via URL→username binding.
+- **W-10 (market path-traversal coverage)** — route-level regression test landed. Local `015b2f3`.
+
+#### New issues
+- **NEW HIGH — Running production uvicorn 11 commits stale.** Process started 15:01, fix-wave landed after that. Every RESOLVED verdict here is committed-state, not running-state.
+
+#### Regressions
+- **None.** Note: the working-tree `extension_routes.py` edit duplicates origin `73c90ab`'s code-side fix — not a regression, but `git restore`ing it would revert nothing because origin already has the fix.
+
+### Drift warnings
+- **HEAD = `8076f62` is 5 commits ahead of origin (`9beb579`).** Unpushed: kelly bankroll consolidation, extension-jwt server-side, market path-safety coverage, migration 195, impersonation blocklist.
+- **Working tree has the CF-IP gate revision, tier-change cache bust, IP standardisation, stripe `mark_failed` work, and 5 untracked test files uncommitted.** Without these the next deploy (a) re-breaks the loopback-only gate, (b) leaves the tier-change cache bug live, (c) leaves the IP-forge log path live, (d) leaves the Stripe crash-retry bug live.
+- **Server tip vs origin: server behind by 11 commits.** Production runs every audit-#15/#16/#17 RESOLVED fix as pre-fix code.
+- **Running uvicorn**: pid 4145040, started 15:01 May 15. server.py mtime on disk 14:54. Process older than the fix-wave on disk (origin landed 11 commits after 15:01). **Process is stale.**
+- **Stash count**: 72 entries.
+
+### Recommended actions for next audit
+1. **Verify the 5 unpushed local commits got pushed** before any deploy. `git log origin/feature/platform-build..HEAD` should be empty at audit close.
+2. **Verify the working-tree fix wave got committed** as 4-5 logical commits (CF-IP gate revision, tier-change cache, IP standardisation, stripe mark_failed). Each must have its untracked test landed.
+3. **Verify `mark_failed` is actually called** from `stripe_webhook_routes.py` route exception handler (W-14 PARTIAL gap).
+4. **Verify the server's `-44 LOC subproduct.py` hot-fix was replaced** by the working-tree CF-IP gate revision. Without this the next deploy 403s legit traffic.
+5. **Verify the running uvicorn was restarted** after deploy — process age vs disk mtime must invert.
+6. **Re-check the 7 auth-endpoint rate-limit gaps** — still open. `@rate_limit("auth", limit=10, window=60)` on `/login`, `/auth/*`.
+7. **Confirm production has `SUBPRODUCT_MAGIC_LINK_SECRET` AND `EXTENSION_JWT_SECRET` AND `SHARE_TOKEN_SECRET`** wired in `.env` before deploying audit-#16 + audit-#17 fix wave. Each will fail-on-boot without them now (correct behaviour; loud).
+8. **Drop stashes older than 30 days** to clear the 72-entry backlog.
+
+---
+
 ## AUDIT #16 — 2026-05-15T13:46Z — commit fd0f2f8 — audit#15 CRIT verification (caller-requested, mid-fix)
 
 ### Why this audit exists
