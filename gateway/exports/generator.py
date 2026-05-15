@@ -38,7 +38,9 @@ import io
 import json
 import logging
 import os
+import re
 import sqlite3
+import sys
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -138,19 +140,51 @@ def _rows_to_dicts(rows) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-def _safe_query(conn, sql: str, params: tuple = ()) -> list[dict]:
-    """Run a raw SELECT and return list[dict]. Returns [] if the table
-    or one of the referenced columns does not exist — keeps the export
-    resilient against schemas the user happens not to have rows in (a
-    test DB built from db.py won't have every migration's tables, and
-    schema drift across deploys would otherwise break the whole export
-    over a single column rename)."""
+_FROM_TABLE_RE = re.compile(r"\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+
+
+def _extract_table_name(sql: str) -> str:
+    """Best-effort first table referenced in a SELECT.
+
+    Used purely for log/manifest annotation — we'd rather emit the
+    table we *tried* to read than a SQL fragment. Joined queries get
+    the first FROM target; unparseable strings fall back to "<unknown>".
+    """
+    m = _FROM_TABLE_RE.search(sql or "")
+    return m.group(1) if m else "<unknown>"
+
+
+def _safe_query(
+    conn,
+    sql: str,
+    params: tuple = (),
+    errors: Optional[list[dict]] = None,
+) -> list[dict]:
+    """Run a raw SELECT and return list[dict].
+
+    Returns [] when the referenced table or column does not exist — keeps
+    the export resilient against schemas the user happens not to have
+    rows in (a test DB built from db.py won't have every migration's
+    tables, and schema drift across deploys would otherwise break the
+    whole export over a single column rename).
+
+    Schema-drift misses are NOT silent: each one logs a warning and (if
+    *errors* is provided) appends a manifest entry so the operator and
+    the data subject both know the export skipped a table instead of
+    pretending it had no rows. Any other ``OperationalError`` (syntax
+    issue, locked DB, real bug) re-raises so it surfaces upstream
+    instead of producing a deceptively-complete archive.
+    """
     try:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_dict(r) for r in rows]
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
         if "no such table" in msg or "no such column" in msg:
+            table = _extract_table_name(sql)
+            log.warning("export query failed: table=%s err=%s", table, e)
+            if errors is not None:
+                errors.append({"table": table, "reason": str(e)})
             return []
         raise
 
@@ -209,10 +243,29 @@ def _collect(user_id: int) -> dict[str, Any]:
 
     Returns a flat dict where each value is either a dict (single row) or
     a list[dict] (table). Keys map 1:1 to filenames inside the ZIP.
+
+    Schema-drift errors raised inside ``_safe_query`` accumulate into
+    ``bundle["__errors__"]`` so ``build_zip`` can surface them in the
+    export manifest. The leading underscores keep the key out of the
+    zip's file map (build_zip iterates a fixed list of bundle keys).
     """
     import db
 
-    bundle: dict[str, Any] = {}
+    errors: list[dict] = []
+
+    # Local _safe_query wrapper that pins the shared error list so every
+    # call site below routes schema-drift misses into the manifest without
+    # having to thread ``errors=`` through dozens of call signatures. We
+    # grab the module-level implementation via sys.modules to dodge the
+    # name-shadowing rule (binding ``_safe_query`` below makes the bare
+    # name local for the whole function, so a direct global lookup would
+    # raise UnboundLocalError).
+    _module_safe_query = sys.modules[__name__]._safe_query
+
+    def _safe_query(conn, sql, params=()):  # noqa: E306, F811
+        return _module_safe_query(conn, sql, params, errors=errors)
+
+    bundle: dict[str, Any] = {"__errors__": errors}
     with db.conn() as c:
         # Account profile
         user_row = c.execute(
@@ -805,6 +858,12 @@ def build_zip(user_id: int, target_path: Path) -> dict:
         "exported_at_unix": now,
         "files": {},
         "row_counts": {},
+        # Schema-drift table/column misses caught by ``_safe_query`` — empty
+        # in the happy case, but populated when a deploy drops/renames a
+        # table the export references. Surfacing this lets operators (and
+        # data subjects) tell a genuinely empty export apart from one that
+        # silently skipped tables.
+        "errors": list(bundle.get("__errors__") or []),
     }
 
     with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
