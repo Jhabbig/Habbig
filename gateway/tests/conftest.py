@@ -215,6 +215,50 @@ _POLLUTION_TABLES = (
 )
 
 
+# Fix A - test-fixture rows planted by make_user / seed_basic / ad-hoc
+# test inserts. The 38-failure cohort that earned this fixture was
+# driven almost entirely by user/session/subscription rows from one
+# file leaking into the next file's "no such user yet" assertion. Wipe
+# these after every function-scoped test to bring the suite to the
+# pollution-free floor.
+#
+# Order matters: child tables before parents so FK ON DELETE CASCADE
+# doesn't have to do double-work and a missing-table error mid-list
+# doesn't strand orphan rows.
+_FIXTURE_WIPE_TABLES = (
+    "sessions",
+    "user_sessions",
+    "csrf_tokens",
+    "subscriptions",
+    "user_market_credentials",
+    "user_positions",
+    "user_predictions",
+    "user_onboarding",
+    "user_invite_tokens",
+    "saved_predictions",
+    "saved_markets",
+    "followed_sources",
+    "user_follows",
+    "user_market_views",
+    "user_market_alerts",
+    "password_resets",
+    "impersonation_actions",
+    "impersonation_sessions",
+    "api_keys",
+    "api_key_usage",
+    "newsletter_subscribers",
+    "predictions",
+    "predictions_reextracted",
+    "source_credibility",
+    "credibility_snapshots",
+    "background_jobs",
+    "processed_stripe_events",
+    "invite_tokens",
+    "users",
+)
+
+
+
 @pytest.fixture(autouse=True)
 def _reset_global_test_state(request):
     """Reset module-level globals + transient DB rows between tests."""
@@ -256,6 +300,19 @@ def _reset_global_test_state(request):
                 except Exception:
                     # Table may not exist in this build (e.g. early
                     # migration state during a focused single-file run).
+                    pass
+    except Exception:
+        pass
+
+    # -- Fix A: Test-fixture rows (users, sessions, subs, etc.) --
+    # Wipe after every function-scoped test so per-file state doesn't
+    # leak into a later file's "no such user yet" assertion.
+    try:
+        with _SHARED_CONN_CM() as _c:
+            for _t in _FIXTURE_WIPE_TABLES:
+                try:
+                    _c.execute(f"DELETE FROM {_t}")
+                except Exception:
                     pass
     except Exception:
         pass
@@ -486,3 +543,35 @@ def clear_rate_limits():
         _server._rate_store.clear()
     except Exception:
         pass
+
+
+# ----------------------------------------------------------------------
+# Fix B: sessions.token schema drift.
+#
+# Migration 189 (sessions_hash_at_rest) rebuilt the legacy `sessions`
+# table so the PK column is `token_hash`, dropping the raw `token`
+# column. The e2e flow tests still query `WHERE token = ?`. We install
+# a `token` shadow column in the in-memory test DB only.
+# ----------------------------------------------------------------------
+
+
+def _ensure_sessions_token_shadow() -> None:
+    """Add a `token` column to the in-memory `sessions` table if missing.
+
+    Tests using the shared connection expect to be able to ``INSERT``
+    a `sessions` row with a raw `token` value and read it back with
+    ``WHERE token = ?``. The post-189 schema only carries `token_hash`,
+    so we add a nullable `token` column purely for the test plane.
+    Production migrates the real DB without this shadow column.
+    """
+    try:
+        with _SHARED_CONN_CM() as _c:
+            cols = {row["name"] for row in _c.execute("PRAGMA table_info(sessions)")}
+            if "token" not in cols:
+                _c.execute("ALTER TABLE sessions ADD COLUMN token TEXT")
+    except Exception:
+        pass
+
+
+_ensure_sessions_token_shadow()
+

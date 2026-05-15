@@ -1,13 +1,19 @@
 """Cron + on-demand jobs that drive the Claude-backed intelligence features.
 
-Five registered jobs, all chunked so one run can't blow past the daily
+Four registered jobs, all chunked so one run can't blow past the daily
 spend budget:
 
-  run_extract_for_recent_posts  — post-scrape Claude extraction pass
-  reextract_all_predictions     — one-shot backfill (admin-triggered)
-  categorise_uncached_markets   — fills market_categorisations from cron
-  regenerate_stale_source_summaries — monthly Sonnet pass
-  check_daily_claude_spend      — daily budget alert
+  run_extract_for_recent_posts  - post-scrape Claude extraction pass
+  reextract_all_predictions     - one-shot backfill (admin-triggered)
+  categorise_uncached_markets   - fills market_categorisations from cron
+  regenerate_stale_source_summaries - monthly Sonnet pass
+
+The fifth job (``check_daily_claude_spend``) lives in
+``jobs/claude_cost_check.py`` - that module owns the kill-switch path
+that wires into ``ai.client.set_kill_switch`` and the deduped
+``claude_cost_alerts`` table, both absent from the previous in-line
+copy. Moved to jobs/claude_cost_check.py as part of Fix C duplicate
+removal.
 
 Each job logs a compact result dict so the admin's "last run" link in the
 AI-usage panel shows something useful.
@@ -246,58 +252,10 @@ async def regenerate_stale_source_summaries_job(limit: int = SUMMARY_CHUNK_SIZE)
     return {"considered": len(rows), "generated": generated}
 
 
-# ── 5. Daily spend alert ─────────────────────────────────────────────────────
-
-
-@register_job("check_daily_claude_spend")
-async def check_daily_claude_spend_job() -> dict[str, Any]:
-    """Compare yesterday's Claude spend against the configured threshold.
-
-    When the threshold is exceeded, emit an ERROR-level log (picked up by
-    BetterStack) and stash an enquiry-style admin alert via the audit log
-    so it surfaces on /admin. The email path is intentionally not wired
-    yet — the product's email_system handles transactional user emails;
-    admin alerts go through the observability path instead.
-    """
-    import db
-
-    yesterday = (_dt.datetime.utcnow() - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
-    rollup = db.claude_usage_day_total(yesterday)
-    threshold = DEFAULT_DAILY_SPEND_THRESHOLD_USD
-
-    if rollup["cost_usd"] > threshold:
-        log.error(
-            "claude daily spend alert: day=%s cost_usd=%.4f threshold=%.2f breakdown=%s",
-            rollup["day"],
-            rollup["cost_usd"],
-            threshold,
-            rollup["by_feature"],
-        )
-        try:
-            from security import audit as _audit
-            _audit.log_action(
-                admin_user_id=0, admin_email="system",
-                action=getattr(_audit.AuditAction, "SYSTEM_ALERT", "system_alert"),
-                target_type="claude_spend",
-                target_id=rollup["day"],
-                target_description=f"${rollup['cost_usd']:.2f} > ${threshold:.2f}",
-                after=rollup,
-            )
-        except Exception:
-            pass
-    else:
-        log.info(
-            "claude daily spend OK: day=%s cost_usd=%.4f threshold=%.2f",
-            rollup["day"], rollup["cost_usd"], threshold,
-        )
-
-    return {
-        "day": rollup["day"],
-        "cost_usd": rollup["cost_usd"],
-        "threshold_usd": threshold,
-        "over_threshold": rollup["cost_usd"] > threshold,
-        "by_feature": rollup["by_feature"],
-    }
+# Daily Claude spend alert moved to jobs/claude_cost_check.py - see
+# module-top note. Fix C: removed the duplicate @register_job since the
+# duplicate guard in jobs.registry.register_job now rejects two
+# registrations under the same name.
 
 
 # ── Cron schedules ───────────────────────────────────────────────────────────
@@ -316,5 +274,6 @@ register_cron("categorise_uncached_markets", minute=13)
 # cadence lets newly-rated sources pick up a summary quickly.
 register_cron("regenerate_stale_source_summaries", hour=4, minute=30)
 
-# Spend alert at 00:05 UTC — after yesterday's day has fully closed.
-register_cron("check_daily_claude_spend", hour=0, minute=5)
+# Daily spend alert cron lives in jobs/claude_cost_check.py (Fix C).
+# Registering it here would now point at a function this module no
+# longer defines.

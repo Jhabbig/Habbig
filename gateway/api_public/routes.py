@@ -325,15 +325,49 @@ async def v1_calendar(request: Request, limit: int = 100):
 # ── Write: POST /predictions ────────────────────────────────────────────
 
 
+# Fix F: columns safe to expose to a non-owning bearer-key holder.
+# Anything not in this list is owner-only and must never ship in a
+# public response. Replaces the previous SELECT * leak that exposed
+# reasoning / market_price_at_prediction / edge_at_prediction /
+# is_anonymous / resolution data to any bearer key for is_public=1 rows.
+#
+# user_id is in the allowlist but the handler nulls it when the owner
+# marked the prediction is_anonymous (preserving the existing public-
+# profile semantics).
+_PUBLIC_PREDICTION_COLUMNS = (
+    "id",
+    "market_slug",
+    "predicted_outcome",
+    "predicted_probability",
+    "created_at",
+    "user_id",
+)
+
+
+def _prediction_not_found() -> HTTPException:
+    """Single, constant-shape 404 for missing / private / forbidden rows.
+
+    Returning the same status + message for "row doesn't exist" and
+    "row exists but you can't see it" stops a bearer-key holder from
+    enumerating sequential IDs to discover which prediction IDs exist.
+    """
+    return HTTPException(404, "Prediction not found")
+
+
 @router.get("/predictions/{prediction_id}")
 async def v1_get_prediction(request: Request, prediction_id: int):
     """Fetch one of the caller's own predictions. Also returns any
     prediction that the owner explicitly marked `is_public=1`. Anyone
-    else's private prediction returns 404 — we deliberately don't leak
+    else's private prediction returns 404 - we deliberately don't leak
     existence.
 
+    Non-owner responses are restricted to ``_PUBLIC_PREDICTION_COLUMNS``
+    only (Fix F); owner-private fields (reasoning,
+    market_price_at_prediction, edge_at_prediction, is_anonymous flag,
+    resolution data, etc.) never leave the server for non-owning callers.
+
     Pairs with POST /predictions so a client-side bot can round-trip:
-    create → fetch → (later) check resolution status.
+    create -> fetch -> (later) check resolution status.
     """
     verify_api_key(request)
     key = request.state.api_key
@@ -344,22 +378,28 @@ async def v1_get_prediction(request: Request, prediction_id: int):
         log.warning("public get_user_prediction failed id=%s: %s", prediction_id, exc)
         row = None
     if row is None:
-        raise HTTPException(404, "Prediction not found")
+        raise _prediction_not_found()
 
     is_owner = row["user_id"] == key["user_id"]
     if not is_owner and not row["is_public"]:
-        raise HTTPException(404, "Prediction not found")
+        # Identical shape to "row doesn't exist" - denies the enumeration
+        # oracle that 404-vs-200 would otherwise provide.
+        raise _prediction_not_found()
 
-    payload = {
-        "prediction": {
-            k: row[k] for k in row.keys()
-        },
-        "is_owner": is_owner,
-    }
-    # Anonymise non-owner responses to respect the author's is_anonymous
-    # flag — the public-profile page does the same scrub.
-    if not is_owner and row["is_anonymous"]:
-        payload["prediction"]["user_id"] = None
+    if is_owner:
+        # Owner sees everything - same shape as before.
+        prediction = {k: row[k] for k in row.keys()}
+    else:
+        # Non-owner: explicit allowlist only. No reasoning, no edge, no
+        # timing data, no resolution scoring. user_id is included so
+        # callers can correlate predictions with public profile rows;
+        # we null it for is_anonymous rows so the author can hide
+        # behind their handle.
+        prediction = {k: row[k] for k in _PUBLIC_PREDICTION_COLUMNS if k in row.keys()}
+        if "user_id" in prediction and row["is_anonymous"]:
+            prediction["user_id"] = None
+
+    payload = {"prediction": prediction, "is_owner": is_owner}
     return _ok(request, "public.get_prediction", payload)
 
 
