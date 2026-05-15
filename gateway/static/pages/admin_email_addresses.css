@@ -302,6 +302,10 @@
   text-decoration: none;
   display: inline-block;
   cursor: pointer;
+  /* WCAG 2.5.5: anchor needs explicit padding to reach 44×44 on mobile.
+     Negative margin keeps the column from getting taller on desktop. */
+  padding: 12px 4px;
+  margin: -12px -4px;
   transition: color var(--duration-fast, .12s) cubic-bezier(0.2, 0, 0, 1);
 }
 .adm-ea-th-link:hover {

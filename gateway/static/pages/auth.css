@@ -230,8 +230,9 @@ body {
   right: var(--space-2);
   top: 50%;
   transform: translateY(-50%);
-  width: 32px;
-  height: 32px;
+  /* WCAG 2.5.5: 44×44 minimum tap target. Was 32×32 — fixed 2026-05-15. */
+  width: 44px;
+  height: 44px;
   background: none;
   border: none;
   cursor: pointer;
