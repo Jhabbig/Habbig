@@ -266,11 +266,65 @@ def _float(v: Any) -> Optional[float]:
         return None
 
 
+# If the upstream returns an empty list but we already have more than
+# this many cached rows, treat it as a likely transient blip (e.g. CLOB
+# indexer hiccup) and SKIP the wipe. Users can still force a clean slate
+# via the explicit /api/portfolio/polymarket/disconnect route.
+_SUSPICIOUS_EMPTY_WIPE_THRESHOLD = 5
+
+
+def _categorise_error(exc: BaseException) -> str:
+    """Map an upstream exception to a stable, non-leaky category.
+
+    We deliberately never return ``str(exc)`` to the client — raw httpx
+    messages include the URL (with wallet address!) and internal hostnames
+    when ``POLYMARKET_API_BASE`` is overridden for staging. The category
+    string is opaque enough for users to retry intelligently without
+    exposing infrastructure detail. See audit HIGH-2 / HIGH-3.
+    """
+    # httpx response errors carry status code on .response. Treat 4xx and
+    # 5xx separately because the user-facing remediation differs.
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = getattr(exc.response, "status_code", 0) or 0
+        if status == 429:
+            return "upstream_rate_limited"
+        if 400 <= status < 500:
+            return "upstream_4xx"
+        if 500 <= status < 600:
+            return "upstream_5xx"
+        return "upstream_http_error"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.ConnectError):
+        # DNS failures land here as well — httpx wraps them.
+        msg = str(exc).lower()
+        if "name or service" in msg or "nodename" in msg or "getaddrinfo" in msg:
+            return "dns_error"
+        return "connect_error"
+    if isinstance(exc, httpx.TransportError):
+        return "transport_error"
+    if isinstance(exc, httpx.HTTPError):
+        return "upstream_http_error"
+    return "internal_error"
+
+
 async def sync_positions(user_id: int) -> dict:
     """Fetch + upsert the user's Polymarket positions.
 
     Returns a summary dict for the caller (typically the sync job) to
     log: `{count, errors, wallet}`.
+
+    Two behaviours worth calling out:
+
+    * **Empty-fetch blip protection (audit HIGH-2).** On a 200 with an
+      empty list, we only wipe existing rows if there are no more than
+      ``_SUSPICIOUS_EMPTY_WIPE_THRESHOLD`` cached positions. Above that
+      we keep the snapshot and log a warning — the April 2026 CLOB
+      indexer incident proved upstream emptiness is not always real.
+    * **Per-market diffing.** Instead of a blanket wipe + reinsert, we
+      DELETE only the rows whose market_id is no longer in the fresh
+      snapshot. That keeps the user_positions table stable across a
+      transient empty response on any subset of markets.
     """
     import db
     conn_row = get_connection(user_id)
@@ -281,40 +335,116 @@ async def sync_positions(user_id: int) -> dict:
     try:
         raw = await fetch_positions(wallet)
     except Exception as exc:
+        category = _categorise_error(exc)
         with db.conn() as c:
             c.execute(
                 "UPDATE polymarket_connections SET "
                 "  sync_error = ?, "
                 "  sync_error_count = sync_error_count + 1 "
                 "WHERE user_id = ?",
-                (str(exc)[:500], user_id),
+                (category, user_id),
             )
-        log.warning("polymarket sync failed for user=%s: %s", user_id, exc)
-        return {"count": 0, "wallet": wallet, "error": str(exc)}
+        # We still log the raw exception server-side for ops, but the
+        # value returned to the caller is the safe category.
+        log.warning(
+            "polymarket sync failed for user=%s category=%s: %s",
+            user_id, category, exc,
+        )
+        return {"count": 0, "wallet": wallet, "error": category}
 
     normalised = [n for n in (_normalise(r) for r in raw) if n]
+    fresh_market_ids = [n["market_id"] for n in normalised]
+
     with db.conn() as c:
-        # Clear rows not in the latest snapshot so a closed position
-        # disappears from the dashboard. Matched by (user, platform)
-        # only — Kalshi rows on the same user stay.
-        c.execute(
-            "DELETE FROM user_positions "
+        existing_row_count = c.execute(
+            "SELECT COUNT(*) AS n FROM user_positions "
             "WHERE user_id = ? AND platform = 'polymarket'",
             (user_id,),
-        )
-        for n in normalised:
+        ).fetchone()["n"]
+
+        # Suspicious-blip guard: empty fetch but a non-trivial cached
+        # snapshot. Keep the existing rows, log loudly, let the next
+        # sync correct things if upstream really did close everything.
+        if (
+            not fresh_market_ids
+            and existing_row_count > _SUSPICIOUS_EMPTY_WIPE_THRESHOLD
+        ):
+            log.warning(
+                "polymarket sync got empty list for user=%s but %d rows "
+                "cached; treating as upstream blip and skipping wipe",
+                user_id, existing_row_count,
+            )
             c.execute(
-                "INSERT OR REPLACE INTO user_positions "
-                "(user_id, platform, market_id, market_question, side, "
-                " shares, entry_price, current_price, position_value_usd, "
-                " unrealised_pnl_usd, realised_pnl_usd, opened_at, last_synced_at) "
-                "VALUES (?, 'polymarket', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "UPDATE polymarket_connections SET "
+                "  last_synced_at = ?, sync_error = ?, "
+                "  sync_error_count = sync_error_count + 1 "
+                "WHERE user_id = ?",
+                (now, "suspicious_empty_upstream", user_id),
+            )
+            return {
+                "count": existing_row_count,
+                "wallet": wallet,
+                "error": "suspicious_empty_upstream",
+            }
+
+        # Targeted delete: drop only rows whose market is no longer in
+        # the fresh snapshot. Genuine close-outs (small portfolio that
+        # legitimately went to zero) still flow through because the
+        # blip-guard only fires above the threshold.
+        if fresh_market_ids:
+            # Parameterised IN-clause to keep SQLite from interpolating.
+            placeholders = ",".join("?" * len(fresh_market_ids))
+            c.execute(
+                f"DELETE FROM user_positions "
+                f"WHERE user_id = ? AND platform = 'polymarket' "
+                f"AND market_id NOT IN ({placeholders})",
+                (user_id, *fresh_market_ids),
+            )
+        else:
+            # Empty fetch + cached row count at-or-below threshold:
+            # treat as a legitimate full close-out. Wipe everything.
+            c.execute(
+                "DELETE FROM user_positions "
+                "WHERE user_id = ? AND platform = 'polymarket'",
+                (user_id,),
+            )
+
+        for n in normalised:
+            # NOTE: the live schema for ``user_positions`` is the one
+            # migration 020 established (``market_title``,
+            # ``avg_entry_price``, ``unrealised_pnl``). Migration 062
+            # tried to redefine the table with new column names but ran
+            # ``CREATE TABLE IF NOT EXISTS`` so it was silently a no-op.
+            # The rest of the codebase (``db.upsert_user_position``,
+            # ``db.get_user_positions``, the dashboard reader) all speak
+            # the 020 schema. Aligning the write here keeps the sync
+            # actually functional rather than crashing on a column-not-
+            # found error every tick.
+            c.execute(
+                "INSERT INTO user_positions "
+                "(user_id, platform, market_id, market_title, side, "
+                " shares, avg_entry_price, current_price, unrealised_pnl, "
+                " position_value_usd, last_synced_at) "
+                "VALUES (?, 'polymarket', ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, platform, market_id, side) DO UPDATE SET "
+                "  market_title       = excluded.market_title, "
+                "  shares             = excluded.shares, "
+                "  avg_entry_price    = excluded.avg_entry_price, "
+                "  current_price      = excluded.current_price, "
+                "  unrealised_pnl     = excluded.unrealised_pnl, "
+                "  position_value_usd = excluded.position_value_usd, "
+                "  last_synced_at     = excluded.last_synced_at",
                 (
-                    user_id, n["market_id"], n.get("market_question"),
-                    n["side"], n["shares"], n.get("entry_price"),
-                    n.get("current_price"), n.get("position_value_usd"),
-                    n.get("unrealised_pnl_usd"), n.get("realised_pnl_usd") or 0.0,
-                    n.get("opened_at"), now,
+                    user_id,
+                    n["market_id"],
+                    n.get("market_question") or "",
+                    n["side"],
+                    n["shares"] or 0.0,
+                    n.get("entry_price") or 0.0,
+                    n.get("current_price") or 0.0,
+                    n.get("unrealised_pnl_usd") or 0.0,
+                    n.get("position_value_usd") or 0.0,
+                    now,
                 ),
             )
         c.execute(
