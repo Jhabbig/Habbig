@@ -113,3 +113,85 @@
   {{ raw_empty_state }}
 
 </div>
+
+<!-- ── Per-row "copy email" button ──────────────────────────────────
+     Delegated click handler — copies the email from the button's
+     [data-copy-email] attribute and surfaces a toast confirmation.
+
+     The server side (admin_routes.py / _render_email_rows) is the
+     producer of the button markup. The agreed contract is a single
+     element appended in the email cell of every <tr>:
+
+       <button data-copy-email="{email}"
+               class="adm-ea-copy-btn"
+               aria-label="Copy email">copy</button>
+
+     Buttons are hidden until row hover (see CSS). Falls back to a
+     hidden <textarea> + execCommand("copy") when the async clipboard
+     API is unavailable (HTTP / older browsers / iframed contexts). -->
+<script>
+(() => {
+  "use strict";
+  if (window.__admEaCopyEmailInstalled) return;
+  window.__admEaCopyEmailInstalled = true;
+
+  function toast(msg) {
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg); return; } catch (e) { /* fall through */ }
+    }
+    try { console.info(msg); } catch (e) { /* swallow */ }
+  }
+
+  function toastError(msg) {
+    if (typeof window.narveToastError === "function") {
+      try { window.narveToastError(msg); return; } catch (e) { /* fall through */ }
+    }
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg, { type: "error" }); return; } catch (e) { /* fall through */ }
+    }
+    try { console.warn(msg); } catch (e) { /* swallow */ }
+  }
+
+  function legacyCopy(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function copyEmail(email) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(email);
+        return true;
+      } catch (e) { /* fall through */ }
+    }
+    return legacyCopy(email);
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target && ev.target.closest && ev.target.closest("[data-copy-email]");
+    if (!btn) return;
+    ev.preventDefault();
+    const email = btn.getAttribute("data-copy-email") || "";
+    if (!email) { toastError("No email to copy"); return; }
+    const ok = await copyEmail(email);
+    if (ok) {
+      toast("Copied " + email);
+    } else {
+      toastError("Copy failed");
+    }
+  });
+})();
+</script>
