@@ -1201,6 +1201,46 @@ def count_email_addresses_by_source(c=None) -> dict[str, int]:
     return {k: len(v) for k, v in by_source.items()}
 
 
+def count_emails_recent(days: int = 7, c=None) -> int:
+    """Return the count of distinct emails first seen in the last N days.
+
+    Spans every source in ``_aggregate_email_rows``. Uses ``first_seen`` so
+    a multi-source email signed up 30 days ago and re-touched today doesn't
+    count as "this week" — only genuinely new addresses do.
+
+    Falls back to ``ts`` when ``first_seen`` is missing (some sources don't
+    expose a separate first-seen timestamp).
+    """
+    own_conn = c is None
+    if own_conn:
+        with db.conn() as new_c:
+            return count_emails_recent(days, new_c)
+    try:
+        days_i = max(1, int(days))
+    except (TypeError, ValueError):
+        days_i = 7
+    cutoff = int(time.time()) - days_i * 86_400
+    raw_rows = _aggregate_email_rows(c)
+    seen: dict[str, int] = {}
+    for r in raw_rows:
+        key = (r["email"] or "").strip().lower()
+        if not key:
+            continue
+        ts_val = r["first_seen"]
+        if ts_val is None:
+            ts_val = r["ts"]
+        if ts_val is None:
+            continue
+        try:
+            ts_i = int(ts_val)
+        except (TypeError, ValueError):
+            continue
+        existing = seen.get(key)
+        if existing is None or ts_i < existing:
+            seen[key] = ts_i
+    return sum(1 for ts_i in seen.values() if ts_i >= cutoff)
+
+
 __all__ = [
     'create_enquiry',
     'list_enquiries',
@@ -1238,5 +1278,6 @@ __all__ = [
     'delete_email_template',
     'aggregate_email_addresses',
     'count_email_addresses_by_source',
+    'count_emails_recent',
     'EMAIL_SOURCE_LABELS',
 ]

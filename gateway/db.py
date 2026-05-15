@@ -1105,6 +1105,7 @@ from queries.admin import (  # noqa: F401,E402
     delete_email_template,
     aggregate_email_addresses,
     count_email_addresses_by_source,
+    count_emails_recent,
     EMAIL_SOURCE_LABELS,
 )
 

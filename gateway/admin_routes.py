@@ -15,6 +15,7 @@ import html
 import json
 import logging
 import re
+import sqlite3
 import time
 
 from fastapi import Form, HTTPException, Request
@@ -3021,6 +3022,253 @@ def _render_newsletter_select(
     )
 
 
+def _render_newsletter_import_section(
+    csrf_field: str,
+    *,
+    import_status: str = "",
+) -> str:
+    """Render the CSV-paste import card above the past-campaigns section.
+
+    Admins paste a newline-separated list of emails; the POST handler at
+    ``/admin/newsletter/import`` parses, validates, dedupes against the
+    existing ``newsletter_subscribers`` table, and inserts new rows with
+    ``source='admin-import'`` + ``confirmed_at=now`` (no double-opt-in
+    since the admin is asserting these are vetted addresses).
+
+    Idempotent: re-pasting the same list inserts zero new rows. Returns
+    a banner row with insert/skip/invalid counts after a successful POST
+    (the ``import_status`` arg, already-escaped HTML) so the admin can
+    see at a glance what happened.
+    """
+    banner = ""
+    if import_status:
+        banner = (
+            '<div class="newsletter-import__banner" '
+            'style="margin:0 0 12px;padding:8px 12px;'
+            'border:1px solid var(--border-default);'
+            'border-radius:var(--radius-sm,6px);'
+            'background:var(--bg-surface);'
+            'font-family:var(--font-ui);font-size:12.5px;'
+            'color:var(--text-primary);">'
+            + import_status +
+            '</div>'
+        )
+    return (
+        '<section class="admin-section newsletter-import" '
+        'style="margin:0 0 24px;">'
+        '<div class="admin-section-head">'
+        '<h2 class="admin-section-title">Import subscribers</h2>'
+        '<span class="admin-section-count">paste newline-separated emails</span>'
+        '</div>'
+        '<div class="admin-card" '
+        'style="padding:14px 16px;'
+        'border:1px solid var(--border-default);'
+        'border-radius:var(--radius-md,8px);'
+        'background:var(--bg-surface);">'
+        + banner +
+        '<form method="post" action="/admin/newsletter/import" '
+        'class="newsletter-import__form" '
+        'style="display:flex;flex-direction:column;gap:10px;'
+        'font-family:var(--font-ui);">'
+        + csrf_field +
+        '<label class="newsletter-field" '
+        'style="display:flex;flex-direction:column;gap:6px;">'
+        '<span class="newsletter-field__label" '
+        'style="font-size:11px;font-weight:600;'
+        'text-transform:uppercase;letter-spacing:0.1em;'
+        'color:var(--text-tertiary);">Emails</span>'
+        '<textarea name="emails" rows="6" required '
+        'maxlength="200000" '
+        'placeholder="one@example.com&#10;two@example.com&#10;three@example.com" '
+        'style="font-family:var(--font-mono);font-size:13px;'
+        'padding:10px 12px;'
+        'border:1px solid var(--border-default);'
+        'border-radius:var(--radius-sm,6px);'
+        'background:var(--bg-base);'
+        'color:var(--text-primary);'
+        'resize:vertical;min-height:120px;"></textarea>'
+        '<span class="newsletter-field__hint" '
+        'style="font-size:11.5px;color:var(--text-tertiary);">'
+        'Paste up to ~5,000 addresses, one per line. Commas, semicolons, '
+        'and whitespace also accepted as separators. Invalid lines are '
+        'skipped; duplicates of existing subscribers are no-ops. New rows '
+        'land with source=admin-import, confirmed_at=now.'
+        '</span>'
+        '</label>'
+        '<div style="display:flex;justify-content:flex-end;">'
+        '<button type="submit" class="btn btn-primary">Import</button>'
+        '</div>'
+        '</form>'
+        '</div>'
+        '</section>'
+    )
+
+
+def _newsletter_import_status_from_qp(qp) -> str:
+    """Translate the ?imported/&skipped/&invalid querystring into a banner.
+
+    Returns escaped HTML ready to drop into ``_render_newsletter_import_section``.
+    """
+    try:
+        imported = max(0, int(qp.get("imported") or 0))
+    except (TypeError, ValueError):
+        imported = 0
+    try:
+        skipped = max(0, int(qp.get("skipped") or 0))
+    except (TypeError, ValueError):
+        skipped = 0
+    try:
+        invalid = max(0, int(qp.get("invalid") or 0))
+    except (TypeError, ValueError):
+        invalid = 0
+    if imported == 0 and skipped == 0 and invalid == 0:
+        return ""
+    parts = [
+        f"<strong>{imported:,}</strong> imported",
+        f"<strong>{skipped:,}</strong> already subscribed",
+        f"<strong>{invalid:,}</strong> invalid skipped",
+    ]
+    # All numbers are server-side ints so they're safe to interpolate into
+    # HTML without escape.
+    return " · ".join(parts)
+
+
+# Email separator regex for CSV-paste import — splits on newlines, commas,
+# semicolons, and any whitespace runs. Matches the textarea hint copy in
+# ``_render_newsletter_import_section``.
+_NEWSLETTER_IMPORT_SPLIT_RE = re.compile(r"[\s,;]+")
+
+# Cap the per-POST import. 5,000 is plenty for an admin paste-job and keeps
+# the SQLite tx + index walk bounded. Larger imports go through the proper
+# CSV-upload path (out of scope here).
+_NEWSLETTER_IMPORT_MAX = 5_000
+
+
+async def newsletter_import_post(request: Request):
+    """POST /admin/newsletter/import — paste-import newsletter subscribers.
+
+    Body fields:
+      * ``emails`` — newline/comma/semicolon-separated address list.
+
+    Behaviour:
+      * Splits on any whitespace/comma/semicolon run.
+      * Lower-cases and trims each candidate.
+      * Skips anything that fails ``is_valid_email``.
+      * Inserts new rows with ``source='admin-import'`` and
+        ``confirmed_at=now`` (admin asserts these are pre-vetted, so we
+        bypass double-opt-in).
+      * Duplicates of existing ``newsletter_subscribers.email`` are
+        skipped via ``INSERT OR IGNORE`` so the operation is idempotent.
+
+    Redirects back to ``/admin/newsletter`` with
+    ``?imported=N&skipped=N&invalid=N`` so the page renders a banner.
+
+    CSRF is double-checked in-handler on top of the middleware so a
+    future middleware-exemption change can't silently expose this surface.
+    Admin auth + mutation rate limit come from ``_require_admin_user``.
+    """
+    admin = _require_admin_user(request)
+    if admin is None:
+        return _denied_response(request)
+
+    srv = _srv()
+    form = await request.form()
+    submitted = form.get(srv.CSRF_FORM_FIELD) or request.headers.get(
+        getattr(srv, "CSRF_HEADER_NAME", "x-csrf-token")
+    )
+    if not srv._validate_csrf(request, submitted):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    raw = (form.get("emails") or "").strip()
+    if not raw:
+        return RedirectResponse("/admin/newsletter", status_code=302)
+
+    candidates = [c.strip() for c in _NEWSLETTER_IMPORT_SPLIT_RE.split(raw) if c.strip()]
+    if not candidates:
+        return RedirectResponse("/admin/newsletter", status_code=302)
+
+    # De-dupe within the paste itself so the counts don't double-bill the
+    # admin for two copies of the same line.
+    seen: set[str] = set()
+    valid_emails: list[str] = []
+    invalid_count = 0
+    for c in candidates[: _NEWSLETTER_IMPORT_MAX]:
+        lower = c.lower()
+        if lower in seen:
+            continue
+        seen.add(lower)
+        if not srv.is_valid_email(lower):
+            invalid_count += 1
+            continue
+        valid_emails.append(lower)
+
+    now = int(time.time())
+    imported = 0
+    skipped = 0
+    if valid_emails:
+        with db.conn() as c:
+            # Probe existing rows in one IN-query so we can split
+            # imported vs skipped counts cleanly. Chunks of 500 to stay
+            # well under SQLite's parameter limit (default 999).
+            existing: set[str] = set()
+            for i in range(0, len(valid_emails), 500):
+                chunk = valid_emails[i:i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                for row in c.execute(
+                    f"SELECT email FROM newsletter_subscribers "
+                    f"WHERE email IN ({placeholders})",
+                    chunk,
+                ).fetchall():
+                    existing.add((row["email"] or "").strip().lower())
+
+            for email in valid_emails:
+                if email in existing:
+                    skipped += 1
+                    continue
+                try:
+                    cur = c.execute(
+                        "INSERT OR IGNORE INTO newsletter_subscribers "
+                        "(email, subscribed_at, source, confirmed_at, "
+                        " segment, frequency) "
+                        "VALUES (?, ?, 'admin-import', ?, 'all', 'weekly')",
+                        (email, now, now),
+                    )
+                    if (cur.rowcount or 0) > 0:
+                        imported += 1
+                    else:
+                        # Lost the race to a concurrent insert.
+                        skipped += 1
+                except sqlite3.IntegrityError:
+                    # Concurrent insert won the race — count as skipped.
+                    skipped += 1
+
+    # Best-effort audit log so this import is visible in /admin/audit-log.
+    try:
+        from security import audit as _a
+        _audit(
+            getattr(
+                _a.AuditAction,
+                "NEWSLETTER_IMPORT",
+                "admin.newsletter.import",
+            ),
+            admin=admin, request=request,
+            target_type="newsletter_subscribers",
+            notes=(
+                f"imported={imported} skipped={skipped} "
+                f"invalid={invalid_count}"
+            ),
+        )
+    except Exception:
+        log.exception("newsletter import audit failed")
+
+    redirect_qs = (
+        f"imported={imported}&skipped={skipped}&invalid={invalid_count}"
+    )
+    return RedirectResponse(
+        f"/admin/newsletter?{redirect_qs}", status_code=302,
+    )
+
+
 async def newsletter_page(request: Request):
     """GET /admin/newsletter — list past campaigns + compose form.
 
@@ -3093,6 +3341,31 @@ async def newsletter_page(request: Request):
         _NEWSLETTER_FREQUENCY_LABELS,
     )
 
+    # CSRF token for the import form. Same pattern as other admin POSTs —
+    # reuse the per-session cookie token if present, otherwise mint one.
+    srv = _srv()
+    try:
+        csrf_token = (
+            request.cookies.get(srv.CSRF_COOKIE_NAME)
+            or getattr(getattr(request, "state", None), "csrf_token", None)
+            or srv._generate_csrf_token()
+        )
+    except Exception:
+        csrf_token = ""
+    csrf_field = (
+        f'<input type="hidden" name="{srv.CSRF_FORM_FIELD}" '
+        f'value="{html.escape(csrf_token)}">'
+        if csrf_token else ""
+    )
+
+    # Surface the import-result banner from ?imported=N&skipped=N&invalid=N
+    # (populated by the POST /admin/newsletter/import redirect).
+    import_status = _newsletter_import_status_from_qp(qp)
+
+    import_section_html = _render_newsletter_import_section(
+        csrf_field, import_status=import_status,
+    )
+
     from admin_shell import render_admin_page
     return render_admin_page(
         request,
@@ -3106,6 +3379,7 @@ async def newsletter_page(request: Request):
         raw_history_rows=history_rows,
         raw_segment_select=segment_select,
         raw_frequency_select=frequency_select,
+        raw_import_section=import_section_html,
         recipient_count=f"{default_count:,}",
         filter_q=q,
         filter_status=status_filter,
@@ -3405,8 +3679,18 @@ def _render_email_sort_headers(active_sort: str, active_dir: str, filter_qs: str
     (so dates default newest-first, alphabetics default A→Z via the asc
     toggle on second click). Preserves the active filter set in the query
     string so sorting doesn't drop filters.
+
+    Prepends a non-sortable bulk-select column whose <th> hosts the
+    "select all" checkbox; the JS in ``email_addresses.html`` watches
+    ``[data-bulk-select-all]`` and propagates the change to every
+    ``[data-bulk-select]`` row checkbox.
     """
-    parts = []
+    parts = [
+        '<th scope="col" class="adm-ea-th adm-ea-th--select">'
+        '<input type="checkbox" data-bulk-select-all '
+        'aria-label="Select all rows on this page">'
+        '</th>'
+    ]
     for key, label, css, sortable in _EMAIL_TABLE_COLUMNS:
         if not sortable:
             parts.append(
@@ -3516,6 +3800,136 @@ def _render_email_totals_badges(counts: dict) -> str:
     return "".join(parts)
 
 
+def _render_email_stats_cards(counts: dict, recent_week: int) -> str:
+    """Render the 5-card stats strip above the filter bar.
+
+    Cards (in render order):
+      1. Total          — sum of every distinct email across all sources.
+      2. Newsletter     — confirmed/pending newsletter subscribers.
+      3. Prerelease     — pre-release waitlist signups.
+      4. Outbound queue — emails currently in the background_jobs outbox.
+      5. This week      — distinct emails first seen in the last 7 days.
+
+    Monochrome by spec — no badge colour, no delta arrows. Numbers are
+    Geist Mono via ``.adm-ea-stat-value``; labels are Inter via
+    ``.adm-ea-stat-label``. Card chrome comes from
+    ``static/pages/admin_email_addresses.css``.
+    """
+    # Total = distinct emails across every source. Sources double-count
+    # multi-source emails so summing the counts dict overstates it; the
+    # totals badge row uses the same convention. For this top-level card
+    # we use the same rolled-up convention so the math reconciles with
+    # the badges below.
+    total = sum(int(v or 0) for v in counts.values())
+    newsletter = int(counts.get("newsletter", 0) or 0)
+    prerelease = int(counts.get("prerelease", 0) or 0)
+    outbound = int(counts.get("outbound", 0) or 0)
+    recent = int(recent_week or 0)
+
+    cards = (
+        ("Total", total),
+        ("Newsletter", newsletter),
+        ("Prerelease waitlist", prerelease),
+        ("Outbound queue", outbound),
+        ("This week", recent),
+    )
+    parts: list[str] = []
+    for label, value in cards:
+        parts.append(
+            '<div class="adm-ea-stat-card">'
+            f'<span class="adm-ea-stat-label">{html.escape(label)}</span>'
+            f'<span class="adm-ea-stat-value">{int(value):,}</span>'
+            '</div>'
+        )
+    return "".join(parts)
+
+
+def _render_email_bulk_footer() -> str:
+    """Build the bulk-select footer chip + inline handler script.
+
+    The footer is hidden until at least one row checkbox is ticked. The
+    JS handler watches three concerns:
+
+      1. The header ``[data-bulk-select-all]`` checkbox — toggles every row.
+      2. Per-row ``[data-bulk-select]`` checkboxes — recompute the count.
+      3. The "Clear selection" button in the footer — unticks every row.
+
+    No bulk action is wired yet — selection mechanism only. Styling is
+    inline against narve tokens so this whole feature lives in
+    ``admin_routes.py`` without touching the page CSS bundle.
+    """
+    footer_html = (
+        '<div id="adm-ea-bulk-footer" data-count="0" hidden '
+        'aria-live="polite" '
+        'style="position:sticky;bottom:16px;margin:16px 0 0;'
+        'padding:10px 14px;border:1px solid var(--border-default);'
+        'border-radius:var(--radius-md,8px);background:var(--bg-surface);'
+        'display:flex;align-items:center;justify-content:space-between;'
+        'gap:12px;font-family:var(--font-ui);font-size:13px;'
+        'color:var(--text-primary);">'
+        '<span style="font-weight:500;">'
+        '<span id="adm-ea-bulk-count" style="font-family:var(--font-mono);'
+        'font-variant-numeric:tabular-nums;">0</span> selected'
+        '</span>'
+        '<button type="button" id="adm-ea-bulk-clear" '
+        'style="font-family:var(--font-ui);font-size:12px;'
+        'background:transparent;border:1px solid var(--border-default);'
+        'border-radius:var(--radius-sm,6px);padding:6px 12px;'
+        'color:var(--text-primary);cursor:pointer;">'
+        'Clear selection'
+        '</button>'
+        '</div>'
+    )
+    script_html = (
+        '<script>'
+        '(()=>{'
+        '"use strict";'
+        'if(window.__admEaBulkSelectInstalled)return;'
+        'window.__admEaBulkSelectInstalled=true;'
+        'const rowBoxes=()=>Array.prototype.slice.call('
+        'document.querySelectorAll("[data-bulk-select]"));'
+        'const selectAllBox=()=>document.querySelector("[data-bulk-select-all]");'
+        'const footer=()=>document.getElementById("adm-ea-bulk-footer");'
+        'const countEl=()=>document.getElementById("adm-ea-bulk-count");'
+        'function refresh(){'
+        'const boxes=rowBoxes();'
+        'const selected=boxes.filter(b=>b.checked).length;'
+        'const c=countEl();if(c)c.textContent=String(selected);'
+        'const f=footer();'
+        'if(f){f.hidden=selected===0;f.setAttribute("data-count",String(selected));}'
+        'const head=selectAllBox();'
+        'if(head){'
+        'if(boxes.length===0||selected===0){head.checked=false;head.indeterminate=false;}'
+        'else if(selected===boxes.length){head.checked=true;head.indeterminate=false;}'
+        'else{head.checked=false;head.indeterminate=true;}'
+        '}'
+        '}'
+        'document.addEventListener("change",ev=>{'
+        'const t=ev.target;if(!t||!t.hasAttribute)return;'
+        'if(t.hasAttribute("data-bulk-select-all")){'
+        'const wanted=!!t.checked;'
+        'rowBoxes().forEach(b=>{b.checked=wanted;});'
+        'refresh();return;'
+        '}'
+        'if(t.hasAttribute("data-bulk-select")){refresh();}'
+        '});'
+        'document.addEventListener("click",ev=>{'
+        'const t=ev.target;if(!t)return;'
+        'if(t.id==="adm-ea-bulk-clear"){'
+        'ev.preventDefault();'
+        'rowBoxes().forEach(b=>{b.checked=false;});'
+        'const head=selectAllBox();'
+        'if(head){head.checked=false;head.indeterminate=false;}'
+        'refresh();'
+        '}'
+        '});'
+        'refresh();'
+        '})();'
+        '</script>'
+    )
+    return footer_html + script_html
+
+
 def _render_email_rows(rows: list) -> str:
     """Render the table body as one <tr> per deduplicated email.
 
@@ -3554,8 +3968,13 @@ def _render_email_rows(rows: list) -> str:
             uid_cell = "—"
         status = html.escape(r.get("status") or "—")
 
+        raw_email_attr = html.escape(r.get("email") or "", quote=True)
         out.append(
             "<tr>"
+            f'<td class="adm-ea-td--select">'
+            f'<input type="checkbox" data-bulk-select '
+            f'value="{raw_email_attr}" '
+            f'aria-label="Select row"></td>'
             f'<td class="adm-ea-td--email">{email}</td>'
             f'<td class="adm-ea-td--source"><span class="adm-ea-source">{source_cell}</span></td>'
             f'<td class="adm-ea-td--ts">{first_seen}</td>'
@@ -3628,6 +4047,15 @@ async def email_addresses_page(request: Request):
         rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
 
     counts = db.count_email_addresses_by_source()
+    # "This week" stats card: distinct emails first seen in the last 7d.
+    # Cheap — same in-memory aggregate as the totals.
+    try:
+        recent_week = int(db.count_emails_recent(days=7))
+    except Exception:
+        # Defence-in-depth: a stats query failure should never 500 the
+        # whole page. Fall back to 0 and keep rendering.
+        log.exception("count_emails_recent failed; rendering with 0")
+        recent_week = 0
 
     export_qs = _build_export_querystring({
         "q": q, "source": source, "status": status_filter,
@@ -3637,15 +4065,38 @@ async def email_addresses_page(request: Request):
     json_href = "/admin/email-addresses/export.json" + (f"?{export_qs}" if export_qs else "")
     sort_headers_html = _render_email_sort_headers(sort, sort_dir, export_qs)
 
+    # Empty state — render via the canonical render_empty() helper so
+    # /admin/email-addresses uses the same nv-empty chrome as every other
+    # admin surface. Action buttons hand the admin a one-click route back
+    # to a clean filter set.
     empty_state = ""
     if not rows:
-        empty_state = (
-            '<div class="adm-ea-empty">'
-            '<p class="adm-ea-empty__title">No matches</p>'
-            '<p class="adm-ea-empty__hint">'
-            'Loosen the filters or clear them to see every address.'
-            '</p></div>'
+        empty_state = _srv().render_empty(
+            title="No matches",
+            body=(
+                "No emails match the current filters. Loosen the search "
+                "or clear filters to see every collected address."
+            ),
+            actions=[
+                {
+                    "label": "Clear filters",
+                    "href": "/admin/email-addresses",
+                    "primary": True,
+                },
+                {
+                    "label": "Back to admin",
+                    "href": "/admin",
+                },
+            ],
         )
+
+    # Bulk-select footer + handler. Selection-only at this stage; the
+    # footer chip stays hidden until at least one row is ticked. Rendered
+    # inside the existing raw_empty_state slot so the template doesn't
+    # need a new placeholder. CSS-light by design — uses inline styling
+    # that respects narve tokens, no per-page CSS edits.
+    bulk_footer_html = _render_email_bulk_footer() if rows else ""
+    empty_state = empty_state + bulk_footer_html
 
     from admin_shell import render_admin_page
     return render_admin_page(
@@ -3666,6 +4117,7 @@ async def email_addresses_page(request: Request):
         raw_source_options=_render_email_source_options(source),
         raw_status_options=_render_email_status_options(status_filter),
         raw_totals_badges=_render_email_totals_badges(counts),
+        raw_stats_cards=_render_email_stats_cards(counts, recent_week),
         raw_rows=_render_email_rows(rows),
         raw_sort_headers=sort_headers_html,
         raw_empty_state=empty_state,
@@ -3880,6 +4332,10 @@ def register(app) -> None:
     )
     app.add_api_route(
         "/admin/newsletter/send", newsletter_send,
+        methods=["POST"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/newsletter/import", newsletter_import_post,
         methods=["POST"], include_in_schema=False,
     )
 
