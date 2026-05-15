@@ -7,8 +7,23 @@ even when the dependency is missing in dev environments.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import AsyncIterator
+
+
+# Re-check the kill switch every N chunks during streaming so an
+# operator-tripped switch terminates an in-flight stream within a
+# bounded window rather than running to completion.
+_KILL_SWITCH_CHECK_EVERY_N_CHUNKS = 5
+
+
+class _KillSwitchTripped(Exception):
+    """Raised mid-stream when the operator kill-switch flips on.
+
+    Caught locally so the streaming generator can shut down the SDK
+    context cleanly and still log the partial usage row.
+    """
 
 
 INTELLIGENCE_SYSTEM_PROMPT = """\
@@ -172,6 +187,16 @@ async def stream_intelligence_response(
     system = INTELLIGENCE_SYSTEM_PROMPT.format(context=context_text, tier=tier)
     messages = _build_messages(history, user_message)
     model = os.environ.get("INTELLIGENCE_MODEL", "claude-sonnet-4-5-20250929")
+
+    # Track usage logging so a client disconnect (asyncio.CancelledError)
+    # or operator-tripped kill switch still produces a row before we
+    # propagate. The audit (MED 3) called out the gap where a long
+    # stream begun before the switch trips runs to completion and any
+    # mid-stream cancel skipped the bare ``except Exception`` log path.
+    usage_logged = False
+    kill_switch_tripped_mid_stream = False
+    final_msg: object = None
+
     try:
         async with sdk.messages.stream(
             model=model,
@@ -179,10 +204,21 @@ async def stream_intelligence_response(
             system=system,
             messages=messages,
         ) as stream:
+            chunk_count = 0
             async for text in stream.text_stream:
+                chunk_count += 1
+                # Re-check the kill switch every N chunks so an operator
+                # flipping the switch mid-stream stops the stream within
+                # a bounded number of chunks instead of running to the
+                # end. _KillSwitchTripped is caught below so we still
+                # log the partial-usage row.
+                if chunk_count % _KILL_SWITCH_CHECK_EVERY_N_CHUNKS == 0:
+                    if _ai_client.is_kill_switch_active():
+                        kill_switch_tripped_mid_stream = True
+                        raise _KillSwitchTripped()
                 yield text
-            # Log final usage — the SDK exposes aggregated counters on the
-            # final message object after the stream completes.
+            # Normal completion — log final usage with the SDK's
+            # aggregated counters from the final message object.
             try:
                 final_msg = await stream.get_final_message()
                 _ai_client.log_response(
@@ -192,14 +228,45 @@ async def stream_intelligence_response(
                     cached_hit=False,
                     user_id=user.get("user_id"),
                 )
+                usage_logged = True
             except Exception:
                 _ai_client.log_failure(
                     feature="intelligence", model=model,
                     user_id=user.get("user_id"),
                 )
-    except Exception:
-        _ai_client.log_failure(
-            feature="intelligence", model=model,
-            user_id=user.get("user_id"),
-        )
+                usage_logged = True
+    except _KillSwitchTripped:
+        # Best-effort partial usage: try the SDK's final-message
+        # aggregator; if the stream was torn down too early, fall back
+        # to a failure row so the dashboard still shows a record.
+        try:
+            partial = await stream.get_final_message()
+            _ai_client.log_response(
+                feature="intelligence",
+                model=model,
+                response=partial,
+                cached_hit=False,
+                user_id=user.get("user_id"),
+            )
+        except Exception:
+            _ai_client.log_failure(
+                feature="intelligence", model=model,
+                user_id=user.get("user_id"),
+            )
+        usage_logged = True
+        yield "\n\n[Stream stopped: cost kill-switch tripped by operator.]"
+    except (Exception, asyncio.CancelledError) as exc:
+        # Always write a usage row before propagating — a client
+        # disconnect raises asyncio.CancelledError, which the previous
+        # bare ``except Exception`` missed entirely (audit MED 3).
+        if not usage_logged:
+            _ai_client.log_failure(
+                feature="intelligence", model=model,
+                user_id=user.get("user_id"),
+            )
+            usage_logged = True
+        if isinstance(exc, asyncio.CancelledError):
+            # Re-raise so the FastAPI task layer sees the cancellation
+            # and unwinds normally instead of swallowing it.
+            raise
         yield "Intelligence assistant failed mid-stream. Please retry."
