@@ -74,6 +74,17 @@ class AuditAction:
     ADMIN_2FA_SETUP   = "admin.2fa_setup"
     ADMIN_2FA_DISABLE = "admin.2fa_disable"
 
+    # Subproduct magic-link lifecycle (audit #15 CRIT #1 / MED #1).
+    # MINT fires whenever the subproduct signup route signs a single-use
+    # auth token bound to a user_id and embeds it in the Stripe Checkout
+    # success URL. REDEEM fires when /onboarding burns the jti and mints
+    # a session cookie. Together they let an admin reconstruct exactly
+    # which user_id was authenticated by a magic link, who triggered the
+    # mint, and from which IP — closing the prior "off-platform Stripe
+    # redirect logs in user X with no audit trail" gap.
+    MAGIC_LINK_MINT   = "magic_link.mint"
+    MAGIC_LINK_REDEEM = "magic_link.redeem"
+
     # Feature flag CRUD (referenced by admin_routes.flag_create/save/delete).
     # These were missing — _audit() previously swallowed the AttributeError
     # and ZERO audit rows landed for any flag write. CRITICAL fix.
@@ -142,6 +153,8 @@ ACTION_LABELS = {
     AuditAction.IMPERSONATION_START: "Started impersonation session",
     AuditAction.IMPERSONATION_END: "Ended impersonation session",
     AuditAction.IMPERSONATION_BLOCKED: "Blocked mutating action during impersonation",
+    AuditAction.MAGIC_LINK_MINT: "Minted subproduct magic-link token",
+    AuditAction.MAGIC_LINK_REDEEM: "Redeemed subproduct magic-link token",
 }
 
 
