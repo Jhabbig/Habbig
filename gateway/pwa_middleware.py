@@ -154,6 +154,10 @@ _PWA_HEAD = _PWA_HEAD_COMMON + _PWA_REDESIGN_LINKS
 # site-wide redesign layer. Match by exact request path. Pre-release at
 # `/` uses a fixed-position particles canvas that the universal frame
 # (narve-redesign.css "every page, all four sides") was painting over.
+# Subdomain landings (sports.narve.ai/, etc.) ALSO hit path "/", but
+# they are full dashboard-chrome pages and DO want the redesign layer
+# — _inject_into_html gates the exclusion on `subproduct_for_host(host)
+# is None` so the path match only fires on the apex.
 _NO_REDESIGN_PATHS = {"/"}
 
 # Default social card. Only injected when the response HTML doesn't
@@ -235,7 +239,17 @@ def _inject_into_html(body: bytes, host: str | None = None, path: str | None = N
     """Apply the six PWA/a11y transforms to an HTML body. Idempotent."""
     # 1. PWA head block (before </head>)
     if b'narve-pwa-head' not in body:
-        head = _PWA_HEAD_COMMON if path in _NO_REDESIGN_PATHS else _PWA_HEAD
+        # _NO_REDESIGN_PATHS skips the redesign layer on the pre-release
+        # landing at apex ``/`` (its full-bleed particles canvas needs an
+        # un-framed body). The subdomain landings at ``<slug>.narve.ai/``
+        # also hit path == "/" but are full dashboard-chrome pages and
+        # MUST keep the redesign layer — gate the exclusion on host so a
+        # subdomain ``/`` doesn't accidentally get the bare head.
+        skip_redesign = (
+            path in _NO_REDESIGN_PATHS
+            and subproduct_for_host(host or "") is None
+        )
+        head = _PWA_HEAD_COMMON if skip_redesign else _PWA_HEAD
         idx = body.rfind(b'</head>')
         if idx != -1:
             body = body[:idx] + head.encode() + body[idx:]
