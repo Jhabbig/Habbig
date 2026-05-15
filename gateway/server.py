@@ -241,6 +241,15 @@ GATE_COOKIE_TTL = 7 * 86400  # 7 days
 # with no rotation story. See NARVE_SECURITY_AUDIT.md critical item C4.
 SITE_ACCESS_TOKEN = os.environ.get("SITE_ACCESS_TOKEN", "")
 
+# Shared secret stamped on dashboard-proxy requests so downstream subproduct
+# services can trust the X-Gateway-User-* identity headers without relying on
+# peer-IP checks. MUST be set in production — if empty, the gateway would omit
+# X-Gateway-Secret entirely and an equally-empty downstream secret could let
+# hmac.compare_digest("", "") return True (full SSO bypass). See the startup
+# checks in lifespan() and the proxy_request fail-closed guard further down
+# for the matching enforcement.
+GATEWAY_SSO_SECRET = os.environ.get("GATEWAY_SSO_SECRET", "")
+
 # Impersonation cookie — see impersonation.py.
 IMPERSONATION_COOKIE_NAME = "narve_impersonation"
 IMPERSONATION_COOKIE_TTL = 4 * 60 * 60  # 4 hours
@@ -394,6 +403,17 @@ async def lifespan(app: FastAPI):
     if IS_PRODUCTION and SITE_ACCESS_TOKEN and len(SITE_ACCESS_TOKEN) < 32:
         log.error("FATAL: SITE_ACCESS_TOKEN is too short (%d chars) — refusing to start.", len(SITE_ACCESS_TOKEN))
         raise RuntimeError("SITE_ACCESS_TOKEN must be at least 32 characters")
+    # GATEWAY_SSO_SECRET stamps X-Gateway-Secret on dashboard-proxy requests so
+    # downstream subproducts can trust the gateway-supplied identity headers.
+    # If left unset in production, proxy_request would silently omit the header
+    # and an equally-empty downstream secret could let hmac.compare_digest("",
+    # "") return True, granting unauthenticated access. Fail fast.
+    if IS_PRODUCTION and not GATEWAY_SSO_SECRET:
+        log.error("FATAL: PRODUCTION=1 but GATEWAY_SSO_SECRET is unset — refusing to start.")
+        raise RuntimeError("GATEWAY_SSO_SECRET must be set in production")
+    if IS_PRODUCTION and GATEWAY_SSO_SECRET and len(GATEWAY_SSO_SECRET) < 32:
+        log.error("FATAL: GATEWAY_SSO_SECRET is too short (%d chars) — refusing to start.", len(GATEWAY_SSO_SECRET))
+        raise RuntimeError("GATEWAY_SSO_SECRET must be at least 32 characters")
     # IP_HASH_SALT defends against rainbow-table reversal of analytics_events.ip_hash
     # rows if the DB is ever exfiltrated. A constant in source code offers zero
     # protection (SHA-256 over IPv4 is a few CPU-hours), so production MUST set a
