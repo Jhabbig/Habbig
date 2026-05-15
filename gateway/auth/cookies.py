@@ -73,3 +73,26 @@ def clear_session_cookie_hardened(response: Response, request: Request) -> None:
     if domain:
         kwargs["domain"] = domain
     response.delete_cookie(**kwargs)
+
+
+# Public alias so other modules can import the cookie-domain helper
+# without reaching into a private name. Returns ".narve.ai" in production
+# (or whatever GATEWAY_COOKIE_DOMAIN / config.json apex resolves to) and
+# None in dev so localhost cookies work.
+def cookie_domain_for(request: Request) -> Optional[str]:
+    """Public wrapper around ``_cookie_domain_for`` for cross-module reuse."""
+    return _cookie_domain_for(request)
+
+
+# TODO(cookie-domain-migration): the following routes still set cookies
+# without an explicit Domain attribute and need to be migrated to call
+# ``cookie_domain_for(request)`` (post-2026-05-15 CSP/cookie audit):
+#
+#   - gateway/routes_sharing.py        — 3 cookie sets:
+#       narve_share_attribution, narve_shared_view, (one more share cookie)
+#   - gateway/saved_views_routes.py    — saved-view scoping cookie
+#   - gateway/affiliate_routes.py      — affiliate_code cookie
+#
+# Each migration is owned by a separate agent / follow-up task; do NOT
+# inline-migrate them from this file. The helper is exported here so
+# those modules can ``from auth.cookies import cookie_domain_for``.
