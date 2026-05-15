@@ -3942,9 +3942,8 @@ async def login_submit(
     response = RedirectResponse("/dashboards", status_code=302)
     set_session_cookie(response, legacy_token, request)
     try:
-        from auth.cookies import set_session_cookie_hardened, clear_pending_token_cookie
+        from auth.cookies import set_session_cookie_hardened
         set_session_cookie_hardened(response, raw_hardened, request)
-        clear_pending_token_cookie(response, request)
     except Exception:
         log.exception("login: hardened-session cookie issuance failed")
     # Rotate CSRF on successful login.
@@ -4072,7 +4071,7 @@ async def logout(request: Request):
     # Also revoke the hardened session cookie if present.
     try:
         from auth.cookies import SESSION_COOKIE as _HARDENED_COOKIE
-        from auth.cookies import clear_session_cookie_hardened, clear_pending_token_cookie
+        from auth.cookies import clear_session_cookie_hardened
         hardened_raw = request.cookies.get(_HARDENED_COOKIE)
         if hardened_raw:
             db.revoke_user_session_by_token(hardened_raw)
@@ -4092,7 +4091,6 @@ async def logout(request: Request):
     response = RedirectResponse("/login", status_code=302)
     try:
         clear_session_cookie_hardened(response, request)
-        clear_pending_token_cookie(response, request)
     except Exception:
         pass
     # Rotate CSRF token on logout so the next session on this browser starts
