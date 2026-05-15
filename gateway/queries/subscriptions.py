@@ -94,6 +94,42 @@ def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
     return row is not None
 
 
+def _bust_tier_change_caches(user_id: int) -> None:
+    """Canonical post-write cache bust for a tier-change.
+
+    AUDIT (CRIT, audit_tier_change.md): every tier-change writer must
+    invalidate both the sync TTL cache (per-user feed + tier-scoped
+    best-bets) and the in-process subproduct access verdict cache.
+    Centralising the helper here means future callers of
+    ``upsert_subscription`` / ``cancel_subscription`` pick up the bust
+    for free — the previous pattern of "each writer remembers to call
+    ``ttl_invalidate.on_subscription_change`` and ``invalidate_user``"
+    was missed by every positive-direction writer
+    (``/billing/subscribe``, Stripe ``subscription.created`` /
+    ``updated`` / ``invoice.paid``, admin grant), leaving 60s stale
+    dashboards + 5min stale subproduct gates on every upgrade.
+
+    Both imports are deferred so a stripped-down test harness that only
+    exercises the query helper doesn't pull the cache stack, and both
+    are wrapped in try/except so a missing/broken cache module never
+    masks the underlying DB write.
+    """
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_subscription_change(user_id)
+    except Exception:  # pragma: no cover — cache layer optional in tests
+        logging.getLogger(__name__).exception(
+            "ttl_invalidate.on_subscription_change failed (user=%s)", user_id,
+        )
+    try:
+        from subproduct_access import invalidate_user
+        invalidate_user(user_id)
+    except Exception:  # pragma: no cover — module optional in tests
+        logging.getLogger(__name__).exception(
+            "subproduct_access.invalidate_user failed (user=%s)", user_id,
+        )
+
+
 def upsert_subscription(
     user_id: int,
     dashboard_key: str,
@@ -120,6 +156,18 @@ def upsert_subscription(
             """,
             (user_id, dashboard_key, plan, now, expires_at, stripe_sub_id, source),
         )
+    # AUDIT (CRIT, audit_tier_change.md): tier-changing writes MUST bust
+    # the feed/best-bets sync cache AND the subproduct access verdict
+    # cache so the very next request reflects the new tier. Previously
+    # only the negative-direction callers (cancel/pause/payment_failed)
+    # remembered this; every positive direction (upgrade) was stale for
+    # 60s (dashboards) and 5min (subproduct gate). Lift the contract
+    # into the canonical helper so every future caller is correct by
+    # default — matches the sibling pattern at
+    # ``set_user_intelligence_addon``. Fires AFTER the ``with db.conn``
+    # block closes so a concurrent reader can't repopulate the cache
+    # with the pre-commit row.
+    _bust_tier_change_caches(user_id)
     # Referral-conversion hook. A paid subscription means the referred user
     # "became paying" for reward purposes. We flag the referral row here so
     # the nightly process_referral_rewards job can grant the gift.
@@ -142,6 +190,12 @@ def cancel_subscription(user_id: int, dashboard_key: str) -> None:
             "WHERE user_id = ? AND dashboard_key = ?",
             (user_id, dashboard_key),
         )
+    # AUDIT (CRIT, audit_tier_change.md): same canonical bust as upsert.
+    # The downgrade path through ``/billing/subscribe`` (pro → trader)
+    # and admin revoke both flow through cancel paths, so the cache
+    # invalidation belongs here for the same reason it belongs on
+    # ``upsert_subscription``.
+    _bust_tier_change_caches(user_id)
 
 
 def list_all_subscriptions(limit: int = 100, before_id: int | None = None) -> list[sqlite3.Row]:

@@ -4619,21 +4619,35 @@ async def billing_action(request: Request, action: str = Form(...)):
 
 @app.post("/billing/subscribe")
 async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
-    """Subscribe the logged-in user — Trader gets 3 credits, Pro gets all."""
+    """Subscribe the logged-in user — Trader gets 3 credits, Pro gets all.
+
+    AUDIT (CRIT, audit_tier_change.md): every state-change branch in
+    this handler must call ``ttl_invalidate.on_subscription_change``
+    AND ``subproduct_access.invalidate_user`` before returning, so the
+    next request observes the new tier instead of a 60s stale
+    dashboards/settings/sidebar payload + a 5min stale subproduct
+    gate. The canonical helpers (``db.upsert_subscription`` /
+    ``db.cancel_subscription``) bust both caches themselves now, but
+    this route also issues raw ``DELETE`` / ``UPDATE`` / ``INSERT OR
+    REPLACE`` SQL that bypasses those helpers — so we fire the bust
+    at the bottom of the route as well, defensively, to cover every
+    state-change path through this route in one place.
+    """
     user = current_user(request)
     if not user:
         return RedirectResponse("/token", status_code=302)
     if plan not in ("trader", "pro"):
         return RedirectResponse("/billing", status_code=302)
+    uid = user["user_id"]
     duration = 30 if interval == "monthly" else 365
     if plan == "pro":
         # Pro unlocks everything — clear old trader sentinel + old subs
         with db.conn() as c:
-            c.execute("DELETE FROM subscriptions WHERE user_id = ? AND dashboard_key = '__plan__'", (user["user_id"],))
+            c.execute("DELETE FROM subscriptions WHERE user_id = ? AND dashboard_key = '__plan__'", (uid,))
         # Subscribe to ALL dashboards as pro
         for key in DASHBOARDS:
             db.upsert_subscription(
-                user_id=user["user_id"],
+                user_id=uid,
                 dashboard_key=key,
                 plan=f"pro_{interval}",
                 duration_days=duration,
@@ -4641,7 +4655,7 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
             )
     else:
         # Trader plan — check if downgrading from Pro
-        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(uid)}
         now = int(time.time())
         current_pinfo = _user_plan_info(user, subs, now)
 
@@ -4652,7 +4666,7 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
                 c.execute(
                     "UPDATE subscriptions SET plan = 'pro_downgrading' "
                     "WHERE user_id = ? AND dashboard_key != '__plan__' AND status = 'active'",
-                    (user["user_id"],),
+                    (uid,),
                 )
             # Create Trader sentinel starting when Pro expires
             pro_end = current_pinfo["expires_at"]
@@ -4662,18 +4676,37 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
                     "INSERT OR REPLACE INTO subscriptions "
                     "(user_id, dashboard_key, plan, status, started_at, expires_at, source) "
                     "VALUES (?, '__plan__', ?, 'active', ?, ?, 'downgrade')",
-                    (user["user_id"], f"trader_{interval}", pro_end, pro_end + trader_duration * 86400),
+                    (uid, f"trader_{interval}", pro_end, pro_end + trader_duration * 86400),
                 )
             log.info("User %s scheduled downgrade from Pro to Trader at %d", user.get("username", user["email"]), pro_end)
         else:
             # Fresh Trader subscription
             db.upsert_subscription(
-                user_id=user["user_id"],
+                user_id=uid,
                 dashboard_key="__plan__",
                 plan=f"trader_{interval}",
                 duration_days=duration,
                 source="billing_trader",
             )
+    # AUDIT (CRIT, audit_tier_change.md): bust the per-user feed/best-
+    # bets sync TTL cache AND the in-process subproduct access verdict
+    # cache. Both helpers are wrapped so a missing/broken cache module
+    # never masks the underlying write — same pattern as the Stripe
+    # webhook positive branches and the queries/subscriptions.py
+    # canonical helpers. The raw DELETE/UPDATE/INSERT OR REPLACE SQL
+    # above bypasses ``db.upsert_subscription``'s built-in bust, so
+    # this catch-all bust is required even though the route also
+    # calls the canonical helper in most branches.
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_subscription_change(uid)
+    except Exception:
+        log.exception("ttl_invalidate.on_subscription_change failed (user=%s)", uid)
+    try:
+        from subproduct_access import invalidate_user
+        invalidate_user(uid)
+    except Exception:
+        log.exception("subproduct_access.invalidate_user failed (user=%s)", uid)
     log.info("User %s subscribed to %s (%s)", user.get("username", user["email"]), plan, interval)
     return RedirectResponse("/billing", status_code=302)
 

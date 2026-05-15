@@ -133,6 +133,61 @@ def _coerce_int(value) -> Optional[int]:
         return None
 
 
+def _bust_user_caches(user_id: int) -> None:
+    """Tier-change cache bust for the positive-direction webhook branches.
+
+    AUDIT (CRIT, audit_tier_change.md): the cancellation / payment-failed
+    branches in ``stripe_webhook_hardening`` already invalidate both the
+    sync TTL cache (via ``ttl_invalidate.on_subscription_change``) and
+    the subproduct access verdict cache (via
+    ``subproduct_access.invalidate_user``). The positive branches
+    (``subscription.created`` / ``updated`` / ``invoice.paid``) did
+    neither, so a Stripe-driven upgrade left a paying user staring at
+    locked dashboards for 60s and a 402 from the subproduct gate for
+    5min. This helper centralises the bust so all three positive
+    branches share the same contract as the negative branches.
+    """
+    if not user_id:
+        return
+    try:
+        from cache import ttl_invalidate
+        ttl_invalidate.on_subscription_change(user_id)
+    except Exception:
+        log.exception(
+            "ttl_invalidate.on_subscription_change failed (user=%s)", user_id,
+        )
+    try:
+        from subproduct_access import invalidate_user
+        invalidate_user(user_id)
+    except Exception:
+        log.exception(
+            "subproduct_access.invalidate_user failed (user=%s)", user_id,
+        )
+
+
+def _user_id_for_stripe_sub(sub_id: str) -> Optional[int]:
+    """Resolve a ``subscriptions.stripe_sub_id`` back to its user_id.
+
+    Used by ``_record_payment`` (invoice.paid) — Stripe's invoice object
+    carries the subscription id but no ``metadata.user_id``, so we have
+    to look up the local row to know whose caches to invalidate.
+    """
+    if not sub_id:
+        return None
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT user_id FROM subscriptions WHERE stripe_sub_id = ? LIMIT 1",
+                (sub_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return int(row["user_id"])
+    except Exception as exc:
+        log.warning("user_id lookup for stripe_sub_id=%s failed: %s", sub_id, exc)
+        return None
+
+
 # ── Dispatch branches ──────────────────────────────────────────────────────
 
 
@@ -203,6 +258,13 @@ def _grant_access(event: dict) -> None:
     except Exception as exc:
         log.warning("grant_access DB write failed: %s", exc)
 
+    # AUDIT (CRIT, audit_tier_change.md): bust the per-user sync TTL
+    # cache + subproduct access verdict cache so the very next request
+    # observes the new active subscription. Negative-direction branches
+    # already do this; without it the dashboard remains stale 60s and
+    # the subproduct gate stays stale up to 5min.
+    _bust_user_caches(user_id)
+
 
 def _update_plan(event: dict) -> None:
     """customer.subscription.updated — sync plan + status from Stripe.
@@ -256,6 +318,12 @@ def _update_plan(event: dict) -> None:
             )
     except Exception as exc:
         log.warning("update_plan DB write failed: %s", exc)
+
+    # AUDIT (CRIT, audit_tier_change.md): same as _grant_access — any
+    # subscription.updated flip (active↔past_due, plan switch, renewal
+    # extension) is a tier-change observable in the per-user feed and
+    # the subproduct access verdict, so the bust fires here too.
+    _bust_user_caches(user_id)
 
 
 def _record_payment(event: dict) -> None:
@@ -311,6 +379,15 @@ def _record_payment(event: dict) -> None:
             "record_payment DB write failed: %s (sub=%s cust=%s)",
             exc, sub_id, customer,
         )
+
+    # AUDIT (CRIT, audit_tier_change.md): the invoice.paid path is how
+    # a past_due subscription returns to active — i.e. the user regains
+    # access. The Stripe invoice carries the subscription id but no
+    # metadata.user_id, so we map sub_id → user_id via the local row
+    # and then run the standard tier-change bust.
+    user_id = _user_id_for_stripe_sub(sub_id)
+    if user_id is not None:
+        _bust_user_caches(user_id)
 
 
 
