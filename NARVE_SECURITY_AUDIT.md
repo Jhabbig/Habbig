@@ -5,6 +5,253 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #15 — 2026-05-15T13:33Z — commit 6a17de5 — post-audit-#14 fix-verification + WIP recheck
+
+### Why this audit exists
+
+Audit #14 (`c01c932`, ~27 min earlier) flagged 1 CRITICAL + 5 HIGH still open after the previous fix wave. Fix agents landed commits for each in parallel during this scan window. The caller asked specifically to verify these five issues against current HEAD and mark each RESOLVED / PARTIAL / NEW.
+
+The scan started at HEAD `2523725`, walked through `9080eb9` / `e5a71a3` / `3f097d3` / `9319423` / `d5ae3b8` (the five fix commits) and finished at HEAD `6a17de5`. Every "RESOLVED" below was re-read against the HEAD that was current when this entry was written.
+
+### Code inventory audited
+- Committed tip: `6a17de5` (`audit(deprecations): tabulate 432 DeprecationWarnings`)
+- Local unpushed commits: none — local tracks `origin/feature/platform-build`
+- Local uncommitted files: 10 modified + 8 untracked at scan close. Modified: `gateway/db.py`, `gateway/email_system/unsubscribe.py`, `gateway/jobs/newsletter_blast_jobs.py`, `gateway/jobs/pipeline_jobs.py`, `gateway/onboarding_routes.py`, `gateway/queries/newsletter.py`, 4 test files. Untracked: migration `194_blast_cursor.py`, `gateway/queries/notifications.py`, 5 test files, `gateway/static/avatars/` (runtime upload dir — should be `.gitignore`d).
+- Local stashes: 70 entries (up 1 from #14's 63 due to in-flight rebases). Sampled top 5 — all CSS / design / pre-task snapshots; no security work in stash limbo.
+- Server uncommitted files: not directly inspected this iteration (no scp / no ssh per scan rules). Server tip was `f99f47a` at audit #14; deploy has not happened in the intervening window, so the server is now ~120 commits behind origin and runs all five pre-fix code paths. **The 5 audit-#14 fixes are committed to origin but NOT deployed.**
+- Server tip vs origin: behind (deploy backlog grew during fix wave).
+- Running uvicorn loaded from: `/home/julianhabbig/Polymarket/venv/bin/python` (pid 4056528, started May 14) and `python3` (pid 4077346, started 2026-05-15 00:05). Both predate the entire fix wave. server.py mtime on server (2026-05-14 23:24:26) is older than uvicorn pid 4077346 start time so the disk file may even be newer than the process — needs a `setsid` restart.
+- Branches with recent work (last 14d not in current): single worktree, all on `feature/platform-build`.
+- DRIFT FLAG: **server and origin diverged + running process stale.** Every "RESOLVED" status below describes intended-and-committed state. Production today still runs every flagged vulnerability from #14 plus the new CRIT introduced in WIP since #14.
+
+### Summary
+Posture: **concerning**
+Critical issues: 1 (NEW — magic-link account takeover; the audit-#14 CRIT is RESOLVED)
+High-priority: 1 (Stripe webhook livemode coverage gap on subproduct checkout — adjacent to the new CRIT)
+Medium-priority: 4 (carry-overs from #14 + 1 new key-domain hygiene)
+Low-priority: 7 (carry-overs from #14)
+Resolved since last audit: 6 (CRIT #1, HIGH #2-#5, MED #6)
+New since last audit: 1 CRIT + 1 HIGH + 1 MED
+Regressions: 0
+
+### Verification matrix — every flagged item from audit #14
+
+| # | Severity | Issue | Location (audit#14) | HEAD now | Status |
+|---|---|---|---|---|---|
+| 1 | CRIT | `retry_job` HMAC verify | `gateway/jobs/backend.py:335-346` | `gateway/jobs/backend.py:353-415` | **RESOLVED** |
+| 2 | HIGH | Kalshi-connect spray throttle | `gateway/portfolio/routes.py:110-173` | `gateway/portfolio/routes.py:279-328` | **RESOLVED** |
+| 3 | HIGH | Avatar `MAX_IMAGE_PIXELS` | `gateway/profile_routes.py:447-512` | `gateway/profile_routes.py:53-59,531-545` | **RESOLVED** |
+| 4 | HIGH | Parallel Polymarket SIWE bypass | `gateway/portfolio/routes.py:93-107` | `gateway/portfolio/routes.py:105-265` | **RESOLVED** |
+| 5 | HIGH | `process_scheduled_deletions` cascade wiring | `gateway/jobs/pipeline_jobs.py:38-104` | `gateway/jobs/pipeline_jobs.py:38-168` | **RESOLVED** |
+| MED#6 | MED | CSRF cookie missing Secure/SameSite | `gateway/security/csrf.py:103` | `gateway/security/csrf.py:92-103` | **RESOLVED** |
+
+Detailed evidence per item:
+
+- **CRIT #1 — `retry_job` HMAC verify.** `_audit_insert` (jobs/backend.py:80-94) now imports `compute_job_hmac` and stores the HMAC alongside the row. `retry_job` (jobs/backend.py:353-415) imports `verify_job_hmac` and refuses any row whose `payload_hmac` is NULL or mismatched. Constant-time compare via `hmac.compare_digest`. Two layered guards: (a) registry allowlist on `name`, (b) HMAC verify. NULL HMAC → reject. Canonical JSON (sort_keys + separators) means roundtrip through `json.loads` is HMAC-stable. Job-HMAC secret comes from `GATEWAY_SSO_SECRET`/`EMBED_SIGNING_SECRET` with an in-memory fallback that warns at boot (which is correct — fail-soft on dev, fail-secure once those env vars are set in prod).
+- **HIGH #2 — Kalshi spray.** Three buckets wired (gateway/portfolio/routes.py:297-328) BEFORE `with_idempotency` so the 10s dedup isn't the only throttle: `kalshi_connect_target:<email>` (5/h), `kalshi_connect_user:<uid>` (10/h), `kalshi_connect_ip:<ip>` (30/600s). Each returns 429 with `Retry-After`. The bucket-key separator changed from `-` (test plan) to `_` (impl) which doesn't matter semantically.
+- **HIGH #3 — Avatar Pillow.** Module-level `Image.MAX_IMAGE_PIXELS = 16_000_000` set at import in `gateway/profile_routes.py:53-59`. Avatar handler intercepts BOTH `DecompressionBombError` and `DecompressionBombWarning` (promotes Warning→error via `warnings.simplefilter("error", ...)`) — returns 413 on either. Per-user `@rate_limit(5/60s)` on the route. Test `tests/test_avatar_bomb_guard.py` pins 89MP→413 and 5MP→200.
+- **HIGH #4 — Parallel Polymarket bypass.** `/api/portfolio/polymarket/connect` (gateway/portfolio/routes.py:105-265) now refuses to write without the full `{address, signature, message}` SIWE triplet. Validation imports `_EVM_ADDRESS_RE`, `_siwe_parse_message`, `_siwe_consume_nonce`, and the signature verifier from `market_routes` (lazy import to avoid the import cycle). The route ALSO refuses to attach a wallet already on EITHER storage table (`polymarket_connections` OR `user_market_credentials`) under a different user → 409. The two parallel storage tables remain (technical debt, not security debt as of this commit).
+- **HIGH #5 — `process_scheduled_deletions` cascade.** `gateway/jobs/pipeline_jobs.py:80-127` now: (1) reads export ZIP paths first, (2) anonymises the `users` row's PII as defence-in-depth, (3) calls `db.cascade_delete_user(user_id)` (the helper added in migration 188/189-ish, re-exported via `gateway/db.py:861`), which walks `sqlite_master` for every `user_id`/`*_user_id` column and deletes. (4) unlinks export ZIPs from disk, (5) enqueues the courtesy email. The hand-rolled 9-table DELETE list is gone. GDPR Art. 17 long-tail coverage is now in lockstep with the user-initiated self-delete path.
+- **MED #6 — CSRF cookie.** `gateway/security/csrf.py:92-103` — `set_cookie` now sets `samesite="lax"`, `secure=is_production`, `httponly=False` (deliberately readable for double-submit), and a per-request domain only when `cookie_domain_fn` is wired AND `is_production` is true.
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT (unchanged from #14).
+- `pm_gateway_session` + `narve_session` both accepted: yes (legacy migration window still open).
+- `narve_session` stored as SHA-256 hash in DB: yes (migration 191 + `_hash_session_token` import at db.py:794).
+- Session cookie HttpOnly: yes (`auth/cookies.py:127`).
+- Session cookie Secure: yes — `secure=_is_production()` (`auth/cookies.py:129`).
+- Session cookie SameSite: Strict (`auth/cookies.py:128`).
+- Session revocation on logout: works (scan confirmed `logout` clears + DB row removed).
+- Session rotation on privilege change: implemented for password reset + impersonation; NOT verified for role-change this iteration.
+- Max sessions per user enforced: not enforced (carry-over, MEDIUM in #13, not re-flagged).
+- Password reset invalidates sessions: yes (migration 003).
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (`queries/auth.py:142`).
+- 2FA status: removed in migration 019.
+- Impersonation banner visible on every page while active: yes (server.py renders banner on all _layout shells).
+- Impersonation blocked paths enforced: yes (`gateway/auth/guards.py`).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes (audit#13 closed the api_keys bypass; re-verified).
+- Super admin routes require role = 2: yes.
+- Subproduct access checked at middleware + route + response: partial (carry-over from #13).
+- `has_subproduct_access` called on every subproduct route: yes.
+- Feature flag evaluation in use: yes (migration 186 added subproduct feature flags).
+- Gift subscription enforcement: yes.
+
+### CSRF
+- Double submit cookie: yes (`narve_csrf` + matching header).
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — `_CSRF_EXEMPT_POSTS` is minimal and each exemption is documented (Stripe webhook, status subscribe, public token endpoints, sendBeacon analytics, subproduct-signup cross-origin form).
+- HTMX X-CSRF-Token hook active: yes.
+- Exempt routes list minimal and documented: yes — but the new `/subproduct-signup` exemption now relies on Origin/Referer + rate-limit for a primitive (magic-link mint over unauthenticated input) that those defences do not protect against. See CRIT #1 below.
+
+### Rate limiting
+- Auth endpoints: still has the 7 gaps from #14 MED #2 (`server_features.py` forgot-password / reset-password / validate-token / register / login / logout / server.py:3889).
+- API endpoints: yes, partial.
+- Per-user and per-IP as appropriate: yes (Kalshi connect now stacks both per-user and per-IP; SIWE connect throttle deferred to global limiter).
+- 429 response includes `Retry-After`: yes (verified on Kalshi connect + per-IP buckets).
+- Cloudflare-level rate limit rules: present + documented in `CLOUDFLARE_CHANGES.md` (last updated May 15 08:58).
+
+### Input validation
+- SQL injection vectors found: 0 confirmed exploitable. Scanner-flagged f-strings are all admin allowlists, `?` placeholder builders for IN clauses, fixed-column UPDATE field-name joins from server-controlled allowlists, or test files. No user input flows into an interpolated SQL identifier on a state-changing route.
+- XSS via innerHTML with user content: 0 confirmed exploitable. The 28 `raw_` template keys all carry server-rendered HTML or test fixtures.
+- Command injection / subprocess with user input: 0.
+- Path traversal in file operations: 0 confirmed exploitable (16 scanner hits all in test fixtures or `gateway/tools/change_queue.py:267` reading a server-pinned filepath).
+- SSRF in URL-fetching code: 0 user-controlled. The 6 scanner-flagged urlopen/requests.get calls are all (a) test rigs using local pytest fixtures or (b) `server.py:3208` `_ur.urlopen(target)` where `target` is an env-pinned scraper URL.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes.
+- No hardcoded secrets in current tree: clean (scan_secrets.sh — no committed `.env`, no DB files tracked, no `AKIA`/Stripe live key patterns).
+- No secrets in git history: clean (500-commit deep scan, no flagged patterns).
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes (Fernet-key check at boot, refuse to upsert on missing key).
+- Sessions hashed before DB storage: yes.
+- Password hashes use PBKDF2-HMAC-SHA256: yes (600k iterations).
+- .env permissions on server: not directly inspected this iteration (scan rules forbid scp / ssh).
+
+### Data privacy
+- Account deletion works end-to-end: yes (cascade-delete now identical for self-delete and scheduled-delete).
+- Data export includes all user-linked tables: verified at #13; cascade table list now lives in `queries/auth.py:cascade_delete_user` and walks sqlite_master.
+- Sensitive fields redacted in logs: yes (passwords never logged; email masks via `_mask_email_local`).
+- Sentry scrubbing active: yes (per `gateway/security/audit.py` and the Sentry-init code path).
+- Impersonation actions logged: yes (audit_log + impersonation banner).
+
+### External integrations
+- Stripe webhook signature validated: yes (`stripe.Webhook.construct_event`).
+- Stripe webhook idempotent: yes — `mark_received` (`stripe_webhook_hardening.py:178-213`) uses `INSERT OR IGNORE INTO processed_stripe_events`. The infra-scan flag is a false positive (the check lives in a sibling module). Audit #14 MED #3 effectively closed by this routing.
+- Stripe webhook mode-verified: yes (livemode check at `stripe_webhook_routes.py:484-497`).
+- Telegram bot token in env only: yes.
+- Discord bot token in env only: yes.
+- Scraper API key validated on every request: yes.
+- Polymarket wallet address validated: yes (SIWE-verified on both `/api/markets/connect/polymarket` AND `/api/portfolio/polymarket/connect` as of `9080eb9`).
+- SEC EDGAR User-Agent set: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes.
+- Cloudflare Tunnel active, origin not directly reachable: unverified this iteration (scan rules forbid external probe).
+- Cloudflare Rules for subdomain enumeration: yes.
+- Cloudflare Rules for scanner UA blocking: yes.
+- Post-deploy commit step documented: yes (`docs/runbook` + 2026-05-15 deploy lessons commit `8689ea5`).
+- CLOUDFLARE_CHANGES.md current: yes.
+
+### Monitoring
+- Sentry backend configured: yes (`gateway/sentry_init.py` per past audit `1802f3b`).
+- Sentry frontend configured: yes.
+- Structured logging configured: yes.
+- Security events logged separately: partial — magic-link redemptions log via Python logging but NOT to `audit_log`. See MED #2 below.
+- Audit log append-only: yes.
+- Uptime monitoring active: yes.
+
+### Dependency audit
+- Last dependency audit: 2026-05-14 (`f8d931a`).
+- Known CVEs: pip-audit blocked on Python 3.9 vs 3.10 harness mismatch (carry-over LOW from #14). No NEW CVEs surfaced via manual `pip list` review of `gateway/requirements.txt`.
+- Unpinned deps: 0 (all pinned).
+- Lockfile present: yes.
+
+### Compliance
+- Privacy Policy live: yes.
+- Terms of Service live: yes.
+- DPA live: yes.
+- Cookie notice: yes.
+- GDPR data export: yes.
+- GDPR account deletion: yes (cascade now uniform).
+
+### Issues found in this audit
+
+#### CRITICAL
+
+1. **Subproduct-signup magic-link bridge lets anyone take over any narve account by paying for a $X subscription on their own card.**
+   Location: `gateway/subproduct_signup_routes.py:229-270` (`_create_or_get_shell_user`), `:273-318` (`_build_checkout_session`), `:324-356` (`/api/billing/subproduct-checkout`), `:358-458` (`/subproduct-signup`), `gateway/onboarding_routes.py:_consume_magic_link` (in working tree, ~line 169-244).
+   Impact: The signup flow mints a single-use, HMAC-signed magic-link token bound to the user_id returned by `_create_or_get_shell_user(email)`. That helper short-circuits to the **existing user_id** if a row with the submitted email already exists (line 245-246). The token is embedded in the Stripe Checkout `success_url` and redeems into a real session cookie at `/onboarding?auth=<token>` with no email/identity cross-check. Attack: POST `email=victim@example.com&subproduct=narve-bots` to `/subproduct-signup` (cross-origin Origin header is trivially forgeable from non-browser clients) or `/api/billing/subproduct-checkout` (returns the checkout URL containing `?auth=<victim-token>` directly in JSON), complete checkout from attacker's browser with attacker's card, Stripe redirects to `/onboarding?auth=<victim-token>` in attacker's browser, `_consume_magic_link` validates the token and mints a session — attacker is now logged in as victim. Cost: one subscription fee (~$10-50). Reward: full account takeover including payment methods, history, social graph, API keys, admin role if victim is an admin.
+   Why audit#14 missed this: the magic-link bridge is brand-new code added in fix commits `e5a71a3` and the working-tree changes to `onboarding_routes.py`. The code did not exist at audit#14's `c01c932` commit. The test suite (`gateway/tests/test_subproduct_signup_magic_link.py`) covers signature/jti/Origin but does NOT have a test like `test_existing_user_email_does_not_mint_token_for_other_user`.
+   Fix: in `_create_or_get_shell_user`, raise an "email already registered, please log in" error if `password_hash` is non-empty OR `is_deleted = 0` and the row's `created_at` predates the request (i.e. row was not just minted by this same call). Alternatively: bind the magic-link token to a fresh random `signup_session_id` that's also stored on the Stripe Checkout `metadata`, and at `_consume_magic_link` confirm the redeeming browser holds the matching cookie. Best fix: never mint magic-link tokens for emails that resolve to a pre-existing user with a real password set; route those emails to a normal password-login flow instead, with a banner saying "you already have an account, sign in to attach this subproduct".
+   Also: add a regression test that mints a "victim" user with `password_hash != ''`, then POSTs `/subproduct-signup` with victim's email + an attacker email, and asserts the response either errors OR the issued token does NOT resolve to the victim's user_id.
+
+#### HIGH
+
+1. **`/api/billing/subproduct-checkout` is the JSON sibling of the form-post `/subproduct-signup` and shares the CRIT #1 takeover primitive.**
+   Location: `gateway/subproduct_signup_routes.py:324-356`.
+   Impact: Same takeover, but easier — the route returns the Stripe Checkout URL in JSON (which carries the embedded `?auth=<victim-token>`), so the attacker doesn't even need a browser, just a curl call. The route is not in `_CSRF_EXEMPT_POSTS` (so it requires a CSRF cookie + header pair), but that requirement is trivially satisfied by hitting the route from any narve.ai page where the attacker has a session — including a free-tier account they minted themselves moments earlier.
+   Fix: same as CRIT #1 — close the `_create_or_get_shell_user` short-circuit. This route inherits the fix automatically.
+
+#### MEDIUM
+
+1. **Magic-link redemptions do not write to `audit_log` — forensics after the CRIT #1 takeover would have only Python-logging traces.**
+   Location: `gateway/onboarding_routes.py:_consume_magic_link` (~line 213), `gateway/subproduct_signup_routes.py:mint_magic_link_token`.
+   Impact: After a magic-link account takeover, the only record is a `log.info` line. The `audit_log` table (which has the structured `user_id`, `action`, `ip_address`, `user_agent` schema) is never written for either mint or redeem.
+   Fix: add `audit.record(user_id=..., action="magic_link_minted", details={"slug": slug, "checkout_session_id": ...})` at mint time and `audit.record(user_id=..., action="magic_link_redeemed", details={"jti": ..., "ip": ...})` at redeem time. Then a takeover leaves a "minted by IP A, redeemed by IP B with different fingerprint" trace.
+
+2. **Magic-link HMAC falls back to `SITE_ACCESS_TOKEN` if `GATEWAY_COOKIE_SECRET` is unset — key-domain crossover.**
+   Location: `gateway/subproduct_signup_routes.py:62-74`.
+   Impact: Two different secrets sign the same kind of token, and an operator who rotates `GATEWAY_COOKIE_SECRET` but leaves `SITE_ACCESS_TOKEN` (or vice versa) creates a confusing state where old tokens may still verify under the alt key. The hard-coded dev fallback `"dev-subproduct-magic-link-secret"` is unreachable in production (server.py refuses to boot without `GATEWAY_COOKIE_SECRET ≥ 32 chars`), so this is hygiene, not exploitable.
+   Fix: drop the `SITE_ACCESS_TOKEN` fallback; rely solely on `GATEWAY_COOKIE_SECRET`. Single key domain, clearer rotation policy.
+
+3. **Carry-over from #14 MED #4**: `gateway/server.py` is now 8684 lines (was 8740 at #14, slight shrink). Still well over the 5000-line redo threshold. Extract auth helpers, redirect helpers, SSO proxy code.
+
+4. **Carry-over from #14 MED #5**: 20-mutations-per-hour billing rate limit lives in code (`billing_routes.py:66-69`) but not in CLOUDFLARE_CHANGES.md WAF rules. Defence-in-depth still missing at the edge.
+
+#### LOW
+
+1. **Carry-over from #14 LOW #1**: Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:231`, `db_referrals.py:453`).
+2. **Stash debt at 70 entries** (up 7 from #14). Audit-#14 noted some > 7d old; some > 30d old now. Bulk-drop entries older than 30 days.
+3. **pip-audit blocked on Python 3.9 vs 3.10 dep mismatch in the scan harness.** Carry-over LOW from #13/#14.
+4. **`requirements.txt` not separated into `requirements-dev.txt`.** Carry-over.
+5. **`gateway/dist/extension/` contains JS files flagged by XSS scanner**: browser-extension bundle, not gateway code. Carry-over.
+6. **`gateway/static/avatars/` is untracked in working tree** — runtime upload directory should be `.gitignore`d so no avatar binary ever gets committed by accident.
+7. **`audits/audit_cron_schedules.md` + `audits/audit_intelligence.md` + 5 new test files untracked** — same housekeeping concern as the dirty working tree from #14, just bigger.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- **Files modified (10)**: `gateway/onboarding_routes.py` carries the `_consume_magic_link` half of CRIT #1; reading the file at HEAD without the working-tree changes hides the consume-side. `gateway/email_system/unsubscribe.py` is a positive hardening (removed hardcoded `"narve-unsubscribe"` HMAC fallback in production). `gateway/jobs/newsletter_blast_jobs.py` + `migrations/194_blast_cursor.py` add a cursor + claim_token pattern that closes a duplicate-email race in the blast tick worker — security-positive. `gateway/db.py` adds 24 lines (small re-exports). `gateway/queries/newsletter.py` adds 181 lines for the blast-cursor support. The 4 modified test files pin the new behaviour.
+- **Untracked files (8)**: migration `194_blast_cursor.py` (referenced by the modified `newsletter_blast_jobs.py` — running the committed worker without applying 194 would error on the missing `last_recipient_id` / `claim_token` columns), `gateway/queries/notifications.py` (new helper module), 5 new test files for blast-cursor / unsubscribe-hardening / scheduled-deletion / magic-link / notification helpers, plus `gateway/static/avatars/` (runtime upload dir — should be `.gitignore`d).
+- **Security implications**: CRIT #1's consume-side lives in the modified `onboarding_routes.py` — committing the mint-side (`e5a71a3`) without the consume-side wouldn't enable the takeover, but it's already on origin; the un-committed consume-side IS reachable today via the deploy path because scp deploys disk state not committed state. **Don't deploy this working tree until CRIT #1 is fixed.** Migration 194 must commit + ship before any worker restart picks up the new newsletter_blast_jobs.py code.
+
+#### Unpushed local commits
+- None. Local tracks origin.
+
+#### Server-side uncommitted state
+- Not inspected this iteration (scan rules forbid ssh/scp). At audit #14 close the server was 110 commits behind origin and ~342 files dirty. Twenty-seven minutes later the server is at least 5-10 commits further behind (the fix-wave commits + magic-link commit + various audits). Reconciliation recommendation: **after CRIT #1 is fixed in a separate session, run a single `setsid` redeploy of the consolidated fix-wave + magic-link-takeover-fix wave. Do NOT deploy intermediate WIP.**
+
+#### Stashes
+- 70 entries. Sampled top 7 (audit-impersonation-rebase-stash-2 through wip-pre-task) — all design/CSS/pre-rebase snapshots from this week. None contain CRIT #1 work in limbo.
+
+### Changes since previous audit
+
+#### Resolved
+- **CRIT #1 (audit#14) — `retry_job` HMAC verify path.** Wired via `compute_job_hmac`/`verify_job_hmac` in `jobs/registry.py:162-174`; `_audit_insert` stores HMAC; `retry_job` verifies before re-enqueue. Constant-time compare confirmed. (Commit prior to scan; specific SHA not on the platform-build log tip but the code is at HEAD.)
+- **HIGH #2 (audit#14) — Kalshi spray throttle.** Three buckets wired at `portfolio/routes.py:297-328`. Each returns 429 + `Retry-After`. (Commit `d5ae3b8` pinned the contract via tests.)
+- **HIGH #3 (audit#14) — Avatar Pillow MAX_IMAGE_PIXELS.** Module-level cap to 16M pixels + DecompressionBombError + DecompressionBombWarning intercepted. (Commit `3f097d3`, pinned by `9319423`.)
+- **HIGH #4 (audit#14) — Parallel Polymarket SIWE bypass.** `/api/portfolio/polymarket/connect` now requires full SIWE triplet, refuses cross-account wallet attach. (Commits `9080eb9` and `e5a71a3`.)
+- **HIGH #5 (audit#14) — `process_scheduled_deletions` cascade.** Routes through `db.cascade_delete_user` after PII anonymisation. (Committed prior to scan.)
+- **MED #6 (audit#14) — CSRF cookie missing Secure/SameSite.** Added `samesite="lax"` and `secure=is_production` at `security/csrf.py:97-98`.
+
+#### New issues
+- **CRIT #1 (this audit)** — Magic-link account takeover via subproduct signup. NEW — bridge code did not exist at #14.
+- **HIGH #1 (this audit)** — `/api/billing/subproduct-checkout` JSON sibling shares the takeover primitive. NEW.
+- **MED #1 (this audit)** — Magic-link mint/redeem not written to `audit_log`. NEW.
+- **MED #2 (this audit)** — Magic-link HMAC key domain crosses `GATEWAY_COOKIE_SECRET` + `SITE_ACCESS_TOKEN`. NEW.
+
+#### Regressions
+- None. The 5 audit-#14 fixes did not break any audit-#13 RESOLVED items.
+
+### Drift warnings
+- Server tip is 110+ commits behind origin and was at #14's scan close; it is at least 5-10 commits further behind now. Every "RESOLVED" status is **committed-not-deployed**. CRIT #1 (audit#14) and HIGH #2-#5 are **still live on the running server** even though they're closed on origin.
+- Running uvicorn processes (pids 4056528 from May 14, 4077346 from May 15 00:05) predate the entire fix wave. `setsid` restart required.
+- CRIT #1 (THIS audit) is reachable on origin today — committed in `e5a71a3` — but only fully exploitable once `onboarding_routes.py` working-tree changes are committed. The mint-side is already on origin so the half-attack (token exists in JSON response) is live. **Do not commit `onboarding_routes.py` until the takeover-fix lands.**
+- Stash count grew from 63 → 70 in <24h. Bulk-drop discipline needed.
+- 8 untracked files in working tree. Migration `194_blast_cursor.py` is referenced by committed code on origin (newsletter_blast_jobs.py via the WIP modifications) — but actually the newsletter_blast_jobs.py changes are also WIP. If working tree gets scp'd to server, missing migration apply = NameError on `last_recipient_id`.
+
+### Recommended actions for next audit
+1. **Verify CRIT #1 is closed.** Read `_create_or_get_shell_user` and confirm it refuses to short-circuit for pre-existing users with non-empty `password_hash`. Run the regression test suggested in the Fix section.
+2. **Verify HIGH #1 is closed** (inherits CRIT #1 fix).
+3. **Verify magic-link mint/redeem now writes to `audit_log`.** Grep for `audit.record` + `magic_link` near `subproduct_signup_routes.py` and `onboarding_routes.py`.
+4. **Verify `SITE_ACCESS_TOKEN` is dropped as a fallback** from `_magic_link_secret`.
+5. **Re-check that origin and server have converged.** If the server is still on `f99f47a` from May 14, every CRIT/HIGH from this audit AND audit#14 is live in production. Schedule a deploy.
+6. **Run a fresh pass on the 7 carry-over auth-endpoint rate-limit gaps** from #14 MED #2. They are still in HEAD.
+7. **Walk the magic-link flow end-to-end on a staging environment** with a victim user that has admin role. Confirm the takeover demonstrates (or is blocked by the fix).
+8. **Drop all stashes older than 30 days** to clear the 70-entry backlog.
+
+---
+
 ## AUDIT #14 — 2026-05-15T13:06Z — commit c01c932 — post-fix-wave verification
 
 ### Why this audit exists
