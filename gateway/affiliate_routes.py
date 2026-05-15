@@ -47,6 +47,12 @@ from server import (  # noqa: E402 — late import, matches server_features patt
 )
 from sidebar import render_sidebar
 
+try:
+    from auth.cookies import cookie_domain_for
+except ImportError:  # pragma: no cover — defensive stub if sibling not yet exported
+    def cookie_domain_for(request: Request):  # type: ignore[override]
+        return None
+
 
 # ── Configuration ─────────────────────────────────────────────────────
 
@@ -62,19 +68,24 @@ _COOKIE_IS_SECURE = (os.environ.get("PRODUCTION", "0") == "1")
 # ── Cookie helpers ────────────────────────────────────────────────────
 
 
-def _set_affiliate_cookie(response: Response, code: str) -> None:
+def _set_affiliate_cookie(response: Response, code: str, request: Request) -> None:
     """Drop the 90-day ``affiliate_code`` cookie.
 
     httpOnly = True because the UI doesn't need JS access; keeps the
     code out of reach of any XSS. sameSite = "lax" so the click from a
     newsletter / podcast show-notes → narve.ai still carries the cookie
     on the landing request but cross-site POSTs don't.
+
+    ``domain`` is set via :func:`cookie_domain_for` so the cookie scopes to
+    the apex (``.narve.ai``) in production and remains host-only in dev —
+    per the CSP/cookie audit shipped 2026-05-15.
     """
     response.set_cookie(
         key=da.AFFILIATE_COOKIE_NAME,
         value=code,
         max_age=da.AFFILIATE_COOKIE_MAX_AGE_SECONDS,
         path="/",
+        domain=cookie_domain_for(request),
         secure=_COOKIE_IS_SECURE,
         httponly=True,
         samesite="lax",
@@ -164,7 +175,7 @@ def _handle_partner_click(request: Request, code: str) -> Response:
         log.exception("affiliate: record_click failed for code=%s", code)
 
     response = RedirectResponse("/", status_code=302)
-    _set_affiliate_cookie(response, affiliate["affiliate_code"])
+    _set_affiliate_cookie(response, affiliate["affiliate_code"], request)
     return response
 
 
