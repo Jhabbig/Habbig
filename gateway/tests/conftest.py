@@ -45,6 +45,33 @@ def _module_uses_testdb(test_file_module: str) -> bool:
     return False
 
 
+def _pin_db_to_shared_conn() -> None:
+    """Force ``db.conn`` to the shared in-memory test connection on
+    every reachable ``db`` module reference.
+
+    Some earlier test classes (notably ``test_stripe_webhook_hardening``)
+    do ``del sys.modules['db']`` in their setUp to bind the module to a
+    tempfile sqlite path, then re-import. That leaves
+    ``sys.modules['db']`` pointing at a fresh, un-patched module whose
+    ``db.conn`` is the real file-backed connection — and the tempfile is
+    deleted on tearDown, so any later test that calls ``db.conn()`` hits
+    "no such table". We re-pin the original ``db`` back into
+    ``sys.modules`` and patch its ``conn`` so lazy imports inside helpers
+    (e.g. ``stripe_webhook_hardening.mark_received``) see the fake again.
+    """
+    db.conn = _SHARED_CONN_CM
+    current = sys.modules.get("db")
+    if current is not db:
+        # A prior test deleted+reimported db. Restore the original so
+        # `import db` from helpers picks up the shared-conn patch.
+        sys.modules["db"] = db
+        if current is not None:
+            try:
+                current.conn = _SHARED_CONN_CM
+            except Exception:
+                pass
+
+
 @pytest.fixture(autouse=True, scope="class")
 def _maybe_force_shared_testdb_class(request):
     """Class-scoped pin — fires BEFORE setUpClass so user/key seeding
@@ -56,7 +83,7 @@ def _maybe_force_shared_testdb_class(request):
     """
     module_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
     if _module_uses_testdb(module_name):
-        db.conn = _SHARED_CONN_CM
+        _pin_db_to_shared_conn()
     yield
 
 
@@ -66,7 +93,7 @@ def _maybe_force_shared_testdb(request):
     leave other tests alone so their own db.conn monkey-patches stick."""
     module_name = request.node.module.__name__ if hasattr(request.node, "module") else ""
     if _module_uses_testdb(module_name):
-        db.conn = _SHARED_CONN_CM
+        _pin_db_to_shared_conn()
     yield
 
 
