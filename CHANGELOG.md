@@ -5,6 +5,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is date-based (no semver yet); releases correspond to
 deploy commits on `feature/platform-build`.
 
+## 2026-05-15
+
+### Added
+
+- **`/stripe/webhook` handler** (`68b00c9`) — production-grade Stripe
+  webhook endpoint with IP allowlist, signature verification,
+  idempotency replay protection, and livemode gate. Closes the
+  defence-in-depth gap left behind when the IP allowlist helpers
+  landed earlier in the week without a wired route.
+- **`/health` payload expanded** (`a2fc096`) — now reports `service`,
+  `db`, `scheduler`, `git_sha`, and `deployed_at`, so the admin
+  health monitor + external uptime probes can distinguish a healthy
+  process from a healthy deploy.
+
+### Changed
+
+- **`/admin/newsletter/send` recipient loop bounded** (`992005b`) —
+  inline send capped at 500 recipients; overflow drained at 500/min
+  by the new `newsletter_blast_tick` cron job. Prevents request
+  timeouts and runaway SMTP fan-out on large lists.
+- **Status-page subscribe form** (`56faa49`) — now posts to the
+  canonical `/api/v1/status/subscribe` (previously pointed at a
+  legacy path that 404'd silently for some subscribers).
+
+### Fixed
+
+- **Foundation bundle on `/api-docs`, `/admin/api-keys`, `/sources`**
+  (`d5fd135`) — share-menu and ⌘K command palette now load
+  correctly on these three surfaces (they were silently missing from
+  the foundation bundle). Offline page tagged with `data-keep` so the
+  service worker leaves it intact across upgrades.
+- **Mobile / trading-addon layout drift** (`e78b0d6`) — visual
+  regression on the `/settings/trading-addon` surface and several
+  mobile breakpoints corrected.
+- **iOS Safari viewport height** (`6a6594b`) — 100dvh fallback added
+  to 20 per-page CSS files so full-height layouts no longer get
+  clipped by the iOS Safari toolbar. QA test vocabulary updated to
+  match the redesign.
+- **Weekly digest `UNIQUE(email)` pollution** (`ae66727`) — prior
+  test runs were leaving rows in the digest-subscribers table that
+  collided on later inserts. Test isolation tightened.
+- **Migration 188** (`f99f47a`) — repairs a dangling
+  `users.invite_token_id` FK reference that migration 162 introduced
+  silently; the bug surfaced on prod tonight when the FK was first
+  exercised.
+
+### Security
+
+- **Audit #12** (`6197f37`) — STRONG posture, 0 CRITICAL / 0 HIGH.
+  Findings tracked in `NARVE_SECURITY_AUDIT.md`.
+- **Audit #13** (`c5a88b4`) — STRONG posture, 0 CRITICAL / 0 HIGH.
+  Findings tracked in `NARVE_SECURITY_AUDIT.md`.
+
 ## Week of 2026-05-14
 
 ### Added
