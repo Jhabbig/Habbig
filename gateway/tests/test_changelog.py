@@ -311,7 +311,9 @@ class TestRoutes(unittest.TestCase):
         self.assertIn("Week of 2026-05-14", r.text)
 
     def test_changelog_rss_mime_type(self):
-        r = self.client.get("/changelog.rss")
+        # Host header must match the allowlist after the audit-5 fix —
+        # TestClient's default ``testserver`` Host would 400.
+        r = self.client.get("/changelog.rss", headers={"Host": "narve.ai"})
         self.assertEqual(r.status_code, 200)
         self.assertIn(
             "application/rss+xml",
@@ -319,7 +321,7 @@ class TestRoutes(unittest.TestCase):
         )
 
     def test_changelog_rss_is_valid_xml_with_5_plus_items(self):
-        r = self.client.get("/changelog.rss")
+        r = self.client.get("/changelog.rss", headers={"Host": "narve.ai"})
         self.assertEqual(r.status_code, 200)
         root = ET.fromstring(r.text)
         self.assertEqual(root.tag, "rss")
@@ -330,7 +332,7 @@ class TestRoutes(unittest.TestCase):
         )
 
     def test_changelog_rss_dates_are_rfc822(self):
-        r = self.client.get("/changelog.rss")
+        r = self.client.get("/changelog.rss", headers={"Host": "narve.ai"})
         root = ET.fromstring(r.text)
         for item in root.findall("./channel/item"):
             pub = item.findtext("pubDate") or ""
@@ -343,7 +345,7 @@ class TestRoutes(unittest.TestCase):
             )
 
     def test_changelog_rss_has_cache_header(self):
-        r = self.client.get("/changelog.rss")
+        r = self.client.get("/changelog.rss", headers={"Host": "narve.ai"})
         cache = r.headers.get("cache-control", "")
         self.assertIn("max-age=3600", cache)
         self.assertIn("public", cache)
@@ -381,6 +383,293 @@ class TestWidgetSurfacesTodaysEntry(unittest.TestCase):
         r = self.client.get("/api/changelog?limit=3")
         self.assertEqual(r.status_code, 200)
         self.assertLessEqual(len(r.json()["entries"]), 3)
+
+
+# ── Host injection / RSS base_url allowlist ──────────────────────────────
+
+
+class TestHostAllowlist(unittest.TestCase):
+    """Regression for the Host-injection finding in audit #5.
+
+    A forged ``Host: evil.com`` header must never make it into the
+    channel ``<link>`` / ``atom:link href`` attributes. The route layer
+    enforces an allowlist via ``_validate_base_url`` and returns HTTP 400
+    for anything outside it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import server  # noqa: F401  — registers changelog_routes
+        from starlette.testclient import TestClient
+
+        cls.client = TestClient(server.app)
+
+    def setUp(self):
+        entries = changelog_routes.parse_changelog(SAMPLE_CHANGELOG)
+        _seed_cache(entries)
+
+    def tearDown(self):
+        _restore_cache()
+
+    def test_validate_base_url_accepts_canonical(self):
+        self.assertEqual(
+            changelog_routes._validate_base_url("https://narve.ai"),
+            "https://narve.ai",
+        )
+
+    def test_validate_base_url_accepts_localhost_with_port(self):
+        self.assertEqual(
+            changelog_routes._validate_base_url("http://localhost:8000"),
+            "http://localhost:8000",
+        )
+        self.assertEqual(
+            changelog_routes._validate_base_url("http://127.0.0.1:8001"),
+            "http://127.0.0.1:8001",
+        )
+
+    def test_validate_base_url_rejects_evil_host(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            changelog_routes._validate_base_url("https://evil.com")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_validate_base_url_rejects_subdomain_of_evil(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            changelog_routes._validate_base_url("https://narve.evil.com")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_validate_base_url_rejects_localhost_lookalike(self):
+        # ``localhost.evil`` smuggles past a naive startswith check.
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            changelog_routes._validate_base_url("http://localhost.evil")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_changelog_rss_rejects_evil_host_header(self):
+        # TestClient forwards the Host header verbatim to the ASGI app.
+        r = self.client.get(
+            "/changelog.rss",
+            headers={"Host": "evil.com"},
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_changelog_rss_accepts_narve_host(self):
+        r = self.client.get(
+            "/changelog.rss",
+            headers={"Host": "narve.ai"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("https://narve.ai/changelog", r.text)
+
+    def test_xml_escape_applied_to_base_url(self):
+        # render_rss must XML-escape interpolations as belt-and-suspenders.
+        xml = changelog_routes.render_rss(
+            changelog_routes.parse_changelog(SAMPLE_CHANGELOG),
+            base_url="https://narve.ai",
+        )
+        # Sanity: rendered XML round-trips through the stdlib parser.
+        ET.fromstring(xml)
+
+
+# ── [Unreleased] drafts filtered from public surfaces ────────────────────
+
+
+_UNRELEASED_FIXTURE = """\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- **Secret WIP** — not for public consumption yet.
+
+## Week of 2026-05-14
+
+### Added
+- **Voters Atlas** — election dashboard.
+"""
+
+
+class TestUnreleasedFiltering(unittest.TestCase):
+    """``## [Unreleased]`` blocks document work-in-progress and pre-disclosure
+    security work; they must not appear on /api/changelog or in the RSS
+    feed unless ``NARVE_CHANGELOG_ALLOW_DRAFTS`` is explicitly set."""
+
+    @classmethod
+    def setUpClass(cls):
+        import server  # noqa: F401
+        from starlette.testclient import TestClient
+
+        cls.client = TestClient(server.app)
+
+    def setUp(self):
+        import os
+        os.environ.pop("NARVE_CHANGELOG_ALLOW_DRAFTS", None)
+        entries = changelog_routes.parse_changelog(_UNRELEASED_FIXTURE)
+        _seed_cache(entries)
+
+    def tearDown(self):
+        import os
+        os.environ.pop("NARVE_CHANGELOG_ALLOW_DRAFTS", None)
+        _restore_cache()
+
+    def test_public_entries_drops_unreleased_by_default(self):
+        entries = changelog_routes.parse_changelog(_UNRELEASED_FIXTURE)
+        public = changelog_routes._public_entries(entries)
+        versions = [e["version"] for e in public]
+        self.assertNotIn("Unreleased", versions)
+        # The dated week is preserved.
+        self.assertTrue(any("Week of 2026-05-14" in v for v in versions))
+
+    def test_api_changelog_hides_unreleased_entries(self):
+        r = self.client.get("/api/changelog?limit=20")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        for entry in body["entries"]:
+            self.assertNotEqual(
+                (entry.get("version") or "").strip().lower(),
+                "unreleased",
+                f"Unreleased entry leaked into public API: {entry}",
+            )
+            # No-date entries are also drafts.
+            self.assertIsNotNone(entry.get("date"))
+
+    def test_rss_feed_hides_unreleased_entries(self):
+        r = self.client.get(
+            "/changelog.rss",
+            headers={"Host": "narve.ai"},
+        )
+        self.assertEqual(r.status_code, 200)
+        # The secret WIP bullet must not appear in the public feed.
+        self.assertNotIn("Secret WIP", r.text)
+
+    def test_env_var_opt_in_surfaces_unreleased(self):
+        import os
+        os.environ["NARVE_CHANGELOG_ALLOW_DRAFTS"] = "1"
+        try:
+            entries = changelog_routes.parse_changelog(_UNRELEASED_FIXTURE)
+            public = changelog_routes._public_entries(entries)
+            versions = [e["version"] for e in public]
+            self.assertIn("Unreleased", versions)
+        finally:
+            os.environ.pop("NARVE_CHANGELOG_ALLOW_DRAFTS", None)
+
+
+# ── CSS regression — font/colour violations stay fixed ───────────────────
+
+
+class TestCssDesignTokens(unittest.TestCase):
+    """Regression for the four CRITICAL findings in
+    ``audits/audit_design_gateway_css.md`` against ``gateway/static/gateway.css``.
+
+    These selectors had raw hex / rgba / chromatic / decorative-shadow
+    violations. If a future refactor reintroduces any of them, the test
+    fails — the design-skill hard rules are non-negotiable.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "static" / "gateway.css"
+        )
+        cls.css = path.read_text(encoding="utf-8")
+
+    # ── Finding 1: .narve-offline-banner @media block ──────────────────
+
+    def test_offline_banner_uses_tokens_in_light_media_query(self):
+        # The light @media block under .narve-offline-banner must use
+        # tokens, not raw hex literals.
+        block = re.search(
+            r"@media\s*\(prefers-color-scheme:\s*light\)\s*\{\s*\.narve-offline-banner\s*\{([^}]+)\}",
+            self.css,
+        )
+        self.assertIsNotNone(
+            block,
+            "expected `.narve-offline-banner` @media rule to remain in gateway.css",
+        )
+        body = block.group(1)
+        for raw in ("#f5f5f5", "#374151", "#e5e7eb"):
+            self.assertNotIn(
+                raw, body,
+                f"raw hex {raw} regressed into .narve-offline-banner @media",
+            )
+        self.assertIn("var(--bg-surface)", body)
+        self.assertIn("var(--text-primary)", body)
+        self.assertIn("var(--border-default)", body)
+
+    # ── Finding 2: .narve-cmdp-error chromatic red ─────────────────────
+
+    def test_cmdp_error_is_monochrome(self):
+        # The chromatic red `#e46a6a` violated both the "no chromatic hue"
+        # and the "status = position/weight not colour" rules.
+        self.assertNotIn(
+            "#e46a6a", self.css,
+            "chromatic red #e46a6a regressed into gateway.css "
+            "(should be var(--text-primary) + font-weight)",
+        )
+        m = re.search(
+            r"\.narve-cmdp-error\s*\{([^}]+)\}",
+            self.css,
+        )
+        self.assertIsNotNone(m, "missing .narve-cmdp-error selector")
+        body = m.group(1)
+        self.assertIn("var(--text-primary)", body)
+        self.assertIn("font-weight", body)
+
+    # ── Finding 3: decorative box-shadow on non-modals ─────────────────
+
+    def test_no_decorative_box_shadow_on_non_modal_selectors(self):
+        # These selectors must not declare a `box-shadow:` rule. Modal
+        # containers (.narve-cmdp, modal overlays) are allowed.
+        offenders = [
+            ".auth-submit:hover",
+            ".dash-card",
+            ".dash-card:hover",
+            ".billing-list",
+            ".btn:hover",
+            ".settings-card",
+            ".narve-cmdp-pill",
+        ]
+        for selector in offenders:
+            esc = re.escape(selector)
+            for m in re.finditer(rf"{esc}\s*\{{([^}}]*)\}}", self.css):
+                body = m.group(1)
+                self.assertNotIn(
+                    "box-shadow:",
+                    body,
+                    f"decorative box-shadow regressed into `{selector}`",
+                )
+
+    # ── Finding 4: raw rgba() paints in non-modal selectors ────────────
+
+    def test_no_raw_rgba_in_selection_or_header_or_auth_body(self):
+        # ::selection, .gw-header, .auth-body — three theme-regression
+        # offenders that must paint through tokens, not raw rgba.
+        for selector in ("::selection", ".gw-header", ".auth-body"):
+            esc = re.escape(selector)
+            m = re.search(rf"{esc}\s*\{{([^}}]*)\}}", self.css)
+            self.assertIsNotNone(
+                m, f"missing selector `{selector}` in gateway.css",
+            )
+            body = m.group(1)
+            # Permit `transparent` keyword (auth-body gradient uses it);
+            # reject raw rgba() literals.
+            self.assertNotRegex(
+                body,
+                r"rgba\s*\(\s*\d",
+                f"raw rgba() paint regressed into `{selector}`",
+            )
+
+    def test_content_area_no_shadow(self):
+        # The .content-area / .page-frame block had a raw-rgba box-shadow
+        # at L1852; verify both the shadow AND the rgba are gone.
+        m = re.search(r"\.page-frame\s*\{([^}]+)\}", self.css)
+        self.assertIsNotNone(m, "missing .page-frame block")
+        body = m.group(1)
+        self.assertNotIn("box-shadow", body)
+        self.assertNotIn("rgba(", body)
 
 
 if __name__ == "__main__":

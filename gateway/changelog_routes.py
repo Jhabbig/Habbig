@@ -24,11 +24,13 @@ import datetime as _dt
 import hashlib
 import html as _html
 import logging
+import os
 import re
 import time
 from email import utils as _email_utils
 from pathlib import Path
 from typing import Any, Optional
+from xml.sax.saxutils import escape as _xml_escape
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response

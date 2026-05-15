@@ -53,7 +53,7 @@ html, body {
 }
 
 ::selection {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-overlay);
   color: var(--text-primary);
 }
 
@@ -69,7 +69,7 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 /* ── Header ─────────────────────────────────────────────────────── */
 
 .gw-header {
-  background: rgba(13, 13, 13, 0.88);
+  background: var(--bg-overlay);
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--border);
@@ -248,7 +248,6 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 
 .auth-submit:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
 }
 
 .auth-error {
@@ -301,8 +300,7 @@ a:hover { color: var(--text-primary); text-decoration: none; }
   border: 1px solid var(--border-strong, var(--border));
   border-radius: var(--radius);
   padding: var(--space-6, 24px);
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.15s ease, border-color 0.2s ease;
   position: relative;
   overflow: hidden;
   text-decoration: none;
@@ -323,7 +321,6 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 .dash-card:hover,
 .dash-card:focus-visible {
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
   border-color: var(--border-strong, var(--text-tertiary));
   text-decoration: none;
 }
@@ -466,7 +463,6 @@ a:hover { color: var(--text-primary); text-decoration: none; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -532,7 +528,6 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 
 .btn:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
 }
 
 .btn-primary {
@@ -583,8 +578,8 @@ a:hover { color: var(--text-primary); text-decoration: none; }
 
 .auth-body {
   background:
-    radial-gradient(900px 500px at 80% 20%, rgba(255, 255, 255, 0.02), transparent 60%),
-    radial-gradient(700px 400px at 10% 90%, rgba(255, 255, 255, 0.02), transparent 60%),
+    radial-gradient(900px 500px at 80% 20%, var(--bg-overlay), transparent 60%),
+    radial-gradient(700px 400px at 10% 90%, var(--bg-overlay), transparent 60%),
     var(--bg);
 }
 
@@ -657,7 +652,6 @@ a:hover { color: var(--text-primary); text-decoration: none; }
   border: 1px solid var(--border-strong, var(--border));
   border-radius: var(--radius);
   padding: 32px;
-  box-shadow: var(--shadow-sm);
   margin-bottom: 32px;
 }
 
@@ -1298,9 +1292,9 @@ textarea:focus-visible {
 }
 @media (prefers-color-scheme: light) {
   .narve-offline-banner {
-    background: #f5f5f5;
-    color: #374151;
-    border-bottom-color: #e5e7eb;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-bottom-color: var(--border-default);
   }
 }
 
@@ -1849,7 +1843,6 @@ label[for] + textarea {
   /* Frame fills the padded main-content (left-aligned, NOT centered).
      Just keeps a top + bottom margin from neighbouring blocks. */
   margin: var(--space-3) 0 var(--space-5);
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
 }
 /* Pages that intentionally render full-width grids (the dashboards
    tile grid, the landing-page hero) opt out via .content-area--bare. */
@@ -2030,7 +2023,7 @@ a.btn:focus-visible,
   align-items: flex-start;
   justify-content: center;
   padding-top: 13vh;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--bg-overlay);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   z-index: 1000;
@@ -2049,7 +2042,7 @@ a.btn:focus-visible,
   background: var(--bg-raised, #141414);
   border: 1px solid var(--border-default, #2a2a2a);
   border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 24px 64px var(--border-ghost);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2177,7 +2170,7 @@ a.btn:focus-visible,
   font-size: var(--text-sm);
   text-align: center;
 }
-.narve-cmdp-error { color: #e46a6a; }
+.narve-cmdp-error { color: var(--text-primary); font-weight: 600; }
 
 .narve-cmdp-footer {
   display: flex;
@@ -2227,7 +2220,6 @@ a.btn:focus-visible,
   color: var(--text-secondary, #ccc);
   font-family: var(--font-ui);
   font-size: 12.5px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   cursor: pointer;
   z-index: 900;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
@@ -2440,7 +2432,7 @@ a.btn:focus-visible,
 .take-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--bg-overlay);
   z-index: 500;
   display: flex;
   align-items: center;
