@@ -98,3 +98,7 @@ The `feature/platform-build` branch has been pushing every few minutes for days 
 3. Other-agent diffs that the user explicitly labelled `wip-other-agent-changes` / `auto-restash-not-mine` — already on HEAD by definition.
 
 The "snapshot before X" naming pattern (`pre-collections-redesign`, `pre-pricing-redesign`, `pre-dashboards-redesign`, etc.) plus the corresponding redesign commits visible in `git log` make this a high-confidence conclusion.
+
+---
+
+**Audit run:** 2026-05-15 — 57 stashes inspected, 56 stale, 1 unclear, 0 valuable. Read-only pass.
