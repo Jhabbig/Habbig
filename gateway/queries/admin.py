@@ -437,6 +437,14 @@ def export_audit_log_csv(
     return buf.getvalue()
 
 
+def _hash_impersonation_token(raw: str) -> str:
+    """SHA-256 hex of the raw cookie value — matches migration 192's
+    ``cookie_token_hash`` column. Stable, no salt: cookie tokens are
+    already 48 bytes of CSPRNG entropy, so a rainbow table is pointless.
+    """
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def create_impersonation_session(
     *,
     admin_user_id: int,
@@ -447,29 +455,45 @@ def create_impersonation_session(
 ) -> dict:
     """Create an impersonation session, returning {id, cookie_token, started_at}.
 
-    The cookie_token is set on the admin's browser; every request that
-    presents it is treated as the admin viewing the target user.
+    The raw cookie_token is set on the admin's browser; every request
+    that presents it is treated as the admin viewing the target user.
+    At rest we persist only the SHA-256 hash (``cookie_token_hash``,
+    migration 192) so a DB dump cannot replay live impersonation
+    cookies. The legacy ``cookie_token`` column carries a per-row
+    hashed-sentinel so the existing NOT NULL/UNIQUE constraint can't
+    trip; the raw token itself is never persisted.
     """
     token = secrets.token_urlsafe(48)
+    token_hash = _hash_impersonation_token(token)
     now = int(time.time())
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO impersonation_sessions "
-            "(admin_user_id, target_user_id, cookie_token, reason, ip_address, user_agent, started_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (admin_user_id, target_user_id, token, reason, ip_address, user_agent, now),
+            "(admin_user_id, target_user_id, cookie_token, cookie_token_hash, "
+            "reason, ip_address, user_agent, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                admin_user_id, target_user_id,
+                f"hashed:{token_hash[:32]}",  # legacy column sentinel — raw never stored
+                token_hash,
+                reason, ip_address, user_agent, now,
+            ),
         )
         return {"id": cur.lastrowid, "cookie_token": token, "started_at": now}
 
 
 def get_impersonation_session_by_token(token: str):
-    """Look up by cookie token. Does NOT filter on ended_at so callers decide."""
+    """Look up by raw cookie token. Hashes before SELECT so the at-rest
+    representation (``cookie_token_hash``, migration 192) is what the
+    query actually matches. Does NOT filter on ended_at so callers decide.
+    """
     if not token:
         return None
+    token_hash = _hash_impersonation_token(token)
     with db.conn() as c:
         return c.execute(
-            "SELECT * FROM impersonation_sessions WHERE cookie_token = ?",
-            (token,),
+            "SELECT * FROM impersonation_sessions WHERE cookie_token_hash = ?",
+            (token_hash,),
         ).fetchone()
 
 

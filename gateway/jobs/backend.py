@@ -41,7 +41,11 @@ def _ensure_jobs_table() -> None:
     """Create the background_jobs audit table if it does not exist.
 
     Kept here (not in db.py init_db) because the jobs module is import-time
-    optional — if Redis is present you might still want the audit log.
+    optional - if Redis is present you might still want the audit log.
+
+    Includes the ``payload_hmac`` column (Fix D / migration 192). Fresh
+    DBs that never ran the migration still get the column shape needed
+    by the retry-path HMAC check.
     """
     with db.conn() as c:
         c.execute("""
@@ -49,6 +53,7 @@ def _ensure_jobs_table() -> None:
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 name           TEXT NOT NULL,
                 payload        TEXT,
+                payload_hmac   TEXT,
                 status         TEXT NOT NULL DEFAULT 'queued',
                 attempts       INTEGER NOT NULL DEFAULT 0,
                 max_attempts   INTEGER NOT NULL DEFAULT 3,
@@ -63,15 +68,28 @@ def _ensure_jobs_table() -> None:
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON background_jobs(status)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_name ON background_jobs(name)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_enqueued ON background_jobs(enqueued_at)")
+        # Idempotent backfill for DBs that ran the pre-192 shape.
+        cols = {row["name"] for row in c.execute("PRAGMA table_info(background_jobs)")}
+        if "payload_hmac" not in cols:
+            try:
+                c.execute("ALTER TABLE background_jobs ADD COLUMN payload_hmac TEXT")
+            except Exception:
+                pass
 
 
 def _audit_insert(name: str, payload: dict, max_attempts: int = 3) -> int:
     _ensure_jobs_table()
+    # Fix D - stamp an HMAC over (name, payload) so the retry path can
+    # reject rows planted by anything other than this code path.
+    from jobs.registry import compute_job_hmac
+    sig = compute_job_hmac(name, payload)
     with db.conn() as c:
         cur = c.execute(
-            "INSERT INTO background_jobs (name, payload, status, max_attempts, enqueued_at) "
-            "VALUES (?, ?, 'queued', ?, ?)",
-            (name, json.dumps(payload, default=str), max_attempts, int(time.time())),
+            "INSERT INTO background_jobs "
+            "(name, payload, payload_hmac, status, max_attempts, enqueued_at) "
+            "VALUES (?, ?, ?, 'queued', ?, ?)",
+            (name, json.dumps(payload, default=str), sig,
+             max_attempts, int(time.time())),
         )
         return cur.lastrowid
 
@@ -333,14 +351,65 @@ def get_worker_status() -> dict:
 
 
 async def retry_job(job_id: int) -> bool:
-    """Re-enqueue a failed job with its original payload."""
+    """Re-enqueue a failed job with its original payload.
+
+    Two guards (HIGH-21 - stored-RCE pivot via background_jobs, Fix D):
+
+    1. Registry allowlist. ``row["name"]`` must be a key in
+       ``jobs.registry.job_registry``. A row that names a coroutine
+       which is no longer (or was never) registered is refused even if
+       the HMAC matches.
+
+    2. Payload HMAC. The row's ``payload_hmac`` column must
+       re-derive to the same hash the enqueue path stamps. A NULL or
+       mismatching HMAC means the row didn't come from
+       ``enqueue_job`` - either it's a pre-migration-192 legacy row, or
+       someone planted it through a side channel that doesn't know the
+       HMAC secret. Both are refused.
+
+    Returns False on missing/unknown/forged rows. The caller (admin
+    panel) renders the same 404 message as a missing ID so an attacker
+    cannot distinguish "row never existed" from "row failed the HMAC
+    check".
+    """
+    from jobs.registry import job_registry, verify_job_hmac
+
     with db.conn() as c:
-        row = c.execute("SELECT name, payload FROM background_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = c.execute(
+            "SELECT name, payload, payload_hmac "
+            "FROM background_jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
     if not row:
         return False
+
+    name = row["name"]
+    if name not in job_registry:
+        log.warning(
+            "retry_job: refusing unknown job name id=%s name=%r - "
+            "not in registry allowlist",
+            job_id, name,
+        )
+        return False
+
     try:
         payload = json.loads(row["payload"] or "{}")
     except Exception:
         payload = {}
-    await enqueue_job(row["name"], **payload)
+
+    # payload_hmac might be missing from older row shapes.
+    try:
+        sig = row["payload_hmac"]
+    except (KeyError, IndexError):
+        sig = None
+
+    if not verify_job_hmac(name, payload, sig):
+        log.warning(
+            "retry_job: HMAC verification failed id=%s name=%r - "
+            "row may be pre-migration-192 or planted",
+            job_id, name,
+        )
+        return False
+
+    await enqueue_job(name, **payload)
     return True

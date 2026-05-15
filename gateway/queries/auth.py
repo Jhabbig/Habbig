@@ -223,12 +223,16 @@ def get_default_dashboard(user_id: int) -> Optional[str]:
 
 
 def create_session(user_id: int) -> str:
+    # Returns the RAW token to the caller (cookie). The DB column holds
+    # only SHA-256(raw) so a database compromise can't replay the cookie.
+    # Lookup paths re-hash before SELECT. See migration 191.
     token = secrets.token_urlsafe(48)
+    token_hash = _hash_session_token(token)
     now = int(time.time())
     with db.conn() as c:
         c.execute(
             "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, user_id, now, now + SESSION_TTL),
+            (token_hash, user_id, now, now + SESSION_TTL),
         )
     # Fire-and-forget engagement ping so the churn-signal job sees a
     # 'login' event. Lazy import keeps this file's imports lean and

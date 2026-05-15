@@ -1149,8 +1149,11 @@ _CSRF_TOKEN_LENGTH = 32
 #     but a failed validation returns 403 just like POST does today.
 #
 # When the flag is true the behaviour is identical to POST enforcement.
+# Audit HIGH FIX A: default flipped to "true". Env var stays as the
+# explicit opt-out (``CSRF_PATCH_DELETE_ENFORCE=false``) for emergency
+# rollback. Mirrors security/csrf.py — keep the two in lockstep.
 CSRF_PATCH_DELETE_ENFORCE = os.environ.get(
-    "CSRF_PATCH_DELETE_ENFORCE", "false"
+    "CSRF_PATCH_DELETE_ENFORCE", "true"
 ).lower() in ("1", "true", "yes", "on")
 
 # Routes that skip CSRF validation (public GET-only, static files, proxied)
@@ -1539,7 +1542,16 @@ except Exception as _exc:  # pragma: no cover
 
 
 class ImpersonationMiddleware(BaseHTTPMiddleware):
-    """Admin "view as" — see impersonation.py for details."""
+    """Admin "view as" — see impersonation.py for details.
+
+    Defence-in-depth: a valid impersonation cookie alone is NOT
+    sufficient. Every request must ALSO present a ``narve_session``
+    cookie that resolves to the same admin user that started the
+    session. A stolen impersonation cookie used without the admin's
+    own session is rejected and the cookie is cleared. This closes
+    the cookie-replay vector flagged in the audit alongside the
+    at-rest hashing fix (migration 192 + queries/admin.py).
+    """
     async def dispatch(self, request, call_next):
         token = request.cookies.get(IMPERSONATION_COOKIE_NAME) or ""
         imp_row = None
@@ -1561,6 +1573,41 @@ class ImpersonationMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
             response = await call_next(request)
+            _clear_impersonation_cookie(response, request)
+            return response
+
+        # Cross-check: the request MUST carry the admin's own
+        # narve_session cookie, and that session MUST resolve to
+        # impersonation_sessions.admin_user_id. Without this, anyone
+        # who steals the impersonation cookie (XSS, MITM on a stale
+        # tab, etc.) gets full target-user access. SessionMiddleware
+        # is registered BEFORE this one and therefore runs INSIDE us
+        # (Starlette: last-added = outermost), so request.state.user
+        # is not yet populated — validate the raw cookie ourselves.
+        session_cookie = request.cookies.get("narve_session", "") or ""
+        admin_session_user = None
+        if session_cookie:
+            try:
+                admin_session_user = db.validate_user_session(session_cookie)
+            except Exception as exc:
+                log.warning("impersonation admin-session lookup failed: %s", exc)
+        if (
+            admin_session_user is None
+            or admin_session_user["user_id"] != imp_row["admin_user_id"]
+        ):
+            try:
+                db.end_impersonation_session(
+                    imp_row["id"], end_reason="admin_session_mismatch"
+                )
+            except Exception:
+                pass
+            log.warning(
+                "impersonation rejected: cookie session_id=%s admin_user_id=%s "
+                "request had session_user_id=%s",
+                imp_row["id"], imp_row["admin_user_id"],
+                None if admin_session_user is None else admin_session_user["user_id"],
+            )
+            response = RedirectResponse("/admin/users", status_code=302)
             _clear_impersonation_cookie(response, request)
             return response
 
@@ -1950,16 +1997,31 @@ except Exception as _gzip_exc:  # pragma: no cover
     log.warning("gzip middleware import failed: %s — continuing without it", _gzip_exc)
 
 
-# ── Request timing (outermost) ───────────────────────────────────────────────
+# ── Request timing ───────────────────────────────────────────────────────────
 # Sets X-Response-Time-ms on every response and logs requests that cross
-# the slow-request threshold into `slow_request_log`. Added LAST so it
-# wraps every other middleware — the measurement captures the full
-# server-side wall-clock, including auth, CSRF, rate limits, and gzip.
+# the slow-request threshold. Wraps every application middleware below
+# but NOT the body-size cap, which sits in front so the wall-clock for
+# a rejected oversized request doesn't get counted.
 try:
     from middleware.perf import RequestTimingMiddleware
     app.add_middleware(RequestTimingMiddleware)
 except Exception as _perf_exc:  # pragma: no cover
     log.warning("timing middleware import failed: %s — continuing without it", _perf_exc)
+
+
+# ── Body-size cap (audit HIGH FIX D — outermost) ─────────────────────────────
+# Reject inbound requests whose Content-Length exceeds MAX_BODY_BYTES
+# (default 2 MB) BEFORE any other middleware reads the body. Chunked /
+# transfer-encoding requests are tallied as they stream in and aborted
+# on the first byte over cap. Registered LAST in add_middleware order so
+# Starlette puts it FIRST in dispatch — every other body-reading
+# middleware (CSRF, hardened session, bulk-data) sees a request whose
+# body is already cap-checked.
+try:
+    from middleware.body_size_limit import BodySizeLimitMiddleware as _BodyCapMW
+    app.add_middleware(_BodyCapMW)
+except Exception as _bsl_exc:  # pragma: no cover
+    log.warning("body-size middleware import failed: %s — continuing without it", _bsl_exc)
 
 
 # ── Shared auth rate limit ───────────────────────────────────────────────────
@@ -6095,6 +6157,16 @@ async def admin_set_role(request: Request, user_id: int, level: int = Form(0)):
     admin = _require_super_admin(request)
     if level < 0 or level > 2:
         raise HTTPException(status_code=400, detail="Invalid role level")
+    # Self-demotion lockout: a super-admin who drops their own level
+    # below their current one can lock themselves (and the install, if
+    # they're the sole super-admin) out of every super-admin route.
+    # ``set_user_role`` revokes all sessions on a role change as well,
+    # which would compound the lockout. Promotion of self is allowed.
+    if user_id == admin["user_id"] and level < int(admin.get("admin_level") or 0):
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to self-demote: change another super-admin's role first",
+        )
     from security import audit as _audit
     before = _audit.snapshot_user(user_id)
     db.set_user_role(user_id, level)
@@ -6269,11 +6341,21 @@ async def admin_delete_user(request: Request, user_id: int):
         raise HTTPException(status_code=403, detail="Cannot delete a super admin")
     from security import audit as _audit
     before = _audit.snapshot_user(user_id)
-    with db.conn() as c:
-        c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
-        c.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    log.info("Super admin %s deleted user id=%d (%s)", admin["email"], user_id, user["email"])
+    # GDPR Art. 17: cascade across every user-scoped table — the inline
+    # 3-table DELETE used to leave orphans in analytics_events, gifts,
+    # email_send_log, push_subscriptions, etc. ``cascade_delete_user``
+    # enumerates ``sqlite_master`` and deletes every row tied to the
+    # user. Revoke hardened sessions first so any outstanding cookie
+    # stops working mid-cascade.
+    try:
+        db.revoke_all_user_sessions(user_id)
+    except Exception:
+        pass
+    deleted = db.cascade_delete_user(user_id)
+    log.info(
+        "Super admin %s deleted user id=%d (%s); cascade=%s",
+        admin["email"], user_id, user["email"], deleted,
+    )
     try:
         _audit.log_action(
             admin_user_id=admin["user_id"], admin_email=admin["email"],
@@ -6319,10 +6401,14 @@ async def admin_bulk_users(request: Request):
         elif action == "delete" and (admin.get("admin_level") or 0) >= 2:
             target = db.get_user_by_id(uid)
             if target and (target["is_admin"] or 0) < 2:
-                with db.conn() as c:
-                    c.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
-                    c.execute("DELETE FROM subscriptions WHERE user_id = ?", (uid,))
-                    c.execute("DELETE FROM users WHERE id = ?", (uid,))
+                # GDPR Art. 17: same cascade as ``admin_delete_user`` —
+                # the hand-rolled 3-table DELETE left orphans in every
+                # user-scoped table without a hard FK CASCADE.
+                try:
+                    db.revoke_all_user_sessions(uid)
+                except Exception:
+                    pass
+                db.cascade_delete_user(uid)
     log.info("Admin %s bulk %s %d users: %s", admin["email"], action, len(user_ids), user_ids)
     try:
         from security import audit as _audit
