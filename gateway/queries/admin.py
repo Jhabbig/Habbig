@@ -962,6 +962,17 @@ def _aggregate_email_rows(c) -> list[dict]:
     return rows
 
 
+_EMAIL_SORT_FIELDS = {
+    # admin UI column key → row dict key
+    "ts": "ts",                  # default: last activity
+    "first_seen": "first_seen",  # oldest sighting
+    "email": "email",            # alphabetical
+    "source": "source",
+    "status": "status",
+    "user_id": "user_id",
+}
+
+
 def aggregate_email_addresses(
     c=None,
     *,
@@ -971,6 +982,8 @@ def aggregate_email_addresses(
     until=None,
     limit=200,
     offset=0,
+    sort="ts",
+    sort_dir="desc",
 ):
     """Return a unified view across every email-collection surface.
 
@@ -1011,6 +1024,7 @@ def aggregate_email_addresses(
             return aggregate_email_addresses(
                 new_c, source=source, q=q, since=since, until=until,
                 limit=limit, offset=offset,
+                sort=sort, sort_dir=sort_dir,
             )
 
     raw_rows = _aggregate_email_rows(c)
@@ -1079,8 +1093,19 @@ def aggregate_email_addresses(
         except (TypeError, ValueError):
             pass
 
-    # Sort newest-first by last-activity ts.
-    out.sort(key=lambda r: r["ts"] or 0, reverse=True)
+    # Sort. Whitelist the field so a malicious ?sort= can't crash the page
+    # or expose dict internals. Fall back to ts/desc on anything unknown.
+    sort_key = _EMAIL_SORT_FIELDS.get(str(sort or "ts").strip().lower(), "ts")
+    direction = str(sort_dir or "desc").strip().lower()
+    reverse = direction != "asc"
+
+    def _sort_value(row):
+        v = row.get(sort_key)
+        if sort_key in ("email", "source", "status"):
+            return (v or "").lower()
+        return v or 0
+
+    out.sort(key=_sort_value, reverse=reverse)
 
     # Pagination.
     try:

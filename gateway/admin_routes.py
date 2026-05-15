@@ -3068,6 +3068,60 @@ _EMAIL_STATUS_LABELS = (
 )
 
 
+# Column definitions for the email-addresses table. Order = render order.
+#   key:       the sort-key value sent as ?sort=<key>
+#   label:     visible header text
+#   th_class:  CSS modifier on the <th>
+#   sortable:  whether to render the column as a clickable sort anchor
+_EMAIL_TABLE_COLUMNS = (
+    ("email",      "Email",         "adm-ea-th--email",  True),
+    ("source",     "Source",        "adm-ea-th--source", True),
+    ("first_seen", "First seen",    "adm-ea-th--ts",     True),
+    ("ts",         "Last activity", "adm-ea-th--ts",     True),
+    ("user_id",    "User",          "adm-ea-th--uid",    True),
+    ("status",     "Status",        "adm-ea-th--status", True),
+)
+
+
+def _render_email_sort_headers(active_sort: str, active_dir: str, filter_qs: str) -> str:
+    """Build the sortable `<th>` row for the email-addresses table.
+
+    Each header is an anchor that toggles direction when clicked on the
+    already-active column, or jumps to `desc` when clicked on a new one
+    (so dates default newest-first, alphabetics default A→Z via the asc
+    toggle on second click). Preserves the active filter set in the query
+    string so sorting doesn't drop filters.
+    """
+    parts = []
+    for key, label, css, sortable in _EMAIL_TABLE_COLUMNS:
+        if not sortable:
+            parts.append(
+                f'<th scope="col" class="adm-ea-th {css}">{html.escape(label)}</th>'
+            )
+            continue
+        is_active = key == active_sort
+        # Click-toggle: if already active, flip dir; otherwise default to desc.
+        next_dir = ("asc" if active_dir == "desc" else "desc") if is_active else "desc"
+        arrow = ""
+        if is_active:
+            arrow = ' <span class="adm-ea-sort-arrow" aria-hidden="true">' + (
+                "↓" if active_dir == "desc" else "↑"
+            ) + "</span>"
+        aria_sort = "none"
+        if is_active:
+            aria_sort = "descending" if active_dir == "desc" else "ascending"
+        # Build the link's querystring on top of the active filter set.
+        sep = "&" if filter_qs else ""
+        href = f"?{filter_qs}{sep}sort={key}&dir={next_dir}"
+        cls = f"adm-ea-th {css}" + (" adm-ea-th--active" if is_active else "")
+        parts.append(
+            f'<th scope="col" class="{cls}" aria-sort="{aria_sort}">'
+            f'<a class="adm-ea-th-link" href="{html.escape(href)}">'
+            f'{html.escape(label)}{arrow}</a></th>'
+        )
+    return "".join(parts)
+
+
 def _fmt_ts(ts) -> str:
     """Format a unix-seconds timestamp as ``YYYY-MM-DD HH:MM`` UTC.
 
@@ -3228,11 +3282,17 @@ async def email_addresses_page(request: Request):
     status_filter = (qp.get("status") or "").strip().lower()
     since_str = (qp.get("since") or "").strip()
     until_str = (qp.get("until") or "").strip()
+    sort = (qp.get("sort") or "ts").strip().lower()
+    sort_dir = (qp.get("dir") or "desc").strip().lower()
 
     if source and source not in _EMAIL_SOURCE_LABELS:
         source = ""
     if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
         status_filter = ""
+    if sort not in {"ts", "first_seen", "email", "source", "status", "user_id"}:
+        sort = "ts"
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "desc"
 
     since_ts = _parse_date_to_ts(since_str)
     until_ts = _parse_date_to_ts(until_str)
@@ -3247,6 +3307,8 @@ async def email_addresses_page(request: Request):
         until=until_ts,
         limit=500,
         offset=0,
+        sort=sort,
+        sort_dir=sort_dir,
     )
     if status_filter:
         rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
@@ -3259,6 +3321,7 @@ async def email_addresses_page(request: Request):
     })
     csv_href = "/admin/email-addresses/export.csv" + (f"?{export_qs}" if export_qs else "")
     json_href = "/admin/email-addresses/export.json" + (f"?{export_qs}" if export_qs else "")
+    sort_headers_html = _render_email_sort_headers(sort, sort_dir, export_qs)
 
     empty_state = ""
     if not rows:
@@ -3290,6 +3353,7 @@ async def email_addresses_page(request: Request):
         raw_status_options=_render_email_status_options(status_filter),
         raw_totals_badges=_render_email_totals_badges(counts),
         raw_rows=_render_email_rows(rows),
+        raw_sort_headers=sort_headers_html,
         raw_empty_state=empty_state,
     )
 

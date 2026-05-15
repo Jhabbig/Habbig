@@ -215,6 +215,28 @@
 .adm-ea-th--uid {
   text-align: right;
 }
+/* Sortable column headers — clickable anchor inside <th>, arrow shown
+   on the active column. Hover lifts the colour but never the row to
+   keep table chrome restrained. */
+.adm-ea-th-link {
+  color: inherit;
+  text-decoration: none;
+  display: inline-block;
+  cursor: pointer;
+  transition: color var(--duration-fast, .12s) cubic-bezier(0.2, 0, 0, 1);
+}
+.adm-ea-th-link:hover {
+  color: var(--text-primary);
+}
+.adm-ea-th--active {
+  color: var(--text-primary);
+}
+.adm-ea-sort-arrow {
+  font-family: var(--font-mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 11px;
+  margin-left: 4px;
+  opacity: 0.85;
+}
 .adm-ea-table tbody td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-ghost, var(--border-default));
