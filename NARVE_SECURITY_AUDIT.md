@@ -5,6 +5,249 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #19 — 2026-05-15T22:54Z — commit 022f0dc — independent re-verify of #18 against same focus areas
+
+### Why this audit exists
+
+Caller dispatched this scan to "produce audit #18" against today's commit waves (auth refactor, /admin/email-addresses aggregator, FK auto-rewrite fix, subproduct rename, health monitor probe fix, 9 admin list filters, 5 new test files, /health endpoints on 4 subproducts, tap-target a11y). Discovery phase at scan open showed that a parallel sibling agent had already committed audit #18 at `022f0dc` (HEAD at scan start), 4 minutes earlier than this scan. Per the audit-format skill's append-only rule and the same precedent set by audit #16 (re-verifying #15's in-flight CRIT), this scan is renumbered to **#19** and is an **independent re-verification of #18's findings against the same HEAD**, with additional probes the caller specifically asked for that #18 did not exercise (live HTTPS curl of `/auth/login` with valid CSRF; server-side `PRAGMA foreign_key_check` and `sqlite_master` orphan-table sweep on prod `auth.db`; dead-route reachability proof for the four stubbed `pending_token` helpers).
+
+This entry's verdict either CONFIRMS, EXTENDS, or CONTRADICTS #18's verdict on a per-finding basis — recorded below.
+
+### Code inventory audited
+- Committed tip: `022f0dc` (`security: audit #18 — 0C 2H 4M 7L`) — same SHA #18 wrote to disk at; matches `origin/feature/platform-build`.
+- Local unpushed commits: **none** — local in sync with origin (confirms #18's clean-drift claim).
+- Local uncommitted files: at scan open `gateway/affiliate_routes.py`, `gateway/routes_sharing.py`, `gateway/tests/test_admin_newsletter.py` modified by sibling agents (not security-relevant — cookie-domain scope + a test stub). Untracked: `gateway/admin_routes.py.bak` (still present, MED-3 from #18 not yet swept), `gateway/static/avatars/`, `gateway/tests/test_gift_subscription.py`. By scan close the working tree had shifted again — sibling agents are committing every 30-60s.
+- Local stashes: **72 entries** (unchanged from #17 + #18). Carry-over.
+- Server uncommitted files: only DB backups (`auth.db.backup-pre-deploy-*`, `auth.db.bak-fk-sweep-1778881231` = recovery point from today's writable_schema sweep) + WAL/SHM files for subproduct sqlite DBs. **No source-file drift.** Confirms #18.
+- Server tip vs origin: matches at `022f0dc` (server pulled the audit-#18 commit before this scan opened).
+- Running uvicorn loaded from: `python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway` (pid 4187709, started 2026-05-15 23:43 local). server.py mtime on disk: 23:38. Process is newer than disk → audit-#17 stale-uvicorn HIGH **stays RESOLVED**.
+- Branches with recent work (last 14d not in current): single worktree on `feature/platform-build`; sibling branches >3 weeks old.
+- DRIFT FLAG: **none in security-critical files.** Working tree is in motion because parallel agents are landing cookie-scope fixes (apex-domain for affiliate / sharing / saved-views cookies) but those are not in this audit's scope and contain no auth primitives. The audit-#17 + #18 fix-wave is fully landed and deployed.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 2 (CONFIRMED from #18: `/auth/login` is live-broken — verified by curl against `https://narve.ai/auth/login` with valid CSRF; carry-over auth-endpoint rate-limit decorator gaps still open)
+Medium-priority: 4 (CONFIRMED: dead routes in `server_features.py`, `AuditAction.EMAIL_ADDRESSES_EXPORT` enum missing, `admin_routes.py.bak` litter, `gateway/server.py` line count at 8723 LOC)
+Low-priority: 7 (CONFIRMED carry-overs)
+Resolved since last audit: 0 (this is a re-verify, not a delta-from-#17 audit)
+New since last audit: 0
+Regressions: 0
+
+### Verification matrix — confirms / extends / contradicts #18
+
+| # | #18 finding | #19 verdict | Evidence |
+|---|---|---|---|
+| 1 | HIGH — `/auth/login` returns 401 to JS-enabled clients | **CONFIRMED LIVE** | `curl -X POST https://narve.ai/auth/login -H "x-csrf-token: ${valid}" -d '{"email":"x","password":"x"}'` returns HTTP 401 + `{"error":"Session expired. Start again from /token."}`. Form fallback `POST /login` (form-encoded) returns HTTP 200 + login page with error. `static/login.html:112` calls `fetch('/auth/login')` in `submitLogin()` — confirmed. Production sign-in via JS is BROKEN; JS-less form fallback works. |
+| 2 | HIGH — `/login` direct POST CSRF + rate-limit | **PROTECTED** (CONFIRMED) | `server.py:3846` `login_submit`: CSRF enforced by global `CSRFMiddleware`. Inline rate-limits: `_auth_rate_limited(ip)` + `_is_rate_limited(f"{ip}:login-auth", 10, 300)` + per-email `_is_rate_limited(f"email:{email}:login", 5, 600)`. No `@rate_limit` decorator → scanner false-positive. Live: empty form returns 403 CSRF; valid CSRF + wrong creds returns 200 with login-page + generic "Invalid email or password" — no user-existence oracle. |
+| 3 | HIGH — `/admin/email-addresses` CSV injection | **DEFANGED** (CONFIRMED) | `admin_routes.py:2657` `_csv_safe_cell`: prefixes `=/+/-/@/\t/\r` with `'`, strips NUL. Applied at every cell write (`:3893-3906`). |
+| 4 | HIGH — `/admin/email-addresses` XSS | **PROTECTED** (CONFIRMED) | `admin_routes.py:_render_email_rows` (`:3741-3794`) — every cell goes through `html.escape`; `_render_email_source_options/_status_options/_totals_badges/_stats_cards/_sort_headers` all use `html.escape`. `raw_email_attr` for the checkbox `value` attribute uses `html.escape(..., quote=True)`. |
+| 5 | HIGH — `/admin/email-addresses` sort SQLi | **PROTECTED** (CONFIRMED, extended) | `queries/admin.py:_EMAIL_SORT_FIELDS` (`:1016-1024`) hard-coded whitelist of 6 fields. Sort happens in-Python `out.sort(key=_sort_value, reverse=reverse)` AFTER the SQL UNION — no SQL ORDER BY interpolation anywhere. The 9-source aggregator (`:786-1013`) uses parameterised `?` placeholders for status filter; SQL `WHERE` extensions are allowlist-driven literals (`"confirmed"`, `"pending"`, `"unsubscribed"`, etc.) — no user-string interpolation. Source / status filter dropdowns rejected against `_EMAIL_SOURCE_LABELS` / `_EMAIL_STATUS_LABELS` enum tuples (`admin_routes.py:3829-3836`). |
+| 6 | HIGH — `/admin/email-addresses` admin gate | **PROTECTED** (CONFIRMED, extended) | Page handler (`:3816`), CSV export (`:3861`), JSON export (~`:3930+`) all call `_require_admin_user(request, page=True)`. CSV export writes audit row with `EMAIL_ADDRESSES_EXPORT` action + filter notes. |
+| 7 | HIGH — `/admin/health-monitor` SSRF | **PROTECTED** (CONFIRMED) | `admin_health_monitor_routes.py:_probe` URL is `f"http://localhost:{port}/health"` where `port` comes from module-level `SERVICES` tuple (14 entries, hard-coded). No user input. httpx 2s timeout. Fallback to `/` on 404. 401/403/404 treated as alive (process up). |
+| 8 | CRIT (resolved) — Migration 197 + writable_schema FK orphan sweep | **FULLY RESOLVED** (CONFIRMED, extended via prod probe) | Live `ssh julianhabbig@100.69.44.108 'python3 -c'` against `~/Habbig/gateway/auth.db`: `PRAGMA integrity_check` = `ok`; `PRAGMA foreign_key_check` = 0 rows; `SELECT name, sql FROM sqlite_master WHERE sql LIKE '%users_drop_bankroll_usd%' OR sql LIKE '%users_old_fk_fix%' OR sql LIKE '%invite_tokens_old%'` = 0 rows. **No remaining FK orphans on production.** Migration 197 (`gateway/migrations/197_fix_sessions_users_fk.py`) rebuilds `sessions` table with correct FK clause via standard SQLite rename-rebuild dance, idempotent short-circuit when no dangling FK present. Migration 198 closes the loop by revoking remaining invite_tokens rows while retaining the table to avoid triggering the same FK-rewrite footgun on `users.invite_token_id`. |
+| 9 | MED — Dead routes in `server_features.py` reachable + harmless | **CONFIRMED, extended dead-end proof** | The four stubbed helpers at `server_features.py:1419-1434`: `set_pending_token_cookie` (no-op return None), `clear_pending_token_cookie` (no-op), `read_pending_token` (returns None), `require_pending_token` (returns `RedirectResponse("/login", 302)` always). Routes that depend on them: `/token` (renders dead `token.html`), `/auth/validate-token` (always returns `{"valid": False}`), `/auth/register` (`require_pending_token` returns redirect → route returns 401 `{"error":"Session expired..."}`), `/auth/login` (same path → 401). **None can mint a session, create a user, or claim a token.** The invite-token DB lookups are all commented out. Confirmed harmless at the security-primitive layer; HIGH only because production login form points at the dead `/auth/login` route. |
+| 10 | MED — `AuditAction.EMAIL_ADDRESSES_EXPORT` enum missing | **CONFIRMED, extended** | `getattr(_a.AuditAction, "EMAIL_ADDRESSES_EXPORT", "admin.email_addresses.export")` is called at `admin_routes.py:3912`. `grep` of `gateway/security/audit.py` shows no `EMAIL_ADDRESSES_EXPORT` constant. Fallback string lands in the audit_log row — admin export IS recorded, just under the literal action label instead of the canonical enum. No security impact. |
+| 11 | MED — `admin_routes.py.bak` litter | **CONFIRMED, present** | `gateway/admin_routes.py.bak` still in working tree as untracked at scan close. 148 KB stale backup from the auth refactor. Same risk class as #18. |
+| 12 | MED — `gateway/server.py` line count carry-over | **CONFIRMED** | 8723 LOC. Was 8825 at #16/#17 — auth refactor trimmed ~100 LOC. |
+| 13 | LOW — Tap-target a11y fix (`96d6623`) | **NEUTRAL** (no security surface) | `.pw-toggle` and `.adm-ea-th-link` bumped to 44x44. CSS-only. |
+| 14 | LOW — Subproduct rename (`188cf63`) | **NEUTRAL** (no security surface) | Display-name strings only. Logo invert CSS direction fix. No auth primitives. |
+| 15 | LOW — /health endpoints on 4 subproducts (`6a0e722`) | **NEUTRAL** (no security surface) | Each returns `{ok, service, ts}` JSON. No DB access, no auth check needed (process-alive probe). |
+
+### Authentication & Sessions
+- Token gate at /token: REMOVED 2026-05-15 (`82170a2`). `/token` page in `server_features.py:1437` still renders `token.html` but the gate is logically retired — `/login` is the direct entry. **Note:** the GET `/token` route still exists, even though the user-visible flow is `/gate` → `/login`. Harmless (renders a deprecated page) but worth deleting per #18 MED-1.
+- `pm_gateway_session` + `narve_session` both accepted: yes.
+- `narve_session` stored as SHA-256 hash in DB: yes (migration 191).
+- Session cookie HttpOnly: yes (`auth/cookies.py:127`).
+- Session cookie Secure: yes — `secure=_is_production()` (`auth/cookies.py:129`).
+- Session cookie SameSite: Strict.
+- Session revocation on logout: works.
+- Session rotation on privilege change: implemented for password reset + impersonation.
+- Max sessions per user enforced: not enforced (carry-over MED since #13).
+- Password reset invalidates sessions: yes (migration 003).
+- Password hashing: PBKDF2-HMAC-SHA256, 600,000 iterations.
+- 2FA status: removed in migration 019 (intentional product decision).
+- Impersonation banner visible on every page while active: yes.
+- Impersonation blocked paths enforced: yes (audit-#17 expansion landed).
+- Extension JWT: protected (audit-#17 fixes landed).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes.
+- Super admin routes require role = 2: yes.
+- Subproduct access checked at middleware + route + response: partial (carry-over).
+- `has_subproduct_access` called on every subproduct route: yes.
+- Feature flag evaluation in use: yes.
+- Gift subscription enforcement: yes (audit-#17 fix landed).
+- API v1 scopes + tier policy: yes.
+
+### CSRF
+- Double submit cookie: yes (`narve_csrf` + matching header).
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — verified live against `/auth/login`: 403 without token.
+- HTMX X-CSRF-Token hook active: yes.
+- Exempt routes list minimal and documented: yes.
+
+### Rate limiting
+- Auth endpoints: 7 decorator gaps (`server.py:3846` `/login` — has inline equivalents; `server_features.py` six dead-or-near-dead routes). Same HIGH-flag as #14/#15/#16/#17/#18 — defence-in-depth gap, not exploit-ready.
+- API endpoints: yes.
+- Per-user and per-IP: yes.
+- 429 response includes `Retry-After`: yes.
+- Cloudflare-level rate limit rules: present.
+
+### Input validation
+- SQL injection vectors found: 0 exploitable. Scanner flagged the same allowlist-driven f-strings as #16/#17/#18 (`queries/admin.py:audit_log` builders, `queries/markets.py`, `db_sharing.py`, etc.). The new `/admin/email-addresses` aggregator (`queries/admin.py:1027-1180`) extends SQL only with allowlist-literal status filters and parameterised `?` placeholders — clean.
+- XSS via innerHTML with user content: 0 exploitable. Same `raw_` template-key hits as prior audits — all server-rendered HTML composed through `html.escape`.
+- Command injection / subprocess with user input: 0.
+- Path traversal: 0 exploitable.
+- SSRF: 0 user-controlled. The `_ur.urlopen(target, timeout=1.0)` at `server.py:3209` is an internal health probe with module-constant `target`. The new admin health monitor probe uses module-constant ports.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes.
+- No hardcoded secrets in current tree: clean.
+- No secrets in git history: clean (500-commit deep scan).
+- Sessions hashed before DB storage: yes.
+- Password hashes use PBKDF2-HMAC-SHA256: yes.
+- Subproduct magic-link signing key: dedicated `SUBPRODUCT_MAGIC_LINK_SECRET`.
+- Extension JWT signing key: dedicated `EXTENSION_JWT_SECRET`.
+- `.env` permissions on server: not inspected this iteration.
+
+### Data privacy
+- Account deletion works end-to-end: yes.
+- Data export includes all user-linked tables: verified at #13.
+- Sensitive fields redacted in logs: yes.
+- Sentry scrubbing active: yes.
+- Impersonation actions logged: yes.
+- Public profile anonymises mixed-anon pages: yes.
+- Magic-link mint/redeem in `audit_log`: yes.
+- `/admin/email-addresses` CSV/JSON export writes audit row: yes.
+
+### External integrations
+- Stripe webhook signature validated: yes.
+- Stripe webhook idempotent: yes (ledger pattern).
+- Stripe webhook mode-verified: yes.
+- Stripe webhook crash retries: RESOLVED at #18 via reorder of `mark_received` after dispatch.
+- Telegram / Discord bot tokens in env only: yes.
+- Scraper API key validated on every request: yes.
+- Polymarket wallet address validated: yes.
+- SEC EDGAR User-Agent set: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes.
+- Cloudflare Tunnel active, origin not directly reachable: unverified this iteration.
+- CF-IP trust gate: RESOLVED at #18 (CF-trio fingerprint OR loopback-with-header).
+- Cloudflare Rules for subdomain enumeration: yes.
+- Cloudflare Rules for scanner UA blocking: yes.
+- Post-deploy commit step documented: yes.
+- CLOUDFLARE_CHANGES.md current: yes.
+
+### Monitoring
+- Sentry backend / frontend configured: yes.
+- Structured logging configured: yes.
+- Security events logged separately: yes.
+- Audit log append-only: yes.
+- Uptime monitoring active: yes (new admin health monitor, probe semantics correct).
+- IP attribution in security log: RESOLVED at #18.
+
+### Dependency audit
+- Last dependency audit: 2026-05-14.
+- Known CVEs: pip-audit blocked on Python 3.9 vs 3.10 dep mismatch (`orjson==3.11.6` requires ≥3.10). Same LOW carry-over since #16.
+- Unpinned deps: 0.
+- Lockfile present: yes.
+
+### Compliance
+- Privacy Policy / Terms / DPA / Cookie notice live: yes.
+- GDPR data export / account deletion: yes.
+
+### Issues found in this audit
+
+#### CRITICAL
+None at HEAD.
+
+#### HIGH
+
+1. **CONFIRMED — Production `/auth/login` returns 401 to JS-enabled login attempts.**
+   Location: `gateway/server_features.py:1769-1859` (route stub); `gateway/static/login.html:112` (form's `fetch('/auth/login')` call).
+   Live evidence (this audit): `curl -X POST https://narve.ai/auth/login -H "x-csrf-token: <valid>" -d '{"email":"x","password":"x"}'` returned `HTTP 401` + `{"error":"Session expired. Start again from /token."}`. Form-encoded `POST /login` (the JS-less fallback) returned `HTTP 200` with rendered login page — works.
+   Impact: every JS-enabled visitor signing in hits the dead route. JS path is broken; users must disable JS or already-have-session. Functional production outage on login. Security side-effect: rate-limit budget burn on the dead endpoint; leaks deprecated `/token` semantics in the error message; no auth bypass.
+   Fix: re-point `static/login.html:112` from `fetch('/auth/login')` to a form POST against `/login` (the working direct-entry path) OR rewrite `auth_login` in `server_features.py` to mirror `server.py:login_submit`'s primitive OR delete the dead routes entirely (as `b2ac023` says is follow-up work). The form-fallback route at `server.py:3846` is the canonical path — pointing the JS at it is the smallest change.
+
+2. **Carry-over from #14/#15/#16/#17/#18 — Auth-endpoint rate-limit decorator gaps.**
+   Location: `gateway/server.py:3846` (`/login` — has inline equivalent), `gateway/server_features.py:260` (`/auth/forgot-password`), `:322` (`/auth/reset-password`), `:1449` (`/auth/validate-token`), `:1588` (`/auth/register`), `:1769` (`/auth/login`), `:1862` (`/auth/logout`).
+   Impact: defence-in-depth gap. CF WAF Rule D mitigates at edge but per-route consistency missing. Two of the seven (`/auth/login`, `/auth/register`) are dead-routes anyway (HIGH #1, MED #1).
+   Fix: add `@rate_limit("auth", limit=10, window=60)` to each. No code-side blocker.
+
+#### MEDIUM
+
+1. **CONFIRMED — Dead auth routes still mounted in `server_features.py`.**
+   Location: `gateway/server_features.py:1437` (`/token`), `:1449` (`/auth/validate-token`), `:1501` (`/register`), `:1588` (`/auth/register`), `:1769` (`/auth/login`).
+   Impact: zero security primitive (stubs can't mint sessions or claim tokens — verified live). Together they cause HIGH #1, consume rate-limit budget, and leak deprecated `/token` semantics via error messages.
+   Fix: delete the five routes + four stubbed helpers + update `seo.py:32` exclusion list + re-point `static/login.html:112` to `/login` direct POST.
+
+2. **CONFIRMED — `AuditAction.EMAIL_ADDRESSES_EXPORT` constant missing from `security/audit.py`.**
+   Location: `gateway/admin_routes.py:3912` uses `getattr(...)` with literal fallback `"admin.email_addresses.export"`.
+   Impact: audit row IS written under the fallback literal. Drift between code-site literals and enum constants. No security primitive impact.
+   Fix: add `EMAIL_ADDRESSES_EXPORT = "admin.email_addresses.export"` to `AuditAction` + entry in `ACTION_LABELS`.
+
+3. **CONFIRMED — `admin_routes.py.bak` litter in working tree.**
+   Location: `gateway/admin_routes.py.bak` (untracked, 148 KB).
+   Impact: deployment glob risk; supply-chain noise.
+   Fix: `rm gateway/admin_routes.py.bak` and add `*.bak` to `.gitignore`.
+
+4. **CONFIRMED — `gateway/server.py` at 8723 LOC.**
+   Carry-over; route-file split overdue.
+
+#### LOW
+
+1. Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:260`, `db_referrals.py:461`). All server-allowlisted. Carry-over.
+2. Stash debt at 72 entries. Carry-over.
+3. pip-audit blocked on Python 3.9 vs 3.10 dep mismatch. Carry-over.
+4. `requirements.txt` not split into `requirements-dev.txt`. Carry-over.
+5. `gateway/static/avatars/` untracked runtime upload dir. Carry-over.
+6. Open-redirect HIGH-flagged routes — 21 hits from `scan_redirects.sh`; all hardcoded local-path destinations. Carry-over false-positive class.
+7. Stripe webhook idempotency scanner false-positive (ledger pattern). Carry-over.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- **`gateway/admin_integrations_routes.py`, `gateway/admin_jobs_routes.py`, `gateway/static/login.html`, `gateway/tests/test_admin_newsletter.py`** (modified) and `gateway/affiliate_routes.py`, `gateway/routes_sharing.py` (modified at scan close — different sibling agents in different windows). None contain auth primitives — all are admin filter UI additions or cookie-domain-scope fixes for cross-subdomain attribution cookies (carry-over from earlier cookie-scoping audit). The login.html edit at scan open touches loading/error UX (commit `c30a906` already landed converting hardcoded strings to narveSkel/narveToast), so the live working-tree may be a follow-on; check the next audit.
+- **Untracked**: `gateway/admin_routes.py.bak` (MED #3 above); `gateway/static/avatars/` (LOW carry-over); `gateway/tests/test_gift_subscription.py` (carry-over from #17/#18 WIP — sibling-agent untracked test, not yet committed).
+
+#### Unpushed local commits
+- **None.** Local HEAD = origin HEAD = server HEAD = `022f0dc`. Audit #18's clean-drift claim holds.
+
+#### Server-side uncommitted state
+- DB backups only. `auth.db.bak-fk-sweep-1778881231` (123 MB, timestamped 22:40) is the recovery point from the FK writable_schema sweep. Independently re-verified via SSH: no orphan tables in `sqlite_master`, `PRAGMA integrity_check = ok`, `PRAGMA foreign_key_check` returns 0 rows. **The bulk patch was complete.**
+
+#### Stashes
+- 72 entries. None contain audit-#19 fixes. Carry-over.
+
+### Changes since previous audit
+This entry is a same-HEAD re-verify of audit #18 (`022f0dc` is the SHA where #18 was committed); there is no commit delta to diff against. Verdicts above are CONFIRMED / EXTENDED / CONTRADICTED on a per-finding basis.
+
+#### Resolved
+None new since #18 (no commits between #18 and #19 except #18 itself).
+
+#### New issues
+None — every issue here is a re-verification of an issue first logged in #18.
+
+#### Regressions
+None.
+
+### Drift warnings
+- **None** in security-critical files. Working tree is in motion from sibling agents landing cookie-domain-scope fixes (apex domain for `affiliate_code`, `narve_share_attribution`, `narve_shared_view`) but those are not auth primitives. The audit-#17/#18 fix wave is fully landed and deployed. Running uvicorn newer than disk.
+- **`admin_routes.py.bak` carry-over** flagged for a second audit in a row — sweep recommended for next audit.
+
+### Recommended actions for next audit
+1. **Fix the live `/auth/login` break.** This is the only HIGH that's actually live-exploitable for "production sign-in is broken via JS". Re-point `static/login.html:112` to form-POST `/login` OR delete the dead route. Next deploy should ship this.
+2. **Delete dead routes in `server_features.py`** — `/token`, `/auth/validate-token`, `/auth/register`, `POST /auth/register`, `/auth/login`. Drop the four stubbed helpers. Re-point `static/login.html:112` accordingly.
+3. **Delete `gateway/admin_routes.py.bak`** — second audit in a row flagging it. Add `*.bak` to `.gitignore`.
+4. **Add `AuditAction.EMAIL_ADDRESSES_EXPORT`** constant + label to `security/audit.py`.
+5. **Add `@rate_limit("auth", ...)` decorators** to the 7 endpoints flagged since #14.
+6. **Drop stashes older than 30 days** (72-entry backlog).
+7. **Post-migration FK-orphan sweeper.** The writable_schema bulk patch (recovery point: `auth.db.bak-fk-sweep-1778881231`) repaired 73+ tables silently mutated by migration 195's `users → users_drop_bankroll_usd` rename. Future migrations that use the rename-rebuild dance MUST run a sweeper after: `PRAGMA foreign_key_check` plus `SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE '%_old' OR name LIKE '%_new' OR name LIKE '%_drop%')` and fail-deploy on any hit. Test `e42ed57` covers the migration side; runtime-deploy gate is the missing piece.
+8. **Verify the next audit catches the audit #18 / #19 split** — if a sibling agent runs a parallel scan, the entry numbering needs to monotonically advance.
+
+---
+
 ## AUDIT #18 — 2026-05-15T22:50Z — commit 96d66233 — auth refactor + /admin/email-addresses + FK fix + health monitor sweep
 
 ### Why this audit exists
