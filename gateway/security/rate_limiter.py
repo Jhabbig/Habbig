@@ -120,17 +120,41 @@ limiter = SlidingWindowRateLimiter()
 
 
 def get_client_ip(request: Request) -> str:
+    """Extract real client IP via the canonical ``server._get_client_ip``.
+
+    Audit MED FIX (audit_security_dir.md cross-cutting): three
+    ``get_client_ip`` implementations had drifted across
+    ``audit.py`` / ``logger.py`` / ``rate_limiter.py``. The previous
+    body here trusted ``cf-connecting-ip`` and ``x-forwarded-for``
+    unconditionally — so an attacker hitting the origin off-tunnel
+    could rotate the spoofed header to evade rate limits entirely.
+    ``server._get_client_ip`` enforces a trusted-peer gate
+    (``_TRUSTED_PROXY_HOSTS``: loopback only — the cloudflared tunnel
+    endpoint) so untrusted peers never have their forwarded headers
+    honoured. Behaviour-wise:
+
+      * peer loopback + ``cf-connecting-ip`` set  → header value
+      * peer loopback + ``x-forwarded-for`` only → first XFF hop
+      * peer NOT in trusted set                   → peer host verbatim
+      * no client at all                          → ``"unknown"``
+
+    Deferred import: ``server`` imports this module at startup, so a
+    top-level ``from server import _get_client_ip`` would cycle.
     """
-    Extract real client IP. Prefers Cloudflare's CF-Connecting-IP,
-    then X-Forwarded-For first hop, then direct connection.
-    """
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    try:
+        from server import _get_client_ip as _server_get_client_ip
+        return _server_get_client_ip(request)
+    except Exception:
+        # Fallback for harnesses that import the rate limiter without
+        # the full server (some unit tests, ad-hoc scripts). Match the
+        # historic body so the rate limiter still works in isolation.
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
 
 
 def rate_limit(

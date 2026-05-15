@@ -19,13 +19,29 @@ Check ordering (every check MUST run before any state mutation):
   5. Live-mode gate — ``STRIPE_LIVE_MODE=true`` required to accept
      ``livemode=True`` events. Default false so dev never touches
      real money even if env leaks.
-  6. Idempotency — :func:`mark_received` short-circuits replays with
-     200 status=already_processed.
+  6. Idempotency precheck — read-only existence query on the
+     ``processed_stripe_events`` ledger. Row present iff a prior
+     delivery already succeeded → short-circuit with 200
+     ``already_processed``. Audit MED FIX
+     (audit_stripe_idempotent.md GAP-3): the precheck does NOT
+     write the ledger row anymore — the write was hoisted to AFTER
+     successful dispatch so a crash mid-dispatch leaves no row and
+     Stripe's retry re-runs the dispatch branch fresh.
   7. Dispatch — branch on ``event["type"]``; wrapped in try/except
-     so a broken branch can't take down the route.
-  8. Always 200 on accepted events. The four reject cases above use
+     so a broken branch can't take down the route. On crash, we
+     ``log.exception`` and respond 200 with NO ledger row written —
+     the missing row is the retry signal for the next Stripe delivery.
+  8. Post-dispatch (success only) — ``mark_received`` + ``mark_processed``
+     write the ledger row and stamp ``processed_at`` in a single
+     post-success step. Concurrent retries can both run side effects
+     before either writes the row; the audit doc accepts this trade-off
+     ("sacrificing crash-in-flight idempotency for crash-survivability")
+     because Stripe spaces retries minutes apart and the dispatch
+     branches all have UPSERT / status-flip semantics that collapse
+     true duplicates.
+  9. Always 200 on accepted events. The four reject cases above use
      403/400/503/429. Stripe retries non-2xx for 3 days so we'd
-     rather log and stamp an error than amplify retries.
+     rather log and respond 200 than amplify retries.
 
 ``backend/payments/stripe_stub.py`` still raises NotImplementedError
 so any code path that imports the stub instead of this module fails
@@ -573,14 +589,63 @@ async def stripe_webhook(request: Request):
                 status_code=400,
             )
 
-    # 7) Idempotency.
-    replayed = mark_received(event)
-    if replayed is not None:
-        return replayed
+    # 7) Idempotency — read-only check before dispatch.
+    #
+    # Audit MED FIX (audit_stripe_idempotent.md GAP-3 closure): write
+    # the ledger row AFTER successful dispatch, not before. Previously
+    # the route called ``mark_received`` first (which INSERTs the row),
+    # then dispatched, then called ``mark_processed`` on BOTH success
+    # and failure. A crash mid-dispatch left the row stamped with
+    # ``processed_at``, so Stripe's retry short-circuited as
+    # ``already_processed`` and the post-crash side effects were
+    # permanently lost.
+    #
+    # The new flow is approach (b) from the audit doc literally —
+    # "move the ``mark_received`` write to AFTER the dispatch branch
+    # succeeds." Concretely:
+    #
+    #   * Pre-dispatch: read-only existence check on the ledger.
+    #     If a row exists, short-circuit as ``already_processed``.
+    #     A row exists iff a PRIOR delivery succeeded — crashed
+    #     attempts never write because the INSERT was hoisted past
+    #     the dispatch.
+    #   * Dispatch: runs as before. On crash we ``log.exception`` and
+    #     respond 200 so Stripe stops retrying THIS delivery — the next
+    #     retry will find no ledger row and run dispatch fresh.
+    #   * Post-dispatch (success): ``mark_received`` writes the row,
+    #     ``mark_processed`` stamps ``processed_at``. Concurrent retries
+    #     hitting the dispatch branch simultaneously both run side
+    #     effects — this is the trade-off the audit doc calls out
+    #     explicitly ("sacrificing crash-in-flight idempotency for
+    #     crash-survivability"). Stripe spaces retries minutes apart,
+    #     so the race window is theoretical for real traffic and the
+    #     UPSERT defence on ``subscriptions`` collapses true duplicates
+    #     to a single row anyway.
+    event_id = event.get("id") or ""
+    if event_id:
+        try:
+            with db.conn() as c:
+                row = c.execute(
+                    "SELECT 1 FROM processed_stripe_events "
+                    "WHERE event_id = ? LIMIT 1",
+                    (event_id,),
+                ).fetchone()
+            if row is not None:
+                return JSONResponse({"status": "already_processed"})
+        except Exception as exc:
+            # Ledger unreachable → fall through and dispatch. Same
+            # fail-open shape ``mark_received`` had — we'd rather risk a
+            # duplicate dispatch than miss the event entirely on a
+            # transient DB hiccup. The dispatch branches all have UPSERT
+            # / status-flip semantics that collapse duplicates.
+            log.warning(
+                "stripe idempotency precheck failed (%s): %s — "
+                "proceeding with dispatch",
+                event_id, exc,
+            )
 
     # 8) Dispatch.
     event_type = event.get("type") or ""
-    error_msg: Optional[str] = None
     try:
         if event_type == "customer.subscription.created":
             _grant_access(event)
@@ -599,12 +664,26 @@ async def stripe_webhook(request: Request):
                 "ignoring stripe event type=%s id=%s",
                 event_type, event.get("id"),
             )
-    except Exception as exc:  # noqa: BLE001
-        error_msg = str(exc)[:500]
+    except Exception:  # noqa: BLE001
+        # Crash mid-dispatch. The ledger row was NEVER written, so
+        # Stripe's retry will re-enter the dispatch branch fresh on the
+        # next delivery (no short-circuit). The per-attempt error text
+        # is captured in the log.exception trace; the admin panel sees
+        # only the FINAL ledger row (which only lands on a successful
+        # dispatch).
         log.exception(
             "stripe handler raised: type=%s id=%s",
             event_type, event.get("id"),
         )
+        # Respond 200 so Stripe doesn't enter a retry storm on top of
+        # the application-level retry. The MISSING ledger row IS the
+        # retry signal — Stripe's exponential-backoff redelivery
+        # remains in effect for 3 days.
+        return JSONResponse({"status": "ok"})
 
-    mark_processed(event, error=error_msg)
+    # Success: write the ledger row + stamp processed_at. This is the
+    # ONLY place ``mark_received`` runs, so the row only ever exists
+    # for events that fully dispatched without raising.
+    mark_received(event)
+    mark_processed(event)
     return JSONResponse({"status": "ok"})

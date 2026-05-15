@@ -201,19 +201,43 @@ def snapshot_user(user_id: int) -> Optional[dict]:
 
 
 def _get_ip(request) -> str:
-    """Best-effort client IP. Mirrors the pattern in server._get_client_ip."""
+    """Best-effort client IP via the canonical ``server._get_client_ip``.
+
+    Audit MED FIX (audit_security_dir.md cross-cutting): three different
+    ``get_client_ip`` implementations had drifted across ``audit.py``,
+    ``logger.py``, and ``rate_limiter.py``. ``audit.py`` was the outlier
+    — it never honoured ``cf-connecting-ip``, so admin actions on a
+    Cloudflare-fronted path recorded the loopback peer instead of the
+    real client. Delegate to ``server._get_client_ip`` (the canonical
+    trusted-proxy-gated helper) so the audit trail matches every other
+    log line in the gateway.
+
+    Deferred import: ``security/`` is imported by ``server`` at module
+    load, so a top-level ``from server import _get_client_ip`` would
+    cycle. Inline import resolves at call time, after ``server`` has
+    finished loading.
+    """
     if request is None:
         return ""
     try:
-        # Respect X-Forwarded-For if present, else request.client.host
-        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-        if xff:
-            return xff
-        if getattr(request, "client", None):
-            return request.client.host or ""
+        from server import _get_client_ip as _server_get_client_ip
+        ip = _server_get_client_ip(request)
+        # server._get_client_ip returns "unknown" when neither peer nor
+        # trusted headers are available; the audit ledger has historically
+        # stored empty string for that case so callers reading
+        # ip_address.NULL get the same evidence shape.
+        return "" if ip == "unknown" else ip
     except Exception:
-        pass
-    return ""
+        # Same fallback shape as before — never raise from the audit path.
+        try:
+            xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            if xff:
+                return xff
+            if getattr(request, "client", None):
+                return request.client.host or ""
+        except Exception:
+            pass
+        return ""
 
 
 def _get_user_agent(request) -> str:

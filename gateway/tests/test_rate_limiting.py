@@ -71,23 +71,54 @@ class TestSlidingWindowRateLimiter(unittest.TestCase):
 
 
 class TestGetClientIP(unittest.TestCase):
-    def test_direct_connection(self):
+    """Audit MED FIX (audit_security_dir.md cross-cutting): the rate
+    limiter's ``get_client_ip`` now delegates to
+    ``server._get_client_ip``, which gates ``cf-connecting-ip`` /
+    ``x-forwarded-for`` on a loopback peer (the trusted proxy set is
+    ``127.0.0.1`` / ``::1`` / ``localhost``). An off-tunnel attacker
+    spoofing the header therefore no longer poisons the rate-limit
+    bucket key. The historic tests used a non-loopback peer (``10.0.0.1``)
+    AND expected the headers to be honoured — that combination was
+    exactly the spoof we're closing. Tests now exercise both halves:
+    loopback peer trusts headers; off-tunnel peer ignores them.
+    """
+
+    def test_direct_connection_off_tunnel_peer(self):
+        # Off-tunnel peer with no spoofed headers → peer is the IP.
         request = MagicMock()
         request.headers = {}
         request.client.host = "10.0.0.1"
         self.assertEqual(get_client_ip(request), "10.0.0.1")
 
-    def test_cloudflare_header(self):
+    def test_cloudflare_header_trusted_peer(self):
+        # Loopback peer (cloudflared on 127.0.0.1) is allowed to attach
+        # CF-Connecting-IP. Header value wins.
+        request = MagicMock()
+        request.headers = {"cf-connecting-ip": "1.2.3.4"}
+        request.client.host = "127.0.0.1"
+        self.assertEqual(get_client_ip(request), "1.2.3.4")
+
+    def test_cloudflare_header_untrusted_peer_ignored(self):
+        # Off-tunnel peer cannot inject CF-Connecting-IP. Header is
+        # dropped on the floor; peer host wins.
         request = MagicMock()
         request.headers = {"cf-connecting-ip": "1.2.3.4"}
         request.client.host = "10.0.0.1"
+        self.assertEqual(get_client_ip(request), "10.0.0.1")
+
+    def test_x_forwarded_for_trusted_peer(self):
+        # Loopback peer with X-Forwarded-For → leftmost hop wins.
+        request = MagicMock()
+        request.headers = {"x-forwarded-for": "1.2.3.4, 5.6.7.8"}
+        request.client.host = "127.0.0.1"
         self.assertEqual(get_client_ip(request), "1.2.3.4")
 
-    def test_x_forwarded_for(self):
+    def test_x_forwarded_for_untrusted_peer_ignored(self):
+        # Off-tunnel peer cannot inject X-Forwarded-For.
         request = MagicMock()
         request.headers = {"x-forwarded-for": "1.2.3.4, 5.6.7.8"}
         request.client.host = "10.0.0.1"
-        self.assertEqual(get_client_ip(request), "1.2.3.4")
+        self.assertEqual(get_client_ip(request), "10.0.0.1")
 
     def test_no_client(self):
         request = MagicMock()

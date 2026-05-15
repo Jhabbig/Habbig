@@ -8775,14 +8775,31 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
                     allowed = True
                     break
             if not allowed:
-                log.warning("ws origin rejected: origin=%s host=%s", origin, host)
+                # Audit MED FIX (audit_security_dir.md cross-cutting):
+                # stamp ``host`` + ``ip_hash`` on every WS Origin denial
+                # so the security feed can pivot from a single row to
+                # either the requested vhost or the offending client
+                # without exposing the raw peer IP. ``_hash_ip`` returns
+                # "" when the peer is unknown — the log keeps its shape
+                # rather than emitting 64 zeroes, matching the
+                # analytics_events.ip_hash column contract.
+                log.warning(
+                    "ws origin rejected: origin=%s host=%s ip_hash=%s",
+                    origin, host, _hash_ip(_get_client_ip(ws)),
+                )
                 await ws.close(code=1008, reason="Cross-origin upgrade denied")
                 return
         else:
             # No Origin header in production is suspicious — browsers always
             # send one for cross-origin or same-origin WS. Reject rather than
             # fail-open, since legitimate clients always include it.
-            log.warning("ws missing origin header from host=%s", host)
+            # Same ``host`` + ``ip_hash`` shape as the cross-origin reject
+            # above so both denial branches surface in identical columns
+            # for the security feed.
+            log.warning(
+                "ws missing origin header from host=%s ip_hash=%s",
+                host, _hash_ip(_get_client_ip(ws)),
+            )
             await ws.close(code=1008, reason="Missing origin")
             return
 

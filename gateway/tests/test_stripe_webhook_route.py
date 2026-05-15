@@ -299,5 +299,139 @@ class TestStripeWebhookRouteWithoutLibrary(unittest.TestCase):
             sys.meta_path.remove(blocker)
 
 
+class TestStripeWebhookRouteCrashAndRetry(_Base):
+    """Audit MED FIX — audit_stripe_idempotent.md GAP-3 closure.
+
+    The ledger row is now written AFTER successful dispatch, not before.
+    Previously, ``mark_received`` wrote the row UP FRONT, then a crash
+    mid-dispatch called ``mark_processed`` which stamped ``processed_at``
+    even on failures. Stripe's retry would short-circuit as
+    ``already_processed`` and any side effect that ran AFTER the
+    ``mark_received`` write but BEFORE the crash was permanently lost.
+
+    The new flow is approach (b) verbatim from the audit doc — "move
+    the ``mark_received`` write to AFTER the dispatch branch succeeds."
+    Pre-dispatch is a read-only existence check; the row only ever lands
+    when dispatch completes without raising. A crashed delivery leaves
+    no ledger row, so Stripe's next retry runs the dispatch branch
+    fresh. The trade-off is that two concurrent retries can both run
+    the dispatch branch before either writes the row — Stripe spaces
+    retries minutes apart so this is theoretical, and the UPSERT
+    defence on ``subscriptions`` collapses true duplicates anyway.
+    """
+
+    def test_crashed_dispatch_redispatches_on_retry(self):
+        # Patch the route's `_grant_access` to crash on first call,
+        # succeed on the second. Replicates Stripe's retry storm.
+        #
+        # NOTE: ``_Base.setUpClass`` removed and re-imported
+        # ``stripe_webhook_routes`` to land on the freshly-loaded
+        # ``stripe_webhook_hardening`` module. Earlier test classes
+        # (e.g. ``TestStripeWebhookRouteWithoutLibrary``) also
+        # remove-and-reimport, so the module object reachable via a
+        # fresh ``import stripe_webhook_routes`` may not be the same
+        # object whose ``stripe_webhook`` is bound on ``server.app``.
+        # Patch via the registered endpoint's actual ``__globals__`` so
+        # the in-flight route hits the patched function regardless of
+        # which module instance ``import`` resolves to in this test.
+
+        # Find the live endpoint registered on server.app.
+        from server import app as _app
+        live_endpoint = None
+        for r in _app.router.routes:
+            if getattr(r, "path", None) == "/stripe/webhook":
+                live_endpoint = r.endpoint
+                break
+        self.assertIsNotNone(live_endpoint, "stripe webhook route not registered")
+        route_globals = live_endpoint.__globals__
+
+        original_grant = route_globals["_grant_access"]
+        calls = {"n": 0}
+
+        def _flaky_grant(event):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("simulated mid-dispatch crash")
+            return original_grant(event)
+
+        route_globals["_grant_access"] = _flaky_grant
+        try:
+            body, headers = _signed_event(
+                "customer.subscription.created",
+                {
+                    "id": "sub_crash_retry",
+                    "metadata": {"user_id": "1",
+                                 "dashboard_key": "crash_retry"},
+                },
+                event_id="evt_route_crash_retry",
+            )
+            # First delivery: handler crashes mid-dispatch. The route's
+            # except branch logs the trace and responds 200 — the ledger
+            # row was NEVER written because the write was hoisted past
+            # the dispatch.
+            first = self._post(body, headers)
+            self.assertEqual(first.status_code, 200, first.text)
+
+            # Ledger row should not exist — write only happens on success.
+            import db
+            with db.conn() as c:
+                row = c.execute(
+                    "SELECT 1 FROM processed_stripe_events "
+                    "WHERE event_id = ?",
+                    ("evt_route_crash_retry",),
+                ).fetchone()
+            self.assertIsNone(
+                row,
+                "GAP-3: a crashed dispatch must leave NO ledger row so "
+                "Stripe's retry re-runs the dispatch branch fresh "
+                "instead of short-circuiting as already_processed.",
+            )
+
+            # Second delivery (Stripe's retry): dispatch runs fresh and
+            # succeeds. Ledger row is stamped with processed_at.
+            second = self._post(body, headers)
+            self.assertEqual(second.status_code, 200, second.text)
+            self.assertEqual(second.json().get("status"), "ok")
+            self.assertEqual(
+                calls["n"], 2,
+                "dispatch branch must have run twice (crash + retry); "
+                "if it only ran once the retry short-circuited.",
+            )
+            with db.conn() as c:
+                row = c.execute(
+                    "SELECT processed_at, error FROM "
+                    "processed_stripe_events WHERE event_id = ?",
+                    ("evt_route_crash_retry",),
+                ).fetchone()
+            self.assertIsNotNone(row, "ledger row missing after success")
+            self.assertIsNotNone(row["processed_at"])
+            self.assertIsNone(row["error"])
+        finally:
+            route_globals["_grant_access"] = original_grant
+
+    def test_successful_dispatch_writes_ledger_for_idempotency(self):
+        """The success path must write the ledger row so a true
+        duplicate delivery short-circuits. The post-success
+        ``mark_received`` is the deduplication tombstone.
+        """
+        body, headers = _signed_event(
+            "customer.subscription.created",
+            {
+                "id": "sub_happy_path",
+                "metadata": {"user_id": "1",
+                             "dashboard_key": "happy_path"},
+            },
+            event_id="evt_route_happy_path",
+        )
+        first = self._post(body, headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json().get("status"), "ok")
+
+        # Replay → already_processed (ledger row survives success).
+        second = self._post(body, headers)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json().get("status"), "already_processed")
+
+
 if __name__ == "__main__":
     unittest.main()

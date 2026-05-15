@@ -49,18 +49,35 @@ def configure_security_logging(base_dir: Optional[Path] = None) -> None:
 
 
 def _get_ip(request: Optional[Request] = None, ip: Optional[str] = None) -> str:
-    """Extract IP from request or use provided value."""
+    """Extract IP via the canonical ``server._get_client_ip``.
+
+    Audit MED FIX (audit_security_dir.md cross-cutting): the three
+    helpers (``audit.py``, ``logger.py``, ``rate_limiter.py``) had
+    drifted. The previous implementation here trusted ``cf-connecting-ip``
+    unconditionally — so an attacker reaching the origin off-tunnel could
+    forge any IP into the security log. ``server._get_client_ip`` only
+    honours the header when the immediate peer is in
+    ``_TRUSTED_PROXY_HOSTS``, which closes that hole. Deferred import
+    keeps the security package importable from ``server`` itself.
+    """
     if ip:
         return ip
     if request is None:
         return "unknown"
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    try:
+        from server import _get_client_ip as _server_get_client_ip
+        return _server_get_client_ip(request)
+    except Exception:
+        # Server module not importable in this context (e.g. ad-hoc test
+        # harness loading only the logger). Preserve the pre-fix fallback
+        # so we never raise from the security-log path.
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip.strip()
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            return xff.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
 
 
 def log_csrf_failure(
