@@ -1,0 +1,68 @@
+<!-- Reusable admin filter bar partial.
+     Body-only fragment, included by admin list pages that need a
+     search-box + status + since/until + export-links chrome row.
+
+     Visual contract: matches the email_addresses.html filter bar
+     shipped at commit 1edbe79. Class namespace `adm-filter-bar` so it
+     never collides with the per-page email-addresses `adm-ea-filter`
+     scope.
+
+     Caller placeholders (substituted via the same raw_/escape rules
+     `render_page` uses elsewhere in the gateway):
+
+       {{ filter_q }}            current free-text query (escaped).
+       {{ raw_status_options }}  pre-rendered <option> elements for the
+                                 status <select>. Caller decides labels
+                                 + which one is `selected`.
+       {{ filter_since }}        ISO date string for the "since" picker.
+       {{ filter_until }}        ISO date string for the "until" picker.
+       {{ export_csv_href }}     query-string-preserving link to the
+                                 CSV exporter.
+       {{ export_json_href }}    optional JSON export link. Pass empty
+                                 string to hide that anchor entirely
+                                 (the caller controls the surrounding
+                                 markup via the raw_ slot).
+
+     Tokens-only styling. Monochrome. 16px inputs (iOS no-zoom).
+     Tap targets ≥ 44×44 px. -->
+
+<form class="adm-filter-bar" method="get" role="search"
+      aria-label="Filter list">
+  <label class="adm-filter-bar__field adm-filter-bar__field--search">
+    <span class="adm-filter-bar__label">Search</span>
+    <input class="adm-filter-bar__input adm-filter-bar__input--text"
+           type="search" name="q"
+           value="{{ filter_q }}"
+           placeholder="search"
+           autocomplete="off"
+           inputmode="search"
+           minlength="0" maxlength="120">
+  </label>
+  <label class="adm-filter-bar__field">
+    <span class="adm-filter-bar__label">Status</span>
+    <select class="adm-filter-bar__input adm-filter-bar__input--select"
+            name="status">
+      {{ raw_status_options }}
+    </select>
+  </label>
+  <label class="adm-filter-bar__field adm-filter-bar__field--date">
+    <span class="adm-filter-bar__label">Since</span>
+    <input class="adm-filter-bar__input adm-filter-bar__input--date"
+           type="date" name="since"
+           value="{{ filter_since }}">
+  </label>
+  <label class="adm-filter-bar__field adm-filter-bar__field--date">
+    <span class="adm-filter-bar__label">Until</span>
+    <input class="adm-filter-bar__input adm-filter-bar__input--date"
+           type="date" name="until"
+           value="{{ filter_until }}">
+  </label>
+  <div class="adm-filter-bar__actions">
+    <button type="submit" class="adm-filter-bar__btn adm-filter-bar__btn--primary">Apply</button>
+    <a href="?" class="adm-filter-bar__btn adm-filter-bar__btn--ghost">Reset</a>
+  </div>
+  <div class="adm-filter-bar__exports">
+    <a class="adm-filter-bar__export" href="{{ export_csv_href }}">Export CSV</a>
+    <a class="adm-filter-bar__export" href="{{ export_json_href }}">Export JSON</a>
+  </div>
+</form>

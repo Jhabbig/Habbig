@@ -528,6 +528,59 @@ def _send_admin_payout_notification(aff, summary: dict, user) -> None:
 # ── Admin panel ──────────────────────────────────────────────────────
 
 
+# Whitelisted server-side status filters for /admin/affiliates. The
+# affiliate_accounts table has no explicit status column — these three
+# buckets are derived from is_active + approved_at:
+#   active  → is_active = 1
+#   paused  → is_active = 0
+#   pending → approved_at IS NULL
+_AFFILIATE_STATUS_FILTERS = {"active", "paused", "pending"}
+
+
+def _affiliate_matches_filter(a, *, q: str, status: str) -> bool:
+    """Apply the server-side q + status filters to a single row.
+
+    ``q`` matches on the affiliate_code (slug) or the human-facing label
+    (username, falling back to email). Comparison is case-insensitive.
+    ``status`` is one of the whitelisted buckets above; empty means
+    no status filter.
+    """
+    if q:
+        needle = q.casefold()
+        slug = (a["affiliate_code"] or "").casefold()
+        label = ((a["user_username"] or a["user_email"]) or "").casefold()
+        if needle not in slug and needle not in label:
+            return False
+    if status:
+        approved = a["approved_at"] if "approved_at" in a.keys() else None
+        is_active = bool(a["is_active"])
+        if status == "active" and not is_active:
+            return False
+        if status == "paused" and is_active:
+            return False
+        if status == "pending" and approved is not None:
+            return False
+    return True
+
+
+def _render_affiliate_status_options(active: str) -> str:
+    """Render the <option> set for the status <select>.
+
+    ``active`` is the currently-selected value (empty string = "Any").
+    """
+    import html as _html
+    opts = [("", "Any status"), ("active", "Active"),
+            ("paused", "Paused"), ("pending", "Pending")]
+    out = []
+    for value, label in opts:
+        sel = " selected" if value == active else ""
+        out.append(
+            f'<option value="{_html.escape(value)}"{sel}>'
+            f'{_html.escape(label)}</option>'
+        )
+    return "".join(out)
+
+
 @app.get("/admin/affiliates", response_class=HTMLResponse)
 async def admin_affiliates_list(request: Request):
     """Admin list view. Also surfaces the pending-payouts queue."""
@@ -535,7 +588,17 @@ async def admin_affiliates_list(request: Request):
     if not user:
         return _denied_response(request)
 
-    affiliates = da.list_affiliates(include_inactive=True)
+    qp = request.query_params
+    filter_q = (qp.get("q") or "").strip()
+    filter_status = (qp.get("status") or "").strip().lower()
+    if filter_status and filter_status not in _AFFILIATE_STATUS_FILTERS:
+        filter_status = ""
+
+    all_affiliates = da.list_affiliates(include_inactive=True)
+    affiliates = [
+        a for a in all_affiliates
+        if _affiliate_matches_filter(a, q=filter_q, status=filter_status)
+    ]
     pending = da.list_affiliate_pending_payouts()
 
     import html as _html
@@ -565,6 +628,11 @@ async def admin_affiliates_list(request: Request):
             f'</tr>'
         )
 
+    empty_msg = (
+        "No affiliates match the filter."
+        if (filter_q or filter_status) else "No affiliates yet."
+    )
+
     from admin_shell import render_admin_page
     return render_admin_page(
         request,
@@ -572,10 +640,14 @@ async def admin_affiliates_list(request: Request):
         page_title="Affiliates",
         active_route="affiliates",
         breadcrumb=[("Admin", "/admin"), ("Affiliates", "/admin/affiliates")],
-        total_affiliates=str(len(affiliates)),
+        total_affiliates=str(len(all_affiliates)),
         pending_payout_count=str(len(pending)),
+        filter_q=filter_q,
+        filter_status=filter_status,
+        raw_status_options=_render_affiliate_status_options(filter_status),
+        filter_result_count=f"{len(affiliates)} of {len(all_affiliates)}",
         raw_affiliate_rows="\n".join(rows) or (
-            '<tr><td colspan="7" style="opacity:0.6">No affiliates yet.</td></tr>'
+            f'<tr><td colspan="7" style="opacity:0.6">{_html.escape(empty_msg)}</td></tr>'
         ),
         raw_payout_rows="\n".join(payout_rows) or (
             '<tr><td colspan="5" style="opacity:0.6">'
