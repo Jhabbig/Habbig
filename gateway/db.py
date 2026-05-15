@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-    token           TEXT PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash      TEXT NOT NULL UNIQUE,
     user_id         INTEGER NOT NULL,
     created_at      INTEGER NOT NULL,
     expires_at      INTEGER NOT NULL,
@@ -258,10 +259,15 @@ CREATE INDEX IF NOT EXISTS idx_topic_analyses ON user_topic_analyses(user_topic_
 def conn():
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout = 5000")  # 5s wait before raising SQLITE_BUSY
+    c.execute("PRAGMA journal_mode = WAL")    # already set elsewhere but reassert for safety
     c.execute("PRAGMA foreign_keys = ON")
     try:
         yield c
         c.commit()
+    except Exception:
+        c.rollback()
+        raise
     finally:
         c.close()
 
