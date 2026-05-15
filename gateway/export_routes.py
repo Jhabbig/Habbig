@@ -68,15 +68,47 @@ def _role_badge(user):
 # ── Signed-URL helpers ─────────────────────────────────────────────────
 
 
+def _is_production() -> bool:
+    """Local production check — kept inline so the import never fails
+    when ``config`` isn't importable in a degraded environment."""
+    try:
+        import config as _cfg
+        return _cfg.is_production()
+    except Exception:
+        return os.environ.get("PRODUCTION", "0").strip().lower() in ("1", "true", "yes")
+
+
 def _export_secret() -> bytes:
-    """HMAC key for signing download URLs. Falls back to the gateway cookie
-    secret when present; otherwise derives one from DATA_EXPORT_DIR so the
-    same key is stable across restarts without needing new env vars."""
+    """HMAC key for signing download URLs.
+
+    Order of preference:
+      1. ``DATA_EXPORT_SIGNING_KEY`` — dedicated, rotatable.
+      2. ``GATEWAY_COOKIE_SECRET`` — shared with cookie signing.
+
+    There is intentionally NO fallback. The previous fallback derived a
+    key from ``DATA_EXPORT_DIR`` (default ``/tmp/narve-exports``) which
+    an attacker can guess, then forge any user's download signature.
+    In production we refuse to run; in dev we surface a loud RuntimeError
+    so the misconfiguration is impossible to miss.
+    """
     raw = (
-        os.environ.get("GATEWAY_COOKIE_SECRET")
-        or os.environ.get("DATA_EXPORT_SIGNING_KEY")
-        or f"dataexport:{EXPORT_DIR}"
+        os.environ.get("DATA_EXPORT_SIGNING_KEY")
+        or os.environ.get("GATEWAY_COOKIE_SECRET")
     )
+    if not raw:
+        if _is_production():
+            raise RuntimeError(
+                "Data-export signing key missing — set "
+                "DATA_EXPORT_SIGNING_KEY or GATEWAY_COOKIE_SECRET. "
+                "Refusing to sign download URLs with a guessable key."
+            )
+        # Dev: still refuse to use a guessable derivation. Loud failure
+        # beats a silent vuln that ships to prod.
+        raise RuntimeError(
+            "Data-export signing key missing — set "
+            "DATA_EXPORT_SIGNING_KEY (or GATEWAY_COOKIE_SECRET) before "
+            "exercising export routes."
+        )
     return hashlib.sha256(raw.encode()).digest()
 
 
@@ -320,9 +352,19 @@ async def api_list_exports(request: Request):
 
 
 async def api_download_export(request: Request, export_id: int):
-    """Signed download — does NOT require session auth, so the link is
-    shareable from the notification email. Validates HMAC + expiry +
-    ownership."""
+    """Signed download — ALSO requires a session that owns the export
+    (or admin).
+
+    Defence in depth:
+      1. Signed HMAC + expiry must validate (catches forged URLs).
+      2. The caller must be logged in AND own the export, or be admin
+         (catches a leaked/forwarded link from someone's inbox).
+
+    Belt + braces: the signing key audit found the legacy guessable-key
+    fallback let an attacker forge any user's download URL. Even with
+    the key fixed, an exfiltrated email link is still a single-factor
+    sharable credential. Tying download to the session closes that gap.
+    """
     try:
         user_id = int(request.query_params.get("u", "0"))
         expires_at = int(request.query_params.get("e", "0"))
@@ -334,6 +376,14 @@ async def api_download_export(request: Request, export_id: int):
         raise HTTPException(status_code=410, detail="Download link expired")
     if not _verify(export_id, user_id, expires_at, sig):
         raise HTTPException(status_code=403, detail="Invalid signature")
+
+    # Session-auth check — even with a valid signature, the caller must
+    # be the export owner (or an admin). Stops link-sharing/exfiltration.
+    caller = _current_user(request)
+    if not caller:
+        raise HTTPException(status_code=401, detail="Login required")
+    if int(caller["user_id"]) != int(user_id) and not caller.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Not your export")
 
     row = db.get_data_export_request(export_id)
     if not row or row["user_id"] != user_id:
