@@ -178,7 +178,16 @@ async def send_saved_prediction_resolution_notifications(
     email per row, then marks the saved row notified. Idempotent: the
     ``notified_on_resolution`` flag ensures we never double-send, and
     batching caps each run.
+
+    Quiet-hours gate (audit HIGHx4): pure-emit job — there is no separate
+    data pass to preserve, so we early-exit during UK quiet hours
+    (UTC ``[22, 6)``). The next non-quiet tick re-scans and finds the
+    same unflagged ``notified_on_resolution = 0`` rows.
     """
+    from jobs.quiet_hours import _within_quiet_hours
+    if _within_quiet_hours():
+        return {"notified": 0, "more": False, "skipped": "quiet_hours"}
+
     import db
     from jobs.email_jobs import enqueue_email
     from jobs import enqueue_job
@@ -266,7 +275,16 @@ async def check_market_movers(
     Compares current prices to snapshots from lookback_hours ago. When a market
     moves more than price_change_threshold AND narve.ai has high-credibility
     source intelligence, sends alerts to opted-in users.
+
+    Quiet-hours gate (audit HIGHx4): pure-emit job — early-exit during UK
+    quiet hours (UTC ``[22, 6)``). The next non-quiet tick re-fetches and
+    re-evaluates against the same ``lookback_hours`` window, so any
+    still-active mover gets caught then.
     """
+    from jobs.quiet_hours import _within_quiet_hours
+    if _within_quiet_hours():
+        return {"alerts_sent": 0, "movers_found": 0, "skipped": "quiet_hours"}
+
     import db
     import os
     import time as _time

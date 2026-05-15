@@ -46,9 +46,19 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
 
 @register_job("detect_market_movements")
 async def detect_market_movements() -> dict[str, Any]:
-    """Run detection, then fan pending events out to subscribers."""
+    """Run detection, then fan pending events out to subscribers.
+
+    Quiet-hours gate (audit HIGHx4): the detection pass always runs so
+    movements are still recorded into ``market_movement_events``. The
+    notification-delivery pass early-exits inside the UK quiet window
+    (UTC ``[22, 6)``). Events stay pending (``notified_at IS NULL``) and
+    the next non-quiet tick picks them up.
+    """
     from backend.markets.movement_detector import run_detection_once
+    from jobs.quiet_hours import _within_quiet_hours
     detection = run_detection_once()
+    if _within_quiet_hours():
+        return {"detection": detection, "delivery": {"skipped": "quiet_hours"}}
     delivery = await _deliver_pending_events()
     return {"detection": detection, "delivery": delivery}
 

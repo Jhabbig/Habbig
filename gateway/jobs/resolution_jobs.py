@@ -32,6 +32,16 @@ async def poll_market_resolutions() -> dict[str, Any]:
     """
     import db
     from jobs import enqueue_job
+    from jobs.quiet_hours import _within_quiet_hours
+
+    # Audit HIGHx4: data pass (poll APIs, resolve predictions, fire
+    # credibility recompute) ALWAYS runs so the public leaderboards and
+    # credibility scores are not stalled by the quiet window. Only the
+    # user-facing notification fan-out is gated; the resolution itself
+    # is persisted, so the next non-quiet tick can pick the email/push
+    # work back up via send_market_resolution_notifications driven off
+    # ``user_market_views.notified_on_resolution = 0``.
+    notifications_gated = _within_quiet_hours()
 
     market_ids = db.get_unresolved_market_ids()
     if not market_ids:
@@ -108,16 +118,22 @@ async def poll_market_resolutions() -> dict[str, Any]:
                         ttl_invalidate.on_market_resolved(market_id)
                     except Exception as ce:
                         log.warning("ttl_invalidate on_market_resolved failed for %s: %s", market_id, ce)
-                    # Enqueue notification
-                    try:
-                        await enqueue_job(
-                            "send_market_resolution_notifications",
-                            market_slug=slug,
-                            outcome="YES" if outcome_yes else "NO",
-                            market_question=raw.get("question", slug),
-                        )
-                    except Exception as ne:
-                        log.warning("Failed to enqueue notification for %s: %s", market_id, ne)
+                    # Enqueue notification — skipped inside the quiet
+                    # window. user_market_views.notified_on_resolution
+                    # stays 0 for affected viewers, so a later non-quiet
+                    # tick of send_market_resolution_notifications still
+                    # delivers (it scans across markets, not just newly-
+                    # resolved ones).
+                    if not notifications_gated:
+                        try:
+                            await enqueue_job(
+                                "send_market_resolution_notifications",
+                                market_slug=slug,
+                                outcome="YES" if outcome_yes else "NO",
+                                market_question=raw.get("question", slug),
+                            )
+                        except Exception as ne:
+                            log.warning("Failed to enqueue notification for %s: %s", market_id, ne)
 
             elif market_id.startswith("kalshi:"):
                 ticker = market_id[7:]
@@ -149,15 +165,16 @@ async def poll_market_resolutions() -> dict[str, Any]:
                         ttl_invalidate.on_market_resolved(market_id)
                     except Exception as ce:
                         log.warning("ttl_invalidate on_market_resolved failed for %s: %s", market_id, ce)
-                    try:
-                        await enqueue_job(
-                            "send_market_resolution_notifications",
-                            market_slug=ticker,
-                            outcome="YES" if outcome_yes else "NO",
-                            market_question=raw.get("title", ticker),
-                        )
-                    except Exception as ne:
-                        log.warning("Failed to enqueue notification for %s: %s", market_id, ne)
+                    if not notifications_gated:
+                        try:
+                            await enqueue_job(
+                                "send_market_resolution_notifications",
+                                market_slug=ticker,
+                                outcome="YES" if outcome_yes else "NO",
+                                market_question=raw.get("title", ticker),
+                            )
+                        except Exception as ne:
+                            log.warning("Failed to enqueue notification for %s: %s", market_id, ne)
 
         except Exception as e:
             log.exception("Error polling resolution for %s: %s", market_id, e)
