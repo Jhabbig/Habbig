@@ -1,9 +1,8 @@
-"""Token-first authentication module for narve.ai.
+"""Hardened-session authentication module for narve.ai.
 
 Public surface (everything else lives in submodules):
 
     from auth import (
-        PENDING_TOKEN_COOKIE,
         SESSION_COOKIE,
         set_session_cookie_hardened,
         clear_session_cookie_hardened,
@@ -13,17 +12,13 @@ Public surface (everything else lives in submodules):
         require_hardened_admin,
     )
 
-The old `sessions` table + `current_user` helper in server.py keep
-working; this module layers a new token-first gate on top for routes
-that care (`/register`, `/login`, `/auth/*`, `/api/auth/sessions`).
+The old ``sessions`` table + ``current_user`` helper in server.py keep
+working; this module layers a hardened session gate on top for routes
+that care (``/register``, ``/login``, ``/auth/*``, ``/api/auth/sessions``).
 """
 
 from auth.cookies import (  # noqa: F401
-    PENDING_TOKEN_COOKIE,
     SESSION_COOKIE,
-    PENDING_TOKEN_TTL,
-    sign_pending_token,
-    verify_pending_token,
     set_session_cookie_hardened,
     clear_session_cookie_hardened,
 )
