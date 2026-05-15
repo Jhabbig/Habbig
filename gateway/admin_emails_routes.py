@@ -31,6 +31,7 @@ sees it, and the click is rate-limited.
 
 from __future__ import annotations
 
+import datetime as _dt
 import html
 import json
 import logging
@@ -73,8 +74,36 @@ _STATUS_LABEL = {
 }
 
 
+# Whitelist of status filter values accepted on the querystring. Anything
+# outside this set is dropped to ""/no-filter rather than 400ing — same
+# defensive posture ``email_addresses_page`` uses for its source filter.
+_VALID_STATUS_FILTERS = ("queued", "sent", "failed", "bounced")
+
+
 def _label_status(raw: Optional[str]) -> str:
     return _STATUS_LABEL.get((raw or "").lower(), (raw or "unknown").lower())
+
+
+def _parse_date_to_ts(s) -> Optional[int]:
+    """Parse ``YYYY-MM-DD`` from the form into unix seconds (start-of-day UTC).
+
+    Mirrors ``admin_routes._parse_date_to_ts``. Returns None on empty or
+    malformed input — the caller treats None as "no bound", so a bad date
+    silently disables the filter rather than 400ing.
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    try:
+        return int(
+            _dt.datetime.strptime(s, "%Y-%m-%d")
+            .replace(tzinfo=_dt.timezone.utc)
+            .timestamp()
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _redact_recipient(addr: str) -> str:
@@ -133,12 +162,23 @@ def _list_email_rows(
     status_filter: Optional[str] = None,
     template_filter: Optional[str] = None,
     recipient_filter: Optional[str] = None,
+    since_ts: Optional[int] = None,
+    until_ts: Optional[int] = None,
 ) -> list[dict]:
     """Read recent send_email jobs from background_jobs.
 
     Applies the optional filters in-Python after a single bounded SELECT,
     so the SQL stays simple even though template/recipient live inside
     the JSON payload. 200-row cap keeps the in-Python loop bounded.
+
+    Filters:
+        status_filter   — whitelisted label (queued/sent/failed/bounced).
+        template_filter — exact match against the dropdown value, or a
+                          case-insensitive substring fallback if no exact
+                          match would land.
+        recipient_filter — case-insensitive substring against ``to``.
+        since_ts/until_ts — unix-seconds bounds on ``enqueued_at``,
+                            applied directly in SQL.
     """
     raw_status_filter = None
     if status_filter == "sent":
@@ -156,28 +196,30 @@ def _list_email_rows(
         template_filter or recipient_filter or status_filter == "queued"
     ) else limit + offset
 
-    with db.conn() as c:
-        if raw_status_filter:
-            rows = c.execute(
-                "SELECT id, name, payload, status, attempts, max_attempts, error, "
-                "enqueued_at, started_at, finished_at, duration_ms "
-                "FROM background_jobs "
-                "WHERE name = 'send_email' AND status = ? "
-                "ORDER BY enqueued_at DESC "
-                "LIMIT ?",
-                (raw_status_filter, fetch_window),
-            ).fetchall()
-        else:
-            rows = c.execute(
-                "SELECT id, name, payload, status, attempts, max_attempts, error, "
-                "enqueued_at, started_at, finished_at, duration_ms "
-                "FROM background_jobs "
-                "WHERE name = 'send_email' "
-                "ORDER BY enqueued_at DESC "
-                "LIMIT ?",
-                (fetch_window,),
-            ).fetchall()
+    where = ["name = 'send_email'"]
+    params: list = []
+    if raw_status_filter:
+        where.append("status = ?")
+        params.append(raw_status_filter)
+    if since_ts is not None:
+        where.append("enqueued_at >= ?")
+        params.append(int(since_ts))
+    if until_ts is not None:
+        where.append("enqueued_at <= ?")
+        params.append(int(until_ts))
+    sql = (
+        "SELECT id, name, payload, status, attempts, max_attempts, error, "
+        "enqueued_at, started_at, finished_at, duration_ms "
+        "FROM background_jobs "
+        "WHERE " + " AND ".join(where) + " "
+        "ORDER BY enqueued_at DESC LIMIT ?"
+    )
+    params.append(fetch_window)
 
+    with db.conn() as c:
+        rows = c.execute(sql, tuple(params)).fetchall()
+
+    tmpl_lc = (template_filter or "").lower()
     out: list[dict] = []
     for r in rows:
         payload = _parse_payload(r["payload"])
@@ -187,8 +229,11 @@ def _list_email_rows(
 
         if status_filter == "queued" and label != "queued":
             continue
-        if template_filter and template != template_filter:
-            continue
+        if template_filter:
+            # Exact match first (dropdown selection), substring fallback
+            # so the user can type a partial template key in the URL.
+            if template != template_filter and tmpl_lc not in template.lower():
+                continue
         if recipient_filter and recipient_filter.lower() not in to.lower():
             continue
 
@@ -366,10 +411,19 @@ async def admin_emails_page(
     template: Optional[str] = None,
     status: Optional[str] = None,
     recipient: Optional[str] = None,
+    q: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
 ):
-    """Render the /admin/emails diagnostic dashboard."""
+    """Render the /admin/emails diagnostic dashboard.
+
+    Accepts ``q`` as an alias for ``recipient`` so the surface lines up
+    with the rest of /admin (e.g. /admin/email-addresses). ``since`` and
+    ``until`` are ``YYYY-MM-DD`` and bound ``enqueued_at`` inclusively
+    (until-date is end-of-day UTC, matching ``email_addresses_page``).
+    """
     user = server._require_admin_user(request, page=True)
     if user is None:
         return server._denied_response(request)
@@ -388,7 +442,21 @@ async def admin_emails_page(
 
     template_filter = (template or "").strip()
     status_filter = (status or "").strip().lower()
-    recipient_filter = (recipient or "").strip()
+    # ``q`` is the canonical name; ``recipient`` kept as a back-compat alias.
+    recipient_filter = (q or recipient or "").strip()
+    since_str = (since or "").strip()
+    until_str = (until or "").strip()
+
+    # Whitelist status — drop anything outside the known set so a bogus
+    # ``?status=DROP TABLE`` quietly becomes "no filter" rather than 400ing.
+    if status_filter and status_filter not in _VALID_STATUS_FILTERS:
+        status_filter = ""
+
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        # Inclusive end-of-day, matches ``email_addresses_page``.
+        until_ts += 86_399
 
     try:
         rows = _list_email_rows(
@@ -397,6 +465,8 @@ async def admin_emails_page(
             status_filter=status_filter or None,
             template_filter=template_filter or None,
             recipient_filter=recipient_filter or None,
+            since_ts=since_ts,
+            until_ts=until_ts,
         )
         stats = _stats_24h()
         templates = _list_distinct_templates()
@@ -423,6 +493,8 @@ async def admin_emails_page(
         raw_template_options=_render_template_filter(templates, template_filter),
         raw_status_options=_render_status_filter(status_filter),
         raw_recipient_value=_esc(recipient_filter),
+        raw_since_value=_esc(since_str),
+        raw_until_value=_esc(until_str),
         raw_result_count=str(len(rows)),
     )
 
@@ -437,6 +509,9 @@ async def admin_api_emails_list(
     template: Optional[str] = None,
     status: Optional[str] = None,
     recipient: Optional[str] = None,
+    q: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> JSONResponse:
@@ -448,12 +523,23 @@ async def admin_api_emails_list(
     except (TypeError, ValueError):
         limit, offset = 100, 0
 
+    status_filter = (status or "").strip().lower()
+    if status_filter and status_filter not in _VALID_STATUS_FILTERS:
+        status_filter = ""
+
+    since_ts = _parse_date_to_ts((since or "").strip())
+    until_ts = _parse_date_to_ts((until or "").strip())
+    if until_ts is not None:
+        until_ts += 86_399
+
     rows = _list_email_rows(
         limit=limit,
         offset=offset,
-        status_filter=(status or "").strip().lower() or None,
+        status_filter=status_filter or None,
         template_filter=(template or "").strip() or None,
-        recipient_filter=(recipient or "").strip() or None,
+        recipient_filter=(q or recipient or "").strip() or None,
+        since_ts=since_ts,
+        until_ts=until_ts,
     )
     # Strip the full recipient from the list-view JSON for parity with
     # the HTML redaction. Callers who want the full address use the
