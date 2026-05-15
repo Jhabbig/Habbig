@@ -87,10 +87,6 @@
         <div class="pr-position-number">#<span id="pr-position">—</span></div>
         <div class="pr-position-label">on the waitlist</div>
       </div>
-      <p id="pr-confirm-hint" style="display:none;font-size:0.78rem;color:var(--text-tertiary);margin-top:8px;line-height:1.5">
-        Check your inbox &mdash; we sent a confirmation link.
-        You won't receive newsletter emails until you click it.
-      </p>
       <div style="font-size:0.78rem;color:var(--text-tertiary);margin-top:4px">Share your spot:</div>
       <div class="pr-ref-row">
         <div class="pr-ref-url" id="pr-ref-url">—</div>
@@ -213,12 +209,6 @@ function submitEmail(e) {
         'https://twitter.com/intent/tweet?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
       document.getElementById('pr-share-wa').href =
         'https://wa.me/?text=' + encodeURIComponent(shareText + ' ' + shareUrl);
-      // Surface the double-opt-in expectation. We render the same hint
-      // for every successful submit (anti-enumeration parity with the
-      // server response — we don't reveal whether confirmation was
-      // actually sent on this particular call).
-      var confirmHint = document.getElementById('pr-confirm-hint');
-      if (confirmHint) confirmHint.style.display = 'block';
       document.getElementById('pr-success').classList.add('visible');
     } else {
       errEl.textContent = res.data.error || 'Something went wrong. Try again.';
