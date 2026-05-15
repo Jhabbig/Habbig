@@ -134,10 +134,6 @@ class AdminNewsletterTestCase(unittest.TestCase):
         except Exception:
             pass
         cls.client = TestClient(server.app)
-        cls.admin_id, cls.admin_token = _create_admin_session()
-        cls.user_id, cls.user_token = _create_regular_session()
-        cls.admin_cookies = {server.COOKIE_NAME: cls.admin_token}
-        cls.user_cookies = {server.COOKIE_NAME: cls.user_token}
 
     def setUp(self):
         # Each test gets a clean campaigns table and a fresh slice of
@@ -148,6 +144,21 @@ class AdminNewsletterTestCase(unittest.TestCase):
                 "DELETE FROM newsletter_subscribers WHERE email LIKE ?",
                 (f"%_{_suffix()}_blast@example.com",),
             )
+        # Fixture-pollution guard: the conftest ``_reset_global_test_state``
+        # autouse fixture wipes ``sessions`` *and* ``users`` after every
+        # function-scoped test on the shared in-memory DB. That means any
+        # session token minted in ``setUpClass`` is dead by the time the
+        # second test in this module runs — admin/user requests then 302
+        # to /gate or 403 on CSRF because the cookie no longer resolves
+        # to a row. Mint a fresh admin + regular session per test instead.
+        # Same story for the TestClient cookie jar: httpx 0.27 merges
+        # per-request ``cookies={...}`` kwargs into the persistent jar,
+        # so stale tokens from a previous test would clobber the new one.
+        self.client.cookies.clear()
+        self.admin_id, self.admin_token = _create_admin_session()
+        self.user_id, self.user_token = _create_regular_session()
+        self.admin_cookies = {server.COOKIE_NAME: self.admin_token}
+        self.user_cookies = {server.COOKIE_NAME: self.user_token}
 
     # ── Auth gates ──────────────────────────────────────────────────
 
