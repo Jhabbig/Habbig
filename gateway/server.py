@@ -394,6 +394,29 @@ async def lifespan(app: FastAPI):
     if IS_PRODUCTION and SITE_ACCESS_TOKEN and len(SITE_ACCESS_TOKEN) < 32:
         log.error("FATAL: SITE_ACCESS_TOKEN is too short (%d chars) — refusing to start.", len(SITE_ACCESS_TOKEN))
         raise RuntimeError("SITE_ACCESS_TOKEN must be at least 32 characters")
+    # IP_HASH_SALT defends against rainbow-table reversal of analytics_events.ip_hash
+    # rows if the DB is ever exfiltrated. A constant in source code offers zero
+    # protection (SHA-256 over IPv4 is a few CPU-hours), so production MUST set a
+    # per-deploy random salt of ≥32 chars. Dev / tests are allowed to run on the
+    # deterministic fallback declared next to _hash_ip, but we log a WARNING so
+    # nobody assumes the analytics hashes are cryptographically protected.
+    if IS_PRODUCTION and not _IP_HASH_SALT_ENV:
+        log.error("FATAL: PRODUCTION=1 but IP_HASH_SALT is unset — refusing to start.")
+        raise RuntimeError(
+            "IP_HASH_SALT must be set in production (per-deploy random ≥32 chars)"
+        )
+    if IS_PRODUCTION and _IP_HASH_SALT_ENV and len(_IP_HASH_SALT_ENV) < 32:
+        log.error(
+            "FATAL: IP_HASH_SALT is too short (%d chars) — refusing to start.",
+            len(_IP_HASH_SALT_ENV),
+        )
+        raise RuntimeError("IP_HASH_SALT must be ≥32 characters")
+    if not IS_PRODUCTION and not _IP_HASH_SALT_ENV:
+        log.warning(
+            "IP_HASH_SALT not set — using deterministic dev fallback; "
+            "analytics ip_hash values are NOT cryptographically protected. "
+            "Production MUST set IP_HASH_SALT to a random ≥32-char value."
+        )
     # Auto-generate first admin invite token if none exist
     tokens = db.list_invite_tokens()
     if not tokens:
@@ -409,29 +432,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.exception("migration upgrade failed at startup: %s", e)
 
-    # If any user has TOTP enabled, the Fernet encryption key MUST be
-    # configured — otherwise we can't decrypt existing secrets and those
-    # admins would be locked out. Fail fast with a clear error.
-    try:
-        with db.conn() as _c:
-            _totp_row = _c.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1"
-            ).fetchone()
-            _totp_users = int(_totp_row["n"] if _totp_row else 0)
-        if _totp_users > 0 and not os.environ.get("CREDENTIALS_ENCRYPTION_KEY"):
-            log.error(
-                "FATAL: %d users have TOTP enabled but CREDENTIALS_ENCRYPTION_KEY "
-                "is unset. Existing TOTP secrets cannot be decrypted. Refusing to start.",
-                _totp_users,
+    # The Fernet encryption key MUST be configured in production regardless
+    # of whether any TOTP users currently exist — otherwise the first
+    # encryption write (TOTP enrolment, Kalshi token, etc.) silently stores
+    # plaintext or 500s under load. Fail fast with a clear error.
+    _cred_key = os.environ.get("CREDENTIALS_ENCRYPTION_KEY", "")
+    if IS_PRODUCTION and not _cred_key:
+        log.error(
+            "FATAL: PRODUCTION=1 but CREDENTIALS_ENCRYPTION_KEY is unset — refusing to start."
+        )
+        raise RuntimeError(
+            "CREDENTIALS_ENCRYPTION_KEY must be set in production"
+        )
+    if IS_PRODUCTION and _cred_key:
+        # Fernet keys must be 32 url-safe base64-encoded bytes. Validate at
+        # boot so we don't discover a typo only when a user enrols TOTP.
+        try:
+            from cryptography.fernet import Fernet as _Fernet
+            _Fernet(_cred_key.encode())
+        except Exception as _e:
+            log.error("FATAL: CREDENTIALS_ENCRYPTION_KEY invalid Fernet key: %s", _e)
+            raise RuntimeError(
+                f"CREDENTIALS_ENCRYPTION_KEY invalid Fernet key: {_e}"
             )
-            if IS_PRODUCTION:
-                raise RuntimeError(
-                    "CREDENTIALS_ENCRYPTION_KEY required: existing TOTP secrets cannot be decrypted"
-                )
-    except RuntimeError:
-        raise
-    except Exception as e:
-        log.warning("startup totp/encryption-key check failed: %s", e)
 
     # Start the background job queue (in-process by default). This drives
     # the *one-shot* enqueued work (emails, pipeline kicks) via
@@ -4886,9 +4909,16 @@ def _reset_token_hash(raw: str) -> str:
 
 # Per-deployment salt so the same raw IP hashes to a different value
 # across deploys — protects against rainbow-table attacks if the analytics
-# DB is exfiltrated. Falls back to a fixed value in tests so the helper is
-# deterministic without environment setup.
-_IP_HASH_SALT = os.environ.get("IP_HASH_SALT", "narve.ai/analytics/v1")
+# DB is exfiltrated. MUST be set per-deploy in production (random, ≥32
+# chars); a literal in source code is not protection because anyone with
+# read access to a leaked DB can precompute SHA-256 over IPv4. In dev /
+# tests we fall back to a constant so the helper stays deterministic
+# without environment setup — the startup check logs a WARNING whenever
+# that dev fallback is in use, and production refuses to boot without
+# IP_HASH_SALT in the environment.
+_IP_HASH_SALT_DEV_FALLBACK = "narve.ai/analytics/dev-only-not-secret"
+_IP_HASH_SALT_ENV = os.environ.get("IP_HASH_SALT", "")
+_IP_HASH_SALT = _IP_HASH_SALT_ENV or _IP_HASH_SALT_DEV_FALLBACK
 
 
 def _hash_ip(raw_ip: str) -> str:
@@ -7889,9 +7919,24 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     # rewrites request.client.host from X-Forwarded-For, so IP-based trust
     # is unreliable). The secret lives only in gateway/.env.production and is
     # loaded into the same EnvironmentFile each dashboard service reads.
-    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
-    if _sso_secret:
-        fwd_headers["X-Gateway-Secret"] = _sso_secret
+    #
+    # Fail-closed: refuse to proxy when GATEWAY_SSO_SECRET is empty. Previously
+    # we silently omitted X-Gateway-Secret, and if the downstream side was also
+    # unset hmac.compare_digest("", "") would return True and accept
+    # unauthenticated traffic. This guard applies in dev too (PRODUCTION=0
+    # would otherwise still hit the compare path on the downstream side).
+    _sso_secret = GATEWAY_SSO_SECRET or os.environ.get("GATEWAY_SSO_SECRET", "")
+    if not _sso_secret:
+        log.error(
+            "proxy_request refusing to forward %s — GATEWAY_SSO_SECRET is unset",
+            key,
+        )
+        return Response(
+            content=b"Gateway misconfigured: SSO secret is unset",
+            status_code=401,
+            media_type="text/plain",
+        )
+    fwd_headers["X-Gateway-Secret"] = _sso_secret
     fwd_headers["X-Forwarded-Host"] = request.headers.get("host", "")
     fwd_headers["X-Forwarded-Proto"] = request.url.scheme
 
