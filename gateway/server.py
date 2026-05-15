@@ -451,16 +451,9 @@ async def lifespan(app: FastAPI):
             "analytics ip_hash values are NOT cryptographically protected. "
             "Production MUST set IP_HASH_SALT to a random ≥32-char value."
         )
-    # Auto-generate first admin invite token if none exist
-    tokens = db.list_invite_tokens()
-    if not tokens:
-        first_token = db.create_invite_token("Auto-generated admin token")
-        log.info("=" * 50)
-        # Audit D — don't leak token prefix bytes. Boot log goes to file +
-        # remote ingest; recover the value via SELECT on invite_tokens.
-        _ = first_token  # not logged
-        log.info("  FIRST ADMIN INVITE TOKEN: <generated — query DB for value>")
-        log.info("=" * 50)
+    # Invite-token bootstrap removed 2026-05-15. Admin promotion is now
+    # handled via /admin/users/{id}/promote against a regular account
+    # created at /register behind the /gate perimeter.
 
     # Run versioned migrations before anything else hits the DB.
     try:
@@ -1184,10 +1177,6 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # IP allowlist; CSRF cookies are irrelevant because Stripe never
     # carries one.
     "/stripe/webhook",
-    # Invite-token bootstrap endpoint (token-first auth flow). Called from
-    # /token before any session exists to anchor a CSRF token against.
-    # Still protected by per-IP rate limiting (10 attempts / minute).
-    "/auth/validate-token",
     # Public status page subscribe/unsubscribe. Called from the unauthenticated
     # /status page (no session to anchor CSRF to). Email format is validated
     # and the endpoint is read-only for unknown addresses, so bot noise is
@@ -1286,9 +1275,9 @@ async def service_worker():
 
 
 
-# Note: /token, /register, /login, /auth/validate-token etc. are handled
-# by server_features.py (token-first flow at lines 1135+). Don't add stubs
-# here — they'd shadow the real handlers via FastAPI's first-match routing.
+# Note: /register, /auth/register, /auth/login etc. are handled by
+# server_features.py. Don't add stubs here — they'd shadow the real
+# handlers via FastAPI's first-match routing.
 
 
 def _generate_csrf_token() -> str:
@@ -1446,8 +1435,8 @@ def _csrf_field(request) -> str:
 _PUBLIC_PATHS = frozenset({
     "/", "/gate", "/health",
     # Token-first auth entry points (public because they bootstrap the flow)
-    "/token", "/register", "/login", "/invite", "/signup",
-    "/auth/validate-token", "/auth/register", "/auth/login", "/auth/logout",
+    "/register", "/login", "/signup",
+    "/auth/register", "/auth/login", "/auth/logout",
     "/auth/forgot-password", "/auth/reset-password",
     "/forgot-password", "/reset-password",
     # Legal + marketing
@@ -2398,7 +2387,7 @@ def _inject_watermark_layer(page: str, request) -> str:
 
     Only fires when:
       - the caller has a ``<body>`` tag (skips fragment responses), and
-      - the request resolves to an authenticated user (skips /, /gate, /token).
+      - the request resolves to an authenticated user (skips /, /gate, /login).
 
     Each layer carries per-request context: email + user_id + session
     suffix + masked IP go into the visible SVG; a deterministic 32-bit
@@ -3036,9 +3025,8 @@ def _sitemap_html() -> str:
             ("/subscribe", "Checkout flow", "Gate"),
             ("/support", "Support ticket", "Gate"),
             ("/contact", "Contact form", "Gate"),
-            ("/token", "Invite token gate (entry point)", "Public"),
-            ("/register", "Create account (requires pending_token)", "Gated"),
-            ("/login", "Sign in (requires pending_token)", "Gated"),
+            ("/register", "Create account", "Gate"),
+            ("/login", "Sign in", "Gate"),
             ("/forgot-password", "Reset password", "Gate"),
         ]),
         ("Dashboards", [
@@ -3052,7 +3040,6 @@ def _sitemap_html() -> str:
         ]),
         ("Admin", [
             ("/admin", "Admin panel", "Admin"),
-            ("/admin/tokens/generate", "Generate token", "Admin"),
             ("/admin/users/bulk", "Bulk user actions", "Admin"),
             ("/admin/security/bulk-fetches", "Bulk-fetch leaderboard", "Admin"),
             ("/admin/security/forensics", "Leak forensics tool", "Admin"),
@@ -3624,7 +3611,6 @@ async def seo_robots_txt(request: Request):
         "Disallow: /auth/\n"
         "Disallow: /dashboards\n"
         "Disallow: /dashboard/\n"
-        "Disallow: /token\n"
         "Disallow: /login\n"
         "Disallow: /signup\n"
         "Disallow: /register\n"
@@ -3821,48 +3807,19 @@ async def gate_submit(request: Request, token: str = Form("")):
     return response
 
 
-# ── Invite token entry (old gate, moved here) ───────────────────────────────
-
-
-@app.get("/invite", response_class=HTMLResponse)
-async def invite_page(request: Request):
-    """Legacy alias — the invite-token entry point is now /token."""
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/invite")
-    return RedirectResponse("/token", status_code=302)
-
-
-@app.post("/invite")
-async def invite_submit(request: Request, token: str = Form("")):
-    """Legacy alias — POST /invite is replaced by POST /auth/validate-token."""
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/invite")
-    return RedirectResponse("/token", status_code=302)
-
-
-def _login_token_section(invite_token: str, email_hint: str) -> str:
-    """Build the token section HTML for the login page (or empty for standalone login)."""
-    if not invite_token:
-        return ""
-    return (
-        f'<input type="hidden" name="invite_token" value="{html.escape(invite_token)}">'
-        f'<label for="invite_token_display">Invite Token</label>'
-        f'<input id="invite_token_display" type="text" value="{html.escape(invite_token)}" readonly class="token-display">'
-        f'<div class="email-hint">{html.escape(email_hint)}</div>'
-    )
+# Invite-token entry (/invite, /token) removed 2026-05-15 — the
+# perimeter is now /gate (SITE_ACCESS_TOKEN). Anyone past /gate may
+# create an account directly at /register.
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    """Token-first login: requires a valid `pending_token` cookie.
+    """Standalone email + password sign-in page.
 
-    If the user is already authenticated → go to /dashboard.
-    If no pending_token cookie → back to /token.
-    If the token is unclaimed → send them to /register instead.
-    Otherwise render login.html with the email pre-populated from the
-    invite token's linked account.
+    The /gate perimeter (SITE_ACCESS_TOKEN) protects the apex. Anyone
+    past the gate may attempt to sign in here directly — no invite
+    token, no pre-flight cookie. Already-authenticated visitors are
+    bounced to /dashboards.
     """
     sub = get_subdomain(request)
     if sub:
@@ -3873,20 +3830,6 @@ async def login_page(request: Request):
     if read_hardened_session(request) or current_user(request):
         return RedirectResponse("/dashboards", status_code=302)
 
-    # Must have come through /token
-    from auth.cookies import read_pending_token
-    raw_token = read_pending_token(request)
-    if not raw_token:
-        return RedirectResponse("/token", status_code=302)
-
-    invite = db.get_invite_token(raw_token)
-    if not invite or invite["status"] == "revoked":
-        return RedirectResponse("/token", status_code=302)
-    if invite["status"] != "claimed":
-        # Unclaimed token → account creation flow
-        return RedirectResponse("/register", status_code=302)
-
-    email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite["claimed_by_email"] else ""
     query_success = request.query_params.get("reset")
     success_html = ""
     if query_success == "success":
@@ -3895,22 +3838,122 @@ async def login_page(request: Request):
         "login",
         request=request,
         error="",
-        email_hint=email_hint,
+        email_hint="",
         raw_success=success_html,
     )
 
 
 @app.post("/login")
-async def login_submit(request: Request):
-    """Legacy POST /login form — replaced by POST /auth/login (JSON).
+async def login_submit(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+):
+    """Server-rendered form fallback for /login.
 
-    Any client still posting to this path is routed back to /token so
-    they re-enter through the token-first flow.
+    Mirrors the password-verification path of the JSON ``/auth/login``
+    endpoint (defined in server_features.py) — same per-IP + per-email
+    rate limits, same ``db.verify_password`` check, same hardened
+    session cookie. JS-enabled clients continue to use /auth/login via
+    fetch; this handler exists so JS-disabled browsers and curl-style
+    clients have a working flow as well.
+
+    CSRF: enforced by the global CSRFMiddleware (form ``_csrf`` field).
     """
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/login")
-    return RedirectResponse("/token", status_code=302)
+
+    ip = _get_client_ip(request)
+    if _auth_rate_limited(ip):
+        return RATE_LIMITED_RESPONSE
+    if _is_rate_limited(f"{ip}:login-auth", limit=10, window=300):
+        return render_page(
+            "login", request=request,
+            error="Too many attempts. Try again in a few minutes.",
+            email_hint="", raw_success="",
+        )
+
+    email = _bounded(email, FIELD_MAX["email"], "email").lower()
+    if len(password) > FIELD_MAX["password"]:
+        return render_page(
+            "login", request=request,
+            error="Invalid email or password.",
+            email_hint="", raw_success="",
+        )
+    if not email or not is_valid_email(email) or not password:
+        return render_page(
+            "login", request=request,
+            error="Invalid email or password.",
+            email_hint=email, raw_success="",
+        )
+
+    # Per-email rate limit (credential-stuffing defence across rotating IPs).
+    if _is_rate_limited(f"email:{email}:login", limit=5, window=600):
+        return render_page(
+            "login", request=request,
+            error="Too many attempts for this account. Try again later.",
+            email_hint=email, raw_success="",
+        )
+
+    user = db.get_user_by_email(email)
+    # Generic error message either way — don't leak whether the email exists.
+    if not user:
+        return render_page(
+            "login", request=request,
+            error="Invalid email or password.",
+            email_hint=email, raw_success="",
+        )
+    if user["suspended"]:
+        return RedirectResponse("/suspended", status_code=302)
+    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
+        log.info("login.failure: user_id=%d ip=%s", user["id"], ip)
+        return render_page(
+            "login", request=request,
+            error="Invalid email or password.",
+            email_hint=email, raw_success="",
+        )
+
+    # Opportunistic PBKDF2 iteration upgrade — mirrors /auth/login.
+    try:
+        if db.password_needs_rehash(password, user["password_hash"], user["password_salt"]):
+            new_hash, new_salt = db._hash_password(password)
+            with db.conn() as c:
+                c.execute(
+                    "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+                    (new_hash, new_salt, user["id"]),
+                )
+            log.info("login: upgraded PBKDF2 iterations for user_id=%d", user["id"])
+    except Exception as exc:
+        log.warning("login: rehash-on-login failed for user_id=%d: %s", user["id"], exc)
+
+    # Issue BOTH the legacy session and the hardened narve_session cookie,
+    # matching server_features._issue_hardened_session.
+    legacy_token = db.create_session(user["id"])
+    try:
+        db.mark_session_two_fa_verified(legacy_token)
+    except Exception:
+        pass
+    ua = request.headers.get("user-agent", "")[:256]
+    raw_hardened = db.create_user_session(
+        user["id"], ip_address=ip, user_agent=ua, legacy_token=legacy_token,
+    )
+
+    response = RedirectResponse("/dashboards", status_code=302)
+    set_session_cookie(response, legacy_token, request)
+    try:
+        from auth.cookies import set_session_cookie_hardened, clear_pending_token_cookie
+        set_session_cookie_hardened(response, raw_hardened, request)
+        clear_pending_token_cookie(response, request)
+    except Exception:
+        log.exception("login: hardened-session cookie issuance failed")
+    # Rotate CSRF on successful login.
+    try:
+        _set_csrf_cookie(response, _generate_csrf_token(), request)
+    except Exception:
+        pass
+    log.info("login: user_id=%d success ip=%s (form-post)", user["id"], ip)
+    return response
 
 
 # ── Two-factor authentication ────────────────────────────────────────────────
@@ -3925,107 +3968,83 @@ async def forgot_password_page(request: Request):
 
 
 @app.post("/forgot-password")
-async def forgot_password_submit(request: Request, invite_token: str = Form(""), email: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
+async def forgot_password_submit(request: Request, email: str = Form("")):
+    """Legacy form-post entry to the email-link reset flow.
+
+    The old token-gated reset path (which required an invite_token to
+    set a new password inline) was removed alongside the invite-token
+    system on 2026-05-15. This handler now mirrors the JSON
+    ``/auth/forgot-password`` endpoint: rate-limited, never reveals
+    whether the email is registered, and triggers a password-reset
+    email if a matching account exists. The actual email sender comes
+    from ``server_features`` so the two routes stay in lockstep.
+    """
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/forgot-password")
 
-    if _auth_rate_limited(_get_client_ip(request)):
+    ip = _get_client_ip(request)
+    if _auth_rate_limited(ip):
         return RATE_LIMITED_RESPONSE
 
-    invite_token = _bounded(invite_token, FIELD_MAX["invite_token"], "invite_token")
     email = _bounded(email, FIELD_MAX["email"], "email").lower()
-    if len(new_password) > FIELD_MAX["password"] or len(confirm_password) > FIELD_MAX["password"]:
-        return render_page("forgot-password", request=request, error="Invalid token or email.", success="")
+    generic_success = (
+        "If an account with that email exists, a password-reset link "
+        "has been sent. Check your inbox."
+    )
 
-    # Per-email rate limiting (3 reset attempts per email per hour, persistent).
-    # Prevents an attacker from spamming reset attempts on a single victim's
-    # account from many different IPs. The bucket is shared with any other
-    # password-reset endpoint (key: "email:{email}:forgot") so an attacker
-    # can't bypass the limit by alternating between endpoints.
-    #
-    # We only consume the bucket for syntactically-valid emails so random
-    # garbage doesn't pollute the rate-limit table.
-    ip = _get_client_ip(request)
-    # Per-IP cap (H17): prevent email-bombing a victim via rotating accounts
-    # on a single attacker IP. 10 attempts per 10 minutes per IP.
-    if _is_rate_limited(f"ip:{ip}:forgot", 10, 600):
-        log.warning("Password reset rate-limited by IP ip=%s", ip)
-        return render_page(
-            "forgot-password", request=request,
-            error="Too many password reset attempts. Please wait and try again later.",
-            success="",
-        )
-    if email and is_valid_email(email):
-        if _is_rate_limited(f"email:{email}:forgot", 3, 3600):
-            log.warning(
-                "Password reset rate-limited for email=%s ip=%s",
-                db.mask_email(email), ip,
-            )
-            # Generic error: don't reveal whether the rate limit was hit
-            # vs. some other validation failure.
-            return render_page(
-                "forgot-password", request=request,
-                error="Too many password reset attempts. Please wait and try again later.",
-                success="",
-            )
+    # Per-IP cap — mirrors /auth/forgot-password.
+    if _is_rate_limited(f"{ip}:forgot-password", limit=3, window=3600):
+        return render_page("forgot-password", request=request, error="", success=generic_success)
 
-    # Validate token exists and is claimed
-    invite = db.get_invite_token(invite_token) if invite_token else None
-    if not invite or invite["status"] != "claimed":
-        return render_page("forgot-password", request=request, error="Invalid or unclaimed token.", success="")
+    if not email or not is_valid_email(email):
+        return render_page("forgot-password", request=request, error="", success=generic_success)
 
-    # Verify email matches the token's linked account
-    if invite["claimed_by_email"] != email:
-        log.warning("Password reset: email mismatch for token. Provided: %s", db.mask_email(email))
-        return render_page("forgot-password", request=request, error="Email does not match the account linked to this token.", success="")
+    # Per-email cap (hashed key so raw email never persists).
+    import hashlib as _h
+    email_key = _h.sha256(email.encode()).hexdigest()[:24]
+    if _is_rate_limited(f"forgot-password:{email_key}", limit=3, window=3600):
+        return render_page("forgot-password", request=request, error="", success=generic_success)
 
-    # Find the user
-    user = db.get_user_by_id(invite["claimed_by_user_id"])
-    if not user:
-        # L14: don't confirm account existence via the reset flow.
-        return render_page(
-            "forgot-password", request=request,
-            error="",
-            success="If that account exists, a password-reset link has been sent.",
-        )
-    if user["suspended"]:
-        return RedirectResponse("/suspended", status_code=302)
+    user = db.get_user_by_email(email)
+    if user and not user["suspended"]:
+        try:
+            from server_features import _hash_reset_token, _APP_URL, enqueue_email
+            raw = secrets.token_urlsafe(32)
+            token_hash = _hash_reset_token(raw)
+            now = int(time.time())
+            with db.conn() as c:
+                c.execute(
+                    "INSERT INTO password_resets (user_id, token, token_hash, created_at, expires_at, used) "
+                    "VALUES (?, ?, ?, ?, ?, 0)",
+                    (user["id"], raw[:32], token_hash, now, now + 3600),
+                )
+            reset_url = f"{_APP_URL}/reset-password?token={raw}"
+            try:
+                await enqueue_email(
+                    to=email,
+                    template="password_reset",
+                    context={
+                        "reset_url": reset_url,
+                        "display_name": user["username"] or email.split("@")[0],
+                    },
+                    tags=["password_reset", "transactional"],
+                )
+            except Exception as exc:
+                log.warning("forgot-password: email enqueue failed: %s", exc)
+        except Exception:
+            log.exception("forgot-password: reset-token issuance failed for user_id=%d", user["id"])
 
-    # Validate passwords match
-    if new_password != confirm_password:
-        return render_page("forgot-password", request=request, error="Passwords don't match.", success="")
-
-    # Validate password strength
-    if len(new_password) < 12:
-        return render_page("forgot-password", request=request, error="Password must be at least 12 characters.", success="")
-    if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("forgot-password", request=request, error="Password must include uppercase, lowercase, number, and special character.", success="")
-
-    # Update password
-    pwd_hash, salt = db._hash_password(new_password)
-    with db.conn() as c:
-        c.execute("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", (pwd_hash, salt, user["id"]))
-
-    # Kill all existing sessions for this user (legacy + hardened).
-    with db.conn() as c:
-        c.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
-    try:
-        db.revoke_all_user_sessions(user["id"])
-    except Exception as exc:
-        log.error("Failed to revoke hardened sessions after reset for user_id=%d: %s", user["id"], exc)
-
-    log.info("Password reset for user %s (id=%d) via token", user["username"] or user["email"], user["id"])
-    return render_page("forgot-password", request=request, error="", success="Password reset successfully. All sessions have been logged out. You can now sign in with your new password.")
+    return render_page("forgot-password", request=request, error="", success=generic_success)
 
 
 @app.get("/signup", response_class=HTMLResponse)
 async def signup_page(request: Request):
-    """Legacy alias — registration now happens at /register (requires pending_token)."""
+    """Legacy alias — account creation now happens at /register."""
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-    return RedirectResponse("/token", status_code=302)
+    return RedirectResponse("/register", status_code=302)
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
@@ -4033,11 +4052,11 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
 
 @app.post("/signup")
 async def signup_submit(request: Request):
-    """Legacy POST /signup — replaced by POST /auth/register (JSON, requires pending_token)."""
+    """Legacy POST /signup — replaced by POST /auth/register (JSON)."""
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/signup")
-    return RedirectResponse("/token", status_code=302)
+    return RedirectResponse("/register", status_code=302)
 
 
 @app.get("/logout")
@@ -4070,7 +4089,7 @@ async def logout(request: Request):
             )
     except Exception:
         pass
-    response = RedirectResponse("/token", status_code=302)
+    response = RedirectResponse("/login", status_code=302)
     try:
         clear_session_cookie_hardened(response, request)
         clear_pending_token_cookie(response, request)
@@ -4131,7 +4150,7 @@ async def my_dashboards(request: Request):
         return await proxy_request(request, "/dashboards")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     # Pause gate — paused users can log in and manage billing, but the
     # dashboard cards are soft-locked with a single "Paused until X,
@@ -4475,7 +4494,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None):
         return await proxy_request(request, forwarded_path)
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     if dashboard and dashboard not in DASHBOARDS:
         dashboard = None
@@ -4584,7 +4603,7 @@ async def billing_action(request: Request, action: str = Form(...)):
         return await proxy_request(request, "/billing")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     parts = action.split(":")
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
@@ -4635,7 +4654,7 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
     """
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if plan not in ("trader", "pro"):
         return RedirectResponse("/billing", status_code=302)
     uid = user["user_id"]
@@ -4722,7 +4741,7 @@ async def preview_page(request: Request, dashboard_key: str):
 
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     if dashboard_key not in DASHBOARDS:
         return RedirectResponse("/dashboards", status_code=302)
@@ -4891,7 +4910,7 @@ async def profile_page(request: Request):
         return await proxy_request(request, "/profile")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     return render_page("profile", request=request, **_profile_context(user))
 
 
@@ -4921,7 +4940,7 @@ async def account_self_delete(
         return await proxy_request(request, "/account/delete")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     # Refuse while impersonating — deletion must be initiated by the real user.
     try:
@@ -5024,7 +5043,7 @@ async def profile_change_password(request: Request, current_password: str = Form
         return await proxy_request(request, "/profile/password")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     # AUDIT 2026-05-14 — 5 password-change attempts per hour per user.
     # Stops a compromised session from brute-forcing current_password
@@ -5036,7 +5055,7 @@ async def profile_change_password(request: Request, current_password: str = Form
 
     db_user = db.get_user_by_id(user["user_id"])
     if not db_user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     err_banner = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
     ok_banner = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
@@ -5401,8 +5420,7 @@ async def reset_password_submit(
     return render_page(
         "login", request=request,
         error="",
-        raw_token_section="",
-        raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
+        email_hint="",
         raw_success='<div class="auth-success">Password reset successfully. You can now sign in.</div>',
     )
 
@@ -5465,50 +5483,12 @@ def _build_admin_context(
 ) -> dict:
     """Build the template context for the admin page.
 
-    Perf audit #5: ``tokens_before`` / ``users_before`` are cursor
-    parameters wired into ``list_invite_tokens`` / ``list_all_users``.
-    ``None`` renders page 1; a numeric value fetches the page whose
-    ids are strictly less than the cursor (newest-first). The
-    'Load more' anchors below each list set these via query string.
+    Invite-token surface was removed 2026-05-15. ``new_token_str`` and
+    ``tokens_before`` remain as no-op parameters so stale callers don't
+    crash; only ``users_before`` is still a live cursor.
     """
-    tokens = db.list_invite_tokens(before_id=tokens_before)
     users = db.list_all_users(before_id=users_before)
-
-    # Token rows HTML
-    token_rows = []
-    for t in tokens:
-        status = t["status"]
-        if status == "unclaimed":
-            badge = '<span class="badge badge-active">Active</span>'
-        elif status == "claimed":
-            badge = '<span class="badge" style="background:var(--green-bg);color:var(--green)">Claimed</span>'
-        else:
-            badge = '<span class="badge" style="background:var(--red-bg);color:var(--red)">Revoked</span>'
-        prefix = html.escape(t["token"][:8]) + "..." + html.escape(t["token"][-4:])
-        meta_parts = []
-        if t["claimed_by_email"]:
-            meta_parts.append(f'User: {html.escape(t["claimed_by_email"])}')
-        if t["note"]:
-            meta_parts.append(html.escape(t["note"]))
-        import datetime as _dt
-        meta_parts.append(_dt.datetime.fromtimestamp(t["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M"))
-        if t["claimed_at"]:
-            meta_parts.append(f'Claimed {_dt.datetime.fromtimestamp(t["claimed_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d")}')
-        meta = " &middot; ".join(meta_parts)
-        revoke_btn = ""
-        if status == "unclaimed":
-            revoke_btn = (
-                f'<form method="post" action="/admin/tokens/revoke">'
-                f'<input type="hidden" name="token_id" value="{t["id"]}">'
-                f'<button type="submit" class="btn btn-danger">Revoke</button></form>'
-            )
-        token_rows.append(
-            f'<div class="admin-row token-row" data-status="{status}">'
-            f'<div class="admin-row-info"><div class="admin-row-main">'
-            f'<span class="token-mono">{prefix}</span>{badge}</div>'
-            f'<div class="admin-row-meta">{meta}</div></div>'
-            f'<div class="admin-row-actions">{revoke_btn}</div></div>'
-        )
+    token_rows: list = []
 
     # User rows HTML — with checkboxes and full management
     import datetime as _dt
@@ -5578,21 +5558,7 @@ def _build_admin_context(
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
             )
 
-            # Revoke token (admin+)
-            if u["invite_token_id"]:
-                detail_extra += (
-                    f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Revoke token for {uname}? They will not be able to log in.\')"'
-                    f' style="margin-top:8px">'
-                    f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
-                )
-
-            # Generate new token for user (admin+)
-            detail_extra += (
-                f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
-                f'onsubmit="return confirm(\'Generate a new invite token for {uname}?\')" style="margin-top:8px">'
-                f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
-            )
+            # Invite-token revoke / generate buttons removed 2026-05-15.
 
             # Impersonate (admin+) — prompts for reason, then POSTs.
             detail_extra += (
@@ -5666,29 +5632,17 @@ def _build_admin_context(
             f'</div></div></div>'
         )
 
-    # Stats
+    # Stats — invite-token counters removed 2026-05-15. The admin
+    # template's Users panel is now the default and no longer slots in
+    # the token banner.
     total_users = len(users)
-    active_tokens = sum(1 for t in tokens if t["status"] == "unclaimed")
-    claimed_tokens = sum(1 for t in tokens if t["status"] == "claimed")
-    revoked_tokens = sum(1 for t in tokens if t["status"] == "revoked")
     stat_cards = (
         f'<div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">{total_users}</div></div>'
-        f'<div class="stat-card"><div class="stat-label">Active Tokens</div><div class="stat-value" style="color:var(--amber)">{active_tokens}</div></div>'
-        f'<div class="stat-card"><div class="stat-label">Claimed Tokens</div><div class="stat-value" style="color:var(--green)">{claimed_tokens}</div></div>'
-        f'<div class="stat-card"><div class="stat-label">Revoked Tokens</div><div class="stat-value" style="color:var(--red)">{revoked_tokens}</div></div>'
     )
 
-    # New token banner
+    # ``new_token_banner`` is permanently empty — kept for template
+    # back-compat until admin.html is updated by the design agent.
     new_token_banner = ""
-    if new_token_str:
-        new_token_banner = (
-            f'<div class="new-token-banner">'
-            f'<div style="display:flex;align-items:center;justify-content:space-between">'
-            f'<div><div style="font-size:12px;color:var(--green);margin-bottom:4px">New token generated:</div>'
-            f'<span class="token-mono">{html.escape(new_token_str)}</span></div>'
-            f'<button onclick="copyToken(this)" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Copy</button>'
-            f'</div></div>'
-        )
 
     # Revenue tab only for super admins (level >= 2)
     if caller_level >= 2:
@@ -5698,18 +5652,8 @@ def _build_admin_context(
         revenue_tab = ""
         revenue_content = '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">Super admin access required.</div>'
 
-    # Perf audit #5: cursor-pagination 'Load more' anchors. Only emit
-    # when the current page was filled (default size 50 tokens / 100
-    # users); a partial page means there's nothing further. PK ids are
-    # ints from AUTOINCREMENT — cast to int defensively so the query
-    # string is strictly numeric (XSS-safe by construction).
-    if tokens and len(tokens) >= 50:
-        last_token_id = int(tokens[-1]["id"])
-        token_rows.append(
-            f'<div class="admin-row" style="justify-content:center">'
-            f'<a href="/admin?tokens_before={last_token_id}#panel-tokens" '
-            f'class="btn btn-primary-outline" style="font-size:12px">Load more tokens</a></div>'
-        )
+    # Perf audit #5: cursor-pagination 'Load more' anchor for users.
+    # The token cursor was removed alongside the invite-token surface.
     if users and len(users) >= 100:
         last_user_id = int(users[-1]["id"])
         user_rows.append(
@@ -5725,11 +5669,14 @@ def _build_admin_context(
     # user-controlled content lands here without escaping. If you add a
     # new raw_ key below, uphold this — or drop the raw_ prefix so
     # render_page escapes it for you.
+    # ``raw_token_rows`` / ``raw_new_token_banner`` were dropped when
+    # admin.html lost the Tokens tab. Local ``token_rows`` /
+    # ``new_token_banner`` are retained but unused so any reflective
+    # diff is obvious.
+    _ = token_rows, new_token_banner
     return {
-        "raw_token_rows": "".join(token_rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No tokens yet.</div></div></div>',
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
-        "raw_new_token_banner": new_token_banner,
         "raw_enquiry_rows": _build_enquiry_rows(),
         "raw_revenue_tab": revenue_tab,
         "raw_revenue_content": revenue_content,
@@ -5751,10 +5698,8 @@ def _build_enquiry_rows() -> str:
                 f'<form method="post" action="/admin/enquiries/{e["id"]}/read">'
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
             )
-        create_token_btn = (
-            f'<form method="post" action="/admin/enquiries/{e["id"]}/create-token">'
-            f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Create Token</button></form>'
-        )
+        # Create-token button removed 2026-05-15 — admins no longer mint
+        # invite tokens. Enquirers register through /register directly.
         rows.append(
             f'<div class="admin-row">'
             f'<div class="admin-row-info">'
@@ -5763,7 +5708,7 @@ def _build_enquiry_rows() -> str:
             f'<div style="font-size:13px;color:var(--text-secondary);margin:8px 0;line-height:1.5">{html.escape(e["message"][:300])}</div>'
             f'<div class="admin-row-meta">{ts}</div>'
             f'</div>'
-            f'<div class="admin-row-actions" style="display:flex;gap:6px">{create_token_btn}{mark_btn}</div></div>'
+            f'<div class="admin-row-actions" style="display:flex;gap:6px">{mark_btn}</div></div>'
         )
     return "".join(rows)
 
@@ -5918,61 +5863,9 @@ async def admin_page(
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
 
 
-@app.post("/admin/tokens/generate")
-async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
-    user = _require_admin_user(request)
-    # AUDIT #4 HIGH #2 — cap generate to 30/min per admin.
-    # Defence-in-depth: admin cookie compromise (XSS / stolen session /
-    # lapsed impersonation) shouldn't let an attacker mint hundreds of
-    # invite tokens in one second.
-    if _is_rate_limited(f"admin-tokens-gen:{user['user_id']}", 30, 60):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many token generations. Try again in a minute.",
-            headers={"Retry-After": "60"},
-        )
-    new_token = db.create_invite_token(note.strip(), target_email=target_email.strip())
-    log.info("Admin %s generated invite token: %s... (target: %s)", user["email"], new_token[:8], target_email.strip() or "none")
-    try:
-        from security import audit as _audit
-        _audit.log_action(
-            admin_user_id=user["user_id"], admin_email=user["email"],
-            action=_audit.AuditAction.TOKEN_GENERATE,
-            target_type="token", target_id=new_token[:8],
-            target_description=(target_email.strip() or note.strip() or None),
-            after={"note": note.strip(), "target_email": target_email.strip()},
-            request=request,
-        )
-    except Exception:
-        pass
-    ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1))
-    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
-
-
-@app.post("/admin/tokens/revoke")
-async def admin_revoke_token(request: Request, token_id: int = Form(0)):
-    user = _require_admin_user(request)
-    # AUDIT #4 HIGH #2 — same ceiling as generate. Blanket-revoke at
-    # line rate would clear every pending invite during an attack window.
-    if _is_rate_limited(f"admin-tokens-rev:{user['user_id']}", 30, 60):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many token revocations. Try again in a minute.",
-            headers={"Retry-After": "60"},
-        )
-    db.revoke_invite_token(token_id)
-    log.info("Admin %s revoked token id=%d", user["email"], token_id)
-    try:
-        from security import audit as _audit
-        _audit.log_action(
-            admin_user_id=user["user_id"], admin_email=user["email"],
-            action=_audit.AuditAction.TOKEN_REVOKE,
-            target_type="token", target_id=token_id,
-            request=request,
-        )
-    except Exception:
-        pass
-    return RedirectResponse("/admin", status_code=302)
+# /admin/tokens/{generate,revoke} removed 2026-05-15 alongside the
+# invite-token entry point. Admins no longer mint invite tokens; new
+# accounts go through /register directly behind the /gate perimeter.
 
 
 @app.post("/admin/users/{user_id}/promote")
@@ -6072,21 +5965,8 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
     return RedirectResponse("/admin", status_code=302)
 
 
-@app.post("/admin/enquiries/{enquiry_id}/create-token")
-async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
-    admin = _require_admin_user(request)
-    enquiry = db.get_enquiry_by_id(enquiry_id)
-    if not enquiry:
-        raise HTTPException(status_code=404, detail="Enquiry not found")
-    email = enquiry["email"]
-    new_token = db.create_invite_token(
-        note=f"From enquiry: {email}",
-        target_email=email,
-    )
-    db.mark_enquiry_read(enquiry_id)
-    log.info("Admin %s created token %s... for enquiry %d (%s)", admin["email"], new_token[:8], enquiry_id, email)
-    ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1))
-    return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_nav_role=_role_badge(admin), _is_admin=admin.get("is_admin"), **ctx)
+# /admin/enquiries/{id}/create-token removed 2026-05-15 — invite-token
+# minting is no longer part of the auth flow.
 
 
 # ── Admin: Logs section ───────────────────────────────────────────────────
@@ -6313,54 +6193,10 @@ async def admin_change_email(request: Request, user_id: int, new_email: str = Fo
     return RedirectResponse("/admin", status_code=302)
 
 
-@app.post("/admin/users/{user_id}/revoke-token")
-async def admin_revoke_user_token(request: Request, user_id: int):
-    admin = _require_admin_user(request)
-    if not _can_manage_user(admin, user_id):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    user = db.get_user_by_id(user_id)
-    if user and user["invite_token_id"]:
-        db.revoke_invite_token(user["invite_token_id"])
-    log.info("Super admin %s revoked token for user %d", admin["email"], user_id)
-    try:
-        from security import audit as _audit
-        _audit.log_action(
-            admin_user_id=admin["user_id"], admin_email=admin["email"],
-            action=_audit.AuditAction.TOKEN_REVOKE,
-            target_type="user", target_id=user_id,
-            target_description=user["email"] if user else None,
-            request=request, notes="revoke_from_user",
-        )
-    except Exception:
-        pass
-    return RedirectResponse("/admin", status_code=302)
-
-
-@app.post("/admin/users/{user_id}/new-token")
-async def admin_new_token_for_user(request: Request, user_id: int):
-    admin = _require_admin_user(request)
-    if not _can_manage_user(admin, user_id):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
-    user = db.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    new_token = db.create_invite_token(f"Replacement token for {user['username'] or user['email']}")
-    db.claim_invite_token(new_token, user_id, user["email"])
-    with db.conn() as c:
-        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?", (new_token, user_id))
-    log.info("Super admin %s generated new token %s... for user %d", admin["email"], new_token[:8], user_id)
-    try:
-        from security import audit as _audit
-        _audit.log_action(
-            admin_user_id=admin["user_id"], admin_email=admin["email"],
-            action=_audit.AuditAction.TOKEN_GENERATE,
-            target_type="user", target_id=user_id,
-            target_description=user["email"],
-            request=request, notes="replacement_token",
-        )
-    except Exception:
-        pass
-    return RedirectResponse("/admin", status_code=302)
+# /admin/users/{id}/revoke-token and /new-token removed 2026-05-15
+# along with the rest of the invite-token surface. The invite_tokens
+# table is retained read-only for the audit log; nothing in this file
+# writes to it any more.
 
 
 @app.post("/admin/users/{user_id}/grant")
@@ -7314,7 +7150,7 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     # Perf audit #3: cache the bundle of DB reads that drives /settings (60s).
     # `subs` powers the default-dashboard <select>; the rest (market connections,
@@ -7621,7 +7457,7 @@ async def settings_disconnect_market(request: Request, source: str):
         return await proxy_request(request, f"/settings/disconnect/{source}")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if source in ("polymarket", "kalshi"):
         db.disconnect_market_credential(user["user_id"], source)
         db.delete_user_positions(user["user_id"], platform=source)
@@ -7643,7 +7479,7 @@ async def settings_integrations_page(request: Request):
     The page is read-only on the server — all state lives behind the
     market_routes JSON endpoints (/api/markets/connections,
     /api/user/bankroll). The template is a shell; settings_integrations.js
-    hydrates it on load. Auth is required (redirect to /token), but the
+    hydrates it on load. Auth is required (redirect to /login), but the
     Trading Add-on check happens client-side via the JSON endpoints'
     403 response — that way users without the add-on still see the page
     and a clear "add-on required" toast rather than a 403 wall.
@@ -7653,7 +7489,7 @@ async def settings_integrations_page(request: Request):
         return await proxy_request(request, "/settings/integrations")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     _username = user.get("username", user["email"])
     _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
@@ -7686,7 +7522,7 @@ async def settings_trading_addon_page(request: Request):
         return await proxy_request(request, "/settings/trading-addon")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     _username = user.get("username", user["email"])
     _admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
@@ -7873,7 +7709,7 @@ async def settings_save(
         return await proxy_request(request, "/settings")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
     # Blank → clear preference. Otherwise must be a real dashboard key the
     # user has access to (admin bypasses the subscription check).
@@ -8252,7 +8088,7 @@ async def signal_search_page(request: Request):
         return await proxy_request(request, "/signal-search")
     user = current_user(request)
     if not user:
-        return RedirectResponse("/token", status_code=302)
+        return RedirectResponse("/login", status_code=302)
     if not user.get("is_admin"):
         # Perf audit #3: cache the Pro-tier gate (30s — more dynamic, falls
         # back on miss). Builder returns the access verdict as a small dict so
