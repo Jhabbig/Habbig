@@ -16,13 +16,27 @@ under any estimation error. Half and quarter Kelly are first-class in
 the API so the frontend can surface three sizes side by side without
 re-asking the server.
 
-No network calls; no DB reads. Callers pass in the user's bankroll
-explicitly (kept in ``users.bankroll_usd`` but fetched separately so
-this module stays unit-testable).
+Bankroll storage
+----------------
+The user's bankroll lives in ``users.bankroll`` (the column added by
+migration 017 and read/written by ``queries/markets.py``,
+``market_routes.py``, ``server.py`` settings/dashboard renderers, and
+every existing test). This module used to read/write a parallel
+``users.bankroll_usd`` column (migration 062), which silently diverged
+from the canonical column — see ``audits/audit_kelly.md`` CRIT-1.
+
+Migration 195 backfills any non-NULL ``bankroll_usd`` into ``bankroll``
+(where bankroll IS NULL) and drops the ``bankroll_usd`` column via the
+SQLite-rebuild dance. After that migration there is exactly one
+bankroll column on ``users`` and exactly one read/write path.
+
+No network calls; this module's DB helpers are tiny shims around the
+canonical column so the calculator stays unit-testable.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 
@@ -68,11 +82,33 @@ def sizing_table(
     Used by both the ``/api/kelly/calculate`` route and the server-side
     dashboard renderer. Everything returned rounds to cents; the
     frontend doesn't need to format.
+
+    NaN / +/-Inf inputs (bankroll OR either probability) are coerced to
+    the zero-bankroll response — they bypass ``<=`` comparisons in
+    Python and would otherwise poison every numeric field downstream,
+    producing literal ``NaN`` / ``Infinity`` tokens in the JSON
+    response that browsers' ``JSON.parse`` rejects. See
+    ``audits/audit_kelly.md`` HIGH-1.
     """
-    if bankroll_usd <= 0:
+    # HIGH-1: filter non-finite floats before any arithmetic so NaN/Inf
+    # can't propagate into stake / edge / max_profit. Treat any
+    # non-finite input as "no bankroll" and surface the zero-bankroll
+    # response — the safest fallback for a calculator UI.
+    if (
+        not math.isfinite(bankroll_usd)
+        or not math.isfinite(our_prob)
+        or not math.isfinite(market_prob)
+        or bankroll_usd <= 0
+    ):
+        # Guard the edge_pct computation too: if either probability is
+        # non-finite we can't compute a meaningful edge, so emit 0.0.
+        if math.isfinite(our_prob) and math.isfinite(market_prob):
+            edge_pct = round(100.0 * (our_prob - market_prob), 2)
+        else:
+            edge_pct = 0.0
         return {
             "bankroll_usd": 0.0,
-            "edge_pct": round(100.0 * (our_prob - market_prob), 2),
+            "edge_pct": edge_pct,
             "full_kelly_pct": 0.0,
             "full": _zero_size(),
             "half": _zero_size(),
@@ -118,24 +154,52 @@ def _zero_size() -> dict:
 
 
 def get_user_bankroll(user_id: int) -> float:
-    """Read ``users.bankroll_usd`` for a user. 0 means unset."""
+    """Read ``users.bankroll`` for a user. 0 means unset.
+
+    Returns a plain ``float`` so callers stay schema-agnostic; for the
+    dict shape (with ``kelly_fraction``) use ``db.get_user_bankroll``.
+    Reads the canonical column — see migration 195 for the
+    ``bankroll_usd`` -> ``bankroll`` consolidation.
+    """
     import db
     with db.conn() as c:
         row = c.execute(
-            "SELECT bankroll_usd FROM users WHERE id = ?", (user_id,),
+            "SELECT bankroll FROM users WHERE id = ?", (user_id,),
         ).fetchone()
     if not row:
         return 0.0
     try:
-        return float(row["bankroll_usd"] or 0)
-    except (TypeError, ValueError, KeyError):
+        value = float(row["bankroll"] or 0)
+    except (TypeError, ValueError, IndexError, KeyError):
         return 0.0
+    # Defence in depth: refuse to propagate non-finite floats out of
+    # the data layer. A NULL or absent column would already be 0 via
+    # the ``or 0`` above; this catches the impossible-but-not-yet-
+    # impossible case where a stray NaN/Inf made it into the column
+    # before migration 195 landed.
+    if not math.isfinite(value):
+        return 0.0
+    return value
 
 
 def set_user_bankroll(user_id: int, bankroll_usd: float) -> None:
+    """Write ``users.bankroll`` for a user.
+
+    Negatives are clamped to 0; NaN/Inf are rejected with ``ValueError``
+    so a misbehaving caller can't poison the column. The route layer
+    already validates the same shape (``portfolio/routes.py``), but
+    this defence-in-depth keeps internal callers (cron, admin shell,
+    backfills) honest. See ``audits/audit_kelly.md`` HIGH-3.
+
+    Writes the canonical ``bankroll`` column — see migration 195.
+    """
     import db
+    v = float(bankroll_usd)
+    if not math.isfinite(v):
+        raise ValueError(f"bankroll must be finite, got {v!r}")
+    v = max(0.0, v)
     with db.conn() as c:
         c.execute(
-            "UPDATE users SET bankroll_usd = ? WHERE id = ?",
-            (max(0.0, float(bankroll_usd)), user_id),
+            "UPDATE users SET bankroll = ? WHERE id = ?",
+            (v, user_id),
         )

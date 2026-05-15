@@ -430,6 +430,16 @@ def register(app) -> None:
         return JSONResponse(table)
 
     # ── Bankroll setter ─────────────────────────────────────────────────
+    # Writes the canonical ``users.bankroll`` column via
+    # ``kelly.set_user_bankroll`` (post-CRIT-1 fix, audits/audit_kelly.md).
+    # The audit found this surface used to write to a parallel
+    # ``users.bankroll_usd`` column while the rest of the codebase
+    # (queries/markets.py, market_routes.py, server.py renderers, all
+    # tests) read/wrote ``users.bankroll``, so the user's bankroll
+    # silently diverged depending on which endpoint they hit. Migration
+    # 195 reconciles the columns; this handler now writes the same
+    # column the Kelly calculator and the trading-addon settings page
+    # read.
     @app.post("/api/kelly/bankroll")
     async def api_set_bankroll(request: Request):
         user = _require_trading_addon(request)
@@ -442,6 +452,16 @@ def register(app) -> None:
         except (TypeError, ValueError):
             return JSONResponse(
                 {"error": "bankroll_usd must be a number"}, status_code=400,
+            )
+        # HIGH-1: reject NaN / +/-Inf at the route boundary so the data
+        # layer never sees a non-finite write. The module-level
+        # ``kelly.set_user_bankroll`` also rejects with ``ValueError``,
+        # but a 400 here gives the client a useful error instead of a
+        # 500.
+        import math
+        if not math.isfinite(bankroll):
+            return JSONResponse(
+                {"error": "bankroll_usd must be finite"}, status_code=400,
             )
         if bankroll < 0 or bankroll > 10_000_000:
             return JSONResponse(
