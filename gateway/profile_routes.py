@@ -37,7 +37,26 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 import db
 from queries import profile as profile_q
 from queries import predictions as predictions_q
+from security.rate_limiter import rate_limit
 from sidebar import render_sidebar
+
+# Pillow decompression-bomb guard (audit HIGH, 2026-05-15). Pillow's
+# default ``MAX_IMAGE_PIXELS`` is ~89M pixels — well below what we
+# care about, but it only raises a warning, not an error. A
+# maliciously-crafted PNG inside a 2 MB envelope can balloon to
+# multi-GB on decode and OOM the worker. Lowering the cap to ~16M
+# (4096×4096 worth of pixels) covers every legitimate avatar (we
+# downscale to 200×200) and trips a hard
+# ``Image.DecompressionBombError`` for anything larger. Set at
+# import time so every route that opens an image — including any
+# future avatar/og card flow — inherits the cap.
+try:
+    from PIL import Image as _PIL_Image  # noqa: F401 — import for side effect
+    _PIL_Image.MAX_IMAGE_PIXELS = 16_000_000
+except Exception:
+    # Pillow optional at module import time; the avatar handler
+    # surfaces the missing-Pillow error with a 500 anyway.
+    pass
 
 
 log = logging.getLogger("gateway.profile_routes")
@@ -444,7 +463,21 @@ async def api_settings_profile(request: Request):
 # ── /api/settings/avatar ───────────────────────────────────────────────
 
 
+@rate_limit(limit=5, window_seconds=60, key_func=lambda r: f"avatar-upload:{getattr(r.state, 'user_id', 'anon')}")
 async def api_settings_avatar(request: Request, file: Optional[UploadFile] = None):
+    """Avatar upload (audit HIGH, 2026-05-15).
+
+    Hardened against the Pillow-decompression-bomb class of attacks:
+      * Module-level ``Image.MAX_IMAGE_PIXELS`` cap (~16M pixels) so a
+        2 MB PNG that decodes to 50k×50k can't OOM the worker.
+      * ``DecompressionBombError`` AND ``DecompressionBombWarning``
+        intercepted explicitly (Pillow only raises on >2× the cap;
+        anything 1×–2× of the cap is a Warning by default).
+      * Per-user @rate_limit(5/60s) so a single attacker can't replay
+        a borderline-legal image to keep the CPU pegged. Bucket key is
+        ``avatar-upload:{user_id}`` (lambda above) so the budget is
+        per-account, not shared with the rest of the auth pool.
+    """
     srv = _srv()
     user = srv.current_user(request) if hasattr(srv, "current_user") else None
     if not user:
@@ -476,14 +509,37 @@ async def api_settings_avatar(request: Request, file: Optional[UploadFile] = Non
 
     try:
         from PIL import Image
+        # Pillow 9+ surfaces DecompressionBombError. The Warning
+        # variant fires when the image is between 1× and 2× of the
+        # cap; we promote it to a rejection via the filterwarnings
+        # context below.
+        try:
+            from PIL.Image import DecompressionBombError
+        except ImportError:
+            class DecompressionBombError(Exception):
+                pass
+        try:
+            from PIL.Image import DecompressionBombWarning
+        except ImportError:
+            class DecompressionBombWarning(UserWarning):
+                pass
     except ImportError:
         log.error("Pillow not installed — avatar upload disabled")
         return JSONResponse({"error": "server_misconfigured"}, status_code=500)
 
+    import warnings
     try:
-        img = Image.open(io.BytesIO(raw))
-        img.verify()  # detect malformed images before we re-open for resize
-        img = Image.open(io.BytesIO(raw))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DecompressionBombWarning)
+            img = Image.open(io.BytesIO(raw))
+            img.verify()  # detect malformed images before we re-open for resize
+            img = Image.open(io.BytesIO(raw))
+    except DecompressionBombError as exc:
+        log.warning("avatar reject (decompression bomb error) user=%s: %s", user["user_id"], exc)
+        return JSONResponse({"error": "image_too_large"}, status_code=413)
+    except DecompressionBombWarning as exc:
+        log.warning("avatar reject (decompression bomb warning) user=%s: %s", user["user_id"], exc)
+        return JSONResponse({"error": "image_too_large"}, status_code=413)
     except Exception as exc:
         log.info("avatar reject (decode) user=%s: %s", user["user_id"], exc)
         return JSONResponse({"error": "bad_image"}, status_code=400)
