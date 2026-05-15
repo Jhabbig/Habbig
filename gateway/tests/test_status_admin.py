@@ -173,7 +173,8 @@ class TestAdminAccessControl(unittest.TestCase):
         client = TestClient(server.app)
         client.cookies.set("narve_gate_access", "granted")
         r = client.get("/admin/status", follow_redirects=False)
-        # Either redirect to /token or 403 — anything except 200 is fine.
+        # Either redirect to /login or 403 — anything except 200 is fine.
+        # (The /token gate was removed in the 2026-05-15 refactor.)
         self.assertNotEqual(r.status_code, 200,
                             "admin page should not render without admin auth")
 

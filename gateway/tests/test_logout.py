@@ -1,10 +1,9 @@
 """Tests for POST /auth/logout and the legacy GET /logout.
 
-Spec requirements:
+After the 2026-05-15 auth refactor:
   - POST /auth/logout revokes session in DB
   - POST /auth/logout clears session cookie
-  - POST /auth/logout clears pending_token cookie
-  - Post-logout GET /dashboards → redirect to /token
+  - Post-logout GET /dashboards → redirect to /login (not the removed /token)
   - Revoked session cannot be used
 """
 
@@ -74,8 +73,9 @@ class TestLogoutHttpSurface(unittest.TestCase):
     def test_legacy_get_logout_exists_and_redirects(self):
         r = client.get("/logout", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        # Legacy logout redirects to /token (not /gate or /login)
-        self.assertEqual(r.headers["location"], "/token")
+        # Legacy logout redirects to /login (the direct entry point after
+        # the 2026-05-15 refactor removed the /token gate).
+        self.assertEqual(r.headers["location"], "/login")
 
     def test_post_logout_without_session_returns_ok(self):
         """Idempotent: logging out when you're already logged out is fine."""
@@ -151,8 +151,7 @@ class TestLogoutRateLimit(unittest.TestCase):
 
 class TestPostLogoutAccess(unittest.TestCase):
     """After revoking a session, the next protected-route hit must bounce
-    to /token. We exercise this at the DB layer + middleware layer rather
-    than via TestClient cookies (which have CSRF quirks)."""
+    to /login (the direct entry point after the 2026-05-15 refactor)."""
 
     def test_dashboard_access_after_revoke_is_blocked(self):
         # Create a user + hardened session
@@ -162,19 +161,18 @@ class TestPostLogoutAccess(unittest.TestCase):
         # Attach the cookie manually via a TestClient sub-request
         client2 = TestClient(server.app)
         client2.cookies.set("narve_session", raw)
-        # Authenticated request: should NOT redirect to /token
+        # Authenticated request: should NOT redirect to /login
         r_before = client2.get("/dashboards", follow_redirects=False)
-        # Accept any non-/token response; we just want to prove auth held
         if r_before.status_code in (302, 307):
-            self.assertNotEqual(r_before.headers["location"], "/token",
+            self.assertNotEqual(r_before.headers["location"], "/login",
                                 "user should have been recognised before revoke")
 
         # Revoke and retry
         db.revoke_user_session_by_token(raw)
         r_after = client2.get("/dashboards", follow_redirects=False)
         if r_after.status_code in (302, 307):
-            self.assertEqual(r_after.headers["location"], "/token",
-                             "revoked session should bounce to /token")
+            self.assertEqual(r_after.headers["location"], "/login",
+                             "revoked session should bounce to /login")
 
 
 if __name__ == "__main__":

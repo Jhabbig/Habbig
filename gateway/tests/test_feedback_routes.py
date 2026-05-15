@@ -254,7 +254,9 @@ class TestPublicList(_Base):
     def test_unauth_redirected_to_login(self):
         r = client.get("/feedback", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertIn("/token", r.headers["location"])
+        # 2026-05-15 — unauth redirects now land on /login (the /token
+        # gate was removed).
+        self.assertIn("/login", r.headers["location"])
 
 
 # ── Detail page ──────────────────────────────────────────────────────────────

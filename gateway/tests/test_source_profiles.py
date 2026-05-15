@@ -146,8 +146,9 @@ class TestRobotsTxt(unittest.TestCase):
         self.assertIn("User-agent: *", r.text)
         self.assertIn("Disallow: /admin/", r.text)
         self.assertIn("Disallow: /api/", r.text)
-        # /token is the gate entry point in the token-first auth flow.
-        self.assertIn("Disallow: /token", r.text)
+        # /token was removed in the 2026-05-15 auth refactor; /login is
+        # the direct entry point and stays disallowed for crawlers.
+        self.assertIn("Disallow: /login", r.text)
         self.assertIn("Sitemap:", r.text)
 
     def test_robots_allows_public_pages(self):

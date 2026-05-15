@@ -104,7 +104,8 @@ class TestPageRender(_DbIsolation):
     def test_requires_login(self):
         r = client.get("/settings/trading-addon", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertIn("/token", r.headers["location"])
+        # 2026-05-15 — direct /login redirect (the /token gate was removed).
+        self.assertIn("/login", r.headers["location"])
 
     def test_renders_when_subscribed(self):
         slug = _unique("ta_render")

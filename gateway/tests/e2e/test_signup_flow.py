@@ -1,5 +1,10 @@
 """Signup: gate → invite token → register → session.
 
+SKIPPED 2026-05-15: This flow targets the removed invite-token gate
+(/auth/validate-token + pending_token cookie + /auth/register chain).
+The new direct /login flow doesn't have an equivalent multi-step
+signup yet; once it does, a sister flow file will cover it.
+
 Every step asserts its own invariants so a failure report names the
 exact step that broke, not just "signup failed".
 """
@@ -9,11 +14,16 @@ from __future__ import annotations
 USES_TESTDB = True
 
 import time
+import pytest
 from tests import _testdb  # noqa: F401
 
 import db
 
 
+@pytest.mark.skip(
+    "invite-token signup flow removed 2026-05-15; "
+    "direct /login flow signup coverage TBD"
+)
 def test_signup_flow(
     client,
     pass_gate,

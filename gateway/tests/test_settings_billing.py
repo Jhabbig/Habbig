@@ -681,7 +681,8 @@ class TestPaywallAndAuth(_DbIsolation):
     def test_settings_billing_requires_login(self):
         r = client.get("/settings/billing", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertIn("/token", r.headers["location"])
+        # 2026-05-15 — direct /login redirect (the /token gate was removed).
+        self.assertIn("/login", r.headers["location"])
 
     def test_invoices_endpoint_requires_login(self):
         r = client.get("/api/v1/billing/invoices")

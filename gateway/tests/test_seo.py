@@ -117,7 +117,10 @@ class TestRobots(unittest.TestCase):
             self.assertIn(f"Allow: {path}", ROBOTS_TXT)
 
     def test_disallows_private_paths(self):
-        for path in ("/dashboard/", "/admin/", "/api/", "/login", "/token"):
+        # /token is no longer listed here — the invite-token gate was
+        # removed in the 2026-05-15 refactor. /login is the direct
+        # entry point and stays disallowed.
+        for path in ("/dashboard/", "/admin/", "/api/", "/login"):
             self.assertIn(f"Disallow: {path}", ROBOTS_TXT)
 
     def test_sitemap_reference(self):

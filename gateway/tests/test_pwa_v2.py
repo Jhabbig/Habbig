@@ -56,7 +56,7 @@ class TestOfflineRoute(unittest.TestCase):
 
 
 class TestSettingsOfflineRoute(unittest.TestCase):
-    """/settings/offline: authed; anon users bounce to /token."""
+    """/settings/offline: authed; anon users bounce to /login."""
 
     def setUp(self):
         self.client = TestClient(server.app)
@@ -67,13 +67,14 @@ class TestSettingsOfflineRoute(unittest.TestCase):
             server.GATE_COOKIE_NAME, server._mint_gate_cookie_value(),
         )
 
-    def test_anon_redirects_to_token(self):
+    def test_anon_redirects_to_login(self):
         # Gate is granted but no user session → offline route redirects
-        # to /token. Accept /token OR /gate to stay resilient if the
+        # to /login (after the 2026-05-15 refactor that removed the
+        # /token gate). Accept /login OR /gate to stay resilient if the
         # gate middleware tightens in future (both mean "not signed in").
         r = self.client.get("/settings/offline", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertIn(r.headers.get("location"), ("/token", "/gate"))
+        self.assertIn(r.headers.get("location"), ("/login", "/gate"))
 
     def test_authed_user_renders(self):
         uid = db.create_user("pwa-offline@test.com", "InitialPass123!", username="pwaoffline")

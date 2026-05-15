@@ -1,7 +1,7 @@
 """Tests for /settings/integrations — the dedicated UI surface for
 Polymarket wallet, Kalshi token, and bankroll.
 
-The GET page itself is a thin shell: it requires auth (redirect to /token)
+The GET page itself is a thin shell: it requires auth (redirect to /login)
 and renders three settings-cards that hydrate client-side. Most of the
 behaviour lives behind market_routes' JSON endpoints
 (/api/markets/connections, /api/markets/connect/{src}, /api/user/bankroll),
@@ -167,7 +167,8 @@ class TestPageRender(_DbIsolation):
     def test_requires_login(self):
         r = client.get("/settings/integrations", follow_redirects=False)
         self.assertIn(r.status_code, (302, 307))
-        self.assertIn("/token", r.headers["location"])
+        # 2026-05-15 — direct /login redirect (the /token gate was removed).
+        self.assertIn("/login", r.headers["location"])
 
     def test_renders_three_cards_for_authed_user(self):
         slug = _unique("si_render")
