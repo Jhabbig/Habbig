@@ -81,7 +81,7 @@
           <p class="invite-sub">
             We just sent a single-use access token to
             <strong>${escapeHTML(email)}</strong>. Enter it at
-            <a href="/token">narve.ai/token</a> to create your account.
+            <a href="/gate">narve.ai/gate</a> to create your account.
           </p>
           <p class="invite-foot">Didn't arrive within 5 minutes? Check your spam folder, then ask your inviter to regenerate the link.</p>
         `;

@@ -34,7 +34,7 @@
     <nav class="landing-nav">
       <a href="#features">{{ t("landing.nav.dashboards") }}</a>
       <a href="/pricing">{{ t("landing.nav.pricing") }}</a>
-      <a href="/token" class="client-login-link">{{ t("nav.sign_in") }}</a>
+      <a href="/gate" class="client-login-link">{{ t("nav.sign_in") }}</a>
       <button class="mobile-menu-toggle" onclick="document.getElementById('mobile-nav').classList.add('open')" aria-label="{{ t('landing.nav.open_menu') }}">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
@@ -49,7 +49,7 @@
       </button>
       <a href="#features" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("landing.nav.dashboards") }}</a>
       <a href="/pricing" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("landing.nav.pricing") }}</a>
-      <a href="/token" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("nav.sign_in") }}</a>
+      <a href="/gate" onclick="document.getElementById('mobile-nav').classList.remove('open')">{{ t("nav.sign_in") }}</a>
     </div>
   </div>
 
@@ -63,7 +63,7 @@
       <p class="landing-sub">{{ t("landing.hero.sub") }}</p>
       <div class="landing-cta-row">
         <a href="/pricing" class="landing-primary-cta" style="color:var(--interactive-text) !important">{{ t("landing.hero.cta_primary") }}</a>
-        <a href="/token" class="landing-secondary-cta">{{ t("landing.hero.cta_login") }}</a>
+        <a href="/gate" class="landing-secondary-cta">{{ t("landing.hero.cta_login") }}</a>
 
       </div>
       <div class="landing-trust">
@@ -146,7 +146,7 @@
       <div>
         <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:14px">Account</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <a href="/token" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Sign In</a>
+          <a href="/gate" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Sign In</a>
           <a href="/subscribe" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Subscribe</a>
           <a href="/support" style="font-size:13px;color:var(--text-secondary);text-decoration:none">Support</a>
         </div>

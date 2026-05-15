@@ -24,18 +24,20 @@
 
   <div class="auth-card">
     <h1 class="auth-hero">Sign in</h1>
-    <p class="auth-sub">Welcome back. Enter your password to reach your dashboards.</p>
+    <p class="auth-sub">Welcome back. Sign in to reach your dashboards.</p>
 
     <div class="auth-success" id="success-msg">{{ raw_success }}</div>
+    <div class="auth-error" id="form-error">{{ error }}</div>
 
     <form class="auth-form" id="login-form" onsubmit="return submitLogin(event)">
       {{ raw_csrf_field }}
 
       <div>
         <label for="email">Email address</label>
-        <input class="auth-input" id="email" name="email" type="text" readonly
-               value="{{ email_hint }}">
-        <div class="auth-hint">This account is linked to your token.</div>
+        <input class="auth-input" id="email" name="email" type="email"
+               required autocomplete="email" autofocus
+               placeholder="you@company.com">
+        <div class="auth-field-error" id="email-err"></div>
       </div>
 
       <div>
@@ -45,16 +47,21 @@
         </div>
         <div class="pw-wrap">
           <input class="auth-input" id="password" name="password" type="password"
-                 required autocomplete="current-password" autofocus>
+                 required autocomplete="current-password">
           <button class="pw-toggle" type="button" onclick="togglePw()" aria-label="Show password">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
           </button>
         </div>
-        <div class="auth-field-error" id="pw-err">{{ error }}</div>
+        <div class="auth-field-error" id="pw-err"></div>
       </div>
 
       <button class="auth-btn" id="login-btn" type="submit">Sign in</button>
     </form>
+
+    <p class="auth-footer-note">
+      Don't have an account?
+      <a class="auth-link-serif" href="/register">Create one</a>
+    </p>
   </div>
 
 <script>
@@ -70,8 +77,12 @@ function getCsrf() {
 function submitLogin(ev) {
   ev.preventDefault();
   var btn = document.getElementById('login-btn');
-  var err = document.getElementById('pw-err');
-  err.textContent = '';
+  var formErr = document.getElementById('form-error');
+  var emailErr = document.getElementById('email-err');
+  var pwErr = document.getElementById('pw-err');
+  formErr.textContent = '';
+  emailErr.textContent = '';
+  pwErr.textContent = '';
   btn.disabled = true;
   btn.textContent = 'Signing in...';
 
@@ -79,26 +90,27 @@ function submitLogin(ev) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-csrf-token': getCsrf() },
     body: JSON.stringify({
+      email: document.getElementById('email').value.trim(),
       password: document.getElementById('password').value,
     }),
   }).then(function(r) {
     return r.json().then(function(d){ return { ok: r.ok, status: r.status, data: d }; });
   }).then(function(res) {
     if (res.ok && res.data && res.data.success) {
-      window.location.href = '/dashboards';
+      window.location.href = (res.data && res.data.redirect) || '/dashboards';
       return;
     }
     btn.disabled = false;
     btn.textContent = 'Sign in';
-    if (res.status === 403) {
-      err.textContent = 'This token is linked to a different account.';
-    } else {
-      err.textContent = (res.data && res.data.error) || 'Incorrect password.';
-    }
+    var err = (res.data && res.data.error) || 'Incorrect email or password.';
+    var field = (res.data && res.data.field) || null;
+    if (field === 'email') emailErr.textContent = err;
+    else if (field === 'password') pwErr.textContent = err;
+    else formErr.textContent = err;
   }).catch(function() {
     btn.disabled = false;
     btn.textContent = 'Sign in';
-    err.textContent = 'Network error. Try again.';
+    formErr.textContent = 'Network error. Try again.';
   });
 
   return false;
