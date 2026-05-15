@@ -5478,15 +5478,43 @@ def _build_admin_context(
     caller_level: int = 1,
     tokens_before: Optional[int] = None,
     users_before: Optional[int] = None,
+    role_filter: str = "all",
+    suspended_filter: str = "all",
+    q_filter: str = "",
 ) -> dict:
     """Build the template context for the admin page.
 
     Invite-token surface was removed 2026-05-15. ``new_token_str`` and
     ``tokens_before`` remain as no-op parameters so stale callers don't
     crash; only ``users_before`` is still a live cursor.
+
+    ``role_filter`` / ``suspended_filter`` / ``q_filter`` narrow the
+    rendered Users list. Values are whitelisted at the route layer;
+    this function applies them post-fetch since the underlying
+    ``list_all_users`` cursor query is already capped (≤500 rows).
     """
     users = db.list_all_users(before_id=users_before)
     token_rows: list = []
+
+    # ── Filter application (whitelisted upstream) ──────────────────
+    # role_filter: all / user / admin / super-admin (mapped to 0/1/2).
+    # suspended_filter: all / yes / no.
+    # q_filter: case-insensitive substring against username + email.
+    role_map = {"user": 0, "admin": 1, "super-admin": 2}
+    q_norm = (q_filter or "").strip().lower()
+    if role_filter in role_map:
+        target_level = role_map[role_filter]
+        users = [u for u in users if (u["is_admin"] or 0) == target_level]
+    if suspended_filter == "yes":
+        users = [u for u in users if u["suspended"]]
+    elif suspended_filter == "no":
+        users = [u for u in users if not u["suspended"]]
+    if q_norm:
+        users = [
+            u for u in users
+            if q_norm in (u["email"] or "").lower()
+            or q_norm in (u["username"] or "").lower()
+        ]
 
     # User rows HTML — with checkboxes and full management
     import datetime as _dt
@@ -5672,13 +5700,117 @@ def _build_admin_context(
     # ``new_token_banner`` are retained but unused so any reflective
     # diff is obvious.
     _ = token_rows, new_token_banner
+
+    # Filter UI — three pill rows that re-issue GET /admin with whitelisted
+    # query params. Selecting a value preserves the others so admins can
+    # narrow incrementally. All values reflected back are server-side
+    # constants (the param itself comes off a whitelist), so no escaping
+    # gymnastics are needed in the URLs.
+    _qs_q = html.escape(q_filter or "", quote=True)
+    def _pill(label: str, param: str, value: str, current: str) -> str:
+        # Build a query string preserving the other filters. Empty-string
+        # / "all" values are dropped so the URL stays clean.
+        rmap = {"role": role_filter, "suspended": suspended_filter, "q": q_filter}
+        rmap[param] = value
+        kept = {k: v for k, v in rmap.items() if v and v != "all"}
+        qs = ("?" + urlencode(kept)) if kept else ""
+        active = (current == value)
+        cls = "filter-btn active" if active else "filter-btn"
+        return f'<a class="{cls}" href="/admin{qs}#panel-users" style="text-decoration:none">{html.escape(label)}</a>'
+
+    role_pills = (
+        _pill("All", "role", "all", role_filter)
+        + _pill("User", "role", "user", role_filter)
+        + _pill("Admin", "role", "admin", role_filter)
+        + _pill("Super Admin", "role", "super-admin", role_filter)
+    )
+    susp_pills = (
+        _pill("All", "suspended", "all", suspended_filter)
+        + _pill("Suspended", "suspended", "yes", suspended_filter)
+        + _pill("Active", "suspended", "no", suspended_filter)
+    )
+
+    filter_bar = (
+        '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">'
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+        '<span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Role</span>'
+        f'{role_pills}</div>'
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+        '<span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Status</span>'
+        f'{susp_pills}</div>'
+        '<form method="get" action="/admin" style="display:flex;gap:8px;align-items:center">'
+        f'<input type="hidden" name="role" value="{html.escape(role_filter)}">'
+        f'<input type="hidden" name="suspended" value="{html.escape(suspended_filter)}">'
+        f'<input type="text" name="q" value="{_qs_q}" placeholder="Search by name or email…" '
+        'style="flex:1;padding:8px 12px;font-size:13px;border:1px solid var(--border);'
+        'border-radius:var(--radius-xs);background:var(--surface);color:var(--text-primary);outline:none">'
+        '<button class="btn btn-primary-outline" style="font-size:12px" type="submit">Search</button>'
+        '</form></div>'
+    )
+
     return {
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
         "raw_enquiry_rows": _build_enquiry_rows(),
         "raw_revenue_tab": revenue_tab,
         "raw_revenue_content": revenue_content,
+        "raw_recent_waitlist": _build_recent_waitlist_widget(),
+        "raw_user_filter_bar": filter_bar,
     }
+
+
+def _build_recent_waitlist_widget() -> str:
+    """Render the 10 most-recent active prerelease waitlist signups.
+
+    Pulls `email`, `subscribed_at`, and `referral_code` (required for the
+    1-indexed position number). Position is computed via
+    ``queries.newsletter._waitlist_position`` so the number rendered here
+    matches what the subscriber sees on the public landing form.
+    """
+    import datetime as _dt
+    try:
+        with db.conn() as c:
+            rows = c.execute(
+                "SELECT email, subscribed_at, referral_code "
+                "FROM newsletter_subscribers "
+                "WHERE source = 'prerelease' AND unsubscribed_at IS NULL "
+                "ORDER BY subscribed_at DESC LIMIT 10"
+            ).fetchall()
+            # Position lookup re-uses the public-facing helper for a
+            # consistent number across surfaces. Wrapped in try/except
+            # per-row so a backfill miss for a single signup can't 500
+            # the entire admin home.
+            from queries.newsletter import _waitlist_position
+            entries = []
+            for r in rows:
+                try:
+                    pos = _waitlist_position(c, r["referral_code"] or "") if r["referral_code"] else None
+                except Exception:
+                    pos = None
+                entries.append((r["email"], r["subscribed_at"], pos))
+    except Exception:
+        # Failing closed keeps the rest of the admin home renderable
+        # even if the newsletter table is missing in a fresh dev DB.
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">Waitlist unavailable.</div></div></div>'
+
+    if not entries:
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No active waitlist signups yet.</div></div></div>'
+
+    out: list[str] = []
+    for email, sub_at, pos in entries:
+        ts = _dt.datetime.fromtimestamp(int(sub_at or 0), tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if sub_at else "—"
+        pos_label = (f'#{int(pos)}' if pos is not None else '—')
+        out.append(
+            '<div class="admin-row" style="padding:8px 12px">'
+            '<div class="admin-row-info">'
+            f'<div class="admin-row-main" style="font-size:13px">'
+            f'<span style="font-weight:600">{html.escape(email or "")}</span>'
+            f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary);font-size:10px">{html.escape(pos_label)}</span>'
+            '</div>'
+            f'<div class="admin-row-meta" style="font-size:11px">{html.escape(ts)}</div>'
+            '</div></div>'
+        )
+    return "".join(out)
 
 
 def _build_enquiry_rows() -> str:
@@ -5844,6 +5976,9 @@ async def admin_page(
     request: Request,
     tokens_before: Optional[int] = None,
     users_before: Optional[int] = None,
+    role: str = "all",
+    suspended: str = "all",
+    q: str = "",
 ):
     user = _require_admin_user(request, page=True)
     if user is None:
@@ -5853,10 +5988,22 @@ async def admin_page(
     # Perf audit #5: pass cursor params through; FastAPI's int parser
     # rejects non-numeric values with a 422 before they hit the DB, so
     # the query layer always sees ints or None.
+    # Whitelist filter params before they hit _build_admin_context — any
+    # value outside the allowed set falls back to "all" so junk query
+    # strings can't surface in the rendered filter UI.
+    _ROLE_ALLOWED = {"all", "user", "admin", "super-admin"}
+    _SUSP_ALLOWED = {"all", "yes", "no"}
+    role_v = role if role in _ROLE_ALLOWED else "all"
+    susp_v = suspended if suspended in _SUSP_ALLOWED else "all"
+    # Cap q at 200 chars to keep the URL sane; escaping is done in render.
+    q_v = (q or "")[:200]
     ctx = _build_admin_context(
         caller_level=user.get("admin_level", 1),
         tokens_before=tokens_before,
         users_before=users_before,
+        role_filter=role_v,
+        suspended_filter=susp_v,
+        q_filter=q_v,
     )
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_nav_role=_role_badge(user), _is_admin=user.get("is_admin"), **ctx)
 

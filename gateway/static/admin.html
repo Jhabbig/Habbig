@@ -80,6 +80,17 @@
         <h1 class="page-title">Hello, {{ username }}!</h1>
       </div>
 
+      <!-- ======== RECENT WAITLIST SIGNUPS ======== -->
+      <div style="margin-bottom:24px;padding:16px 18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Recent waitlist signups</div>
+          <a href="/admin/emails" style="font-size:11px;color:var(--text-muted);text-decoration:none">View all &rarr;</a>
+        </div>
+        <div class="admin-list" style="font-size:12px">
+          {{ raw_recent_waitlist }}
+        </div>
+      </div>
+
       <div class="content-area">
         <div class="admin-tabs">
           <button class="admin-tab active" onclick="switchTab('users')">Users</button>
@@ -121,8 +132,9 @@
           </div>
 
           <div style="margin-bottom:12px">
-            <input type="text" id="user-search" placeholder="Search users by name or email..." oninput="searchUsers(this.value)"
-              style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-primary);outline:none;margin-bottom:12px"
+            {{ raw_user_filter_bar }}
+            <input type="text" id="user-search" placeholder="Quick client-side filter (current page only)…" oninput="searchUsers(this.value)"
+              style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-primary);outline:none;margin-top:12px;margin-bottom:12px"
               onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-light)'"
               onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
             <div style="display:flex;align-items:center;gap:8px">
