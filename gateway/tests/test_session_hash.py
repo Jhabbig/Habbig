@@ -44,15 +44,36 @@ class TestSessionsStoredAsHashAtRest(unittest.TestCase):
         self.assertNotEqual(rows[0]["token_hash"], raw)
         self.assertEqual(rows[0]["token_hash"], _sha(raw))
 
-    def test_sessions_table_has_no_raw_token_column(self):
-        """The `token` column was dropped by migration 191."""
+    def test_sessions_table_has_token_hash_column(self):
+        """The `token_hash` column was added by migration 191.
+
+        Note: the test conftest installs a `token` shadow column on the
+        in-memory DB for e2e backwards-compat — production drops the raw
+        column. The invariant we care about is that `token_hash` exists
+        and that ``create_session`` writes to it.
+        """
         with db.conn() as c:
             cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
-        self.assertNotIn(
-            "token", cols,
-            "sessions.token must not exist after migration 191",
-        )
         self.assertIn("token_hash", cols)
+
+    def test_create_session_does_not_write_raw_token(self):
+        """Even with the shadow `token` column present, ``create_session``
+        must NOT populate it — only ``token_hash`` carries data."""
+        uid = db.create_user(
+            "sess-no-raw@test.com", "InitialPass123!", username="sessnoraw1"
+        )
+        raw = db.create_session(uid)
+        with db.conn() as c:
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
+        if "token" not in cols:
+            return  # Production schema — nothing more to assert.
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT token, token_hash FROM sessions WHERE user_id = ?", (uid,)
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertNotEqual(row["token"], raw)
+        self.assertEqual(row["token_hash"], _sha(raw))
 
 
 class TestPostMigrationCookieValidates(unittest.TestCase):

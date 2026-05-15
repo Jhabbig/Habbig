@@ -117,15 +117,16 @@ def _prime_csrf(client: TestClient, session_token: str) -> str:
 class AdminSingleDeleteCascadeTestCase(unittest.TestCase):
     """`/admin/users/{user_id}/delete` must wipe every user-scoped row."""
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
+        # Per-test setUp — the conftest autouse fixture wipes users +
+        # sessions between tests so a class-scoped admin would be nuked.
         try:
             import migrations as _migrations
             _migrations.upgrade_to_head()
         except Exception:
             pass
-        cls.client = TestClient(server.app)
-        cls.admin_id, cls.admin_token = _create_super_admin()
+        self.client = TestClient(server.app)
+        self.admin_id, self.admin_token = _create_super_admin()
 
     def test_delete_user_wipes_user_scoped_tables(self):
         victim_id = _create_regular_user()
@@ -174,15 +175,14 @@ class AdminSingleDeleteCascadeTestCase(unittest.TestCase):
 class AdminBulkDeleteCascadeTestCase(unittest.TestCase):
     """`/admin/users/bulk` with bulk_action=delete cascades for each user."""
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
         try:
             import migrations as _migrations
             _migrations.upgrade_to_head()
         except Exception:
             pass
-        cls.client = TestClient(server.app)
-        cls.admin_id, cls.admin_token = _create_super_admin()
+        self.client = TestClient(server.app)
+        self.admin_id, self.admin_token = _create_super_admin()
 
     def test_bulk_delete_wipes_user_scoped_tables_for_each(self):
         victim_ids = [_create_regular_user() for _ in range(3)]

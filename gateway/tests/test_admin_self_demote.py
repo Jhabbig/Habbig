@@ -59,10 +59,14 @@ def _prime_csrf(client: TestClient, session_token: str) -> str:
 class AdminSelfDemoteTestCase(unittest.TestCase):
     """The `/admin/users/{id}/role` handler refuses to lower one's own role."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.client = TestClient(server.app)
-        cls.admin_id, cls.admin_token = _create_super_admin()
+    def setUp(self):
+        # Per-test setUp because the conftest's autouse fixture wipes
+        # users + sessions after every function-scoped test (see
+        # _FIXTURE_WIPE_TABLES). A class-scoped admin would have its DB
+        # rows nuked after test #1 and every subsequent test would hit
+        # a CSRF/auth bounce.
+        self.client = TestClient(server.app)
+        self.admin_id, self.admin_token = _create_super_admin()
 
     def _post(self, target_uid: int, level: int):
         csrf = _prime_csrf(self.client, self.admin_token)
