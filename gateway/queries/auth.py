@@ -121,7 +121,12 @@ def delete_sessions_for_user(user_id: int, except_token: str = "") -> int:
     """Delete all sessions for user_id, optionally preserving one by token. Returns rows deleted."""
     with db.conn() as c:
         if except_token:
-            cur = c.execute("DELETE FROM sessions WHERE user_id = ? AND token != ?", (user_id, except_token))
+            # except_token is the raw cookie value (returned by create_session);
+            # hash it to match the at-rest representation in sessions.token_hash.
+            cur = c.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, _hash_session_token(except_token)),
+            )
         else:
             cur = c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         return cur.rowcount or 0
@@ -222,7 +227,7 @@ def create_session(user_id: int) -> str:
     now = int(time.time())
     with db.conn() as c:
         c.execute(
-            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
             (token, user_id, now, now + SESSION_TTL),
         )
     # Fire-and-forget engagement ping so the churn-signal job sees a
@@ -237,21 +242,29 @@ def create_session(user_id: int) -> str:
 
 
 def get_session(token: str) -> Optional[sqlite3.Row]:
+    # `token` is the raw cookie value. Migration 191 dropped the raw
+    # column; lookups go through token_hash.
     if not token:
         return None
+    token_hash = _hash_session_token(token)
     with db.conn() as c:
         row = c.execute(
             "SELECT s.*, u.username, u.email, u.is_admin FROM sessions s "
             "JOIN users u ON u.id = s.user_id "
-            "WHERE s.token = ? AND s.expires_at > ?",
-            (token, int(time.time())),
+            "WHERE s.token_hash = ? AND s.expires_at > ?",
+            (token_hash, int(time.time())),
         ).fetchone()
     return row
 
 
 def delete_session(token: str) -> None:
+    if not token:
+        return
     with db.conn() as c:
-        c.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        c.execute(
+            "DELETE FROM sessions WHERE token_hash = ?",
+            (_hash_session_token(token),),
+        )
 
 
 def purge_expired_sessions() -> int:
@@ -261,22 +274,22 @@ def purge_expired_sessions() -> int:
 
 
 def set_session_csrf(session_token: str, csrf_token: str) -> None:
-    """Store a CSRF token in the session row."""
+    """Store a CSRF token in the session row. ``session_token`` is the raw cookie."""
     with db.conn() as c:
         c.execute(
-            "UPDATE sessions SET csrf_token = ?, csrf_created_at = ? WHERE token = ?",
-            (csrf_token, int(time.time()), session_token),
+            "UPDATE sessions SET csrf_token = ?, csrf_created_at = ? WHERE token_hash = ?",
+            (csrf_token, int(time.time()), _hash_session_token(session_token)),
         )
 
 
 def get_session_csrf(session_token: str) -> Optional[dict]:
-    """Get the CSRF token and creation time for a session."""
+    """Get the CSRF token and creation time for a session. Caller passes raw cookie."""
     if not session_token:
         return None
     with db.conn() as c:
         row = c.execute(
-            "SELECT csrf_token, csrf_created_at FROM sessions WHERE token = ? AND expires_at > ?",
-            (session_token, int(time.time())),
+            "SELECT csrf_token, csrf_created_at FROM sessions WHERE token_hash = ? AND expires_at > ?",
+            (_hash_session_token(session_token), int(time.time())),
         ).fetchone()
     if not row or not row["csrf_token"]:
         return None
@@ -287,8 +300,8 @@ def clear_session_csrf(session_token: str) -> None:
     """Clear the CSRF token from a session (e.g. on logout)."""
     with db.conn() as c:
         c.execute(
-            "UPDATE sessions SET csrf_token = NULL, csrf_created_at = NULL WHERE token = ?",
-            (session_token,),
+            "UPDATE sessions SET csrf_token = NULL, csrf_created_at = NULL WHERE token_hash = ?",
+            (_hash_session_token(session_token),),
         )
 
 
@@ -339,19 +352,35 @@ def get_invite_token(token: str) -> Optional[sqlite3.Row]:
 
 
 def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
-    """Atomically claim a token. Returns True if claimed, False if already claimed or expired."""
+    """Atomically claim a token. Returns True if claimed, False if already
+    claimed, expired, or the registering email does not match the token's
+    pinned ``target_email``.
+
+    Target-email enforcement (audit HIGH, 2026-05-15): tokens minted by
+    the /api/invite/{code}/accept flow pin the invitee's email into
+    ``invite_tokens.target_email``. Before this fix the claim path
+    matched only the token string + status, so a leaked or sniffed
+    token could be redeemed by any attacker registering with any
+    email. The claim path now requires the registering email to equal
+    the pinned ``target_email`` (case-insensitive). Tokens without a
+    target (admin-minted bare invites) still accept any email by
+    treating NULL / empty as 'no constraint'.
+    """
     token_str = token_str.strip()
+    normalised_email = (email or "").strip().lower()
     now = int(time.time())
     with db.conn() as c:
         cur = c.execute(
             "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
             "claimed_by_email = ?, claimed_at = ? "
             "WHERE token = ? AND status = 'unclaimed' "
-            "AND (expires_at IS NULL OR expires_at > ?)",
-            (user_id, email, now, token_str, now),
+            "AND (expires_at IS NULL OR expires_at > ?) "
+            "AND (target_email IS NULL OR target_email = '' "
+            "     OR LOWER(target_email) = ?)",
+            (user_id, email, now, token_str, now, normalised_email),
         )
         if cur.rowcount == 0:
-            return False  # Already claimed, revoked, or expired
+            return False  # Already claimed, revoked, expired, or email mismatch
         c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
                    (token_str, user_id))
         return True
@@ -697,17 +726,22 @@ def purge_expired_email_otps() -> int:
 
 def mark_session_two_fa_verified(session_token: str) -> None:
     """Flip sessions.two_fa_verified=1 for the given token and stamp the time.
-    Also stamps users.two_fa_verified_at for the "last used" indicator."""
+    Also stamps users.two_fa_verified_at for the "last used" indicator.
+
+    ``session_token`` is the raw cookie — hashed before lookup so it
+    matches sessions.token_hash.
+    """
     now = int(time.time())
+    token_hash = _hash_session_token(session_token)
     with db.conn() as c:
         c.execute(
-            "UPDATE sessions SET two_fa_verified = 1, two_fa_verified_at = ? WHERE token = ?",
-            (now, session_token),
+            "UPDATE sessions SET two_fa_verified = 1, two_fa_verified_at = ? WHERE token_hash = ?",
+            (now, token_hash),
         )
         c.execute(
             "UPDATE users SET two_fa_verified_at = ? "
-            "WHERE id = (SELECT user_id FROM sessions WHERE token = ?)",
-            (now, session_token),
+            "WHERE id = (SELECT user_id FROM sessions WHERE token_hash = ?)",
+            (now, token_hash),
         )
 
 
@@ -716,8 +750,8 @@ def session_two_fa_verified(session_token: str) -> bool:
         return False
     with db.conn() as c:
         row = c.execute(
-            "SELECT two_fa_verified FROM sessions WHERE token = ? AND expires_at > ?",
-            (session_token, int(time.time())),
+            "SELECT two_fa_verified FROM sessions WHERE token_hash = ? AND expires_at > ?",
+            (_hash_session_token(session_token), int(time.time())),
         ).fetchone()
     return bool(row and row["two_fa_verified"])
 
@@ -732,8 +766,8 @@ def set_pending_totp_secret(session_token: str, encrypted_secret: str) -> None:
     with db.conn() as c:
         c.execute(
             "UPDATE sessions SET pending_totp_secret = ?, pending_totp_secret_at = ? "
-            "WHERE token = ?",
-            (encrypted_secret, int(time.time()), session_token),
+            "WHERE token_hash = ?",
+            (encrypted_secret, int(time.time()), _hash_session_token(session_token)),
         )
 
 
@@ -743,8 +777,8 @@ def get_pending_totp_secret(session_token: str, max_age_seconds: int = 900) -> O
         return None
     with db.conn() as c:
         row = c.execute(
-            "SELECT pending_totp_secret, pending_totp_secret_at FROM sessions WHERE token = ?",
-            (session_token,),
+            "SELECT pending_totp_secret, pending_totp_secret_at FROM sessions WHERE token_hash = ?",
+            (_hash_session_token(session_token),),
         ).fetchone()
     if not row or not row["pending_totp_secret"]:
         return None
@@ -757,8 +791,8 @@ def clear_pending_totp_secret(session_token: str) -> None:
     with db.conn() as c:
         c.execute(
             "UPDATE sessions SET pending_totp_secret = NULL, pending_totp_secret_at = NULL "
-            "WHERE token = ?",
-            (session_token,),
+            "WHERE token_hash = ?",
+            (_hash_session_token(session_token),),
         )
 
 
@@ -867,36 +901,168 @@ def revoke_user_session(session_id: int, user_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def cascade_delete_user(user_id: int) -> dict:
-    """Delete a user and every row in any table that has a `user_id` column.
+# Documented variant forms of user_id seen in the schema today. Kept
+# here so the test suite can assert coverage explicitly; the discovery
+# logic in ``cascade_delete_user`` matches any column ending in
+# ``_user_id`` so it picks up future variants without code changes.
+_KNOWN_USER_REF_COLUMNS = (
+    "user_id",
+    "follower_user_id",
+    "followed_user_id",
+    "owner_user_id",
+    "sharer_user_id",
+    "reporter_user_id",
+    "referrer_user_id",
+    "referred_user_id",
+    "referred_by_user_id",
+    "admin_user_id",
+    "target_user_id",
+    "setup_by_user_id",
+    "claimed_by_user_id",
+    "used_by_user_id",
+    "signed_up_user_id",
+)
 
-    Used by the user-initiated account-deletion flow (GDPR Art. 17) and the
-    admin delete flow. Returns a dict mapping table names to deleted-row
-    counts so callers can audit the scope. Fails open: a table that's missing
-    or schema-mismatched is skipped rather than aborting the whole delete.
+
+# Non-conventional FK columns that don't carry the ``_user_id`` suffix.
+# Each entry is (table, column) and is treated as a user FK. Tables
+# missing from the current schema are skipped silently.
+_EXPLICIT_USER_REF_COLUMNS = (
+    ("take_reports", "resolved_by"),
+    ("affiliate_conversions", "commission_paid_by_admin_id"),
+)
+
+
+def _is_user_ref_column(col_name: str, col_type: str) -> bool:
+    """True if (col_name, col_type) looks like an INTEGER FK to users.id.
+
+    Matches ``user_id`` exactly and any column ending in ``_user_id``.
+    Restricts to INTEGER affinity so TEXT columns sharing the suffix
+    (e.g. Discord snowflake IDs) aren't misidentified as user FKs.
+    """
+    if col_name != "user_id" and not col_name.endswith("_user_id"):
+        return False
+    # SQLite type affinity: INTEGER if the declared type contains "INT".
+    return "INT" in (col_type or "").upper()
+
+
+def cascade_delete_user(user_id: int) -> dict:
+    """Delete a user and every row in any table that references users.id.
+
+    Used by the user-initiated account-deletion flow (GDPR Art. 17), the
+    admin delete flow, and the 30-day soft-delete sweep. Returns a dict
+    mapping ``"table.column"`` keys (or just ``"table"`` for the canonical
+    ``user_id`` column, to preserve the historical return shape) to
+    deleted-row counts so callers can audit the scope. Fails open: a
+    table that's missing or schema-mismatched is skipped rather than
+    aborting the whole delete.
+
+    Discovery is schema-driven: we iterate ``sqlite_master`` and treat
+    any INTEGER column matching ``user_id`` or ``*_user_id`` as a user
+    reference. Covers ``user_id`` plus every variant
+    (``follower_user_id``, ``referrer_user_id``, ``admin_user_id``,
+    ``target_user_id``, ``setup_by_user_id``, ``claimed_by_user_id``,
+    ``used_by_user_id``, ``referred_by_user_id``, ``sharer_user_id``,
+    ``reporter_user_id``, ``signed_up_user_id``, ...) and any future
+    ``*_user_id`` column without requiring a code change here.
+
+    A small explicit list of non-conventional FK columns (e.g.
+    ``take_reports.resolved_by``) is appended after the schema walk so
+    they're cleaned up too. The ``users`` table itself is deleted last;
+    before that we NULL its self-referential ``*_user_id`` columns
+    (e.g. ``referred_by_user_id``) for any user that points at the row
+    we're about to delete so we don't leave dangling references.
     """
     deleted: dict = {}
     with db.conn() as c:
-        # Enumerate every user-scoped table by inspecting the schema.
-        rows = c.execute(
+        # ── 1. Enumerate every user-scoped table by inspecting the schema.
+        # Schema-driven discovery means new migrations are covered the
+        # moment they're applied — no hardcoded list to keep in sync.
+        table_rows = c.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
-        for r in rows:
+        table_columns: dict[str, list[tuple[str, str]]] = {}
+        for r in table_rows:
             table = r["name"]
             if table == "users":
-                continue  # Delete users last so FK-ish cascades don't orphan.
+                continue  # Handle the users table specially below.
             try:
-                cols = [c2["name"] for c2 in c.execute(f"PRAGMA table_info({table})").fetchall()]
+                col_rows = c.execute(
+                    f"PRAGMA table_info({table})"
+                ).fetchall()
             except Exception:
                 continue
-            if "user_id" in cols:
+            cols: list[tuple[str, str]] = []
+            for cr in col_rows:
+                col_name = cr["name"]
+                col_type = cr["type"] if "type" in cr.keys() else ""
+                cols.append((col_name, col_type or ""))
+            table_columns[table] = cols
+
+        # ── 2. DELETE every (table, column) pair where the column is a
+        # user reference. Per-column counts so the audit output shows
+        # exactly what was touched.
+        for table, cols in table_columns.items():
+            for col_name, col_type in cols:
+                if not _is_user_ref_column(col_name, col_type):
+                    continue
                 try:
-                    cur = c.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
-                    if cur.rowcount:
-                        deleted[table] = cur.rowcount
+                    cur = c.execute(
+                        f"DELETE FROM {table} WHERE {col_name} = ?",
+                        (user_id,),
+                    )
                 except Exception:
                     continue
-        # Then the user row itself.
+                if cur.rowcount:
+                    # Preserve historical "table -> count" shape for the
+                    # canonical column; disambiguate per-column for variants.
+                    key = (
+                        table if col_name == "user_id"
+                        else f"{table}.{col_name}"
+                    )
+                    deleted[key] = cur.rowcount
+
+        # ── 3. Apply the explicit non-conventional FK list.
+        for table, col_name in _EXPLICIT_USER_REF_COLUMNS:
+            cols = table_columns.get(table) or []
+            col_names = {c2[0] for c2 in cols}
+            if col_name not in col_names:
+                continue
+            try:
+                cur = c.execute(
+                    f"DELETE FROM {table} WHERE {col_name} = ?",
+                    (user_id,),
+                )
+            except Exception:
+                continue
+            if cur.rowcount:
+                deleted[f"{table}.{col_name}"] = cur.rowcount
+
+        # ── 4. NULL self-references on the users table itself (e.g.
+        # ``referred_by_user_id``) before the final DELETE so we don't
+        # leave other users pointing at a row we're about to remove.
+        try:
+            user_col_rows = c.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()
+        except Exception:
+            user_col_rows = []
+        for cr in user_col_rows:
+            col_name = cr["name"]
+            col_type = cr["type"] if "type" in cr.keys() else ""
+            if col_name == "id" or not _is_user_ref_column(col_name, col_type):
+                continue
+            try:
+                cur = c.execute(
+                    f"UPDATE users SET {col_name} = NULL WHERE {col_name} = ?",
+                    (user_id,),
+                )
+            except Exception:
+                continue
+            if cur.rowcount:
+                deleted[f"users.{col_name}"] = cur.rowcount
+
+        # ── 5. Finally the user row itself.
         cur = c.execute("DELETE FROM users WHERE id = ?", (user_id,))
         deleted["users"] = cur.rowcount
     return deleted

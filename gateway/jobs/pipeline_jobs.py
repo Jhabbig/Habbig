@@ -39,11 +39,29 @@ async def run_pipeline() -> dict[str, Any]:
 async def process_scheduled_deletions() -> dict[str, Any]:
     """Hard-delete users whose 30-day soft-delete window has elapsed.
 
-    Anonymises personal fields, cascades personal data, retains research
-    and financial records. Sends a final `account_deleted` email (which
-    will bounce — intentional: confirms deletion to any proxied inbox).
+    GDPR Art. 17 hard-delete pass. The previous implementation hand-rolled
+    a 7-table DELETE that missed ~50 user-keyed tables (intelligence
+    messages, watchlists, alerts, follows, take_reports, newsletter
+    audiences, etc.) and every ``*_user_id`` variant column
+    (referrer_user_id, admin_user_id, sharer_user_id, ...). We now route
+    through ``db.cascade_delete_user`` which walks ``sqlite_master`` and
+    deletes every row in every (table, column) pair matching ``user_id``
+    or ``*_user_id`` — same engine the user-initiated self-delete uses,
+    so the two paths stay in lock-step.
+
+    We anonymise the ``users`` row's PII first (defence in depth — if
+    the cascade aborts partway, the PII is already wiped), then cascade
+    every other user-keyed row across the schema. The cascade handles
+    the final users DELETE itself.
+
+    We also unlink any data export ZIPs on disk so the deletion is
+    GDPR-clean and reclaims disk. The courtesy ``account_deleted`` email
+    is enqueued last; it will bounce against the anonymised inbox —
+    that is intentional, it confirms the delete completed for any
+    proxied inbox the user gave us.
     """
     import db
+    import os as _os
     from jobs.email_jobs import enqueue_email
 
     now = int(time.time())
@@ -58,13 +76,37 @@ async def process_scheduled_deletions() -> dict[str, Any]:
         ).fetchall()
 
     deleted = 0
+    files_removed = 0
     for r in rows:
         user_id = r["id"]
         old_email = r["email"]
-        anon_email = f"deleted_{user_id}@deleted.narve.ai"
         try:
+            # ── 1. Collect export ZIP paths on disk BEFORE cascading.
+            # ``cascade_delete_user`` will wipe the
+            # ``data_export_requests`` row, taking the ``file_path`` with
+            # it — read first so we can unlink the ZIPs afterwards.
+            export_paths: list[str] = []
+            try:
+                with db.conn() as c:
+                    ex_rows = c.execute(
+                        "SELECT file_path FROM data_export_requests "
+                        "WHERE user_id = ? AND file_path IS NOT NULL "
+                        "AND file_path != ''",
+                        (user_id,),
+                    ).fetchall()
+                    export_paths = [
+                        row["file_path"] for row in ex_rows
+                    ]
+            except Exception:
+                # Table may not exist in older snapshots; non-fatal.
+                pass
+
+            # ── 2. Anonymise PII on the users row first. If the cascade
+            # below crashes mid-flight, the row that remains is still
+            # PII-free. The cascade will finalise the users DELETE
+            # itself.
+            anon_email = f"deleted_{user_id}@deleted.narve.ai"
             with db.conn() as c:
-                # Anonymise
                 c.execute(
                     "UPDATE users SET email = ?, username = ?, "
                     "is_deleted = 1, deleted_at = ?, "
@@ -75,19 +117,35 @@ async def process_scheduled_deletions() -> dict[str, Any]:
                     "WHERE id = ?",
                     (anon_email, f"[deleted_{user_id}]", now, user_id),
                 )
-                # Cascade personal data
-                c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM email_unsubscribes WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM user_topics WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM intelligence_conversations WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM gifted_subscriptions WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM user_market_credentials WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM user_market_views WHERE user_id = ?", (user_id,))
-                c.execute("DELETE FROM feedback_submissions WHERE user_id = ?", (user_id,))
-                # NOTE: subscriptions, analytics_events, user_bet_history retained
-                # (financial/research records — retained for legal compliance).
-            # Final courtesy email — will likely bounce, that is the point.
+
+            # ── 3. Cascade-delete every user-keyed row across the
+            # schema. This covers ~85 (table, column) pairs in the
+            # current schema, including every ``*_user_id`` variant
+            # (follower_user_id, referrer_user_id, admin_user_id,
+            # sharer_user_id, etc.). The function ends by DELETEing
+            # the users row itself.
+            db.cascade_delete_user(user_id)
+
+            # ── 4. Unlink export ZIP files on disk. GDPR Art. 17 is
+            # explicit that "without undue delay" includes ancillary
+            # personal data, so the bundled ZIPs go too. Tolerate
+            # FileNotFoundError so re-runs and already-cleaned paths
+            # don't trip the loop.
+            for path in export_paths:
+                try:
+                    _os.unlink(path)
+                    files_removed += 1
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    log.warning(
+                        "scheduled-deletion: unlink %s: %s", path, e,
+                    )
+
+            # ── 5. Final courtesy email — will likely bounce, that is
+            # the point. We send to the ORIGINAL (pre-anonymisation)
+            # address so any proxied inbox the user gave us still
+            # receives the deletion confirmation.
             try:
                 await enqueue_email(
                     to=old_email,
@@ -99,9 +157,15 @@ async def process_scheduled_deletions() -> dict[str, Any]:
                 pass
             deleted += 1
         except Exception as e:
-            log.exception("hard-delete failed for user_id=%s: %s", user_id, e)
+            log.exception(
+                "hard-delete failed for user_id=%s: %s", user_id, e,
+            )
 
-    return {"deleted": deleted, "checked": len(rows)}
+    return {
+        "deleted": deleted,
+        "checked": len(rows),
+        "files_removed": files_removed,
+    }
 
 
 @register_job("generate_sitemap")
@@ -154,39 +218,12 @@ async def generate_sitemap() -> dict[str, Any]:
     return {"urls": len(parts) - 2, "path": str(sitemap_path)}
 
 
-@register_job("run_backtest")
-async def run_backtest_job(backtest_id: int = 0) -> dict[str, Any]:
-    """Execute a backtest simulation (F13)."""
-    import db as _db
-    import json as _json
-    from intelligence.backtester import run_backtest
-
-    now = int(time.time())
-    with _db.conn() as c:
-        row = c.execute("SELECT * FROM backtests WHERE id = ?", (backtest_id,)).fetchone()
-    if not row:
-        return {"error": "backtest not found"}
-
-    with _db.conn() as c:
-        c.execute("UPDATE backtests SET status = 'running' WHERE id = ?", (backtest_id,))
-
-    try:
-        params = _json.loads(row["params"])
-        result = run_backtest(params)
-        with _db.conn() as c:
-            c.execute(
-                "UPDATE backtests SET status = 'completed', result = ?, completed_at = ? WHERE id = ?",
-                (_json.dumps(result), now, backtest_id),
-            )
-        return {"backtest_id": backtest_id, "status": "completed", "trade_count": result.get("trade_count", 0)}
-    except Exception as e:
-        log.exception("Backtest %d failed: %s", backtest_id, e)
-        with _db.conn() as c:
-            c.execute(
-                "UPDATE backtests SET status = 'failed', result = ?, completed_at = ? WHERE id = ?",
-                (_json.dumps({"error": str(e)}), now, backtest_id),
-            )
-        return {"backtest_id": backtest_id, "status": "failed", "error": str(e)}
+# Fix C: run_backtest moved to jobs/backtest_jobs.py - that module is
+# the canonical owner (backtest_routes imports it directly). The
+# previous in-line copy here registered the same job name at import
+# time and silently overwrote whichever module loaded second. With the
+# duplicate guard now active in jobs.registry.register_job, importing
+# both would raise.
 
 
 @register_job("recompute_credibilities")
