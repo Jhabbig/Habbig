@@ -1051,7 +1051,7 @@ body > .pr-page,
 body > .pr-hero,
 body > .landing-body,
 body > .auth-shell,
-body > main:not([class*="page-frame--off"]):not(.nv-error),
+body > main:not([class*="page-frame--off"]):not(.nv-error):not(.gate-card):not(.auth-card):not(.faq-shell):not(.about-shell),
 body > article {
   border: 1px solid var(--border-default) !important;
   border-radius: var(--radius-md, 10px) !important;
@@ -1097,7 +1097,7 @@ body > .app-shell > .main-content {
 [data-density="compact"] body > .pr-hero,
 [data-density="compact"] body > .landing-body,
 [data-density="compact"] body > .auth-shell,
-[data-density="compact"] body > main,
+[data-density="compact"] body > main:not(.nv-error):not(.gate-card):not(.auth-card):not(.faq-shell):not(.about-shell),
 [data-density="compact"] body > article {
   padding: var(--space-4, 16px) var(--space-4, 16px) !important;
 }
@@ -1120,7 +1120,7 @@ body > .app-shell > .main-content {
   body > .pr-hero,
   body > .landing-body,
   body > .auth-shell,
-  body > main,
+  body > main:not(.nv-error):not(.gate-card):not(.auth-card):not(.faq-shell):not(.about-shell),
   body > article {
     padding: var(--space-4, 16px) var(--space-3, 12px) !important;
     border-radius: var(--radius-sm, 6px) !important;
@@ -1134,12 +1134,26 @@ body > .app-shell > .main-content {
 }
 
 /* Pages with their own opinionated layout (auth funnel, error pages,
-   landing hero) opt out cleanly. */
+   public marketing, long-form content) opt out cleanly.
+   These wrappers ship their own card / hero / centered-column composition
+   and looked malformed inside the universal frame (a card-inside-a-card
+   silhouette). The frame is for dashboards + app surfaces; everything
+   below has its own page-level CSS file in static/pages/. */
 body > main.nv-error,
+body > main.gate-card,           /* /gate, /support, /enquire, /contact, /404, /403, /500, /maintenance */
+body > main.auth-card,           /* /login, /token, /signup, /forgot-password */
+body > main.faq-shell,           /* /faq */
+body > main.about-shell,         /* /about */
 body > .auth-canvas,
+body > .auth-wrap,               /* /forgot-password outer */
 body > .gate-canvas,
+body > .legal-shell,             /* /terms, /privacy, /dpa */
 body[data-no-frame] > * {
   border: 0 !important;
   background: transparent !important;
   min-height: auto;
+  overflow: visible !important;
+  /* Padding is left to the page-specific CSS (static/pages/<page>.css)
+     so the opted-out wrapper renders with its own intended inner
+     rhythm, not the frame's 32px. */
 }
