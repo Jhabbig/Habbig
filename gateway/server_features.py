@@ -1768,7 +1768,15 @@ async def auth_register(request: Request):
 
 @app.post("/auth/login")
 async def auth_login(request: Request):
-    """Password check against the user bound to the pending_token."""
+    """Direct email + password login (JSON).
+
+    Rewritten 2026-05-15 to drop the invite-token requirement. Accepts
+    `{email, password}` JSON, verifies against `users.password_hash`,
+    issues `narve_session` + `pm_gateway_session` cookies, returns
+    `{success: true, redirect: '/dashboards'}`. CSRF enforced via
+    `_csrf` header on the request (the form-submit JS in login.html
+    reads the cookie and sends it as a header).
+    """
     ip = _get_client_ip(request)
     if server._is_rate_limited(f"{ip}:login-auth", limit=10, window=300):
         return JSONResponse(
@@ -1777,32 +1785,60 @@ async def auth_login(request: Request):
             headers={"Retry-After": "300"},
         )
 
-    redirect = require_pending_token(request)
-    if redirect:
-        return JSONResponse({"error": "Session expired. Start again from /token."}, status_code=401)
-    raw_token = read_pending_token(request) or ""
-
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid request."}, status_code=400)
-    password = body.get("password") or ""
-    if not password or len(password) > 256:
-        return JSONResponse({"error": "Incorrect password."}, status_code=401)
 
-    # REMOVED: invite-token system retired 2026-05-15
-    # invite = db.get_invite_token(raw_token)
-    invite = None
-    if not invite or invite["status"] != "claimed":
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    if not email or "@" not in email or len(email) > 254:
         return JSONResponse(
-            {"error": "This token is not linked to an account."},
+            {"error": "Enter a valid email.", "field": "email"},
+            status_code=400,
+        )
+    if not password or len(password) > 256:
+        return JSONResponse(
+            {"error": "Enter your password.", "field": "password"},
+            status_code=400,
+        )
+
+    # Per-email rate limit (H1): credential-stuffing across rotating IPs.
+    # 5 wrong attempts per 10min per email regardless of source IP.
+    if server._is_rate_limited(f"email:{email}:login", limit=5, window=600):
+        return JSONResponse(
+            {"error": "Too many attempts for this account."},
+            status_code=429,
+            headers={"Retry-After": "600"},
+        )
+
+    user = db.get_user_by_email(email)
+    # Constant-time-ish: always run verify_password even on missing user
+    # so timing doesn't distinguish enumeration from wrong-password.
+    dummy_hash = "0" * 64
+    dummy_salt = "0" * 32
+    if not user:
+        db.verify_password(password, dummy_hash, dummy_salt)
+        log.info("auth.login: unknown email %s", db.mask_email(email))
+        return JSONResponse(
+            {"error": "Invalid email or password."},
             status_code=401,
         )
 
-    user_id = invite["claimed_by_user_id"]
-    user = db.get_user_by_id(user_id)
-    if not user:
-        return JSONResponse({"error": "Account not found."}, status_code=401)
+    user_id = user["id"]
+    if user["suspended"]:
+        return JSONResponse(
+            {"error": "This account has been suspended."},
+            status_code=403,
+        )
+
+    if not user["password_hash"]:
+        # Shell user (created via subproduct signup magic-link) hasn't set
+        # a password yet. Funnel to the reset flow.
+        return JSONResponse(
+            {"error": "This account hasn't set a password yet. Use the password-reset link from your invite email."},
+            status_code=401,
+        )
 
     # Per-email rate limit (H1): credential-stuffing across rotating IPs.
     # 5 wrong attempts per 10min per email regardless of source IP.
@@ -1826,7 +1862,10 @@ async def auth_login(request: Request):
             "login.failure user_id=%d ip=%s ua_prefix=%s",
             user_id, ip, (request.headers.get("user-agent", "")[:64]),
         )
-        return JSONResponse({"error": "Incorrect password."}, status_code=401)
+        return JSONResponse(
+            {"error": "Invalid email or password."},
+            status_code=401,
+        )
 
     # Opportunistic PBKDF2 iteration upgrade: if this user's hash was written
     # before the iteration-count bump, re-hash at the current cost now that we
@@ -1849,6 +1888,7 @@ async def auth_login(request: Request):
     response = JSONResponse({
         "success": True,
         "requires_2fa": has_2fa,
+        "redirect": "/dashboards",
     })
     await _issue_hardened_session(user_id, request, response)
 
