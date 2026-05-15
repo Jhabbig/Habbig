@@ -51,9 +51,11 @@ _BLOCKED_PATTERNS = [
     r"/account/api-keys",         # API key create/rotate/revoke
     r"/account/payment",          # saved payment methods
     r"/auth/logout",              # Must use /admin/impersonations/end instead
+    r"/profile/password",         # CRIT — admin->user password change via /profile/password
     r"/settings/password",
     r"/settings/email",
     r"/settings/2fa",             # Even though 2FA was removed, defend if re-added
+    r"/settings/disconnect/",     # HIGH — deletes positions + market credentials
 
     # Billing / subscriptions — entire surface is off-limits.
     r"/billing",                  # /billing/cancel, /billing/checkout, /billing/portal, etc.
@@ -61,6 +63,9 @@ _BLOCKED_PATTERNS = [
     r"/checkout",
     r"/api/billing",
     r"/api/v\d+/billing",
+
+    # Subproduct signup — starts signup flow under user identity.
+    r"/subproduct-signup",        # HIGH — start a signup under the user identity
 
     # Admin — impersonated sessions should never hit admin routes at all.
     # (The /admin/impersonations/end endpoint is whitelisted below.)
@@ -73,6 +78,17 @@ _BLOCKED_PATTERNS = [
     r"/widgets",                  # Embed widgets
     r"/api/widgets",
     r"/api/v\d+/widgets",
+    r"/api/embeds",               # HIGH — create/delete/rotate-token widget endpoints
+
+    # Trading addon — toggles user trading integration.
+    r"/api/trading-addon/config",
+
+    # Sharing / saved / follow / preferences — write surfaces under user identity.
+    r"/api/share/",
+    r"/api/saved/",
+    r"/api/sources/.+/follow",
+    r"/api/notifications/email-preferences",
+    r"/api/feedback",             # submit/vote/comment under user identity
 
     # AI / Intelligence (would burn user's token quota)
     r"/intelligence",
@@ -94,6 +110,9 @@ _READ_ALSO_BLOCKED_PATTERNS = [
     r"/account/api-keys",
     r"/account/payment",
     r"/admin",
+    # GET /api/embeds returns widget tokens (include_token=True) — a read
+    # alone is a credential leak, so block read methods too.
+    r"/api/embeds",
 ]
 _READ_ALSO_BLOCKED_RE = [re.compile(p) for p in _READ_ALSO_BLOCKED_PATTERNS]
 
