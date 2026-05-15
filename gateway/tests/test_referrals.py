@@ -644,5 +644,138 @@ class TestLeaderboardApi(unittest.TestCase):
         self.assertEqual(r.json()["period"], "all")
 
 
+
+# ── Audit HIGH (2026-05-15): security regression tests ───────────────────────
+
+
+class TestSelfReferralGuard(unittest.TestCase):
+    """Audit HIGH — attach_user_to_referral must refuse self-binding.
+
+    Without this, a user could create a referral row pointing at their
+    own account from their own invite link, then collect the reward
+    once they subscribed. The DB layer is now the load-bearing guard.
+    """
+
+    def test_self_attach_refused(self):
+        tag = self._testMethodName
+        uid = _mk_user(f"selfref_{tag}@test.com", f"selfref_{tag}")
+        rid = dbr.create_referral(
+            referrer_user_id=uid,
+            referred_email=f"selfref_{tag}@test.com",
+        )
+        # Same user trying to attach to their own referrer's row.
+        ok = dbr.attach_user_to_referral(rid, uid)
+        self.assertFalse(ok, "self-referral must not bind")
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT referred_user_id FROM referrals WHERE id = ?",
+                (rid,),
+            ).fetchone()
+        self.assertIsNone(row["referred_user_id"])
+
+    def test_third_party_attach_still_works(self):
+        tag = self._testMethodName
+        r = _mk_user(f"r_third_{tag}@test.com", f"r_third_{tag}")
+        i = _mk_user(f"i_third_{tag}@test.com", f"i_third_{tag}")
+        rid = dbr.create_referral(referrer_user_id=r, referred_email=f"i_third_{tag}@test.com")
+        ok = dbr.attach_user_to_referral(rid, i)
+        self.assertTrue(ok)
+
+
+class TestInviteTokenTargetEmail(unittest.TestCase):
+    """Audit HIGH — claim_invite_token must reject claims whose
+    registering email does not match the token's pinned target_email."""
+
+    def test_email_mismatch_rejects_claim(self):
+        tag = self._testMethodName
+        # Mint a token bound to a specific email.
+        token = db.create_invite_token(
+            note=f"test {tag}",
+            target_email=f"intended_{tag}@test.com",
+        )
+        # Try to claim with a different email — must fail.
+        uid = _mk_user(f"attacker_{tag}@test.com", f"attacker_{tag}")
+        ok = db.claim_invite_token(token, uid, f"attacker_{tag}@test.com")
+        self.assertFalse(ok)
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT status FROM invite_tokens WHERE token = ?",
+                (token,),
+            ).fetchone()
+        self.assertEqual(row["status"], "unclaimed")
+
+    def test_email_match_allows_claim(self):
+        tag = self._testMethodName
+        target = f"matchee_{tag}@test.com"
+        token = db.create_invite_token(note=f"test {tag}", target_email=target)
+        uid = _mk_user(target, f"matchee_{tag}")
+        # Case-insensitive match — register with mixed case.
+        ok = db.claim_invite_token(token, uid, target.upper())
+        self.assertTrue(ok)
+
+    def test_bare_token_with_no_target_accepts_any_email(self):
+        """Admin-minted tokens with empty target_email are intentionally
+        open — keeps the historical flow working."""
+        tag = self._testMethodName
+        token = db.create_invite_token(note=f"admin {tag}", target_email="")
+        uid = _mk_user(f"any_{tag}@test.com", f"any_{tag}")
+        ok = db.claim_invite_token(token, uid, f"any_{tag}@test.com")
+        self.assertTrue(ok)
+
+
+
+
+class TestAffiliateHookWiredIntoRegister(unittest.TestCase):
+    """Audit HIGH — verify ``maybe_attribute_signup`` is actually called
+    on /auth/register. Before this audit, ``affiliate_routes`` exposed the
+    hook but no one called it; signups landing with the ``affiliate_code``
+    cookie set fell through silently. We monkey-patch the hook and confirm
+    it fires with the new user_id.
+    """
+
+    def test_hook_called_on_successful_register(self):
+        # Use the actual affiliate_routes module so the import inside the
+        # register handler resolves to the patched function.
+        import affiliate_routes as _aff
+        calls = []
+
+        original = _aff.maybe_attribute_signup
+        def spy(request, user_id):
+            calls.append(user_id)
+            return None
+        _aff.maybe_attribute_signup = spy
+        try:
+            tag = self._testMethodName
+            # Mint an invite token + drive the /auth/validate-token →
+            # /auth/register flow end-to-end. The auth/register handler
+            # checks the pending_token cookie that the validate step sets.
+            email = f"affhook_{tag}@test.com"
+            token = db.create_invite_token(note=f"affhook {tag}", target_email=email)
+
+            c = TestClient(server.app)
+            # First call /auth/validate-token to set the pending_token cookie.
+            r1 = c.post("/auth/validate-token", json={"token": token})
+            self.assertEqual(r1.status_code, 200, r1.text)
+            # Also set CSRF for the register POST.
+            c.cookies.set("_csrf", "t_register_csrf")
+            r = c.post(
+                "/auth/register",
+                json={
+                    "email": email,
+                    "display_name": f"affhook{tag[:10]}",
+                    "password": "TestPass123!",
+                    "confirm_password": "TestPass123!",
+                },
+                headers={"x-csrf-token": "t_register_csrf"},
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(len(calls), 1, "hook must fire exactly once on register")
+            user_id = r.json()["user_id"]
+            self.assertEqual(calls[0], user_id)
+        finally:
+            _aff.maybe_attribute_signup = original
+
+
+
 if __name__ == "__main__":
     unittest.main()

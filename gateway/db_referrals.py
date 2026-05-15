@@ -123,12 +123,20 @@ def create_referral(
 
 def attach_user_to_referral(referral_id: int, user_id: int) -> bool:
     """Called when the invitee actually registers. Fills referred_user_id
-    IF NULL — so re-running a bug doesn't rebind the row."""
+    IF NULL — so re-running a bug doesn't rebind the row.
+
+    Self-referral guard (audit HIGH, 2026-05-15): refuses to bind when
+    ``user_id`` matches the referral's ``referrer_user_id``. Without
+    this, a user could register against their own invite link to mint
+    a referral row pointing at themselves, then watch the reward job
+    grant them free months from their own conversion.
+    """
     with db.conn() as c:
         cur = c.execute(
             "UPDATE referrals SET referred_user_id = ? "
-            "WHERE id = ? AND referred_user_id IS NULL",
-            (user_id, referral_id),
+            "WHERE id = ? AND referred_user_id IS NULL "
+            "AND referrer_user_id != ?",
+            (user_id, referral_id, user_id),
         )
         return cur.rowcount > 0
 

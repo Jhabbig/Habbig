@@ -20,6 +20,7 @@ import re
 import secrets
 import sys
 import time
+import urllib.parse
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
@@ -33,6 +34,43 @@ from cache import ttl_cache, DEFAULT_TTLS
 
 
 log = logging.getLogger("gateway.market_routes")
+
+
+# Path-traversal guard for the user-supplied market id (audit HIGH,
+# 2026-05-15). The unified id format is ``poly:{slug}`` or
+# ``kalshi:{ticker}``. Both halves drop straight into upstream URL
+# templates (``f"{gamma}/markets/{slug}"``,
+# ``f"{base}/markets/{ticker}"``), so an unescaped value lets an
+# attacker pivot to any path the upstream host serves — including
+# ``/markets/../v1/private``-style traversals against gamma-api.
+# Accept only the EIP-style / Kalshi-canonical character set and cap
+# the length so one request can't blow upstream URL limits.
+_MARKET_SLUG_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+def _safe_market_id(market_id: str) -> tuple[str, str] | None:
+    """Validate a unified market id and return ``(prefix, encoded_slug)``.
+
+    Returns ``None`` if the prefix is unknown or the slug fails the
+    allowlist. The encoded form is URL-quoted with ``safe=''`` so any
+    upstream consumer that re-interpolates into a path is doubly
+    defended against ``/``, ``?``, ``#``, percent sequences, NULs,
+    and Unicode look-alikes that slipped past a different layer.
+    """
+    if not market_id:
+        return None
+    raw = market_id.strip()
+    if raw.startswith("poly:"):
+        slug = raw[5:]
+        prefix = "poly:"
+    elif raw.startswith("kalshi:"):
+        slug = raw[7:]
+        prefix = "kalshi:"
+    else:
+        return None
+    if not slug or not _MARKET_SLUG_RE.fullmatch(slug):
+        return None
+    return prefix, urllib.parse.quote(slug, safe="")
 
 
 # ── SIWE (EIP-4361) wallet-connect proof of ownership ────────────────────────
@@ -95,20 +133,51 @@ def _siwe_build_message(address: str, nonce: str, issued_at: str) -> str:
 def _siwe_parse_message(message: str) -> dict:
     """Parse the fields out of a posted SIWE message.
 
-    Returns a dict with the keys we validate against (uri, version,
-    chain_id, nonce). Missing fields map to ``None`` so callers can
-    fail closed. Strict line-prefix matching — anything that wraps,
-    re-encodes, or reorders fields produces ``None`` for that field
-    and is rejected upstream.
+    Returns a dict with the keys we validate against (domain, address,
+    uri, version, chain_id, nonce). Missing fields map to ``None`` so
+    callers can fail closed. Strict line-prefix matching — anything
+    that wraps, re-encodes, or reorders fields produces ``None`` for
+    that field and is rejected upstream.
+
+    Domain + Address parsing (audit HIGH, 2026-05-15): the EIP-4361
+    spec puts the asserting domain on the first line — ``{Domain}
+    wants you to sign in...`` — and the wallet address on the second.
+    Before this fix the verify path only checked URI / Chain ID /
+    Version, leaving the domain and address fields un-verified. A
+    signer who controlled a wallet for ANY signing surface (e.g. a
+    phishing app pretending to be a narve.ai look-alike) could swap
+    the first line to ``evil.example wants you to sign in...`` and
+    the server would still accept the signature as long as URI /
+    Chain ID / Version matched. We now extract both fields here; the
+    caller asserts ``domain == SIWE_DOMAIN`` and
+    ``address == recovered signer``.
     """
     out: dict[str, str | None] = {
+        "domain": None,
+        "address": None,
         "uri": None,
         "version": None,
         "chain_id": None,
         "nonce": None,
         "issued_at": None,
     }
-    for line in message.splitlines():
+    lines = message.splitlines()
+    # First line: ``{Domain} wants you to sign in with your Ethereum
+    # account:``. Per EIP-4361 the suffix is exact; require it so a
+    # partial-domain spoof (e.g. ``narve.ai.evil.example wants you...``)
+    # populates the full domain string and gets rejected by the
+    # equality check upstream.
+    if lines:
+        first = lines[0].strip()
+        suffix = " wants you to sign in with your Ethereum account:"
+        if first.endswith(suffix):
+            out["domain"] = first[: -len(suffix)].strip() or None
+    # Second line: wallet address. May be absent on malformed bodies.
+    if len(lines) >= 2:
+        candidate = lines[1].strip()
+        if _EVM_ADDRESS_RE.fullmatch(candidate):
+            out["address"] = candidate
+    for line in lines:
         if line.startswith("URI: "):
             out["uri"] = line[len("URI: "):].strip()
         elif line.startswith("Version: "):
@@ -395,6 +464,16 @@ async def api_markets_false_consensus(request: Request, limit: int = 20):
 async def api_market_detail(request: Request, market_id: str):
     srv = _srv()
     user = _require_markets_user(request)
+    # Path-traversal guard (audit HIGH, 2026-05-15) — ``market_id`` is
+    # interpolated into upstream URL templates (gamma-api / kalshi). A
+    # raw ``poly:../v1/admin`` would let an attacker pivot to any path
+    # the upstream host serves. Reject everything outside the safe
+    # alphabet, then rebuild the canonical id from the percent-encoded
+    # slug so cache keys and log lines all see one shape.
+    safe = _safe_market_id(market_id)
+    if safe is None:
+        raise HTTPException(status_code=400, detail="Invalid market id")
+    market_id = f"{safe[0]}{safe[1]}"
     market = await unified_markets.fetch_single_market(
         srv.POLY_CLIENT, srv.KALSHI_CLIENT, market_id, cache_ttl=120,
     )
@@ -590,6 +669,18 @@ async def api_connect_polymarket(request: Request):
         nonce = parsed["nonce"]
         if not nonce:
             return JSONResponse({"error": "Missing nonce in signed message"}, status_code=400)
+        # Domain pin (audit HIGH, 2026-05-15) — the first line of an
+        # EIP-4361 body must read ``narve.ai wants you to sign in...``.
+        # If a client signs ``evil.example wants you to sign in...``
+        # and we accept it, an attacker who pre-collected a victim's
+        # signature for that decoy domain could replay it here as a
+        # narve.ai connect. Reject anything that is not an exact match.
+        if parsed["domain"] != SIWE_DOMAIN:
+            log.warning(
+                "SIWE connect: bad domain %r for user %s",
+                parsed["domain"], user.get("username"),
+            )
+            return JSONResponse({"error": "Signed message domain mismatch"}, status_code=400)
         if parsed["uri"] != SIWE_URI:
             log.warning(
                 "SIWE connect: bad URI %r for user %s",
@@ -600,10 +691,32 @@ async def api_connect_polymarket(request: Request):
             return JSONResponse({"error": "Signed message chain id mismatch"}, status_code=400)
         if parsed["version"] != SIWE_VERSION:
             return JSONResponse({"error": "Signed message version mismatch"}, status_code=400)
+        # Address-in-body pin (audit HIGH, 2026-05-15) — the second
+        # line of the SIWE body is the wallet the signer is asserting
+        # ownership of. Both the JSON ``address`` field and the in-body
+        # second-line address must match the recovered signer. Without
+        # this, an attacker could swap the in-body address while
+        # keeping the JSON ``address`` aligned with the recovered key,
+        # claiming ownership of a different wallet than the one whose
+        # key signed the message.
+        if not parsed["address"]:
+            return JSONResponse(
+                {"error": "Missing address in signed message"},
+                status_code=400,
+            )
 
         recovered = _siwe_recover_signer(message, signature)
         if not recovered:
             return JSONResponse({"error": "Invalid signature"}, status_code=400)
+        if parsed["address"].lower() != recovered.lower():
+            log.warning(
+                "SIWE connect: in-body address %s does not match recovered signer %s for user %s",
+                parsed["address"][:10] + "...", recovered[:10] + "...", user.get("username"),
+            )
+            return JSONResponse(
+                {"error": "Signed message address does not match recovered signer"},
+                status_code=400,
+            )
         if recovered.lower() != signed_address.lower():
             log.warning(
                 "SIWE connect: signer mismatch for user %s — claimed %s, recovered %s",
@@ -871,6 +984,14 @@ async def api_poly_order_params(request: Request, market_id: str):
     if not market_id.startswith("poly:"):
         raise HTTPException(status_code=400, detail="Only Polymarket markets supported")
 
+    # Path-traversal guard (audit HIGH, 2026-05-15) — see
+    # api_market_detail for the threat model. Reject anything outside
+    # the slug allowlist before we touch the upstream client.
+    safe = _safe_market_id(market_id)
+    if safe is None or safe[0] != "poly:":
+        raise HTTPException(status_code=400, detail="Invalid market id")
+    market_id = f"{safe[0]}{safe[1]}"
+
     market = await unified_markets.fetch_single_market(
         srv.POLY_CLIENT, srv.KALSHI_CLIENT, market_id, cache_ttl=120,
     )
@@ -976,6 +1097,13 @@ async def api_kelly_calculate(request: Request):
     market_id = (body.get("market_id") or body.get("market_slug") or "").strip()
     if not market_id:
         return JSONResponse({"error": "market_id required"}, status_code=400)
+    # Path-traversal guard (audit HIGH, 2026-05-15) — see
+    # api_market_detail. Kelly resolves the same fetch_single_market
+    # codepath, so the same allowlist applies.
+    safe = _safe_market_id(market_id)
+    if safe is None:
+        return JSONResponse({"error": "Invalid market id"}, status_code=400)
+    market_id = f"{safe[0]}{safe[1]}"
 
     stored = db.get_user_bankroll(user["user_id"])
     req_bankroll = body.get("bankroll")

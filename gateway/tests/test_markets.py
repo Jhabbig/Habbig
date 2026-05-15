@@ -408,5 +408,158 @@ class TestKalshiServiceAuth(unittest.TestCase):
         self.assertIsNone(token)
 
 
+
+# ── Audit HIGH (2026-05-15): path-traversal + SIWE parse regressions ──
+
+
+class TestSafeMarketIdPathTraversal(unittest.TestCase):
+    """Audit HIGH — ``_safe_market_id`` is the choke point preventing
+    attacker-controlled ``market_id`` values from being interpolated
+    into upstream URL templates.
+
+    Threat model: ``poly:../v1/admin`` lands in
+    ``f"{gamma_base}/markets/{slug}"`` and pivots the upstream request
+    to gamma-api's admin surface (or anywhere else on the host). The
+    helper rejects anything outside ``[A-Za-z0-9._-]{1,128}`` and
+    percent-encodes the survivor.
+    """
+
+    def setUp(self):
+        # Import lazily so test_markets isn't bound to market_routes
+        # import order during collection.
+        import market_routes
+        self.f = market_routes._safe_market_id
+
+    def test_legitimate_poly_slug_accepted(self):
+        out = self.f("poly:will-btc-hit-100k-2026")
+        self.assertIsNotNone(out)
+        self.assertEqual(out[0], "poly:")
+        self.assertEqual(out[1], "will-btc-hit-100k-2026")
+
+    def test_legitimate_kalshi_ticker_accepted(self):
+        out = self.f("kalshi:KXBTCUSD-26FEB28-T100000")
+        self.assertIsNotNone(out)
+        self.assertEqual(out[0], "kalshi:")
+
+    def test_path_traversal_rejected(self):
+        # The canonical proof-of-attack — ``../`` in the slug. ``/`` is
+        # not in the allowlist so the fullmatch fails outright.
+        for evil in (
+            "poly:../v1/admin",
+            "poly:..%2Fv1%2Fadmin",
+            "poly:slug/extra",
+            "kalshi:slug?param=1",
+            "kalshi:slug#frag",
+            "poly:slug\0null",
+        ):
+            self.assertIsNone(self.f(evil), f"should reject: {evil!r}")
+
+    def test_unknown_prefix_rejected(self):
+        self.assertIsNone(self.f("http://evil.example/market"))
+        self.assertIsNone(self.f("file:///etc/passwd"))
+        self.assertIsNone(self.f("plain-slug-no-prefix"))
+
+    def test_empty_or_missing_rejected(self):
+        self.assertIsNone(self.f(""))
+        self.assertIsNone(self.f("poly:"))
+        self.assertIsNone(self.f("kalshi:"))
+
+    def test_length_cap_enforced(self):
+        long_slug = "a" * 129
+        self.assertIsNone(self.f(f"poly:{long_slug}"))
+        # Exactly at the cap is still accepted.
+        ok = self.f(f"poly:{'a' * 128}")
+        self.assertIsNotNone(ok)
+
+    def test_output_is_percent_encoded(self):
+        # Defence-in-depth: even legitimate slugs come out percent-encoded
+        # so anywhere downstream that builds a URL is shielded if the
+        # allowlist regresses later.
+        import urllib.parse
+        out = self.f("poly:will-btc-100k.2026")
+        self.assertIsNotNone(out)
+        # The slug only contains safe chars, so the encoded form is the
+        # same string back — but the codepath is exercised.
+        self.assertEqual(
+            urllib.parse.unquote(out[1]), "will-btc-100k.2026",
+        )
+
+
+class TestSiweParseDomainAndAddress(unittest.TestCase):
+    """Audit HIGH — ``_siwe_parse_message`` now surfaces the domain
+    (line 1) and the in-body wallet address (line 2). The verify
+    handler uses both as additional checks; without them an attacker
+    could supply a body that asserts a different domain or address
+    while keeping URI / Chain ID / Version aligned.
+    """
+
+    def _build(
+        self,
+        *,
+        domain: str = "narve.ai",
+        address: str = "0x1111111111111111111111111111111111111111",
+        uri: str = "https://narve.ai",
+        version: str = "1",
+        chain: str = "1",
+        nonce: str = "abc123",
+        issued_at: str = "2026-05-15T12:00:00Z",
+    ) -> str:
+        return (
+            f"{domain} wants you to sign in with your Ethereum account:\n"
+            f"{address}\n"
+            f"\n"
+            f"Verify wallet ownership for narve.ai portfolio sync.\n"
+            f"\n"
+            f"URI: {uri}\n"
+            f"Version: {version}\n"
+            f"Chain ID: {chain}\n"
+            f"Nonce: {nonce}\n"
+            f"Issued At: {issued_at}"
+        ).replace("\\n", "\n")  # collapse literal escapes for readability
+
+    def test_canonical_body_parses_domain_and_address(self):
+        import market_routes
+        msg = self._build()
+        parsed = market_routes._siwe_parse_message(msg)
+        self.assertEqual(parsed["domain"], "narve.ai")
+        self.assertEqual(parsed["address"], "0x1111111111111111111111111111111111111111")
+        self.assertEqual(parsed["nonce"], "abc123")
+
+    def test_tampered_domain_surfaces_in_parse(self):
+        """A body that claims ``evil.example`` instead of ``narve.ai``
+        parses cleanly but the domain field doesn't match SIWE_DOMAIN —
+        the verify handler is responsible for the rejection."""
+        import market_routes
+        msg = self._build(domain="evil.example")
+        parsed = market_routes._siwe_parse_message(msg)
+        self.assertEqual(parsed["domain"], "evil.example")
+        self.assertNotEqual(parsed["domain"], market_routes.SIWE_DOMAIN)
+
+    def test_partial_domain_suffix_attack_surfaces_full_string(self):
+        """``narve.ai.evil.example`` is a subdomain trick — the full
+        string must come out of the parser so the equality check rejects."""
+        import market_routes
+        msg = self._build(domain="narve.ai.evil.example")
+        parsed = market_routes._siwe_parse_message(msg)
+        self.assertEqual(parsed["domain"], "narve.ai.evil.example")
+        self.assertNotEqual(parsed["domain"], "narve.ai")
+
+    def test_non_address_line_two_returns_none(self):
+        import market_routes
+        msg = self._build(address="not-an-evm-address")
+        parsed = market_routes._siwe_parse_message(msg)
+        self.assertIsNone(parsed["address"])
+
+    def test_missing_first_line_suffix_returns_none_domain(self):
+        """If the message doesn't end with the canonical suffix, the
+        domain field stays None — verify path will then 400 on
+        the equality check."""
+        import market_routes
+        msg = "narve.ai is the asserting party.\n0x1111111111111111111111111111111111111111\n"
+        parsed = market_routes._siwe_parse_message(msg)
+        self.assertIsNone(parsed["domain"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

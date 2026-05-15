@@ -101,8 +101,35 @@ async def unsubscribe_page(request: Request, token: str = "", type: str = "marke
     Accepts a signed token and flips the user's email preference.
     Always returns a confirmation page — even for invalid tokens, to
     avoid leaking whether an email exists.
+
+    AUDIT 2026-05-15 — per-IP rate-limit (10/hour). An unauthenticated
+    HMAC-signed endpoint with no body validation is a tempting brute
+    target for somebody hunting forged tokens; 10/hour is plenty for
+    a legit user (one click), tight enough to make token enumeration
+    economically pointless. The cap is per-IP because the route has
+    no session identity to anchor against. Failure also masks the
+    token-existence oracle (the response shape is identical to a
+    rejected forged token).
     """
     token = (token or "").strip()
+    # Per-IP rate-limit. 10/hour is the spec; matches the per-IP cap
+    # the password-reset surface uses, which sits at the same risk
+    # band (unauth, signed token).
+    try:
+        ip = server._get_client_ip(request)
+        if server._is_rate_limited(f"unsubscribe-ip:{ip}", 10, 3600):
+            log.info("unsubscribe: per-IP cap hit ip=%s", ip)
+            return HTMLResponse(
+                "<!DOCTYPE html><html><head><title>Too many attempts</title></head>"
+                "<body><h1>Too many attempts.</h1>"
+                "<p>Try again in an hour.</p></body></html>",
+                status_code=429,
+            )
+    except Exception:
+        # Rate-limit infra down — fail open rather than block a real
+        # user's unsubscribe click. The token still has to verify.
+        log.exception("unsubscribe: rate-limit check failed, allowing through")
+
     row = UnsubscribeManager.unsubscribe(token) if token else None
     scope_label = {
         "marketing": "marketing emails",
@@ -1645,7 +1672,10 @@ async def auth_register(request: Request):
     # every error inside the helper is swallowed already.
     try:
         from affiliate_routes import maybe_attribute_signup
-        maybe_attribute_signup(request, response, user_id)
+        # Hook signature is ``(request, user_id)`` per the affiliate_routes
+        # contract — the cookie is read off the request and best-effort
+        # cleared internally. We don't need the response object here.
+        maybe_attribute_signup(request, user_id)
     except Exception:
         log.exception("auth.register: affiliate attribution hook failed (user_id=%d)", user_id)
 

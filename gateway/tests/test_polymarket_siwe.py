@@ -351,5 +351,64 @@ class TestLegacyRemoval(_SIWEBase):
         self.assertEqual(data["address"], self.acct.address.lower())
 
 
+
+# ── Audit HIGH (2026-05-15): domain + in-body address pin ─────────────
+
+
+class TestSiweDomainAndAddressPin(_SIWEBase):
+    """Audit HIGH — the SIWE verify path now refuses messages whose
+    first line names a domain other than ``narve.ai`` and whose
+    in-body second-line address does not match the recovered signer.
+
+    Before this audit, only the URI / Chain ID / Version fields were
+    checked. A signer who had pre-collected a victim's signature for
+    a decoy domain or who tampered with the address line could
+    silently attach a wallet they did not own.
+    """
+
+    def test_tampered_domain_rejected(self):
+        body = self._get_nonce()
+        msg = body["message_template"].replace("{address}", self.acct.address)
+        # Rewrite the first line so it asserts a different domain.
+        # The signer still owns the key, but the body says
+        # ``evil.example`` is the asserting party.
+        tampered = msg.replace(
+            "narve.ai wants you to sign in",
+            "evil.example wants you to sign in",
+            1,
+        )
+        sig = _sign_personal(tampered, self.acct.key.hex())
+        r = self._post_connect(
+            {"address": self.acct.address, "signature": sig, "message": tampered},
+        )
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertIn("domain", r.json()["error"].lower())
+
+    def test_swapped_in_body_address_rejected(self):
+        """The signed-by-key address is on line 2 of the SIWE body.
+        Swap it for a different valid-looking address while leaving
+        the JSON ``address`` field aligned with the recovered key —
+        the server must catch the mismatch via the in-body parse."""
+        body = self._get_nonce()
+        from eth_account import Account
+        other = Account.create()
+        # Build a body where line 2 is `other.address` but everything
+        # else (URI, chain id, version, nonce, JSON address) names
+        # `self.acct.address`. The signer still signs that exact body.
+        msg = body["message_template"].replace("{address}", other.address)
+        sig = _sign_personal(msg, self.acct.key.hex())
+        r = self._post_connect(
+            {"address": self.acct.address, "signature": sig, "message": msg},
+        )
+        self.assertEqual(r.status_code, 400, r.text)
+        # Error message names the address mismatch, not the URI/domain.
+        err = (r.json().get("error") or "").lower()
+        self.assertTrue(
+            "address" in err or "signer" in err,
+            f"expected address/signer mismatch error, got: {err!r}",
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()

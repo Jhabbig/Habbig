@@ -255,5 +255,118 @@ class TestGravatar(unittest.TestCase):
         self.assertIn("d=identicon", url)
 
 
+
+# ── Audit HIGH (2026-05-15): avatar decompression-bomb guard ───────────
+
+
+try:
+    from PIL import Image as _AVATAR_TEST_PIL_IMAGE
+    _AVATAR_TEST_PIL_OK = True
+except Exception:
+    _AVATAR_TEST_PIL_OK = False
+
+
+class TestAvatarDecompressionBombGuard(unittest.TestCase):
+    """Audit HIGH — the avatar upload route is now hardened against
+    Pillow decompression-bomb attacks.
+
+    The fix has three pieces:
+      1. Module-level ``Image.MAX_IMAGE_PIXELS = 16_000_000`` so a
+         2 MB PNG that decodes to 50k×50k can't OOM the worker.
+      2. ``@rate_limit("avatar-upload", 5, 60)`` per-user budget so a
+         single attacker can't replay a borderline image to peg CPU.
+      3. ``DecompressionBombError`` / ``DecompressionBombWarning``
+         intercepted explicitly and surfaced as 413 ``image_too_large``.
+
+    This test pins (1) and (3) with a 4096×4096+ test bitmap that
+    trips the cap. The rate-limit decorator is verified by inspecting
+    the route handler's ``__wrapped__`` attribute — calling 6 times
+    in a unit test would couple to other tests' rate-limit state.
+    """
+
+    @unittest.skipUnless(_AVATAR_TEST_PIL_OK, "Pillow not installed")
+    def test_max_image_pixels_is_capped(self):
+        # The module loaded its cap at import time. Reading the
+        # class-level attribute confirms the cap survived
+        # ``profile_routes`` import.
+        import profile_routes  # noqa: F401 — side-effect import to set cap
+        from PIL import Image
+        self.assertEqual(Image.MAX_IMAGE_PIXELS, 16_000_000)
+
+    @unittest.skipUnless(_AVATAR_TEST_PIL_OK, "Pillow not installed")
+    def test_avatar_handler_rejects_decompression_bomb(self):
+        """A 5000×5000 image (25M pixels) exceeds the 16M cap. The
+        handler must surface 413 ``image_too_large`` rather than
+        attempting to decode and crash the worker."""
+        import io
+        import os
+        import sys
+        # Path the gateway module so profile_routes resolves.
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        # We must rely on the actual handler since rate_limit + the
+        # bomb error catch are the load-bearing pieces.
+        import profile_routes
+        from PIL import Image
+
+        # Build a 5000×5000 RGB image. Encode it as PNG so the body
+        # has real bytes; Pillow opens it lazily, runs verify(), then
+        # raises a DecompressionBombWarning on re-open (since 25M >
+        # 16M cap but < 2×16M = 32M, this is a Warning, not Error).
+        buf = io.BytesIO()
+        img = Image.new("RGB", (5000, 5000), color=(128, 128, 128))
+        img.save(buf, format="PNG")
+        buf.seek(0)
+
+        # Drive the handler through a TestClient so the wrapper /
+        # rate-limit chain runs. Authenticate by stubbing
+        # ``server.current_user`` to return a fixed user dict.
+        import sys
+        import db
+        import server
+        from fastapi.testclient import TestClient
+
+        # Use any extant user id; the handler only reads user["user_id"].
+        # _new_user is module-local and creates a fresh DB row.
+        uid = _new_user(f"avbomb_{time.time_ns()}@x.com")
+
+        client = TestClient(server.app)
+        token = db.create_session(uid)
+        client.cookies.set(server.COOKIE_NAME, token)
+        client.cookies.set("_csrf", "t_avatar_csrf")
+
+        r = client.post(
+            "/api/settings/avatar",
+            files={"file": ("bomb.png", buf.getvalue(), "image/png")},
+            headers={"x-csrf-token": "t_avatar_csrf"},
+        )
+        # 413 is the strict contract — the bomb branch surfaces
+        # ``image_too_large``. We accept 400 if Pillow rejects on
+        # verify() before the warning fires (different Pillow versions
+        # behave differently on borderline sizes).
+        self.assertIn(r.status_code, (400, 413), r.text)
+        if r.status_code == 413:
+            self.assertIn(
+                r.json().get("error"),
+                ("image_too_large", "too_large"),
+            )
+
+    def test_rate_limit_decorator_attached(self):
+        """The handler must carry the @rate_limit wrapper so a single
+        attacker can't replay borderline images to peg CPU. We
+        introspect the function object rather than firing 6 requests
+        because rate-limit state leaks across tests in the shared
+        in-memory bucket store."""
+        import profile_routes
+        handler = profile_routes.api_settings_avatar
+        # @rate_limit wraps with functools.wraps so __wrapped__ should
+        # point at the original function — its presence is the proof
+        # that the decorator ran.
+        self.assertTrue(
+            hasattr(handler, "__wrapped__"),
+            "api_settings_avatar must be wrapped by @rate_limit",
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()
