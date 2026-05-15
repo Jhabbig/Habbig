@@ -765,6 +765,357 @@ def delete_email_template(key: str) -> bool:
         return cur.rowcount > 0
 
 
+# ── Unified email-address aggregator ─────────────────────────────────────
+
+
+# Discriminator labels for the source column. Kept here (not in the route
+# handler) so tests and the CSV/JSON export use the exact same strings.
+EMAIL_SOURCE_LABELS = (
+    "newsletter",    # newsletter_subscribers, any source != 'prerelease'
+    "user",          # users.email, real account (password_hash != '')
+    "enquiry",       # enquiries.email (contact/support form)
+    "feedback",      # feedback_submissions.user_id -> users.email
+    "prerelease",    # newsletter_subscribers where source == 'prerelease'
+    "shell",         # users.email where password_hash == '' (admin-created stub)
+    "outbound",      # background_jobs payload (name='send_email')
+    "unsubscribe",   # newsletter_subscribers where unsubscribed_at IS NOT NULL
+    "invite",        # invite_tokens.target_email (pre-claim invitations)
+)
+
+
+def _aggregate_email_rows(c) -> list[dict]:
+    """Internal — pull every email-bearing row from each of the 9 sources.
+
+    Each row carries a ``source`` discriminator, a ``ts`` (unix seconds for
+    last activity), an ``email``, and optional ``user_id``/``status`` fields.
+    The UNION is materialised in-Python (rather than SQL UNION ALL) because
+    one of the sources — the outbound queue — stores the recipient inside a
+    JSON payload column and SQLite's json1 isn't guaranteed to be compiled
+    in on every host. Doing the parse in Python keeps the query portable.
+
+    Returns rows roughly newest-first per source. The caller is expected
+    to apply final ordering / dedupe / filtering.
+    """
+    import json as _json
+
+    rows: list[dict] = []
+
+    # 1) Newsletter subscribers — both prerelease and post-launch live here;
+    #    the ``source`` column on the table itself tells us which surface
+    #    captured them. Unsubscribed rows fork to the 'unsubscribe' bucket.
+    try:
+        ns = c.execute(
+            "SELECT email, subscribed_at, confirmed_at, unsubscribed_at, source "
+            "FROM newsletter_subscribers"
+        ).fetchall()
+    except Exception:
+        ns = []
+    for r in ns:
+        email = (r["email"] or "").strip()
+        if not email:
+            continue
+        sub_src = (r["source"] or "").strip().lower()
+        unsub_at = r["unsubscribed_at"]
+        if unsub_at:
+            rows.append({
+                "email": email,
+                "source": "unsubscribe",
+                "ts": int(unsub_at),
+                "first_seen": int(r["subscribed_at"] or 0) or None,
+                "user_id": None,
+                "status": "unsubscribed",
+            })
+            continue
+        bucket = "prerelease" if sub_src == "prerelease" else "newsletter"
+        rows.append({
+            "email": email,
+            "source": bucket,
+            "ts": int(r["subscribed_at"] or 0),
+            "first_seen": int(r["subscribed_at"] or 0) or None,
+            "user_id": None,
+            "status": "confirmed" if r["confirmed_at"] else "pending",
+        })
+
+    # 2 + 6) Users — registered accounts vs admin-created shell rows
+    #        (password_hash == '' means the row was provisioned but the
+    #        user never set a password).
+    try:
+        us = c.execute(
+            "SELECT id, email, created_at, password_hash, suspended "
+            "FROM users"
+        ).fetchall()
+    except Exception:
+        us = []
+    for r in us:
+        email = (r["email"] or "").strip()
+        if not email:
+            continue
+        is_shell = not (r["password_hash"] or "").strip()
+        rows.append({
+            "email": email,
+            "source": "shell" if is_shell else "user",
+            "ts": int(r["created_at"] or 0),
+            "first_seen": int(r["created_at"] or 0) or None,
+            "user_id": int(r["id"]),
+            "status": "suspended" if r["suspended"] else "active",
+        })
+
+    # 3) Enquiries (contact/support form).
+    try:
+        eq = c.execute(
+            "SELECT email, created_at FROM enquiries"
+        ).fetchall()
+    except Exception:
+        eq = []
+    for r in eq:
+        email = (r["email"] or "").strip()
+        if not email:
+            continue
+        rows.append({
+            "email": email,
+            "source": "enquiry",
+            "ts": int(r["created_at"] or 0),
+            "first_seen": int(r["created_at"] or 0) or None,
+            "user_id": None,
+            "status": "active",
+        })
+
+    # 4) Feedback submitters — linked back to users.email by user_id. Anonymous
+    #    feedback (user_id IS NULL) does not surface here since there's no
+    #    email captured server-side.
+    try:
+        fb = c.execute(
+            "SELECT f.user_id, f.created_at, u.email "
+            "FROM feedback_submissions f "
+            "JOIN users u ON f.user_id = u.id "
+            "WHERE f.user_id IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        fb = []
+    for r in fb:
+        email = (r["email"] or "").strip()
+        if not email:
+            continue
+        rows.append({
+            "email": email,
+            "source": "feedback",
+            "ts": int(r["created_at"] or 0),
+            "first_seen": int(r["created_at"] or 0) or None,
+            "user_id": int(r["user_id"]) if r["user_id"] is not None else None,
+            "status": "active",
+        })
+
+    # 7) Outbound queue recipients — inside JSON payload on background_jobs
+    #    rows where name='send_email'. We cap at 2000 most-recent rows to
+    #    bound the in-Python loop on production-size databases.
+    try:
+        ob = c.execute(
+            "SELECT payload, enqueued_at, status FROM background_jobs "
+            "WHERE name = 'send_email' "
+            "ORDER BY enqueued_at DESC LIMIT 2000"
+        ).fetchall()
+    except Exception:
+        ob = []
+    for r in ob:
+        try:
+            data = _json.loads(r["payload"] or "{}")
+        except Exception:
+            continue
+        to = (data.get("to") or "").strip()
+        if not to:
+            continue
+        rows.append({
+            "email": to,
+            "source": "outbound",
+            "ts": int(r["enqueued_at"] or 0),
+            "first_seen": int(r["enqueued_at"] or 0) or None,
+            "user_id": None,
+            "status": (r["status"] or "queued"),
+        })
+
+    # 9) Invite token targets. Only rows that captured a target_email at
+    #    creation surface here; legacy invites had no target email.
+    try:
+        iv = c.execute(
+            "SELECT target_email, created_at, status, claimed_by_user_id "
+            "FROM invite_tokens WHERE target_email IS NOT NULL "
+            "AND target_email != ''"
+        ).fetchall()
+    except Exception:
+        iv = []
+    for r in iv:
+        email = (r["target_email"] or "").strip()
+        if not email:
+            continue
+        rows.append({
+            "email": email,
+            "source": "invite",
+            "ts": int(r["created_at"] or 0),
+            "first_seen": int(r["created_at"] or 0) or None,
+            "user_id": (
+                int(r["claimed_by_user_id"])
+                if r["claimed_by_user_id"] is not None else None
+            ),
+            "status": (r["status"] or "unclaimed"),
+        })
+
+    return rows
+
+
+def aggregate_email_addresses(
+    c=None,
+    *,
+    source=None,
+    q=None,
+    since=None,
+    until=None,
+    limit=200,
+    offset=0,
+):
+    """Return a unified view across every email-collection surface.
+
+    Surfaces 9 distinct sources (see ``EMAIL_SOURCE_LABELS``). Each row in
+    the return value is a dict shaped:
+
+        {
+            "email":        str,        # lower-cased for display, stable for dedupe
+            "email_raw":    str,        # the exact email we found (case preserved)
+            "source":       str,        # one of EMAIL_SOURCE_LABELS
+            "ts":           int,        # last activity (unix seconds)
+            "first_seen":   int|None,   # earliest sighting across all sources
+            "user_id":      int|None,   # linked users.id if any source carried one
+            "status":       str,        # source-specific (e.g. confirmed, queued)
+            "all_sources":  list[str],  # every source this email appears in
+        }
+
+    Dedup semantics: rows are keyed by ``lower(email)``. When the same
+    email appears in multiple sources, we keep the row from the source
+    with the *most recent* ``ts`` and stash every other source in
+    ``all_sources`` so the UI can render the badge stack. ``first_seen``
+    is the min(ts) across every sighting.
+
+    Filters:
+      * ``source``  — exact-match against ``EMAIL_SOURCE_LABELS``. None means
+                      every source.
+      * ``q``       — substring match (case-insensitive) on the email column.
+      * ``since``   — only rows with ts >= since (unix seconds).
+      * ``until``   — only rows with ts <= until (unix seconds).
+      * ``limit`` / ``offset`` — applied after sorting by ts DESC.
+
+    Pass ``c`` to reuse an existing connection (the test harness does this).
+    If ``c`` is None, the function opens its own connection.
+    """
+    own_conn = c is None
+    if own_conn:
+        with db.conn() as new_c:
+            return aggregate_email_addresses(
+                new_c, source=source, q=q, since=since, until=until,
+                limit=limit, offset=offset,
+            )
+
+    raw_rows = _aggregate_email_rows(c)
+
+    # Group by lower(email). Keep the row from the most recent source; track
+    # every other source for the all_sources stack; track first_seen across
+    # all sightings; promote user_id if any source had it.
+    grouped: dict[str, dict] = {}
+    for r in raw_rows:
+        key = (r["email"] or "").strip().lower()
+        if not key:
+            continue
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = {
+                "email": key,
+                "email_raw": r["email"],
+                "source": r["source"],
+                "ts": r["ts"],
+                "first_seen": r["first_seen"],
+                "user_id": r["user_id"],
+                "status": r["status"],
+                "all_sources": [r["source"]],
+            }
+            continue
+        # Track this source even if we don't promote it.
+        if r["source"] not in existing["all_sources"]:
+            existing["all_sources"].append(r["source"])
+        # Promote user_id if we didn't have one yet.
+        if existing["user_id"] is None and r["user_id"] is not None:
+            existing["user_id"] = r["user_id"]
+        # Track earliest sighting.
+        fs = r["first_seen"]
+        if fs is not None:
+            if existing["first_seen"] is None or fs < existing["first_seen"]:
+                existing["first_seen"] = fs
+        # Promote the row if this source is newer.
+        if r["ts"] > existing["ts"]:
+            existing["source"] = r["source"]
+            existing["ts"] = r["ts"]
+            existing["status"] = r["status"]
+            existing["email_raw"] = r["email"]
+
+    out = list(grouped.values())
+
+    # Filter — source (exact), q (substring), since/until (ts).
+    if source:
+        src = str(source).strip().lower()
+        out = [r for r in out if (
+            r["source"] == src or src in r["all_sources"]
+        )]
+    if q:
+        needle = str(q).strip().lower()
+        if needle:
+            out = [r for r in out if needle in r["email"]]
+    if since is not None:
+        try:
+            since_i = int(since)
+            out = [r for r in out if (r["ts"] or 0) >= since_i]
+        except (TypeError, ValueError):
+            pass
+    if until is not None:
+        try:
+            until_i = int(until)
+            out = [r for r in out if (r["ts"] or 0) <= until_i]
+        except (TypeError, ValueError):
+            pass
+
+    # Sort newest-first by last-activity ts.
+    out.sort(key=lambda r: r["ts"] or 0, reverse=True)
+
+    # Pagination.
+    try:
+        limit_i = max(1, min(2000, int(limit)))
+    except (TypeError, ValueError):
+        limit_i = 200
+    try:
+        offset_i = max(0, int(offset))
+    except (TypeError, ValueError):
+        offset_i = 0
+
+    return out[offset_i:offset_i + limit_i]
+
+
+def count_email_addresses_by_source(c=None) -> dict[str, int]:
+    """Return a {source: distinct_emails} dict over every surface.
+
+    Used by the /admin/email-addresses page to populate the source-filter
+    badge counts in the header. Counts distinct lower(email) per source
+    so multi-source emails are accounted for in every bucket they touch.
+    """
+    own_conn = c is None
+    if own_conn:
+        with db.conn() as new_c:
+            return count_email_addresses_by_source(new_c)
+    raw_rows = _aggregate_email_rows(c)
+    by_source: dict[str, set[str]] = {label: set() for label in EMAIL_SOURCE_LABELS}
+    for r in raw_rows:
+        key = (r["email"] or "").strip().lower()
+        if not key:
+            continue
+        by_source.setdefault(r["source"], set()).add(key)
+    return {k: len(v) for k, v in by_source.items()}
+
+
 __all__ = [
     'create_enquiry',
     'list_enquiries',
@@ -800,4 +1151,7 @@ __all__ = [
     'get_email_template',
     'upsert_email_template',
     'delete_email_template',
+    'aggregate_email_addresses',
+    'count_email_addresses_by_source',
+    'EMAIL_SOURCE_LABELS',
 ]

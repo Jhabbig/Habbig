@@ -1103,6 +1103,9 @@ from queries.admin import (  # noqa: F401,E402
     get_email_template,
     upsert_email_template,
     delete_email_template,
+    aggregate_email_addresses,
+    count_email_addresses_by_source,
+    EMAIL_SOURCE_LABELS,
 )
 
 # v2 audit-log surface (search + filters + stats + streaming CSV) — kept in

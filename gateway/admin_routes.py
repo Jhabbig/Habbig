@@ -3042,6 +3042,401 @@ async def newsletter_send(request: Request):
     return RedirectResponse("/admin/newsletter", status_code=302)
 
 
+# ── /admin/email-addresses ───────────────────────────────────────────────
+#
+# Unified aggregator over every email-collection surface on the platform:
+# newsletter subscribers (active + unsubscribed + prerelease), registered
+# users + admin-created shell rows, contact enquiries, feedback submitters,
+# outbound email-queue recipients, and invite-token targets. 9 sources,
+# one searchable + exportable table.
+#
+# Data layer: ``db.aggregate_email_addresses`` and
+# ``db.count_email_addresses_by_source`` (queries/admin.py).
+# Auth: admin gate, matches /admin/newsletter (super-admin sessions only
+# clear ``_require_admin_user``'s 2FA gate; vanilla logged-in users 403).
+
+
+_EMAIL_SOURCE_LABELS = (
+    "newsletter", "user", "enquiry", "feedback", "prerelease",
+    "shell", "outbound", "unsubscribe", "invite",
+)
+
+
+_EMAIL_STATUS_LABELS = (
+    "active", "confirmed", "pending", "unsubscribed",
+    "suspended", "queued", "complete", "failed", "unclaimed",
+)
+
+
+def _fmt_ts(ts) -> str:
+    """Format a unix-seconds timestamp as ``YYYY-MM-DD HH:MM`` UTC.
+
+    Returns ``"—"`` for None/0 so the table reads cleanly when a source
+    didn't have a timestamp. Matches the date formatting used elsewhere
+    in the admin surface (e.g. /admin/users).
+    """
+    if not ts:
+        return "—"
+    try:
+        return _dt.datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OverflowError):
+        return "—"
+
+
+def _parse_date_to_ts(s) -> int | None:
+    """Parse ``YYYY-MM-DD`` from the form into unix seconds (start-of-day UTC).
+
+    Returns None on empty or malformed input — the caller treats None as
+    "no bound", so a bad date silently disables the filter rather than 400ing.
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    try:
+        return int(_dt.datetime.strptime(s, "%Y-%m-%d")
+                   .replace(tzinfo=_dt.timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_email_source_options(active: str) -> str:
+    """Build the <option> list for the source-filter dropdown.
+
+    Renders verbatim through the template's ``raw_source_options`` slot.
+    All values flow through ``html.escape`` for defence-in-depth even
+    though the labels are static.
+    """
+    out = ['<option value="">All sources</option>']
+    for label in _EMAIL_SOURCE_LABELS:
+        sel = " selected" if active == label else ""
+        out.append(
+            f'<option value="{html.escape(label)}"{sel}>'
+            f'{html.escape(label)}</option>'
+        )
+    return "".join(out)
+
+
+def _render_email_status_options(active: str) -> str:
+    """Build the <option> list for the status-filter dropdown."""
+    out = ['<option value="">Any status</option>']
+    for label in _EMAIL_STATUS_LABELS:
+        sel = " selected" if active == label else ""
+        out.append(
+            f'<option value="{html.escape(label)}"{sel}>'
+            f'{html.escape(label)}</option>'
+        )
+    return "".join(out)
+
+
+def _render_email_totals_badges(counts: dict) -> str:
+    """Render the source-totals badge row across the top of the table.
+
+    Order follows ``_EMAIL_SOURCE_LABELS`` so the visual rhythm matches
+    the filter dropdown.
+    """
+    parts: list[str] = []
+    for label in _EMAIL_SOURCE_LABELS:
+        n = int(counts.get(label, 0) or 0)
+        parts.append(
+            f'<span class="adm-ea-total">'
+            f'<span class="adm-ea-total__label">{html.escape(label)}</span>'
+            f'<span class="adm-ea-total__value">{n:,}</span>'
+            f'</span>'
+        )
+    return "".join(parts)
+
+
+def _render_email_rows(rows: list) -> str:
+    """Render the table body as one <tr> per deduplicated email.
+
+    Each row links the user_id cell to /admin/users where applicable, so
+    the admin can pivot into the per-user surface without copy-pasting.
+    Sources beyond the primary are stacked after a hairline separator so
+    the column reads "newsletter · enquiry · outbound" when a single email
+    appears in multiple buckets.
+    """
+    if not rows:
+        return ""
+    out: list[str] = []
+    for r in rows:
+        email = html.escape(r.get("email") or "")
+        primary_source = html.escape(r.get("source") or "")
+        extras = [s for s in (r.get("all_sources") or []) if s != r.get("source")]
+        source_cell = f'<span class="adm-ea-source__primary">{primary_source}</span>'
+        if extras:
+            extra_strs = []
+            for s in extras:
+                extra_strs.append(
+                    f'<span class="adm-ea-source__sep">·</span>'
+                    f'<span class="adm-ea-source__extra">{html.escape(s)}</span>'
+                )
+            source_cell += "".join(extra_strs)
+
+        first_seen = _fmt_ts(r.get("first_seen"))
+        last_ts = _fmt_ts(r.get("ts"))
+        uid = r.get("user_id")
+        if uid:
+            uid_cell = (
+                f'<a href="/admin/users?q={html.escape(str(r.get("email") or ""))}">'
+                f'#{int(uid)}</a>'
+            )
+        else:
+            uid_cell = "—"
+        status = html.escape(r.get("status") or "—")
+
+        out.append(
+            "<tr>"
+            f'<td class="adm-ea-td--email">{email}</td>'
+            f'<td class="adm-ea-td--source"><span class="adm-ea-source">{source_cell}</span></td>'
+            f'<td class="adm-ea-td--ts">{first_seen}</td>'
+            f'<td class="adm-ea-td--ts">{last_ts}</td>'
+            f'<td class="adm-ea-td--uid">{uid_cell}</td>'
+            f'<td class="adm-ea-td--status">{status}</td>'
+            "</tr>"
+        )
+    return "".join(out)
+
+
+def _build_export_querystring(filters: dict) -> str:
+    """Stringify the active filters into a querystring for the CSV/JSON links.
+
+    Mirrors the page's own filter querystring so the user gets the
+    currently-viewed subset rather than the full dataset on export.
+    Empty filters are dropped to keep the URL short.
+    """
+    from urllib.parse import urlencode
+    pairs = [(k, v) for k, v in filters.items() if v]
+    return urlencode(pairs)
+
+
+async def email_addresses_page(request: Request):
+    """GET /admin/email-addresses — unified email aggregator page.
+
+    Read-only admin surface. Filters are passed via querystring so
+    bookmarks + the export links can carry the same subset. Pagination
+    is implicit (top 500 by default — anything beyond export to CSV).
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    source = (qp.get("source") or "").strip().lower()
+    status_filter = (qp.get("status") or "").strip().lower()
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+
+    if source and source not in _EMAIL_SOURCE_LABELS:
+        source = ""
+    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
+        status_filter = ""
+
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        # Treat the until-date as inclusive end-of-day.
+        until_ts += 86_399
+
+    rows = db.aggregate_email_addresses(
+        source=source or None,
+        q=q or None,
+        since=since_ts,
+        until=until_ts,
+        limit=500,
+        offset=0,
+    )
+    if status_filter:
+        rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
+
+    counts = db.count_email_addresses_by_source()
+
+    export_qs = _build_export_querystring({
+        "q": q, "source": source, "status": status_filter,
+        "since": since_str, "until": until_str,
+    })
+    csv_href = "/admin/email-addresses/export.csv" + (f"?{export_qs}" if export_qs else "")
+    json_href = "/admin/email-addresses/export.json" + (f"?{export_qs}" if export_qs else "")
+
+    empty_state = ""
+    if not rows:
+        empty_state = (
+            '<div class="adm-ea-empty">'
+            '<p class="adm-ea-empty__title">No matches</p>'
+            '<p class="adm-ea-empty__hint">'
+            'Loosen the filters or clear them to see every address.'
+            '</p></div>'
+        )
+
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/email_addresses.html",
+        page_title="Email addresses",
+        active_route="email-addresses",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Email addresses", "/admin/email-addresses"),
+        ],
+        filter_q=q,
+        filter_since=since_str,
+        filter_until=until_str,
+        result_count=f"{len(rows):,}",
+        export_csv_href=csv_href,
+        export_json_href=json_href,
+        raw_source_options=_render_email_source_options(source),
+        raw_status_options=_render_email_status_options(status_filter),
+        raw_totals_badges=_render_email_totals_badges(counts),
+        raw_rows=_render_email_rows(rows),
+        raw_empty_state=empty_state,
+    )
+
+
+async def email_addresses_export_csv(request: Request):
+    """GET /admin/email-addresses/export.csv — CSV download of filtered rows.
+
+    Mirrors the page's filter set. Cap at 5000 rows so an admin who
+    forgets to filter doesn't accidentally export 100MB. Uses
+    ``_csv_safe_cell`` to defang spreadsheet formula injection in the
+    email + status columns.
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    source = (qp.get("source") or "").strip().lower()
+    status_filter = (qp.get("status") or "").strip().lower()
+    since_ts = _parse_date_to_ts(qp.get("since"))
+    until_ts = _parse_date_to_ts(qp.get("until"))
+    if until_ts is not None:
+        until_ts += 86_399
+
+    if source and source not in _EMAIL_SOURCE_LABELS:
+        source = ""
+    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
+        status_filter = ""
+
+    rows = db.aggregate_email_addresses(
+        source=source or None,
+        q=q or None,
+        since=since_ts,
+        until=until_ts,
+        limit=5000,
+        offset=0,
+    )
+    if status_filter:
+        rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
+
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow([
+        "email", "source", "first_seen", "last_activity",
+        "user_id", "status", "all_sources",
+    ])
+    for r in rows:
+        w.writerow([
+            _csv_safe_cell(r.get("email") or ""),
+            _csv_safe_cell(r.get("source") or ""),
+            _csv_safe_cell(_fmt_ts(r.get("first_seen"))),
+            _csv_safe_cell(_fmt_ts(r.get("ts"))),
+            _csv_safe_cell(r.get("user_id") if r.get("user_id") is not None else ""),
+            _csv_safe_cell(r.get("status") or ""),
+            _csv_safe_cell("|".join(r.get("all_sources") or [])),
+        ])
+
+    try:
+        from security import audit as _a
+        _audit(
+            getattr(_a.AuditAction, "EMAIL_ADDRESSES_EXPORT", "admin.email_addresses.export"),
+            admin=admin, request=request,
+            target_type="email_addresses_export",
+            target_description=f"csv · {len(rows)} rows",
+            notes=f"q={q!r} source={source!r} status={status_filter!r}",
+        )
+    except Exception:
+        pass
+
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="email_addresses.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def email_addresses_export_json(request: Request):
+    """GET /admin/email-addresses/export.json — JSON dump of filtered rows.
+
+    Same filter contract as the CSV exporter. Returns a minimal object
+    with a ``rows`` array and a ``count`` integer so a downstream script
+    can sanity-check the cap was hit (count == 5000 → re-run with filters).
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    source = (qp.get("source") or "").strip().lower()
+    status_filter = (qp.get("status") or "").strip().lower()
+    since_ts = _parse_date_to_ts(qp.get("since"))
+    until_ts = _parse_date_to_ts(qp.get("until"))
+    if until_ts is not None:
+        until_ts += 86_399
+
+    if source and source not in _EMAIL_SOURCE_LABELS:
+        source = ""
+    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
+        status_filter = ""
+
+    rows = db.aggregate_email_addresses(
+        source=source or None,
+        q=q or None,
+        since=since_ts,
+        until=until_ts,
+        limit=5000,
+        offset=0,
+    )
+    if status_filter:
+        rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
+
+    # Strip internal-only keys before serialising.
+    public = []
+    for r in rows:
+        public.append({
+            "email": r.get("email"),
+            "source": r.get("source"),
+            "all_sources": list(r.get("all_sources") or []),
+            "first_seen": r.get("first_seen"),
+            "last_activity": r.get("ts"),
+            "user_id": r.get("user_id"),
+            "status": r.get("status"),
+        })
+
+    try:
+        from security import audit as _a
+        _audit(
+            getattr(_a.AuditAction, "EMAIL_ADDRESSES_EXPORT", "admin.email_addresses.export"),
+            admin=admin, request=request,
+            target_type="email_addresses_export",
+            target_description=f"json · {len(rows)} rows",
+            notes=f"q={q!r} source={source!r} status={status_filter!r}",
+        )
+    except Exception:
+        pass
+
+    return JSONResponse({"count": len(public), "rows": public})
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -3071,6 +3466,23 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/users/bulk-actions", users_bulk_actions,
         methods=["POST"], include_in_schema=False,
+    )
+
+    # Unified email-address aggregator — single searchable surface across
+    # every email-collection source on the platform (9 sources). See
+    # email_addresses_page docstring for the full inventory. Data layer:
+    # db.aggregate_email_addresses + count_email_addresses_by_source.
+    app.add_api_route(
+        "/admin/email-addresses", email_addresses_page,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/email-addresses/export.csv", email_addresses_export_csv,
+        methods=["GET"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/email-addresses/export.json", email_addresses_export_json,
+        methods=["GET"], include_in_schema=False,
     )
 
     # Newsletter blast composer — see newsletter_page docstring for the

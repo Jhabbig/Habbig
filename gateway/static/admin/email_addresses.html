@@ -1,0 +1,111 @@
+<!-- /admin/email-addresses — unified email-collection aggregator.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Surfaces every email captured by the platform across 9 distinct sources
+     (newsletter, user, enquiry, feedback, prerelease, shell, outbound queue,
+     unsubscribe, invite token) in one searchable table. Dedup is by
+     lower(email) — multi-source emails show every source they appear in
+     as a thin row of badges in the source column.
+
+     Filters: source (dropdown), free-text search on email, since/until
+     date pickers, status. All filters round-trip via querystring.
+
+     Density: dense rows (28px) by default. Numbers and dates in Geist Mono,
+     emails in Geist Mono so the alignment scans cleanly down the column.
+     Strictly monochrome — categorisation by typography weight + indentation,
+     never by colour. -->
+
+<link rel="stylesheet" href="/_gateway_static/pages/admin_email_addresses.css">
+
+<div class="adm-ea-page">
+
+  <div class="adm-ea-hero">
+    <p class="adm-ea-hero__eyebrow">Aggregator</p>
+    <h2 class="adm-ea-hero__display">Email addresses</h2>
+    <p class="adm-ea-hero__lede">
+      Every email captured by the platform — newsletter, accounts, contact
+      enquiries, feedback, pre-release waitlist, admin-created shells,
+      outbound queue, unsubscribes, and invite token targets — deduplicated
+      and sorted by last activity.
+    </p>
+  </div>
+
+  <!-- ── Source totals badges ─────────────────────────────────────── -->
+  <div class="adm-ea-totals" aria-label="Email counts by source">
+    {{ raw_totals_badges }}
+  </div>
+
+  <!-- ── Filter bar ───────────────────────────────────────────────── -->
+  <form class="adm-ea-filter" method="get" action="/admin/email-addresses"
+        role="search" aria-label="Filter email addresses">
+    <label class="adm-ea-filter__field">
+      <span class="adm-ea-filter__label">Search</span>
+      <input class="adm-ea-filter__input" type="search" name="q"
+             value="{{ filter_q }}"
+             placeholder="email substring"
+             autocomplete="off"
+             inputmode="search"
+             minlength="0" maxlength="120">
+    </label>
+    <label class="adm-ea-filter__field">
+      <span class="adm-ea-filter__label">Source</span>
+      <select class="adm-ea-filter__input" name="source">
+        {{ raw_source_options }}
+      </select>
+    </label>
+    <label class="adm-ea-filter__field">
+      <span class="adm-ea-filter__label">Status</span>
+      <select class="adm-ea-filter__input" name="status">
+        {{ raw_status_options }}
+      </select>
+    </label>
+    <label class="adm-ea-filter__field adm-ea-filter__field--date">
+      <span class="adm-ea-filter__label">Since</span>
+      <input class="adm-ea-filter__input" type="date" name="since"
+             value="{{ filter_since }}">
+    </label>
+    <label class="adm-ea-filter__field adm-ea-filter__field--date">
+      <span class="adm-ea-filter__label">Until</span>
+      <input class="adm-ea-filter__input" type="date" name="until"
+             value="{{ filter_until }}">
+    </label>
+    <div class="adm-ea-filter__actions">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="/admin/email-addresses" class="btn btn-ghost">Reset</a>
+    </div>
+  </form>
+
+  <!-- ── Export + summary strip ───────────────────────────────────── -->
+  <div class="adm-ea-summary">
+    <div class="adm-ea-summary__count">
+      <span class="adm-ea-summary__count-value">{{ result_count }}</span>
+      <span class="adm-ea-summary__count-label">rows</span>
+    </div>
+    <div class="adm-ea-summary__exports">
+      <a class="adm-ea-export" href="{{ export_csv_href }}">Export CSV</a>
+      <a class="adm-ea-export" href="{{ export_json_href }}">Export JSON</a>
+    </div>
+  </div>
+
+  <!-- ── Table ────────────────────────────────────────────────────── -->
+  <div class="adm-ea-table-wrap">
+    <table class="adm-ea-table">
+      <thead>
+        <tr>
+          <th scope="col" class="adm-ea-th adm-ea-th--email">Email</th>
+          <th scope="col" class="adm-ea-th adm-ea-th--source">Source</th>
+          <th scope="col" class="adm-ea-th adm-ea-th--ts">First seen</th>
+          <th scope="col" class="adm-ea-th adm-ea-th--ts">Last activity</th>
+          <th scope="col" class="adm-ea-th adm-ea-th--uid">User</th>
+          <th scope="col" class="adm-ea-th adm-ea-th--status">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ raw_rows }}
+      </tbody>
+    </table>
+  </div>
+
+  {{ raw_empty_state }}
+
+</div>
