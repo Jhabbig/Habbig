@@ -477,3 +477,137 @@ Smoke: `curl -sI https://voters.narve.ai/` should return 200 from the gateway.
 - [ ] Update cloudflared config on prod
 - [ ] Reload service
 - [ ] Smoke each subdomain
+
+---
+
+## 2026-05-15 — WAF rule: protect /admin/api/* endpoints
+
+Closes carry-over audit LOW #1: existing CF WAF rules (the 2026-04-21
+pass) cover `/admin/*` rate-limiting at 60/min/IP but do **not**
+specifically harden the `/admin/api/*` JSON surface, which is the
+highest-value attack target on the origin (admin mutation endpoints,
+job triggers, watermark trace, health monitor, etc.). Add a dedicated
+custom rule + rate-limit pair to make brute-force / scraping
+impossible at the edge before requests reach uvicorn.
+
+### CF Dashboard nav path
+
+```
+narve.ai → Security → WAF → Custom rules → Create rule
+```
+
+(Rate-limit half lives one tab over: `narve.ai → Security → WAF →
+Rate limiting rules → Create rule`.)
+
+### Custom rule — managed challenge + country allowlist
+
+- **Rule name:** `admin-api-edge-shield`
+- **Expression** (copy-paste into the expression editor in "Edit
+  expression" mode):
+
+  ```
+  (http.request.uri.path matches "^/admin/api/")
+  ```
+
+- **Action — pick one of the two postures below depending on how
+  locked-down you want it.** Posture B is stricter; default to A if
+  unsure since you sometimes admin from random networks (phone tether,
+  hotel wifi, etc.).
+
+  **Posture A — Managed Challenge (default, recommended):**
+  - Action: `Managed Challenge`
+  - Lets a real human through after a JS challenge; blocks
+    headless / scripted abuse cold. No country pinning, so admin
+    works from anywhere.
+
+  **Posture B — Block by country (stricter, only if admin is
+  geo-stable):**
+  - Expression (extends the path match):
+
+    ```
+    (http.request.uri.path matches "^/admin/api/"
+      and not ip.geoip.country in {"GB" "US"})
+    ```
+
+  - Action: `Block`
+  - Allowlist GB + US only (adjust to wherever you actually admin
+    from — `DE`, `FR`, etc.). Any other origin gets a hard 403 at
+    the edge.
+
+### Rate-limit rule — pair with the custom rule above
+
+Second tab: `narve.ai → Security → WAF → Rate limiting rules → Create
+rule`.
+
+- **Rule name:** `admin-api-rate-limit`
+- **Match expression:**
+
+  ```
+  (http.request.uri.path matches "^/admin/api/")
+  ```
+
+- **Characteristics:** `IP source address`
+- **Period:** `5 minutes`
+- **Requests allowed:** `60`
+- **When exceeded:** `Block` for `10 minutes`
+- **Description:** `admin-api-rate-limit — 60 req / 5 min per IP`
+
+This is **tighter** than the existing Rule E (`/admin/*` at 60/min/IP
+= 300/5min/IP) because `/admin/api/*` is the JSON mutation surface,
+not the HTML console. Legit admin usage is bursty-but-low (login,
+load page, click a few buttons → ~10-20 reqs in a minute, then idle);
+60 / 5min is generous for humans, fatal for scrapers.
+
+### Justification
+
+The admin API is the single highest-value target on the origin:
+- `POST /admin/api/jobs/*` triggers background jobs (rate-limited
+  app-side at 30-120/min/admin per `admin_jobs_routes.py:85-145`, but
+  edge limit adds defence in depth).
+- `GET /admin/api/health-monitor` enumerates all 13 services
+  (`admin_health_monitor_routes.py`) — a recon goldmine for an
+  attacker mapping the surface.
+- `GET /admin/trace-watermark?id=<wm>` (`admin_routes.py:712`)
+  reverse-looks-up per-recipient email watermarks; every hit is
+  audit-logged, but the audit only fires *after* the request reaches
+  uvicorn.
+
+App-side, `_require_admin_user` returns 403 on missing session, so
+functional auth is fine. But:
+1. **Brute-force / credential-stuffing** against any future
+   `/admin/api/login`-style endpoint would burn uvicorn cycles for
+   every guess.
+2. **Scraping** the JSON endpoints for shape/error-message
+   reconnaissance is trivially scriptable from a single IP.
+3. **DoS amplification** — an attacker can issue thousands of
+   `/admin/api/*` requests, each of which forces an admin-session
+   lookup against SQLite before 403ing. Edge block = origin saved.
+
+The managed-challenge posture (A) stops headless bots cold without
+locking out the human; the rate-limit pair caps even an authenticated
+session if it goes rogue (compromised admin laptop). Both rules cost
+~zero on Cloudflare's Pro plan.
+
+### Deploy order
+
+1. Add the rate-limit rule first (rate-limit page) — it's
+   purely additive, can't lock you out.
+2. Smoke `/admin/api/health-monitor` from your normal IP to confirm
+   nothing breaks at 60 req / 5min.
+3. Add the custom rule (Posture A by default).
+4. Smoke again — managed challenge should fire once per session for
+   a real browser, then cookie-bypass subsequent requests.
+5. If switching to Posture B later: confirm your current public IP's
+   country **before** flipping action to Block (use
+   <https://ifconfig.co/country-iso>).
+
+### Tasks remaining
+
+- [ ] Add rate-limit rule via CF dashboard (narve.ai → Security →
+      WAF → Rate limiting rules → Create rule)
+- [ ] Add custom rule, Posture A (narve.ai → Security → WAF →
+      Custom rules → Create rule)
+- [ ] Smoke `/admin/api/health-monitor` and `/admin/api/jobs/*` from
+      a real browser session after both rules are live
+- [ ] (Optional) Upgrade to Posture B once a stable admin-country
+      set is confirmed
