@@ -31,6 +31,23 @@
     </div>
   </section>
 
+  <form class="int-filters" method="get" action="/admin/integrations" aria-label="Filter integrations">
+    <label class="int-filter">
+      <span class="int-filter__lbl">Provider</span>
+      <select name="provider" class="int-filter__select">
+        {{ raw_provider_options }}
+      </select>
+    </label>
+    <label class="int-filter">
+      <span class="int-filter__lbl">Status</span>
+      <select name="status" class="int-filter__select">
+        {{ raw_status_options }}
+      </select>
+    </label>
+    <button type="submit" class="int-filter__submit">Apply</button>
+    <a class="int-filter__clear" href="/admin/integrations">Clear</a>
+  </form>
+
   <div class="int-list" id="int-list">
     {{ raw_integration_rows }}
   </div>
@@ -73,6 +90,51 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+
+  .int-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .int-filter { display: flex; flex-direction: column; gap: 4px; }
+  .int-filter__lbl {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .int-filter__select {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--bg-card, var(--bg-inset));
+    color: var(--text-primary);
+    min-width: 160px;
+  }
+  .int-filter__submit {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 7px 14px;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    background: var(--text-primary);
+    color: var(--bg-page, var(--bg-inset));
+    cursor: pointer;
+    line-height: 1;
+  }
+  .int-filter__clear {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 7px 6px;
+  }
+  .int-filter__clear:hover { color: var(--text-primary); }
 
   .int-list {
     display: flex;

@@ -284,6 +284,56 @@ def _render_rows(snapshot: dict[str, dict[str, Any]]) -> str:
     )
 
 
+# ── Filter whitelists ────────────────────────────────────────────────────
+#
+# Mirrors ``admin_routes.email_addresses_page``: querystring values must
+# be in the whitelist or get coerced to "" (= show all). Provider order
+# matches the rendering order above so the dropdown reads top-to-bottom
+# the same way the list does.
+
+_INTEGRATION_PROVIDER_LABELS = (
+    "stripe", "anthropic", "polymarket", "kalshi",
+    "smtp", "sentry", "betterstack", "cloudflare",
+)
+
+# UI-facing status labels. The underlying snapshot uses
+# ``connected/degraded/down``; the filter maps the UI vocabulary to that
+# raw value via ``_STATUS_FILTER_MAP`` so we keep the friendlier admin
+# terminology ("error" reads better than "degraded", "disconnected"
+# reads better than "down").
+_INTEGRATION_STATUS_LABELS = ("connected", "disconnected", "error")
+
+_STATUS_FILTER_MAP = {
+    "connected": integrations_q.STATUS_CONNECTED,
+    "disconnected": integrations_q.STATUS_DOWN,
+    "error": integrations_q.STATUS_DEGRADED,
+}
+
+
+def _render_provider_options(active: str) -> str:
+    """Build the <option> list for the provider-filter dropdown."""
+    out = ['<option value="">All providers</option>']
+    for label in _INTEGRATION_PROVIDER_LABELS:
+        sel = " selected" if active == label else ""
+        out.append(
+            f'<option value="{html.escape(label)}"{sel}>'
+            f'{html.escape(label)}</option>'
+        )
+    return "".join(out)
+
+
+def _render_status_options(active: str) -> str:
+    """Build the <option> list for the status-filter dropdown."""
+    out = ['<option value="">All statuses</option>']
+    for label in _INTEGRATION_STATUS_LABELS:
+        sel = " selected" if active == label else ""
+        out.append(
+            f'<option value="{html.escape(label)}"{sel}>'
+            f'{html.escape(label)}</option>'
+        )
+    return "".join(out)
+
+
 # ── HTML page ────────────────────────────────────────────────────────────
 
 
@@ -301,12 +351,43 @@ async def admin_integrations_page(request: Request):
         log.exception("admin_integrations_page: snapshot failed")
         snapshot = {}
 
-    # Summary tally (connected / degraded / down counts).
+    # Whitelist filter values — anything outside the allowed sets gets
+    # coerced to "" so the page degrades to "no filter" rather than 400.
+    # The "all" sentinel from the dropdown comes in as the empty string
+    # by default; we also explicitly handle the literal "all" value.
+    qp = request.query_params
+    provider = (qp.get("provider") or "").strip().lower()
+    status_filter = (qp.get("status") or "").strip().lower()
+    if provider == "all":
+        provider = ""
+    if status_filter == "all":
+        status_filter = ""
+    if provider and provider not in _INTEGRATION_PROVIDER_LABELS:
+        provider = ""
+    if status_filter and status_filter not in _INTEGRATION_STATUS_LABELS:
+        status_filter = ""
+
+    # Tally always reflects the unfiltered snapshot — the headline counts
+    # at the top of the page describe the whole system, not the filtered
+    # slice. The filter only narrows the rendered list below.
     tally = {"connected": 0, "degraded": 0, "down": 0}
     for row in snapshot.values():
         tally[row.get("status", "down")] = tally.get(
             row.get("status", "down"), 0
         ) + 1
+
+    filtered_snapshot = snapshot
+    if provider:
+        filtered_snapshot = {
+            slug: row for slug, row in filtered_snapshot.items()
+            if slug == provider
+        }
+    if status_filter:
+        raw_status = _STATUS_FILTER_MAP[status_filter]
+        filtered_snapshot = {
+            slug: row for slug, row in filtered_snapshot.items()
+            if row.get("status") == raw_status
+        }
 
     return render_admin_page(
         request,
@@ -318,6 +399,10 @@ async def admin_integrations_page(request: Request):
         raw_tally_connected=str(tally["connected"]),
         raw_tally_degraded=str(tally["degraded"]),
         raw_tally_down=str(tally["down"]),
-        raw_integration_rows=_render_rows(snapshot),
-        raw_integration_count=str(len(snapshot)),
+        raw_integration_rows=_render_rows(filtered_snapshot),
+        raw_integration_count=str(len(filtered_snapshot)),
+        raw_provider_options=_render_provider_options(provider),
+        raw_status_options=_render_status_options(status_filter),
+        filter_provider=provider,
+        filter_status=status_filter,
     )
