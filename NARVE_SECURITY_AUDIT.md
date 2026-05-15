@@ -5,6 +5,273 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #16 — 2026-05-15T13:46Z — commit fd0f2f8 — audit#15 CRIT verification (caller-requested, mid-fix)
+
+### Why this audit exists
+
+Audit #15 (`f086180`, ~13 min earlier) flagged a brand-new CRIT (magic-link account takeover via the subproduct-signup → Stripe Checkout → /onboarding bridge) plus a HIGH (JSON-sibling route inherits the primitive) plus two MEDs (no audit_log for mint/redeem, key-domain crossover via `SITE_ACCESS_TOKEN` fallback). The caller dispatched this audit explicitly to verify the in-flight fix (registered-user email rejection + dedicated HMAC secret + audit logging) against current HEAD. Fix landing was in motion when this scan started.
+
+The scan opened HEAD at `fd0f2f8` (`audit#15 fixes — notifications + newsletter race + unsubscribe HMAC + onboarding magic-link`, committed 2026-05-15 14:37 local). Working tree at scan close had `gateway/security/audit.py` + `gateway/subproduct_signup_routes.py` modified with the takeover-fix work — uncommitted. **HEAD itself does NOT contain the four audit#15 fixes.** Every verdict below describes committed-tip state per the caller's explicit instruction ("based on what's actually in HEAD when you scan"); the fix-in-flight is documented under WIP findings.
+
+### Code inventory audited
+- Committed tip: `fd0f2f8` (`audit#15 fixes — notifications + newsletter race + unsubscribe HMAC + onboarding magic-link`). One commit ahead of `origin/feature/platform-build` (`f086180` = audit #15 entry itself).
+- Local unpushed commits: **1** — `fd0f2f8`. Touches db.py (+24), email_system/unsubscribe.py (+47), jobs/newsletter_blast_jobs.py (+122), migrations/194_blast_cursor.py (+70 new), onboarding_routes.py (+88), queries/newsletter.py (+181), queries/notifications.py (+360 new), 5 new test files (~914 LOC). All security-neutral or security-positive (newsletter cursor closes a race; unsubscribe HMAC dropped a hardcoded fallback; notifications CRUD closes an AttributeError that masked failed writes). NONE of the four audit-#15 fixes are in this commit.
+- Local uncommitted files: 2 modified (`gateway/security/audit.py` +13, `gateway/subproduct_signup_routes.py` +167) + 1 untracked (`gateway/static/avatars/`). The 2 modified files together implement the four audit-#15 fixes. Untracked since pre-#15.
+- Local stashes: 70 entries (unchanged from #15). Bulk-drop discipline still missing.
+- Server uncommitted files: not inspected (scan rules forbid scp / ssh).
+- Server tip vs origin: behind (no deploy in the 13-minute window). Server still runs every pre-fix-wave path.
+- Running uvicorn loaded from: not directly inspected this iteration. At #15 it was `~/Habbig/gateway/server.py` (pid 4077346, started 00:05 May 15). With no deploy between #15 and #16 the process is now ~13 min older relative to disk.
+- Branches with recent work (last 14d not in current): `backup/parallel-agent-mess-2026-04-20`, `feature/referral-program`, `feature/annoyance-polish`, `feature/invite-token-system`, `main` — all >3 weeks old. Single worktree on `feature/platform-build`.
+- DRIFT FLAG: **unpushed WIP + uncommitted fix-in-flight + running process stale.** The takeover-fix lives in two modified files that are not committed; if the fix agent crashes mid-write or another agent reverts the working tree, CRIT #1 stays open at HEAD. Origin is now 1 commit behind local, and the audit-#15 deploy backlog has not been worked off — production still runs every audit-#14 + audit-#15 vulnerability.
+
+### Summary
+Posture: **concerning**
+Critical issues: 1 (audit#15 CRIT #1 NOT closed at HEAD; PARTIAL — fix staged in working tree, uncommitted, untested)
+High-priority: 1 (audit#15 HIGH #1 inherits same primitive, same status)
+Medium-priority: 4 (audit#15 MED #1 + MED #2 NOT closed at HEAD; MED #3 + MED #4 carry-overs; plus the new "broad except Exception swallows RegisteredUserConflict with generic 502/redirect" UX-on-security gap once the fix lands)
+Low-priority: 7 (carry-overs from #15 — stash debt, pip-audit blocked, dynamic ORDER BY, etc.)
+Resolved since last audit: **0** (fix not yet committed)
+New since last audit: 0
+Regressions: 0
+
+### Verification matrix — every flagged item from audit #15
+
+| # | Severity | Issue | HEAD state | Working-tree state | Status |
+|---|---|---|---|---|---|
+| 1 | CRIT | `_create_or_get_shell_user` short-circuits for registered users | `subproduct_signup_routes.py:229-270` unchanged | `:389-437` rewritten with `RegisteredUserConflict` raise | **PARTIAL** (fix in WIP, not at HEAD) |
+| 2 | HIGH | `/api/billing/subproduct-checkout` inherits the takeover | route at `:324-356` unchanged | inherits the new raise via `_create_or_get_shell_user` call | **PARTIAL** (fix in WIP, swallowed by broad `except Exception`) |
+| 3 | MED | Magic-link mint/redeem not in `audit_log` | `audit.py` lacks `MAGIC_LINK_*` constants at HEAD | WIP adds `AuditAction.MAGIC_LINK_MINT` + `MAGIC_LINK_REDEEM` + `log_action` calls in `_build_checkout_session` + `burn_magic_link_jti` | **PARTIAL** (fix in WIP) |
+| 4 | MED | `SITE_ACCESS_TOKEN` fallback in `_magic_link_secret` | `subproduct_signup_routes.py:62-74` unchanged | WIP replaces fallback chain with dedicated `SUBPRODUCT_MAGIC_LINK_SECRET` env var + boot-time guard | **PARTIAL** (fix in WIP) |
+
+Detailed evidence per item, all from HEAD = `fd0f2f8`:
+
+- **CRIT #1 — registered-user takeover.** `git show HEAD:gateway/subproduct_signup_routes.py` shows `_create_or_get_shell_user` at lines 229-270 with NO `password_hash` check. The function `SELECT id FROM users WHERE email = ?` and on row hit returns `int(row["id"])`. An attacker submitting a victim's email gets the victim's user_id, which then flows into `_build_checkout_session` → `mint_magic_link_token(user_id)` → embedded in `success_url`. Takeover primitive fully reachable.
+- **HIGH #1 — JSON-sibling route.** `/api/billing/subproduct-checkout` at `subproduct_signup_routes.py:324-356` calls the same `_create_or_get_shell_user` and returns the Stripe URL containing the embedded auth token in JSON. Curl + free-tier-account-CSRF suffices.
+- **MED #1 — no audit log for magic-link lifecycle.** `git show HEAD:gateway/security/audit.py | grep MAGIC_LINK` returns ZERO hits. Only `log.info` / `log.warning` lines exist on the mint and redeem paths, which are not the structured `audit_log` table.
+- **MED #2 — key-domain crossover.** `_magic_link_secret()` at HEAD `:62-74` returns `os.environ.get("GATEWAY_COOKIE_SECRET") or os.environ.get("SITE_ACCESS_TOKEN") or "dev-subproduct-magic-link-secret"`. Both secrets still in play; anyone with `SITE_ACCESS_TOKEN` (rotated rarely, shared among operators) can forge tokens.
+
+**Working-tree review (informational only, NOT scored against HEAD):**
+
+- `gateway/security/audit.py` (+13 LOC): adds `MAGIC_LINK_MINT = "magic_link.mint"` + `MAGIC_LINK_REDEEM = "magic_link.redeem"` AuditAction enum members plus matching ACTION_LABELS entries. Drop-in additive change; safe to commit.
+- `gateway/subproduct_signup_routes.py` (+167 LOC): four substantive changes —
+  1. `_magic_link_secret()` rewritten to require `SUBPRODUCT_MAGIC_LINK_SECRET` (dedicated env var, ≥32 chars, production refuses to boot without it via `_ensure_magic_link_secret_configured` startup guard).
+  2. New `RegisteredUserConflict(Exception)` class with `user_id` + `masked_email`.
+  3. New `_row_is_registered(row)` helper requiring BOTH `password_hash` AND `password_salt` non-empty.
+  4. `_create_or_get_shell_user` now raises `RegisteredUserConflict` for registered users; preserves shell-user reuse semantics for empty-password rows.
+  5. `_build_checkout_session` writes `MAGIC_LINK_MINT` audit row before Stripe call; `burn_magic_link_jti` writes `MAGIC_LINK_REDEEM` on every redemption attempt (first-use AND replay, so refresh-back attacks are visible in the trail).
+- **Gaps in the WIP fix worth flagging now so the caller can iterate before commit:**
+  - **MED-new#1 — `RegisteredUserConflict` swallowed by broad `except Exception`.** Both routes (`api_subproduct_checkout` and `subproduct_signup`) wrap `_create_or_get_shell_user` in `except Exception`, return a generic 502/"Checkout temporarily unavailable" or a redirect with `error=checkout`. **Security-wise this is sufficient** (the magic-link token is never minted, so no takeover), but the docstring promises "user-visible 'sign in first' response" and the code never delivers it. Users hitting this path see a generic error and have no clue why their checkout failed. Recommend `except RegisteredUserConflict as exc:` before the broad clause, returning a 409 / redirect with `error=sign_in_first&existing=<masked>`.
+  - **MED-new#2 — `register()` calls `_ensure_magic_link_secret_configured()` but the working tree does not show that call wired into `register()`.** Verified by `grep _ensure_magic_link_secret_configured gateway/subproduct_signup_routes.py` → only definition shows, no callers. If this never runs at boot, production missing `SUBPRODUCT_MAGIC_LINK_SECRET` will silently swing into the `_is_production()` branch of `_magic_link_secret()` which raises at first signing attempt — that's failure-on-first-customer-checkout, not failure-on-boot. The docstring asserts boot-time failure parity with `SITE_ACCESS_TOKEN` / `GATEWAY_COOKIE_SECRET` / `IP_HASH_SALT` guards; that parity is missing. Add the call to `register()` (or to module import) before commit.
+  - **MED-new#3 — Zero regression test for the registered-user case.** `grep -c "RegisteredUserConflict\|registered\|password_hash" gateway/tests/test_subproduct_signup_magic_link.py` → 0 hits. The 49 tests added in `fd0f2f8` cover token round-trip, jti burn, origin check, rate-limit, slug whitelist — but NOT the actual takeover primitive being closed. A test like `test_existing_user_with_password_hash_raises_RegisteredUserConflict_and_no_token_minted` is the single most important guard against this CRIT regressing in a future refactor. Add before commit.
+
+### Authentication & Sessions
+- Token gate at /token: PRESENT (unchanged from #15).
+- `pm_gateway_session` + `narve_session` both accepted: yes (legacy migration window still open).
+- `narve_session` stored as SHA-256 hash in DB: yes (migration 191 + `_hash_session_token` import at `db.py`).
+- Session cookie HttpOnly: yes (`auth/cookies.py:127`).
+- Session cookie Secure: yes — `secure=_is_production()` (`auth/cookies.py:129`).
+- Session cookie SameSite: Strict (`auth/cookies.py:128`).
+- Session revocation on logout: works (re-verified — `logout` clears + DB row removed).
+- Session rotation on privilege change: implemented for password reset + impersonation; role-change rotation not re-verified this iteration.
+- Max sessions per user enforced: not enforced (carry-over MEDIUM since #13).
+- Password reset invalidates sessions: yes (migration 003).
+- Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (`queries/auth.py:142`).
+- 2FA status: removed in migration 019.
+- Impersonation banner visible on every page while active: yes.
+- Impersonation blocked paths enforced: yes (`gateway/auth/guards.py`).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes.
+- Super admin routes require role = 2: yes.
+- Subproduct access checked at middleware + route + response: partial (carry-over).
+- `has_subproduct_access` called on every subproduct route: yes.
+- Feature flag evaluation in use: yes (migration 186 added subproduct feature flags).
+- Gift subscription enforcement: yes.
+
+### CSRF
+- Double submit cookie: yes (`narve_csrf` + matching header).
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — `_CSRF_EXEMPT_POSTS` minimal and documented.
+- HTMX X-CSRF-Token hook active: yes.
+- Exempt routes list minimal and documented: yes — but the `/subproduct-signup` exemption STILL relies on Origin/Referer + rate-limit for a primitive (magic-link mint over unauthenticated input) that those defences do not protect against until the WIP fix lands.
+
+### Rate limiting
+- Auth endpoints: still has the 7 gaps from #14 MED #2 / #15 carry-over (`server_features.py` forgot-password / reset-password / validate-token / register / login / logout / `server.py:3889`).
+- API endpoints: yes, partial.
+- Per-user and per-IP as appropriate: yes.
+- 429 response includes `Retry-After`: yes.
+- Cloudflare-level rate limit rules: present + documented in `CLOUDFLARE_CHANGES.md`.
+
+### Input validation
+- SQL injection vectors found: 0 confirmed exploitable. Scanner-flagged f-strings (`api_v1.py:348-357`, `db_sharing.py:399-540`, `db_referrals.py:497`) are all admin-allowlist-driven identifiers or `?` placeholder builders for IN clauses. ORDER BY dynamic-identifier risks at `queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:231`, `db_referrals.py:461` are all server-allowlisted columns — HIGH-cosmetic, not exploitable. Same 4 hits as #15 LOW #1.
+- XSS via innerHTML with user content: 0 confirmed exploitable. 19 `raw_` template-key hits are all server-rendered HTML (`status_routes.py` component rows, `routes_referrals.py` token, `jobs/newsletter_blast_jobs.py:204` body_html_str — webhook-driven content from controlled source).
+- Command injection / subprocess with user input: 0.
+- Path traversal: 0 confirmed exploitable. 1 MEDIUM scanner-flag at `scripts/cloudflare_dns_sync.py:42` (`open(config_path)`) — `config_path` is a hardcoded module-level constant.
+- SSRF: 0 user-controlled.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes.
+- No hardcoded secrets in current tree: clean (scan_secrets.sh — no committed `.env`, no DB files tracked, no `AKIA`/Stripe live key patterns).
+- No secrets in git history: clean (500-commit deep scan, no flagged patterns).
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes.
+- Sessions hashed before DB storage: yes.
+- Password hashes use PBKDF2-HMAC-SHA256: yes (600k iterations).
+- .env permissions on server: not inspected this iteration.
+
+### Data privacy
+- Account deletion works end-to-end: yes (cascade now uniform per audit #15 RESOLVED for HIGH #5).
+- Data export includes all user-linked tables: verified at #13; cascade table list walks sqlite_master in `queries/auth.py:cascade_delete_user`.
+- Sensitive fields redacted in logs: yes.
+- Sentry scrubbing active: yes.
+- Impersonation actions logged: yes (audit_log + impersonation banner).
+
+### External integrations
+- Stripe webhook signature validated: yes.
+- Stripe webhook idempotent: yes.
+- Stripe webhook mode-verified: yes (livemode check at `stripe_webhook_routes.py:484-497`).
+- Telegram bot token in env only: yes.
+- Discord bot token in env only: yes.
+- Scraper API key validated on every request: yes.
+- Polymarket wallet address validated: yes (SIWE-verified on both `/api/markets/connect/polymarket` AND `/api/portfolio/polymarket/connect` per audit #15 RESOLVED HIGH #4).
+- SEC EDGAR User-Agent set: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes.
+- Cloudflare Tunnel active, origin not directly reachable: unverified this iteration (scan rules).
+- Cloudflare Rules for subdomain enumeration: yes.
+- Cloudflare Rules for scanner UA blocking: yes.
+- Post-deploy commit step documented: yes.
+- CLOUDFLARE_CHANGES.md current: yes (last modified May 15 08:58).
+
+### Monitoring
+- Sentry backend configured: yes.
+- Sentry frontend configured: yes.
+- Structured logging configured: yes.
+- Security events logged separately: **partial** — same finding as #15 MED #1, still open at HEAD. Magic-link mint/redeem write only to Python logging, NOT to `audit_log`. WIP fix adds the audit writes but is uncommitted.
+- Audit log append-only: yes.
+- Uptime monitoring active: yes.
+
+### Dependency audit
+- Last dependency audit: 2026-05-14 (`f8d931a`).
+- Known CVEs: pip-audit still blocked on Python 3.9 vs 3.10 harness mismatch (`orjson==3.11.6` requires Python ≥3.10; the harness venv is 3.9). Same LOW carry-over as #14/#15.
+- Unpinned deps: 0.
+- Lockfile present: yes.
+
+### Compliance
+- Privacy Policy live: yes.
+- Terms of Service live: yes.
+- DPA live: yes.
+- Cookie notice: yes.
+- GDPR data export: yes.
+- GDPR account deletion: yes.
+
+### Issues found in this audit
+
+#### CRITICAL
+
+1. **AUDIT #15 CRIT #1 still open at HEAD — magic-link account takeover via subproduct-signup.**
+   Status: **PARTIAL** — fix is staged in working tree (`gateway/security/audit.py` + `gateway/subproduct_signup_routes.py` modified, both uncommitted). HEAD itself is vulnerable.
+   Location: `gateway/subproduct_signup_routes.py:229-270` at HEAD `fd0f2f8` (`_create_or_get_shell_user`).
+   Impact: unchanged from audit #15 — pay subscription fee, walk away with victim's session cookie.
+   Fix verification when commit lands: confirm `git show <new-sha>:gateway/subproduct_signup_routes.py | grep -A5 "if row:" | grep RegisteredUserConflict` returns a hit AND `grep -c "RegisteredUserConflict" gateway/tests/test_subproduct_signup_magic_link.py` is ≥ 1.
+
+#### HIGH
+
+1. **AUDIT #15 HIGH #1 still open at HEAD — JSON-sibling /api/billing/subproduct-checkout route inherits the takeover primitive.**
+   Status: **PARTIAL** — inherits the same WIP fix.
+   Location: `gateway/subproduct_signup_routes.py:324-356` at HEAD.
+   Impact: unchanged from audit #15 — easier exploitation than the form route (curl-only, no browser needed).
+   Fix path: once `_create_or_get_shell_user` raises `RegisteredUserConflict`, both routes inherit the protection. **BUT both routes currently swallow it via broad `except Exception` → generic 502** — security holds, UX does not. See WIP-found MED-new#1 in the Recommended Actions section.
+
+#### MEDIUM
+
+1. **AUDIT #15 MED #1 still open at HEAD — magic-link mint/redeem not written to `audit_log`.**
+   Status: **PARTIAL** — WIP adds `AuditAction.MAGIC_LINK_MINT` + `MAGIC_LINK_REDEEM` constants in `audit.py` and `_audit.log_action` calls in `_build_checkout_session` + `burn_magic_link_jti`. Not committed.
+   Location: `gateway/security/audit.py` and `gateway/subproduct_signup_routes.py` at HEAD.
+
+2. **AUDIT #15 MED #2 still open at HEAD — magic-link HMAC key crosses `GATEWAY_COOKIE_SECRET` ↔ `SITE_ACCESS_TOKEN` domains.**
+   Status: **PARTIAL** — WIP replaces both with a dedicated `SUBPRODUCT_MAGIC_LINK_SECRET` env var + `_ensure_magic_link_secret_configured` startup guard (≥32 chars, production-required).
+   Location: `gateway/subproduct_signup_routes.py:62-74` at HEAD.
+   Gap in the WIP: the `_ensure_magic_link_secret_configured()` function exists in the WIP but is not yet called from `register(app)` — so the boot-time guard never fires. Add the call before commit, or production will fail-on-first-customer instead of fail-on-boot. See WIP-found MED-new#2.
+
+3. **Carry-over from audit #15 MED #3** — `gateway/server.py` is 8825 lines (was 8684 at #15, slight growth). Still well past the 5000-line refactor threshold.
+
+4. **Carry-over from audit #15 MED #4** — 20-mutations-per-hour billing rate limit in `billing_routes.py:66-69` not mirrored in CLOUDFLARE_CHANGES.md WAF rules.
+
+#### LOW
+
+1. **Carry-over from audit #15 LOW #1** — Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:231`, `db_referrals.py:461`). All server-allowlisted; not exploitable, but the scanner keeps flagging them.
+2. **Stash debt at 70 entries** (unchanged from #15). Bulk-drop discipline still missing.
+3. **pip-audit blocked on Python 3.9 vs 3.10 dep mismatch** — `orjson==3.11.6` requires Python ≥3.10. Carry-over from #13/#14/#15.
+4. **`requirements.txt` not separated into `requirements-dev.txt`** — carry-over.
+5. **`gateway/dist/extension/` JS files flagged by XSS scanner** — browser-extension bundle, not gateway code. Carry-over.
+6. **`gateway/static/avatars/` untracked** (carry-over from #15 LOW #6) — runtime upload directory should be `.gitignore`d.
+7. **Open-redirect HIGH-flagged routes** — 13 hits in `scan_redirects.sh` (`profile_routes.py:206`, `billing_routes.py:1248`, 5x `status_routes.py:535-630`, `saved_views_routes.py:339`, 5x `feedback_routes.py:611-990`). All have hardcoded local-path destinations (`/login?next=...`, `/admin/status#...`, `/feedback/{item_id}`) — none take user-controlled URLs. Carry-over (was unflagged in #15 — likely false-positive class).
+
+### WIP-specific findings
+
+#### Uncommitted local work
+
+- **`gateway/security/audit.py`** (+13 LOC, security-positive): adds `AuditAction.MAGIC_LINK_MINT` + `MAGIC_LINK_REDEEM` enum members + matching `ACTION_LABELS`. Pure additive change; commits cleanly. Implements the audit-#15 MED #1 fix.
+- **`gateway/subproduct_signup_routes.py`** (+167 LOC, security-critical): four substantive changes —
+  1. `_magic_link_secret()` rewritten to require a dedicated `SUBPRODUCT_MAGIC_LINK_SECRET` env var (audit-#15 MED #2 fix).
+  2. New `_ensure_magic_link_secret_configured()` startup guard (≥32 char check, production-mandatory) — **but the function is defined and never called**; fix incomplete until wired into `register(app)`.
+  3. New `RegisteredUserConflict(Exception)` + `_row_is_registered(row)` helper that requires BOTH `password_hash` AND `password_salt` non-empty.
+  4. `_create_or_get_shell_user` raises `RegisteredUserConflict` for registered users (audit-#15 CRIT #1 fix). Shell-user reuse semantics preserved.
+  5. `_build_checkout_session` writes `MAGIC_LINK_MINT` audit row before Stripe call; `burn_magic_link_jti` writes `MAGIC_LINK_REDEEM` on every redemption attempt (audit-#15 MED #1 fix).
+- **Untracked**: `gateway/static/avatars/` — runtime upload dir, same as #15.
+- **Security implications**: The fix-in-flight closes audit #15's CRIT + HIGH + 2 MEDs once committed AND once the two completion gaps below land. Until then, HEAD remains vulnerable to the takeover. If the working tree is scp'd to the server without commit (the existing deploy path), the fix DOES go live — but it goes live with the two completion gaps (broad `except Exception` swallowing `RegisteredUserConflict`, no test, startup guard not wired).
+- **Must-do before commit**:
+  1. **Wire `_ensure_magic_link_secret_configured()` into `register(app)`** (or call it at module import). Without this the production fail-on-boot guarantee in the docstring is a lie.
+  2. **Add a registered-user-rejection regression test** in `gateway/tests/test_subproduct_signup_magic_link.py` (e.g., `test_existing_user_with_password_hash_raises_RegisteredUserConflict`). The 49 tests in `fd0f2f8` cover signature/jti/Origin/rate-limit but NOT the actual takeover-closing primitive.
+  3. **Catch `RegisteredUserConflict` explicitly** in both `api_subproduct_checkout` and `subproduct_signup` routes, BEFORE the broad `except Exception`, returning a clear "sign in first" 409 / redirect with `error=sign_in_first&existing=<masked>`. The current broad-except path returns a generic 502/redirect — security holds (no token minted) but the user has no idea what went wrong.
+
+#### Unpushed local commits
+- **`fd0f2f8`** (`audit#15 fixes — notifications + newsletter race + unsubscribe HMAC + onboarding magic-link`). Files: db.py (+24), email_system/unsubscribe.py (+47), jobs/newsletter_blast_jobs.py (+122), migrations/194_blast_cursor.py (new, +70), onboarding_routes.py (+88 — adds `_consume_magic_link` consume-side bridge), queries/newsletter.py (+181 — cursor + claim_token primitives), queries/notifications.py (new, +360 — CRUD for notification_routes), 5 new test files (+914 LOC). Security-relevant: **yes** —
+  - `_consume_magic_link` in `onboarding_routes.py` is now committed; that's the half that takes the signed token from the Stripe success URL and mints a session cookie. This means the takeover primitive's consume-side is now in HEAD even though the mint-side at `subproduct_signup_routes.py` HEAD is unchanged. The two-half attack chain (mint embedded in JSON / form-redirect → consume on /onboarding) is now end-to-end reachable AT HEAD.
+  - `email_system/unsubscribe.py` (+47) hardens HMAC against the prior hardcoded `"narve-unsubscribe"` fallback (audit-#14 LOW). Now requires `UNSUBSCRIBE_HMAC_SECRET` in production. Audit-positive.
+  - `jobs/newsletter_blast_jobs.py` + `migrations/194_blast_cursor.py` close a double-send race in the blast worker. Audit-positive.
+
+#### Server-side uncommitted state
+- Not inspected (scan rules forbid scp/ssh). At audit #15 the server was 110+ commits behind origin and ~342 files dirty. Server has not been deployed since. The takeover primitive at HEAD `fd0f2f8` is therefore live in production already via the committed `_consume_magic_link` bridge, even though the corresponding mint-side fix lives only in the local working tree.
+- **Reconciliation recommendation**: after the in-flight fix lands and the three completion gaps above close, do a single `setsid` redeploy of the consolidated wave (audit #14 fixes + audit #15 fixes + audit #16's takeover-fix). Do NOT deploy with the working tree as-is — the broad-except path is acceptable for security but creates a UX failure mode that will generate support tickets.
+
+#### Stashes
+- 70 entries (unchanged from #15). Audit-#14 noted some > 7d old; some > 30d old now. Bulk-drop entries older than 30 days. Sample of top-of-stack at this scan (stash@{0}-{4}): all CSS / design / audit-impersonation rebase snapshots — none contain the magic-link fix in limbo.
+
+### Changes since previous audit
+
+#### Resolved
+- **None at HEAD.** The four audit-#15 issues (CRIT #1, HIGH #1, MED #1, MED #2) are all still open at HEAD `fd0f2f8`. Fixes are staged in working tree (uncommitted) per the caller's "fix landing RIGHT NOW" context.
+
+#### New issues
+- **No new HIGH/CRIT.** Three new MED concerns surfaced from reading the in-flight fix (see WIP findings) — they apply to the post-commit state of the fix, not to HEAD itself:
+  - MED-new#1: routes' broad `except Exception` swallows `RegisteredUserConflict` → generic error response. Security holds; UX is broken.
+  - MED-new#2: `_ensure_magic_link_secret_configured()` defined but not called from `register(app)`. Production fail-on-boot guarantee is broken.
+  - MED-new#3: zero regression test for the registered-user case. The takeover-closing primitive has no test coverage.
+
+#### Regressions
+- **None vs audit #15.** The four issues are unchanged-at-HEAD. The `fd0f2f8` commit added the consume-side (`_consume_magic_link`) which makes the takeover chain more reachable at HEAD than at #15's `f086180`, but that's expansion of an already-known CRIT, not a new regression class.
+
+### Drift warnings
+- **HEAD = `fd0f2f8` is one commit ahead of origin (`f086180`).** Unpushed.
+- **Working tree has the audit-#15 fix-in-flight uncommitted.** If the working tree is scp'd to server before commit, fix DOES ship — but with the three completion gaps. If the working tree is discarded (e.g., by `git restore`), the fix is lost.
+- **Server tip vs origin: still diverged.** No deploy in the 13-minute audit-#15 → audit-#16 window. Every audit-#14 + audit-#15 CRIT/HIGH remains live in production.
+- **Running uvicorn**: not directly inspected this iteration. At #15 it was pid 4077346, ~13 hours old, predating the entire fix wave. Still stale relative to disk.
+- **Stash count**: 70 entries, unchanged from #15.
+
+### Recommended actions for next audit
+1. **Verify CRIT #1 fix is committed.** Confirm `git show <next-sha>:gateway/subproduct_signup_routes.py | grep "raise RegisteredUserConflict"` returns a hit.
+2. **Verify the regression test landed.** Confirm `grep -c "RegisteredUserConflict\|registered_user\|password_hash.*signup" gateway/tests/test_subproduct_signup_magic_link.py` is ≥ 1.
+3. **Verify the `_ensure_magic_link_secret_configured()` startup guard is wired.** Confirm `grep "_ensure_magic_link_secret_configured" gateway/subproduct_signup_routes.py | wc -l` is ≥ 2 (definition + at least one caller).
+4. **Verify routes catch `RegisteredUserConflict` explicitly.** Confirm both `api_subproduct_checkout` and `subproduct_signup` have an `except RegisteredUserConflict` clause before the broad `except Exception`, returning a clear "sign in first" status.
+5. **Verify `MAGIC_LINK_MINT` and `MAGIC_LINK_REDEEM` audit_log rows are being written.** A test like `test_audit_log_row_written_on_mint` that calls `_build_checkout_session` with a mocked Stripe and asserts `db.query_audit_log(action="magic_link.mint")` returns ≥ 1.
+6. **Verify `SUBPRODUCT_MAGIC_LINK_SECRET` is wired into the production server's `.env`** before the deploy that brings this fix live. Otherwise production will fail-on-first-checkout (or, if the startup guard is wired, fail-on-boot — both are loud failures, but it would be embarrassing).
+7. **Schedule a deploy.** Production is now ~24h+ behind origin with two stacked audit waves' worth of fixes pending. Every CRIT/HIGH closed-on-origin since audit #14 is still live in production.
+8. **Re-check the 7 carry-over auth-endpoint rate-limit gaps** from #14 MED #2 / #15 carry-over. They are still in HEAD.
+9. **Drop all stashes older than 30 days** to clear the 70-entry backlog.
+
+---
+
 ## AUDIT #15 — 2026-05-15T13:33Z — commit 6a17de5 — post-audit-#14 fix-verification + WIP recheck
 
 ### Why this audit exists
