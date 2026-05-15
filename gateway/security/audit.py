@@ -85,8 +85,15 @@ class AuditAction:
     # impersonate_start/end referenced these constants but the symbols
     # did not exist, so the audit trail had no record of any
     # impersonation session being opened or closed.
-    IMPERSONATION_START = "impersonation.start"
-    IMPERSONATION_END   = "impersonation.end"
+    IMPERSONATION_START   = "impersonation.start"
+    IMPERSONATION_END     = "impersonation.end"
+    # Logged by the impersonation middleware (gateway/server.py) when a
+    # mutating verb is refused because the active impersonation session
+    # is read-only. Without this constant the symbol-lookup raises
+    # AttributeError which is swallowed in-place, so refused mutations
+    # left no audit trail — the same class of bug the start/end constants
+    # had. Defining it here makes the block surface as its own row.
+    IMPERSONATION_BLOCKED = "impersonation.blocked"
 
 
 ALL_ACTIONS = tuple(
@@ -134,6 +141,7 @@ ACTION_LABELS = {
     AuditAction.FEATURE_FLAG_DELETE: "Deleted feature flag",
     AuditAction.IMPERSONATION_START: "Started impersonation session",
     AuditAction.IMPERSONATION_END: "Ended impersonation session",
+    AuditAction.IMPERSONATION_BLOCKED: "Blocked mutating action during impersonation",
 }
 
 

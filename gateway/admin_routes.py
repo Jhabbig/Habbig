@@ -468,6 +468,19 @@ async def flag_create(request: Request):
     name = (form.get("name") or "").strip()
     if not key or not re.fullmatch(r"[a-z0-9_\-]{1,80}", key):
         raise HTTPException(status_code=400, detail="Key must be lowercase [a-z0-9_-], ≤80 chars")
+    # HIGH fix: pin the flag keyspace to features.KNOWN_FLAGS so admins
+    # cannot persist arbitrary keys. New keys MUST be added to the registry
+    # in code before being createable here — that's the deliberate friction
+    # that keeps a typo from creating a dead row no code reads, and that
+    # prevents pre-staging rows for keys downstream code will consume.
+    if not features.is_known_flag(key):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown flag key '{key}'. Add it to features.KNOWN_FLAGS "
+                "in the registry first."
+            ),
+        )
     if not name:
         name = key
     subproduct_key = _normalize_subproduct(form.get("subproduct"))
@@ -600,6 +613,13 @@ async def flag_evaluate_api(request: Request, key: str):
     user = _current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    # HIGH fix: gate the evaluator behind the KNOWN_FLAGS registry so a
+    # free user cannot probe for the existence of admin-only flags via a
+    # differential response (e.g. 200/true vs 200/false leaking key
+    # presence). Admins keep the unrestricted path so they can debug
+    # newly-added registry entries before any code wires them up.
+    if not (user.get("is_admin") or features.is_known_flag(key)):
+        raise HTTPException(status_code=404, detail="Flag not found")
     subproduct_key = _normalize_subproduct(request.query_params.get("subproduct"))
     enabled = features.is_feature_enabled(key, user, subproduct_key=subproduct_key)
     return JSONResponse({

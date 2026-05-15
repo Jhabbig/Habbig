@@ -42,6 +42,58 @@ import db
 log = logging.getLogger("features")
 
 
+# ── Flag registry ───────────────────────────────────────────────────────
+#
+# KNOWN_FLAGS is the single source of truth for the feature-flag keyspace.
+# Admins can only CREATE flags whose key is listed here, and the public
+# evaluator (``/api/flags/evaluate/{key}``) returns 404 for any key that
+# isn't listed (for non-admin callers) so the existence of admin-only
+# flags isn't leaked via differential responses.
+#
+# Pre-existing DB rows whose key is NOT in KNOWN_FLAGS still evaluate
+# (read paths stay functional so a stale deploy doesn't black-hole a
+# production rollout), but ``is_known_flag()`` is False for them and the
+# admin flag-list view emits a deprecation warning so they get cleaned up.
+#
+# TODO(future-dev): adding a new flag?
+#   1. Add the key to KNOWN_FLAGS below (lowercase, [a-z0-9_-], <= 80 chars).
+#   2. Wire the read site to ``features.is_feature_enabled("<key>", user)``.
+#   3. Create the DB row via /admin/flags or db.create_feature_flag().
+# Removing a flag? Delete the DB rows first (admin UI handles both global
+# and per-subproduct rows), THEN remove the key here. Removing the key
+# while DB rows still exist is harmless (rows still evaluate) but will
+# trigger the deprecation-warning path in list_feature_flags.
+KNOWN_FLAGS: set[str] = {
+    # Global / cross-subproduct flags.
+    "experimental_alerts",        # alerts surface, gradual rollout
+    "morning_briefing_email",     # daily-briefing email — kill switch
+    "ai_signals_v2",              # next-gen claude pipeline scoring
+    "new_dashboard_shell",        # 2026-Q2 shell redesign — rollout
+    "weekly_digest_email",        # weekly digest scheduler — kill switch
+    # Per-subproduct beta gates. Pattern: <subproduct>_beta. Each pairs
+    # with a per-(key, subproduct_key) row written via the admin UI; the
+    # global row stays false so non-subproduct contexts never see them.
+    "voters_beta",
+    "crypto_beta",
+    "sports_beta",
+    "weather_beta",
+    "world_beta",
+    "midterm_beta",
+    "traders_beta",
+    "whale_beta",
+    "climate_beta",
+    "disasters_beta",
+    "cb_beta",
+    "health_beta",
+    "love_beta",
+}
+
+
+def is_known_flag(key: str) -> bool:
+    """Return True iff ``key`` is in the in-code KNOWN_FLAGS registry."""
+    return key in KNOWN_FLAGS
+
+
 def _parse_list(raw) -> list:
     if raw is None:
         return []
