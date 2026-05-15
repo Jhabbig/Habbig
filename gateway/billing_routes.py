@@ -890,12 +890,36 @@ async def settings_billing_cancel(
     reason: str = Form(""),
     step: str = Form("1"),
     attempt_id: str = Form(""),
+    slug: str = Form(""),
+    cancel_all: str = Form(""),
 ):
     """Three-step cancel funnel.
 
     step=1 → record attempt, advance to step 2 (pause offer).
     step=3 → finalize cancel (flip subs to 'cancelled', queue win-back emails).
     Any other value → treat as step 1.
+
+    AUDIT (H3): the step=3 UPDATE used to flip every active
+    subscription row for the user with a bare ``WHERE user_id=?
+    AND status='active'`` clause. Combined with the trading-addon
+    free-grant path (audit C1), that made it trivial to cancel-then-
+    readd for repeated 30-day grants. The handler now requires the
+    caller to be explicit:
+
+      * ``slug`` provided → cancel only that one dashboard's row,
+        after validating the slug is in the subproduct allowlist (or
+        the special ``__plan__`` bundle sentinel). Other dashboards
+        are untouched.
+      * ``cancel_all=true`` → keep the legacy "cancel every active
+        sub" behaviour for the retention funnel
+        (``_render_cancel_step2``'s "No, cancel anyway" button), but
+        only when the caller opts in explicitly. Trading add-on is a
+        separate code path (it lives on the ``users`` table, not
+        ``subscriptions``) and is left untouched by either branch —
+        callers wanting to drop it must POST
+        ``/settings/billing/addon/cancel`` separately.
+      * Neither provided → 400. Forces the UI / API caller to declare
+        intent rather than silently nuking every sub on the account.
     """
     user = current_user(request)
     _billing_rate_limit(user, "cancel")
@@ -916,34 +940,77 @@ async def settings_billing_cancel(
         # while a retry of the same attempt collapses to one.
         from security.idempotency import with_idempotency
 
+        slug_clean = (slug or "").strip().lower()
+        cancel_all_flag = (cancel_all or "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+
+        # Build the allowlist of dashboard_keys we will accept on the
+        # wire. The catalogue is the source of truth for subproduct
+        # slugs; the ``__plan__`` sentinel covers the bundle row that
+        # _make_user_with_plan / the Stripe upsert path use. Anything
+        # outside this set is rejected so a malicious body can't
+        # smuggle SQL fragments or unknown keys.
+        try:
+            from subproduct import DASHBOARD_KEY_FOR_SLUG as _DK
+            allowed_keys = set(_DK.values()) | {"__plan__"}
+        except Exception:
+            allowed_keys = {"__plan__"}
+
+        if not slug_clean and not cancel_all_flag:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "cancel requires either a 'slug' (per-dashboard "
+                    "cancel) or 'cancel_all=true' (cancel every "
+                    "subscription)."
+                ),
+            )
+
+        if slug_clean and slug_clean not in allowed_keys:
+            raise HTTPException(
+                status_code=400,
+                detail="unknown subscription slug",
+            )
+
         async def _do_cancel() -> dict:
             with db.conn() as c:
-                c.execute(
-                    "UPDATE subscriptions SET status = 'cancelled' "
-                    "WHERE user_id = ? AND status = 'active'",
-                    (user["user_id"],),
-                )
+                if slug_clean:
+                    c.execute(
+                        "UPDATE subscriptions SET status = 'cancelled' "
+                        "WHERE user_id = ? AND dashboard_key = ? "
+                        "AND status = 'active'",
+                        (user["user_id"], slug_clean),
+                    )
+                else:
+                    c.execute(
+                        "UPDATE subscriptions SET status = 'cancelled' "
+                        "WHERE user_id = ? AND status = 'active'",
+                        (user["user_id"],),
+                    )
             _finalize_cancel_attempt(
                 attempt_id_int, outcome="cancelled", reached_step=3,
             )
             _queue_winback_emails(user["user_id"], user["email"])
             ttl_invalidate.on_subscription_change(user["user_id"])
             log.info(
-                "User %s cancelled subscription (attempt=%s)",
+                "User %s cancelled subscription (attempt=%s, scope=%s)",
                 user.get("username", user["email"]),
                 attempt_id_int,
+                slug_clean or "all",
             )
-            return {"cancelled": True}
+            return {"cancelled": True, "scope": slug_clean or "all"}
 
         await with_idempotency(
             user_id=user["user_id"],
             op="billing_cancel_finalize",
             client_key=request.headers.get("Idempotency-Key"),
-            ttl_seconds=30,  # slightly longer because the email fan-out
-                             # job queueing takes a moment; protect the
-                             # slow-click-as-retry case
+            ttl_seconds=30,
             body=_do_cancel,
-            fallback_fingerprint=f"attempt:{attempt_id_int}",
+            fallback_fingerprint=(
+                f"attempt:{attempt_id_int}:scope:"
+                f"{slug_clean or 'all'}"
+            ),
         )
         return RedirectResponse("/settings/billing?saved=cancelled", status_code=302)
 
@@ -1048,14 +1115,31 @@ async def settings_billing_resubscribe(request: Request):
 
 @app.post("/settings/billing/addon", include_in_schema=False)
 async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
-    """Add an add-on. Only 'trading' is wired up — Stripe stubbed.
+    """Start a Stripe Checkout session for the trading add-on.
 
-    Idempotent: a double-click would otherwise push period_end an
-    additional 30 days forward on each POST. We route the mutation
-    through ``with_idempotency`` keyed on (user, addon) so a retry
-    within 10 s replays the first response without re-running the
-    period-shift. A genuinely-later re-add (> 10 s) still extends, by
-    design: the user chose to top up again.
+    AUDIT (C1): the previous implementation called
+    ``db.set_trading_addon(uid, True, period_end=now + 30 * 86400)``
+    directly here. With no payment step in front, any logged-in user
+    could self-grant a $29/mo entitlement for 30 days at a time,
+    refreshable at the 20-mutations-per-hour rate limit. This handler
+    now NEVER mutates the entitlement inline. Instead it:
+
+      1. Validates ``addon == 'trading'`` (only wired add-on today).
+      2. Verifies Stripe SDK + ``STRIPE_SECRET_KEY`` +
+         ``STRIPE_PRICE_TRADING_ADDON_MONTHLY`` are all configured.
+         Any missing piece -> 503 ``billing_unavailable`` with NO DB
+         write. Fails closed.
+      3. Creates a ``stripe.checkout.Session.create`` for the
+         configured trading-addon price in ``mode='subscription'`` and
+         302-redirects to its hosted URL. Metadata carries
+         ``user_id``, ``addon='trading'`` and ``flow='addon'`` so the
+         webhook (already shipped in 68b00c9) knows which user to
+         flip when ``checkout.session.completed`` fires with
+         ``payment_status='paid'``.
+
+    The local flag (``user_settings.trading_addon_active``) is now
+    activated ONLY by the webhook. This handler holds no entitlement
+    side effects of its own.
     """
     user = current_user(request)
     _billing_rate_limit(user, "addon")
@@ -1063,25 +1147,105 @@ async def settings_billing_addon_add(request: Request, addon: str = Form(...)):
         return RedirectResponse("/token", status_code=302)
     if addon != "trading":
         return RedirectResponse("/settings/billing", status_code=302)
-    from security.idempotency import with_idempotency
     uid = user["user_id"]
 
-    async def _do_add() -> dict:
-        now = int(time.time())
-        db.set_trading_addon(uid, True, period_end=now + 30 * 86400)
-        ttl_invalidate.on_subscription_change(uid)
-        log.info("User %s added trading add-on", user.get("username", user["email"]))
-        return {"ran": True}
+    # Fail-closed config check. Stripe SDK must import; secret_key and
+    # the trading-addon price id must both be set. Any missing piece
+    # is treated as "billing temporarily unavailable" — we return a
+    # 503 with NO DB write rather than risk a self-grant slipping
+    # through. This is the audit-CRIT invariant: only a successful
+    # paid checkout (via the webhook) can flip the local flag.
+    try:
+        import stripe  # type: ignore[import]
+    except ImportError:
+        log.warning(
+            "addon checkout requested but stripe SDK not installed — "
+            "failing closed for user %s",
+            user.get("username", user.get("email", "?")),
+        )
+        return JSONResponse(
+            {"error": "billing_unavailable"},
+            status_code=503,
+        )
 
-    await with_idempotency(
-        user_id=uid,
-        op="billing_addon_add",
-        client_key=request.headers.get("Idempotency-Key"),
-        ttl_seconds=10,
-        body=_do_add,
-        fallback_fingerprint=addon,
+    secret_key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    price_id = (
+        os.environ.get("STRIPE_PRICE_TRADING_ADDON_MONTHLY") or ""
+    ).strip()
+    if not secret_key or not price_id:
+        log.warning(
+            "addon checkout requested but Stripe not configured "
+            "(secret_set=%s price_set=%s) — failing closed for user %s",
+            bool(secret_key), bool(price_id),
+            user.get("username", user.get("email", "?")),
+        )
+        return JSONResponse(
+            {"error": "billing_unavailable"},
+            status_code=503,
+        )
+
+    stripe.api_key = secret_key
+    app_url = (
+        os.environ.get("APP_URL") or "https://narve.ai"
+    ).rstrip("/")
+    email = (user.get("email") or "").strip()
+    session_params: Dict[str, Any] = dict(
+        mode="subscription",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=(
+            f"{app_url}/settings/billing"
+            "?saved=addon_added&session_id={CHECKOUT_SESSION_ID}"
+        ),
+        cancel_url=f"{app_url}/settings/billing?error=addon_cancelled",
+        metadata={
+            "user_id": str(uid),
+            "addon": "trading",
+            "flow": "addon",
+        },
+        subscription_data={
+            "metadata": {
+                "user_id": str(uid),
+                "addon": "trading",
+                "flow": "addon",
+            },
+        },
     )
-    return RedirectResponse("/settings/billing?saved=addon_added", status_code=302)
+    if email:
+        session_params["customer_email"] = email
+
+    try:
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create, **session_params,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception(
+            "stripe checkout session create failed for addon user=%s: %s",
+            uid, exc,
+        )
+        return JSONResponse(
+            {"error": "billing_unavailable"},
+            status_code=503,
+        )
+
+    checkout_url = getattr(session, "url", None) or (
+        session.get("url") if isinstance(session, dict) else None
+    )
+    if not checkout_url:
+        log.warning(
+            "stripe checkout session returned no url for addon user=%s",
+            uid,
+        )
+        return JSONResponse(
+            {"error": "billing_unavailable"},
+            status_code=503,
+        )
+
+    log.info(
+        "User %s started trading add-on checkout (session=%s)",
+        user.get("username", user.get("email", uid)),
+        getattr(session, "id", "?"),
+    )
+    return RedirectResponse(checkout_url, status_code=302)
 
 
 @app.post("/settings/billing/addon/cancel", include_in_schema=False)

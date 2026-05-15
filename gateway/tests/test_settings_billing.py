@@ -401,10 +401,12 @@ class TestCancelFlow(_DbIsolation):
         self.assertEqual(r1.status_code, 302)
         self.assertIn("/settings/billing/cancel-flow?step=2", r1.headers["location"])
         attempt_id = int(r1.headers["location"].split("attempt_id=")[-1])
-        # Step 3 — final confirmation. Flips subs to cancelled.
+        # Step 3 — final confirmation. AUDIT (H3): the caller MUST now
+        # opt into a scope. Use cancel_all=true since the test seeds
+        # the bundle row (dashboard_key='__plan__').
         r2 = _post_form(
             "/settings/billing/cancel", token=self.token,
-            data={"step": "3", "attempt_id": str(attempt_id)},
+            data={"step": "3", "attempt_id": str(attempt_id), "cancel_all": "true"},
         )
         self.assertEqual(r2.status_code, 302)
         self.assertIn("saved=cancelled", r2.headers["location"])
@@ -488,11 +490,19 @@ class TestAddonFlow(_DbIsolation):
             "addon-test@test.com", "addon_test", plan="trader", interval="monthly", days_left=29,
         )
 
-    def test_add_trading_addon(self):
+    def test_add_trading_addon_requires_stripe_checkout(self):
+        # AUDIT (C1): the POST /settings/billing/addon handler used to
+        # flip the local trading-addon flag directly, granting any
+        # logged-in user a free 30-day entitlement. The handler now
+        # routes through Stripe Checkout; with no Stripe SDK / secret
+        # / price id in the test env it MUST fail closed (503) and
+        # MUST NOT write the addon flag. The happy-path Stripe flow
+        # is covered by tests/test_billing_addon_checkout.py.
+        pre = db.get_trading_addon_status(self.uid).get("active", False)
         r = _post_form("/settings/billing/addon", token=self.token, data={"addon": "trading"})
-        self.assertEqual(r.status_code, 302)
-        self.assertIn("saved=addon_added", r.headers["location"])
-        self.assertTrue(db.get_trading_addon_status(self.uid)["active"])
+        self.assertEqual(r.status_code, 503)
+        post = db.get_trading_addon_status(self.uid).get("active", False)
+        self.assertEqual(post, pre, "addon flag changed on fail-closed path")
 
     def test_cancel_trading_addon(self):
         # Ensure it's on first.
