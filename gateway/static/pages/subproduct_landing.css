@@ -6,10 +6,13 @@
  * accent comes from gateway/config.json via the inline --sp-accent var
  * the renderer sets on <body>.
  *
- * Layout: full-width sections, page padded with --space-8 / --space-6.
- * Hero, tabs, and pricing all sit on the same base background — no inset
- * shells, no centered narrow column. Density stays comfortable on desktop
- * and reflows to a single column at ≤ 900px.
+ * Chrome: the page now wraps inside the dashboard's .app-shell /
+ * .main-content / .page-frame triad so subdomain landings share the
+ * same outer silhouette as authed dashboard pages. The sidebar is
+ * suppressed (.app-shell--no-sidebar) since this page is for
+ * unauthenticated visitors who don't have personal dashboards to list.
+ * Hero, tabs, pricing, and "Also on narve.ai" all live INSIDE the
+ * single .page-frame border so the visual unit reads as one window.
  */
 
 :root { color-scheme: light dark; }
@@ -27,23 +30,43 @@
   --sp-accent: var(--text-primary);
 }
 
-.sp-page {
-  width: 100%;
-  padding: var(--space-8) var(--space-6);
+/* No-sidebar variant of the app shell: collapses the sidebar/main grid
+   to a single column and hides any stray .sidebar element. Used by
+   marketing-style pages (subproduct landings, etc.) that want the
+   dashboard's framed silhouette but have no signed-in user to show
+   navigation for. */
+.app-shell--no-sidebar {
+  grid-template-columns: 1fr !important;
+  grid-template-areas: "main" "status" !important;
+}
+.app-shell--no-sidebar .sidebar { display: none !important; }
+:root[data-sidebar="collapsed"] .app-shell--no-sidebar {
+  grid-template-columns: 1fr !important;
+}
+
+/* Subproduct-specific overrides for the dashboard chrome ─────────────── */
+
+/* Page-frame: keep the dashboard's bordered window, but give the
+   subproduct hero a touch more breathing room and let the floating-
+   numbers atmosphere clip cleanly inside. */
+.sp-frame {
+  overflow: hidden;
+  gap: var(--space-7);
+  position: relative;
+}
+
+/* Page-header wordmark row: the wordmark + "Part of narve.ai" sit on
+   one line and reuse the canonical .page-header bottom-border. */
+.sp-page-header {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
-@media (max-width: 640px) {
-  .sp-page {
-    padding: var(--space-6) var(--space-5);
-    gap: var(--space-7);
-  }
-}
-
-/* ── Topbar wordmark ────────────────────────────────────────────────────── */
-
+/* Legacy .sp-topbar kept as alias for any older renderers; safe no-op
+   in the new template since it never appears, but harmless if cached. */
 .sp-topbar {
   display: flex;
   justify-content: space-between;
@@ -109,8 +132,12 @@
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--space-7);
   align-items: center;
-  min-height: 60vh;
-  padding: var(--space-7) 0 var(--space-6);
+  /* Hero used to drive its own 60vh height when the page was loose;
+     now that the hero sits INSIDE .page-frame, leave the frame to
+     size itself off content (no min-height) so the bordered window
+     hugs the hero rather than stretching to half the viewport. */
+  min-height: 48vh;
+  padding: var(--space-5) 0 var(--space-4);
 }
 
 @media (max-width: 900px) {
@@ -118,7 +145,7 @@
     grid-template-columns: 1fr;
     gap: var(--space-6);
     min-height: 0;
-    padding: var(--space-5) 0;
+    padding: var(--space-4) 0;
   }
 }
 
@@ -571,9 +598,10 @@
    a 2 px translate. Collapses to single-column at < 720 px. */
 
 .sp-others {
-  padding: var(--space-8) 0;
+  padding-top: var(--space-7);
   border-top: 1px solid var(--border-subtle);
-  margin-top: var(--space-8);
+  /* Sits inside .page-frame now — the frame supplies the outer margin,
+     so we just need a top-only divider between sections. */
 }
 
 .sp-others__title {
@@ -627,8 +655,10 @@
 
 .sp-footer {
   width: 100%;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: var(--space-5);
+  /* Sits below .page-frame inside .main-content; the frame's border
+     already separates it visually, so we only need a little top
+     padding (not a border) to keep it breathing. */
+  padding: var(--space-4) 0 var(--space-3);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
