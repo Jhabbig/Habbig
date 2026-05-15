@@ -78,17 +78,18 @@ def _current_user(request):
 def _audit(action, *, admin, request, target_type=None, target_id=None,
            target_description=None, before=None, after=None, notes=None):
     # NOTE: security.audit.log_action() already wraps DB-layer failures in
-    # its own try/except so audit logging never blocks the admin action.
-    # The only exceptions that surface up to *this* helper come from
-    # programming errors at the call site — AttributeError on a missing
-    # AuditAction constant, TypeError on a bad kwarg, etc. A bare
-    # `except: pass` here silently hid the missing FEATURE_FLAG_* /
-    # IMPERSONATION_* constants and produced ZERO audit rows for those
-    # actions. We now log.exception() so the next missing constant is
-    # loud in the gateway log. We still don't re-raise — admin actions
-    # must not break on an audit bug — but the failure is visible.
+    # its own try/except so storage failures never block the admin action.
+    # By the time an exception reaches us here, the cause is almost
+    # certainly a programming error at the call site — AttributeError on
+    # a missing AuditAction constant, TypeError on a bad kwarg, etc.
+    # The previous bare `except: pass` silently hid the missing
+    # FEATURE_FLAG_* / IMPERSONATION_* constants and produced ZERO audit
+    # rows for those actions. We now log.exception() and re-raise so the
+    # next missing constant is loud in the gateway log *and* the
+    # failing call site is forced to confront it during development +
+    # tests, instead of quietly dropping audit rows in production.
+    from security import audit as _a
     try:
-        from security import audit as _a
         _a.log_action(
             admin_user_id=(admin or {}).get("user_id"),
             admin_email=(admin or {}).get("email"),
@@ -105,6 +106,7 @@ def _audit(action, *, admin, request, target_type=None, target_id=None,
             "AuditAction constant or a bad kwarg; investigate immediately",
             action,
         )
+        raise
 
 
 def _fmt_ts(ts, fmt="%Y-%m-%d %H:%M:%S UTC"):
