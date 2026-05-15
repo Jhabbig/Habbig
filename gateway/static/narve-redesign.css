@@ -1073,10 +1073,15 @@ body > .app-shell {
   overflow: visible;
 }
 
-/* For app-shell pages, push the frame inward via main-content padding
-   so dashboards still get a proper internal margin. */
+/* For app-shell pages, only the sidebar separator is owned here —
+   .main-content padding is left to gateway.css's native rule
+   (.main-content { padding: var(--space-4) var(--page-pad) var(--page-pad); })
+   so we don't triple-stack body padding + frame padding + main padding.
+   Removed 2026-05-15: redundant `padding: var(--space-5) var(--space-6)`
+   override was adding 24px/32px on top of gateway.css's own padding and
+   the body perimeter, producing 100px+ of cumulative chrome on dashboard
+   routes. gateway.css owns .main-content padding; we own the border only. */
 body > .app-shell > .main-content {
-  padding: var(--space-5, 24px) var(--space-6, 32px) !important;
   border-left: 1px solid var(--border-default);
 }
 
@@ -1096,9 +1101,10 @@ body > .app-shell > .main-content {
 [data-density="compact"] body > article {
   padding: var(--space-4, 16px) var(--space-4, 16px) !important;
 }
-[data-density="compact"] body > .app-shell > .main-content {
-  padding: var(--space-4, 16px) var(--space-4, 16px) !important;
-}
+/* Compact-density override for .main-content removed 2026-05-15:
+   redundant with gateway.css/components.css [data-density="compact"]
+   rules that already tighten .main-content padding. Leaving it here
+   re-introduced the triple-stack in compact mode. */
 
 /* Mobile (narrow viewport) — frame stays but tightens to keep content
    readable. Sidebar collapses on app-shell so we re-bleed the main. */
@@ -1120,7 +1126,9 @@ body > .app-shell > .main-content {
     border-radius: var(--radius-sm, 6px) !important;
   }
   body > .app-shell > .main-content {
-    padding: var(--space-3, 12px) var(--space-3, 12px) !important;
+    /* Mobile padding is owned by mobile-a11y.css and gateway.css's
+       responsive .main-content rules — we only drop the sidebar
+       separator since the sidebar collapses on narrow viewports. */
     border-left: 0;
   }
 }
