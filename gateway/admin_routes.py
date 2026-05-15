@@ -208,7 +208,31 @@ async def impersonations_list(request: Request):
     if admin is None:
         return _denied_response(request)
 
-    sessions = db.list_impersonation_sessions(limit=200)
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        until_ts += 86_399
+
+    sessions = db.list_impersonation_sessions(limit=500)
+
+    def _keep(s) -> bool:
+        if q:
+            admin_email = (s["admin_email"] or "").lower()
+            target_email = (s["target_email"] or "").lower()
+            if q.lower() not in admin_email and q.lower() not in target_email:
+                return False
+        started = int(s["started_at"] or 0)
+        if since_ts is not None and started < since_ts:
+            return False
+        if until_ts is not None and started > until_ts:
+            return False
+        return True
+
+    sessions = [s for s in sessions if _keep(s)][:200]
     rows = []
     for s in sessions:
         started = _fmt_ts(s["started_at"], "%Y-%m-%d %H:%M UTC")
@@ -240,6 +264,10 @@ async def impersonations_list(request: Request):
         active_route="impersonations",
         breadcrumb=[("Admin", "/admin"), ("Impersonations", "/admin/impersonations")],
         raw_sessions=body,
+        filter_q=q,
+        filter_since=since_str,
+        filter_until=until_str,
+        result_count=f"{len(sessions):,}",
     )
 
 
@@ -413,7 +441,31 @@ async def flags_page(request: Request):
     if admin is None:
         return _denied_response(request)
 
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    enabled_filter = (qp.get("enabled") or "").strip().lower()
+    if enabled_filter not in {"", "yes", "no", "all"}:
+        enabled_filter = ""
+
     flags = db.list_feature_flags()
+
+    def _keep(f) -> bool:
+        if q:
+            needle = q.lower()
+            key = (f["key"] or "").lower()
+            name = (f["name"] or "").lower()
+            if needle not in key and needle not in name:
+                return False
+        if enabled_filter in {"yes", "no"}:
+            is_on = bool(f["enabled_globally"])
+            if enabled_filter == "yes" and not is_on:
+                return False
+            if enabled_filter == "no" and is_on:
+                return False
+        # ``all`` and empty pass through.
+        return True
+
+    flags = [f for f in flags if _keep(f)]
     rows = []
     for f in flags:
         data = features.flag_to_dict(f)
@@ -458,6 +510,9 @@ async def flags_page(request: Request):
         breadcrumb=[("Admin", "/admin"), ("Feature flags", "/admin/flags")],
         raw_flag_rows=body,
         raw_create_subproduct_options=_flag_subproduct_dropdown(None),
+        filter_q=q,
+        filter_enabled=enabled_filter,
+        result_count=f"{len(flags):,}",
     )
 
 
@@ -680,8 +735,13 @@ async def emails_page(request: Request):
     if admin is None:
         return _denied_response(request)
 
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    needle = q.lower()
+
     existing = {r["key"]: r for r in db.list_email_templates()}
     rows = []
+    kept = 0
     for key, description in EDITABLE_EMAIL_TEMPLATES:
         row = existing.get(key)
         if row:
@@ -696,6 +756,17 @@ async def emails_page(request: Request):
             ts = "—"
             status_html = '<span class="badge" style="background:var(--surface-hover);color:var(--text-muted)">Default</span>'
             subject = ""
+
+        # Substring search across key + subject so the admin can type
+        # either ``billing`` (hits ``billing.invoice_paid``) or ``Welcome``
+        # (hits the subject line). Description is intentionally not part
+        # of the haystack — these are mostly boilerplate so they'd dilute
+        # the signal.
+        if needle:
+            hay = f"{key.lower()} {(subject or '').lower()}"
+            if needle not in hay:
+                continue
+        kept += 1
 
         meta_parts = [html.escape(description)]
         if row:
@@ -721,6 +792,8 @@ async def emails_page(request: Request):
         active_route="email-templates",
         breadcrumb=[("Admin", "/admin"), ("Email templates", "/admin/email-templates")],
         raw_template_rows="".join(rows),
+        filter_q=q,
+        result_count=f"{kept:,}",
     )
 
 
@@ -886,12 +959,26 @@ async def trace_watermark_route(request: Request):
     except Exception:
         log.warning("trace_watermark rate-limit check failed", exc_info=True)
 
-    raw = (request.query_params.get("id") or "").strip().lower()
+    qp = request.query_params
+    raw = (qp.get("id") or "").strip().lower()
     if not raw or not re.fullmatch(r"[0-9a-f]{4,12}", raw):
         return JSONResponse(
             {"error": "missing or malformed id (expected 4-12 hex chars)"},
             status_code=400,
         )
+
+    # Optional refinement filters — let an admin scope a positive hit by
+    # target email substring or by created_at window so a stale watermark
+    # pointing at a recycled inbox doesn't yield a misleading result. All
+    # values are post-validated and applied after the watermark lookup so
+    # the existing 4-12 hex-char contract is unchanged.
+    q_target = (qp.get("q") or "").strip().lower()
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        until_ts += 86_399
 
     from email_system import watermark as _wm
     detail = _wm.trace_watermark_detail(raw)
@@ -959,6 +1046,28 @@ async def trace_watermark_route(request: Request):
     except Exception:
         log.warning("trace_watermark user lookup failed", exc_info=True)
 
+    # Apply optional refinement filters now that we have the full row.
+    # A filter miss returns the same 404 shape as an unknown watermark
+    # so the endpoint stays consistent for clients.
+    created_at = int(detail.get("created_at") or 0)
+    if q_target and user_row:
+        target_email = (user_row["email"] or "").lower()
+        if q_target not in target_email:
+            return JSONResponse(
+                {"error": "watermark not found (filter mismatch)"},
+                status_code=404,
+            )
+    if since_ts is not None and created_at < since_ts:
+        return JSONResponse(
+            {"error": "watermark not found (filter mismatch)"},
+            status_code=404,
+        )
+    if until_ts is not None and created_at > until_ts:
+        return JSONResponse(
+            {"error": "watermark not found (filter mismatch)"},
+            status_code=404,
+        )
+
     payload = {
         "watermark": detail["watermark"],
         "user_id": detail["user_id"],
@@ -970,6 +1079,11 @@ async def trace_watermark_route(request: Request):
         "created_at_iso": _dt.datetime.utcfromtimestamp(
             detail["created_at"]
         ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "filters": {
+            "q": q_target or None,
+            "since": since_str or None,
+            "until": until_str or None,
+        },
     }
     return JSONResponse(payload)
 
@@ -1040,10 +1154,19 @@ async def cache_page(request: Request):
     from cache import ttl_cache
     stats = ttl_cache.stats()
 
+    namespace_filter = (request.query_params.get("namespace") or "").strip()
+
     # Render the per-prefix hit table. Keep styling inline so it inherits
     # the dashboard shell without needing a new /static asset.
+    needle = namespace_filter.lower()
+    per_prefix = stats["per_prefix"]
+    if needle:
+        per_prefix = [
+            r for r in per_prefix
+            if needle in (r.get("prefix") or "").lower()
+        ]
     rows = []
-    for r in stats["per_prefix"]:
+    for r in per_prefix:
         rate = f"{r['hit_rate'] * 100:.1f}%"
         rows.append(
             f"<tr>"
@@ -1058,6 +1181,27 @@ async def cache_page(request: Request):
         "<tr><td colspan='5' class='muted'>No cache activity yet.</td></tr>"
     )
     hit_rate_pct = f"{stats['hit_rate'] * 100:.2f}%"
+
+    namespace_form = (
+        "<form method='get' style='display:flex;gap:12px;align-items:flex-end;"
+        "padding:16px;background:var(--bg-raised);"
+        "border:1px solid var(--border-default);border-radius:12px;margin:24px 0'>"
+        "<label style='display:flex;flex-direction:column;font-size:11px;"
+        "color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;"
+        "font-family:var(--font-mono);gap:4px;flex:1'>Namespace contains"
+        f"<input type='text' name='namespace' value='{html.escape(namespace_filter)}' "
+        "placeholder='e.g. market or user_' "
+        "style='font-family:var(--font-ui);font-size:13px;padding:6px 8px;"
+        "background:var(--bg-base);color:var(--text-primary);"
+        "border:1px solid var(--border-default);border-radius:6px'></label>"
+        "<button type='submit' style='background:var(--text-primary);"
+        "color:var(--bg-base);border:none;border-radius:6px;padding:7px 14px;"
+        "font-family:var(--font-mono);font-size:11px;text-transform:uppercase;"
+        "letter-spacing:0.08em;cursor:pointer'>Filter</button>"
+        "<a href='/admin/cache' style='align-self:center;color:var(--text-muted);"
+        "font-size:11px;text-decoration:underline'>Clear</a>"
+        "</form>"
+    )
 
     body = f"""<!DOCTYPE html><html lang='en'><head>
 <meta charset='utf-8'><title>Cache — narve admin</title>
@@ -1105,6 +1249,7 @@ button.danger:hover{{border-color:var(--text-primary)}}
 
 <h2 style='font-family:var(--font-display);font-style:italic;font-size:24px;margin:32px 0 8px'>
   Per-prefix activity</h2>
+{namespace_form}
 <table>
   <thead><tr>
     <th>Prefix</th><th class='num'>Hits</th><th class='num'>Misses</th>
@@ -1292,8 +1437,28 @@ async def backups_page(request: Request):
     if admin is None:
         return _denied_response(request)
 
-    hourly = _scan_backup_dir(_BACKUP_DIRS["hourly"], "auth.db.")[:24]
-    daily = _scan_backup_dir(_BACKUP_DIRS["daily"], "auth.db.")[:30]
+    qp = request.query_params
+    status_filter = (qp.get("status") or "").strip().lower()
+    if status_filter not in {"", "success", "failed"}:
+        status_filter = ""
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        until_ts += 86_399
+
+    def _in_window(mtime: int) -> bool:
+        if since_ts is not None and mtime < since_ts:
+            return False
+        if until_ts is not None and mtime > until_ts:
+            return False
+        return True
+
+    hourly_all = _scan_backup_dir(_BACKUP_DIRS["hourly"], "auth.db.")
+    daily_all = _scan_backup_dir(_BACKUP_DIRS["daily"], "auth.db.")
+    hourly = [e for e in hourly_all if _in_window(int(e["mtime"]))][:24]
+    daily = [e for e in daily_all if _in_window(int(e["mtime"]))][:30]
     verify_tail = _read_verify_tail(limit=5)
 
     now = int(time.time())
@@ -1330,7 +1495,8 @@ async def backups_page(request: Request):
         f"<li><code>{html.escape(ln)}</code></li>" for ln in verify_tail
     ) or "<li class='muted'>No verification log yet.</li>"
 
-    # Drill history — last 10 recovery-drill outcomes.
+    # Drill history — last 10 recovery-drill outcomes. Status filter
+    # applies here (snapshot files don't carry a status; drills do).
     drill_rows: list[str] = []
     try:
         with db.conn() as c:
@@ -1338,17 +1504,32 @@ async def backups_page(request: Request):
                 "SELECT id, started_at, completed_at, integrity_ok, "
                 "       foreign_key_ok, users_live, users_restore, "
                 "       predictions_live, predictions_restore, notes "
-                "FROM drill_runs ORDER BY started_at DESC LIMIT 10"
+                "FROM drill_runs ORDER BY started_at DESC LIMIT 50"
             ).fetchall()
+            kept = 0
             for r in rows:
+                if kept >= 10:
+                    break
+                if since_ts is not None and int(r["started_at"] or 0) < since_ts:
+                    continue
+                if until_ts is not None and int(r["started_at"] or 0) > until_ts:
+                    continue
+                passed = (
+                    r["integrity_ok"] and r["foreign_key_ok"] and
+                    (not r["notes"] or r["notes"] == "ok")
+                )
+                if status_filter == "success" and not passed:
+                    continue
+                if status_filter == "failed" and passed:
+                    continue
                 status = (
                     '<span class="badge" style="background:rgba(46,160,67,0.12);'
                     'color:#2ea043">PASS</span>'
-                    if (r["integrity_ok"] and r["foreign_key_ok"] and
-                        (not r["notes"] or r["notes"] == "ok"))
+                    if passed
                     else '<span class="badge" style="background:rgba(248,81,73,0.12);'
                          'color:#f85149">FAIL</span>'
                 )
+                kept += 1
                 drill_rows.append(
                     f"<tr><td>{_fmt_ts(r['started_at'])}</td>"
                     f"<td>{status}</td>"
@@ -1380,6 +1561,45 @@ async def backups_page(request: Request):
             f"<div class='card'><p class='card-label'>Latest {kind}</p>"
             f"<p class='card-value' style='color:{colour}'>{label}</p></div>"
         )
+
+    def _opt(value: str, label: str, active: str) -> str:
+        sel = ' selected' if value == active else ''
+        return f'<option value="{html.escape(value)}"{sel}>{html.escape(label)}</option>'
+
+    filter_form_html = (
+        "<form method='get' style='display:flex;gap:12px;align-items:flex-end;"
+        "flex-wrap:wrap;padding:16px;background:var(--bg-raised);"
+        "border:1px solid var(--border-default);border-radius:12px;margin:0 0 24px'>"
+        "<label style='display:flex;flex-direction:column;font-size:11px;"
+        "color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;"
+        "font-family:var(--font-mono);gap:4px'>Drill status"
+        "<select name='status' style='font-family:var(--font-ui);font-size:13px;"
+        "padding:6px 8px;background:var(--bg-base);color:var(--text-primary);"
+        "border:1px solid var(--border-default);border-radius:6px'>"
+        f"{_opt('', 'All', status_filter)}{_opt('success', 'Success', status_filter)}"
+        f"{_opt('failed', 'Failed', status_filter)}</select></label>"
+        "<label style='display:flex;flex-direction:column;font-size:11px;"
+        "color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;"
+        "font-family:var(--font-mono);gap:4px'>Since"
+        f"<input type='date' name='since' value='{html.escape(since_str)}' "
+        "style='font-family:var(--font-ui);font-size:13px;padding:6px 8px;"
+        "background:var(--bg-base);color:var(--text-primary);"
+        "border:1px solid var(--border-default);border-radius:6px'></label>"
+        "<label style='display:flex;flex-direction:column;font-size:11px;"
+        "color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;"
+        "font-family:var(--font-mono);gap:4px'>Until"
+        f"<input type='date' name='until' value='{html.escape(until_str)}' "
+        "style='font-family:var(--font-ui);font-size:13px;padding:6px 8px;"
+        "background:var(--bg-base);color:var(--text-primary);"
+        "border:1px solid var(--border-default);border-radius:6px'></label>"
+        "<button type='submit' style='background:var(--text-primary);"
+        "color:var(--bg-base);border:none;border-radius:6px;padding:7px 14px;"
+        "font-family:var(--font-mono);font-size:11px;text-transform:uppercase;"
+        "letter-spacing:0.08em;cursor:pointer'>Apply</button>"
+        "<a href='/admin/backups' style='align-self:center;color:var(--text-muted);"
+        "font-size:11px;text-decoration:underline'>Clear</a>"
+        "</form>"
+    )
 
     body = f"""<!DOCTYPE html><html lang='en'><head>
 <meta charset='utf-8'><title>Backups — narve admin</title>
@@ -1413,6 +1633,8 @@ font-family:var(--font-mono);font-size:11px}}
 </style></head><body>
 <h1>Backups</h1>
 <p class='meta'>3-2-1 snapshot strategy · hourly + daily + weekly offsite</p>
+
+{filter_form_html}
 
 <div class='grid'>
   {_alert_card('hourly', hourly_age_h, 2)}
@@ -1591,10 +1813,24 @@ async def churn_dashboard(request: Request):
     if not isinstance(admin, dict):
         return admin
 
+    # ``level`` maps the friendlier UI label onto the canonical risk_tier
+    # stored in churn_signals so the dropdown reads ``low/medium/high``
+    # rather than ``healthy/at_risk/critical``.
+    qp = request.query_params
+    level = (qp.get("level") or "").strip().lower()
+    if level not in {"", "low", "medium", "high"}:
+        level = ""
+    _LEVEL_TO_TIER = {"low": "healthy", "medium": "at_risk", "high": "critical"}
+    tier_filter = _LEVEL_TO_TIER.get(level)
+
     dist = _churn_risk_distribution()
-    top = _top_at_risk_users(limit=20)
+    top = _top_at_risk_users(limit=100)
     funnel = _cancellation_funnel()
     recent = _recent_cancellations(limit=20)
+
+    if tier_filter:
+        top = [u for u in top if (u.get("risk_tier") or "") == tier_filter]
+    top = top[:20]
 
     # Risk distribution pie
     risk_pie_html = _render_risk_pie(dist)
@@ -1711,6 +1947,8 @@ async def churn_dashboard(request: Request):
         raw_top_users=top_html,
         raw_funnel=funnel_html,
         raw_recent=recent_html,
+        filter_level=level,
+        result_count=f"{len(top):,}",
     )
 
 
@@ -1922,11 +2160,27 @@ async def sharing_dashboard(request: Request):
     # Window selector — default 30 days, clamped to [1, 90]. The query
     # param is the one page-state control this dashboard needs; adding
     # a full form would be a distraction from the numbers.
+    qp = request.query_params
     try:
-        days = int(request.query_params.get("days", "30"))
+        days = int(qp.get("days", "30"))
     except (TypeError, ValueError):
         days = 30
     days = max(1, min(90, days))
+
+    # source_type pins the table set to a single share family. ``since``
+    # accepts YYYY-MM-DD and overrides the ``days`` window when set
+    # (caller wants an explicit lower bound for ad-hoc audits).
+    source_type = (qp.get("source_type") or "").strip().lower()
+    if source_type not in {"", "market", "source", "prediction"}:
+        source_type = ""
+    since_str = (qp.get("since") or "").strip()
+    since_ts = _parse_date_to_ts(since_str)
+    if since_ts is not None:
+        # Translate explicit since into a days-window for the underlying
+        # queries. Cap at 90 so a buggy ?since=1970 doesn't run a 50-year
+        # scan, while honouring more recent values verbatim.
+        explicit_days = max(1, min(90, (int(time.time()) - since_ts) // 86400 + 1))
+        days = explicit_days
 
     # Lazy import: the module requires migrations 110-114. On a partial
     # schema tree we render a guidance panel instead of a 500.
@@ -1970,6 +2224,16 @@ async def sharing_dashboard(request: Request):
                    "conversion_rate_pct": 0.0, "distinct_countries": 0}
         totals = top_markets = top_sources = sharers = []
         referrers = countries = series = []
+
+    # Post-filter by source_type: hide unrelated tables + trim the totals
+    # row down to the requested family. Empty sub-lists render as the
+    # "no activity" empty state, which is the right UX for a hard filter.
+    if source_type:
+        totals = [t for t in totals if (t.get("share_type") or "").lower() == source_type]
+        if source_type != "market":
+            top_markets = []
+        if source_type != "source":
+            top_sources = []
 
     rate_display = (
         f"{overall['conversion_rate_pct']:.1f}%"
@@ -2017,6 +2281,9 @@ async def sharing_dashboard(request: Request):
         raw_top_sharers=_render_sharers_table(sharers),
         raw_referrers=_render_breakdown(referrers, key="referrer", label="Referrer"),
         raw_countries=_render_breakdown(countries, key="country", label="Country"),
+        filter_source_type=source_type,
+        filter_since=since_str,
+        result_count=f"{len(totals):,}",
     )
 
 
@@ -2762,12 +3029,54 @@ async def newsletter_page(request: Request):
     count for the currently selected filter is rendered server-side on
     initial load and refreshed by inline JS on filter change via
     /admin/newsletter/recipients.
+
+    History filters (``q``, ``status``, ``since``, ``until``) are applied
+    in Python over the raw campaign list so bookmarks repopulate the
+    form. ``status=sent`` keeps rows with a ``sent_at`` timestamp;
+    ``status=scheduled`` keeps the future-fire rows.
     """
     admin = _require_admin_user(request, page=True)
     if admin is None:
         return _denied_response(request)
 
-    campaigns = db.list_newsletter_campaigns(limit=50)
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    status_filter = (qp.get("status") or "").strip().lower()
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+
+    if status_filter not in {"", "sent", "scheduled"}:
+        status_filter = ""
+
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        until_ts += 86_399
+
+    # Pull a wider window than the rendered cap so the post-filter still
+    # has something to show when the admin filters far back. 500 is plenty
+    # — campaigns are rare events, not log lines.
+    campaigns = db.list_newsletter_campaigns(limit=500)
+    now_ts = int(time.time())
+
+    def _keep(c: dict) -> bool:
+        if q and q.lower() not in (c.get("subject") or "").lower():
+            return False
+        if status_filter:
+            sent_at = c.get("sent_at")
+            sched_at = int(c.get("scheduled_at") or 0)
+            if status_filter == "sent" and not sent_at:
+                return False
+            if status_filter == "scheduled" and (sent_at or sched_at <= now_ts):
+                return False
+        ref_ts = int(c.get("sent_at") or c.get("scheduled_at") or 0)
+        if since_ts is not None and ref_ts < since_ts:
+            return False
+        if until_ts is not None and ref_ts > until_ts:
+            return False
+        return True
+
+    campaigns = [c for c in campaigns if _keep(c)][:50]
     history_rows = _render_newsletter_history_rows(campaigns)
 
     # Default-filter recipient count for the live preview.
@@ -2798,6 +3107,11 @@ async def newsletter_page(request: Request):
         raw_segment_select=segment_select,
         raw_frequency_select=frequency_select,
         recipient_count=f"{default_count:,}",
+        filter_q=q,
+        filter_status=status_filter,
+        filter_since=since_str,
+        filter_until=until_str,
+        result_count=f"{len(campaigns):,}",
     )
 
 
