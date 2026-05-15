@@ -43,7 +43,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "sports": {
         "slug": "sports",
         "dashboard_key": "sports",
-        "name": "Sharpe Sports",
+        "name": "Sports",
         "tagline": "Polymarket vs bookmaker arbitrage",
         "hero_headline": "Where the odds / disagree.",
         "hero_sub": (
@@ -63,7 +63,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "weather": {
         "slug": "weather",
         "dashboard_key": "weather",
-        "name": "Polymarket Weather",
+        "name": "Weather",
         "tagline": "Weather market mispricings",
         "hero_headline": "Rain, shine, / and mispriced.",
         "hero_sub": (
@@ -83,7 +83,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "world": {
         "slug": "world",
         "dashboard_key": "world",
-        "name": "World State",
+        "name": "World",
         "tagline": "Global conflicts and geopolitics",
         "hero_headline": "The world moves. / Markets lag.",
         "hero_sub": (
@@ -103,7 +103,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "crypto": {
         "slug": "crypto",
         "dashboard_key": "crypto",
-        "name": "Crypto Edge",
+        "name": "Crypto",
         "tagline": "BTC and crypto ensemble signals",
         "hero_headline": "BTC doesn't / lie to everyone.",
         "hero_sub": (
@@ -123,7 +123,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "midterm": {
         "slug": "midterm",
         "dashboard_key": "midterm",
-        "name": "Midterm Predictor",
+        "name": "Midterm",
         "tagline": "Election polling aggregation",
         "hero_headline": "Polls drift. / Probabilities don't.",
         "hero_sub": (
@@ -145,7 +145,7 @@ SUBPRODUCTS: dict[str, dict] = {
         # The dashboard_key in config.json is `top_traders` but the subdomain
         # is `traders`. Access checks need to hit the canonical key.
         "dashboard_key": "top_traders",
-        "name": "Top Traders",
+        "name": "Traders",
         "tagline": "Polymarket top-trader activity",
         "hero_headline": "Follow the / smart money.",
         "hero_sub": (
@@ -165,7 +165,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "whale": {
         "slug": "whale",
         "dashboard_key": "whale",
-        "name": "Whale Watch",
+        "name": "Whale",
         "tagline": "Institutional money movement",
         "hero_headline": "Watch the / billion-dollar / footprints.",
         "hero_sub": (
@@ -185,7 +185,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "voters": {
         "slug": "voters",
         "dashboard_key": "voters",
-        "name": "Voters Atlas",
+        "name": "Voters",
         "tagline": "Voter sentiment, polling, election markets — country by country",
         "hero_headline": "Politics is local. / The signal is global.",
         "hero_sub": (
@@ -205,7 +205,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "climate": {
         "slug": "climate",
         "dashboard_key": "climate",
-        "name": "Climate Change",
+        "name": "Climate",
         "tagline": "Long-horizon climate market signals",
         "hero_headline": "The climate moves. / The market notices.",
         "hero_sub": (
@@ -226,7 +226,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "disasters": {
         "slug": "disasters",
         "dashboard_key": "disasters",
-        "name": "Eco Disasters",
+        "name": "Disasters",
         "tagline": "Live ecological & environmental disaster feed",
         "hero_headline": "Earth shakes. / The map shows.",
         "hero_sub": (
@@ -249,7 +249,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "cb": {
         "slug": "cb",
         "dashboard_key": "centralbank",
-        "name": "Central Bank Tracker",
+        "name": "Central Bank",
         "tagline": "Fed, ECB, BoE rates, implied path, FOMC edge",
         "hero_headline": "Rates today. / Path tomorrow.",
         "hero_sub": (
@@ -271,7 +271,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "health": {
         "slug": "health",
         "dashboard_key": "world_health",
-        "name": "World Health",
+        "name": "Health",
         "tagline": "Disease atlas, outbreak radar, drug supply chains",
         "hero_headline": "508 diseases. / One globe.",
         "hero_sub": (
@@ -295,7 +295,7 @@ SUBPRODUCTS: dict[str, dict] = {
     "love": {
         "slug": "love",
         "dashboard_key": "love",
-        "name": "Love Atlas",
+        "name": "Love",
         "tagline": "How love is changing",
         "hero_headline": "Marriage. / Divorce. / Forever.",
         "hero_sub": (

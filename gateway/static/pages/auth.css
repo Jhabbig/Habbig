@@ -31,10 +31,9 @@ body {
 .auth-brand img {
   width: 24px;
   height: 24px;
-  filter: invert(1);
   border-radius: var(--radius-xs);
 }
-[data-theme="dark"] .auth-brand img { filter: none; }
+[data-theme="dark"] .auth-brand img { filter: invert(1); }
 .auth-brand span {
   font-family: var(--font-ui);
   font-weight: var(--weight-semibold);

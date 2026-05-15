@@ -23,7 +23,8 @@ body {
       text-decoration: none; color: var(--text-primary);
       margin-bottom: 32px;
     }
-    .invite-brand img { width: 26px; height: 26px; filter: invert(1); border-radius: 5px; }
+    .invite-brand img { width: 26px; height: 26px; border-radius: 5px; }
+    [data-theme="dark"] .invite-brand img { filter: invert(1); }
     .invite-brand span { font-weight: 600; font-size: var(--text-lg); letter-spacing: -0.03em; }
     .invite-card {
       width: 100%;

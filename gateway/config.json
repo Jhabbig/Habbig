@@ -10,7 +10,7 @@
     "sports": {
       "subdomain": "sports",
       "target": 8888,
-      "display_name": "Sharpe Sports",
+      "display_name": "Sports",
       "description": "Polymarket vs bookmaker odds arbitrage signals",
       "accent": "#ef4444",
       "monthly_cents": 1999,
@@ -20,7 +20,7 @@
     "weather": {
       "subdomain": "weather",
       "target": 5050,
-      "display_name": "Polymarket Weather",
+      "display_name": "Weather",
       "description": "Weather market mispricings & rain forecasts",
       "accent": "#3b82f6",
       "monthly_cents": 799,
@@ -30,7 +30,7 @@
     "world": {
       "subdomain": "world",
       "target": 7050,
-      "display_name": "World State",
+      "display_name": "World",
       "description": "Global conflicts, headlines, geopolitical feed",
       "accent": "#8b5cf6",
       "monthly_cents": 599,
@@ -40,7 +40,7 @@
     "crypto": {
       "subdomain": "crypto",
       "target": 8000,
-      "display_name": "Crypto Edge",
+      "display_name": "Crypto",
       "description": "BTC & crypto signals, ensemble ML predictor",
       "accent": "#f59e0b",
       "monthly_cents": 999,
@@ -50,7 +50,7 @@
     "midterm": {
       "subdomain": "midterm",
       "target": 8051,
-      "display_name": "Midterm Predictor",
+      "display_name": "Midterm",
       "description": "Election & polling aggregation across markets",
       "accent": "#6366f1",
       "monthly_cents": 1499,
@@ -60,7 +60,7 @@
     "top_traders": {
       "subdomain": "traders",
       "target": 8052,
-      "display_name": "Top Traders",
+      "display_name": "Traders",
       "description": "Polymarket top-trader activity and leaderboard",
       "accent": "#0ea5e9",
       "monthly_cents": 1299,
@@ -70,7 +70,7 @@
     "whale": {
       "subdomain": "whale",
       "target": 8054,
-      "display_name": "Whale Watch",
+      "display_name": "Whale",
       "description": "Institutional whale flow — 13F, Form 4, 13D filings",
       "accent": "#10b981",
       "monthly_cents": 1799,
@@ -80,7 +80,7 @@
     "voters": {
       "subdomain": "voters",
       "target": 7051,
-      "display_name": "Voters Atlas",
+      "display_name": "Voters",
       "description": "Voter sentiment, polling, election markets across countries",
       "accent": "#a855f7",
       "monthly_cents": 599,
@@ -90,7 +90,7 @@
     "climate": {
       "subdomain": "climate",
       "target": 7052,
-      "display_name": "Climate Change",
+      "display_name": "Climate",
       "description": "Long-horizon climate markets — GISTEMP, CO2, sea ice, SST, ENSO, CH4",
       "accent": "#34d399",
       "monthly_cents": 599,
@@ -100,7 +100,7 @@
     "disasters": {
       "subdomain": "disasters",
       "target": 7060,
-      "display_name": "Eco Disasters",
+      "display_name": "Disasters",
       "description": "Live ecological & environmental disaster feed (USGS, NASA EONET, GDACS, ReliefWeb, NOAA NWS, NASA FIRMS)",
       "accent": "#22c55e",
       "monthly_cents": 599,
@@ -110,7 +110,7 @@
     "centralbank": {
       "subdomain": "cb",
       "target": 7061,
-      "display_name": "Central Bank Tracker",
+      "display_name": "Central Bank",
       "description": "Fed, ECB, BoE rates - implied path - Polymarket FOMC edge",
       "accent": "#14b8a6",
       "monthly_cents": 599,
@@ -120,7 +120,7 @@
     "world_health": {
       "subdomain": "health",
       "target": 7053,
-      "display_name": "World Health",
+      "display_name": "Health",
       "description": "508-disease atlas · WHO outbreaks · AMR globe · drug supply chains · prediction markets",
       "accent": "#10b981",
       "monthly_cents": 999,
@@ -130,7 +130,7 @@
     "love": {
       "subdomain": "love",
       "target": 7062,
-      "display_name": "Love Atlas",
+      "display_name": "Love",
       "description": "Marriage, divorce, fertility, dating — every macro relationship metric",
       "accent": "#ec4899",
       "monthly_cents": 599,
