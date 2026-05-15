@@ -51,9 +51,24 @@ except ImportError:
 # ── Config from environment ─────────────────────────────────────────────────
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "app").lower().strip() or "app"
-ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip() or "production"
+# NOTE: ``ENVIRONMENT`` is intentionally NOT captured at module import time.
+# Test harnesses (and any caller that flips ``os.environ["ENVIRONMENT"]``
+# after first import) need the new value to be picked up by every
+# subsequent log record. Read it inside ``StructuredFormatter.format()``
+# via :func:`_current_environment` instead — see MED-1 in the security
+# audit.
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper().strip()
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+
+
+def _current_environment() -> str:
+    """Return the current ``ENVIRONMENT`` value, freshly read from the env.
+
+    Computed per-record so a test (or runtime override) that mutates
+    ``os.environ["ENVIRONMENT"]`` after this module loaded shows up
+    on the very next log line.
+    """
+    return os.getenv("ENVIRONMENT", "production").strip() or "production"
 
 
 # ── Request context (contextvars for async safety) ─────────────────────────
@@ -116,6 +131,28 @@ SENSITIVE_KEY_HINTS = (
     "webhook",
     "kalshi",
     "vapid",
+    # H-2 expansion: short-lived secrets and signed-URL components that
+    # were previously logged in the clear. ``code`` covers OTP / magic-
+    # link / OAuth verification codes; ``signature`` / ``hash`` / ``salt``
+    # / ``nonce`` catch arbitrary signed-payload fields; ``magic_link``
+    # and ``callback_url`` are full URLs that frequently contain a
+    # one-shot token in the query string.
+    "otp",
+    "code",
+    "signature",
+    "hash",
+    "salt",
+    "nonce",
+    "magic_link",
+    "callback_url",
+    # H-2 (continued): any field whose name ends in ``_url`` or is just
+    # ``url``. Reset / invite / confirm / cancel / signed URLs all carry
+    # a one-shot token in the path or query string, and a single hint of
+    # ``url`` covers them in one rule. Non-secret URL fields used in
+    # production logs (``app_url``, ``share_url``, ``og_image_url``,
+    # ``avatar_url``, ``image_url``, ``site_url``) opt out via
+    # ``SENSITIVE_ALLOWLIST`` below.
+    "url",
 )
 
 # Safe fields that contain "token" / "key" in their name but are not secrets.
@@ -128,6 +165,34 @@ SENSITIVE_ALLOWLIST = {
     "session_id",  # bare id (not value) is fine
     "token_id",    # invite token db row id
     "posts_found_total",
+    # H-2 false-positive guards. The hints expansion added ``code`` and
+    # ``hash`` which match common, non-secret diagnostic fields — these
+    # IDs/counters MUST stay visible for ops to be able to debug.
+    "status_code",
+    "error_code",      # http error code / Stripe error code / business code
+    "response_code",
+    "http_code",
+    "exit_code",
+    "country_code",
+    "currency_code",
+    "zip_code",
+    "postal_code",
+    # H-2 URL allowlist. The ``url`` hint above is intentionally broad —
+    # these are the fields we know are NOT token-bearing and need to
+    # stay visible in logs/admin panels for support to do their job.
+    "app_url",
+    "site_url",
+    "share_url",
+    "og_image_url",
+    "avatar_url",
+    "image_url",
+    "feedback_url",
+    "terms_url",
+    "privacy_url",
+    "support_url",
+    "docs_url",
+    "request_url",       # incoming request path — not a secret
+    "response_url",      # admin webhook-config display path
 }
 
 _RESERVED_RECORD_ATTRS = frozenset({
@@ -165,13 +230,41 @@ def _scrub_value(key: str, value: Any) -> Any:
 import re  # noqa: E402
 
 _MESSAGE_REDACT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
-    # Bearer tokens in auth headers or Authorization strings.
+    # Bearer tokens in auth headers or Authorization strings. Run before
+    # the JWT pattern so the ``bearer`` prefix is preserved rather than
+    # being eaten by the bare-JWT replacement.
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{10,}"), "bearer [REDACTED]"),
+    # Stripe webhook signature header. Case-insensitive header name —
+    # run BEFORE the generic JWT pattern because the header value can
+    # also be a JWT-shape string and we want the header name preserved.
+    (re.compile(r"(?i)stripe-signature:\s*\S+"), "stripe-signature: <redacted>"),
+    # Bare JWTs (eyJ... three-part base64url with dots). Catches cookies,
+    # query strings, and any context where the token appears without a
+    # ``Bearer `` prefix.
+    (re.compile(r"eyJ[A-Za-z0-9._-]+"), "<jwt-redacted>"),
+    # Generic HMAC ``sig=`` / ``hmac=`` parameters in URLs or signed
+    # payloads. Run before the generic key=value pattern below so the
+    # ``<redacted>`` placeholder shape is consistent across HMAC params.
+    (re.compile(r"\bsig=[A-Za-z0-9+/=]+"), "sig=<redacted>"),
+    (re.compile(r"\bhmac=[A-Za-z0-9+/=]+"), "hmac=<redacted>"),
+    # Token-prefix redact: ``token=abc12345...`` truncated prefix in logs.
+    # MUST come before the generic ``token=...`` catch-all below so the
+    # trailing ``...`` is preserved (the catch-all otherwise consumes the
+    # ellipsis as part of the secret body).
+    (re.compile(r"token=([a-zA-Z0-9_\-]{8,12})\.\.\."),
+     "token=<prefix-redacted>..."),
     # Password embedded in a query string or URL fragment.
     (re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)=[^\s&\"']{6,}"),
      r"\1=[REDACTED]"),
     # Basic-auth user:pass in a URL (scheme://user:pass@host).
     (re.compile(r"(?i)([a-z]+)://([^:@\s/]+):([^@\s/]+)@"), r"\1://\2:[REDACTED]@"),
+    # Raw email addresses anywhere in a log message. Audit-log writes
+    # that legitimately need the unredacted email opt out via
+    # ``extra={"no_redact": True}`` — see _RedactionFilter below.
+    # IGNORECASE because mailbox parts arrive verbatim from user input
+    # and routinely include uppercase characters.
+    (re.compile(r"[a-z0-9._+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.IGNORECASE),
+     "<email-redacted>"),
 )
 
 
@@ -189,6 +282,69 @@ def _redact_message(msg: str) -> str:
     return out
 
 
+class _RedactionFilter(logging.Filter):
+    """Logging filter that scrubs raw emails / token-prefixes from BOTH
+    the ``%s``-style interpolation args AND the final rendered message.
+
+    Why a filter and not just rely on the formatter? StreamHandler /
+    RotatingFileHandler / Logtail each call ``record.getMessage()``
+    independently, and any third-party handler that bypasses our
+    formatter (or reads ``record.args`` directly for structured fields,
+    as Logtail does) would still see the raw email. Filters run before
+    handler dispatch and mutate the record in-place, so every downstream
+    consumer sees the already-scrubbed values.
+
+    Audit log writes that legitimately need the raw email opt out via::
+
+        log.info("user created %s", email, extra={"no_redact": True})
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Audit-log opt-out — caller is on the hook for the consequences.
+        if getattr(record, "no_redact", False):
+            return True
+        # 1. Scrub args so any handler that pulls record.args directly
+        #    (Logtail's structured fields, custom JSON formatters, etc.)
+        #    sees the same redacted strings the formatter will emit.
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: (_redact_message(v) if isinstance(v, str) else v)
+                    for k, v in record.args.items()
+                }
+            elif isinstance(record.args, tuple):
+                record.args = tuple(
+                    _redact_message(a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+            elif isinstance(record.args, str):
+                # Single non-tuple string arg (rare, but valid).
+                record.args = _redact_message(record.args)
+        # 2. Pre-render the final message and stash it on the record so
+        #    every handler sees the scrubbed text, even ones that read
+        #    ``record.msg`` directly instead of calling ``getMessage()``.
+        try:
+            rendered = record.getMessage()
+        except Exception:  # pragma: no cover — malformed format string
+            return True
+        scrubbed = _redact_message(rendered)
+        if scrubbed != rendered:
+            # Replace msg with the already-rendered scrubbed text and
+            # clear args so subsequent getMessage() calls are no-ops.
+            record.msg = scrubbed
+            record.args = ()
+        return True
+
+
+# Module-level singleton — attached to every handler in configure_logging
+# so each record passes through the redaction step exactly once before
+# the handler's emit() runs. Filters on the root logger do NOT fire for
+# records logged via child loggers (the parent's handlers are invoked
+# from the child's callHandlers walk, bypassing parent-logger filters),
+# so the filter must live on each handler.
+_redaction_filter = _RedactionFilter()
+
+
 class StructuredFormatter(logging.Formatter):
     """Formats log records as JSON lines for BetterStack ingestion."""
 
@@ -197,7 +353,9 @@ class StructuredFormatter(logging.Formatter):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "service": SERVICE_NAME,
-            "environment": ENVIRONMENT,
+            # MED-1: read ENVIRONMENT freshly per record so tests and
+            # runtime overrides take effect without a process restart.
+            "environment": _current_environment(),
             "logger": record.name,
             # Content-level regex pass catches bearer-prefix tokens,
             # key=value secrets in URLs, and basic-auth embedded creds
