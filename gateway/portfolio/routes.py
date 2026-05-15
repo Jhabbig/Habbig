@@ -6,6 +6,17 @@ same check applied to the existing /api/markets/connections endpoints.
 
 Register via ``from portfolio.routes import register; register(app)``
 from server.py (no business logic in server.py).
+
+Gate policy
+-----------
+Every state-mutating route in this module MUST call
+``_require_trading_addon(request)`` on its first line. The audit found
+the entire file's set of POST routes were reachable by free-tier users,
+which bypasses the monetisation contract for Polymarket/Kalshi
+connections, position sync, Kelly calc, and bankroll persistence.
+
+Read-only routes (``GET /api/portfolio/status``, summary, positions)
+stay accessible to free users so the UI can render the upsell.
 """
 
 from __future__ import annotations
@@ -16,6 +27,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
+import db
 from portfolio import kalshi, kelly, polymarket, positions
 
 
@@ -37,12 +49,50 @@ def _user_id(user: dict) -> int:
     return int(user.get("id") or user.get("user_id") or 0)
 
 
+def _require_trading_addon(request: Request) -> dict:
+    """Auth + Trading Add-on gate for state-mutating portfolio routes.
+
+    Returns the user dict on success. Raises:
+      * 401 if no authenticated session
+      * 402 Payment Required if the user does not hold an active Trading
+        Add-on (admins bypass via ``db.has_trading_addon``).
+
+    402 is the right status here: the user is authenticated, but the
+    request is gated behind a paid product. The client renders an
+    upsell modal pointing at /pricing#trading-access.
+    """
+    user = _require_user(request)
+    uid = _user_id(user)
+    if uid <= 0:
+        # Defensive: an authenticated session without an id is a bug,
+        # not a payment problem — fall through as auth failure.
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not db.has_trading_addon(uid):
+        raise HTTPException(
+            status_code=402,
+            detail="Trading Add-on required. See /pricing for access.",
+        )
+    return user
+
+
 def register(app) -> None:
+
+    # ── Trading add-on status (free, read-only) ─────────────────────────
+    # Lets the dashboard render the upsell card without forcing the user
+    # to provoke a 402 on a mutating endpoint first. Returns 200 for any
+    # authenticated user — addon-less and addon-active alike — with a
+    # boolean so the client can branch on `has_addon`.
+    @app.get("/api/portfolio/status")
+    async def api_portfolio_status(request: Request):
+        user = _require_user(request)
+        uid = _user_id(user)
+        active = bool(db.has_trading_addon(uid)) if uid > 0 else False
+        return JSONResponse({"has_addon": active})
 
     # ── Polymarket connect ──────────────────────────────────────────────
     @app.post("/api/portfolio/polymarket/connect")
     async def connect_polymarket(request: Request):
-        user = _require_user(request)
+        user = _require_trading_addon(request)
         try:
             body = await request.json()
         except Exception:
@@ -59,7 +109,7 @@ def register(app) -> None:
     # ── Kalshi connect ──────────────────────────────────────────────────
     @app.post("/api/portfolio/kalshi/connect")
     async def connect_kalshi(request: Request):
-        user = _require_user(request)
+        user = _require_trading_addon(request)
         try:
             body = await request.json()
         except Exception:
@@ -142,7 +192,7 @@ def register(app) -> None:
     # ── Kelly calculator ────────────────────────────────────────────────
     @app.post("/api/kelly/calculate")
     async def api_kelly_calculate(request: Request):
-        user = _require_user(request)
+        user = _require_trading_addon(request)
         try:
             body = await request.json()
         except Exception:
@@ -176,7 +226,7 @@ def register(app) -> None:
     # ── Bankroll setter ─────────────────────────────────────────────────
     @app.post("/api/kelly/bankroll")
     async def api_set_bankroll(request: Request):
-        user = _require_user(request)
+        user = _require_trading_addon(request)
         try:
             body = await request.json()
         except Exception:
@@ -194,3 +244,59 @@ def register(app) -> None:
             )
         kelly.set_user_bankroll(_user_id(user), bankroll)
         return JSONResponse({"saved": True, "bankroll_usd": bankroll})
+
+    # ── Position sync ───────────────────────────────────────────────────
+    # Fans out to both Polymarket + Kalshi sync_positions for the caller.
+    # Gated behind the Trading Add-on: position-sync is the heavy-lifting
+    # part of the monetised flow (talks to upstream exchanges, normalises
+    # positions, writes user_positions rows), so free users must hit the
+    # upsell. ``not_connected`` from either side is surfaced as a per-
+    # platform field — we don't 4xx on missing connections because a user
+    # may legitimately connect only one of the two platforms.
+    @app.post("/api/portfolio/sync")
+    async def sync_positions(request: Request):
+        user = _require_trading_addon(request)
+        uid = _user_id(user)
+        try:
+            poly_result = await polymarket.sync_positions(uid)
+        except Exception as exc:
+            log.warning("polymarket sync raised for user=%s: %s", uid, exc)
+            poly_result = {"count": 0, "error": str(exc)}
+        try:
+            kalshi_result = await kalshi.sync_positions(uid)
+        except Exception as exc:
+            log.warning("kalshi sync raised for user=%s: %s", uid, exc)
+            kalshi_result = {"count": 0, "error": str(exc)}
+        return JSONResponse({
+            "polymarket": poly_result,
+            "kalshi": kalshi_result,
+        })
+
+    # ── Disconnect: Polymarket ──────────────────────────────────────────
+    # User-initiated removal of the platform credential. We keep the row
+    # in user_market_credentials so the UI can still show "Reconnect", but
+    # drop the cached positions so the dashboard doesn't display stale
+    # holdings. Gated behind the Trading Add-on — disconnecting is a
+    # state-mutating action on a paid-product surface.
+    @app.post("/api/portfolio/polymarket/disconnect")
+    async def disconnect_polymarket(request: Request):
+        user = _require_trading_addon(request)
+        uid = _user_id(user)
+        db.disconnect_market_credential(uid, "polymarket")
+        db.delete_user_positions(uid, platform="polymarket")
+        log.info("user=%s disconnected polymarket", uid)
+        return JSONResponse({"disconnected": True, "platform": "polymarket"})
+
+    # ── Disconnect: Kalshi ──────────────────────────────────────────────
+    # Same shape as the Polymarket disconnect. Scrubs the encrypted Kalshi
+    # token via ``db.disconnect_market_credential`` (member_id is kept so
+    # the UI can show "Reconnect jake@email.com") and clears the cached
+    # positions row.
+    @app.post("/api/portfolio/kalshi/disconnect")
+    async def disconnect_kalshi(request: Request):
+        user = _require_trading_addon(request)
+        uid = _user_id(user)
+        db.disconnect_market_credential(uid, "kalshi")
+        db.delete_user_positions(uid, platform="kalshi")
+        log.info("user=%s disconnected kalshi", uid)
+        return JSONResponse({"disconnected": True, "platform": "kalshi"})
