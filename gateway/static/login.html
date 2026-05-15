@@ -74,6 +74,30 @@ function getCsrf() {
   return (document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/) || [])[1] || '';
 }
 
+// Register a 'button' skeleton shape on first use (idempotent).
+function ensureButtonSkel() {
+  if (!window.narveSkel || window.narveSkel.templates['button']) return;
+  window.narveSkel.registerTemplate('button', function () {
+    return '<span class="skeleton skeleton-bar" style="display:inline-block;width:80px;height:10px;vertical-align:middle"></span>';
+  });
+}
+
+function setLoading(btn, on) {
+  if (on) {
+    btn.dataset.label = btn.textContent;
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    ensureButtonSkel();
+    if (window.narveSkel && btn.id) {
+      window.narveSkel.show(btn.id, 'button', 1);
+    }
+  } else {
+    btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+    btn.textContent = btn.dataset.label || 'Sign in';
+  }
+}
+
 function submitLogin(ev) {
   ev.preventDefault();
   var btn = document.getElementById('login-btn');
@@ -83,8 +107,7 @@ function submitLogin(ev) {
   formErr.textContent = '';
   emailErr.textContent = '';
   pwErr.textContent = '';
-  btn.disabled = true;
-  btn.textContent = 'Signing in...';
+  setLoading(btn, true);
 
   fetch('/auth/login', {
     method: 'POST',
@@ -100,22 +123,27 @@ function submitLogin(ev) {
       window.location.href = (res.data && res.data.redirect) || '/dashboards';
       return;
     }
-    btn.disabled = false;
-    btn.textContent = 'Sign in';
+    setLoading(btn, false);
     var err = (res.data && res.data.error) || 'Incorrect email or password.';
     var field = (res.data && res.data.field) || null;
     if (field === 'email') emailErr.textContent = err;
     else if (field === 'password') pwErr.textContent = err;
     else formErr.textContent = err;
   }).catch(function() {
-    btn.disabled = false;
-    btn.textContent = 'Sign in';
-    formErr.textContent = 'Network error. Try again.';
+    setLoading(btn, false);
+    if (window.narveToast) {
+      window.narveToast('Network error — try again', { type: 'error' });
+    } else {
+      formErr.textContent = 'Network error — try again';
+    }
   });
 
   return false;
 }
 </script>
+<link rel="stylesheet" href="/_gateway_static/skeletons.css">
+<script src="/_gateway_static/skeletons.js" defer></script>
+<script src="/_gateway_static/js/toast.js" defer></script>
 <script src="/_gateway_static/theme.js?v=2" defer></script>
   <script src="/_gateway_static/js/cmdk.js" defer></script>
   <script src="/_gateway_static/js/share_menu.js" defer></script>
