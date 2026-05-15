@@ -50,13 +50,13 @@ SERVICES: list[dict] = [
     {"name": "World",          "slug": "world",         "port": 7050},
     {"name": "Crypto",         "slug": "crypto",        "port": 8000},
     {"name": "Midterm",        "slug": "midterm",       "port": 8051},
-    {"name": "Top Traders",    "slug": "top-traders",   "port": 8052},
+    {"name": "Traders",        "slug": "top-traders",   "port": 8052},
     {"name": "Voters",         "slug": "voters",        "port": 7051},
     {"name": "Climate",        "slug": "climate",       "port": 7052},
     {"name": "Disasters",      "slug": "disasters",     "port": 7060},
     {"name": "Whale",          "slug": "whale",         "port": 8053},
     {"name": "Central Bank",   "slug": "central-bank",  "port": 7061},
-    {"name": "World Health",   "slug": "world-health",  "port": 7053},
+    {"name": "Health",         "slug": "world-health",  "port": 7053},
     {"name": "Love",           "slug": "love",          "port": 7062},
 ]
 
@@ -92,10 +92,15 @@ def _uptime_24h(slug: str) -> Optional[float]:
 
 
 def _probe(service: dict, client: httpx.Client) -> dict:
-    """HEAD http://localhost:<port>/health with a 2s timeout.
+    """GET http://localhost:<port>/health with a 2s timeout.
 
     Returns the public-facing dict shape: ``{name, slug, port, status,
     latency_ms, last_check, uptime_24h}``.
+
+    Uses GET (not HEAD): the gateway's /health is registered as @app.get
+    and some subproduct backends similarly only accept GET. HEAD returns
+    404 against those routes, which produced a false-positive "DOWN"
+    status across every service in the dashboard (2026-05-15 fix).
     """
     port = service["port"]
     url = f"http://localhost:{port}/health"
@@ -103,7 +108,7 @@ def _probe(service: dict, client: httpx.Client) -> dict:
     status = "down"
     latency_ms: Optional[int] = None
     try:
-        resp = client.head(url, timeout=2.0)
+        resp = client.get(url, timeout=2.0)
         latency_ms = int((time.monotonic() - started) * 1000)
         if 200 <= resp.status_code < 300:
             status = "slow" if latency_ms >= 500 else "up"
