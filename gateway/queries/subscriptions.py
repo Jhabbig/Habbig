@@ -19,6 +19,37 @@ from typing import Optional
 import db
 
 
+def _is_user_subscription_paused(c: sqlite3.Connection, user_id: int) -> bool:
+    """True if the user's subscription is currently in a pause window.
+
+    AUDIT (HIGH): the four access-check functions in this module
+    (``has_active_subscription``, ``has_any_active_subscription``,
+    ``get_user_active_subproducts``, ``get_user_subscription_tier``)
+    historically ignored ``users.subscription_paused_until``. A paused
+    user kept gateway access until ``expires_at`` arrived because the
+    queries only filtered on the subscription row, not the user-level
+    pause flag.
+
+    The pause column is stored as a DATETIME ISO string (see migration
+    094). We compare against ``datetime('now')`` server-side so the
+    semantics match the rest of the codebase (server.py /
+    billing_routes.py both treat the column the same way), and we
+    swallow exceptions so a missing column (pre-094) is read as "not
+    paused" — matching ``server._subscription_pause_status``.
+    """
+    try:
+        row = c.execute(
+            "SELECT 1 FROM users WHERE id = ? "
+            "AND subscription_paused_until IS NOT NULL "
+            "AND subscription_paused_until > datetime('now')",
+            (user_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # Column missing — feature not migrated yet. Treat as not paused.
+        return False
+    return row is not None
+
+
 def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
     with db.conn() as c:
         return c.execute(
@@ -35,6 +66,11 @@ def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
         ).fetchone()
         if admin_row and admin_row[0]:
             return True
+        # AUDIT (HIGH): a paused user must not retain access until
+        # expires_at arrives. Check users.subscription_paused_until
+        # before honouring the subscription row.
+        if _is_user_subscription_paused(c, user_id):
+            return False
         row = c.execute(
             "SELECT id FROM subscriptions "
             "WHERE user_id = ? AND dashboard_key = ? AND status = 'active' "
@@ -427,6 +463,10 @@ def get_user_subscription_tier(user_id: int) -> str:
         admin_row = c.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
         if admin_row and admin_row["is_admin"]:
             return "pro"
+        # AUDIT (HIGH): a paused user has no effective tier — they
+        # shouldn't see Pro/Trader-only surfaces while paused.
+        if _is_user_subscription_paused(c, user_id):
+            return "none"
         subs = c.execute(
             "SELECT plan FROM subscriptions WHERE user_id = ? AND status = 'active'",
             (user_id,),
@@ -526,6 +566,10 @@ def has_any_active_subscription(user_id: int) -> bool:
         ).fetchone()
         if admin_row and admin_row[0]:
             return True
+        # AUDIT (HIGH): paused users should not pass the "is a paying
+        # customer" check used by embed widgets etc.
+        if _is_user_subscription_paused(c, user_id):
+            return False
         row = c.execute(
             "SELECT 1 FROM subscriptions "
             "WHERE user_id = ? AND status = 'active' "
@@ -550,6 +594,11 @@ def get_user_active_subproducts(user_id: int) -> set[str]:
     """
     now = int(time.time())
     with db.conn() as c:
+        # AUDIT (HIGH): a paused user shouldn't surface as actively
+        # subscribed to any subproduct — they'd otherwise still see
+        # their subscriptions listed in cross-product UIs while paused.
+        if _is_user_subscription_paused(c, user_id):
+            return set()
         rows = c.execute(
             "SELECT dashboard_key FROM subscriptions "
             "WHERE user_id = ? AND status = 'active' "
