@@ -22,6 +22,30 @@ import config
 _local = threading.local()
 
 
+# ── LIKE pattern escaping (Audit C-3) ────────────────────────────────────────
+#
+# Entity names arrive from path parameters and flow into ``... LIKE ?``
+# clauses. SQLite treats ``%`` and ``_`` as wildcards, so a caller could
+# submit ``%`` to force a full-table scan or ``_`` to fish for entities
+# with shared prefixes. Escape both chars + the escape char itself and
+# emit ``ESCAPE '\\'`` so the wildcards are matched literally.
+
+LIKE_ESCAPE_CHAR = "\\"
+
+
+def escape_like(pattern: str) -> str:
+    """Escape ``%``, ``_`` and ``\\`` so the value is matched literally in
+    a SQLite LIKE clause. Callers must add ``ESCAPE '\\'`` on the LIKE.
+    """
+    if not pattern:
+        return pattern
+    return (
+        pattern.replace(LIKE_ESCAPE_CHAR, LIKE_ESCAPE_CHAR + LIKE_ESCAPE_CHAR)
+        .replace("%", LIKE_ESCAPE_CHAR + "%")
+        .replace("_", LIKE_ESCAPE_CHAR + "_")
+    )
+
+
 # ── Connection management ────────────────────────────────────────────────────
 
 def _get_conn() -> sqlite3.Connection:
@@ -705,10 +729,10 @@ def get_entity_recent_classified_posts(entity: str, limit: int = 30) -> list[dic
                       c.is_sensitive, c.sensitive_reason, c.classified_at
                FROM classifications c
                JOIN posts p ON p.id = c.post_id
-               WHERE c.entities_json LIKE ?
+               WHERE c.entities_json LIKE ? ESCAPE '\\'
                ORDER BY c.classified_at DESC
                LIMIT ?""",
-            (f"%{entity}%", limit),
+            (f"%{escape_like(entity)}%", limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -898,9 +922,9 @@ def get_entity_hourly_counts_by_source(entity: str, hour_iso: str) -> dict[str, 
                FROM classifications c
                JOIN posts p ON p.id = c.post_id
                WHERE p.posted_at >= ? AND p.posted_at < ?
-                 AND c.entities_json LIKE ?
+                 AND c.entities_json LIKE ? ESCAPE '\\'
                GROUP BY p.source""",
-            (hour_iso, next_hour, f"%{entity}%"),
+            (hour_iso, next_hour, f"%{escape_like(entity)}%"),
         ).fetchall()
     return {r["source"]: int(r["cnt"]) for r in rows}
 

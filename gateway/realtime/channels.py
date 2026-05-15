@@ -46,10 +46,24 @@ _UID_RE = re.compile(r"^[0-9]{1,10}$")
 
 
 def _has_subproduct_access(user: dict, slug: str) -> bool:
-    """Check subproduct access via the same helper that gates dashboard routes."""
+    """Check subproduct access via the same helper that gates dashboard routes.
+
+    Audit F — pass the full user row, not a bare ``user_id`` int.
+    ``has_subproduct_access`` reads ``subscription_tier`` / ``is_admin`` /
+    ``subproduct_subscriptions`` off the row. With an int every field
+    lookup missed and the gate denied every subproduct channel, even to
+    paying users.
+    """
+    user_id = user.get("user_id")
+    if user_id is None:
+        return False
     try:
+        import db as _db
         from subproduct_access import has_subproduct_access as _check
-        return bool(_check(user.get("user_id"), slug))
+        row = _db.get_user_by_id(int(user_id))
+        if row is None:
+            return False
+        return bool(_check(row, slug))
     except Exception:
         # If the module is unavailable or raises, fail closed.
         return False

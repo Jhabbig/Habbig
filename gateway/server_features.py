@@ -1636,6 +1636,19 @@ async def auth_register(request: Request):
     response = JSONResponse({"success": True, "user_id": user_id})
     await _issue_hardened_session(user_id, request, response)
 
+    # Affiliate-attribution hook (audit HIGH, 2026-05-15). If the visitor
+    # arrived via /partner/{code} or /p/{code}, the affiliate cookie is
+    # set on this session; bind the new user_id to the affiliate's
+    # conversions table now. Defined in affiliate_routes.py but never
+    # previously wired into the register path — silent miss meant every
+    # affiliate-driven signup since launch went unattributed. Fail-soft:
+    # every error inside the helper is swallowed already.
+    try:
+        from affiliate_routes import maybe_attribute_signup
+        maybe_attribute_signup(request, response, user_id)
+    except Exception:
+        log.exception("auth.register: affiliate attribution hook failed (user_id=%d)", user_id)
+
     # Share-loop conversion attribution. If this visitor landed on narve.ai
     # via /s/{m,s,p}/{token} we set a `narve_share_attribution` cookie
     # carrying the share_metrics row id. Link the row to the new user so
@@ -1689,7 +1702,10 @@ async def auth_register(request: Request):
         # Clear the cookie either way — consumed once, no longer needed.
         response.delete_cookie("narve_share_attribution", path="/")
 
-    log.info("auth.register: user_id=%d email=%s via token=%s...", user_id, email, raw_token[:8])
+    # Audit D — drop raw email + token prefix from access log. Mask the
+    # email so on-call can still correlate to a user without the log line
+    # itself being a PII source. Token prefix is gone entirely.
+    log.info("auth.register: user_id=%d email=%s", user_id, db.mask_email(email))
     return response
 
 

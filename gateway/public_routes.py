@@ -90,7 +90,8 @@ async def api_enquire(request: Request):
         return JSONResponse({"error": "Message is too long (500 characters max)"}, status_code=400)
 
     db.create_enquiry(email, job_title, message)
-    log.info("New enquiry from %s (%s)", email, job_title)
+    # Audit D — mask the enquirer email. Raw value is on the enquiries row.
+    log.info("New enquiry from %s (%s)", db.mask_email(email), job_title)
 
     # Notification email — enqueued via the job queue so the request
     # returns immediately and failures retry automatically.
@@ -168,7 +169,8 @@ async def api_subscribe(request: Request):
         note=f"Subscription: {plan} ({interval})",
         target_email=email,
     )
-    log.info("Subscription checkout: %s -> %s (%s), token generated", email, plan, interval)
+    # Audit D — mask email; raw value is on the invite-token row.
+    log.info("Subscription checkout: %s -> %s (%s), token generated", db.mask_email(email), plan, interval)
     return JSONResponse({"token": token})
 
 
@@ -218,7 +220,8 @@ async def api_support_ticket(request: Request):
         return JSONResponse({"error": "Message is too long (2000 characters max)"}, status_code=400)
 
     db.create_enquiry(email, "Support Ticket", message)
-    log.info("Support ticket from %s", email)
+    # Audit D — mask email; raw value is on the enquiries row.
+    log.info("Support ticket from %s", db.mask_email(email))
     return JSONResponse({"success": True})
 
 

@@ -442,7 +442,10 @@ async def lifespan(app: FastAPI):
     if not tokens:
         first_token = db.create_invite_token("Auto-generated admin token")
         log.info("=" * 50)
-        log.info("  FIRST ADMIN INVITE TOKEN: %s... (query DB for full value)", first_token[:12])
+        # Audit D — don't leak token prefix bytes. Boot log goes to file +
+        # remote ingest; recover the value via SELECT on invite_tokens.
+        _ = first_token  # not logged
+        log.info("  FIRST ADMIN INVITE TOKEN: <generated — query DB for value>")
         log.info("=" * 50)
 
     # Run versioned migrations before anything else hits the DB.
@@ -1177,6 +1180,13 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # to the append-only analytics_events table. A forgery can at worst
     # log a junk row that the abuse filters already throw away.
     "/api/analytics/event",
+    # Subproduct-landing signup form — the <form> lives on
+    # <slug>.narve.ai and POSTs to the apex, so the double-submit cookie
+    # can't bridge the subdomain↔apex boundary. The route compensates
+    # with Origin/Referer apex-match, per-IP + per-email rate limits,
+    # and a strict SUBPRODUCTS slug whitelist. See
+    # subproduct_signup_routes.subproduct_signup for the full posture.
+    "/subproduct-signup",
 })
 
 # Prefix-matched POST exemptions for endpoints with dynamic path segments.
