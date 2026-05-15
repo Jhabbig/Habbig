@@ -292,6 +292,120 @@ class AggregateEmailAddressesTests(unittest.TestCase):
             self.assertGreaterEqual(counts[label], 1,
                                     f"label {label!r} expected >=1, got {counts[label]}")
 
+    # ------------------------------------------------------------------
+    # Sort feature (commit 85914f4) — column-click sorting on every column.
+    # The aggregator takes ``sort`` + ``sort_dir`` kwargs, whitelisted against
+    # {ts, first_seen, email, source, status, user_id}. Anything else falls
+    # back to ts/desc. We seed the standard fixture and pivot on the seeded
+    # emails so unrelated rows from other tests don't trip the assertions.
+    # ------------------------------------------------------------------
+
+    def _seeded_view(self, rows, seeded):
+        """Filter aggregator output to just the rows we seeded.
+
+        Returns the rows in the order the aggregator emitted them — order is
+        what we're asserting on, so we can't sort or set-ify here.
+        """
+        seeded_emails = set(v.lower() for v in seeded.values() if v)
+        return [r for r in rows if r["email"] in seeded_emails]
+
+    def test_sort_email_asc(self):
+        """sort=email & dir=asc returns rows in alphabetical email order."""
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        rows = aggregate_email_addresses(
+            limit=200, sort="email", sort_dir="asc",
+        )
+        emails = [r["email"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(emails, sorted(emails),
+                         f"sort=email&dir=asc must be alphabetical, got {emails!r}")
+
+    def test_sort_email_desc(self):
+        """sort=email & dir=desc returns rows in reverse-alphabetical order."""
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        rows = aggregate_email_addresses(
+            limit=200, sort="email", sort_dir="desc",
+        )
+        emails = [r["email"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(emails, sorted(emails, reverse=True),
+                         f"sort=email&dir=desc must be reverse-alpha, got {emails!r}")
+
+    def test_sort_ts_desc_default(self):
+        """No explicit sort + dir=desc returns newest ts first.
+
+        The aggregator defaults to sort=ts/sort_dir=desc, which is also
+        what the admin page renders on first load. Seeded rows have
+        decreasing ts the further down ``_seed_one_per_source`` you go
+        (now-100 → now-900), so newest-first means newsletter (-100)
+        ahead of invite (-900).
+        """
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        rows = aggregate_email_addresses(limit=200, sort_dir="desc")
+        ts_seq = [r["ts"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(ts_seq, sorted(ts_seq, reverse=True),
+                         f"default sort must be ts/desc, got {ts_seq!r}")
+
+    def test_sort_ts_asc(self):
+        """sort=ts & dir=asc returns oldest first."""
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        rows = aggregate_email_addresses(
+            limit=200, sort="ts", sort_dir="asc",
+        )
+        ts_seq = [r["ts"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(ts_seq, sorted(ts_seq),
+                         f"sort=ts&dir=asc must be oldest-first, got {ts_seq!r}")
+
+    def test_sort_source_asc(self):
+        """sort=source & dir=asc groups rows by source alphabetically.
+
+        Each seeded email lives in exactly one primary source (except
+        the user/feedback dedupe — feedback collapses into the user row
+        so the user row carries source='user'). Ordering primaries
+        alphabetically gives a deterministic sequence we can assert on.
+        """
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        rows = aggregate_email_addresses(
+            limit=200, sort="source", sort_dir="asc",
+        )
+        sources = [r["source"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(sources, sorted(sources),
+                         f"sort=source&dir=asc must be alpha by source, got {sources!r}")
+
+    def test_sort_garbage_falls_back_to_ts_desc(self):
+        """Bogus sort/dir values silently fall back to the ts/desc default.
+
+        A malicious or fat-fingered ?sort=__class__&dir=lol must not crash
+        the page or leak dict internals — the aggregator whitelists sort
+        keys and any non-'asc' direction is treated as desc.
+        """
+        now = int(time.time())
+        with db.conn() as c:
+            seeded = _seed_one_per_source(c, now)
+
+        # Should not raise.
+        rows = aggregate_email_addresses(
+            limit=200, sort="garbage", sort_dir="garbage",
+        )
+        ts_seq = [r["ts"] for r in self._seeded_view(rows, seeded)]
+        self.assertEqual(
+            ts_seq, sorted(ts_seq, reverse=True),
+            f"unknown sort must fall back to ts/desc, got {ts_seq!r}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
