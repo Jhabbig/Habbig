@@ -174,6 +174,25 @@ def _sanitize_status(raw: str) -> Optional[str]:
     return raw if raw in VALID_STATUSES else None
 
 
+def _parse_date_to_ts(s) -> Optional[int]:
+    """Parse ``YYYY-MM-DD`` into unix seconds (start-of-day UTC).
+
+    Mirrors ``admin_routes._parse_date_to_ts``. Returns None on empty or
+    malformed input so a bad date silently disables the filter rather than
+    400ing — matches the admin/email triage UX.
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    try:
+        return int(_dt.datetime.strptime(s, "%Y-%m-%d")
+                   .replace(tzinfo=_dt.timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
 def _list_items(
     *,
     status: Optional[str] = None,
@@ -182,6 +201,8 @@ def _list_items(
     include_private: bool = False,
     user_id: Optional[int] = None,
     q: Optional[str] = None,
+    since_ts: Optional[int] = None,
+    until_ts: Optional[int] = None,
     limit: int = 100,
 ) -> list[dict]:
     """List feedback items with optional filters.
@@ -212,6 +233,14 @@ def _list_items(
         if q_clean:
             where.append("LOWER(title) LIKE ?")
             params.append(f"%{q_clean.lower()}%")
+    if since_ts is not None:
+        # created_at is stored as a 'YYYY-MM-DD HH:MM:SS' UTC string; compare
+        # via strftime('%s', ...) so we match the ts boundaries exactly.
+        where.append("CAST(strftime('%s', created_at) AS INTEGER) >= ?")
+        params.append(int(since_ts))
+    if until_ts is not None:
+        where.append("CAST(strftime('%s', created_at) AS INTEGER) <= ?")
+        params.append(int(until_ts))
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     order_sql = {
@@ -727,10 +756,19 @@ async def admin_feedback_page(request: Request):
         return RedirectResponse("/login", status_code=302)
 
     filter_status = request.query_params.get("status")
+    since_raw = (request.query_params.get("since") or "").strip()
+    until_raw = (request.query_params.get("until") or "").strip()
+    since_ts = _parse_date_to_ts(since_raw)
+    until_ts = _parse_date_to_ts(until_raw)
+    if until_ts is not None:
+        # Inclusive end-of-day UTC: cover all 86,400 seconds of the chosen day.
+        until_ts += 86_399
     items = _list_items(
         status=_sanitize_status(filter_status) if filter_status else None,
         sort="new",
         include_private=True,
+        since_ts=since_ts,
+        until_ts=until_ts,
         limit=300,
     )
 
@@ -776,15 +814,62 @@ async def admin_feedback_page(request: Request):
             f'</div>'
         )
 
+    # Preserve the date-range query when switching status chips so admins
+    # can narrow by status without re-typing the since/until inputs.
+    date_qs_parts: list[str] = []
+    if since_raw:
+        date_qs_parts.append(f"since={html.escape(since_raw, quote=True)}")
+    if until_raw:
+        date_qs_parts.append(f"until={html.escape(until_raw, quote=True)}")
+    date_qs_tail = ("&" + "&".join(date_qs_parts)) if date_qs_parts else ""
+    date_qs_only = ("?" + "&".join(date_qs_parts)) if date_qs_parts else ""
+
     status_filters = []
     for s in ["", "open", "in_progress", "shipped", "declined", "dup"]:
         label = "All" if not s else s.replace("_", " ").title()
         active = ((s == filter_status) or (not s and not filter_status))
-        qs = f"?status={s}" if s else ""
+        if s:
+            qs = f"?status={s}{date_qs_tail}"
+        else:
+            qs = date_qs_only
         cls = "fb-chip fb-chip-active" if active else "fb-chip"
         status_filters.append(
             f'<a class="{cls}" href="/admin/feedback{qs}">{html.escape(label)}</a>'
         )
+
+    # Date-range filter form. GET so the URL stays bookmarkable; we
+    # re-emit the active status as a hidden field so chips + date range
+    # compose cleanly.
+    since_val = html.escape(since_raw, quote=True)
+    until_val = html.escape(until_raw, quote=True)
+    status_hidden = (
+        f'<input type="hidden" name="status" value="{html.escape(filter_status, quote=True)}">'
+        if filter_status else ""
+    )
+    date_range_form = (
+        '<form method="get" action="/admin/feedback" '
+        'style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
+        + status_hidden +
+        '<label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em">Since '
+        f'<input type="date" name="since" value="{since_val}" '
+        'style="font-size:12px;padding:4px 8px;margin-left:6px;background:var(--bg-raised);'
+        'border:1px solid var(--border);border-radius:4px;color:var(--text-primary)"></label>'
+        '<label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
+        'letter-spacing:0.05em">Until '
+        f'<input type="date" name="until" value="{until_val}" '
+        'style="font-size:12px;padding:4px 8px;margin-left:6px;background:var(--bg-raised);'
+        'border:1px solid var(--border);border-radius:4px;color:var(--text-primary)"></label>'
+        '<button type="submit" class="sb-btn sb-btn-outline" '
+        'style="font-size:11px;padding:4px 10px">Apply</button>'
+        + (
+            '<a href="/admin/feedback" class="sb-btn sb-btn-outline" '
+            'style="font-size:11px;padding:4px 10px">Clear</a>'
+            if (since_raw or until_raw or filter_status) else ""
+        )
+        + '</form>'
+    )
+    status_filters.append(date_range_form)
 
     # ENHANCEMENT #6 — bulk status change bar. A single <form
     # id="af-bulk"> posts all checked ids + the chosen status to
