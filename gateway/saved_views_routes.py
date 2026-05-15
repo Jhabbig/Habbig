@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import db
 import saved_views_db as views
 import saved_views_schema as schema
+from auth.cookies import cookie_domain_for
 
 
 log = logging.getLogger("saved_views_routes")
@@ -346,6 +347,7 @@ async def share_view(request: Request, token: str):
         "narve_shared_view",
         json.dumps({"id": view_id, "name": row["name"][:80], "scope": row["scope"]}),
         max_age=300, httponly=False, samesite="lax", secure=_is_prod,
+        domain=cookie_domain_for(request),
     )
     return response
 
