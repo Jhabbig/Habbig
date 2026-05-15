@@ -7,10 +7,8 @@ inside middleware clashes with FastAPI's exception machinery.
   - attach_session_to_request : reads the hardened session cookie and
     sets request.state.hardened_user (a dict) if valid.
   - read_hardened_session     : one-shot lookup without mutating state.
-  - require_pending_token     : used by /register + /login — redirects
-    to /token if the short-lived invite cookie is missing.
   - require_hardened_session  : used by protected HTML routes — redirects
-    to /token if the user is not authenticated.
+    to /login if the user is not authenticated.
   - require_hardened_admin    : same, plus admin check.
 """
 
@@ -23,10 +21,7 @@ from fastapi.responses import RedirectResponse
 
 import db
 
-from auth.cookies import (
-    SESSION_COOKIE,
-    read_pending_token,
-)
+from auth.cookies import SESSION_COOKIE
 
 
 def read_hardened_session(request: Request) -> Optional[dict]:
@@ -61,25 +56,8 @@ def attach_session_to_request(request: Request) -> None:
         request.state.hardened_user = None
 
 
-def require_pending_token(request: Request) -> Optional[RedirectResponse]:
-    """Return a redirect to /token if the pending_token cookie is missing.
-
-    Also validates the invite token still exists and is not revoked. If
-    the user cleared cookies or the token was revoked since the gate,
-    bounce back to /token so they can re-enter.
-    """
-    raw = read_pending_token(request)
-    if not raw:
-        return RedirectResponse("/login", status_code=302)
-    # REMOVED: invite-token system retired 2026-05-15
-    # invite = db.get_invite_token(raw)
-    # if not invite or invite["status"] == "revoked":
-    #     return RedirectResponse("/login", status_code=302)
-    return None
-
-
 def require_hardened_session(request: Request) -> Optional[RedirectResponse]:
-    """Return a redirect to /token if the user is not authenticated.
+    """Return a redirect to /login if the user is not authenticated.
 
     Prefers the hardened session cookie. Falls back to the legacy
     `current_user` helper so existing routes protected only by the old
@@ -111,8 +89,8 @@ def require_hardened_admin(request: Request) -> Optional[RedirectResponse]:
             return None
     except Exception:
         pass
-    # Admins land on /gate (SITE_ACCESS_TOKEN), not /token (invite-flow) —
-    # admins authenticate via the site-access gate, not invite tokens.
+    # Admins land on /gate (SITE_ACCESS_TOKEN) —
+    # admins authenticate via the site-access gate.
     return RedirectResponse("/gate", status_code=302)
 
 
