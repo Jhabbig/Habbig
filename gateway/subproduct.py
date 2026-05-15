@@ -47,7 +47,7 @@ SUBPRODUCTS: dict[str, dict] = {
         "tagline": "Polymarket vs bookmaker arbitrage",
         "hero_headline": "Where the odds / disagree.",
         "hero_sub": (
-            "Sharpe Sports hunts for edge between Polymarket prices and the "
+            "narve.ai hunts for edge between Polymarket prices and the "
             "sharpest traditional-bookmaker lines. When they disagree by more "
             "than the vig, you see it first."
         ),
@@ -67,7 +67,7 @@ SUBPRODUCTS: dict[str, dict] = {
         "tagline": "Weather market mispricings",
         "hero_headline": "Rain, shine, / and mispriced.",
         "hero_sub": (
-            "Polymarket Weather compares live NOAA and ECMWF forecast "
+            "narve.ai compares live NOAA and ECMWF forecast "
             "probabilities against market prices, surfacing weather markets "
             "where the consensus forecast and the market disagree."
         ),
@@ -107,7 +107,7 @@ SUBPRODUCTS: dict[str, dict] = {
         "tagline": "BTC and crypto ensemble signals",
         "hero_headline": "BTC doesn't / lie to everyone.",
         "hero_sub": (
-            "Crypto Edge blends narve.ai credibility-weighted predictions "
+            "narve.ai blends credibility-weighted predictions "
             "with technical indicators and funding-rate signals into a "
             "single ensemble score per asset."
         ),

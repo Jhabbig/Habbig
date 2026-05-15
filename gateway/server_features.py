@@ -1401,16 +1401,37 @@ async def api_ingest_market_snapshot(request: Request, slug: str):
 
 from auth.cookies import (
     SESSION_COOKIE,
-    set_pending_token_cookie,
-    clear_pending_token_cookie,
-    read_pending_token,
     set_session_cookie_hardened,
     clear_session_cookie_hardened,
 )
 from auth.guards import (
     read_hardened_session,
-    require_pending_token,
 )
+
+
+# Pending-token helpers were deleted with the auth refactor (2026-05-15):
+# the /token invite-gate is gone, /login is direct email+password. The
+# routes below still reference the old API; rather than rewrite each one
+# (the rewrite lives in server.py:/login POST), we stub them as no-ops so
+# the module imports cleanly. Routes that depend on them remain reachable
+# but short-circuit to a 410 Gone / generic error — none of the dashboards
+# link to them anymore, so live traffic isn't affected.
+def set_pending_token_cookie(response, raw_token, request):
+    return None
+
+
+def clear_pending_token_cookie(response, request):
+    return None
+
+
+def read_pending_token(request):
+    return None
+
+
+def require_pending_token(request):
+    # Returns a "session expired" redirect so any direct hit on the dead
+    # routes funnels back to /login (the new direct-entry path).
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/token", response_class=HTMLResponse)
