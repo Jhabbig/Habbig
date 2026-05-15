@@ -1,6 +1,6 @@
 """Bearer-token auth + per-key hourly rate limiting for the public API.
 
-Sits in front of every /api/public/v1/* handler. Two concerns:
+Sits in front of every /api/public/v1/* handler. Three concerns:
 
 1. Validate Authorization: Bearer narve_<key>
    - SHA-256 the provided key, look it up in api_keys, reject if missing or
@@ -8,7 +8,14 @@ Sits in front of every /api/public/v1/* handler. Two concerns:
    - Parse the `scopes` column into a set so handlers can enforce
      scope requirements (e.g. 'write' for POST /predictions).
 
-2. Per-key hourly quota
+2. Origin allowlist (api_keys.allowed_origins, migration 180)
+   - Comma/newline-separated host list. NULL/empty means "any origin".
+   - When set, the Origin header (or Referer fallback) is normalised
+     to a bare hostname and matched against the list. Wildcards of the
+     form "*.example.com" match any subdomain. A non-matching caller
+     gets 403 with {"error": "origin_not_allowed"}.
+
+3. Per-key hourly quota
    - api_usage_hourly is an (api_key_id, hour_bucket) → request_count rollup.
      Each validated request UPSERTs +1. If the post-increment count > the
      key's rate_limit_hour, we return 429 with a Retry-After header that
@@ -26,6 +33,7 @@ import hashlib
 import logging
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
 
@@ -55,6 +63,103 @@ def _parse_scopes(raw: Optional[str]) -> set[str]:
     scopes = {s.strip() for s in raw.split(",") if s.strip()}
     scopes.add("read")  # read is the baseline — never strip it even if absent
     return scopes
+
+
+def _normalise_origin(origin: Optional[str]) -> str:
+    """Reduce an Origin/Referer string to a bare lowercase hostname.
+
+    Accepts full URLs ("https://example.com/foo"), bare hostnames
+    ("example.com"), or empty/None. Returns "" on anything unparseable
+    so the caller treats it as "no origin provided".
+
+    Matches the convention used by queries.api_keys._normalise_origin
+    so the public API and the embed API enforce origins identically.
+    """
+    if not origin:
+        return ""
+    s = origin.strip().lower()
+    if "://" in s:
+        try:
+            host = urlparse(s).netloc
+        except Exception:
+            host = ""
+        host = host.split("@")[-1]  # strip userinfo
+        host = host.split(":", 1)[0]  # strip port
+        return host
+    return s.split("/", 1)[0].split(":", 1)[0]
+
+
+def _parse_allowed_origins(raw: Optional[str]) -> list[str]:
+    """Split allowed_origins into a normalised hostname/pattern list.
+
+    Accepts newline-separated or comma-separated input — the management
+    UI stores comma-joined, but the column tolerates either so admins
+    pasting one-per-line from a doc don't silently get a single mashed
+    entry. Lowercased; entries that don't parse become "".
+
+    Wildcards: a single leading "*." means "any subdomain". We handle
+    the wildcard literally here rather than re-using _normalise_origin
+    for the whole pattern (which would strip a leading "*." treating
+    it as a path-like artefact).
+    """
+    if not raw:
+        return []
+    out: list[str] = []
+    # Accept either separator. Split commas first, then newlines, so
+    # mixed input like "a.com\nb.com" or "a.com, b.com" both work.
+    parts: list[str] = []
+    for chunk in str(raw).split(","):
+        parts.extend(chunk.split("\n"))
+    for part in parts:
+        token = part.strip().lower()
+        if not token:
+            continue
+        if token.startswith("*."):
+            suffix = _normalise_origin(token[2:])
+            if suffix:
+                out.append("*." + suffix)
+            continue
+        norm = _normalise_origin(token)
+        if norm:
+            out.append(norm)
+    return out
+
+
+def _origin_matches(host: str, patterns: list[str]) -> bool:
+    """Return True if *host* matches any entry in *patterns*.
+
+    Exact hostnames compare case-insensitively (both pre-lowered).
+    A "*.example.com" pattern matches any host that ends with
+    ".example.com" but NOT example.com itself — wildcard means
+    "some subdomain", not "the apex too". Admins who want both list
+    both.
+    """
+    if not host or not patterns:
+        return False
+    for pat in patterns:
+        if pat.startswith("*."):
+            suffix = pat[1:]  # ".example.com"
+            if host.endswith(suffix) and host != suffix[1:]:
+                return True
+        elif host == pat:
+            return True
+    return False
+
+
+def _request_origin_host(request: Request) -> str:
+    """Pull the request's effective origin hostname.
+
+    Prefer the Origin header (set by browsers on cross-origin XHR/fetch);
+    fall back to Referer when Origin is absent (server-to-server or
+    older clients). Returns "" if neither is present or parseable.
+    """
+    origin = request.headers.get("origin") or request.headers.get("Origin")
+    if origin:
+        return _normalise_origin(origin)
+    referer = request.headers.get("referer") or request.headers.get("Referer")
+    if referer:
+        return _normalise_origin(referer)
+    return ""
 
 
 def verify_api_key(request: Request) -> dict:
@@ -88,6 +193,25 @@ def verify_api_key(request: Request) -> dict:
     row = db.get_api_key_by_hash(key_hash)
     if row is None:
         raise HTTPException(status_code=401, detail="Invalid or revoked API key")
+
+    # Origin allowlist (migration 180 column). Enforced ONLY when the
+    # column is populated — an empty/missing list means the key is open
+    # to any origin, matching the pre-existing behaviour. Older deploys
+    # without migration 180 won't have the column at all; treat that
+    # the same as "no restriction" so we never 403 a valid key because
+    # of schema drift.
+    try:
+        allowed_raw = row["allowed_origins"]
+    except (KeyError, IndexError):
+        allowed_raw = None
+    allowed = _parse_allowed_origins(allowed_raw)
+    if allowed:
+        caller_host = _request_origin_host(request)
+        if not _origin_matches(caller_host, allowed):
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "origin_not_allowed"},
+            )
 
     limit = int(row["rate_limit_hour"] or 0)
     bucket = _hour_bucket()

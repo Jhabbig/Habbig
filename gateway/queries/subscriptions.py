@@ -58,6 +58,20 @@ def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
 
 
 def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
+    """Gate-keeping access check for a specific dashboard.
+
+    AUDIT (MED-1, queries/billing): historically this treated a NULL
+    ``expires_at`` as "never expires", which papered over the fact that
+    the Stripe webhook never wrote the column in the first place. A
+    missed ``customer.subscription.deleted`` event therefore left the
+    row perpetually-active. The closed-fail rule below treats NULL as
+    "no known expiry → not active": every Stripe-sourced row now
+    writes ``expires_at = current_period_end``, and any pre-fix NULL
+    rows are repaired by migration 193. Manual ``upsert_subscription``
+    calls (CLI grants, gift flows) still write explicit timestamps via
+    ``duration_days``, so the only NULLs left are bug states that
+    deserve to fail closed.
+    """
     now = int(time.time())
     with db.conn() as c:
         # Admins bypass subscription checks for all dashboards.
@@ -74,7 +88,7 @@ def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
         row = c.execute(
             "SELECT id FROM subscriptions "
             "WHERE user_id = ? AND dashboard_key = ? AND status = 'active' "
-            "AND (expires_at IS NULL OR expires_at > ?)",
+            "AND expires_at IS NOT NULL AND expires_at > ?",
             (user_id, dashboard_key, now),
         ).fetchone()
     return row is not None

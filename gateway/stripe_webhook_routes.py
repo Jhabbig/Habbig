@@ -50,6 +50,7 @@ from stripe_webhook_hardening import (
     extract_client_ip,
     mark_processed,
     mark_received,
+    reject_mode_mismatch,
     reject_non_stripe_ip,
 )
 
@@ -63,6 +64,60 @@ def _stripe_live_mode_enabled() -> bool:
     cannot accidentally honour production webhooks."""
     flag = os.environ.get("STRIPE_LIVE_MODE", "").strip().lower()
     return flag in {"1", "true", "yes", "on"}
+
+
+def _is_production_env() -> bool:
+    """Mirror of stripe_webhook_hardening._is_production.
+
+    Kept here to avoid reaching into the hardening module's private
+    helper. ``PRODUCTION=1`` is the only canonical production signal
+    the gateway respects.
+    """
+    return os.environ.get("PRODUCTION", "0") == "1"
+
+
+def _trust_user_from_metadata(
+    user_id: Optional[int],
+    customer_id: str,
+) -> Optional[int]:
+    """Fix E: return user_id only if it matches the customer-id mapping.
+
+    Audit finding (HIGH): metadata.user_id was trusted blindly. An
+    attacker who creates a Stripe customer with their own card and sets
+    metadata.user_id=42 in the checkout session could grant a paid
+    subscription to user 42. The fix is to require that the customer
+    on the event maps to the same user_id we already have on file in
+    ``users.stripe_customer_id`` (set by the first
+    ``checkout.session.completed`` for that customer).
+
+    Returns the trusted user_id, or None if the metadata-customer pair
+    is inconsistent. If no row maps to customer_id yet (first event),
+    we accept the metadata value -- that matches the canonical
+    first-touch flow from checkout.session.completed.
+    """
+    if not customer_id or user_id is None:
+        return user_id
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT id FROM users WHERE stripe_customer_id = ?",
+                (customer_id,),
+            ).fetchone()
+    except Exception as exc:
+        log.warning(
+            "stripe metadata trust check DB read failed (cust=%s): %s",
+            customer_id, exc,
+        )
+        return user_id
+    if row is None:
+        return user_id
+    if int(row["id"]) != int(user_id):
+        log.warning(
+            "stripe metadata user_id mismatch: metadata=%s mapped=%s cust=%s",
+            user_id, row["id"], customer_id,
+        )
+        return None
+    return user_id
 
 
 def _stripe_webhook_secret() -> str:
@@ -100,7 +155,9 @@ def _grant_access(event: dict) -> None:
     """
     obj = (event.get("data") or {}).get("object") or {}
     meta = obj.get("metadata") or {}
-    user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
+    raw_user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
+    customer_id = (obj.get("customer") or "").strip()
+    user_id = _trust_user_from_metadata(raw_user_id, customer_id)
     dashboard_key = (
         meta.get("dashboard_key") or meta.get("subproduct_slug") or ""
     ).strip()
@@ -110,8 +167,9 @@ def _grant_access(event: dict) -> None:
 
     if not user_id or not dashboard_key:
         log.warning(
-            "subscription.created missing metadata: user_id=%s key=%s id=%s",
-            user_id, dashboard_key, event.get("id"),
+            "subscription.created missing/untrusted metadata: "
+            "raw_user_id=%s mapped=%s key=%s cust=%s id=%s",
+            raw_user_id, user_id, dashboard_key, customer_id, event.get("id"),
         )
         return
 
@@ -161,7 +219,9 @@ def _update_plan(event: dict) -> None:
     under the closed-fail rule)."""
     obj = (event.get("data") or {}).get("object") or {}
     meta = obj.get("metadata") or {}
-    user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
+    raw_user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
+    customer_id = (obj.get("customer") or "").strip()
+    user_id = _trust_user_from_metadata(raw_user_id, customer_id)
     dashboard_key = (
         meta.get("dashboard_key") or meta.get("subproduct_slug") or ""
     ).strip()
@@ -172,8 +232,9 @@ def _update_plan(event: dict) -> None:
 
     if not user_id or not dashboard_key:
         log.warning(
-            "subscription.updated missing metadata: user_id=%s key=%s id=%s",
-            user_id, dashboard_key, event.get("id"),
+            "subscription.updated missing/untrusted metadata: "
+            "raw_user_id=%s mapped=%s key=%s cust=%s id=%s",
+            raw_user_id, user_id, dashboard_key, customer_id, event.get("id"),
         )
         return
 
@@ -252,6 +313,76 @@ def _record_payment(event: dict) -> None:
         )
 
 
+
+
+
+def _link_customer(event: dict) -> None:
+    """checkout.session.completed - persist users.stripe_customer_id (Fix E).
+
+    Audit finding: metadata.user_id was trusted blindly on every
+    subscription event. This handler is where we first see a customer
+    id paired with a freshly-authenticated narve user, so we write the
+    mapping here. After this, _trust_user_from_metadata rejects any
+    subsequent event whose customer id maps to a different user.
+    """
+    obj = (event.get("data") or {}).get("object") or {}
+    meta = obj.get("metadata") or (obj.get("subscription_data") or {}).get("metadata") or {}
+    raw_user_id = _coerce_int(meta.get("user_id") or meta.get("narve_user_id"))
+    customer_id = (obj.get("customer") or "").strip()
+    event_id = event.get("id")
+
+    if not raw_user_id or not customer_id:
+        log.info(
+            "checkout.session.completed missing user_id/customer: "
+            "user_id=%s cust=%s id=%s - nothing to link",
+            raw_user_id, customer_id, event_id,
+        )
+        return
+
+    try:
+        with db.conn() as c:
+            existing = c.execute(
+                "SELECT id, stripe_customer_id FROM users WHERE id = ?",
+                (raw_user_id,),
+            ).fetchone()
+            if existing is None:
+                log.warning(
+                    "checkout.session.completed: user_id=%s not found, "
+                    "refusing to link customer=%s id=%s",
+                    raw_user_id, customer_id, event_id,
+                )
+                return
+            if existing["stripe_customer_id"]:
+                if existing["stripe_customer_id"] != customer_id:
+                    log.warning(
+                        "checkout.session.completed: user_id=%s already "
+                        "mapped to cust=%s, refusing to overwrite with %s "
+                        "(event_id=%s)",
+                        raw_user_id, existing["stripe_customer_id"],
+                        customer_id, event_id,
+                    )
+                return
+            other = c.execute(
+                "SELECT id FROM users WHERE stripe_customer_id = ?",
+                (customer_id,),
+            ).fetchone()
+            if other is not None and int(other["id"]) != int(raw_user_id):
+                log.warning(
+                    "checkout.session.completed: cust=%s already mapped to "
+                    "user_id=%s, refusing to re-bind to %s (event_id=%s)",
+                    customer_id, other["id"], raw_user_id, event_id,
+                )
+                return
+            c.execute(
+                "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
+                (customer_id, raw_user_id),
+            )
+    except Exception as exc:
+        log.warning(
+            "link_customer DB write failed: %s (user=%s cust=%s)",
+            exc, raw_user_id, customer_id,
+        )
+
 # ── Route ──────────────────────────────────────────────────────────────────
 
 
@@ -328,16 +459,42 @@ async def stripe_webhook(request: Request):
             status_code=503,
         )
 
-    # 6) Live-mode gate.
-    if event.get("livemode") and not _stripe_live_mode_enabled():
-        log.warning(
-            "rejecting livemode=True event in non-live env: type=%s id=%s",
-            event.get("type"), event.get("id"),
-        )
-        return JSONResponse(
-            {"error": "Live events not accepted in this environment"},
-            status_code=400,
-        )
+    # 6) Live-mode gate -- symmetric (Fix E).
+    #
+    # Audit finding: the previous gate only rejected livemode=True
+    # events in non-live envs. The reverse hole (livemode=False test
+    # events accepted in production) let an attacker who guessed the
+    # webhook URL forward signed test-account events into prod.
+    # reject_mode_mismatch enforces both directions: production accepts
+    # only livemode=True, non-prod accepts only livemode=False.
+    #
+    # The bespoke _stripe_live_mode_enabled() env-flag check is kept
+    # for non-prod envs (PRODUCTION!=1) where we still want a narrow
+    # escape hatch (STRIPE_LIVE_MODE=true) for staging-against-real-
+    # Stripe. Production gets no such opt-out.
+    if _is_production_env():
+        mode_reject = reject_mode_mismatch(event)
+        if mode_reject is not None:
+            return mode_reject
+    else:
+        if event.get("livemode") and not _stripe_live_mode_enabled():
+            log.warning(
+                "rejecting livemode=True event in non-live env: type=%s id=%s",
+                event.get("type"), event.get("id"),
+            )
+            return JSONResponse(
+                {"error": "Live events not accepted in this environment"},
+                status_code=400,
+            )
+        elif event.get("livemode") is None:
+            log.warning(
+                "rejecting event with missing livemode flag: type=%s id=%s",
+                event.get("type"), event.get("id"),
+            )
+            return JSONResponse(
+                {"error": "Malformed event: livemode flag required"},
+                status_code=400,
+            )
 
     # 7) Idempotency.
     replayed = mark_received(event)
@@ -358,6 +515,8 @@ async def stripe_webhook(request: Request):
             apply_invoice_payment_failed(event)
         elif event_type == "invoice.paid":
             _record_payment(event)
+        elif event_type == "checkout.session.completed":
+            _link_customer(event)
         else:
             log.debug(
                 "ignoring stripe event type=%s id=%s",

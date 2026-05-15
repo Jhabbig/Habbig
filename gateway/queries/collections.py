@@ -60,6 +60,50 @@ VALID_VISIBILITY = {"private", "shared", "public"}
 VALID_ITEM_TYPES = {"market", "source", "prediction"}
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# AUDIT (MED): a viewer hitting the same collection twice inside the
+# throttle window only bumps ``view_count`` once. Pre-fix every refresh
+# / scroll-back / tab restore inflated the public most-followed sort
+# and let any signed-in user farm "popularity" on a public board by
+# scripting reloads. The bucket is per (viewer, collection); anonymous
+# views aren't deduplicated here (they fall back to the raw bump path)
+# because we don't have a stable per-anon identity to key on without
+# fingerprinting.
+_VIEW_BUMP_WINDOW_SECONDS = 600
+
+
+# Process-local most-recent-view cache: maps (viewer_user_id, collection_id)
+# to the unix timestamp of the last bump we counted. Sized small — the
+# entries naturally age out after _VIEW_BUMP_WINDOW_SECONDS, but a
+# long-running process accreting one entry per (viewer, collection) pair
+# would eventually dominate memory. The simple cap below evicts the
+# oldest entries when the dict exceeds the limit; deterministic eviction
+# keeps the dedup honest under burst-y load without a separate sweeper.
+_VIEW_BUMP_CACHE: dict[tuple[int, int], int] = {}
+_VIEW_BUMP_CACHE_CAP = 50_000
+
+
+def _should_bump_view(viewer_user_id: int, collection_id: int) -> bool:
+    """True if this (viewer, collection) pair hasn't been counted in the
+    last ``_VIEW_BUMP_WINDOW_SECONDS``.
+
+    Records the timestamp on a True return so the next call in the
+    window short-circuits. The owner-skip + visibility checks remain the
+    caller's responsibility — this helper only handles dedup.
+    """
+    now = int(time.time())
+    key = (int(viewer_user_id), int(collection_id))
+    last = _VIEW_BUMP_CACHE.get(key)
+    if last is not None and (now - last) < _VIEW_BUMP_WINDOW_SECONDS:
+        return False
+    if len(_VIEW_BUMP_CACHE) >= _VIEW_BUMP_CACHE_CAP:
+        # Cheap LRU-ish eviction: drop the oldest 10% so we don't pay
+        # the dict resize cost on every call near the cap.
+        victims = sorted(_VIEW_BUMP_CACHE.items(), key=lambda kv: kv[1])
+        for victim_key, _ in victims[: _VIEW_BUMP_CACHE_CAP // 10]:
+            _VIEW_BUMP_CACHE.pop(victim_key, None)
+    _VIEW_BUMP_CACHE[key] = now
+    return True
+
 
 def _slugify(title: str) -> str:
     slug = _SLUG_RE.sub("-", (title or "").strip().lower()).strip("-")
@@ -175,11 +219,21 @@ def get_collection(
             return None
         if not _can_view(row, viewer_user_id):
             raise PermissionError("not visible to viewer")
+        # AUDIT (MED): de-dup the bump per (viewer, collection) inside the
+        # throttle window so a refresh-spammer can't inflate view_count.
+        # Owners are always skipped; anonymous viewers don't have a
+        # stable id to key on, so they still hit the raw bump path (the
+        # rate-limit middleware already bounds anon traffic up-stream).
         if bump_views and viewer_user_id != row["owner_user_id"]:
-            c.execute(
-                "UPDATE collections SET view_count = view_count + 1 WHERE id = ?",
-                (collection_id,),
+            should_bump = (
+                viewer_user_id is None
+                or _should_bump_view(viewer_user_id, collection_id)
             )
+            if should_bump:
+                c.execute(
+                    "UPDATE collections SET view_count = view_count + 1 WHERE id = ?",
+                    (collection_id,),
+                )
     return _row_to_dict(row, viewer_user_id=viewer_user_id)
 
 
@@ -202,11 +256,19 @@ def get_collection_by_slug(
             return None
         if not _can_view(row, viewer_user_id):
             raise PermissionError("not visible to viewer")
+        # AUDIT (MED): mirror the per-(viewer, collection) throttle from
+        # get_collection so the public /c/{handle}/{slug} surface can't
+        # be reload-spammed for popularity inflation either.
         if bump_views and viewer_user_id != row["owner_user_id"]:
-            c.execute(
-                "UPDATE collections SET view_count = view_count + 1 WHERE id = ?",
-                (row["id"],),
+            should_bump = (
+                viewer_user_id is None
+                or _should_bump_view(viewer_user_id, row["id"])
             )
+            if should_bump:
+                c.execute(
+                    "UPDATE collections SET view_count = view_count + 1 WHERE id = ?",
+                    (row["id"],),
+                )
     return _row_to_dict(row, viewer_user_id=viewer_user_id)
 
 

@@ -45,9 +45,33 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 import db
 from queries import collections as coll
+from security.rate_limiter import rate_limit
 
 
 log = logging.getLogger("collections_routes")
+
+
+def _follow_rate_key(request: Request) -> str:
+    """Per-user rate-limit bucket for follow/unfollow.
+
+    AUDIT (MED): the follow/unfollow endpoints had no per-user throttle,
+    so a logged-in attacker could thrash ``follower_count`` on a board
+    by spamming POST/DELETE pairs — inflating the most-followed list,
+    burning DB writes, and spamming the underlying ``collection_follows``
+    table. 30 actions per minute per user matches the realistic ceiling
+    for a human clicking the Follow button and is shared between POST
+    and DELETE so the attacker can't dodge it by alternating verbs.
+
+    Anonymous requests (which will 401 in the handler anyway) fall back
+    to the canonicalised client IP so a burst of unauthed hits can't
+    burn the decorator without a counter.
+    """
+    import server
+    user = server.current_user(request)
+    if user:
+        return f"coll-follow:user:{user['user_id']}"
+    from security.rate_limiter import get_client_ip
+    return f"coll-follow:anon:{get_client_ip(request)}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -358,6 +382,7 @@ async def api_reorder(request: Request, id: int):
     return JSONResponse({"updated": n})
 
 
+@rate_limit(limit=30, window_seconds=60, key_func=_follow_rate_key)
 async def api_follow(request: Request, id: int):
     user = _require_user(request)
     try:
@@ -369,6 +394,7 @@ async def api_follow(request: Request, id: int):
     return JSONResponse({"following": True})
 
 
+@rate_limit(limit=30, window_seconds=60, key_func=_follow_rate_key)
 async def api_unfollow(request: Request, id: int):
     user = _require_user(request)
     coll.unfollow_collection(user["user_id"], int(id))
