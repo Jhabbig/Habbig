@@ -104,7 +104,7 @@ _CRITICAL_CSS = (
 )
 
 
-_PWA_HEAD = (
+_PWA_HEAD_COMMON = (
     '<!--narve-pwa-head-->\n'
     + _CRITICAL_CSS +
     '<link rel="manifest" href="/manifest.json">\n'
@@ -133,6 +133,9 @@ _PWA_HEAD = (
     '<link rel="preload" href="/_gateway_static/fonts/SourceSerif4-Variable.woff2" '
     'as="font" type="font/woff2" crossorigin>\n'
     f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
+)
+
+_PWA_REDESIGN_LINKS = (
     # narve-polish: site-wide refinement layer (motion + focus rhythm).
     f'<link rel="stylesheet" href="/_gateway_static/narve-polish.css?v={_NARVE_POLISH_VER}">\n'
     # narve-redesign: substantive visual refresh — page-header type,
@@ -141,6 +144,17 @@ _PWA_HEAD = (
     # specificity. See narve-redesign.css head comment.
     f'<link rel="stylesheet" href="/_gateway_static/narve-redesign.css?v={_NARVE_REDESIGN_VER}">\n'
 )
+
+# Full head for app pages. Pre-release / public marketing pages get
+# _PWA_HEAD_COMMON only (no polish, no redesign) so the universal frame
+# doesn't paint an opaque card over their full-bleed canvas.
+_PWA_HEAD = _PWA_HEAD_COMMON + _PWA_REDESIGN_LINKS
+
+# Routes that own their own visual composition and must skip the
+# site-wide redesign layer. Match by exact request path. Pre-release at
+# `/` uses a fixed-position particles canvas that the universal frame
+# (narve-redesign.css "every page, all four sides") was painting over.
+_NO_REDESIGN_PATHS = {"/"}
 
 # Default social card. Only injected when the response HTML doesn't
 # already declare an og:image (per-page cards on profile_public,
@@ -217,13 +231,14 @@ _MAIN_CLOSE_RE = re.compile(
 )
 
 
-def _inject_into_html(body: bytes, host: str | None = None) -> bytes:
+def _inject_into_html(body: bytes, host: str | None = None, path: str | None = None) -> bytes:
     """Apply the six PWA/a11y transforms to an HTML body. Idempotent."""
     # 1. PWA head block (before </head>)
     if b'narve-pwa-head' not in body:
+        head = _PWA_HEAD_COMMON if path in _NO_REDESIGN_PATHS else _PWA_HEAD
         idx = body.rfind(b'</head>')
         if idx != -1:
-            body = body[:idx] + _PWA_HEAD.encode() + body[idx:]
+            body = body[:idx] + head.encode() + body[idx:]
 
     # 1b. og:image — only when the page doesn't already declare one. Per-page
     # cards (profile_public, shared_*, render_page _base head) keep theirs.
@@ -291,7 +306,7 @@ class PWAInjectionMiddleware(BaseHTTPMiddleware):
             chunks.append(chunk)
         body = b"".join(chunks)
         host = request.headers.get("host") or (request.url.hostname or "")
-        new_body = _inject_into_html(body, host=host)
+        new_body = _inject_into_html(body, host=host, path=request.url.path)
 
         headers = dict(response.headers)
         # Content-Length has to be recomputed; let Starlette do it.
