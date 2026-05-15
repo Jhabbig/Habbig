@@ -321,7 +321,13 @@ async def admin_api_keys_page(request: Request):
     quota check because admins are operating outside the tier system.
     """
     admin = _require_admin_user(request, page=True)
-    if hasattr(admin, "status_code"):  # RedirectResponse from the guard
+    if admin is None:
+        # SECURITY: _require_admin_user(page=True) returns None (not a
+        # RedirectResponse) for non-admins. Without this check, the
+        # hasattr() guard below lets the request flow through and
+        # ``list_all_api_keys()`` leaks every tenant's keys.
+        return RedirectResponse("/login?next=/admin/api-keys", status_code=302)
+    if hasattr(admin, "status_code"):  # belt-and-braces — Response/RedirectResponse paths (e.g. 2FA)
         return admin
 
     rows = q_api_keys.list_all_api_keys()
@@ -392,7 +398,12 @@ async def admin_api_keys_page(request: Request):
 
 async def admin_api_keys_revoke(request: Request, key_id: int):
     admin = _require_admin_user(request)
-    if hasattr(admin, "status_code"):
+    if admin is None:
+        # SECURITY: defence-in-depth. page=False normally raises
+        # HTTPException(403); if the contract ever changes, we still
+        # must not execute the cross-tenant revoke below.
+        return RedirectResponse("/login?next=/admin/api-keys", status_code=302)
+    if hasattr(admin, "status_code"):  # belt-and-braces — Response/RedirectResponse paths
         return admin
     ok = q_api_keys.admin_revoke_api_key(int(key_id))
     if ok:
