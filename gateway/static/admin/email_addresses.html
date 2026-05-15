@@ -35,6 +35,15 @@
     {{ raw_totals_badges }}
   </div>
 
+  <!-- ── Stats cards — totals per source + weekly growth ──────────
+       5 cards in a row: Total, Newsletter, Prerelease waitlist,
+       Outbound queue, This week (delta). Wired up by a separate
+       agent — this template just renders the {{ raw_stats_cards }}
+       block server-side. Monochrome, no shadow, no colour. -->
+  <div class="adm-ea-stats-grid" aria-label="Email collection stats">
+    {{ raw_stats_cards }}
+  </div>
+
   <!-- ── Filter bar ───────────────────────────────────────────────── -->
   <form class="adm-ea-filter" method="get" action="/admin/email-addresses"
         role="search" aria-label="Filter email addresses">

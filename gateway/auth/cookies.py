@@ -89,42 +89,6 @@ def verify_pending_token(cookie_value: str) -> Optional[str]:
     return raw
 
 
-def set_pending_token_cookie(response: Response, raw_token: str, request: Request) -> None:
-    signed = sign_pending_token(raw_token)
-    kwargs = dict(
-        key=PENDING_TOKEN_COOKIE,
-        value=signed,
-        max_age=PENDING_TOKEN_TTL,
-        httponly=False,     # JS reads this to pre-populate the email field
-        samesite="strict",
-        secure=_is_production(),
-        path="/",
-    )
-    domain = _cookie_domain_for(request)
-    if domain:
-        kwargs["domain"] = domain
-    response.set_cookie(**kwargs)
-
-
-def clear_pending_token_cookie(response: Response, request: Request) -> None:
-    kwargs = dict(key=PENDING_TOKEN_COOKIE, path="/")
-    domain = _cookie_domain_for(request)
-    if domain:
-        kwargs["domain"] = domain
-    response.delete_cookie(**kwargs)
-
-
-def read_pending_token(request: Request) -> Optional[str]:
-    """Return the raw invite token from the pending cookie, or None.
-
-    NOTE: invite-token system retired 2026-05-15. This stub remains so any
-    caller that still imports the name doesn't break, but it always returns
-    None. set_pending_token_cookie/clear_pending_token_cookie are likewise
-    kept as no-op-safe stubs (they still touch cookies, harmlessly).
-    """
-    return None
-
-
 def set_session_cookie_hardened(response: Response, raw_session_token: str, request: Request) -> None:
     kwargs = dict(
         key=SESSION_COOKIE,

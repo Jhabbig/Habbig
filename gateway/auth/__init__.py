@@ -5,14 +5,10 @@ Public surface (everything else lives in submodules):
     from auth import (
         PENDING_TOKEN_COOKIE,
         SESSION_COOKIE,
-        set_pending_token_cookie,
-        clear_pending_token_cookie,
-        read_pending_token,
         set_session_cookie_hardened,
         clear_session_cookie_hardened,
         read_hardened_session,
         attach_session_to_request,
-        require_pending_token,
         require_hardened_session,
         require_hardened_admin,
     )
@@ -26,9 +22,6 @@ from auth.cookies import (  # noqa: F401
     PENDING_TOKEN_COOKIE,
     SESSION_COOKIE,
     PENDING_TOKEN_TTL,
-    set_pending_token_cookie,
-    clear_pending_token_cookie,
-    read_pending_token,
     sign_pending_token,
     verify_pending_token,
     set_session_cookie_hardened,
@@ -37,7 +30,6 @@ from auth.cookies import (  # noqa: F401
 from auth.guards import (  # noqa: F401
     read_hardened_session,
     attach_session_to_request,
-    require_pending_token,
     require_hardened_session,
     require_hardened_admin,
     # Spec-exact aliases

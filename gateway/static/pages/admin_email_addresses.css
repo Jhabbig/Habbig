@@ -82,6 +82,85 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Stats cards (top of page) ────────────────────────────────────
+ *
+ * 5-card row showing per-source totals + weekly growth delta. Strict
+ * monochrome — no shadow, no colour, no rounded background fills.
+ * Cards are equal-width via CSS grid, each one a simple bordered box
+ * with a tiny uppercase label and a big mono numeral. Optional delta
+ * (e.g. "+42") renders below the value at small size in a secondary
+ * weight. Wraps to 2 columns then 1 column at narrow widths.
+ *
+ * Padding/border via narve tokens. Server template ships these inside
+ * .adm-ea-stats-grid via the {{ raw_stats_cards }} substitution.
+ */
+
+.adm-ea-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 20px;
+}
+.adm-ea-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-surface);
+  /* No shadow, no colour. */
+  min-width: 0;
+}
+.adm-ea-stat-label {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+  /* Avoid letting a long label wrap awkwardly inside a narrow card. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.adm-ea-stat-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.adm-ea-stat-delta {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.adm-ea-stat-delta__arrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 900px) {
+  .adm-ea-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  .adm-ea-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Filter bar ───────────────────────────────────────────────────── */
 
 .adm-ea-filter {
