@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
@@ -345,6 +346,143 @@ except Exception:  # pragma: no cover
     from fastapi.responses import JSONResponse as _DefaultJSONResponse  # type: ignore[assignment]
     _JSON_SERIALIZER = "stdlib"
 
+
+# Persistent httpx client for upstream proxying (connection pooling).
+# Defined here (rather than alongside the proxy handlers) because the
+# lifespan context manager below assigns to it during startup and must
+# be defined before the FastAPI() constructor so it can be passed in.
+HTTP_CLIENT: Optional[httpx.AsyncClient] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: startup logic before yield, shutdown after.
+
+    Replaces the deprecated ``@app.on_event("startup"|"shutdown")``
+    handlers (FastAPI ≥0.93 emits DeprecationWarning for those).
+    Body matches the prior on_event handlers verbatim — see
+    git history for the original split.
+    """
+    global HTTP_CLIENT
+    # ── Startup ──────────────────────────────────────────────────────────
+    # Config validation runs BEFORE any other startup work so a
+    # misconfigured production server fails loudly (sys.exit(2)) instead
+    # of trickling a cryptic error deep in a handler. Dev mode only
+    # warns so local iteration with partial env stays unblocked.
+    # See gateway/config.py for the spec.
+    try:
+        import config as _cfg
+        _cfg.validate_config()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001 — never let config import itself break startup
+        log.exception("config.validate_config() crashed — continuing (legacy env)")
+
+    HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
+    mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
+    log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
+    log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
+    if IS_PRODUCTION and not os.environ.get("GATEWAY_COOKIE_SECRET"):
+        log.error("FATAL: PRODUCTION=1 but GATEWAY_COOKIE_SECRET is unset — refusing to start.")
+        raise RuntimeError("GATEWAY_COOKIE_SECRET must be set in production (signs pending-token + gate cookies)")
+    if IS_PRODUCTION and len(os.environ.get("GATEWAY_COOKIE_SECRET", "")) < 32:
+        log.error("FATAL: GATEWAY_COOKIE_SECRET is too short (<32 chars) — refusing to start.")
+        raise RuntimeError("GATEWAY_COOKIE_SECRET must be at least 32 characters")
+    if IS_PRODUCTION and not SITE_ACCESS_TOKEN:
+        log.error("FATAL: PRODUCTION=1 but SITE_ACCESS_TOKEN is unset — refusing to start.")
+        raise RuntimeError("SITE_ACCESS_TOKEN must be set in production")
+    if IS_PRODUCTION and SITE_ACCESS_TOKEN and len(SITE_ACCESS_TOKEN) < 32:
+        log.error("FATAL: SITE_ACCESS_TOKEN is too short (%d chars) — refusing to start.", len(SITE_ACCESS_TOKEN))
+        raise RuntimeError("SITE_ACCESS_TOKEN must be at least 32 characters")
+    # Auto-generate first admin invite token if none exist
+    tokens = db.list_invite_tokens()
+    if not tokens:
+        first_token = db.create_invite_token("Auto-generated admin token")
+        log.info("=" * 50)
+        log.info("  FIRST ADMIN INVITE TOKEN: %s... (query DB for full value)", first_token[:12])
+        log.info("=" * 50)
+
+    # Run versioned migrations before anything else hits the DB.
+    try:
+        import migrations as _migrations
+        _migrations.upgrade_to_head()
+    except Exception as e:
+        log.exception("migration upgrade failed at startup: %s", e)
+
+    # If any user has TOTP enabled, the Fernet encryption key MUST be
+    # configured — otherwise we can't decrypt existing secrets and those
+    # admins would be locked out. Fail fast with a clear error.
+    try:
+        with db.conn() as _c:
+            _totp_row = _c.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1"
+            ).fetchone()
+            _totp_users = int(_totp_row["n"] if _totp_row else 0)
+        if _totp_users > 0 and not os.environ.get("CREDENTIALS_ENCRYPTION_KEY"):
+            log.error(
+                "FATAL: %d users have TOTP enabled but CREDENTIALS_ENCRYPTION_KEY "
+                "is unset. Existing TOTP secrets cannot be decrypted. Refusing to start.",
+                _totp_users,
+            )
+            if IS_PRODUCTION:
+                raise RuntimeError(
+                    "CREDENTIALS_ENCRYPTION_KEY required: existing TOTP secrets cannot be decrypted"
+                )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log.warning("startup totp/encryption-key check failed: %s", e)
+
+    # Start the background job queue (in-process by default). This drives
+    # the *one-shot* enqueued work (emails, pipeline kicks) via
+    # ``jobs/backend.py`` and writes ``background_jobs``.
+    try:
+        from jobs import start_worker as _start_worker
+        await _start_worker()
+    except Exception as e:
+        log.exception("job queue start failed: %s", e)
+
+    # Start the APScheduler-backed recurring scheduler. Separate concern
+    # from ``jobs/backend.py``: this drives the *scheduled* recurring
+    # jobs (health checks, weekly reports, etc.) and writes ``job_runs``.
+    # Single-process guard lives inside ``scheduler.start`` — see
+    # RUNBOOK.md for the leader-election story.
+    try:
+        from scheduler.registry import register_all as _register_scheduler
+        from scheduler import scheduler as _scheduler
+        _register_scheduler()
+        _scheduler.start()
+    except Exception as e:
+        log.exception("scheduler start failed: %s", e)
+
+    yield
+
+    # ── Shutdown ─────────────────────────────────────────────────────────
+    if HTTP_CLIENT:
+        await HTTP_CLIENT.aclose()
+    # Close market API clients to prevent connection leaks
+    try:
+        await POLY_CLIENT.close()
+    except Exception:
+        pass
+    try:
+        await KALSHI_CLIENT.close()
+    except Exception:
+        pass
+    # Stop the job queue so cron loops exit cleanly.
+    try:
+        from jobs import stop_worker as _stop_worker
+        await _stop_worker()
+    except Exception:
+        pass
+    # Stop APScheduler.
+    try:
+        from scheduler import scheduler as _scheduler
+        _scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+
+
 app = FastAPI(
     title="narve.ai API",
     version="1.0",
@@ -384,6 +522,7 @@ app = FastAPI(
     # to stay out of the public surface.
     openapi_url="/api/openapi.json",
     default_response_class=_DefaultJSONResponse,
+    lifespan=lifespan,
 )
 
 # Application metadata for /health and RUNBOOK tooling.
@@ -601,129 +740,11 @@ async def global_exception_handler(request: StarletteRequest, exc: Exception):
     log.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
     return JSONResponse({"error": "Internal server error"}, status_code=500)
 
-# Persistent httpx client for upstream proxying (connection pooling).
-HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
-
-@app.on_event("startup")
-async def _startup():
-    global HTTP_CLIENT
-    # Config validation runs BEFORE any other startup work so a
-    # misconfigured production server fails loudly (sys.exit(2)) instead
-    # of trickling a cryptic error deep in a handler. Dev mode only
-    # warns so local iteration with partial env stays unblocked.
-    # See gateway/config.py for the spec.
-    try:
-        import config as _cfg
-        _cfg.validate_config()
-    except SystemExit:
-        raise
-    except Exception:  # noqa: BLE001 — never let config import itself break startup
-        log.exception("config.validate_config() crashed — continuing (legacy env)")
-
-    HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
-    mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
-    log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
-    log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
-    if IS_PRODUCTION and not os.environ.get("GATEWAY_COOKIE_SECRET"):
-        log.error("FATAL: PRODUCTION=1 but GATEWAY_COOKIE_SECRET is unset — refusing to start.")
-        raise RuntimeError("GATEWAY_COOKIE_SECRET must be set in production (signs pending-token + gate cookies)")
-    if IS_PRODUCTION and len(os.environ.get("GATEWAY_COOKIE_SECRET", "")) < 32:
-        log.error("FATAL: GATEWAY_COOKIE_SECRET is too short (<32 chars) — refusing to start.")
-        raise RuntimeError("GATEWAY_COOKIE_SECRET must be at least 32 characters")
-    if IS_PRODUCTION and not SITE_ACCESS_TOKEN:
-        log.error("FATAL: PRODUCTION=1 but SITE_ACCESS_TOKEN is unset — refusing to start.")
-        raise RuntimeError("SITE_ACCESS_TOKEN must be set in production")
-    if IS_PRODUCTION and SITE_ACCESS_TOKEN and len(SITE_ACCESS_TOKEN) < 32:
-        log.error("FATAL: SITE_ACCESS_TOKEN is too short (%d chars) — refusing to start.", len(SITE_ACCESS_TOKEN))
-        raise RuntimeError("SITE_ACCESS_TOKEN must be at least 32 characters")
-    # Auto-generate first admin invite token if none exist
-    tokens = db.list_invite_tokens()
-    if not tokens:
-        first_token = db.create_invite_token("Auto-generated admin token")
-        log.info("=" * 50)
-        log.info("  FIRST ADMIN INVITE TOKEN: %s... (query DB for full value)", first_token[:12])
-        log.info("=" * 50)
-
-    # Run versioned migrations before anything else hits the DB.
-    try:
-        import migrations as _migrations
-        _migrations.upgrade_to_head()
-    except Exception as e:
-        log.exception("migration upgrade failed at startup: %s", e)
-
-    # If any user has TOTP enabled, the Fernet encryption key MUST be
-    # configured — otherwise we can't decrypt existing secrets and those
-    # admins would be locked out. Fail fast with a clear error.
-    try:
-        with db.conn() as _c:
-            _totp_row = _c.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE totp_enabled = 1"
-            ).fetchone()
-            _totp_users = int(_totp_row["n"] if _totp_row else 0)
-        if _totp_users > 0 and not os.environ.get("CREDENTIALS_ENCRYPTION_KEY"):
-            log.error(
-                "FATAL: %d users have TOTP enabled but CREDENTIALS_ENCRYPTION_KEY "
-                "is unset. Existing TOTP secrets cannot be decrypted. Refusing to start.",
-                _totp_users,
-            )
-            if IS_PRODUCTION:
-                raise RuntimeError(
-                    "CREDENTIALS_ENCRYPTION_KEY required: existing TOTP secrets cannot be decrypted"
-                )
-    except RuntimeError:
-        raise
-    except Exception as e:
-        log.warning("startup totp/encryption-key check failed: %s", e)
-
-    # Start the background job queue (in-process by default). This drives
-    # the *one-shot* enqueued work (emails, pipeline kicks) via
-    # ``jobs/backend.py`` and writes ``background_jobs``.
-    try:
-        from jobs import start_worker as _start_worker
-        await _start_worker()
-    except Exception as e:
-        log.exception("job queue start failed: %s", e)
-
-    # Start the APScheduler-backed recurring scheduler. Separate concern
-    # from ``jobs/backend.py``: this drives the *scheduled* recurring
-    # jobs (health checks, weekly reports, etc.) and writes ``job_runs``.
-    # Single-process guard lives inside ``scheduler.start`` — see
-    # RUNBOOK.md for the leader-election story.
-    try:
-        from scheduler.registry import register_all as _register_scheduler
-        from scheduler import scheduler as _scheduler
-        _register_scheduler()
-        _scheduler.start()
-    except Exception as e:
-        log.exception("scheduler start failed: %s", e)
-
-
-@app.on_event("shutdown")
-async def _shutdown():
-    if HTTP_CLIENT:
-        await HTTP_CLIENT.aclose()
-    # Close market API clients to prevent connection leaks
-    try:
-        await POLY_CLIENT.close()
-    except Exception:
-        pass
-    try:
-        await KALSHI_CLIENT.close()
-    except Exception:
-        pass
-    # Stop the job queue so cron loops exit cleanly.
-    try:
-        from jobs import stop_worker as _stop_worker
-        await _stop_worker()
-    except Exception:
-        pass
-    # Stop APScheduler.
-    try:
-        from scheduler import scheduler as _scheduler
-        _scheduler.shutdown(wait=False)
-    except Exception:
-        pass
+# NOTE: Startup/shutdown logic lives in the ``lifespan`` async-context
+# manager near the FastAPI() constructor above. ``HTTP_CLIENT`` is also
+# declared up there because lifespan needs to assign it before the app
+# is built. Migrated from the deprecated @app.on_event handlers.
 
 
 # Static files for apex pages (CSS, JS, images).
