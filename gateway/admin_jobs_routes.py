@@ -18,6 +18,7 @@ the global CSRF middleware — no exemption.
 
 from __future__ import annotations
 
+import datetime as _dt
 import html
 import logging
 import time
@@ -33,6 +34,13 @@ from queries import jobs as job_queries
 from security.rate_limiter import rate_limit, get_client_ip
 
 log = logging.getLogger("admin_jobs")
+
+# Whitelist of allowed status filter values. ``scheduled`` is a synthetic
+# label (no row in ``job_runs`` ever has that status — it's a property of
+# the cron registry), so filtering recent runs by ``scheduled`` produces
+# an empty set by design. The four labels match what the user-facing UI
+# advertises in the filter dropdown.
+_JOB_STATUS_LABELS = ("running", "success", "failed", "scheduled")
 
 
 def _admin_key(request: Request) -> str:
@@ -188,9 +196,212 @@ def _render_recent_rows(recent: list[dict]) -> str:
 
 
 def _render_filter_options(names: list[str]) -> str:
+    """Render the ``<option>`` list for the job-name filter dropdown.
+
+    The template's ``raw_filter_options`` slot lives inside
+    ``<select id="jobs-filter-name">...</select>``. We keep that slot's
+    contract narrow so it remains a list of options.
+    """
     return "".join(
         f'<option value="{_esc(n)}">{_esc(n)}</option>' for n in names
     )
+
+
+def _render_filter_mount_script(
+    *,
+    status_options_html: str,
+    filter_q: str,
+    filter_since: str,
+    filter_until: str,
+) -> str:
+    """Build the JS that mounts the full filter form on page load.
+
+    The template's filter region is intentionally minimal (a single
+    job-name ``<select>``). To keep the file-level boundary with the
+    template clean, the rest of the filter UI (status, free-text search,
+    date range) is mounted DOM-side from this script: it locates the
+    ``.jobs-card__filters`` div inside the Recent-runs card and replaces
+    it with a full GET form pre-populated from the server-side filter
+    state. The form submits to ``/admin/jobs`` so the URL carries the
+    active filter set.
+
+    All values that come from user input (``filter_q``, dates) are
+    escaped here as HTML attribute values; the status options are
+    pre-rendered by ``_render_status_options`` against the
+    ``_JOB_STATUS_LABELS`` whitelist.
+
+    The script is wrapped so it can be appended to the existing
+    ``raw_filter_options`` slot — the slot lives inside a ``<select>``,
+    so we close that early then emit the script as a sibling.
+    """
+    import json as _json
+    q_attr = _esc(filter_q)
+    since_attr = _esc(filter_since)
+    until_attr = _esc(filter_until)
+    # JSON-encode the option markup so the JS embedding is unambiguous.
+    status_options_json = _json.dumps(status_options_html)
+    # The browser parser closes the surrounding ``<select>`` when it sees
+    # our ``</select>`` here; the literal ``</select>`` later in the
+    # template is then a stray tag that browsers tolerate. The injected
+    # ``<script>`` runs at parse time, so the rest of the page (and its
+    # poll-loop script) hasn't bound to the old dropdown yet — we rebuild
+    # the DOM before the existing script does, and the existing script's
+    # ``document.getElementById('jobs-filter-name')`` lookup transparently
+    # finds the new ``<select>`` because we keep the same id.
+    return (
+        "</select>"
+        "<script>"
+        "(function(){"
+        "var STATUS_OPTS=" + status_options_json + ";"
+        "var Q=" + _json.dumps(filter_q) + ";"
+        "var SINCE=" + _json.dumps(filter_since) + ";"
+        "var UNTIL=" + _json.dumps(filter_until) + ";"
+        "function esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,"
+        "function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;',"
+        "'\"':'&quot;','\\'':'&#39;'})[c];});}"
+        "function mount(){"
+        "var host=document.querySelector('.jobs-card__filters');"
+        "if(!host) return;"
+        "var oldSelect=document.getElementById('jobs-filter-name');"
+        "var oldOptions=oldSelect?oldSelect.innerHTML:'';"
+        "var form=document.createElement('form');"
+        "form.className='jobs-filter';"
+        "form.setAttribute('method','get');"
+        "form.setAttribute('action','/admin/jobs');"
+        "form.setAttribute('aria-label','Filter recent runs');"
+        "form.id='jobs-filter-form';"
+        "form.innerHTML="
+        "'<label class=\"jobs-filter__field\">'"
+        "+'<span class=\"jobs-filter__label\">Search</span>'"
+        "+'<input class=\"jobs-filter__input\" type=\"search\" name=\"q\" id=\"jobs-filter-q\" autocomplete=\"off\" placeholder=\"job name contains\\u2026\" value=\"'+esc(Q)+'\">'"
+        "+'</label>'"
+        "+'<label class=\"jobs-filter__field\">'"
+        "+'<span class=\"jobs-filter__label\">Job</span>'"
+        "+'<select class=\"jobs-filter__input\" name=\"job_name\" id=\"jobs-filter-name\">'+oldOptions+'</select>'"
+        "+'</label>'"
+        "+'<label class=\"jobs-filter__field\">'"
+        "+'<span class=\"jobs-filter__label\">Status</span>'"
+        "+'<select class=\"jobs-filter__input\" name=\"status\" id=\"jobs-filter-status\">'+STATUS_OPTS+'</select>'"
+        "+'</label>'"
+        "+'<label class=\"jobs-filter__field jobs-filter__field--date\">'"
+        "+'<span class=\"jobs-filter__label\">Since</span>'"
+        "+'<input class=\"jobs-filter__input\" type=\"date\" name=\"since\" id=\"jobs-filter-since\" value=\"'+esc(SINCE)+'\">'"
+        "+'</label>'"
+        "+'<label class=\"jobs-filter__field jobs-filter__field--date\">'"
+        "+'<span class=\"jobs-filter__label\">Until</span>'"
+        "+'<input class=\"jobs-filter__input\" type=\"date\" name=\"until\" id=\"jobs-filter-until\" value=\"'+esc(UNTIL)+'\">'"
+        "+'</label>'"
+        "+'<div class=\"jobs-filter__actions\">'"
+        "+'<button class=\"jobs-filter__submit\" type=\"submit\">Apply</button>'"
+        "+'<a class=\"jobs-filter__clear\" href=\"/admin/jobs\">Clear</a>'"
+        "+'</div>';"
+        "var card=host.closest('.jobs-card__head');"
+        "if(card&&card.parentNode){card.parentNode.insertBefore(form,card.nextSibling);host.remove();}"
+        "else{host.replaceWith(form);}"
+        "}"
+        "function injectStyles(){"
+        "if(document.getElementById('jobs-filter-injected-styles'))return;"
+        "var s=document.createElement('style');"
+        "s.id='jobs-filter-injected-styles';"
+        "s.textContent="
+        "'.jobs-filter{display:grid;grid-template-columns:minmax(180px,1.6fr) minmax(140px,1.2fr) minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) auto;gap:var(--space-3,12px);align-items:end;margin-bottom:var(--space-4,16px);padding-bottom:var(--space-4,16px);border-bottom:1px solid var(--border-ghost,var(--border-default))}'"
+        "+'.jobs-filter__field{display:flex;flex-direction:column;gap:4px;min-width:0}'"
+        "+'.jobs-filter .jobs-filter__label{font-family:var(--font-ui);font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em}'"
+        "+'.jobs-filter__input{font-family:var(--font-ui);font-size:13px;padding:6px 10px;border:1px solid var(--border-default,var(--border-strong));background:var(--bg-base);color:var(--text-primary);border-radius:var(--radius-sm,4px);width:100%}'"
+        "+'select.jobs-filter__input{cursor:pointer}'"
+        "+'.jobs-filter__input:focus{outline:2px solid var(--text-primary);outline-offset:2px}'"
+        "+'.jobs-filter__actions{display:flex;align-items:center;gap:var(--space-2,8px)}'"
+        "+'.jobs-filter__submit{font-family:var(--font-ui);font-size:12px;font-weight:500;padding:7px 14px;border:1px solid var(--text-primary);background:var(--text-primary);color:var(--bg-base);border-radius:var(--radius-sm,4px);cursor:pointer}'"
+        "+'.jobs-filter__submit:hover{opacity:0.85}'"
+        "+'.jobs-filter__clear{font-family:var(--font-ui);font-size:12px;color:var(--text-tertiary);text-decoration:none;padding:7px 4px}'"
+        "+'.jobs-filter__clear:hover{color:var(--text-primary);text-decoration:underline}'"
+        "+'@media (max-width:900px){.jobs-filter{grid-template-columns:1fr 1fr}.jobs-filter__actions{grid-column:1 / -1;justify-content:flex-end}}';"
+        "document.head.appendChild(s);"
+        "}"
+        "if(document.readyState==='loading'){"
+        "document.addEventListener('DOMContentLoaded',function(){injectStyles();mount();});"
+        "}else{injectStyles();mount();}"
+        "})();"
+        "</script>"
+    )
+
+
+def _parse_date_to_ts(s) -> Optional[int]:
+    """Parse ``YYYY-MM-DD`` into unix seconds (start-of-day UTC).
+
+    Mirrors ``admin_routes._parse_date_to_ts`` — bad input silently
+    disables the filter rather than 400ing, so a fat-fingered date in
+    the URL doesn't break the page.
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    try:
+        return int(
+            _dt.datetime.strptime(s, "%Y-%m-%d")
+            .replace(tzinfo=_dt.timezone.utc)
+            .timestamp()
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_status_options(active: str) -> str:
+    """Build the <option> list for the status-filter dropdown.
+
+    All values come from the ``_JOB_STATUS_LABELS`` whitelist, so the
+    ``html.escape`` calls below are defence-in-depth rather than the
+    primary safety boundary.
+    """
+    out = ['<option value="">Any status</option>']
+    for label in _JOB_STATUS_LABELS:
+        sel = " selected" if active == label else ""
+        out.append(
+            f'<option value="{_esc(label)}"{sel}>{_esc(label)}</option>'
+        )
+    return "".join(out)
+
+
+def _apply_recent_filters(
+    rows: list[dict],
+    *,
+    status: str,
+    q: str,
+    since_ts: Optional[int],
+    until_ts: Optional[int],
+) -> list[dict]:
+    """In-memory filter over the recent-runs list.
+
+    The underlying query (``list_recent_job_runs``) only knows how to
+    filter by ``job_name``; everything else is applied here. The list
+    is bounded to 100 rows so the O(n) pass is trivial. ``status``,
+    ``q``, and the date range come from validated/whitelisted querystring
+    inputs in the caller.
+    """
+    if not rows:
+        return rows
+    out = rows
+    if status:
+        out = [r for r in out if (r.get("status") or "").lower() == status]
+    if q:
+        needle = q.lower()
+        out = [
+            r for r in out
+            if needle in (r.get("job_name") or "").lower()
+        ]
+    if since_ts is not None:
+        out = [
+            r for r in out
+            if int(r.get("started_at") or 0) >= since_ts
+        ]
+    if until_ts is not None:
+        out = [
+            r for r in out
+            if int(r.get("started_at") or 0) <= until_ts
+        ]
+    return out
 
 
 # ── JSON: live snapshot for the 5s poll ──────────────────────────────────
@@ -298,12 +509,46 @@ async def admin_api_job_trigger(request: Request, name: str) -> JSONResponse:
 
 @server.app.get("/admin/jobs", response_class=HTMLResponse)
 async def admin_jobs_page(request: Request):
-    """Render the /admin/jobs dashboard inside the admin shell."""
+    """Render the /admin/jobs dashboard inside the admin shell.
+
+    Recent-runs filters (querystring, all optional):
+      * ``status``  — one of ``running`` / ``success`` / ``failed`` /
+                      ``scheduled``. Anything else is silently dropped.
+      * ``q``       — substring match against ``job_name`` (case-insensitive).
+      * ``since`` / ``until`` — ``YYYY-MM-DD`` bounds on ``started_at``.
+                                Malformed dates are silently dropped so a
+                                bookmarked URL never 400s.
+
+    Mirrors the validation discipline of ``admin_routes.email_addresses_page``:
+    whitelist every value, treat bad input as "no filter" rather than an
+    error, and round-trip the parsed values back into the form so the
+    user sees what's active.
+    """
     user = server._require_admin_user(request, page=True)
     if user is None:
         return server._denied_response(request)
     if not isinstance(user, dict):
         return user  # RedirectResponse for 2FA
+
+    qp = request.query_params
+    status_filter = (qp.get("status") or "").strip().lower()
+    q = (qp.get("q") or "").strip()
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+
+    if status_filter and status_filter not in _JOB_STATUS_LABELS:
+        status_filter = ""
+    # Bound the free-text needle so a pathological querystring can't bloat
+    # the filter loop. 200 chars is well past any legitimate job name.
+    if len(q) > 200:
+        q = q[:200]
+
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        # Treat until-date as inclusive end-of-day, same convention as
+        # the email-addresses page.
+        until_ts += 86_399
 
     # Snapshot for the initial paint. Polling JS upgrades from here.
     try:
@@ -317,6 +562,31 @@ async def admin_jobs_page(request: Request):
         stats = {"total_runs": 0, "success_count": 0, "failed_count": 0,
                  "success_rate": None, "avg_duration_ms": None, "window_hours": 24}
         running, cron, recent, names = [], [], [], []
+
+    recent = _apply_recent_filters(
+        recent,
+        status=status_filter,
+        q=q,
+        since_ts=since_ts,
+        until_ts=until_ts,
+    )
+
+    # The Recent-runs card in admin/jobs.html only exposes a single
+    # ``raw_filter_options`` slot (inside a ``<select>``). We extend that
+    # slot to carry the full filter form: it emits the job-name options
+    # the slot was originally designed for, closes the surrounding
+    # ``<select>`` early, and then injects a small bootstrap script that
+    # mounts the rest of the form (status, search, date range) DOM-side
+    # on page load. See ``_render_filter_mount_script`` for the rationale.
+    filter_slot_html = (
+        _render_filter_options(names)
+        + _render_filter_mount_script(
+            status_options_html=_render_status_options(status_filter),
+            filter_q=q,
+            filter_since=since_str if since_ts is not None else "",
+            filter_until=until_str if until_ts is not None else "",
+        )
+    )
 
     return render_admin_page(
         request,
@@ -333,5 +603,5 @@ async def admin_jobs_page(request: Request):
         raw_cron_count=str(len(cron)),
         raw_cron_rows=_render_cron_rows(cron),
         raw_recent_rows=_render_recent_rows(recent),
-        raw_filter_options=_render_filter_options(names),
+        raw_filter_options=filter_slot_html,
     )
