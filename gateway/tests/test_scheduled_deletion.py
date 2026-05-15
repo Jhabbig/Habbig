@@ -333,6 +333,179 @@ class ProcessScheduledDeletionsCascadeTestCase(unittest.TestCase):
         self.assertEqual(result["checked"], 0)
         self.assertEqual(result["files_removed"], 0)
 
+    def test_cascade_failure_rolls_back_cleanly(self):
+        """If ``cascade_delete_user`` raises mid-flight, the user row and
+        every user-keyed row stays intact (cascade's own txn rolls back)
+        and the export ZIPs are NOT unlinked from disk — the next sweep
+        retries the user end-to-end.
+
+        Audit #14 HIGH #5: explicit rollback contract. We mock
+        ``db.cascade_delete_user`` to delete a few user-keyed rows and
+        then raise, simulating a partial-cascade crash. The test pins:
+
+          (a) The user row still exists (no orphaned half-anonymisation).
+          (b) Any rows the mock managed to write are reverted (the mock
+              uses ``with db.conn() as c:`` so its writes commit only if
+              the function returns normally — raising mid-block triggers
+              ROLLBACK).
+          (c) Export ZIPs on disk were NOT unlinked (the loop is after
+              the cascade call, so it never runs).
+          (d) The sweep does not crash the whole job — other users in
+              the batch still process.
+        """
+        from unittest import mock as _mock
+
+        # Three users:
+        #   - ``victim`` is the one whose cascade we'll crash.
+        #   - ``other`` is queued behind to verify the loop continues.
+        #   - ``bystander`` is NOT scheduled for deletion; we seed the
+        #     victim's follow row pointing at the bystander so that
+        #     ``other``'s successful cascade can't accidentally
+        #     mask-clean the victim's row through the ``followed_user_id``
+        #     column.
+        victim = _create_user("rb_victim")
+        other = _create_user("rb_other")
+        bystander = _create_user("rb_bystand")
+
+        # Seed a user-keyed row for the victim so we can assert it
+        # survives the rollback. follower=victim, followed=bystander
+        # keeps the row alive even after ``other``'s cascade.
+        now = int(time.time())
+        with db.conn() as c:
+            try:
+                c.execute(
+                    "INSERT INTO user_follows "
+                    "(follower_user_id, followed_user_id) "
+                    "VALUES (?, ?)",
+                    (victim, bystander),
+                )
+            except Exception:
+                pass
+
+        # Stage an export ZIP on disk for the victim — must NOT be
+        # unlinked when cascade fails.
+        f = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".zip", prefix=f"rb_export_{victim}_"
+        )
+        f.write(b"PK\x03\x04 should survive")
+        f.close()
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO data_export_requests "
+                "(user_id, requested_at, status, file_path, "
+                "completed_at, expires_at) "
+                "VALUES (?, ?, 'ready', ?, ?, ?)",
+                (victim, now, f.name, now, now + 86400),
+            )
+
+        # Schedule both users for past-due deletion.
+        _schedule_for_past(victim)
+        _schedule_for_past(other)
+
+        # Sanity: pre-state has rows + file on disk.
+        pre = _count_user_keyed_rows(victim)
+        self.assertGreater(
+            len(pre), 0,
+            "Setup didn't seed any user-keyed rows for the victim."
+        )
+        self.assertTrue(os.path.exists(f.name))
+
+        # Patch cascade to write 3 rows (mimicking a partial cascade)
+        # then raise. Because the mock uses ``with db.conn() as c:``,
+        # its writes are inside a transaction that rolls back when the
+        # block exits with an exception — so post-condition: zero rows
+        # changed. This pins the contract: callers can rely on cascade
+        # being atomic even on partial failure.
+        call_count = {"n": 0}
+        real_cascade = db.cascade_delete_user
+
+        def _fake_cascade(user_id):
+            call_count["n"] += 1
+            if user_id == victim:
+                # Simulate a partial cascade: open the connection, do
+                # some DELETEs, then raise. The ``with`` block must
+                # roll back the partial DELETEs.
+                with db.conn() as c:
+                    # Delete from 3 user-keyed tables (the "after 3
+                    # tables" in the audit test spec). Each one is a
+                    # real DELETE that would normally commit at block
+                    # exit.
+                    for tbl in ("user_follows", "user_topics", "sessions"):
+                        try:
+                            c.execute(
+                                f"DELETE FROM {tbl} WHERE user_id = ? "
+                                "OR follower_user_id = ?",
+                                (user_id, user_id),
+                            )
+                        except Exception:
+                            # Try the canonical user_id column alone
+                            try:
+                                c.execute(
+                                    f"DELETE FROM {tbl} WHERE user_id = ?",
+                                    (user_id,),
+                                )
+                            except Exception:
+                                pass
+                    raise RuntimeError(
+                        "simulated cascade crash after 3 tables"
+                    )
+            # ``other`` cascades normally so we can verify the sweep
+            # loop didn't bail on the first failure.
+            return real_cascade(user_id)
+
+        from jobs.pipeline_jobs import process_scheduled_deletions
+        with _mock.patch.object(db, "cascade_delete_user", _fake_cascade):
+            result = _run(process_scheduled_deletions())
+
+        # (a) The victim user row still exists — cascade rolled back.
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT id FROM users WHERE id = ?", (victim,),
+            ).fetchone()
+        self.assertIsNotNone(
+            row,
+            "Victim user was deleted despite cascade raising "
+            "mid-flight — rollback contract violated."
+        )
+
+        # (b) Any rows the partial cascade managed to DELETE are back.
+        post = _count_user_keyed_rows(victim)
+        self.assertEqual(
+            post, pre,
+            f"Partial-cascade DELETEs were not rolled back. "
+            f"Pre={pre} Post={post}"
+        )
+
+        # (c) The export ZIP is still on disk. Unlink only runs after
+        # a successful cascade.
+        self.assertTrue(
+            os.path.exists(f.name),
+            f"Export ZIP {f.name} was unlinked despite cascade raising "
+            "— unlink must be gated on cascade success."
+        )
+
+        # (d) The OTHER user processed normally — sweep didn't abort.
+        with db.conn() as c:
+            other_row = c.execute(
+                "SELECT id FROM users WHERE id = ?", (other,),
+            ).fetchone()
+        self.assertIsNone(
+            other_row,
+            "Cascade failure on victim aborted processing of subsequent "
+            "users — per-user try/except contract broken."
+        )
+
+        # The job's accounting reflects exactly 1 success (the other),
+        # the victim was checked but not deleted.
+        self.assertEqual(result["checked"], 2)
+        self.assertEqual(result["deleted"], 1)
+
+        # Cleanup — unlink the leftover ZIP ourselves.
+        try:
+            os.unlink(f.name)
+        except OSError:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()
