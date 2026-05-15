@@ -257,6 +257,92 @@ async def trim_job_runs(days: int = 30) -> dict[str, Any]:
         return {"ok": False, "error": str(e), "cutoff_ts": cutoff}
 
 
+@register_job("trim_analytics_events")
+async def trim_analytics_events(days: int = 180) -> dict[str, Any]:
+    """Trim ``analytics_events`` rows older than ``days``.
+
+    Per the log-retention audit (``audits/audit_log_retention.md``), the
+    table had no retention path despite indefinite growth from
+    page-view / event capture writes. 180 days is a deliberately
+    generous window: long enough for the admin analytics dashboard's
+    quarter-over-quarter aggregates (``queries/admin.py``) and for
+    GDPR-style "user export the last 6 months" requests, short enough
+    that high-volume event traffic doesn't dominate the SQLite file.
+
+    The cutoff uses the ``idx_analytics_created`` index (``db.py:388``)
+    so the DELETE is index-driven and won't full-scan the table even
+    once it grows past a few hundred thousand rows.
+    """
+    import db
+    cutoff = int(time.time()) - int(days) * 86400
+    try:
+        with db.conn() as c:
+            cur = c.execute(
+                "DELETE FROM analytics_events WHERE created_at < ?",
+                (cutoff,),
+            )
+            removed = cur.rowcount or 0
+        log.info("trim_analytics_events: removed %d rows < %d", removed, cutoff)
+        return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
+    except Exception as e:
+        log.warning("trim_analytics_events: skipped — %s", e)
+        return {"ok": False, "error": str(e), "cutoff_ts": cutoff}
+
+
+@register_job("trim_security_events")
+async def trim_security_events(days: int = 90) -> dict[str, Any]:
+    """Trim ``security_events`` rows older than ``days``.
+
+    Per the log-retention audit, the table grows without bound from
+    ``POST /api/security/capture-attempt`` writes. 90 days is the
+    conventional retention for low-volume security telemetry — long
+    enough for incident forensics, short enough to keep the table
+    bounded under a screen-share-campaign or anti-forensic abuse spike.
+
+    **Audit-tier exception:** rows flagged as actively under
+    investigation (``metadata.status = 'active'``) or rated critical
+    (``metadata.severity = 'critical'``) are preserved forever. The
+    table's ``metadata`` column is opaque JSON (see migration 072
+    docstring), so we use ``json_extract`` against the existing
+    payload rather than adding a schema-level column. Rows with
+    malformed JSON or no such keys fall through to the age-based
+    sweep — the normal path.
+
+    Index ``idx_security_events_recent`` (``created_at``) drives the
+    age scan; the ``json_extract`` filter runs as a post-filter against
+    that range, which is fine while the per-day candidate count is
+    tiny.
+    """
+    import db
+    cutoff = int(time.time()) - int(days) * 86400
+    try:
+        with db.conn() as c:
+            # ``json_extract`` raises on malformed JSON, which would
+            # abort the entire DELETE and leave the table un-trimmed
+            # for the day. Guard each extract behind ``json_valid``
+            # and fall back to '' (sweepable) when the payload isn't
+            # parseable — a row with corrupt metadata can't be a
+            # critical-flagged forensic record anyway.
+            cur = c.execute(
+                "DELETE FROM security_events "
+                "WHERE created_at < ? "
+                "  AND COALESCE(CASE WHEN json_valid(metadata) "
+                "                    THEN json_extract(metadata, '$.status') "
+                "                    ELSE '' END, '') != 'active' "
+                "  AND COALESCE(CASE WHEN json_valid(metadata) "
+                "                    THEN json_extract(metadata, '$.severity') "
+                "                    ELSE '' END, '') != 'critical'",
+                (cutoff,),
+            )
+            removed = cur.rowcount or 0
+        log.info("trim_security_events: removed %d rows < %d (critical preserved)",
+                 removed, cutoff)
+        return {"ok": True, "removed": removed, "cutoff_ts": cutoff}
+    except Exception as e:
+        log.warning("trim_security_events: skipped — %s", e)
+        return {"ok": False, "error": str(e), "cutoff_ts": cutoff}
+
+
 @register_job("trim_wallet_connect_nonces")
 async def trim_wallet_connect_nonces(max_age_seconds: int = 3600) -> dict[str, Any]:
     """Sweep SIWE wallet-connect nonces older than ``max_age_seconds``.
@@ -317,6 +403,18 @@ register_cron("trim_wallet_connect_nonces", hour=3, minute=45)
 # deletes land before the daily VACUUM at 05:00 reclaims the pages.
 # 30-day retention bounds /admin/jobs polling scans per the perf audit.
 register_cron("trim_job_runs", hour=4, minute=15)
+
+# 03:50 UTC daily — analytics_events retention (180 d) per the log
+# retention audit. Slotted in the 03:40-03:45-03:50 trim cluster so
+# all retention deletes land before the 04:10 WAL checkpoint and the
+# 05:00 daily VACUUM reclaims the pages in one pass.
+register_cron("trim_analytics_events", hour=3, minute=50)
+
+# 03:50 UTC daily — security_events retention (90 d, audit-tier rows
+# preserved) per the log retention audit. Same slot as
+# trim_analytics_events: both retention jobs share the 03:50 marker so
+# admin observability groups the two log-trim deletes together.
+register_cron("trim_security_events", hour=3, minute=50)
 
 
 # ── Quarterly recovery drill ──────────────────────────────────────────────

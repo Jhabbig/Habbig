@@ -320,5 +320,220 @@ class TestTrimJobRuns(unittest.TestCase):
         self.assertEqual(match[0]["minute"], 15)
 
 
+class TestTrimAnalyticsEvents(unittest.TestCase):
+    """``trim_analytics_events`` drops > 180 d, keeps ≤ 180 d.
+
+    Per the log-retention audit, ``analytics_events`` had no retention
+    path despite indefinite growth from page-view writes. The 180-day
+    contract (drop older, keep newer) is the load-bearing behaviour.
+    """
+
+    def setUp(self) -> None:
+        # Clean slate per test — _testdb shares one in-memory
+        # connection across the suite so unrelated tests may have
+        # inserted rows we don't want to assert against.
+        with db.conn() as c:
+            c.execute("DELETE FROM analytics_events")
+
+    def _insert(self, event_type: str, created_at: int,
+                ip_hash: str = "h") -> None:
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO analytics_events "
+                "(event_type, ip_hash, created_at) VALUES (?, ?, ?)",
+                (event_type, ip_hash, created_at),
+            )
+
+    def _count(self) -> int:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM analytics_events"
+            ).fetchone()
+        return int(row[0])
+
+    def test_removes_rows_older_than_cutoff(self):
+        now = int(__import__("time").time())
+        # 200 days old — must be swept (default retention 180 days).
+        self._insert("page_view", created_at=now - 200 * 86400)
+        result = _run(db_maintenance.trim_analytics_events())
+        self.assertTrue(result["ok"], msg=f"trim returned: {result!r}")
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(self._count(), 0)
+
+    def test_keeps_rows_inside_retention_window(self):
+        now = int(__import__("time").time())
+        # 30 days old — well inside the 180-day window.
+        self._insert("page_view", created_at=now - 30 * 86400)
+        result = _run(db_maintenance.trim_analytics_events())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_mixed_dataset_only_old_rows_swept(self):
+        now = int(__import__("time").time())
+        # Two old, one recent — only the two old rows go.
+        self._insert("a", now - 365 * 86400)
+        self._insert("b", now - 181 * 86400)
+        self._insert("c", now - 30 * 86400)
+        result = _run(db_maintenance.trim_analytics_events())
+        self.assertEqual(result["removed"], 2)
+        with db.conn() as c:
+            remaining = [r[0] for r in c.execute(
+                "SELECT event_type FROM analytics_events ORDER BY event_type"
+            ).fetchall()]
+        self.assertEqual(remaining, ["c"])
+
+    def test_custom_days_parameter(self):
+        now = int(__import__("time").time())
+        self._insert("forty_day_old", created_at=now - 40 * 86400)
+        # 60-day window keeps it.
+        result = _run(db_maintenance.trim_analytics_events(days=60))
+        self.assertEqual(result["removed"], 0)
+        # 14-day window sweeps it.
+        result = _run(db_maintenance.trim_analytics_events(days=14))
+        self.assertEqual(result["removed"], 1)
+
+    def test_registered_in_job_registry(self):
+        from jobs.registry import job_registry
+        self.assertIn("trim_analytics_events", job_registry)
+
+    def test_registered_in_cron_schedule(self):
+        from jobs.registry import cron_jobs
+        match = [j for j in cron_jobs if j["name"] == "trim_analytics_events"]
+        self.assertEqual(len(match), 1, msg=f"cron_jobs={cron_jobs!r}")
+        self.assertEqual(match[0]["hour"], 3)
+        self.assertEqual(match[0]["minute"], 50)
+
+
+class TestTrimSecurityEvents(unittest.TestCase):
+    """``trim_security_events`` drops > 90 d, keeps ≤ 90 d, never sweeps
+    rows tagged ``status='active'`` or ``severity='critical'``.
+
+    The audit-tier preservation is the load-bearing distinction from
+    the generic perf-log trims: forensic rows must outlive the
+    retention window so incident response can re-read them weeks or
+    months after the event.
+    """
+
+    def setUp(self) -> None:
+        with db.conn() as c:
+            c.execute("DELETE FROM security_events")
+
+    def _insert(self, event_type: str, created_at: int,
+                metadata: str = "{}") -> None:
+        with db.conn() as c:
+            c.execute(
+                "INSERT INTO security_events "
+                "(event_type, metadata, created_at) VALUES (?, ?, ?)",
+                (event_type, metadata, created_at),
+            )
+
+    def _count(self) -> int:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM security_events"
+            ).fetchone()
+        return int(row[0])
+
+    def test_removes_rows_older_than_cutoff(self):
+        now = int(__import__("time").time())
+        # 100 days old — must be swept (default retention 90 days).
+        self._insert("capture_attempt", created_at=now - 100 * 86400)
+        result = _run(db_maintenance.trim_security_events())
+        self.assertTrue(result["ok"], msg=f"trim returned: {result!r}")
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(self._count(), 0)
+
+    def test_keeps_rows_inside_retention_window(self):
+        now = int(__import__("time").time())
+        # 10 days old — well inside the 90-day window.
+        self._insert("capture_attempt", created_at=now - 10 * 86400)
+        result = _run(db_maintenance.trim_security_events())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_critical_severity_preserved_forever(self):
+        """A row with ``metadata.severity = 'critical'`` must survive
+        even when its age is far past the retention cutoff. Forensics
+        and incident response re-read these long after the event."""
+        now = int(__import__("time").time())
+        self._insert(
+            "capture_attempt",
+            created_at=now - 365 * 86400,
+            metadata='{"severity":"critical"}',
+        )
+        result = _run(db_maintenance.trim_security_events())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_active_status_preserved_forever(self):
+        """Rows under active investigation (``status='active'``) are
+        also preserved regardless of age."""
+        now = int(__import__("time").time())
+        self._insert(
+            "capture_attempt",
+            created_at=now - 500 * 86400,
+            metadata='{"status":"active"}',
+        )
+        result = _run(db_maintenance.trim_security_events())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(self._count(), 1)
+
+    def test_non_critical_old_row_swept_alongside_critical_kept(self):
+        """The audit-tier exception applies row-by-row: an ordinary
+        old row in the same sweep as a critical old row goes; the
+        critical one stays."""
+        now = int(__import__("time").time())
+        self._insert("a", now - 200 * 86400, metadata='{}')
+        self._insert("b", now - 200 * 86400,
+                     metadata='{"severity":"critical"}')
+        self._insert("c", now - 200 * 86400,
+                     metadata='{"status":"active"}')
+        self._insert("d", now - 5 * 86400, metadata='{}')
+        result = _run(db_maintenance.trim_security_events())
+        self.assertEqual(result["removed"], 1)
+        with db.conn() as c:
+            remaining = sorted(r[0] for r in c.execute(
+                "SELECT event_type FROM security_events"
+            ).fetchall())
+        self.assertEqual(remaining, ["b", "c", "d"])
+
+    def test_malformed_metadata_treated_as_non_critical(self):
+        """A row whose ``metadata`` isn't valid JSON must still be
+        eligible for sweeping — we can't read fields out of it, so
+        treating it as "no status/severity tag" is the safe default."""
+        now = int(__import__("time").time())
+        self._insert("a", now - 200 * 86400, metadata="not-json")
+        result = _run(db_maintenance.trim_security_events())
+        # SQLite's json_extract returns NULL on invalid JSON; the
+        # COALESCE then yields '' and the row is swept.
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(self._count(), 0)
+
+    def test_custom_days_parameter(self):
+        now = int(__import__("time").time())
+        self._insert("a", created_at=now - 60 * 86400)
+        # 90-day window (default) keeps it.
+        result = _run(db_maintenance.trim_security_events())
+        self.assertEqual(result["removed"], 0)
+        # 30-day window sweeps it.
+        result = _run(db_maintenance.trim_security_events(days=30))
+        self.assertEqual(result["removed"], 1)
+
+    def test_registered_in_job_registry(self):
+        from jobs.registry import job_registry
+        self.assertIn("trim_security_events", job_registry)
+
+    def test_registered_in_cron_schedule(self):
+        from jobs.registry import cron_jobs
+        match = [j for j in cron_jobs if j["name"] == "trim_security_events"]
+        self.assertEqual(len(match), 1, msg=f"cron_jobs={cron_jobs!r}")
+        self.assertEqual(match[0]["hour"], 3)
+        self.assertEqual(match[0]["minute"], 50)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
