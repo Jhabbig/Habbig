@@ -47,6 +47,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 import db
 import db_sharing
 import share_tokens
+from auth.cookies import cookie_domain_for
 
 
 log = logging.getLogger("routes.sharing")
@@ -153,6 +154,7 @@ async def public_shared_market(request: Request, token: str):
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
         max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
+        domain=cookie_domain_for(request),
     )
     return response
 
@@ -196,6 +198,7 @@ async def public_shared_source(request: Request, token: str):
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
         max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
+        domain=cookie_domain_for(request),
     )
     return response
 
@@ -236,6 +239,7 @@ async def public_shared_prediction(request: Request, token: str):
     response.set_cookie(
         "narve_share_attribution", str(metric_id),
         max_age=7 * 86400, httponly=True, samesite="lax", secure=_is_prod,
+        domain=cookie_domain_for(request),
     )
     return response
 
