@@ -942,32 +942,43 @@ EMBED_CSP_DEFAULT = "; ".join([
 ])
 
 
+def _apply_security_headers(response, *, is_embed: bool) -> None:
+    """Stamp SECURITY_HEADERS + CSP onto response in place.
+
+    Audit HIGH FIX C: extracted so every branch in the middleware (the
+    413 early-return AND the normal pass-through, including empty-body
+    302 redirects) goes through the same code path.
+    """
+    for header, value in SECURITY_HEADERS.items():
+        if is_embed and header == "X-Frame-Options":
+            continue
+        response.headers[header] = value
+    if "Content-Security-Policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = (
+            EMBED_CSP_DEFAULT if is_embed else CSP
+        )
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject CSP / HSTS / X-Frame-Options on every response.
+
+    Audit HIGH FIX C. Headers go on every status code and every body
+    length — including empty-body 302/301 redirects. Without this, a
+    bare RedirectResponse leaks past CSP because Starlette only sets
+    Location + Content-Length: 0.
+    """
+
     async def dispatch(self, request, call_next):
-        # Reject oversized requests
+        # Reject oversized requests. Even the early-return 413 carries
+        # the full set of security headers.
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > MAX_REQUEST_BODY:
-            return JSONResponse({"error": "Request too large"}, status_code=413)
-        # Embed widgets must render inside partner iframes, so /embed/*
-        # opts out of the blanket X-Frame-Options: DENY and uses a
-        # per-widget frame-ancestors CSP set by the route handler.
+            too_large = JSONResponse({"error": "Request too large"}, status_code=413)
+            _apply_security_headers(too_large, is_embed=False)
+            return too_large
         is_embed = request.url.path.startswith("/embed/")
         response = await call_next(request)
-        for header, value in SECURITY_HEADERS.items():
-            if is_embed and header == "X-Frame-Options":
-                continue
-            response.headers[header] = value
-        # Honour a CSP already set by the route handler (embed routes set
-        # their own with partner-specific frame-ancestors). Otherwise
-        # install the strict site default — or the embed-safe default
-        # for /embed/* error pages.
-        if "Content-Security-Policy" not in response.headers:
-            response.headers["Content-Security-Policy"] = (
-                EMBED_CSP_DEFAULT if is_embed else CSP
-            )
-        # Prevent Cloudflare from caching HTML responses on the main site.
-        # Embed responses get their own Cache-Control set by the handler
-        # (short max-age so a sub lapse propagates quickly).
+        _apply_security_headers(response, is_embed=is_embed)
         ct = response.headers.get("content-type", "")
         if "text/html" in ct and not is_embed:
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
