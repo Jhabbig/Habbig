@@ -3876,6 +3876,14 @@ def _render_email_bulk_footer() -> str:
         '<span id="adm-ea-bulk-count" style="font-family:var(--font-mono);'
         'font-variant-numeric:tabular-nums;">0</span> selected'
         '</span>'
+        '<span style="display:flex;align-items:center;gap:8px;">'
+        '<button type="button" id="adm-ea-bulk-delete" '
+        'style="font-family:var(--font-ui);font-size:12px;'
+        'background:transparent;border:1px solid var(--border-default);'
+        'border-radius:var(--radius-sm,6px);padding:6px 12px;'
+        'color:var(--text-primary);cursor:pointer;">'
+        'Delete selected'
+        '</button>'
         '<button type="button" id="adm-ea-bulk-clear" '
         'style="font-family:var(--font-ui);font-size:12px;'
         'background:transparent;border:1px solid var(--border-default);'
@@ -3883,6 +3891,7 @@ def _render_email_bulk_footer() -> str:
         'color:var(--text-primary);cursor:pointer;">'
         'Clear selection'
         '</button>'
+        '</span>'
         '</div>'
     )
     script_html = (
@@ -4129,32 +4138,58 @@ async def email_addresses_page(request: Request):
     )
 
 
-async def email_addresses_export_csv(request: Request):
-    """GET /admin/email-addresses/export.csv — CSV download of filtered rows.
+# Cap on the per-request ``emails=`` selection list, applied to both
+# the GET querystring path and the POST overflow path. Generous enough
+# to cover plausible manual click-selection while bounding work per
+# request (the filter is applied in-memory after the page-limit fetch,
+# so an unbounded list could balloon RAM). Mirror this in the page JS
+# so the user gets a toast instead of a silently-truncated CSV.
+_EMAIL_EXPORT_SELECTION_CAP = 500
 
-    Mirrors the page's filter set. Cap at 5000 rows so an admin who
-    forgets to filter doesn't accidentally export 100MB. Uses
-    ``_csv_safe_cell`` to defang spreadsheet formula injection in the
-    email + status columns.
+
+def _parse_emails_param(raw: str | None) -> list[str]:
+    """Normalise a comma-separated ``emails=`` payload.
+
+    Lowercases and dedupes, preserving first-seen order. Drops malformed
+    entries silently — the page's checkbox state is the source of truth
+    and we don't want a stray comma to 400 a download. Honours
+    ``_EMAIL_EXPORT_SELECTION_CAP`` to bound work.
     """
-    admin = _require_admin_user(request, page=True)
-    if admin is None:
-        return _denied_response(request)
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for chunk in str(raw).split(","):
+        e = chunk.strip().lower()
+        if not e or e in seen:
+            continue
+        # Cheap shape check — keep anything with an ``@`` and no whitespace.
+        if "@" not in e or any(c.isspace() for c in e):
+            continue
+        seen.add(e)
+        out.append(e)
+        if len(out) >= _EMAIL_EXPORT_SELECTION_CAP:
+            break
+    return out
 
-    qp = request.query_params
-    q = (qp.get("q") or "").strip()
-    source = (qp.get("source") or "").strip().lower()
-    status_filter = (qp.get("status") or "").strip().lower()
-    since_ts = _parse_date_to_ts(qp.get("since"))
-    until_ts = _parse_date_to_ts(qp.get("until"))
-    if until_ts is not None:
-        until_ts += 86_399
 
-    if source and source not in _EMAIL_SOURCE_LABELS:
-        source = ""
-    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
-        status_filter = ""
+def _email_addresses_csv_response(
+    admin,
+    request,
+    *,
+    q: str,
+    source: str,
+    status_filter: str,
+    since_ts: int | None,
+    until_ts: int | None,
+    emails: list[str] | None,
+):
+    """Shared CSV body for both the GET and POST export paths.
 
+    ``emails`` (lowercased) intersects the filtered result set so a
+    bulk-select export ships only the checked rows. When None/empty,
+    falls back to the legacy "everything matching the filter" behaviour.
+    """
     rows = db.aggregate_email_addresses(
         source=source or None,
         q=q or None,
@@ -4165,6 +4200,11 @@ async def email_addresses_export_csv(request: Request):
     )
     if status_filter:
         rows = [r for r in rows if (r.get("status") or "").lower() == status_filter]
+
+    selection_mode = bool(emails)
+    if selection_mode:
+        wanted = set(emails or [])
+        rows = [r for r in rows if (r.get("email") or "").lower() in wanted]
 
     import csv as _csv
     import io as _io
@@ -4187,24 +4227,125 @@ async def email_addresses_export_csv(request: Request):
 
     try:
         from security import audit as _a
+        sel_note = f" selected={len(emails or [])}" if selection_mode else ""
         _audit(
             getattr(_a.AuditAction, "EMAIL_ADDRESSES_EXPORT", "admin.email_addresses.export"),
             admin=admin, request=request,
             target_type="email_addresses_export",
-            target_description=f"csv · {len(rows)} rows",
-            notes=f"q={q!r} source={source!r} status={status_filter!r}",
+            target_description=(
+                f"csv · {len(rows)} rows" + (" · selection" if selection_mode else "")
+            ),
+            notes=(
+                f"q={q!r} source={source!r} status={status_filter!r}{sel_note}"
+            ),
         )
     except Exception:
         pass
 
+    fname = (
+        "email_addresses_selected.csv" if selection_mode else "email_addresses.csv"
+    )
     from fastapi.responses import Response as _Response
     return _Response(
         content=buf.getvalue(),
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": 'attachment; filename="email_addresses.csv"',
+            "Content-Disposition": f'attachment; filename="{fname}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+async def email_addresses_export_csv(request: Request):
+    """GET /admin/email-addresses/export.csv — CSV download of filtered rows.
+
+    Mirrors the page's filter set. Cap at 5000 rows so an admin who
+    forgets to filter doesn't accidentally export 100MB. Uses
+    ``_csv_safe_cell`` to defang spreadsheet formula injection in the
+    email + status columns.
+
+    Optional ``?emails=a@x.com,b@y.com,...`` query param intersects the
+    filtered set with the supplied list — used by the page's "Export
+    selected" bulk action when the URL stays short. Capped at
+    ``_EMAIL_EXPORT_SELECTION_CAP`` emails per request. When the URL
+    would exceed ~2000 chars the page falls back to the POST handler
+    below.
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    q = (qp.get("q") or "").strip()
+    source = (qp.get("source") or "").strip().lower()
+    status_filter = (qp.get("status") or "").strip().lower()
+    since_ts = _parse_date_to_ts(qp.get("since"))
+    until_ts = _parse_date_to_ts(qp.get("until"))
+    if until_ts is not None:
+        until_ts += 86_399
+
+    if source and source not in _EMAIL_SOURCE_LABELS:
+        source = ""
+    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
+        status_filter = ""
+
+    emails = _parse_emails_param(qp.get("emails"))
+
+    return _email_addresses_csv_response(
+        admin, request,
+        q=q, source=source, status_filter=status_filter,
+        since_ts=since_ts, until_ts=until_ts,
+        emails=emails,
+    )
+
+
+async def email_addresses_export_csv_post(request: Request):
+    """POST /admin/email-addresses/export.csv — selection-export overflow.
+
+    Same contract as the GET handler but the ``emails`` payload arrives
+    in the form body so admins can export selections too long to fit in
+    a URL (the page falls back here once the GET URL would exceed
+    ~2000 chars). Filter context is also accepted as form fields so the
+    same intersection logic runs.
+
+    CSRF is enforced by the global middleware; the page sends the
+    cookie-derived token as ``x-csrf-token`` alongside the form body.
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    form = await request.form()
+    q = (form.get("q") or "").strip()
+    source = (form.get("source") or "").strip().lower()
+    status_filter = (form.get("status") or "").strip().lower()
+    since_ts = _parse_date_to_ts(form.get("since"))
+    until_ts = _parse_date_to_ts(form.get("until"))
+    if until_ts is not None:
+        until_ts += 86_399
+
+    if source and source not in _EMAIL_SOURCE_LABELS:
+        source = ""
+    if status_filter and status_filter not in _EMAIL_STATUS_LABELS:
+        status_filter = ""
+
+    # Accept either a single comma-separated ``emails`` field (matches the
+    # GET contract) or multiple ``emails`` fields (FormData.append). The
+    # page uses the comma-separated form for simpler payloads.
+    raw_emails: list[str] = []
+    if hasattr(form, "getlist"):
+        raw_emails = [v for v in form.getlist("emails") if isinstance(v, str)]
+    if not raw_emails:
+        single = form.get("emails")
+        if isinstance(single, str):
+            raw_emails = [single]
+    emails = _parse_emails_param(",".join(raw_emails)) if raw_emails else []
+
+    return _email_addresses_csv_response(
+        admin, request,
+        q=q, source=source, status_filter=status_filter,
+        since_ts=since_ts, until_ts=until_ts,
+        emails=emails,
     )
 
 
@@ -4272,6 +4413,102 @@ async def email_addresses_export_json(request: Request):
     return JSONResponse({"count": len(public), "rows": public})
 
 
+async def email_addresses_bulk_delete(request: Request):
+    """POST /admin/email-addresses/bulk-delete — wire for the "Delete
+    selected" footer button on /admin/email-addresses.
+
+    JSON body: ``{"emails": ["a@b.com", ...]}``. Requires admin auth and
+    CSRF (double-checked in-handler on top of the middleware).
+
+    Behaviour per email (safety over completeness):
+      * Always call ``db.unsubscribe_newsletter(email)`` — soft-marks the
+        newsletter row as unsubscribed (UPDATE, not DELETE).
+      * If the row was on the newsletter list, returns True; otherwise
+        False. Either way we log a NEWSLETTER_UNSUBSCRIBE audit row
+        attributing the action to the admin so non-newsletter rows leave
+        a footprint without us touching ``users`` / ``enquiries`` /
+        ``feedback`` (cascade fanout).
+
+    Returns ``{"deleted": N, "errors": [...]}`` where ``deleted`` counts
+    newsletter rows that flipped to unsubscribed. Non-newsletter rows
+    surface in ``errors`` so the UI can warn that those weren't actioned.
+
+    Hard cap of 500 emails per request — anyone wanting more should use
+    the export → script path rather than holding an HTTP connection open.
+    """
+    admin = _require_admin_user(request)
+    if admin is None:
+        return _denied_response(request)
+
+    srv = _srv()
+    submitted = request.headers.get(
+        getattr(srv, "CSRF_HEADER_NAME", "x-csrf-token")
+    )
+    if not srv._validate_csrf(request, submitted):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    raw_emails = body.get("emails") if isinstance(body, dict) else None
+    if not isinstance(raw_emails, list) or not raw_emails:
+        raise HTTPException(status_code=400, detail="emails list required")
+
+    seen: set[str] = set()
+    emails: list[str] = []
+    for e in raw_emails[:500]:
+        if not isinstance(e, str):
+            continue
+        lower = e.strip().lower()
+        if not lower or lower in seen:
+            continue
+        seen.add(lower)
+        emails.append(lower)
+
+    deleted = 0
+    errors: list[dict] = []
+    from security import audit as _a
+
+    for email in emails:
+        try:
+            unsubscribed = db.unsubscribe_newsletter(email)
+        except Exception as exc:
+            log.exception("bulk-delete unsubscribe failed for %s", email)
+            errors.append({"email": email, "error": str(exc)})
+            continue
+
+        if unsubscribed:
+            deleted += 1
+            notes = "bulk delete via /admin/email-addresses"
+        else:
+            # Non-newsletter row — leave the upstream record alone (FK
+            # cascade would chain into users/enquiries/feedback). Just
+            # audit the admin's intent.
+            errors.append({
+                "email": email,
+                "error": "not on newsletter list — skipped (no DELETE)",
+            })
+            notes = (
+                "bulk delete via /admin/email-addresses — "
+                "non-newsletter row, no-op"
+            )
+
+        try:
+            _audit(
+                _a.AuditAction.NEWSLETTER_UNSUBSCRIBE,
+                admin=admin, request=request,
+                target_type="newsletter_subscribers",
+                target_description=email,
+                notes=notes,
+            )
+        except Exception:
+            log.exception("bulk-delete audit failed for %s", email)
+
+    return JSONResponse({"deleted": deleted, "errors": errors})
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -4318,6 +4555,10 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/email-addresses/export.json", email_addresses_export_json,
         methods=["GET"], include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/email-addresses/bulk-delete", email_addresses_bulk_delete,
+        methods=["POST"], include_in_schema=False,
     )
 
     # Newsletter blast composer — see newsletter_page docstring for the

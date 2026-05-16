@@ -195,3 +195,219 @@
   });
 })();
 </script>
+
+<!-- ── Bulk "Delete selected" handler ────────────────────────────────
+     Wires the #adm-ea-bulk-delete button (rendered server-side by
+     _render_email_bulk_footer in admin_routes.py) to a confirm-modal
+     → POST /admin/email-addresses/bulk-delete flow.
+
+     Server-side semantics (see handler docstring):
+       * Newsletter rows are soft-unsubscribed (UPDATE unsubscribed_at).
+       * Non-newsletter rows are NOT deleted (FK cascade fanout into
+         users / enquiries / feedback) — audit-logged only.
+       * Returns {deleted: N, errors: [...]}; the toast surfaces both.
+
+     CSRF token is pulled from the ``_csrf`` cookie set by the global
+     CSRF middleware (CSRF_COOKIE_NAME in server.py) and sent via the
+     ``x-csrf-token`` header — same convention as every other JSON
+     admin POST (see /api/auth/sessions, /admin/cost-alerts, etc.). -->
+<script>
+(() => {
+  "use strict";
+  if (window.__admEaBulkDeleteInstalled) return;
+  window.__admEaBulkDeleteInstalled = true;
+
+  function csrfToken() {
+    const m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  function toast(msg) {
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg); return; } catch (e) { /* fall through */ }
+    }
+    try { console.info(msg); } catch (e) { /* swallow */ }
+  }
+  function toastError(msg) {
+    if (typeof window.narveToastError === "function") {
+      try { window.narveToastError(msg); return; } catch (e) { /* fall through */ }
+    }
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg, { type: "error" }); return; } catch (e) { /* fall through */ }
+    }
+    try { console.warn(msg); } catch (e) { /* swallow */ }
+  }
+
+  function selectedEmails() {
+    const boxes = document.querySelectorAll("[data-bulk-select]:checked");
+    const out = [];
+    boxes.forEach((b) => {
+      const v = (b.value || "").trim();
+      if (v) out.push(v);
+    });
+    return out;
+  }
+
+  function buildModal(count) {
+    const overlay = document.createElement("div");
+    overlay.id = "adm-ea-bulk-modal";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "adm-ea-bulk-modal-title");
+    overlay.style.cssText =
+      "position:fixed;inset:0;background:rgba(13,13,13,.5);" +
+      "display:flex;align-items:center;justify-content:center;" +
+      "z-index:10000;font-family:var(--font-ui);";
+
+    const card = document.createElement("div");
+    card.style.cssText =
+      "background:var(--bg-surface,#fff);border:1px solid var(--border-default);" +
+      "border-radius:var(--radius-md,8px);padding:20px;min-width:320px;" +
+      "max-width:440px;color:var(--text-primary);";
+
+    const title = document.createElement("h3");
+    title.id = "adm-ea-bulk-modal-title";
+    title.textContent = "Unsubscribe " + count +
+      (count === 1 ? " email address?" : " email addresses?");
+    title.style.cssText =
+      "margin:0 0 8px;font-size:16px;font-weight:600;letter-spacing:-0.01em;";
+
+    const body = document.createElement("p");
+    body.style.cssText =
+      "margin:0 0 16px;font-size:13px;color:var(--text-secondary);line-height:1.4;";
+    body.textContent =
+      "Newsletter subscribers will be soft-unsubscribed. Non-newsletter " +
+      "rows (users, enquiries, etc.) are not deleted — only audit-logged.";
+
+    const actions = document.createElement("div");
+    actions.style.cssText =
+      "display:flex;gap:8px;justify-content:flex-end;";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.id = "adm-ea-bulk-modal-cancel";
+    cancel.textContent = "Cancel";
+    cancel.style.cssText =
+      "font-family:var(--font-ui);font-size:13px;background:transparent;" +
+      "border:1px solid var(--border-default);border-radius:var(--radius-sm,6px);" +
+      "padding:8px 14px;color:var(--text-primary);cursor:pointer;";
+
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.id = "adm-ea-bulk-modal-confirm";
+    confirm.textContent = "Confirm";
+    confirm.style.cssText =
+      "font-family:var(--font-ui);font-size:13px;background:var(--text-primary,#0d0d0d);" +
+      "border:1px solid var(--text-primary,#0d0d0d);border-radius:var(--radius-sm,6px);" +
+      "padding:8px 14px;color:var(--bg-surface,#fff);cursor:pointer;";
+
+    actions.appendChild(cancel);
+    actions.appendChild(confirm);
+    card.appendChild(title);
+    card.appendChild(body);
+    card.appendChild(actions);
+    overlay.appendChild(card);
+    return { overlay, cancel, confirm };
+  }
+
+  function removeRowsFromDom(emails) {
+    const set = new Set(emails.map((e) => (e || "").toLowerCase()));
+    const boxes = document.querySelectorAll("[data-bulk-select]");
+    boxes.forEach((b) => {
+      const v = (b.value || "").toLowerCase();
+      if (!set.has(v)) return;
+      const tr = b.closest("tr");
+      if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+    });
+    // Re-trigger the bulk-footer refresh by dispatching a change event
+    // on any remaining row checkbox — falls back to hiding the footer
+    // outright if nothing's left.
+    const remaining = document.querySelector("[data-bulk-select]");
+    if (remaining) {
+      remaining.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      const footer = document.getElementById("adm-ea-bulk-footer");
+      if (footer) footer.hidden = true;
+    }
+  }
+
+  async function postBulkDelete(emails) {
+    const res = await fetch("/admin/email-addresses/bulk-delete", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "x-csrf-token": csrfToken(),
+      },
+      body: JSON.stringify({ emails: emails }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (e) { /* leave empty */ }
+    return { ok: res.ok, status: res.status, data: data };
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!t) return;
+
+    // Open confirm modal
+    if (t.id === "adm-ea-bulk-delete") {
+      ev.preventDefault();
+      const emails = selectedEmails();
+      if (emails.length === 0) { toastError("No rows selected"); return; }
+
+      const existing = document.getElementById("adm-ea-bulk-modal");
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+      const { overlay, cancel, confirm } = buildModal(emails.length);
+      document.body.appendChild(overlay);
+      confirm.focus();
+
+      const close = () => {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      };
+      cancel.addEventListener("click", close);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) close();
+      });
+      const escHandler = (e) => {
+        if (e.key === "Escape") { close(); document.removeEventListener("keydown", escHandler); }
+      };
+      document.addEventListener("keydown", escHandler);
+
+      confirm.addEventListener("click", async () => {
+        confirm.disabled = true;
+        cancel.disabled = true;
+        confirm.textContent = "Working…";
+        try {
+          const result = await postBulkDelete(emails);
+          close();
+          document.removeEventListener("keydown", escHandler);
+          if (!result.ok) {
+            toastError(
+              (result.data && result.data.detail) ||
+              ("Bulk delete failed (HTTP " + result.status + ")")
+            );
+            return;
+          }
+          const deleted = (result.data && result.data.deleted) || 0;
+          const errs = (result.data && result.data.errors) || [];
+          removeRowsFromDom(emails);
+          if (errs.length > 0) {
+            toast(
+              "Unsubscribed " + deleted + " · " + errs.length + " skipped " +
+              "(non-newsletter rows preserved)"
+            );
+          } else {
+            toast("Unsubscribed " + deleted + " email" + (deleted === 1 ? "" : "s"));
+          }
+        } catch (e) {
+          close();
+          document.removeEventListener("keydown", escHandler);
+          toastError("Network error: " + (e && e.message ? e.message : "unknown"));
+        }
+      });
+    }
+  });
+})();
+</script>
