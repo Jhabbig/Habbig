@@ -16,6 +16,7 @@ omitted so localhost works.
 from __future__ import annotations
 
 import os
+import secrets
 from typing import Optional
 
 from fastapi import Request, Response
@@ -25,6 +26,15 @@ SESSION_COOKIE = "narve_session"  # NB: new cookie, NOT pm_gateway_session
 
 # Session cookie lifetime. Override with SESSION_COOKIE_TTL_DAYS env var.
 SESSION_COOKIE_TTL = int(os.environ.get("SESSION_COOKIE_TTL_DAYS", "7")) * 24 * 60 * 60
+
+
+# Anonymous visitor-tracking cookie. Opaque 22-char URL-safe ID minted on
+# first visit and persisted for 1 year so analytics events can be linked
+# across sessions without PII. Readable by JS (HttpOnly=False) because
+# the static analytics tracker echoes the value back as ``session_id`` on
+# every ping. Not signed — it's an opaque correlator, not a credential.
+VISITOR_COOKIE = "narve_visitor"
+VISITOR_TTL = 365 * 86400  # 1 year
 
 
 def _is_production() -> bool:
@@ -73,6 +83,46 @@ def clear_session_cookie_hardened(response: Response, request: Request) -> None:
     if domain:
         kwargs["domain"] = domain
     response.delete_cookie(**kwargs)
+
+
+def read_visitor_cookie(request: Request) -> Optional[str]:
+    """Return the existing ``narve_visitor`` cookie value, or None."""
+    val = request.cookies.get(VISITOR_COOKIE)
+    if not val:
+        return None
+    # Light sanity guard: opaque IDs are URL-safe base64 (~22 chars). Reject
+    # anything wildly out of range so a tampered/oversized value can't get
+    # written through to analytics joins downstream.
+    if len(val) > 64:
+        return None
+    return val
+
+
+def set_visitor_cookie(response: Response, request: Request) -> str:
+    """Mint a fresh opaque visitor ID and set it on ``response``.
+
+    Returns the new value so callers can echo it into a body inject or log.
+    ``HttpOnly=False`` because the analytics tracker (analytics.js) reads
+    it from ``document.cookie`` and ships it as ``session_id`` on every
+    event ping. ``SameSite=Lax`` keeps it on top-level navigations from
+    other origins (shared links, OG previews) without leaking on
+    cross-site POSTs.
+    """
+    value = secrets.token_urlsafe(16)  # 22-char URL-safe opaque ID
+    kwargs = dict(
+        key=VISITOR_COOKIE,
+        value=value,
+        max_age=VISITOR_TTL,
+        httponly=False,  # JS reads this; intentional
+        samesite="lax",
+        secure=_is_production(),
+        path="/",
+    )
+    domain = _cookie_domain_for(request)
+    if domain:
+        kwargs["domain"] = domain
+    response.set_cookie(**kwargs)
+    return value
 
 
 # Public alias so other modules can import the cookie-domain helper

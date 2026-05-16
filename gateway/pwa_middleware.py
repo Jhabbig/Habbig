@@ -28,6 +28,19 @@ try:
 except ImportError:  # pragma: no cover — direct import path in tests
     from subproduct import subproduct_for_host  # type: ignore
 
+try:
+    from gateway.auth.cookies import (
+        VISITOR_COOKIE,
+        read_visitor_cookie,
+        set_visitor_cookie,
+    )
+except ImportError:  # pragma: no cover — direct import path in tests
+    from auth.cookies import (  # type: ignore
+        VISITOR_COOKIE,
+        read_visitor_cookie,
+        set_visitor_cookie,
+    )
+
 
 # Cache-bust query for the assets we inject. We compute it once at import
 # time from the file's mtime — a bytewise mtime change (any edit) bumps
@@ -49,6 +62,7 @@ _NARVE_APP_VER = _asset_version("narve-app.js")
 _SHORTCUTS_VER = _asset_version("shortcuts.js")
 _FEEDBACK_BTN_VER = _asset_version("feedback_button.js")
 _SHORTCUTS_DISC_VER = _asset_version("js/shortcuts-discovery.js")
+_ANALYTICS_VER = _asset_version("analytics.js")
 
 
 # Critical first-paint CSS. Inlined into the head so the visible chrome
@@ -225,6 +239,31 @@ _BODY_INJECT = (
     f'<script src="/_gateway_static/feedback_button.js?v={_FEEDBACK_BTN_VER}" defer></script>\n'
 )
 
+# Anonymous analytics tracker. Injected separately from _BODY_INJECT so the
+# middleware can skip it on pre-auth and admin paths (and honour DNT).
+# Reads the ``narve_visitor`` cookie (minted on first visit) and pings
+# /api/analytics/event with page_view + form-submit events.
+_ANALYTICS_SCRIPT = (
+    f'<script src="/_gateway_static/analytics.js?v={_ANALYTICS_VER}" defer></script>\n'
+)
+
+
+def _should_inject_analytics(request) -> bool:
+    """Skip analytics + visitor-cookie work on pre-auth + admin + DNT.
+
+      - /gate is the unauthenticated landing — no tracking before login.
+      - /admin/* is operator surface — never auto-tracked.
+      - DNT: 1 honoured site-wide as a hard skip (cookie + script).
+    """
+    if request.headers.get("dnt") == "1":
+        return False
+    path = request.url.path or ""
+    if path == "/gate" or path.startswith("/gate/"):
+        return False
+    if path.startswith("/admin"):
+        return False
+    return True
+
 _VIEWPORT_RE = re.compile(br'<meta\s+name="viewport"[^>]*>', re.IGNORECASE)
 _BODY_OPEN_RE = re.compile(br'(<body[^>]*>)', re.IGNORECASE)
 _MAIN_OPEN = b'<div class="main-content">'
@@ -235,7 +274,12 @@ _MAIN_CLOSE_RE = re.compile(
 )
 
 
-def _inject_into_html(body: bytes, host: str | None = None, path: str | None = None) -> bytes:
+def _inject_into_html(
+    body: bytes,
+    host: str | None = None,
+    path: str | None = None,
+    inject_analytics: bool = False,
+) -> bytes:
     """Apply the six PWA/a11y transforms to an HTML body. Idempotent."""
     # 1. PWA head block (before </head>)
     if b'narve-pwa-head' not in body:
@@ -288,11 +332,24 @@ def _inject_into_html(body: bytes, host: str | None = None, path: str | None = N
         count=1,
     )
 
-    # 3. Skip link + shared runtime scripts right after <body>
+    # 3. Skip link + shared runtime scripts right after <body>. The
+    # analytics tag is appended here too when caller opted in (gated on
+    # path + DNT in the dispatch layer) — keeps the script as part of the
+    # one-shot body inject so we don't have to walk the body again.
     if b'narve-skip-link' not in body:
+        injected = _BODY_INJECT
+        if inject_analytics:
+            injected = injected + _ANALYTICS_SCRIPT
+
         def _body_repl(m: re.Match) -> bytes:
-            return m.group(1) + b'\n' + _BODY_INJECT.encode()
+            return m.group(1) + b'\n' + injected.encode()
         body = _BODY_OPEN_RE.sub(_body_repl, body, count=1)
+    elif inject_analytics and b'/_gateway_static/analytics.js' not in body:
+        # Skip-link already present (re-proxied response) but no analytics
+        # tag yet — inject the tracker just after <body> so it still fires.
+        def _body_repl_analytics(m: re.Match) -> bytes:
+            return m.group(1) + b'\n' + _ANALYTICS_SCRIPT.encode()
+        body = _BODY_OPEN_RE.sub(_body_repl_analytics, body, count=1)
 
     # 4. Promote main-content div → semantic <main>
     if _MAIN_OPEN in body:
@@ -320,15 +377,45 @@ class PWAInjectionMiddleware(BaseHTTPMiddleware):
             chunks.append(chunk)
         body = b"".join(chunks)
         host = request.headers.get("host") or (request.url.hostname or "")
-        new_body = _inject_into_html(body, host=host, path=request.url.path)
+
+        # Decide whether to mint the anonymous visitor cookie + inject the
+        # analytics tracker. Both are gated on the same predicate
+        # (_should_inject_analytics) so we honour DNT + skip pre-auth /
+        # admin surfaces in one place.
+        analytics_ok = _should_inject_analytics(request)
+
+        new_body = _inject_into_html(
+            body,
+            host=host,
+            path=request.url.path,
+            inject_analytics=analytics_ok,
+        )
 
         headers = dict(response.headers)
         # Content-Length has to be recomputed; let Starlette do it.
         headers.pop("content-length", None)
 
-        return Response(
+        new_response = Response(
             content=new_body,
             status_code=response.status_code,
             headers=headers,
             media_type=ctype,
         )
+
+        # Preserve any Set-Cookie headers the original response had
+        # (Response(headers=...) drops repeats in dict form). Copy them
+        # back from the upstream response's MutableHeaders.
+        upstream_cookies = response.headers.getlist("set-cookie")
+        if upstream_cookies:
+            # Drop the entry Response() may have re-emitted from the dict
+            # snapshot so we don't end up duplicating the same cookie.
+            del new_response.headers["set-cookie"]
+            for c in upstream_cookies:
+                new_response.headers.append("set-cookie", c)
+
+        # Mint the visitor cookie on first visit. Skipped on DNT + pre-auth
+        # + admin paths via _should_inject_analytics.
+        if analytics_ok and not read_visitor_cookie(request):
+            set_visitor_cookie(new_response, request)
+
+        return new_response

@@ -4,10 +4,15 @@
  * window.narveTrack(event_type, properties) for explicit events.
  *
  * Uses navigator.sendBeacon when possible for fire-and-forget POSTs.
- * No cookies set client-side; we rely only on the existing session.
+ * Reads the ``narve_visitor`` opaque ID cookie minted by the gateway
+ * middleware and echoes it back as ``session_id`` so server-side
+ * analytics can join page-views to a single visitor across visits.
+ * Falls back to crypto.randomUUID() if the cookie is missing (e.g. on
+ * the very first request before the Set-Cookie has taken effect).
  */
 (function () {
   var ENDPOINT = "/api/analytics/event";
+  var VISITOR_COOKIE = "narve_visitor";
 
   function pickUserAgentCategory() {
     // UA-allowlist: device-class bucketing for analytics ONLY. Keeps
@@ -23,6 +28,41 @@
     }
   }
 
+  function readVisitorCookie() {
+    // document.cookie is the canonical source; the middleware sets
+    // HttpOnly=false specifically so this read works.
+    try {
+      var raw = document.cookie || "";
+      var prefix = VISITOR_COOKIE + "=";
+      var parts = raw.split(";");
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i].trim();
+        if (p.indexOf(prefix) === 0) {
+          return p.slice(prefix.length);
+        }
+      }
+    } catch (e) {
+      /* swallow — fall through to UUID fallback */
+    }
+    return "";
+  }
+
+  function visitorId() {
+    var v = readVisitorCookie();
+    if (v) return v;
+    // Cookie absent (first hit before Set-Cookie applies, or a privacy
+    // tool stripped it). Mint a one-shot UUID so the event still has a
+    // correlator — won't survive across pages, but better than null.
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") {
+        return window.crypto.randomUUID();
+      }
+    } catch (e) {
+      /* swallow */
+    }
+    return "";
+  }
+
   function track(eventType, properties) {
     try {
       var payload = {
@@ -30,6 +70,7 @@
         page: window.location.pathname,
         referrer: document.referrer || "",
         user_agent_category: pickUserAgentCategory(),
+        session_id: visitorId(),
         properties: properties || {},
       };
       var body = JSON.stringify(payload);
