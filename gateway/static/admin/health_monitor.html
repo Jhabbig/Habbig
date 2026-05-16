@@ -204,7 +204,7 @@
         +     '<dt>Checked</dt><dd>' + escape(fmtTs(s.last_check)) + '</dd>'
         +   '</dl>'
         +   '<div class="hm-actions">'
-        +     '<a href="/admin/logs?service=' + encodeURIComponent(s.slug || s.name) + '">View logs</a>'
+        +     '<a href="/admin/jobs?q=' + encodeURIComponent(s.slug || s.name) + '">View recent runs</a>'
         +   '</div>'
         + '</div>';
     }).join('');
