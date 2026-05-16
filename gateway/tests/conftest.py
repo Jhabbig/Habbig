@@ -261,7 +261,22 @@ _FIXTURE_WIPE_TABLES = (
 
 @pytest.fixture(autouse=True)
 def _reset_global_test_state(request):
-    """Reset module-level globals + transient DB rows between tests."""
+    """Reset module-level globals + transient DB rows between tests.
+
+    Function-scope wipes ONLY cover noisy "scratch" tables (rate-limit
+    rows, audit-log events, engagement events) that pile up from
+    request-driven tests and never carry seed data a sibling test would
+    rely on. Long-lived fixture rows (users / sessions / subscriptions /
+    etc.) are NOT wiped here — many test classes mint them in
+    ``setUpClass()`` and re-use them across every test in the class, and
+    the post-2026-05-15 auth flow needs the row in ``sessions`` /
+    ``user_sessions`` to still exist when the second / third / Nth test
+    in the class fires a request.
+
+    Cross-file fixture-row pollution is handled by the module-scoped
+    ``_wipe_fixture_rows_between_files`` fixture below, so the next file
+    in the suite still starts from a clean slate.
+    """
     yield
     module_name = (
         request.node.module.__name__
@@ -304,15 +319,37 @@ def _reset_global_test_state(request):
     except Exception:
         pass
 
-    # -- Fix A: Test-fixture rows (users, sessions, subs, etc.) --
-    # Wipe after every function-scoped test so per-file state doesn't
-    # leak into a later file's "no such user yet" assertion.
+
+@pytest.fixture(autouse=True, scope="module")
+def _wipe_fixture_rows_between_files(request):
+    """Wipe long-lived fixture rows BETWEEN test files (module scope).
+
+    Per-file ``setUpClass`` seeding (users, sessions, subs, ...) must
+    survive across every test in a class — wiping these rows function-
+    by-function nukes the admin session token a class-scoped fixture
+    minted, causing the second test in the class to fall back to
+    "anonymous" and hit the /login redirect or a 403 instead of the
+    seeded admin response.
+
+    Wiping at module teardown gives later files a clean slate without
+    breaking same-file class fixtures. Order matters: child tables
+    before parents so FK ON DELETE CASCADE doesn't strand orphan rows.
+    """
+    yield
+    module_name = (
+        request.node.module.__name__
+        if hasattr(request.node, "module") else ""
+    )
+    if not _module_uses_testdb(module_name):
+        return
     try:
         with _SHARED_CONN_CM() as _c:
             for _t in _FIXTURE_WIPE_TABLES:
                 try:
                     _c.execute(f"DELETE FROM {_t}")
                 except Exception:
+                    # Table may not exist in this build (e.g. early
+                    # migration state during a focused single-file run).
                     pass
     except Exception:
         pass
