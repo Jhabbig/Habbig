@@ -106,6 +106,10 @@ bot_activity.log
 # flagged gateway/admin_routes.py.bak as a 148KB orphan from an earlier
 # in-session sed command — block the whole pattern so it never re-creeps in.
 *.bak
+
+# Generated avatar PNGs. Audit #24 LOW flagged the untracked dir — these are
+# rendered on first request via Pillow + cached on disk. No reason to track.
+gateway/static/avatars/
 *.parquet
 *.pkl
 *.pickle
