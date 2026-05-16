@@ -102,6 +102,10 @@ bot_activity.log
 *_bot.log
 
 # ─── Data dumps / backups / caches (too big or sensitive) ────────────────────
+# Stale in-place backups left by sed / cp / editor saves. Audit #18/19 MED #5
+# flagged gateway/admin_routes.py.bak as a 148KB orphan from an earlier
+# in-session sed command — block the whole pattern so it never re-creeps in.
+*.bak
 *.parquet
 *.pkl
 *.pickle

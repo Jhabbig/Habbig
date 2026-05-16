@@ -98,6 +98,14 @@ class AuditAction:
     # the email so the trail still resolves a who.
     NEWSLETTER_UNSUBSCRIBE = "newsletter.unsubscribe"
 
+    # Email-addresses CSV/JSON export from the admin email-addresses panel.
+    # Two call sites in admin_routes.py used getattr() with a string fallback
+    # because this constant did not exist, so the canonical action was the
+    # fallback literal "admin.email_addresses.export" rather than a real
+    # symbol — flagged by audit #18/19 MED #4. Defining it here lets the
+    # call sites resolve to the constant and surface in the catalog.
+    EMAIL_ADDRESSES_EXPORT = "email_addresses.export"
+
     # Admin impersonation lifecycle. Same issue as feature flags above —
     # impersonate_start/end referenced these constants but the symbols
     # did not exist, so the audit trail had no record of any
@@ -162,6 +170,7 @@ ACTION_LABELS = {
     AuditAction.MAGIC_LINK_MINT: "Minted subproduct magic-link token",
     AuditAction.MAGIC_LINK_REDEEM: "Redeemed subproduct magic-link token",
     AuditAction.NEWSLETTER_UNSUBSCRIBE: "Unsubscribed from newsletter",
+    AuditAction.EMAIL_ADDRESSES_EXPORT: "Exported email-addresses CSV/JSON",
 }
 
 
