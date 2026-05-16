@@ -35,6 +35,7 @@ import html
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Form, HTTPException, Request
@@ -755,7 +756,12 @@ async def admin_feedback_page(request: Request):
     if not user or not user.get("is_admin"):
         return RedirectResponse("/login", status_code=302)
 
-    filter_status = request.query_params.get("status")
+    filter_status = (request.query_params.get("status") or "").strip()
+    # Drop unrecognised statuses up-front so the <option selected> below
+    # never echoes attacker-controlled junk into the rendered <select>.
+    if filter_status and filter_status not in VALID_STATUSES:
+        filter_status = ""
+    filter_q = (request.query_params.get("q") or "").strip()[:60]
     since_raw = (request.query_params.get("since") or "").strip()
     until_raw = (request.query_params.get("until") or "").strip()
     since_ts = _parse_date_to_ts(since_raw)
@@ -764,9 +770,10 @@ async def admin_feedback_page(request: Request):
         # Inclusive end-of-day UTC: cover all 86,400 seconds of the chosen day.
         until_ts += 86_399
     items = _list_items(
-        status=_sanitize_status(filter_status) if filter_status else None,
+        status=filter_status or None,
         sort="new",
         include_private=True,
+        q=filter_q or None,
         since_ts=since_ts,
         until_ts=until_ts,
         limit=300,
@@ -814,62 +821,40 @@ async def admin_feedback_page(request: Request):
             f'</div>'
         )
 
-    # Preserve the date-range query when switching status chips so admins
-    # can narrow by status without re-typing the since/until inputs.
-    date_qs_parts: list[str] = []
-    if since_raw:
-        date_qs_parts.append(f"since={html.escape(since_raw, quote=True)}")
-    if until_raw:
-        date_qs_parts.append(f"until={html.escape(until_raw, quote=True)}")
-    date_qs_tail = ("&" + "&".join(date_qs_parts)) if date_qs_parts else ""
-    date_qs_only = ("?" + "&".join(date_qs_parts)) if date_qs_parts else ""
-
-    status_filters = []
-    for s in ["", "open", "in_progress", "shipped", "declined", "dup"]:
-        label = "All" if not s else s.replace("_", " ").title()
-        active = ((s == filter_status) or (not s and not filter_status))
-        if s:
-            qs = f"?status={s}{date_qs_tail}"
-        else:
-            qs = date_qs_only
-        cls = "fb-chip fb-chip-active" if active else "fb-chip"
-        status_filters.append(
-            f'<a class="{cls}" href="/admin/feedback{qs}">{html.escape(label)}</a>'
-        )
-
-    # Date-range filter form. GET so the URL stays bookmarkable; we
-    # re-emit the active status as a hidden field so chips + date range
-    # compose cleanly.
-    since_val = html.escape(since_raw, quote=True)
-    until_val = html.escape(until_raw, quote=True)
-    status_hidden = (
-        f'<input type="hidden" name="status" value="{html.escape(filter_status, quote=True)}">'
-        if filter_status else ""
+    # Render the shared admin_filter_bar partial. The partial owns the
+    # q + status + since/until + export-links chrome row — see
+    # gateway/static/_partials/admin_filter_bar.html for placeholder
+    # semantics. No CSV/JSON exports exist for this surface yet, so the
+    # export anchors are hidden via the partial's empty-href CSS rule.
+    status_opts = [
+        ("",            "All statuses"),
+        ("open",        "Open"),
+        ("in_progress", "In progress"),
+        ("shipped",     "Shipped"),
+        ("declined",    "Declined"),
+        ("dup",         "Duplicate"),
+    ]
+    raw_status_options = "".join(
+        f'<option value="{html.escape(v, quote=True)}"'
+        f'{" selected" if v == filter_status else ""}>'
+        f'{html.escape(label)}</option>'
+        for v, label in status_opts
     )
-    date_range_form = (
-        '<form method="get" action="/admin/feedback" '
-        'style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">'
-        + status_hidden +
-        '<label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
-        'letter-spacing:0.05em">Since '
-        f'<input type="date" name="since" value="{since_val}" '
-        'style="font-size:12px;padding:4px 8px;margin-left:6px;background:var(--bg-raised);'
-        'border:1px solid var(--border);border-radius:4px;color:var(--text-primary)"></label>'
-        '<label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;'
-        'letter-spacing:0.05em">Until '
-        f'<input type="date" name="until" value="{until_val}" '
-        'style="font-size:12px;padding:4px 8px;margin-left:6px;background:var(--bg-raised);'
-        'border:1px solid var(--border);border-radius:4px;color:var(--text-primary)"></label>'
-        '<button type="submit" class="sb-btn sb-btn-outline" '
-        'style="font-size:11px;padding:4px 10px">Apply</button>'
-        + (
-            '<a href="/admin/feedback" class="sb-btn sb-btn-outline" '
-            'style="font-size:11px;padding:4px 10px">Clear</a>'
-            if (since_raw or until_raw or filter_status) else ""
-        )
-        + '</form>'
+    partial_path = (
+        Path(__file__).parent / "static" / "_partials" / "admin_filter_bar.html"
     )
-    status_filters.append(date_range_form)
+    raw_filter_bar = partial_path.read_text()
+    for key, value in (
+        ("filter_q",          filter_q),
+        ("raw_status_options", raw_status_options),
+        ("filter_since",      since_raw),
+        ("filter_until",      until_raw),
+        ("export_csv_href",   ""),
+        ("export_json_href",  ""),
+    ):
+        placeholder = "{{ " + key + " }}"
+        rendered = value if key.startswith("raw_") else html.escape(str(value), quote=True)
+        raw_filter_bar = raw_filter_bar.replace(placeholder, rendered)
 
     # ENHANCEMENT #6 — bulk status change bar. A single <form
     # id="af-bulk"> posts all checked ids + the chosen status to
@@ -907,7 +892,7 @@ async def admin_feedback_page(request: Request):
             '<div style="padding:48px;text-align:center;color:var(--text-muted);font-size:13px">'
             'No feedback submitted yet.</div>'
         ),
-        raw_status_filters="".join(status_filters),
+        raw_filter_bar=raw_filter_bar,
         raw_bulk_bar=bulk_bar,
     )
 

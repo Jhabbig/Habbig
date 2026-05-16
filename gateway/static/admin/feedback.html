@@ -1,4 +1,6 @@
 <!-- Converted from admin-feedback.html. Body-only — wrapped by admin_shell. -->
+<link rel="stylesheet" href="/_gateway_static/pages/admin_filter_bar.css">
+
 <div class="adm-wrap">
       <div class="adm-head">
         <div>
@@ -8,9 +10,7 @@
 
       <p class="adm-sub">Every submission — public <em>and</em> private. Change status from the dropdown; the submitter gets an in-app notification on every change. Use <a href="/feedback">/feedback</a> to see the public roadmap.</p>
 
-      <div class="fb-filter-bar">
-        {{ raw_status_filters }}
-      </div>
+      {{ raw_filter_bar }}
 
       <div class="af-list">
         {{ raw_rows }}
