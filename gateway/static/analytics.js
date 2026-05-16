@@ -16,10 +16,14 @@
  *   window.narveTrack(...) is a no-op. On "accept" everything fires
  *   normally. Newsletter form-submits are exempt — they're an explicit
  *   first-party action initiated by the user, not passive tracking.
- *   cookie_consent.js may call window.narveTrackPostConsent() when the
- *   user clicks Accept to fire a deferred page_view for this visit;
- *   otherwise the first tracked page_view is the next page load, which
- *   is acceptable because the user has already seen the banner here.
+ *   cookie_consent.js currently does window.location.reload() on the
+ *   Accept click — the reloaded page mints the visitor cookie + fires
+ *   the first page_view through the normal auto-track path. The
+ *   window.narveTrackPostConsent() helper below is exported for any
+ *   future SPA-style consent flow that wants to avoid the reload, but
+ *   it isn't called today. Either path is ePrivacy-compliant: no page
+ *   view is recorded until consent is explicit. (Doc accuracy nit from
+ *   audit #23 — fixed 2026-05-16.)
  */
 (function () {
   var ENDPOINT = "/api/analytics/event";
