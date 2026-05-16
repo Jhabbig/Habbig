@@ -159,10 +159,13 @@ class AdminHealthMonitorTestCase(unittest.TestCase):
             self.assertIn(entry["status"], ("up", "slow", "down"))
 
         names = {e["name"] for e in data["services"]}
+        # Display names mirror config.json display_name (see SERVICES in
+        # admin_health_monitor_routes.py). "Top Traders" → "Traders" and
+        # "World Health" → "Health" was synced in commit 176c613.
         for expected in [
             "Gateway", "Sports", "Weather", "World", "Crypto", "Midterm",
-            "Top Traders", "Voters", "Climate", "Disasters", "Whale",
-            "Central Bank", "World Health", "Love",
+            "Traders", "Voters", "Climate", "Disasters", "Whale",
+            "Central Bank", "Health", "Love",
         ]:
             self.assertIn(expected, names, f"{expected} missing from API response")
 
