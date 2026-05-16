@@ -106,7 +106,8 @@
     try {
       const r = await fetch("/api/referrals/me");
       if (r.status === 401) {
-        window.location.href = "/token";
+        // /token retired 2026-05-16 (audit #18 MED #3); funnel to /login.
+        window.location.href = "/login";
         return;
       }
       data = await r.json();

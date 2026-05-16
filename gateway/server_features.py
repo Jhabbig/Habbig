@@ -1380,24 +1380,23 @@ async def api_ingest_market_snapshot(request: Request, slug: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TOKEN-FIRST AUTH FLOW (/token → /register or /login → /dashboard)
+# AUTH FLOW (/gate perimeter → /login → /dashboard)
 # ═══════════════════════════════════════════════════════════════════════
 #
 # Flow:
-#   1. /token                   — single input, validates invite token
-#   2. POST /auth/validate-token → sets pending_token cookie, returns
-#      {valid, claimed, email_hint?}
-#   3. /register                — requires pending_token, shows form
-#   4. POST /auth/register      — creates user, issues session, clears
-#      pending_token
-#   5. /login                   — requires pending_token, shows form
-#   6. POST /auth/login         — verifies password, issues session,
-#      clears pending_token
+#   1. /gate  (server.py)  — SITE_ACCESS_TOKEN perimeter
+#   2. /login (server.py)  — standalone email+password page
+#   3. POST /auth/login    — JSON login, issues hardened session cookies
+#   4. POST /auth/logout   — revokes hardened + legacy session
 #
 # Two cookies coexist during the rollout:
 #   - narve_session (new, hardened, SHA-256 at rest, 7-day TTL)
-#   - pm_gateway_session (old, still written so CSRF/2FA/audit work)
-# Every login/register writes to BOTH so legacy helpers keep running.
+#   - pm_gateway_session (old, still written so CSRF/audit work)
+# Every login writes to BOTH so legacy helpers keep running.
+#
+# The old token-first flow (/token, /auth/validate-token, /register,
+# /auth/register) was retired 2026-05-15 and the routes deleted in the
+# audit #18 MED #3 follow-up. See git history for the prior implementation.
 
 from auth.cookies import (
     SESSION_COOKIE,
@@ -1407,129 +1406,6 @@ from auth.cookies import (
 from auth.guards import (
     read_hardened_session,
 )
-
-
-# Pending-token helpers were deleted with the auth refactor (2026-05-15):
-# the /token invite-gate is gone, /login is direct email+password. The
-# routes below still reference the old API; rather than rewrite each one
-# (the rewrite lives in server.py:/login POST), we stub them as no-ops so
-# the module imports cleanly. Routes that depend on them remain reachable
-# but short-circuit to a 410 Gone / generic error — none of the dashboards
-# link to them anymore, so live traffic isn't affected.
-def set_pending_token_cookie(response, raw_token, request):
-    return None
-
-
-def clear_pending_token_cookie(response, request):
-    return None
-
-
-def read_pending_token(request):
-    return None
-
-
-def require_pending_token(request):
-    # Returns a "session expired" redirect so any direct hit on the dead
-    # routes funnels back to /login (the new direct-entry path).
-    return RedirectResponse("/login", status_code=302)
-
-
-@app.get("/token", response_class=HTMLResponse)
-async def token_page(request: Request):
-    """The only entry point to the site for unauthenticated users."""
-    sub = server.get_subdomain(request)
-    if sub:
-        return await server.proxy_request(request, "/token")
-    # If already authenticated, short-circuit to the dashboard.
-    if read_hardened_session(request) or server.current_user(request):
-        return RedirectResponse("/dashboards", status_code=302)
-    return render_page("token", request=request, error="")
-
-
-@app.post("/auth/validate-token")
-async def auth_validate_token(request: Request):
-    """Check an invite token and issue a pending_token cookie.
-
-    Rate limit: 10 attempts per minute per IP.
-    Response: {valid: bool, claimed: bool, email_hint?: str}
-    """
-    ip = _get_client_ip(request)
-    # Per-IP cap tightened to 5/min (H4): shared IP floods + token guessing.
-    if server._is_rate_limited(f"{ip}:token-validate", limit=5, window=60):
-        return JSONResponse(
-            {"valid": False, "error": "Too many attempts. Wait 60 seconds."},
-            status_code=429,
-            headers={"Retry-After": "60"},
-        )
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    raw_token = (body.get("token") or "").strip()
-    if not raw_token or len(raw_token) > 128:
-        return JSONResponse({"valid": False}, status_code=400)
-
-    # Per-token bucket so a single token cannot be hammered by a botnet.
-    if server._is_rate_limited(f"token-validate:{raw_token[:32]}", limit=10, window=600):
-        return JSONResponse(
-            {"valid": False, "error": "Too many attempts for this token."},
-            status_code=429,
-            headers={"Retry-After": "600"},
-        )
-
-    # REMOVED: invite-token system retired 2026-05-15
-    # invite = db.get_invite_token(raw_token)
-    # if not invite or invite["status"] == "revoked":
-    #     return JSONResponse({"valid": False})
-    #
-    # claimed = invite["status"] == "claimed"
-    # email_hint = ""
-    # if claimed and invite["claimed_by_email"]:
-    #     email_hint = db.mask_email(invite["claimed_by_email"])
-    return JSONResponse({"valid": False})
-
-    resp = JSONResponse({
-        "valid": True,
-        "claimed": claimed,
-        "email_hint": email_hint,
-    })
-    set_pending_token_cookie(resp, raw_token, request)
-    return resp
-
-
-@app.get("/register", response_class=HTMLResponse)
-async def register_page(request: Request):
-    """Account creation — requires a valid pending_token cookie."""
-    sub = server.get_subdomain(request)
-    if sub:
-        return await server.proxy_request(request, "/register")
-    # Already logged in → dashboard
-    if read_hardened_session(request) or server.current_user(request):
-        return RedirectResponse("/dashboards", status_code=302)
-    redirect = require_pending_token(request)
-    if redirect:
-        return redirect
-    raw_token = read_pending_token(request)
-    # REMOVED: invite-token system retired 2026-05-15
-    # invite = db.get_invite_token(raw_token) if raw_token else None
-    invite = None
-    if not invite or invite["status"] != "unclaimed":
-        # Claimed tokens go to /login instead
-        if invite and invite["status"] == "claimed":
-            return RedirectResponse("/login", status_code=302)
-        return RedirectResponse("/login", status_code=302)
-    target_email = ""
-    try:
-        target_email = invite["target_email"] or ""
-    except (KeyError, IndexError):
-        target_email = ""
-    return render_page(
-        "register",
-        request=request,
-        error="",
-        target_email=target_email,
-    )
 
 
 def _is_strong_password(pw: str) -> Optional[str]:
@@ -1575,7 +1451,6 @@ async def _issue_hardened_session(
 
     server.set_session_cookie(response, legacy_token, request)
     set_session_cookie_hardened(response, raw_hardened, request)
-    clear_pending_token_cookie(response, request)
     # Rotate the CSRF token on every successful session issuance so any token
     # captured on a public page before login cannot be reused post-auth.
     try:
@@ -1583,187 +1458,6 @@ async def _issue_hardened_session(
     except Exception:
         pass  # Cookie rotation is defense-in-depth; never block login on failure.
     return raw_hardened
-
-
-@app.post("/auth/register")
-async def auth_register(request: Request):
-    """Create the user bound to the pending_token's invite token."""
-    ip = _get_client_ip(request)
-    if server._is_rate_limited(f"{ip}:register", limit=5, window=600):
-        return JSONResponse({"error": "Too many registration attempts."}, status_code=429)
-
-    redirect = require_pending_token(request)
-    if redirect:
-        return JSONResponse({"error": "Session expired. Start again from /token."}, status_code=401)
-    raw_token = read_pending_token(request) or ""
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid request."}, status_code=400)
-
-    # display_name normalisation mirrors the public handle constraint:
-    # unicode NFC, strip zero-width / bidi control, reject null bytes.
-    # Length check stays at 2–40 to match the UI copy.
-    from security.input_hygiene import clean_text
-    try:
-        display_name = clean_text(
-            body.get("display_name"),
-            min_len=2, max_len=40, required=True, field="display_name",
-        )
-    except HTTPException as exc:
-        detail = exc.detail if isinstance(exc.detail, dict) else {"error": str(exc.detail)}
-        return JSONResponse(detail, status_code=exc.status_code)
-    email = (body.get("email") or "").strip().lower()
-    password = body.get("password") or ""
-    confirm_password = body.get("confirm_password") or ""
-    if not email or "@" not in email or len(email) > 254:
-        return JSONResponse({"error": "Enter a valid email.", "field": "email"}, status_code=400)
-    if password != confirm_password:
-        return JSONResponse(
-            {"error": "Passwords do not match.", "field": "password"},
-            status_code=400,
-        )
-    pw_err = _is_strong_password(password)
-    if pw_err:
-        return JSONResponse({"error": pw_err, "field": "password"}, status_code=400)
-
-    # Token must still be valid and unclaimed at write time.
-    # REMOVED: invite-token system retired 2026-05-15
-    # invite = db.get_invite_token(raw_token)
-    invite = None
-    if not invite or invite["status"] != "unclaimed":
-        return JSONResponse(
-            {"error": "This token has already been claimed."},
-            status_code=409,
-        )
-
-    if db.get_user_by_email(email):
-        return JSONResponse(
-            {"error": "An account with that email already exists.", "field": "email"},
-            status_code=400,
-        )
-
-    # display_name reuses the username slot — must match USERNAME_RE roughly
-    username_base = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in display_name)[:20]
-    if len(username_base) < 3:
-        username_base = email.split("@")[0][:20]
-    # Ensure uniqueness
-    username = username_base
-    suffix = 1
-    while db.get_user_by_username(username):
-        suffix += 1
-        username = f"{username_base[:18]}{suffix}"
-
-    user_id = db.create_user(email, password, username=username)
-    if not db.claim_invite_token(raw_token, user_id, email):
-        return JSONResponse(
-            {"error": "This token was just claimed by someone else."},
-            status_code=409,
-        )
-
-    # Auto-activate subscription if the token came from a purchase
-    try:
-        note = invite["note"] or ""
-    except Exception:
-        note = ""
-    if note.startswith("Subscription:"):
-        parts = note.replace("Subscription:", "").strip().split("(")
-        sub_plan = parts[0].strip().lower() if parts else ""
-        sub_interval = parts[1].rstrip(")").strip().lower() if len(parts) > 1 else "monthly"
-        if sub_plan in ("trader", "pro"):
-            duration = 30 if sub_interval == "monthly" else 365
-            if sub_plan == "pro":
-                for key in server.DASHBOARDS:
-                    db.upsert_subscription(
-                        user_id=user_id, dashboard_key=key,
-                        plan=f"pro_{sub_interval}", duration_days=duration,
-                        source="subscribe_checkout",
-                    )
-            else:
-                db.upsert_subscription(
-                    user_id=user_id, dashboard_key="__plan__",
-                    plan=f"trader_{sub_interval}", duration_days=duration,
-                    source="subscribe_checkout",
-                )
-
-    response = JSONResponse({"success": True, "user_id": user_id})
-    await _issue_hardened_session(user_id, request, response)
-
-    # Affiliate-attribution hook (audit HIGH, 2026-05-15). If the visitor
-    # arrived via /partner/{code} or /p/{code}, the affiliate cookie is
-    # set on this session; bind the new user_id to the affiliate's
-    # conversions table now. Defined in affiliate_routes.py but never
-    # previously wired into the register path — silent miss meant every
-    # affiliate-driven signup since launch went unattributed. Fail-soft:
-    # every error inside the helper is swallowed already.
-    try:
-        from affiliate_routes import maybe_attribute_signup
-        # Hook signature is ``(request, user_id)`` per the affiliate_routes
-        # contract — the cookie is read off the request and best-effort
-        # cleared internally. We don't need the response object here.
-        maybe_attribute_signup(request, user_id)
-    except Exception:
-        log.exception("auth.register: affiliate attribution hook failed (user_id=%d)", user_id)
-
-    # Share-loop conversion attribution. If this visitor landed on narve.ai
-    # via /s/{m,s,p}/{token} we set a `narve_share_attribution` cookie
-    # carrying the share_metrics row id. Link the row to the new user so
-    # /admin/sharing shows the conversion AND create a referrals-table row
-    # pointing at the sharer so the nightly reward job grants them the
-    # standard "1 month free" that a direct /invite/{code} flow would.
-    # Fail-soft end-to-end: a bad cookie, missing migration, or closed DB
-    # never blocks a signup.
-    share_metric_raw = request.cookies.get("narve_share_attribution")
-    if share_metric_raw:
-        try:
-            metric_id = int(share_metric_raw)
-        except (TypeError, ValueError):
-            metric_id = None
-        if metric_id and metric_id > 0:
-            try:
-                import db_sharing
-                linked = db_sharing.link_share_to_signup(metric_id, user_id)
-                if linked:
-                    # Bridge to the referral-reward pipeline. Create a
-                    # pending referral row; the daily
-                    # process_referral_rewards job resolves it into a
-                    # gifted_subscriptions grant once this new user's
-                    # subscription upsert flips converted_to_paid via
-                    # db_referrals.mark_referral_converted (wired into
-                    # db.upsert_subscription). Same reward path as the
-                    # direct /invite/{code} flow.
-                    sharer_id = db_sharing.get_sharer_for_share_metric(metric_id)
-                    if sharer_id and sharer_id != user_id:
-                        try:
-                            import db_referrals
-                            db_referrals.create_referral(
-                                referrer_user_id=sharer_id,
-                                referred_user_id=user_id,
-                                referred_email=email,
-                            )
-                        except Exception:
-                            log.exception(
-                                "auth.register: share->referral bridge "
-                                "failed (sharer=%d, user=%d, metric=%d)",
-                                sharer_id, user_id, metric_id,
-                            )
-            except Exception:
-                # Log + move on. An attribution failure on signup is
-                # strictly lower priority than the signup itself.
-                log.exception(
-                    "auth.register: share attribution link failed "
-                    "(user_id=%d, metric_id=%s)",
-                    user_id, share_metric_raw,
-                )
-        # Clear the cookie either way — consumed once, no longer needed.
-        response.delete_cookie("narve_share_attribution", path="/")
-
-    # Audit D — drop raw email + token prefix from access log. Mask the
-    # email so on-call can still correlate to a user without the log line
-    # itself being a PII source. Token prefix is gone entirely.
-    log.info("auth.register: user_id=%d email=%s", user_id, db.mask_email(email))
-    return response
 
 
 @app.post("/auth/login")
@@ -1917,7 +1611,6 @@ async def auth_logout(request: Request):
         response.headers["Retry-After"] = "60"
         clear_session_cookie_hardened(response, request)
         clear_session_cookie(response, request)
-        clear_pending_token_cookie(response, request)
         return response
 
     raw_hardened = request.cookies.get(SESSION_COOKIE, "")
@@ -1935,7 +1628,6 @@ async def auth_logout(request: Request):
     response = JSONResponse({"ok": True})
     clear_session_cookie_hardened(response, request)
     clear_session_cookie(response, request)
-    clear_pending_token_cookie(response, request)
     return response
 
 

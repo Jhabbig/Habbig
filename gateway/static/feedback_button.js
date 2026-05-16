@@ -27,7 +27,6 @@
 
   // Pages where the FAB would be noise or redundant.
   var SUPPRESS_PATHS = [
-    "/token",
     "/login",
     "/logout",
     "/admin",

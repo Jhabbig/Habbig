@@ -24,7 +24,6 @@
   var SUPPRESS_PATHS = [
     "/settings/billing",
     "/settings/billing/cancel-flow",
-    "/token",
     "/login",
     "/admin",
   ];

@@ -3807,9 +3807,10 @@ async def gate_submit(request: Request, token: str = Form("")):
     return response
 
 
-# Invite-token entry (/invite, /token) removed 2026-05-15 — the
-# perimeter is now /gate (SITE_ACCESS_TOKEN). Anyone past /gate may
-# create an account directly at /register.
+# Invite-token entry (/invite, /token) removed 2026-05-15. The
+# /register and /auth/register routes followed on 2026-05-16
+# (audit #18 MED #3). Perimeter is /gate (SITE_ACCESS_TOKEN);
+# /login below is the only post-gate auth surface.
 
 
 @app.get("/login", response_class=HTMLResponse)

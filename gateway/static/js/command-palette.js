@@ -528,8 +528,9 @@
   //     (caller opted for custom placement and we don't want two)
   function mountPill() {
     if (document.querySelector('.narve-search-trigger')) return;
+    // /register + /token retired 2026-05-16 (audit #18 MED #3).
     const PUBLIC_PATHS = new Set([
-      '/', '/gate', '/login', '/register', '/token', '/signup',
+      '/', '/gate', '/login', '/signup',
       '/forgot-password', '/reset-password',
       '/terms', '/privacy', '/dpa', '/unsubscribe',
       '/about', '/how-it-works', '/methodology', '/faq',
