@@ -30,13 +30,11 @@ except ImportError:  # pragma: no cover — direct import path in tests
 
 try:
     from gateway.auth.cookies import (
-        VISITOR_COOKIE,
         read_visitor_cookie,
         set_visitor_cookie,
     )
 except ImportError:  # pragma: no cover — direct import path in tests
     from auth.cookies import (  # type: ignore
-        VISITOR_COOKIE,
         read_visitor_cookie,
         set_visitor_cookie,
     )
