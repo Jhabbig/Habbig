@@ -39,6 +39,16 @@ from jobs.email_jobs import enqueue_email
 from jobs import enqueue_job, get_worker_status, list_recent_jobs, retry_job
 from sidebar import render_sidebar
 
+# Canonical rate-limit decorator. Fall back to no-op so the module still
+# imports if the security subpackage is missing (matches server.py).
+try:
+    from security.rate_limiter import rate_limit
+except ImportError:  # pragma: no cover — defensive
+    def rate_limit(*args, **kwargs):
+        def deco(fn):
+            return fn
+        return deco
+
 # Dedicated security-channel logger (routes to logs/security.log).
 import logging as _logging
 security_log = _logging.getLogger("security.auth")
@@ -258,6 +268,11 @@ def _hash_reset_token(raw: str) -> str:
 
 
 @app.post("/auth/forgot-password")
+@rate_limit(
+    limit=3,
+    window_seconds=3600,
+    error_message="Too many password-reset requests. Try again in an hour.",
+)
 async def auth_forgot_password(request: Request, email: str = Form("")):
     """Always returns 200. Never reveals whether the email exists.
 
@@ -320,6 +335,11 @@ async def auth_forgot_password(request: Request, email: str = Form("")):
 
 
 @app.post("/auth/reset-password")
+@rate_limit(
+    limit=5,
+    window_seconds=3600,
+    error_message="Too many reset attempts. Try again in an hour.",
+)
 async def auth_reset_password(
     request: Request,
     token: str = Form(""),
@@ -1591,6 +1611,11 @@ async def auth_login(request: Request):
 
 
 @app.post("/auth/logout")
+@rate_limit(
+    limit=20,
+    window_seconds=60,
+    error_message="Too many logout requests.",
+)
 async def auth_logout(request: Request):
     """Revoke the hardened session AND the legacy session cookie.
 
