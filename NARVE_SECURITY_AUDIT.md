@@ -5,6 +5,154 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #23 — 2026-05-16T14:42Z — commit cf70ffa — analytics.js client-side consent gate (closes audit #22 MED #1 strict-ePrivacy gap)
+
+### Why this audit exists
+
+Loop iteration 4 — caller dispatched audit #23 to verify the single audit-#22 finding closed by `cf70ffa`:
+  1. **MED #1 (#22)** — strict-ePrivacy gap: `analytics.js` was unconditionally firing a `page_view` ping on first visit (before the user clicked Accept/Decline on the cookie banner). `cf70ffa` was supposed to add a client-side `narve_consent` cookie read that gates the auto-`page_view` AND `window.narveTrack()` calls on `consent === "accept"`, while leaving newsletter-form submits exempt (first-party user-initiated action).
+
+Plus: review `cf70ffa` diff (+58 / -11 in analytics.js, single file) for any NEW issues introduced by the fix itself.
+
+### Code inventory audited
+- Committed tip: `cf70ffa` (`fix(analytics): client-side consent gate before page_view (closes audit #22 MED #1)`). One commit ahead of audit #22's `5130b62`.
+- Local unpushed commits: **none** — local HEAD = origin HEAD = `cf70ffa`.
+- Local uncommitted files: `BUGS_FOUND.md` (modified, doc-only). Untracked: `gateway/static/avatars/` (carry-over), `gateway/tests/test_gift_subscription.py` (carry-over). **No source-file WIP.**
+- Local stashes: **72 entries** (unchanged from #22). Carry-over.
+- Server uncommitted files: only `auth.db.bak-fk-sweep-*` + `auth.db.backup-pre-*` + `config.json.bak.*` + `.deployed-at` + `sitemap.xml` + subproduct WAL/SHM (all runtime artifacts / pre-`*.bak`-gitignore backups). No source-file drift.
+- Server tip vs origin: **server matches origin** (`cf70ffa` on both). Drift closed.
+- Running uvicorn loaded from: `python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway` (pid 63405, started 2026-05-16 15:36:05 local). `gateway/static/analytics.js` mtime 15:36:02 → uvicorn started 3 seconds after final write → **process IS loading current tree.** Static analytics.js is served from disk by StaticFiles, so even uvicorn-load timing is irrelevant for THIS fix — but verified md5 match (`4b45743bfb55f19ebefe5f5d80855595` on disk and on the live wire from `https://narve.ai/_gateway_static/analytics.js`) proves the served bytes ARE the cf70ffa bytes.
+- Branches with recent work (last 14d not in current): single worktree on `feature/platform-build`; no sibling branches modified.
+- DRIFT FLAG: **none.** Server matches origin; uvicorn loaded post-final-write; served-file md5 matches disk.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 0
+Medium-priority: 1 (`gateway/server.py` LOC creep CARRY-OVER, still 8934 LOC — `cf70ffa` is static-only so server.py LOC unchanged from #22)
+Low-priority: 7 (all carry-overs)
+Resolved since last audit: **1** — #22 MED #1 (strict-ePrivacy first-visit page_view ping) CLOSED.
+New since last audit: **0** — no new findings introduced by `cf70ffa`.
+Regressions: **0.**
+
+### Verification matrix — audit #23 focus surfaces
+
+| # | Surface | Evidence | Status |
+|---|---|---|---|
+| 1 | `analytics.js` client-side consent gate (#22 MED #1) | `gateway/static/analytics.js:43-75`: new `readCookie(name)` helper generalises the existing visitor-cookie reader; `consentState()` returns `"accept"` / `"decline"` / `""` (anything else is treated as unset); `hasConsent()` returns `consentState() === "accept"`. `:123-127` `track()` early-returns when `!hasConsent()`. `:138-145` the auto `page_view` block is wrapped in `if (hasConsent()) { ... }` so DOMContentLoaded handler is only registered when consent is `"accept"`. **Newsletter form-submit hook (`:150-158`) was correctly switched from `track(...)` (which would now be a no-op without consent) to `sendEvent(...)` directly** — preserves first-party explicit-action telemetry. `:131-136` `window.narveTrackPostConsent` is a hatch for `cookie_consent.js` to fire a deferred page_view post-Accept, but it ALSO gates on `hasConsent()` so a script-injection that tried to call it without setting the cookie first would no-op. **Live wire verification**: md5 of `https://narve.ai/_gateway_static/analytics.js` (`4b45743bfb55f19ebefe5f5d80855595`) matches md5 of `~/Habbig/gateway/static/analytics.js` (`4b45743bfb55f19ebefe5f5d80855595`) — served bytes ARE the cf70ffa bytes. | **CLOSED** |
+| 2 | Server-side consent gate at `/api/analytics/event` still intact (carry-over from #22) | `gateway/server.py:5229-5246` unchanged by `cf70ffa` (diff was static-only). Live probe (3 cases): `POST /api/analytics/event` with `Cookie: narve_consent=decline` → `HTTP 204`; with `DNT: 1` → `HTTP 204`; with `Cookie: narve_consent=accept` → `HTTP 204`. **DB verification**: after probing with three payloads (`/audit23test_decline`, `/audit23test_dnt`, `/audit23test_accept`), `SELECT page FROM analytics_events WHERE page LIKE '/audit23test%'` returns ONLY `('/audit23test_accept',)` — decline and DNT rows were NOT written. The server-side gate still works exactly as #22 verified, **and is now defended in depth by the client-side gate** added in `cf70ffa`. | **PROTECTED** (carry-over) |
+| 3 | NEW issues introduced by `cf70ffa` | Diff scope: `gateway/static/analytics.js` only (+58 / -11). Five regions touched: (a) docstring expansion (`:13-22`) — no runtime effect. (b) new `CONSENT_COOKIE` constant + `readCookie(name)` generalised reader replacing the inline `readVisitorCookie` body — same logic, parameterised; no new injection vector (cookie value is still substring-after-`=`, never evaluated). (c) new `consentState()` + `hasConsent()` helpers — pure-functional, no I/O. (d) `track()` re-wired to early-return on `!hasConsent()`; original network-send moved to `sendEvent()` so newsletter-hook and post-consent-hatch can call it directly. (e) `window.narveTrackPostConsent` hatch added — gates on `hasConsent()` so it's a no-op without the cookie set. **No new auth bypass, no new oracle, no new injection vector, no new DOS surface, no new exfil path.** **Minor doc nit**: the analytics.js docstring at `:19-22` says "cookie_consent.js may call window.narveTrackPostConsent() when the user clicks Accept" — but `cookie_consent.js:121` actually calls `window.location.reload()` instead, NOT `narveTrackPostConsent()`. This is **not a security issue** (reload re-fetches the page and the post-accept page fires page_view normally via the auto-track block), but the comment is aspirational rather than descriptive. Filed as **LOW (doc accuracy)**, not regression-flagged. | **CLEAN** |
+| 4 | Newsletter form-submit exemption is safe | `gateway/static/analytics.js:147-158` — `submit` listener fires `sendEvent("newsletter_signup")` directly (bypassing `track()` consent gate) on forms matching `.newsletter-form` selector, `#prerelease-form` id, or `#newsletter-form` id. **Justification**: newsletter signup is a first-party explicit user action (user clicked Submit on a form they typed an email into), not passive cross-site tracking. ePrivacy art. 5(3) exempts strictly-necessary-for-user-requested-service cookies/events. **The selector list is narrow and hardcoded** (cannot be expanded by attacker via XSS without first having script execution, in which case consent gates are moot). Server-side at `/api/analytics/event` will still 204 + skip-write on decline+DNT, so even if an attacker forged a fake form with one of these classes/IDs the event won't be persisted server-side when the user has chosen decline. **No bypass surface.** | **SAFE** |
+| 5 | `readCookie(name)` substring parser robust to malicious cookie names | `:43-60` parser does `raw.split(";")` then `p.trim()` then `p.indexOf(prefix) === 0` where `prefix = name + "="`. Called only with two hardcoded constants (`VISITOR_COOKIE = "narve_visitor"`, `CONSENT_COOKIE = "narve_consent"`). **No XSS surface** (no innerHTML/eval; result is JSON-serialised in payload body or compared as string). Even if document.cookie were attacker-poisoned with a forged `narve_consent=accept`, the worst outcome is that the analytics endpoint records a page_view — which is the same outcome as the user clicking Accept, i.e. no security impact. Cookie value goes into JSON payload via `JSON.stringify` (no template interpolation). **No injection surface.** | **SAFE** |
+| 6 | Server-side LOC creep (carry-over from #22 MED #2) | `gateway/server.py` still at 8934 LOC (unchanged from #22 — `cf70ffa` is static-only, didn't touch server.py). `gateway/db.py` 1567 LOC. Carry-over MED. | **CARRY-OVER** |
+| 7 | Carry-over LOWs re-verified | Dynamic ORDER BY (4 hits, all server-allowlisted, carry-over); 72 stashes; pip-audit blocked on Py 3.9/3.10 dep mismatch; `requirements.txt` not split into `requirements-dev.txt`; `gateway/static/avatars/` untracked runtime dir; open-redirect scanner false-positives (`feedback_routes.py` 2 hits, both hardcoded local paths); Stripe webhook idempotency scanner false-positive. All unchanged from #22. | **CARRY-OVER** |
+
+### Authentication & Sessions
+- No changes in this surface since #22. `cf70ffa` diff scope is `gateway/static/analytics.js` only — no auth code touched. All `/login`, `/auth/login`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password` `@rate_limit` decorators, oracle parity, session storage hashing, cookie attributes, password hashing, impersonation flow all carry forward unchanged.
+
+### Authorisation
+- No changes since #22. All admin gates, subproduct access, gift subscription enforcement, feature-flag eval carry forward.
+
+### CSRF
+- No changes since #22. Double-submit cookie + session-bound CSRF still enforced on all mutating endpoints. The analytics endpoint `/api/analytics/event` is intentionally exempt from CSRF (analytics beacons from arbitrary origins are by design — the rate limit + 204-on-decline gate are the controls).
+
+### Rate limiting
+- No changes since #22. 46 `@rate_limit` decorators across the codebase (unchanged). The single `scan_auth.sh` HIGH at `gateway/server_features.py:1483` is a known false-positive (matches a `def` line in a handler whose POST sibling IS decorated — carry-over).
+
+### Input validation
+- Diff scope of `cf70ffa` is `gateway/static/analytics.js` only — no new SQL, no new template, no new shell, no new subprocess, no new file I/O, no new URL fetch. **No new injection surface.** The new `readCookie(name)` helper takes only hardcoded constant names; cookie values go into JSON payload via `JSON.stringify` (no string concatenation, no template interpolation).
+- Carry-over false-positives unchanged: `db_sharing.py` IN-clause int lists, `db_referrals.py`/`watchlist.py`/`db_takes.py`/`feedback_routes.py` ORDER BY with server-allowlisted col names, `migrations/125_preferred_language.py` cols_sql (admin-controlled DDL).
+
+### Encryption & secrets
+- No changes since #22. Secrets scan clean on current tree AND history.
+
+### Data privacy
+- **Client-side consent gate now LIVE in analytics.js** (closed in this audit): auto `page_view` is suppressed pre-consent on first visit; `window.narveTrack(...)` is a no-op pre-consent. **#22 MED #1 CLOSED.**
+- The strict-ePrivacy posture is now BOTH server-side (cf70ffa-1 from #22: `/api/analytics/event` returns 204 + skips DB on `narve_consent=decline` or `DNT:1`) AND client-side (cf70ffa-2 from #23: `analytics.js` no-ops the auto-page-view AND the `window.narveTrack()` API when consent isn't explicitly `"accept"`). **Defence in depth achieved.**
+- Newsletter signup remains exempt from the gate — first-party explicit user action (justified above in matrix item #4).
+- All other Data Privacy items from #22 carry forward unchanged: account deletion, export completeness, log redaction, impersonation logging.
+
+### External integrations
+- No changes since #22. Stripe webhook signature + idempotency + mode-verification carry forward. Bot tokens env-only.
+
+### Infrastructure
+- No changes since #22. SQLite WAL, Cloudflare Tunnel origin protection, CF rules carry forward.
+- `CLOUDFLARE_CHANGES.md` last modified 2026-05-15 (carry-over).
+
+### Monitoring
+- No changes since #22. Sentry still not configured (carry-over LOW).
+
+### Dependency audit
+- No changes since #22. pip-audit blocked on Py 3.9/3.10 dep mismatch (LOW carry-over).
+
+### Compliance
+- **Cookie-consent flow now fully self-consistent**: banner click → cookie set → BOTH client-side and server-side gates honour the decision. **Decline is hard-enforced on both sides; pre-click first-visit window is now fully gated.** (Audit #22 closed server-side enforcement; audit #23 closes client-side enforcement. Strict-ePrivacy reading satisfied.)
+
+### Issues found in this audit
+
+#### CRITICAL
+None at HEAD.
+
+#### HIGH
+None at HEAD.
+
+#### MEDIUM
+
+1. **CARRY-OVER from #22 MED #2 — `gateway/server.py` at 8934 LOC (unchanged from #22).**
+   Location: `gateway/server.py`.
+   Impact: cf70ffa diff was static-only, so server.py LOC unchanged. Route-file split still overdue. Not a security issue per se, but the higher the LOC the harder it is to spot the next oracle/missing-decorator pattern. Carry-over informational MED.
+
+#### LOW
+
+1. **NEW (doc accuracy)** — analytics.js docstring at `:19-22` says "cookie_consent.js may call window.narveTrackPostConsent() when the user clicks Accept" but `cookie_consent.js:117-126` actually calls `window.location.reload()` instead. Not a security issue (reload achieves the same end-state — post-accept page fires page_view via the auto-track block) but the doc comment is aspirational rather than descriptive. Fix: either wire `narveTrackPostConsent()` into the Accept handler in `cookie_consent.js` (preserves SPA-style no-reload behaviour) or amend the analytics.js docstring to say "OR a reload triggers the auto-page_view path".
+2. Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:260`, `db_referrals.py:461`). All server-allowlisted. Carry-over.
+3. Stash debt at 72 entries. Carry-over.
+4. pip-audit blocked on Python 3.9 vs 3.10 dep mismatch. Carry-over.
+5. `requirements.txt` not split into `requirements-dev.txt`. Carry-over.
+6. `gateway/static/avatars/` untracked runtime upload dir. Carry-over.
+7. Open-redirect scanner false-positives (`feedback_routes.py` 2 hits, hardcoded local paths). Carry-over.
+8. Stripe webhook idempotency scanner false-positive (ledger pattern). Carry-over.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- `BUGS_FOUND.md` (modified, doc-only). Untracked: `gateway/static/avatars/` (LOW carry-over); `gateway/tests/test_gift_subscription.py` (carry-over). **No source-file WIP.**
+
+#### Unpushed local commits
+- **None.** Local HEAD = origin HEAD = server HEAD = `cf70ffa`.
+
+#### Server-side uncommitted state
+- Only DB backups + `.deployed-at` markers + `sitemap.xml` + subproduct WAL/SHM (all runtime artifacts / pre-`*.bak`-gitignore backups). **No source-file drift.**
+
+#### Stashes
+- 72 entries. Carry-over since #19/#20/#21/#22. Recommendation unchanged: timeboxed sweep in a separate session.
+
+### Changes since previous audit
+
+#### Resolved
+- **#22 MED #1** — strict-ePrivacy gap: analytics.js fired a `page_view` on first visit before the user clicked Accept/Decline. **CLOSED** by `cf70ffa`. Auto-page_view now gated on `consentState() === "accept"`. Verified by reading the served file (md5-matched to disk) + reading the logic in `analytics.js:138-145` + confirming the server-side gate at `/api/analytics/event` still rejects decline+DNT rows (DB query confirms only the `audit23test_accept` row was written; decline+DNT rows correctly suppressed).
+
+#### New issues
+- **1 LOW (doc accuracy)** — analytics.js docstring references `window.narveTrackPostConsent()` being called by `cookie_consent.js`, but `cookie_consent.js` actually uses `window.location.reload()` instead. Functionally equivalent (reload triggers auto-page_view path) but comment is aspirational. Filed as LOW.
+
+#### Regressions
+- **None.**
+
+### Drift warnings
+- none
+
+### Stability counter
+- **Counter: 0** (reset). Audit #23 closes 1 MED from #22 and introduces 1 new LOW (doc accuracy). Findings count + IDs differ materially from #22 — counter does NOT increment.
+- For reference: if the next 3 audits all return findings IDENTICAL to #23 (0C 0H 1M 8L, exact same IDs, zero deltas), counter reaches 3 → recommend stopping the loop via CronDelete on the recurring bug-hunt + security-scan job.
+
+### Recommended actions for next audit
+1. **Tiny cleanup (LOW)**: pick ONE of — (a) wire `cookie_consent.js:117-126` Accept handler to call `window.narveTrackPostConsent()` AND skip the reload (preserves SPA-style instant-feedback); or (b) edit the analytics.js docstring at `:19-22` to say "the Accept handler reloads, which triggers the auto-page_view path". Either resolves the doc-vs-code mismatch.
+2. Plan `gateway/server.py` route-file split — 8934 LOC unchanged, still well past the point where new patterns are hard to enforce by review.
+3. Stash sweep — 72 entries silently growing.
+4. Verify Tailscale + Cloudflare Tunnel posture from outside the VPN once per quarter (last verified pre-#13).
+
+---
+
 ## AUDIT #22 — 2026-05-16T14:29Z — commit 5130b62 — audit #21 cleanup: /login oracle + analytics consent gate + /login @rate_limit
 
 ### Why this audit exists
