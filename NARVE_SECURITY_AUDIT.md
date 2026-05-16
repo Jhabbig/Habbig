@@ -5,6 +5,165 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #22 — 2026-05-16T14:29Z — commit 5130b62 — audit #21 cleanup: /login oracle + analytics consent gate + /login @rate_limit
+
+### Why this audit exists
+
+Loop iteration 3 — caller dispatched audit #22 to verify the 3 audit-#21 findings closed by `5130b62`:
+  1. **HIGH #1 (#21)** — `/login` form-fallback user-existence oracle (mirror of the `baac236` fix at `/auth/login`).
+  2. **MED #3 (#21)** — `/login` form-fallback missing canonical `@rate_limit` decorator.
+  3. **MED #2 + #4 (#21)** — `/api/analytics/event` server-side ePrivacy consent gate (DNT + `narve_consent=decline`).
+
+Plus: review `5130b62` diff for any NEW issues introduced by the fix itself.
+
+### Code inventory audited
+- Committed tip: `5130b62` (`fix(auth + privacy): close audit #21 — /login oracle parity + analytics consent gate + /login @rate_limit`). One commit ahead of audit #21's `4064828`.
+- Local unpushed commits: **none** — local HEAD = origin HEAD = `5130b62`.
+- Local uncommitted files: `BUGS_FOUND.md` (modified, doc-only). Untracked: `gateway/static/avatars/` (carry-over), `gateway/tests/test_gift_subscription.py` (carry-over). **No source-file WIP.**
+- Local stashes: **72 entries** (unchanged from #21). Carry-over.
+- Server uncommitted files: `whale-dashboard/whale.sqlite-shm` + `whale-dashboard/whale.sqlite-wal` (subproduct WAL/SHM; runtime-only). DB backups + `.deployed-at` markers preserved. No source-file drift.
+- Server tip vs origin: **server matches origin** (`5130b62` on both). Drift closed.
+- Running uvicorn loaded from: `python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway` (pid 61475, started 2026-05-16 15:21:23 local). `gateway/server.py` mtime 15:21:21 → uvicorn started 2 seconds after final write → **process IS loading current tree.** The `/login` oracle fix + `@rate_limit` decorator + analytics consent gate are LIVE.
+- Branches with recent work (last 14d not in current): single worktree on `feature/platform-build`.
+- DRIFT FLAG: **none.** Server matches origin; uvicorn loaded post-final-commit.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 0 (**#21 HIGH #1 CLOSED**)
+Medium-priority: 2 (#21 MED #1 strict-ePrivacy gap on first-visit analytics ping CARRY-OVER; `gateway/server.py` LOC creep CARRY-OVER, now 8934 LOC up from 8883)
+Low-priority: 7 (all carry-overs)
+Resolved since last audit: **3** — #21 HIGH #1 (`/login` form-fallback oracle) CLOSED; #21 MED #3 (`/login` missing `@rate_limit` decorator) CLOSED; #21 MED #2 + #4 (`/api/analytics/event` server-side consent gate) CLOSED.
+New since last audit: **0** — no new findings introduced by `5130b62`.
+Regressions: **0.**
+
+### Verification matrix — audit #22 focus surfaces
+
+| # | Surface | Evidence | Status |
+|---|---|---|---|
+| 1 | `/login` form-fallback user-existence oracle (#21 HIGH #1) | `gateway/server.py:3903-3917`: `db.verify_password(password, user["password_hash"] or "", user["password_salt"] or "")` runs BEFORE any branch on `user["suspended"]` or `user["password_hash"]`. Unknown email burns a dummy hash `db.verify_password(password, "0"*64, "0"*32)` to neutralise both the response-shape oracle AND the timing oracle. Only AFTER successful verify does the handler check suspended (`302 /suspended`) or shell (`401 "set a password"` — unreachable in practice since empty hash can't match, kept as defence-in-depth). **Live probe**: `POST /login` with `email=admin@narve.ai&password=wrong` returns `HTTP 200 OK` + body `<div class="auth-error">Invalid email or password.</div>` + `x-ratelimit-remaining: 9`. `POST /login` with `email=nobody999@example.invalid&password=wrong` returns identical `HTTP 200 OK` + identical body + `x-ratelimit-remaining: 8`. **Identical response shape AND body. Oracle CLOSED.** | **CLOSED** |
+| 2 | `/login` form-fallback `@rate_limit` decorator (#21 MED #3) | `gateway/server.py:3848-3852` — `@rate_limit(limit=10, window_seconds=300, error_message="Too many login attempts.")` decorator now stacked between `@app.post("/login")` and `async def login_submit`. Pattern matches the `8ebea42` shipping on forgot/reset/logout. Inline `_is_rate_limited` calls kept as finer-grained second layer (per-email bucket the per-IP decorator can't replicate). **Live probe**: response carries `x-ratelimit-limit: 10`, `x-ratelimit-remaining: <N>` headers proving the decorator is wired and decrementing per request. | **CLOSED** |
+| 3 | `/api/analytics/event` server-side consent gate (#21 MED #2 + #4) | `gateway/server.py:5229-5246` — early-return `Response(status_code=204)` when `request.headers.get("DNT") == "1"` OR `request.cookies.get("narve_consent") == "decline"`. Wrapped in try/except so cookie/header parse failure can't 500 the beacon. Missing cookie still proceeds (industry-standard first-visit behaviour). **Live probe (3 cases)**: (a) `POST /api/analytics/event` with `DNT: 1` → `HTTP 204`. (b) `POST /api/analytics/event` with `Cookie: narve_consent=decline` → `HTTP 204`. (c) `POST /api/analytics/event` with no header/cookie → `HTTP 204` (proceeds, returns 204 on success path too). **DB verification**: after probing with two payloads (`/audit22test_decline` + `/audit22test_accept`), `SELECT page FROM analytics_events WHERE page LIKE '/audit22test%'` returns ONLY `('/audit22test_accept',)` — the decline row was NOT written. **Server-side gate WORKS.** | **CLOSED** |
+| 4 | NEW issues introduced by `5130b62` | Diff scope: `gateway/server.py` only (+55 / -4 LOC). Three code regions touched: (a) `@rate_limit` decorator stacked above `login_submit` (`:3848-3852`) — body-agnostic decorator, fires before form-parse, no risk. (b) `login_submit` body reordered to put `verify_password` first (`:3905-3947`) — symmetric to the proven `/auth/login` fix in `server_features.py:1510-1528`. (c) Analytics consent gate inserted at top of `api_analytics_event` (`:5229-5246`) — defensive try/except, no DB or auth interaction. **No new auth bypass, no new oracle, no new injection vector, no new DOS surface.** Minor cosmetic: the new decorator's per-IP bucket (`server.login_submit:<ip>`, 10/300s) and the inline `_is_rate_limited(f"{ip}:login-auth", 10, 300)` at `:3876` now track the same thing in two counters — redundant but not a security issue, kept to preserve the shared-bucket envelope across both auth paths. | **CLEAN** |
+| 5 | `dummy_hash`/`dummy_salt` constants safe under `verify_password` | `gateway/queries/auth.py:146-151` `verify_password` does `_hash_password(password, salt, PBKDF2_ITERATIONS)` then `hmac.compare_digest(candidate, stored_hash)`. `dummy_hash = "0" * 64` (64 hex chars = 32 bytes, matches sha256 hex digest length) + `dummy_salt = "0" * 32` (32 hex chars = 16 bytes salt) match the expected format — no parse exception, no DB lookup, no side effects. Returns False after burning the PBKDF2 cycles to keep timing parity. The `verify_password` function still performs TWO PBKDF2 computes on failure (modern + legacy iteration counts at `:147` + `:150`); this is symmetric across known/unknown email paths so no new timing oracle is introduced. | **PROTECTED** |
+| 6 | Per-email rate limit DOS surface (carry-over, re-verified) | `gateway/server.py:3895` — `_is_rate_limited(f"email:{email}:login", limit=5, window=600)` fires BEFORE `verify_password`, so 5 wrong-password attempts for ANY email (existing or not) locks that email out for 10 min. Symmetric to `server_features.py` — known DOS pattern, carry-over LOW since #16 (cost-of-defence accepted: per-email throttle is the credential-stuffing-across-rotating-IPs defence; can't move the check past verify_password without losing that protection). Not re-flagged. | **ACCEPTED** |
+| 7 | Visitor cookie + analytics ingest pipeline unchanged | `gateway/auth/cookies.py:101-124` (set_visitor_cookie) + `gateway/pwa_middleware.py:298-538` (consent injection) untouched by `5130b62`. Verified via `git diff 5130b62^ 5130b62` (only `gateway/server.py` changed). #21 verification matrix items #4-#6, #11-#13, #19-#20 all carry forward unchanged. | **PROTECTED** (carry-over) |
+
+### Authentication & Sessions
+- `/login` form-fallback user-existence oracle: **CLOSED** by `5130b62`. `verify_password` runs first with dummy hash for unknown email; identical response shape verified via live curl probe.
+- `/login` form-fallback rate-limit: **CANONICAL DECORATOR ADDED** (`@rate_limit(10, 300)` per-IP); inline per-email (`5/600`) kept as second layer.
+- All four canonical auth endpoints now `@rate_limit`-decorated: `/auth/login` (10/300), `/auth/logout` (20/60), `/auth/forgot-password` (3/3600), `/auth/reset-password` (5/3600), `/login` form-fallback (10/300). **Full auth surface covered.**
+- All other Authentication & Sessions items from audit #21 carry forward unchanged: session storage hashed, cookies HttpOnly+Secure+SameSite, password PBKDF2-HMAC-SHA256 600k iter, impersonation banner + blocked paths, password-reset session-invalidation, 2FA intentionally absent. **No regressions in this surface.**
+
+### Authorisation
+- No changes since #21. All admin gates, subproduct access checks, gift subscription enforcement, feature-flag evaluation carry forward unchanged.
+
+### CSRF
+- No changes since #21. Double-submit cookie + session-bound CSRF still enforced on all POST/PUT/PATCH/DELETE; `/login` form-fallback still validated by `CSRFMiddleware` (verified via probe — bare POST without `_csrf` token returns `403 {"error":"CSRF validation failed"}`).
+
+### Rate limiting
+- **All 4 canonical auth POST handlers now decorated** (closed in this audit): `/login` (10/300), `/auth/login` (10/300), `/auth/logout` (20/60), `/auth/forgot-password` (3/3600), `/auth/reset-password` (5/3600). #21 MED #3 CLOSED.
+- 46 total `@rate_limit` decorators across the codebase (up from 45 at #21, +1 from `/login`).
+- Other endpoint coverage unchanged since #21 (billing endpoints MEDIUM carry-over — admin-gated or Cloudflare-WAF-rate-limited at edge; AI endpoints MEDIUM carry-over).
+
+### Input validation
+- Diff scope of `5130b62` is `gateway/server.py` only; no new SQL, no new template, no new shell, no new subprocess, no new file I/O, no new URL fetch. **No new injection surface.**
+- All carry-over false-positives from prior audits unchanged: `db_sharing.py` `IN (...)` placeholders (server-built int lists), `db_referrals.py` allowlisted col, `migrations/125` cols_sql (admin-controlled DDL).
+
+### Encryption & secrets
+- No changes since #21. Secrets scan clean on current tree AND history.
+
+### Data privacy
+- **Server-side consent gate now LIVE at `/api/analytics/event`** (closed in this audit): DNT-1 and `narve_consent=decline` cookie both cause silent 204 + no DB write. Verified via direct DB query. #21 MED #2 + #4 CLOSED.
+- Strict-ePrivacy first-visit analytics ping (#21 MED #1) carries over — `_should_inject_analytics` still injects the tracker when `narve_consent` is unset, so the first page-view ping fires before the user clicks Accept/Decline. Decision-pending (option a/b/c documented in #21 entry).
+- All other Data Privacy items from #21 carry forward unchanged: account deletion end-to-end, export completeness, log redaction, impersonation logging.
+
+### External integrations
+- No changes since #21. Stripe webhook signature + idempotency + mode-verification carry forward. Bot tokens env-only. Scraper API key validated per request.
+
+### Infrastructure
+- No changes since #21. SQLite WAL, Cloudflare Tunnel origin protection, CF rules for subdomain enumeration + scanner-UA blocking all carry forward.
+- `CLOUDFLARE_CHANGES.md` last modified 2026-05-15 (carry-over from #21).
+
+### Monitoring
+- No changes since #21. Sentry still not configured (carry-over LOW). Structured logging + `logs/security.log` + audit append-only DB log all carry forward.
+
+### Dependency audit
+- No changes since #21. pip-audit blocked on Python 3.9/3.10 dep mismatch carry-over (LOW since #16). Lockfile present, no unpinned deps.
+
+### Compliance
+- No changes since #21. Privacy/Terms/DPA + cookie consent banner all carry forward. **Server-side enforcement of the consent decision now matches the banner UI** (newly closed in #22).
+
+### Issues found in this audit
+
+#### CRITICAL
+None at HEAD.
+
+#### HIGH
+None at HEAD. **#21 HIGH #1 CLOSED.**
+
+#### MEDIUM
+
+1. **CARRY-OVER from #21 MED #1 — Analytics page-view pings fire before user clicks Accept/Decline on first visit (strict-ePrivacy gap).**
+   Location: `gateway/pwa_middleware.py:298-320` `_should_inject_analytics`; `gateway/static/analytics.js`.
+   Impact: same as #21 — first visit (when `narve_consent` is unset) injects the tracker and fires a `page_view` event with `visitor_id=NULL` before the user has clicked the banner. Strict-ePrivacy reading wants this gated on explicit accept. Looser legitimate-interest reading: NULL-visitor-id row contains no PII or stable identifier so likely defensible. **Partial mitigation now in place via #22 closure**: `narve_consent=decline` post-click is now hard-enforced server-side, so the gap is strictly limited to the pre-click window on first visit (not post-decline).
+   Fix: gate `_should_inject_analytics` on `consent_val == "accept"` (most conservative; loses first-visit telemetry) OR document the legitimate-interest reading in privacy policy. Decision-pending from #21.
+
+2. **CARRY-OVER from #21 MED #2 — `gateway/server.py` at 8934 LOC (was 8883 at #21).**
+   Impact: +51 LOC from the audit-#21 cleanup (`@rate_limit` decorator + login_submit reordering + analytics consent gate). Route-file split still overdue. Not a security issue per se, but the higher the LOC the harder it is to spot the next oracle/missing-decorator pattern.
+
+#### LOW
+
+1. Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:260`, `db_referrals.py:461`). All server-allowlisted. Carry-over.
+2. Stash debt at 72 entries. Carry-over.
+3. pip-audit blocked on Python 3.9 vs 3.10 dep mismatch. Carry-over.
+4. `requirements.txt` not split into `requirements-dev.txt`. Carry-over.
+5. `gateway/static/avatars/` untracked runtime upload dir. Carry-over.
+6. Open-redirect scanner false-positives (21 hits; all hardcoded local-path destinations). Carry-over.
+7. Stripe webhook idempotency scanner false-positive (ledger pattern). Carry-over.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- `BUGS_FOUND.md` (modified, doc-only — no security implications). Untracked: `gateway/static/avatars/` (LOW carry-over runtime dir); `gateway/tests/test_gift_subscription.py` (carry-over). **No source-file WIP.**
+
+#### Unpushed local commits
+- **None.** Local HEAD = origin HEAD = server HEAD = `5130b62`.
+
+#### Server-side uncommitted state
+- `whale-dashboard/whale.sqlite-shm` + `whale-dashboard/whale.sqlite-wal` only (subproduct WAL/SHM; runtime artifacts, .gitignored class). DB backups + `.deployed-at` predate the `*.bak` .gitignore rule. **No source-file drift.**
+
+#### Stashes
+- 72 entries. Carry-over since #19/#20/#21. Recommendation unchanged: timeboxed sweep in a separate session.
+
+### Changes since previous audit
+
+#### Resolved
+- **#21 HIGH #1** — `/login` form-fallback user-existence oracle: **CLOSED** by `5130b62`. `verify_password` runs first with dummy hash for unknown email; identical 200 OK + identical body verified via live probe.
+- **#21 MED #2 + MED #4** — `/api/analytics/event` accepts pings from DNT-1 / decline-cookie clients: **CLOSED** by `5130b62`. Server-side gate at `:5229-5246` returns 204 + skips DB write; verified via DB query after live probe.
+- **#21 MED #3** — `/login` form-fallback missing `@rate_limit` decorator: **CLOSED** by `5130b62`. Decorator at `gateway/server.py:3848-3852` matches pattern from `8ebea42`. Verified via `x-ratelimit-*` response headers on live probe.
+
+#### New issues
+- **None.** `5130b62` introduces no new attack surface, no new injection vector, no new oracle, no new auth bypass. Diff is 3 well-scoped fixes in a single file.
+
+#### Regressions
+- **None.**
+
+### Drift warnings
+- none
+
+### Stability counter
+- **Counter: 0** (reset). Audit #22 closes 1 HIGH + 3 of 4 MEDs from #21. Findings count + IDs differ materially from #21 — counter does NOT increment.
+- For reference: if the next 3 audits all return findings IDENTICAL to #22 (0C 0H 2M 7L, exact same IDs, zero deltas), counter reaches 3 → recommend stopping the loop via CronDelete.
+
+### Recommended actions for next audit
+1. Decide strict-ePrivacy posture on first-visit analytics ping (MED #1): gate `_should_inject_analytics` on `consent_val == "accept"` (strictest), or document legitimate-interest reading in privacy policy. Decision-pending since #21.
+2. Plan `gateway/server.py` route-file split — 8934 LOC is well past the point where new patterns are hard to enforce by review.
+3. Stash sweep — 72 entries silently growing.
+4. Verify Tailscale + Cloudflare Tunnel posture from outside the VPN once per quarter (last verified pre-#13).
+
+---
+
 ## AUDIT #21 — 2026-05-16T14:13Z — commit 4064828 — analytics dashboard + visitor cookie + consent banner + bulk delete/export + rate-limit decorators
 
 ### Why this audit exists
