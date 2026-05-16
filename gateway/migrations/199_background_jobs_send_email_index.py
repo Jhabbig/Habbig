@@ -24,6 +24,17 @@ peak from the email enqueuer.
 
 Idempotent via ``IF NOT EXISTS`` — safe to re-run, and matches the
 hot-applied production index created out-of-band on 2026-05-15.
+
+Lazy-table guard (bug-hunt iteration 1, 2026-05-16):
+``background_jobs`` is created lazily by ``jobs/backend.py``
+(``_ensure_jobs_table``) at the first job enqueue, NOT by a prior
+migration. Fresh DBs (e.g. test DBs that never enqueue a job, or
+brand-new prod installs) therefore don't have the table when the
+migration runner imports this file. We mirror the canonical CREATE
+TABLE from ``jobs/backend.py`` here so the index can always be
+created. Both statements are ``IF NOT EXISTS`` so re-running is
+safe and existing DBs (incl. prod, which has the table already)
+are untouched.
 """
 
 from __future__ import annotations
@@ -33,6 +44,27 @@ down_revision = "198"
 
 
 def upgrade(c):
+    # Mirror the canonical schema from jobs/backend.py::_ensure_jobs_table.
+    # Keep this in sync if that table shape changes — same columns, same
+    # types, same defaults, including the payload_hmac column from
+    # migration 192.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT NOT NULL,
+            payload        TEXT,
+            payload_hmac   TEXT,
+            status         TEXT NOT NULL DEFAULT 'queued',
+            attempts       INTEGER NOT NULL DEFAULT 0,
+            max_attempts   INTEGER NOT NULL DEFAULT 3,
+            error          TEXT,
+            result         TEXT,
+            enqueued_at    INTEGER NOT NULL,
+            started_at     INTEGER,
+            finished_at    INTEGER,
+            duration_ms    INTEGER
+        )
+    """)
     c.execute(
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_send_email "
         "ON background_jobs(name, status, enqueued_at DESC)"
