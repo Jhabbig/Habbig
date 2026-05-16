@@ -438,6 +438,97 @@ print('sent')
 \""
 ```
 
+## Sentry (error reporting)
+
+**Status:** code is wired up, DSN is not set, so `init_sentry()` returns
+`False` and every Sentry call is a no-op. This is intentional — Sentry is
+opt-in. The audit log (`NARVE_SECURITY_AUDIT.md`) tracks this as an
+accepted LOW (configurable, awaiting user choice).
+
+### What Sentry does for narve.ai when enabled
+
+- **Error aggregation** — every uncaught exception in FastAPI handlers,
+  background jobs, and the scraper is grouped, deduped, and shown with a
+  stack trace + request context (sanitised — see Privacy below).
+- **Release tracking** — `release=detect_release()` tags each event with
+  the current git SHA so regressions are pinned to a specific deploy.
+- **Performance traces** — 10% sampling of request spans + SQL queries
+  via `SqlalchemyIntegration`. Slow endpoints surface as `p95` regressions
+  on the Sentry performance dashboard.
+
+### How to enable
+
+1. Create a Sentry account at https://sentry.io (free tier is fine —
+   5k errors/mo, 10k performance units/mo).
+2. Create a new project, platform = **FastAPI**. Sentry will hand you a
+   DSN like `https://<key>@o<org>.ingest.sentry.io/<project>`.
+3. SSH to the prod box and append the DSN to the gateway env file:
+
+   ```bash
+   ssh julianhabbig@100.69.44.108
+   echo 'SENTRY_DSN=https://<key>@o<org>.ingest.sentry.io/<project>' >> ~/.gateway_env
+   # Optional tuning (defaults are sane):
+   # echo 'SENTRY_TRACES_SAMPLE_RATE=0.1' >> ~/.gateway_env
+   # echo 'SENTRY_PROFILES_SAMPLE_RATE=0.1' >> ~/.gateway_env
+   # echo 'ENVIRONMENT=production' >> ~/.gateway_env   # already set
+   ```
+
+4. Restart uvicorn so the new env is loaded (`Restart uvicorn` section
+   below). `init_sentry()` runs once at startup and is idempotent.
+5. Verify: trigger a test error from the admin panel
+   (`/admin/sentry/test`) and confirm it appears in the Sentry UI.
+6. (Optional) Repeat steps 1–4 with `~/.gateway_env_staging` to wire up
+   the staging environment to a separate Sentry project. Keep prod and
+   staging on **different DSNs** so noisy staging errors don't pollute
+   the prod issue list.
+
+### Env vars read by the init code
+
+Defined in `gateway/observability/sentry_setup.py:init_sentry`:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `SENTRY_DSN` | (unset → Sentry disabled) | Required to enable. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Fraction of requests traced. |
+| `SENTRY_PROFILES_SAMPLE_RATE` | `0.1` | Fraction of traces profiled. |
+| `ENVIRONMENT` | `production` | Tag on every event (`production`/`staging`). |
+
+The scraper service has its own init in
+`gateway/scraper/observability.py:49-78` and reads the same env vars.
+Both call the shared `scrub_sensitive_data` hook.
+
+### What to expect when enabled
+
+- Every uncaught exception → Sentry (sanitised).
+- WARNING-level log lines → Sentry breadcrumb.
+- ERROR-level log lines → Sentry event.
+- ~10% of requests recorded as performance traces.
+- ~10% of those traces profiled (CPU sampling).
+- Release SHA visible on each event for regression tracking.
+
+### Privacy — PII scrubbing
+
+Sentry's `before_send` hook is `scrub_sensitive_data` in
+`gateway/observability/sentry_setup.py:23-55`. It runs on **every event**
+before it leaves the server and:
+
+- `[Filtered]`s any header in
+  `{authorization, x-csrf-token, cookie, set-cookie}`.
+- `[Filtered]`s **all** request cookies (no allowlist).
+- `[Filtered]`s any request body / `extra` field whose key contains
+  `password`, `token`, `secret`, `key`, `card`, `cvv`, `cvc`, `ssn`,
+  `pin`, `credit`, `bank`, or `account_number`.
+- `[Filtered]`s the full query string if any of the same hints appear.
+
+User context is also minimised: `set_user_context` at
+`sentry_setup.py:106-121` hashes the internal user id
+(`sha256("narve:<id>")[:16]`) and **drops the email entirely** — only the
+hashed id and tier tag are sent. `send_default_pii=False` is also set on
+the SDK init so the Sentry SDK does not auto-attach IP / username.
+
+**If you enable Sentry, audit the hint list once** — anything not on it
+(e.g. a future "license_key" field) will be sent in cleartext until added.
+
 ## Monitoring
 
 Cloudflare Health Checks poll `/health` every 60s (prod) and 5min (staging).

@@ -5,6 +5,38 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## Audit #25 — 2026-05-16 — adequate posture (Sentry LOW closed via documentation)
+
+**Posture:** adequate (0C / 0H / 1M / 6L) — 1 LOW resolved vs #24 by
+documenting the Sentry enablement path. No code changes; finding is
+re-classed from "carry-over LOW" to "accepted/documented (configurable,
+awaiting user choice)".
+
+### Resolution detail
+- **#24 LOW #N "Sentry not configured"** → **CLOSED**. Sentry SDK
+  integration in `gateway/observability/sentry_setup.py` is intentionally
+  opt-in via `SENTRY_DSN`. Enablement path is now documented in
+  `gateway/RUNBOOK.md` under the new `## Sentry (error reporting)`
+  section, covering: what Sentry provides (errors / releases / traces),
+  how to obtain a DSN, exact env-var names + defaults read by
+  `init_sentry()`, the PII scrubbing performed by `scrub_sensitive_data`
+  (`gateway/observability/sentry_setup.py:23-55`), and a note on the
+  hashed-id-only user context (`set_user_context` at `:106-121`). The
+  remaining decision is a product/ops one (whether to spend the free-tier
+  budget), not a security gap — code is hardened and ready.
+
+### Stability counter
+**4** — finding IDs match #24 minus the one resolved-by-documentation
+LOW. Zero source files changed; only `gateway/RUNBOOK.md` and this audit
+log were touched.
+
+### Recommendation
+Same as #24: ship. The Sentry slot is now a documented opt-in rather than
+a latent gap. If/when the user enables it, re-audit the hint list in
+`_SENSITIVE_FIELD_HINTS` against any new field names.
+
+---
+
 ## Audit #24 — 2026-05-16 — adequate posture
 Commit reviewed: HEAD `37d63d6` (eb691f9 + 37d63d6 since #23 `3171969`).
 Scope: TIGHT — diff-since-#23 only (full /security-scan stalled at 600s last attempt, watchdog skipped).
