@@ -1,0 +1,33 @@
+# Dev-only deps for the gateway. Production installs use
+# `pip install -r requirements.txt` and never see this file.
+#
+# Local dev / CI:
+#   pip install -r gateway/requirements-dev.txt
+#
+# This file inherits the prod pins via `-r requirements.txt` so dev
+# environments stay in lockstep with production (same fastapi, httpx,
+# starlette, cryptography, etc). Add ONLY test/lint/audit tooling below.
+#
+# Audit lineage: split out per audit #24 LOW (close LOW: separate
+# dev-only deps so prod installs don't pull pytest/bs4/etc).
+
+-r requirements.txt
+
+# --- Test runner + plugins ------------------------------------------------
+pytest==8.3.0
+pytest-asyncio==0.24.0  # asyncio_mode=strict per pytest.ini
+pytest-cov==7.1.0       # coverage reports for CI (gateway/.coveragerc)
+pytest-xdist==3.6.1     # -n auto parallelism in .github/workflows/test.yml
+pytest-mock==3.14.0     # mocker fixture used across tests/
+
+# --- Coverage backend (pytest-cov shells out to this) ---------------------
+coverage==7.10.7
+
+# --- Test-only HTML parsing -----------------------------------------------
+# Used by tests/test_mobile_viewport.py; module is import-guarded so prod
+# never needs it, but pinning keeps CI deterministic.
+beautifulsoup4==4.14.3
+
+# --- Dependency audit tooling ---------------------------------------------
+# Drives the weekly CVE sweep documented in NARVE_SECURITY_AUDIT.md.
+pip-audit==2.9.0
