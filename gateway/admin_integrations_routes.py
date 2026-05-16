@@ -19,7 +19,9 @@ from __future__ import annotations
 import html
 import logging
 import os
+import re
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -32,6 +34,23 @@ from queries import integrations as integrations_q
 
 
 log = logging.getLogger("admin_integrations")
+
+
+# Canonical admin filter-bar partial, shipped in commit f30503f. Loaded
+# once at import time (small file, never changes between deploys) and
+# placeholder-substituted per request before being injected into the
+# ``raw_filter_bar`` slot in admin/integrations.html.
+_FILTER_BAR_PARTIAL_PATH = (
+    Path(__file__).parent / "static" / "_partials" / "admin_filter_bar.html"
+)
+try:
+    _FILTER_BAR_PARTIAL = _FILTER_BAR_PARTIAL_PATH.read_text()
+except OSError:
+    # Defensive: an absent partial is a deployment error rather than a
+    # request-time failure. Log loudly but degrade to an empty filter so
+    # the page still renders.
+    log.exception("admin_integrations: failed to load admin_filter_bar partial")
+    _FILTER_BAR_PARTIAL = ""
 
 
 # ── Snapshot endpoint ────────────────────────────────────────────────────
@@ -334,6 +353,79 @@ def _render_status_options(active: str) -> str:
     return "".join(out)
 
 
+def _render_filter_bar(
+    *,
+    provider_options_html: str,
+    status_options_html: str,
+) -> str:
+    """Render the canonical admin_filter_bar partial for /admin/integrations.
+
+    The partial ships with a search box, status select, since/until
+    pickers, and export anchors. /admin/integrations only honours the
+    ``provider`` + ``status`` querystring keys (filter shipped in
+    61805c9), so we:
+
+      * fill the partial's status slot with the integrations status
+        options;
+      * inject a sibling provider <label> next to the status field;
+      * strip the search, since/until, and exports blocks the page
+        doesn't use.
+
+    Mirrors the substitution rules ``render_admin_page`` applies: keys
+    prefixed with ``raw_`` are inserted verbatim, everything else is
+    HTML-escaped.
+    """
+    rendered = (
+        _FILTER_BAR_PARTIAL
+        .replace("{{ raw_status_options }}", status_options_html)
+        .replace("{{ filter_q }}", "")
+        .replace("{{ filter_since }}", "")
+        .replace("{{ filter_until }}", "")
+        .replace("{{ export_csv_href }}", "")
+        .replace("{{ export_json_href }}", "")
+    )
+
+    # Drop the slots that don't apply to this page: search box, the two
+    # date pickers, and the exports row. Done with a regex per block so
+    # we don't have to copy the partial's markup here.
+    for cls in (
+        "adm-filter-bar__field--search",
+        "adm-filter-bar__field--date",
+    ):
+        rendered = re.sub(
+            r'<label class="adm-filter-bar__field ' + cls + r'[^"]*"[\s\S]*?</label>',
+            "",
+            rendered,
+        )
+    rendered = re.sub(
+        r'<div class="adm-filter-bar__exports">[\s\S]*?</div>',
+        "",
+        rendered,
+    )
+
+    # Inject the provider <label> immediately before the status field so
+    # the rendered order reads provider, then status — same order as the
+    # legacy inline filter.
+    provider_label = (
+        '<label class="adm-filter-bar__field">'
+        '<span class="adm-filter-bar__label">Provider</span>'
+        '<select class="adm-filter-bar__input adm-filter-bar__input--select" '
+        'name="provider">'
+        f'{provider_options_html}'
+        '</select>'
+        '</label>'
+    )
+    # Regex-match the status field's opening so we tolerate the partial's
+    # natural whitespace + newlines between <label> and <span>.
+    rendered = re.sub(
+        r'(<label class="adm-filter-bar__field">\s*<span class="adm-filter-bar__label">Status</span>)',
+        provider_label + r'\1',
+        rendered,
+        count=1,
+    )
+    return rendered
+
+
 # ── HTML page ────────────────────────────────────────────────────────────
 
 
@@ -389,6 +481,11 @@ async def admin_integrations_page(request: Request):
             if row.get("status") == raw_status
         }
 
+    filter_bar_html = _render_filter_bar(
+        provider_options_html=_render_provider_options(provider),
+        status_options_html=_render_status_options(status_filter),
+    )
+
     return render_admin_page(
         request,
         "admin/integrations.html",
@@ -401,8 +498,5 @@ async def admin_integrations_page(request: Request):
         raw_tally_down=str(tally["down"]),
         raw_integration_rows=_render_rows(filtered_snapshot),
         raw_integration_count=str(len(filtered_snapshot)),
-        raw_provider_options=_render_provider_options(provider),
-        raw_status_options=_render_status_options(status_filter),
-        filter_provider=provider,
-        filter_status=status_filter,
+        raw_filter_bar=filter_bar_html,
     )
