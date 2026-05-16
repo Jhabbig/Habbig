@@ -1,0 +1,117 @@
+<!-- /admin/analytics — page-view + event analytics dashboard.
+     Wrapped by admin_shell. Body-only fragment.
+
+     Reads from the analytics_events table only. Five stats cards (total
+     events, unique visitors, page views, newsletter signups, logins), a
+     sortable top-20 pages table, a top-20 events table, and a 30-day
+     daily-page-views SVG sparkline. Filter bar (since/until date) lives
+     above the tables.
+
+     Strict monochrome — categorisation by typography weight + indentation,
+     never by colour. Inter for chrome, Geist Mono for every numeric cell. -->
+
+<link rel="stylesheet" href="/_gateway_static/pages/admin_analytics.css">
+
+<div class="adm-an-page">
+
+  <div class="adm-an-hero">
+    <p class="adm-an-hero__eyebrow">Dashboard</p>
+    <h2 class="adm-an-hero__display">Analytics</h2>
+    <p class="adm-an-hero__lede">
+      Page views and product events from the analytics_events table.
+      Unique visitors are keyed on the narve_visitor cookie when present
+      and the IP hash for rows that pre-date the cookie (migration 200).
+    </p>
+  </div>
+
+  <!-- ── Stats cards ─────────────────────────────────────────────── -->
+  <div class="adm-an-stats-grid" aria-label="Analytics summary">
+    {{ raw_stats_cards }}
+  </div>
+
+  <!-- ── Sparkline: daily page views, last 30d ───────────────────── -->
+  <div class="adm-an-spark" aria-label="Daily page views — last 30 days">
+    <div class="adm-an-spark__head">
+      <h3 class="adm-an-spark__title">Daily page views · last 30d</h3>
+      <span class="adm-an-spark__total">{{ spark_total }} views</span>
+    </div>
+    {{ raw_sparkline_svg }}
+    <div class="adm-an-spark__axis">
+      <span>{{ spark_start }}</span>
+      <span>{{ spark_end }}</span>
+    </div>
+  </div>
+
+  <!-- ── Filter bar ──────────────────────────────────────────────── -->
+  <form class="adm-an-filter" method="get" action="/admin/analytics"
+        role="search" aria-label="Filter analytics">
+    <label class="adm-filter-bar__field adm-filter-bar__field--date">
+      <span class="adm-filter-bar__label">Since</span>
+      <input class="adm-filter-bar__input adm-filter-bar__input--date"
+             type="date" name="since" value="{{ filter_since }}">
+    </label>
+    <label class="adm-filter-bar__field adm-filter-bar__field--date">
+      <span class="adm-filter-bar__label">Until</span>
+      <input class="adm-filter-bar__input adm-filter-bar__input--date"
+             type="date" name="until" value="{{ filter_until }}">
+    </label>
+    <div class="adm-filter-bar__actions">
+      <button type="submit" class="adm-filter-bar__btn adm-filter-bar__btn--primary">Apply</button>
+      <a href="/admin/analytics" class="adm-filter-bar__btn adm-filter-bar__btn--ghost">Reset</a>
+    </div>
+    <div class="adm-filter-bar__exports">
+      <a class="adm-filter-bar__export" href="{{ export_csv_href }}">Export CSV</a>
+    </div>
+  </form>
+
+  <!-- ── Summary strip (window + total row count) ────────────────── -->
+  <div class="adm-an-summary">
+    <span class="adm-an-section__hint">Window: {{ window_label }}</span>
+  </div>
+
+  <!-- ── Two-column tables ───────────────────────────────────────── -->
+  <div class="adm-an-tables">
+    <section class="adm-an-section">
+      <div class="adm-an-section__head">
+        <h3 class="adm-an-section__title">Top pages</h3>
+        <span class="adm-an-section__hint">top 20</span>
+      </div>
+      <div class="adm-an-table-wrap">
+        <table class="adm-an-table">
+          <thead>
+            <tr>
+              {{ raw_pages_sort_headers }}
+            </tr>
+          </thead>
+          <tbody>
+            {{ raw_pages_rows }}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="adm-an-section">
+      <div class="adm-an-section__head">
+        <h3 class="adm-an-section__title">Top events</h3>
+        <span class="adm-an-section__hint">top 20</span>
+      </div>
+      <div class="adm-an-table-wrap">
+        <table class="adm-an-table">
+          <thead>
+            <tr>
+              <th class="adm-an-th">Event</th>
+              <th class="adm-an-th adm-an-th--num">Count</th>
+              <th class="adm-an-th adm-an-th--num">Last seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ raw_events_rows }}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  {{ raw_empty_state }}
+
+</div>

@@ -4516,6 +4516,388 @@ async def email_addresses_bulk_delete(request: Request):
     return JSONResponse({"deleted": deleted, "errors": errors})
 
 
+# ── /admin/analytics — page-view + event dashboard ──────────────────────
+
+
+# Whitelist of column keys the top-pages table can be sorted by. Mirrors
+# the keys produced by db.get_top_pages so a malicious ?sort= can't crash
+# the page or expose dict internals.
+_ANALYTICS_PAGE_SORT_FIELDS = ("views", "unique_visitors", "page")
+
+
+def _fmt_analytics_ts(ts) -> str:
+    """Compact YYYY-MM-DD HH:MM for the last-seen column. Returns ``—`` on
+    missing/zero so the dense table reads cleanly."""
+    if not ts:
+        return "—"
+    try:
+        return _dt.datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OverflowError):
+        return "—"
+
+
+def _render_analytics_stats_cards(summary: dict) -> str:
+    """Render the 5-card stats strip across the top of the page."""
+    cards = (
+        ("Total events", summary.get("total_events", 0), ""),
+        (
+            "Unique visitors",
+            summary.get("unique_visitors", 0),
+            "visitor_id + ip_hash",
+        ),
+        ("Page views", summary.get("page_views", 0), ""),
+        ("Newsletter signups", summary.get("newsletter_signups", 0), ""),
+        ("Logins", summary.get("logins", 0), ""),
+    )
+    parts: list[str] = []
+    for label, value, note in cards:
+        note_html = (
+            f'<span class="adm-an-stat-note">{html.escape(note)}</span>'
+            if note else ""
+        )
+        parts.append(
+            '<div class="adm-an-stat-card">'
+            f'<span class="adm-an-stat-label">{html.escape(label)}</span>'
+            f'<span class="adm-an-stat-value">{int(value or 0):,}</span>'
+            f'{note_html}'
+            '</div>'
+        )
+    return "".join(parts)
+
+
+def _render_analytics_sparkline_svg(series: list[dict]) -> str:
+    """Render a monochrome SVG sparkline for the daily page-view series.
+
+    Layout uses a viewBox so the SVG scales to the container width.
+    Both the line and a translucent area fill use ``var(--text-primary)``
+    so the chart remains strictly monochrome and theme-aware.
+    """
+    if not series:
+        return (
+            '<svg class="adm-an-spark__svg" viewBox="0 0 600 96" '
+            'preserveAspectRatio="none" aria-hidden="true"></svg>'
+        )
+    width = 600
+    height = 96
+    n = len(series)
+    counts = [int(p.get("count") or 0) for p in series]
+    max_v = max(counts) if counts else 0
+    # Step between points along X. Single-point series degenerates to a
+    # vertical anchor at x=0; the area path stays valid in both cases.
+    step = (width / (n - 1)) if n > 1 else 0
+    # Reserve 4px top + 4px bottom padding so the line never clips into
+    # the border-radius of the wrapper.
+    pad_top = 4
+    pad_bot = 4
+    h_eff = height - pad_top - pad_bot
+    points: list[str] = []
+    for i, v in enumerate(counts):
+        x = i * step
+        y = (height - pad_bot) if max_v == 0 else (
+            pad_top + (1.0 - (v / max_v)) * h_eff
+        )
+        points.append(f"{x:.1f},{y:.1f}")
+    line_d = "M " + " L ".join(points)
+    area_d = (
+        f"{line_d} L {(n - 1) * step:.1f},{height - pad_bot:.1f} "
+        f"L 0,{height - pad_bot:.1f} Z"
+    )
+    return (
+        f'<svg class="adm-an-spark__svg" viewBox="0 0 {width} {height}" '
+        'preserveAspectRatio="none" aria-hidden="true">'
+        f'<path class="adm-an-spark__area" d="{area_d}"/>'
+        f'<path class="adm-an-spark__line" d="{line_d}"/>'
+        '</svg>'
+    )
+
+
+def _render_analytics_pages_sort_headers(
+    sort: str,
+    sort_dir: str,
+    base_qs: str,
+) -> str:
+    """Build the top-pages table header row with sortable column anchors."""
+    def header(key: str, label: str, align_right: bool = False) -> str:
+        is_active = (sort == key)
+        next_dir = "asc" if (is_active and sort_dir == "desc") else "desc"
+        arrow = ""
+        if is_active:
+            glyph = "↓" if sort_dir == "desc" else "↑"
+            arrow = f'<span class="adm-an-sort-arrow" aria-hidden="true">{glyph}</span>'
+        # Preserve filter context — append sort/dir to the page's existing
+        # query string.
+        from urllib.parse import urlencode, parse_qsl
+        existing = dict(parse_qsl(base_qs))
+        existing["sort"] = key
+        existing["dir"] = next_dir
+        href = "/admin/analytics?" + urlencode(existing)
+        cls_th = "adm-an-th"
+        if align_right:
+            cls_th += " adm-an-th--num"
+        if is_active:
+            cls_th += " adm-an-th--active"
+        return (
+            f'<th class="{cls_th}">'
+            f'<a class="adm-an-th-link" href="{html.escape(href, quote=True)}">'
+            f'{html.escape(label)}{arrow}'
+            f'</a></th>'
+        )
+
+    return (
+        header("page", "Page")
+        + header("views", "Views", align_right=True)
+        + header("unique_visitors", "Uniques", align_right=True)
+    )
+
+
+def _render_analytics_pages_rows(rows: list[dict]) -> str:
+    """Render the top-pages table body. Renders an explicit empty row
+    when there's no data so the wrapper doesn't collapse to zero height."""
+    if not rows:
+        return (
+            '<tr><td colspan="3" class="adm-an-empty">'
+            '<p class="adm-an-empty__hint">No page views in this window.</p>'
+            '</td></tr>'
+        )
+    parts: list[str] = []
+    for r in rows:
+        page = html.escape(str(r.get("page") or "(unknown)"))
+        views = int(r.get("views") or 0)
+        uniques = int(r.get("unique_visitors") or 0)
+        parts.append(
+            "<tr>"
+            f'<td class="adm-an-td--page">{page}</td>'
+            f'<td class="adm-an-td--num">{views:,}</td>'
+            f'<td class="adm-an-td--num">{uniques:,}</td>'
+            "</tr>"
+        )
+    return "".join(parts)
+
+
+def _render_analytics_events_rows(rows: list[dict]) -> str:
+    if not rows:
+        return (
+            '<tr><td colspan="3" class="adm-an-empty">'
+            '<p class="adm-an-empty__hint">No events in this window.</p>'
+            '</td></tr>'
+        )
+    parts: list[str] = []
+    for r in rows:
+        et = html.escape(str(r.get("event_type") or "(unknown)"))
+        cnt = int(r.get("count") or 0)
+        last_seen = _fmt_analytics_ts(r.get("last_seen"))
+        parts.append(
+            "<tr>"
+            f'<td class="adm-an-td--event">{et}</td>'
+            f'<td class="adm-an-td--num">{cnt:,}</td>'
+            f'<td class="adm-an-td--ts">{html.escape(last_seen)}</td>'
+            "</tr>"
+        )
+    return "".join(parts)
+
+
+def _resolve_analytics_window(qp) -> tuple[int, int, str, str]:
+    """Parse since/until from query params, returning (since, until,
+    since_str, until_str). Defaults to the trailing 30 days when neither
+    bound is given."""
+    since_str = (qp.get("since") or "").strip()
+    until_str = (qp.get("until") or "").strip()
+    since_ts = _parse_date_to_ts(since_str)
+    until_ts = _parse_date_to_ts(until_str)
+    if until_ts is not None:
+        until_ts += 86_399  # inclusive end-of-day
+    now = int(time.time())
+    if until_ts is None:
+        until_ts = now
+    if since_ts is None:
+        since_ts = until_ts - 30 * 86_400
+    return since_ts, until_ts, since_str, until_str
+
+
+async def analytics_dashboard(request: Request):
+    """GET /admin/analytics — page-view + event dashboard.
+
+    Read-only admin surface. Window defaults to the last 30 days; filter
+    bar lets admins narrow with since/until. Top-pages table is sortable
+    via querystring (?sort=views|unique_visitors|page&dir=asc|desc).
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    since_ts, until_ts, since_str, until_str = _resolve_analytics_window(qp)
+
+    sort = (qp.get("sort") or "views").strip().lower()
+    if sort not in _ANALYTICS_PAGE_SORT_FIELDS:
+        sort = "views"
+    sort_dir = (qp.get("dir") or "desc").strip().lower()
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+
+    summary = db.get_analytics_summary(since_ts, until_ts)
+    top_pages = db.get_top_pages(since_ts, until_ts, limit=20)
+    top_events = db.get_top_events(since_ts, until_ts, limit=20)
+
+    # In-Python sort so the user can flip the order without re-querying.
+    def _page_sort_key(row):
+        v = row.get(sort)
+        if sort == "page":
+            return (v or "").lower()
+        return v or 0
+    top_pages.sort(key=_page_sort_key, reverse=(sort_dir != "asc"))
+
+    # Sparkline always shows the trailing 30 days, independent of the
+    # filter window — the filter scopes the tables + cards, not the
+    # trendline. Mirrors how most analytics dashboards behave.
+    spark_until = int(time.time())
+    spark_since = spark_until - 30 * 86_400
+    spark_series = db.get_analytics_daily_page_views(spark_since, spark_until)
+    spark_total = sum(int(p.get("count") or 0) for p in spark_series)
+    spark_start = spark_series[0]["date"] if spark_series else ""
+    spark_end = spark_series[-1]["date"] if spark_series else ""
+
+    # Build the CSV-export href off the filter context.
+    from urllib.parse import urlencode
+    export_qs = urlencode([
+        (k, v) for k, v in (("since", since_str), ("until", until_str))
+        if v
+    ])
+    csv_href = "/admin/analytics/export.csv" + (f"?{export_qs}" if export_qs else "")
+
+    # Window label for the summary strip. Uses the same YYYY-MM-DD format
+    # as the filter inputs so it reconciles visually.
+    def _fmt_d(ts):
+        return _dt.datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d")
+    window_label = f"{_fmt_d(since_ts)} → {_fmt_d(until_ts)}"
+
+    # Stable base-qs for the sort-header link builder. We only need the
+    # filter context (since/until); sort/dir are re-set by each header.
+    base_qs = urlencode([
+        (k, v) for k, v in (("since", since_str), ("until", until_str))
+        if v
+    ])
+
+    raw_empty_state = ""
+    if summary.get("total_events", 0) == 0:
+        raw_empty_state = _srv().render_empty(
+            title="No analytics events",
+            body=(
+                "No events match the current window. Widen the date range "
+                "or clear the filter to see every recorded event."
+            ),
+            actions=[
+                {"label": "Clear filter", "href": "/admin/analytics", "primary": True},
+                {"label": "Back to admin", "href": "/admin"},
+            ],
+        )
+
+    from admin_shell import render_admin_page
+    return render_admin_page(
+        request,
+        "admin/analytics.html",
+        page_title="Analytics",
+        active_route="analytics",
+        breadcrumb=[
+            ("Admin", "/admin"),
+            ("Analytics", "/admin/analytics"),
+        ],
+        filter_since=since_str,
+        filter_until=until_str,
+        export_csv_href=csv_href,
+        window_label=window_label,
+        spark_total=f"{spark_total:,}",
+        spark_start=spark_start,
+        spark_end=spark_end,
+        raw_stats_cards=_render_analytics_stats_cards(summary),
+        raw_sparkline_svg=_render_analytics_sparkline_svg(spark_series),
+        raw_pages_sort_headers=_render_analytics_pages_sort_headers(
+            sort, sort_dir, base_qs,
+        ),
+        raw_pages_rows=_render_analytics_pages_rows(top_pages),
+        raw_events_rows=_render_analytics_events_rows(top_events),
+        raw_empty_state=raw_empty_state,
+    )
+
+
+async def analytics_export_csv(request: Request):
+    """GET /admin/analytics/export.csv — raw analytics_events CSV download.
+
+    Mirrors the page's date-range filter. Cap at 5000 rows so an admin
+    who forgets to filter doesn't accidentally export 100MB. Uses
+    ``_csv_safe_cell`` to defang spreadsheet formula injection in every
+    cell (page, referrer, properties etc. all come from untrusted clients).
+    """
+    admin = _require_admin_user(request, page=True)
+    if admin is None:
+        return _denied_response(request)
+
+    qp = request.query_params
+    since_ts, until_ts, _, _ = _resolve_analytics_window(qp)
+
+    rows = db.list_analytics_events_for_export(since_ts, until_ts, limit=5000)
+
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow([
+        "id", "created_at_iso", "event_type", "user_id", "session_id",
+        "visitor_id", "page", "referrer", "ip_hash", "user_agent_category",
+        "properties",
+    ])
+    for r in rows:
+        keys = r.keys()
+        # visitor_id may be missing on pre-migration-200 dbs; tolerate.
+        visitor_id = r["visitor_id"] if "visitor_id" in keys else ""
+        ts_iso = ""
+        try:
+            ts_iso = _dt.datetime.utcfromtimestamp(int(r["created_at"])).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except (TypeError, ValueError, OverflowError):
+            pass
+        w.writerow([
+            _csv_safe_cell(r["id"]),
+            _csv_safe_cell(ts_iso),
+            _csv_safe_cell(r["event_type"] or ""),
+            _csv_safe_cell(r["user_id"] if r["user_id"] is not None else ""),
+            _csv_safe_cell(r["session_id"] or ""),
+            _csv_safe_cell(visitor_id or ""),
+            _csv_safe_cell(r["page"] or ""),
+            _csv_safe_cell(r["referrer"] or ""),
+            _csv_safe_cell(r["ip_hash"] or ""),
+            _csv_safe_cell(r["user_agent_category"] or ""),
+            _csv_safe_cell(r["properties"] or ""),
+        ])
+
+    try:
+        from security import audit as _a
+        _audit(
+            getattr(
+                _a.AuditAction,
+                "ANALYTICS_EXPORT",
+                "admin.analytics.export",
+            ),
+            admin=admin, request=request,
+            target_type="analytics_export",
+            target_description=f"csv · {len(rows)} rows",
+            notes=f"since={since_ts} until={until_ts}",
+        )
+    except Exception:
+        pass
+
+    from fastapi.responses import Response as _Response
+    return _Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="analytics_events.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 
@@ -4545,6 +4927,18 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/users/bulk-actions", users_bulk_actions,
         methods=["POST"], include_in_schema=False,
+    )
+
+    # /admin/analytics — page-view + event dashboard backed by the
+    # analytics_events table. Uniques key on the narve_visitor cookie
+    # (migration 200) with an IP-hash fallback for pre-cookie rows.
+    app.add_api_route(
+        "/admin/analytics", analytics_dashboard,
+        methods=["GET"], response_class=HTMLResponse, include_in_schema=False,
+    )
+    app.add_api_route(
+        "/admin/analytics/export.csv", analytics_export_csv,
+        methods=["GET"], include_in_schema=False,
     )
 
     # Unified email-address aggregator — single searchable surface across

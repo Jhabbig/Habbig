@@ -297,6 +297,237 @@ def get_analytics_features(since: int) -> dict:
     }
 
 
+# ── /admin/analytics dashboard helpers ──────────────────────────────
+#
+# These are scoped to the analytics_events table only. Each helper takes
+# (since, until) as unix-second bounds; ``until`` defaults to "now" when
+# omitted. Uniqueness is keyed on ``visitor_id`` (migration 200) and falls
+# back to ``ip_hash`` when the cookie hasn't been minted yet, so the
+# numbers stay meaningful for historical rows that pre-date the column.
+
+
+def get_analytics_summary(since: int, until: Optional[int] = None) -> dict:
+    """Top-of-page stats for the analytics dashboard.
+
+    Returns counts for total events, page views, newsletter signups,
+    logins, and unique visitors (visitor_id preferred, ip_hash fallback)
+    over the [since, until] window.
+    """
+    if until is None:
+        until = int(time.time())
+    with db.conn() as c:
+        total = c.execute(
+            "SELECT COUNT(*) AS n FROM analytics_events "
+            "WHERE created_at >= ? AND created_at <= ?",
+            (since, until),
+        ).fetchone()["n"] or 0
+        page_views = c.execute(
+            "SELECT COUNT(*) AS n FROM analytics_events "
+            "WHERE event_type = 'page_view' "
+            "AND created_at >= ? AND created_at <= ?",
+            (since, until),
+        ).fetchone()["n"] or 0
+        newsletter = c.execute(
+            "SELECT COUNT(*) AS n FROM analytics_events "
+            "WHERE event_type IN ('newsletter_signup', 'newsletter_subscribe') "
+            "AND created_at >= ? AND created_at <= ?",
+            (since, until),
+        ).fetchone()["n"] or 0
+        logins = c.execute(
+            "SELECT COUNT(*) AS n FROM analytics_events "
+            "WHERE event_type IN ('login', 'login_success') "
+            "AND created_at >= ? AND created_at <= ?",
+            (since, until),
+        ).fetchone()["n"] or 0
+    return {
+        "total_events": int(total),
+        "page_views": int(page_views),
+        "newsletter_signups": int(newsletter),
+        "logins": int(logins),
+        "unique_visitors": get_unique_visitors(since, until),
+    }
+
+
+def get_unique_visitors(since: int, until: Optional[int] = None) -> int:
+    """Distinct visitors over the window.
+
+    Prefer ``visitor_id`` (migration 200) and fall back to ``ip_hash``
+    for the rows where the cookie wasn't yet set. Counts the union of
+    the two key spaces so a visitor identified by both keys is counted
+    once.
+    """
+    if until is None:
+        until = int(time.time())
+    with db.conn() as c:
+        # COUNT(DISTINCT COALESCE(visitor_id, 'ip:' || ip_hash)) gives us
+        # the union — visitor_id takes precedence when present, else we
+        # prefix with 'ip:' so a hash never collides with a visitor uuid.
+        try:
+            row = c.execute(
+                "SELECT COUNT(DISTINCT COALESCE(visitor_id, 'ip:' || ip_hash)) AS u "
+                "FROM analytics_events "
+                "WHERE created_at >= ? AND created_at <= ?",
+                (since, until),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # visitor_id column missing (pre-migration-200 DB) — fall back.
+            row = c.execute(
+                "SELECT COUNT(DISTINCT ip_hash) AS u FROM analytics_events "
+                "WHERE created_at >= ? AND created_at <= ?",
+                (since, until),
+            ).fetchone()
+    return int(row["u"] if row else 0)
+
+
+def get_top_pages(
+    since: int,
+    until: Optional[int] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Top N pages by view count over the window.
+
+    Returns a list of {"page", "views", "unique_visitors"} dicts. Pages
+    with a NULL or empty path are bucketed under "(unknown)". Uniques use
+    the same visitor_id/ip_hash union as ``get_unique_visitors``.
+    """
+    if until is None:
+        until = int(time.time())
+    try:
+        lim = max(1, min(500, int(limit)))
+    except (TypeError, ValueError):
+        lim = 20
+    with db.conn() as c:
+        try:
+            rows = c.execute(
+                "SELECT "
+                "  COALESCE(NULLIF(page, ''), '(unknown)') AS page, "
+                "  COUNT(*) AS views, "
+                "  COUNT(DISTINCT COALESCE(visitor_id, 'ip:' || ip_hash)) AS uniques "
+                "FROM analytics_events "
+                "WHERE event_type = 'page_view' "
+                "  AND created_at >= ? AND created_at <= ? "
+                "GROUP BY page ORDER BY views DESC LIMIT ?",
+                (since, until, lim),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = c.execute(
+                "SELECT "
+                "  COALESCE(NULLIF(page, ''), '(unknown)') AS page, "
+                "  COUNT(*) AS views, "
+                "  COUNT(DISTINCT ip_hash) AS uniques "
+                "FROM analytics_events "
+                "WHERE event_type = 'page_view' "
+                "  AND created_at >= ? AND created_at <= ? "
+                "GROUP BY page ORDER BY views DESC LIMIT ?",
+                (since, until, lim),
+            ).fetchall()
+    return [
+        {
+            "page": r["page"] or "(unknown)",
+            "views": int(r["views"] or 0),
+            "unique_visitors": int(r["uniques"] or 0),
+        }
+        for r in rows
+    ]
+
+
+def get_top_events(
+    since: int,
+    until: Optional[int] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Top N event types by count over the window.
+
+    Returns {"event_type", "count", "last_seen"} per row. Last-seen is a
+    unix seconds timestamp (the MAX created_at within the window).
+    """
+    if until is None:
+        until = int(time.time())
+    try:
+        lim = max(1, min(500, int(limit)))
+    except (TypeError, ValueError):
+        lim = 20
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT event_type, COUNT(*) AS c, MAX(created_at) AS last_seen "
+            "FROM analytics_events "
+            "WHERE created_at >= ? AND created_at <= ? "
+            "GROUP BY event_type ORDER BY c DESC LIMIT ?",
+            (since, until, lim),
+        ).fetchall()
+    return [
+        {
+            "event_type": r["event_type"] or "(unknown)",
+            "count": int(r["c"] or 0),
+            "last_seen": int(r["last_seen"] or 0),
+        }
+        for r in rows
+    ]
+
+
+def get_analytics_daily_page_views(
+    since: int,
+    until: Optional[int] = None,
+) -> list[dict]:
+    """Daily page-view series for the sparkline.
+
+    Returns a list of {"date" (YYYY-MM-DD), "count"} dicts ordered by
+    date ascending. Gaps (days with zero events) are filled with 0 so
+    the sparkline renders an honest baseline.
+    """
+    if until is None:
+        until = int(time.time())
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT DATE(created_at, 'unixepoch') AS d, COUNT(*) AS c "
+            "FROM analytics_events "
+            "WHERE event_type = 'page_view' "
+            "  AND created_at >= ? AND created_at <= ? "
+            "GROUP BY d ORDER BY d",
+            (since, until),
+        ).fetchall()
+    have = {r["d"]: int(r["c"] or 0) for r in rows}
+    # Densify the series — sparkline reads as a level line when an empty
+    # day is silently skipped, which is a lie. Fill zeroes so the X axis
+    # is real time.
+    import datetime as _dt
+    start = _dt.datetime.utcfromtimestamp(since).date()
+    end = _dt.datetime.utcfromtimestamp(until).date()
+    out: list[dict] = []
+    cur = start
+    while cur <= end:
+        key = cur.isoformat()
+        out.append({"date": key, "count": have.get(key, 0)})
+        cur = cur + _dt.timedelta(days=1)
+    return out
+
+
+def list_analytics_events_for_export(
+    since: int,
+    until: Optional[int] = None,
+    limit: int = 5000,
+) -> list[sqlite3.Row]:
+    """Raw analytics_events rows for CSV export, capped at ``limit`` rows.
+
+    Newest first so the CSV head matches the admin's expectation of the
+    most recent activity. The cap is a hard bound — admins who want more
+    should narrow the filter rather than scrape.
+    """
+    if until is None:
+        until = int(time.time())
+    try:
+        lim = max(1, min(50000, int(limit)))
+    except (TypeError, ValueError):
+        lim = 5000
+    with db.conn() as c:
+        return c.execute(
+            "SELECT * FROM analytics_events "
+            "WHERE created_at >= ? AND created_at <= ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (since, until, lim),
+        ).fetchall()
+
+
 def insert_audit_log(
     *,
     admin_user_id: Optional[int],
@@ -1262,6 +1493,12 @@ __all__ = [
     'get_analytics_users',
     'get_analytics_revenue',
     'get_analytics_features',
+    'get_analytics_summary',
+    'get_unique_visitors',
+    'get_top_pages',
+    'get_top_events',
+    'get_analytics_daily_page_views',
+    'list_analytics_events_for_export',
     'insert_audit_log',
     'query_audit_log',
     'export_audit_log_csv',
