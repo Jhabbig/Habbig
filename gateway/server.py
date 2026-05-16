@@ -3845,6 +3845,11 @@ async def login_page(request: Request):
 
 
 @app.post("/login")
+@rate_limit(
+    limit=10,
+    window_seconds=300,
+    error_message="Too many login attempts.",
+)
 async def login_submit(
     request: Request,
     email: str = Form(""),
@@ -3898,20 +3903,48 @@ async def login_submit(
         )
 
     user = db.get_user_by_email(email)
-    # Generic error message either way — don't leak whether the email exists.
+    # Audit #21 HIGH #1 fix: mirror the /auth/login fix from baac236.
+    # ALWAYS run verify_password BEFORE branching on user state (suspended /
+    # shell / unknown). Otherwise distinct response shapes (a /suspended 302
+    # vs a generic 401) leak which emails exist on the platform. Constant-
+    # time-ish: even on missing user we burn a dummy verify_password so
+    # timing doesn't distinguish enumeration from wrong-password.
+    dummy_hash = "0" * 64
+    dummy_salt = "0" * 32
     if not user:
+        db.verify_password(password, dummy_hash, dummy_salt)
         return render_page(
             "login", request=request,
             error="Invalid email or password.",
             email_hint=email, raw_success="",
         )
-    if user["suspended"]:
-        return RedirectResponse("/suspended", status_code=302)
-    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
+
+    # Verify password FIRST — before any state-dependent branching.
+    # Shell users (empty password_hash) reliably fail this check since an
+    # empty hash can't match anything, so they get the generic "Invalid
+    # email or password" until they redeem their reset link.
+    if not db.verify_password(password, user["password_hash"] or "", user["password_salt"] or ""):
         log.info("login.failure: user_id=%d ip=%s", user["id"], ip)
         return render_page(
             "login", request=request,
             error="Invalid email or password.",
+            email_hint=email, raw_success="",
+        )
+
+    # Password verified — NOW it's safe to surface specific account-state
+    # errors. The caller has proven they own the credentials, so revealing
+    # suspended/shell status doesn't help an enumeration attacker.
+    if user["suspended"]:
+        return RedirectResponse("/suspended", status_code=302)
+
+    if not user["password_hash"]:
+        # Shell user (created via subproduct signup magic-link) hasn't set
+        # a password yet. In practice unreachable because verify_password
+        # above will fail against an empty hash, but kept as defence in
+        # depth in case verify_password behaviour ever changes.
+        return render_page(
+            "login", request=request,
+            error="This account hasn't set a password yet. Use the password-reset link from your invite email.",
             email_hint=email, raw_success="",
         )
 
@@ -5193,6 +5226,24 @@ async def api_analytics_event(request: Request):
     so the beacon response never blocks on disk I/O. See the
     fire-and-forget pattern in engagement.py for reference.
     """
+    # Audit #21 MED #2 + #4 fix: server-side ePrivacy consent gate.
+    # The client analytics.js already respects DNT + the consent banner,
+    # but per a strict ePrivacy reading even page-view pings need consent
+    # OR DNT to fire. Drop the row silently if the visitor opted out so a
+    # tampered/older client cannot still ship events past the consent UI.
+    #   DNT: 1                       -> 204, skip recording
+    #   narve_consent=decline cookie -> 204, skip recording
+    #   missing cookie (first visit) -> proceed (industry-standard behaviour
+    #                                   until the user clicks the banner)
+    try:
+        if request.headers.get("DNT") == "1":
+            return Response(status_code=204)
+        if request.cookies.get("narve_consent") == "decline":
+            return Response(status_code=204)
+    except Exception:
+        # Header/cookie parsing must never 500 the beacon endpoint.
+        pass
+
     # Resolve the rate-limit principal first so authenticated users get
     # their own bucket (one user behind NAT can't be DoSed by a noisy
     # neighbour, and we still throttle anon traffic per source IP).
