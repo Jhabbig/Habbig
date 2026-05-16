@@ -8,9 +8,6 @@ Re-exported back onto db.py at import time, so every existing
 from __future__ import annotations
 
 import hashlib
-import hmac
-import json
-import logging
 import secrets
 import sqlite3
 import time

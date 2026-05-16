@@ -26,7 +26,6 @@ failing affiliate attribution must never break signup for the user.
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Optional
