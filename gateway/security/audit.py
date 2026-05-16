@@ -97,6 +97,11 @@ class AuditAction:
     # link). admin_user_id is NULL on these rows; the target column carries
     # the email so the trail still resolves a who.
     NEWSLETTER_UNSUBSCRIBE = "newsletter.unsubscribe"
+    # Admin-initiated CSV import of newsletter subscribers — flagged by
+    # audit #20 MED #5. The import route referenced this constant before
+    # it existed in the catalog, so the AttributeError was swallowed and
+    # every CSV import landed with no audit row.
+    NEWSLETTER_IMPORT      = "newsletter.import"
 
     # Email-addresses CSV/JSON export from the admin email-addresses panel.
     # Two call sites in admin_routes.py used getattr() with a string fallback
@@ -170,6 +175,7 @@ ACTION_LABELS = {
     AuditAction.MAGIC_LINK_MINT: "Minted subproduct magic-link token",
     AuditAction.MAGIC_LINK_REDEEM: "Redeemed subproduct magic-link token",
     AuditAction.NEWSLETTER_UNSUBSCRIBE: "Unsubscribed from newsletter",
+    AuditAction.NEWSLETTER_IMPORT: "Imported newsletter subscribers via CSV",
     AuditAction.EMAIL_ADDRESSES_EXPORT: "Exported email-addresses CSV/JSON",
 }
 
