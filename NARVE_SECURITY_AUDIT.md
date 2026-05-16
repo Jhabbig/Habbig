@@ -5,6 +5,261 @@ Each entry is a point-in-time snapshot. Diffs reveal posture changes.
 
 ---
 
+## AUDIT #21 — 2026-05-16T14:13Z — commit 4064828 — analytics dashboard + visitor cookie + consent banner + bulk delete/export + rate-limit decorators
+
+### Why this audit exists
+
+Caller dispatched audit #21 against the 26 new commits since audit #20's HEAD (`9fa6342`). Focus surfaces (caller-supplied):
+  1. `baac236` — `/auth/login` direct rewrite: verify user-existence oracle is closed (verify password BEFORE branching on user state).
+  2. `06f22e3` — zombie route deletion: verify `/token`, `/auth/validate-token`, `/auth/register` unreachable.
+  3. `68ba4aa` — `narve_visitor` cookie + middleware: verify cookie attrs, DNT respect, admin-page exclusion.
+  4. `92037b5` — migration 200: `visitor_id` column add safe.
+  5. `84c49cb` — `/admin/analytics` dashboard: XSS, SQLi, CSV defang, auth gate.
+  6. `a558844` — consent banner: verify analytics doesn't fire until consent OR DNT.
+  7. `d3cfbcd` + `a4daca2` — bulk delete/export: CSRF on new POST handlers, cap enforcement.
+  8. `8ebea42` — `@rate_limit` decorators formalized on forgot/reset/logout.
+  9. `1933131` — migration 199 hardening: handles missing `background_jobs` table on fresh DBs.
+
+### Code inventory audited
+- Committed tip: `4064828` (`fix(admin/nav): remove 3 dead sidebar links (404 on click)`). 26 commits ahead of audit #20's `9fa6342`.
+- Local unpushed commits: **none** — local HEAD = origin HEAD = `4064828`.
+- Local uncommitted files: `BUGS_FOUND.md` (modified, doc-only). Untracked: `gateway/static/avatars/` (carry-over), `gateway/tests/test_gift_subscription.py` (carry-over). **No source-file WIP.**
+- Local stashes: **72 entries** (unchanged from #20). Carry-over.
+- Server uncommitted files: only `auth.db.bak-fk-sweep-1778881231` + `auth.db.backup-pre-deploy-*` + `auth.db.backup-pre-188-*` + `config.json.bak.*` + `.deployed-at` + subproduct WAL/SHM + `gateway/static/sitemap.xml`. No source-file drift.
+- Server tip vs origin: **server matches origin** (`4064828` on both). Drift from #20 closed.
+- Running uvicorn loaded from: `python3 -m uvicorn server:app --host 127.0.0.1 --port 7000 --app-dir gateway` (pid 55156, started 2026-05-16 14:02:24 local). `server.py` mtime 13:56:19 + `pwa_middleware.py` mtime 14:01:28 + `admin_routes.py` mtime 13:56:19 → all pre-restart → **process IS loading current tree.** Consent banner + analytics middleware + bulk delete + analytics dashboard are LIVE.
+- Branches with recent work (last 14d not in current): single worktree on `feature/platform-build`; sibling branches >3 weeks old.
+- DRIFT FLAG: **none.** Server matches origin; uvicorn loaded post-final-commit.
+
+### Summary
+Posture: **adequate**
+Critical issues: 0
+High-priority: 1 (**NEW** — `/login` form-fallback handler in `server.py:3847` carries the SAME user-existence oracle that `baac236` just closed at `/auth/login` — symmetric bug never fixed)
+Medium-priority: 4 (analytics tracker fires before consent decision on first visit — strict-ePrivacy gap; `gateway/server.py` at 8883 LOC carry-over; `/login` form-fallback missing `@rate_limit` decorator carry-over; analytics `/api/analytics/event` accepts NULL `narve_consent` cookie state and records page_views — ePrivacy-strict reading)
+Low-priority: 7 (carry-overs)
+Resolved since last audit: **5** — #20 HIGH #1 (rate-limit decorator gaps) PARTIALLY CLOSED (3 of 4 — forgot/reset/logout decorated; `/login` form-fallback remains); #20 HIGH #2 (`/auth/login` user-existence oracle) CLOSED; #20 MED #1 (server 2 commits behind) CLOSED; #20 MED #2 (sibling-agent dead-route deletion WIP) CLOSED; #20 MED #5 (`AuditAction.NEWSLETTER_IMPORT` enum missing) CLOSED.
+New since last audit: **1 HIGH + 2 MED** — symmetric user-existence oracle on `/login` form-fallback; first-visit analytics ping before consent click; LOC creep.
+Regressions: **0** (the new HIGH is a pre-existing parallel bug, not a regression — but it's escalated because the symmetric fix at `/auth/login` makes it visible).
+
+### Verification matrix — audit #21 focus surfaces
+
+| # | Surface | Evidence | Status |
+|---|---|---|---|
+| 1 | `/auth/login` user-existence oracle (`baac236`) | `gateway/server_features.py:1510-1528` — `verify_password(password, user["password_hash"] or "", user["password_salt"] or "")` runs BEFORE any state-dependent branching. On failure: generic `401 "Invalid email or password."`. Only AFTER successful verify does the handler check suspended (`403`) or shell (`401 "Account not finished setup..."`). Diff hunk: `-if user["suspended"]: ... -if not user["password_hash"]: ...` moved BELOW the verify_password call. The shell-user branch is now unreachable in practice (empty hash can't match anything), kept as defence-in-depth. | **CLOSED** — #20 HIGH #2 resolved. |
+| 2 | `/login` form-fallback symmetric oracle (NEW finding) | `gateway/server.py:3900-3917` — handler does `user = db.get_user_by_email(email); if not user: return ...; if user["suspended"]: return RedirectResponse("/suspended", 302); if not db.verify_password(...): return ...`. **Same oracle pattern** the `/auth/login` fix just closed: branching on user state BEFORE password verification. `/suspended` 302 distinguishes suspended-user from unknown-email. The page is server-rendered (HTML form fallback for JS-disabled clients) — still reachable via curl. Same per-email + per-IP rate limits apply (`:3869`, `:3871`, `:3893`), so practical exfil is slow. | **OPEN** — Issue HIGH #1. |
+| 3 | Zombie route deletion (`06f22e3`) | `grep -rE '@app\.(get|post)\("/(token|register|auth/validate-token|auth/register)"' gateway/` returns 0 hits. `grep -rE 'pending_token' gateway/ --include='*.py' | grep -v test_` returns 2 historical comment references in `auth/cookies.py:4` and `queries/auth.py:343` (docstring narration only — no live code path). `/token`, `/auth/validate-token`, `/register`, `POST /auth/register` are gone. Frontend stranded-caller fixes confirmed in commit body (referrals.js, leaderboard.js, command-palette.js etc.). | **CLOSED** — auth surface shrunk. |
+| 4 | `narve_visitor` cookie attributes (`68ba4aa`) | `gateway/auth/cookies.py:101-124` `set_visitor_cookie`: `value = secrets.token_urlsafe(16)` (22-char URL-safe opaque ID), `httponly=False` (intentional — JS reads it for analytics echo), `samesite="lax"` (top-level navigations only, not cross-site POSTs), `secure=_is_production()`, `path="/"`, `max_age=365 days`, `domain=.narve.ai` in prod via `_cookie_domain_for`. Not a credential, opaque correlator only. `read_visitor_cookie` rejects values >64 chars. **Cookie attrs sound.** | **PROTECTED** |
+| 5 | Visitor cookie middleware admin/DNT exclusion (`68ba4aa`) | `gateway/pwa_middleware.py:298-320` `_should_inject_analytics`: returns False on `DNT: 1`, on `path == /gate` / `/gate/*`, on `path.startswith("/admin")`. Dispatch (`:490-538`) gates the visitor-cookie mint on `analytics_ok AND consent_val == "accept" AND no existing visitor cookie` — three-way gate. **Admin pages and DNT-1 clients never get tracked.** | **PROTECTED** |
+| 6 | Migration 200 visitor_id (`92037b5`) | `gateway/migrations/200_analytics_visitor_id.py:38-46` — additive nullable `ALTER TABLE analytics_events ADD COLUMN visitor_id TEXT` guarded by `PRAGMA table_info` check + `CREATE INDEX IF NOT EXISTS idx_analytics_visitor ON analytics_events(visitor_id, created_at DESC)`. No string interpolation, no user input, idempotent. Downgrade is intentional no-op (preserve historical data). | **PROTECTED** — no SQLi, no PII regression. |
+| 7 | `/admin/analytics` admin gate (`84c49cb`) | `gateway/admin_routes.py:4724-4726` (dashboard) + `:4831-4833` (export.csv) — both call `_require_admin_user(request, page=True)`; non-admin returns `_denied_response(request)`. Routes registered via `app.add_api_route` (`:4935`, `:4940`) with `include_in_schema=False`. CSV is GET-only — no POST sibling to worry about. | **PROTECTED** |
+| 8 | `/admin/analytics` XSS | Renderers `_render_analytics_stats_cards` (`:4539`), `_render_analytics_sparkline_svg` (`:4568`), `_render_analytics_pages_sort_headers` (`:4614`), `_render_analytics_pages_rows` (`:4653`), `_render_analytics_events_rows` (`:4677`) all wrap variable values in `html.escape(...)` and coerce numeric counts via `int(... or 0)`. Sparkline path/coord values are computed from `int(p.get("count") or 0)` + numeric arithmetic — no user-string interpolation into the SVG. Sort headers escape href via `html.escape(href, quote=True)`. **No exploitable XSS surface.** | **PROTECTED** |
+| 9 | `/admin/analytics` SQL injection | `gateway/queries/admin.py:309-528` — `get_analytics_summary`, `get_unique_visitors`, `get_top_pages`, `get_top_events`, `get_analytics_daily_page_views`, `list_analytics_events_for_export` ALL parameterise with `?` placeholders. Limit clamped via `max(1, min(500, int(limit)))` (50000 for export). Sort key from query param mapped through allowlist `_ANALYTICS_PAGE_SORT_FIELDS = ("views", "unique_visitors", "page")` (`:4525`, `:4732`) — invalid → fallback to `"views"`. **No SQLi vector.** | **PROTECTED** |
+| 10 | `/admin/analytics/export.csv` CSV defang | `gateway/admin_routes.py:4849-4880` — every cell wrapped in `_csv_safe_cell(...)` (page, referrer, properties, event_type, ip_hash, user_agent_category all from untrusted clients). Cap 5000 rows. `Content-Disposition: attachment` + `Cache-Control: no-store`. | **PROTECTED** |
+| 11 | Consent banner: analytics fires before consent click (`a558844`) | `gateway/pwa_middleware.py:298-320` `_should_inject_analytics`: returns True when `consent_val IS UNSET` (first visit). Tracker is injected, page_view fires, `/api/analytics/event` records the event with `visitor_id=NULL`. The mint of the visitor cookie is correctly gated on `consent_val=="accept"` at `:531-536`. But the analytics ping itself fires BEFORE the user clicks Accept/Decline. ePrivacy strict reading: no analytics until consent. Looser reading (legitimate-interest + visitor_id NULL): the captured row has no PII, no cookie ID, just timestamp + path + hashed IP — likely defensible. **Flag as MED #1.** | **PROTECTED (with strict-ePrivacy gap)** — MED #1. |
+| 12 | Consent banner DNT respect | `_should_inject_consent` (`:323-339`) returns False when `_should_inject_analytics` returns False (which short-circuits on DNT). `cookie_consent.js:dntActive()` does a defence-in-depth check on `navigator.doNotTrack === "1"` so a re-proxied stale-banner response also self-suppresses. **Banner never shows on DNT-1 clients.** | **PROTECTED** |
+| 13 | Bulk delete (`d3cfbcd`) — admin gate + CSRF | `gateway/admin_routes.py:4446-4455` — `admin = _require_admin_user(request); if admin is None: return _denied_response(request)` AND `srv._validate_csrf(request, submitted)` raises 403 on mismatch (defence-in-depth on top of middleware). | **PROTECTED** (extended) |
+| 14 | Bulk delete cap + safety | `gateway/admin_routes.py:4462-4475` — hard cap `raw_emails[:500]`, dedupe + lowercase, drop non-string. Per-email behaviour: `db.unsubscribe_newsletter(email)` is SOFT (UPDATE `unsubscribed_at`, not DELETE). Non-newsletter rows are AUDIT-LOGGED but NOT deleted — explicit comment cites FK cascade fanout risk. Returns `{"deleted": N, "errors": [...]}` so the UI can warn about no-op rows. **Cannot mass-DELETE users/enquiries/feedback via this endpoint.** | **PROTECTED** |
+| 15 | Bulk export-selected (`a4daca2`) — admin gate + CSRF | `gateway/admin_routes.py:4321-4323` (POST handler) — admin gate via `_require_admin_user(request, page=True)`. CSRF enforced by global `CSRFMiddleware` (docstring `:4318-4319` explicit). | **PROTECTED** |
+| 16 | Bulk export-selected cap | `_EMAIL_EXPORT_SELECTION_CAP = 500` (`:4154`) enforced in `_parse_emails_param` (`:4178`). Backing query `db.aggregate_email_addresses(..., limit=5000)` caps the unfiltered set; selection intersection drops to ≤500. `_csv_safe_cell` defangs every cell. `Content-Disposition: attachment` + `Cache-Control: no-store`. | **PROTECTED** |
+| 17 | Rate-limit decorators (`8ebea42`) | Diff confirms `@rate_limit(limit=3, window_seconds=3600, ...)` on `/auth/forgot-password`, `@rate_limit(limit=5, window_seconds=3600, ...)` on `/auth/reset-password`, `@rate_limit(limit=20, window_seconds=60, ...)` on `/auth/logout`. Inline per-email / per-token guards kept as finer-grained second layer. `/login` form-fallback at `gateway/server.py:3847` STILL has only inline `_is_rate_limited(...)` calls + no decorator — same single-route gap that started this thread. | **PARTIALLY CLOSED** (3 of 4) — MED #3. |
+| 18 | Migration 199 hardening (`1933131`) | `gateway/migrations/199_background_jobs_send_email_index.py:54-71` — adds `CREATE TABLE IF NOT EXISTS background_jobs (...)` mirroring the canonical `_ensure_jobs_table` schema (including `payload_hmac` from migration 192) BEFORE the index create. Idempotent — both statements use `IF NOT EXISTS`. Fresh DBs (test, brand-new prod) now apply cleanly. **No SQLi vector** — pure DDL, no interpolation. | **PROTECTED** |
+| 19 | `/api/analytics/event` rate-limit + size cap | `gateway/server.py:5161-5318` — `_ANALYTICS_RATE_LIMIT = 60` per principal per 60s (user_id if authed, else IP); body cap 4096B (`:5225` → 400); event_type regex `^[A-Za-z0-9_]{1,64}$` (`:5160`); properties size cap via `properties_too_large` (`:5251` → 422); PII scrub via `_analytics_q.scrub_properties`; field length caps page=512, referrer=512, ua_cat=32, session_id=128, visitor_id=128. Always returns ≤500 status (never crashes the page). | **PROTECTED** |
+| 20 | Cookie scope `.narve.ai` in prod (regression check) | `gateway/auth/cookies.py:34-77` (session) + `:101-124` (visitor) — both call `_cookie_domain_for(request)`. Session cookie `SameSite=Strict` + `HttpOnly=True` + `Secure=_is_production()`. Visitor cookie `SameSite=Lax` + `HttpOnly=False` (intentional) + `Secure=_is_production()`. Different attrs by design — session is a credential, visitor is an opaque correlator. | **PROTECTED** |
+
+### Authentication & Sessions
+- Token gate at /token: **DELETED** — `06f22e3` removed `/token`, `/auth/validate-token`, `/register`, `POST /auth/register`. Direct email+password is the only flow.
+- `pm_gateway_session` + `narve_session` both accepted: yes.
+- `narve_session` stored as SHA-256 hash in DB: yes (migration 191).
+- Session cookie HttpOnly: yes (`auth/cookies.py:59`).
+- Session cookie Secure: yes — `secure=_is_production()`.
+- Session cookie SameSite: Strict.
+- Session cookie Domain in production: `.narve.ai` via `_cookie_domain_for`.
+- Session revocation on logout: works.
+- Session rotation on privilege change: implemented for password reset + impersonation.
+- Session rotation on login: yes.
+- Max sessions per user enforced: not enforced (carry-over LOW since #13).
+- Password reset invalidates sessions: yes (migration 003).
+- Password hashing: PBKDF2-HMAC-SHA256, 600,000 iterations.
+- 2FA status: removed in migration 019 (intentional product decision).
+- Impersonation banner visible on every page while active: yes.
+- Impersonation blocked paths enforced: yes.
+- **NEW VISITOR COOKIE**: `narve_visitor` opaque-correlator cookie minted on first HTML response after consent; `HttpOnly=false` (JS reads); `SameSite=Lax`; `Secure` in prod; apex-scoped; 1y TTL. Not a credential.
+- **NEW CONSENT COOKIE**: `narve_consent` (`accept`/`decline`/unset); `SameSite=Lax`; `Secure` on https; host-scoped (intentional, per subdomain).
+
+### Authorisation
+- Admin routes require role ≥ 1: yes — all 5 new analytics + bulk routes call `_require_admin_user`.
+- Super admin routes require role = 2: yes.
+- Subproduct access checked at middleware + route + response: partial (carry-over).
+- `has_subproduct_access` called on every subproduct route: yes.
+- Feature flag evaluation in use: yes.
+- Gift subscription enforcement: yes.
+- New `/admin/analytics`: admin-gated.
+- New `/admin/analytics/export.csv`: admin-gated + CSV-defanged.
+- New `/admin/email-addresses/bulk-delete`: admin-gated + CSRF-double-checked + 500 cap + soft-unsubscribe only.
+- New `POST /admin/email-addresses/export.csv`: admin-gated + CSRF (middleware) + 500 selection cap.
+
+### CSRF
+- Double submit cookie: yes (`_csrf` cookie + matching `x-csrf-token` header OR form field).
+- Validation on every POST/PUT/PATCH/DELETE with cookie auth: yes — bulk-delete double-checks on top of middleware; bulk-export trusts middleware.
+- HTMX X-CSRF-Token hook active: yes.
+- Exempt routes list minimal and documented: yes.
+
+### Rate limiting
+- Auth endpoints: **3 of 4 now decorated** — `/auth/forgot-password` (3/3600), `/auth/reset-password` (5/3600), `/auth/logout` (20/60), `/auth/login` (10/300 per-IP + 5/600 per-email inline). `/login` form-fallback at `gateway/server.py:3847` has inline only, no decorator (carry-over MED #3).
+- API endpoints: yes.
+- Per-user and per-IP as appropriate: yes.
+- 429 response includes Retry-After: yes (`/auth/login`); decorator-driven 429s share `SlidingWindowRateLimiter` envelope.
+- Cloudflare-level rate limit rules: present (Rule D `/auth`, Rule E `/admin`).
+- `/api/analytics/event`: 60/min per principal — solid.
+
+### Input validation
+- SQL injection vectors found: 0 new in audited surfaces (analytics queries + bulk handlers + migration 199/200 all parameterised). Carry-over `IN (...)` placeholder pattern in `gateway/jobs/*.py`, `api_v1.py`, `db_sharing.py`, `backtest.py`, `onboarding_routes.py` — investigated repeatedly in prior audits, all chunks/IDs are server-built integer lists.
+- XSS via innerHTML with user content: 0 new — analytics dashboard renderers all html.escape.
+- Command injection / subprocess with user input: 0.
+- Path traversal in file operations: 0.
+- SSRF in URL-fetching code: 0.
+
+### Encryption & secrets
+- HTTPS enforced via Cloudflare Tunnel: yes.
+- No hardcoded secrets in current tree: clean.
+- No secrets in git history: clean.
+- Kalshi tokens encrypted with CREDENTIALS_ENCRYPTION_KEY: yes.
+- Sessions hashed before DB storage: yes.
+- Password hashes use PBKDF2-HMAC-SHA256: yes.
+- .env permissions on server: 600 (assumed — no evidence of change).
+
+### Data privacy
+- Account deletion works end-to-end: yes.
+- Data export includes all user-linked tables: verified.
+- Sensitive fields redacted in logs: yes.
+- Sentry scrubbing active: N/A — Sentry not configured.
+- Impersonation actions logged: yes.
+- **Visitor cookie**: opaque ID only, no PII. Mint gated on explicit consent. ePrivacy / GDPR posture: defensible for cookie itself; the broader analytics-pings-before-consent gap is MED #1.
+
+### External integrations
+- Stripe webhook signature validated: yes.
+- Stripe webhook idempotent: yes.
+- Stripe webhook mode-verified: yes.
+- Telegram bot token in env only: yes.
+- Discord bot token in env only: yes.
+- Scraper API key validated on every request: yes.
+- Polymarket wallet address validated: yes.
+- SEC EDGAR User-Agent set: yes.
+
+### Infrastructure
+- SQLite WAL mode active: yes.
+- Cloudflare Tunnel active, origin not directly reachable: yes (unverified this audit — Tailscale + tunnel both required).
+- Cloudflare Rules for subdomain enumeration: yes.
+- Cloudflare Rules for scanner UA blocking: yes.
+- Post-deploy commit step documented: yes.
+- CLOUDFLARE_CHANGES.md current: yes (last modified 2026-05-15).
+
+### Monitoring
+- Sentry backend configured: no.
+- Sentry frontend configured: no.
+- Structured logging configured: yes.
+- Security events logged separately: yes (`logs/security.log` via `security.auth` logger).
+- Audit log append-only: yes.
+- Uptime monitoring active: yes (status_system probes).
+
+### Dependency audit
+- Last dependency audit: 2026-05-14.
+- Known CVEs: pip-audit blocked on Python 3.9 vs 3.10 dep mismatch. Same LOW carry-over since #16.
+- Unpinned deps: 0.
+- Lockfile present: yes.
+
+### Compliance
+- Privacy Policy / Terms / DPA: yes.
+- Cookie notice: **NEW** — consent banner shipped 2026-05-16 (`a558844`).
+- GDPR data export / account deletion: yes.
+
+### Issues found in this audit
+
+#### CRITICAL
+None at HEAD.
+
+#### HIGH
+
+1. **NEW — `/login` form-fallback handler carries symmetric user-existence oracle.**
+   Location: `gateway/server.py:3847-3917` (the server-rendered `POST /login` form-fallback for JS-disabled clients).
+   Impact: same vulnerability class that `baac236` just closed at `/auth/login`. The handler does `user = db.get_user_by_email(email); if not user: return error("Invalid email or password.")` BEFORE running `verify_password`, then `if user["suspended"]: return RedirectResponse("/suspended", 302)`. An attacker who can POST to `/login` can distinguish: (a) `302 /suspended` → user exists AND is suspended; (b) `200 + "Invalid email or password"` → unknown email OR wrong password. Rate-limited (per-IP 10/300s, per-email 5/600s) so practical exfil is slow (~720 emails/IP/day), but the oracle exists. This is NOT a regression — the same bug has lived at this endpoint since before audit #20. It's escalated because the parallel `/auth/login` fix makes the asymmetry obvious.
+   Fix: mirror the `baac236` fix — call `db.verify_password(password, user["password_hash"] or "", user["password_salt"] or "")` FIRST, return the generic 401 on failure, and only branch to `/suspended` redirect / "set a password" guidance on the success path. Same diff pattern as `gateway/server_features.py:1507-1561`.
+
+#### MEDIUM
+
+1. **NEW — Analytics page-view pings fire before user clicks Accept/Decline on first visit (strict-ePrivacy gap).**
+   Location: `gateway/pwa_middleware.py:298-320` `_should_inject_analytics`; `gateway/static/analytics.js` (auto-page-view on DOMContentLoaded).
+   Impact: on the first visit (when `narve_consent` is unset), the tracker is injected and fires a `page_view` event to `/api/analytics/event` BEFORE the user clicks Accept/Decline on the banner. The recorded row has `visitor_id=NULL` (cookie not yet minted), but contains: page path, referrer, hashed IP, UA category bucket, server timestamp. ePrivacy strict reading requires no analytics until explicit consent. Looser legitimate-interest reading: row contains no PII or stable identifier, so likely defensible. Mitigations already in place: DNT-1 hard skip, admin-page exclusion, no cookie minted until accept.
+   Fix: option (a) — gate `_should_inject_analytics` on `consent_val IN ("accept",)` (most conservative; loses first-visit telemetry). Option (b) — keep the current behaviour and document the legitimate-interest reading + privacy-policy disclosure. Option (c) — add a server-side check at `/api/analytics/event` that drops the row when `narve_consent != "accept"`. Recommend (c) if first-visit telemetry is wanted for non-decision purposes, else (a).
+
+2. **CARRY-OVER from #20 — `gateway/server.py` at 8883 LOC.**
+   Up from 8870 at #20 (+13 LOC from analytics + visitor-cookie + consent banner glue). Route-file split overdue.
+
+3. **PARTIAL CARRY-OVER from #20 HIGH #1 — `/login` form-fallback missing `@rate_limit` decorator.**
+   Location: `gateway/server.py:3847`.
+   Impact: handler has inline rate-limits (`_auth_rate_limited(ip)`, `_is_rate_limited(f"{ip}:login-auth", 10, 300)`, `_is_rate_limited(f"email:{email}:login", 5, 600)`) so effective limits exist, but the canonical `@rate_limit` decorator is missing so the route doesn't surface in the standard rate-limit audit log or share the 429 envelope/headers. Same fix class as `8ebea42`.
+   Fix: add `@rate_limit(limit=10, window_seconds=300, ...)` above `@app.post("/login")`. Inline guards stay (per-email finer-grained).
+
+4. **NEW — `/api/analytics/event` accepts pings from clients that have explicitly declined consent.**
+   Location: `gateway/server.py:5172-5318` (no consent check); `gateway/pwa_middleware.py:298-320` `_should_inject_analytics` returns True on `decline` per the docstring comment ("`narve_consent=decline` -> still inject the tracker (page-view events keep flowing with visitor_id NULL)").
+   Impact: a user who explicitly clicks "Decline" on the banner still has their `page_view` events recorded (with `visitor_id=NULL` and no cookie ID — so no cross-session join). Strict-ePrivacy reading: a Decline click should suppress analytics entirely. Legitimate-interest reading: NULL-visitor-id rows are defensible. Pairs with MED #1 — same root cause (no server-side consent check at the event endpoint).
+   Fix: at `/api/analytics/event`, read `request.cookies.get("narve_consent")` and short-circuit to 204 when value is `"decline"`. Cheap, defence-in-depth, removes any ambiguity in privacy-policy disclosure.
+
+#### LOW
+
+1. Dynamic `ORDER BY` columns in 4 places (`queries/watchlist.py:105`, `db_takes.py:405`, `feedback_routes.py:260`, `db_referrals.py:461`). All server-allowlisted. Carry-over.
+2. Stash debt at 72 entries. Carry-over.
+3. pip-audit blocked on Python 3.9 vs 3.10 dep mismatch. Carry-over.
+4. `requirements.txt` not split into `requirements-dev.txt`. Carry-over.
+5. `gateway/static/avatars/` untracked runtime upload dir. Carry-over.
+6. Open-redirect HIGH-flagged routes (carry-over false-positive class). 21 hits from scanner; all hardcoded local-path destinations.
+7. Stripe webhook idempotency scanner false-positive (ledger pattern). Carry-over.
+
+### WIP-specific findings
+
+#### Uncommitted local work
+- `BUGS_FOUND.md` (modified, doc-only — no security implications). Untracked: `gateway/static/avatars/` (LOW carry-over runtime dir); `gateway/tests/test_gift_subscription.py` (carry-over).
+- **No source-file WIP** — all 26 commits since `9fa6342` are pushed and matched on server.
+
+#### Unpushed local commits
+- **None.** Local HEAD = origin HEAD = server HEAD = `4064828`.
+
+#### Server-side uncommitted state
+- DB backups + WAL/SHM + `.deployed-at` marker + `config.json.bak.*` + `gateway/static/sitemap.xml`. No source-file drift. The `*.bak` files predate the `.gitignore` rule landed in `9fa6342`; harmless.
+
+#### Stashes
+- 72 entries. Carry-over since #19/#20. Recommendation: timeboxed sweep in a separate session.
+
+### Changes since previous audit
+
+#### Resolved
+- **#20 HIGH #1** — auth-endpoint rate-limit decorator gaps: **3 of 4 CLOSED** by `8ebea42` (forgot-password, reset-password, logout decorated). The `/login` form-fallback remains and is re-flagged as MED #3.
+- **#20 HIGH #2** — `/auth/login` user-existence oracle: **CLOSED** by `baac236`. `verify_password` now runs before any user-state branching; identical-message generic 401 on every failure path. Verified via diff hunk.
+- **#20 MED #1** — server 2 commits behind origin: **CLOSED.** Server tip = origin tip = `4064828`.
+- **#20 MED #2** — sibling-agent uncommitted dead-route deletion: **CLOSED** by `06f22e3`. `/token`, `/auth/validate-token`, `/register`, `POST /auth/register` all gone from `server_features.py`; frontend stranded-caller fixes shipped alongside.
+- **#20 MED #5** — `AuditAction.NEWSLETTER_IMPORT` enum missing: **CLOSED** by `7454b64`.
+
+#### New issues
+- **HIGH #1** — `/login` form-fallback carries symmetric user-existence oracle (parallel to the just-closed `/auth/login` bug). Pre-existing, escalated by the asymmetry.
+- **MED #1** — analytics pings fire before consent decision on first visit (strict-ePrivacy gap).
+- **MED #4** — `/api/analytics/event` accepts pings post-Decline (no server-side consent check).
+
+#### Regressions
+- **None.** The new HIGH #1 is a pre-existing bug, not a regression — but it's escalated to HIGH because the symmetric fix at `/auth/login` makes the asymmetric exposure obvious.
+
+### Drift warnings
+- none
+
+### Recommended actions for next audit
+1. Apply the `/login` form-fallback fix (mirror the `baac236` diff at `gateway/server.py:3847-3917`). Closes HIGH #1.
+2. Decide ePrivacy posture: gate `/api/analytics/event` on `narve_consent != "decline"` (MED #4) and optionally on `narve_consent == "accept"` (MED #1, strictest reading). Document the chosen posture in the privacy policy.
+3. Add `@rate_limit` decorator to `/login` (MED #3). One-line change.
+4. Stash sweep — 72 entries is silently growing technical debt.
+5. Verify Tailscale + Cloudflare Tunnel posture from outside the VPN once per quarter (`https://100.69.44.108:7000` should not respond). Last verified pre-#13.
+6. Re-verify the `_render_empty` `raw_icon_svg` slot (#20 MED #4) hasn't gained a user-input caller since #20.
+
+---
+
 ## AUDIT #20 — 2026-05-16T08:45Z — commit 9fa6342 — /auth/login fix + admin stats/bulk/CSV import + migration 199
 
 ### Why this audit exists
