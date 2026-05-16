@@ -5,12 +5,15 @@
        1. Hero ("Emails", Instrument Serif Italic)
        2. Stats bar — 24h sent / failed / queued / failure rate
        3. Top failing templates (right column of stats)
-       4. Filter row — template / status / recipient
+       4. Filter row — admin_filter_bar partial (q/status/since/until)
+          + emails-specific template <select> sibling
        5. Recent table — last 200, with View link → /admin/emails/{id}
 
      Recipient is redacted (`abc***@domain`) in the list view; the
      detail page shows the full address.
 -->
+
+<link rel="stylesheet" href="/_gateway_static/pages/admin_filter_bar.css">
 
 <div class="emails-page">
 
@@ -58,6 +61,14 @@
       <span class="emails-card__sub">{{ raw_result_count }} rows</span>
     </header>
 
+    <!-- Canonical admin filter bar (q / status / since / until). -->
+    {{ raw_filter_bar }}
+
+    <!-- Emails-only template filter. Lives in its own GET form because
+         the canonical partial owns the q/status/since/until contract and
+         doesn't know about per-page selects. Submitting this form posts
+         only ``template`` — the partial's fields are re-applied via the
+         querystring round-trip on the next render. -->
     <form method="get" action="/admin/emails" class="emails-filter">
       <label class="emails-filter__group">
         <span class="emails-filter__label">Template</span>
@@ -65,26 +76,8 @@
           {{ raw_template_options }}
         </select>
       </label>
-
-      <label class="emails-filter__group">
-        <span class="emails-filter__label">Status</span>
-        <select name="status" class="emails-filter__select">
-          {{ raw_status_options }}
-        </select>
-      </label>
-
-      <label class="emails-filter__group emails-filter__group--wide">
-        <span class="emails-filter__label">Recipient contains</span>
-        <input type="search"
-               name="recipient"
-               value="{{ raw_recipient_value }}"
-               placeholder="e.g. @gmail.com"
-               class="emails-filter__input">
-      </label>
-
       <div class="emails-filter__actions">
-        <button type="submit" class="emails-filter__submit">Apply</button>
-        <a href="/admin/emails" class="emails-filter__reset">Clear</a>
+        <button type="submit" class="emails-filter__submit">Apply template</button>
       </div>
     </form>
 

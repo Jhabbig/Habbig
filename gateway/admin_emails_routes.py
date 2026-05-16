@@ -36,6 +36,7 @@ import html
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import HTTPException, Request
@@ -47,6 +48,23 @@ from admin_shell import render_admin_page
 from security.rate_limiter import rate_limit, get_client_ip
 
 log = logging.getLogger("admin_emails")
+
+
+# Canonical admin filter-bar partial, shipped in commit f30503f. Loaded
+# once at import time (small file, never changes between deploys) and
+# placeholder-substituted per request before being injected into the
+# ``raw_filter_bar`` slot in admin/emails.html.
+_FILTER_BAR_PARTIAL_PATH = (
+    Path(__file__).parent / "static" / "_partials" / "admin_filter_bar.html"
+)
+try:
+    _FILTER_BAR_PARTIAL = _FILTER_BAR_PARTIAL_PATH.read_text()
+except OSError:
+    # Defensive: an absent partial is a deployment error rather than a
+    # request-time failure. Log loudly but degrade to an empty filter so
+    # the page still renders.
+    log.exception("admin_emails: failed to load admin_filter_bar partial")
+    _FILTER_BAR_PARTIAL = ""
 
 
 # ── Auth/rate-limit key ────────────────────────────────────────────────
@@ -389,6 +407,36 @@ def _render_status_filter(selected: str) -> str:
     return "".join(parts)
 
 
+def _render_filter_bar(
+    *,
+    status_options_html: str,
+    filter_q: str,
+    filter_since: str,
+    filter_until: str,
+) -> str:
+    """Render the canonical admin_filter_bar partial for /admin/emails.
+
+    Substitutes the partial's placeholders the same way ``render_page``
+    would: ``raw_*`` keys are inserted verbatim, everything else is
+    HTML-escaped. The Emails surface has no CSV/JSON exporter yet, so the
+    export anchors stay empty and the partial's CSS auto-hides them
+    (``.adm-filter-bar__export[href=""] { display: none; }``).
+    """
+    rendered = _FILTER_BAR_PARTIAL
+    for key, value in (
+        ("filter_q",           filter_q),
+        ("raw_status_options", status_options_html),
+        ("filter_since",       filter_since),
+        ("filter_until",       filter_until),
+        ("export_csv_href",    ""),
+        ("export_json_href",   ""),
+    ):
+        placeholder = "{{ " + key + " }}"
+        repl = value if key.startswith("raw_") else html.escape(str(value), quote=True)
+        rendered = rendered.replace(placeholder, repl)
+    return rendered
+
+
 def _render_top_failing(items: list[dict]) -> str:
     if not items:
         return '<p class="emails-stat__hint">No failures in window.</p>'
@@ -478,6 +526,18 @@ async def admin_emails_page(
             "window_hours": 24,
         }, []
 
+    # Recent-deliveries filter row now uses the canonical
+    # ``admin_filter_bar`` partial (commit f30503f). The template-name
+    # dropdown stays as a sibling inline ``<select>`` since it's specific
+    # to this surface and not part of the partial's q/status/since/until
+    # contract.
+    filter_bar_html = _render_filter_bar(
+        status_options_html=_render_status_filter(status_filter),
+        filter_q=recipient_filter,
+        filter_since=since_str,
+        filter_until=until_str,
+    )
+
     return render_admin_page(
         request,
         "admin/emails.html",
@@ -496,6 +556,7 @@ async def admin_emails_page(
         raw_since_value=_esc(since_str),
         raw_until_value=_esc(until_str),
         raw_result_count=str(len(rows)),
+        raw_filter_bar=filter_bar_html,
     )
 
 
