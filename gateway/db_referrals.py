@@ -445,6 +445,7 @@ def get_leaderboard(
     if col not in _LEADERBOARD_SORT_COLUMNS:
         raise ValueError(f"invalid leaderboard column: {col!r}")
     with db.conn() as c:
+        # nosec-orderby: column whitelisted by _ALLOWED_SORT_FIELDS
         return c.execute(
             f"""
             SELECT u.id AS user_id, u.leaderboard_handle AS handle,

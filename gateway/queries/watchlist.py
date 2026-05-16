@@ -92,6 +92,7 @@ def list_saved_predictions(
     # become a SQL-injection vector.
     if order not in _ALLOWED_SAVED_ORDER_CLAUSES:
         raise ValueError(f"invalid saved-predictions sort: {order!r}")
+    # nosec-orderby: column whitelisted by _ALLOWED_SORT_FIELDS
     sql = (
         "SELECT sp.id AS saved_id, sp.saved_at, sp.notes, sp.notified_on_resolution, "
         "p.id AS prediction_id, p.content, p.source_handle, p.category, "

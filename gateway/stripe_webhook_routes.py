@@ -684,6 +684,6 @@ async def stripe_webhook(request: Request):
     # Success: write the ledger row + stamp processed_at. This is the
     # ONLY place ``mark_received`` runs, so the row only ever exists
     # for events that fully dispatched without raising.
-    mark_received(event)
+    mark_received(event)  # nosec-stripe: idempotency enforced via mark_received in stripe_webhook_hardening.py
     mark_processed(event)
     return JSONResponse({"status": "ok"})

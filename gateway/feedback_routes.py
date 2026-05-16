@@ -257,6 +257,7 @@ def _list_items(
         # `where_sql` is a parameterised whitelist join — every ? has a value
         # in `params`. Static-analysis flagged this in audit #1; left here so
         # future scans can downgrade by reading this comment.
+        # nosec-orderby: column whitelisted by _ALLOWED_SORT_FIELDS
         rows = c.execute(
             f"SELECT * FROM feedback_items {where_sql} ORDER BY {order_sql} LIMIT ?",  # noqa: S608
             (*params, limit),
@@ -709,7 +710,7 @@ async def api_feedback_vote(request: Request, item_id: int, toggle: str = Form("
         return JSONResponse({"voted": voted, "upvotes": new_count})
     # Open-redirect: SAFE. `item_id` is path-typed `int`, so the destination
     # can only resolve to /feedback/<integer> — never user-supplied. Audit #1.
-    return RedirectResponse(f"/feedback/{item_id}", status_code=302)
+    return RedirectResponse(f"/feedback/{item_id}", status_code=302)  # nosec-redirect: hardcoded path "/feedback/<int>", never user-controlled
 
 
 @app.post("/api/feedback/{item_id}/comment", include_in_schema=False)
@@ -735,7 +736,7 @@ async def api_feedback_comment(request: Request, item_id: int, body: str = Form(
         )
     # Open-redirect: SAFE. `item_id` is path-typed `int`, so the destination
     # can only resolve to /feedback/<integer> — never user-supplied. Audit #1.
-    return RedirectResponse(f"/feedback/{item_id}", status_code=302)
+    return RedirectResponse(f"/feedback/{item_id}", status_code=302)  # nosec-redirect: hardcoded path "/feedback/<int>", never user-controlled
 
 
 # ── Admin routes ─────────────────────────────────────────────────────────────

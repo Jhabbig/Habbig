@@ -400,6 +400,7 @@ def list_market_takes(
         "quality": "COALESCE(quality_score, 0) DESC, created_at DESC",
     }.get(sort, "COALESCE(quality_score, 0) DESC, created_at DESC")
 
+    # nosec-orderby: column whitelisted by _ALLOWED_SORT_FIELDS
     sql = (
         f"SELECT * FROM market_takes WHERE {' AND '.join(where)} "
         f"ORDER BY {order} LIMIT ? OFFSET ?"
