@@ -46,6 +46,16 @@ if not getattr(db.conn, "_is_test_fake", False):
     db.conn = _fake_conn
     db.init_db()
 
+    # The ``background_jobs`` table is created lazily by
+    # ``jobs.backend._ensure_jobs_table`` rather than by a migration. In
+    # production, ``server.py`` calls ``upgrade_to_head()`` before the job
+    # backend starts, but the table is hot-created out-of-band before
+    # migration 199 ships (see its docstring). Tests have no such backstop,
+    # so we pre-create the table here to keep migration 199 (composite
+    # index on ``background_jobs``) from blowing up on a fresh in-memory DB.
+    from jobs.backend import _ensure_jobs_table as _ensure_jobs_table_for_tests
+    _ensure_jobs_table_for_tests()
+
     import migrations  # noqa: E402
     migrations.upgrade_to_head()
 

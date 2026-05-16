@@ -3720,12 +3720,17 @@ def _render_email_sort_headers(active_sort: str, active_dir: str, filter_qs: str
     return "".join(parts)
 
 
-def _fmt_ts(ts) -> str:
+def _fmt_email_addresses_ts(ts) -> str:
     """Format a unix-seconds timestamp as ``YYYY-MM-DD HH:MM`` UTC.
 
     Returns ``"—"`` for None/0 so the table reads cleanly when a source
     didn't have a timestamp. Matches the date formatting used elsewhere
     in the admin surface (e.g. /admin/users).
+
+    Distinct from the top-level ``_fmt_ts`` (line ~113) which takes a
+    custom ``fmt`` arg — earlier this was named ``_fmt_ts`` too and
+    shadowed the general helper, breaking every caller that passed a
+    format string (e.g. /admin/users, /admin/jobs CSV export).
     """
     if not ts:
         return "—"
@@ -3956,8 +3961,8 @@ def _render_email_rows(rows: list) -> str:
                 )
             source_cell += "".join(extra_strs)
 
-        first_seen = _fmt_ts(r.get("first_seen"))
-        last_ts = _fmt_ts(r.get("ts"))
+        first_seen = _fmt_email_addresses_ts(r.get("first_seen"))
+        last_ts = _fmt_email_addresses_ts(r.get("ts"))
         uid = r.get("user_id")
         if uid:
             uid_cell = (
@@ -4173,8 +4178,8 @@ async def email_addresses_export_csv(request: Request):
         w.writerow([
             _csv_safe_cell(r.get("email") or ""),
             _csv_safe_cell(r.get("source") or ""),
-            _csv_safe_cell(_fmt_ts(r.get("first_seen"))),
-            _csv_safe_cell(_fmt_ts(r.get("ts"))),
+            _csv_safe_cell(_fmt_email_addresses_ts(r.get("first_seen"))),
+            _csv_safe_cell(_fmt_email_addresses_ts(r.get("ts"))),
             _csv_safe_cell(r.get("user_id") if r.get("user_id") is not None else ""),
             _csv_safe_cell(r.get("status") or ""),
             _csv_safe_cell("|".join(r.get("all_sources") or [])),
