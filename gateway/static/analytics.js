@@ -9,10 +9,22 @@
  * analytics can join page-views to a single visitor across visits.
  * Falls back to crypto.randomUUID() if the cookie is missing (e.g. on
  * the very first request before the Set-Cookie has taken effect).
+ *
+ * Consent gate (audit #22 MED #1, strict-ePrivacy reading):
+ *   Reads the ``narve_consent`` cookie before firing anything. If the
+ *   value is unset or "decline" the auto page_view is suppressed and
+ *   window.narveTrack(...) is a no-op. On "accept" everything fires
+ *   normally. Newsletter form-submits are exempt — they're an explicit
+ *   first-party action initiated by the user, not passive tracking.
+ *   cookie_consent.js may call window.narveTrackPostConsent() when the
+ *   user clicks Accept to fire a deferred page_view for this visit;
+ *   otherwise the first tracked page_view is the next page load, which
+ *   is acceptable because the user has already seen the banner here.
  */
 (function () {
   var ENDPOINT = "/api/analytics/event";
   var VISITOR_COOKIE = "narve_visitor";
+  var CONSENT_COOKIE = "narve_consent";
 
   function pickUserAgentCategory() {
     // UA-allowlist: device-class bucketing for analytics ONLY. Keeps
@@ -28,12 +40,12 @@
     }
   }
 
-  function readVisitorCookie() {
+  function readCookie(name) {
     // document.cookie is the canonical source; the middleware sets
     // HttpOnly=false specifically so this read works.
     try {
       var raw = document.cookie || "";
-      var prefix = VISITOR_COOKIE + "=";
+      var prefix = name + "=";
       var parts = raw.split(";");
       for (var i = 0; i < parts.length; i++) {
         var p = parts[i].trim();
@@ -42,9 +54,24 @@
         }
       }
     } catch (e) {
-      /* swallow — fall through to UUID fallback */
+      /* swallow — fall through to caller default */
     }
     return "";
+  }
+
+  function readVisitorCookie() {
+    return readCookie(VISITOR_COOKIE);
+  }
+
+  function consentState() {
+    // "" (unset) | "accept" | "decline". Anything else treated as unset.
+    var v = (readCookie(CONSENT_COOKIE) || "").toLowerCase();
+    if (v === "accept" || v === "decline") return v;
+    return "";
+  }
+
+  function hasConsent() {
+    return consentState() === "accept";
   }
 
   function visitorId() {
@@ -63,7 +90,10 @@
     return "";
   }
 
-  function track(eventType, properties) {
+  function sendEvent(eventType, properties) {
+    // Internal — does the actual network send with no consent check.
+    // Callers must gate on hasConsent() unless the event is exempt
+    // (first-party user-initiated action, e.g. newsletter_signup).
     try {
       var payload = {
         event_type: String(eventType || "").slice(0, 64),
@@ -90,23 +120,40 @@
     }
   }
 
+  function track(eventType, properties) {
+    // Public tracker — respects consent gate. Unset/decline → no-op.
+    if (!hasConsent()) return;
+    sendEvent(eventType, properties);
+  }
+
   window.narveTrack = track;
 
-  // Auto-track page view.
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () { track("page_view"); });
-  } else {
-    track("page_view");
+  // Deferred page_view helper for cookie_consent.js to invoke after the
+  // user clicks Accept, so the current visit isn't entirely untracked.
+  window.narveTrackPostConsent = function () {
+    if (!hasConsent()) return;
+    sendEvent("page_view");
+  };
+
+  // Auto-track page view — gated on consent==accept.
+  if (hasConsent()) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function () { sendEvent("page_view"); });
+    } else {
+      sendEvent("page_view");
+    }
   }
 
   // Auto-hook newsletter forms (selector .newsletter-form or #prerelease-form).
+  // Exempt from the consent gate: newsletter signup is an explicit
+  // first-party action the user initiated, not passive tracking.
   document.addEventListener("submit", function (ev) {
     var f = ev.target;
     if (!f || f.nodeName !== "FORM") return;
     if (f.classList && f.classList.contains("newsletter-form")) {
-      track("newsletter_signup");
+      sendEvent("newsletter_signup");
     } else if (f.id === "prerelease-form" || f.id === "newsletter-form") {
-      track("newsletter_signup");
+      sendEvent("newsletter_signup");
     }
   }, true);
 })();
