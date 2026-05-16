@@ -1507,8 +1507,11 @@ async def auth_login(request: Request):
         )
 
     user = db.get_user_by_email(email)
-    # Constant-time-ish: always run verify_password even on missing user
-    # so timing doesn't distinguish enumeration from wrong-password.
+    # Audit #20 HIGH #2 fix: ALWAYS verify password before branching on user
+    # state (suspended / shell / unknown). Otherwise distinct error messages
+    # leak which emails exist on the platform. Constant-time-ish: always run
+    # verify_password even on missing user so timing doesn't distinguish
+    # enumeration from wrong-password.
     dummy_hash = "0" * 64
     dummy_salt = "0" * 32
     if not user:
@@ -1520,6 +1523,25 @@ async def auth_login(request: Request):
         )
 
     user_id = user["id"]
+
+    # Verify password FIRST — before any state-dependent branching.
+    # Shell users (empty password_hash) will reliably fail this check since
+    # an empty hash can't match anything, so they'll get the generic
+    # "Invalid email or password" until they redeem their reset link.
+    if not db.verify_password(password, user["password_hash"] or "", user["password_salt"] or ""):
+        log.info("auth.login: wrong password for user_id=%d", user_id)
+        security_log.warning(
+            "login.failure user_id=%d ip=%s ua_prefix=%s",
+            user_id, ip, (request.headers.get("user-agent", "")[:64]),
+        )
+        return JSONResponse(
+            {"error": "Invalid email or password."},
+            status_code=401,
+        )
+
+    # Password verified — NOW it's safe to surface specific account-state
+    # errors. The caller has proven they own the credentials, so revealing
+    # suspended/shell status doesn't help an enumeration attacker.
     if user["suspended"]:
         return JSONResponse(
             {"error": "This account has been suspended."},
@@ -1528,36 +1550,11 @@ async def auth_login(request: Request):
 
     if not user["password_hash"]:
         # Shell user (created via subproduct signup magic-link) hasn't set
-        # a password yet. Funnel to the reset flow.
+        # a password yet. In practice unreachable because verify_password
+        # above will fail against an empty hash, but kept as defense in
+        # depth in case verify_password behaviour ever changes.
         return JSONResponse(
-            {"error": "This account hasn't set a password yet. Use the password-reset link from your invite email."},
-            status_code=401,
-        )
-
-    # Per-email rate limit (H1): credential-stuffing across rotating IPs.
-    # 5 wrong attempts per 10min per email regardless of source IP.
-    try:
-        email_key = (user["email"] or "").strip().lower()
-    except (KeyError, IndexError):
-        email_key = ""
-    if email_key and server._is_rate_limited(f"email:{email_key}:login", limit=5, window=600):
-        return JSONResponse(
-            {"error": "Too many attempts for this account."},
-            status_code=429,
-            headers={"Retry-After": "600"},
-        )
-
-    if user["suspended"]:
-        return JSONResponse({"error": "This account has been suspended."}, status_code=403)
-
-    if not db.verify_password(password, user["password_hash"], user["password_salt"]):
-        log.info("auth.login: wrong password for user_id=%d", user_id)
-        security_log.warning(
-            "login.failure user_id=%d ip=%s ua_prefix=%s",
-            user_id, ip, (request.headers.get("user-agent", "")[:64]),
-        )
-        return JSONResponse(
-            {"error": "Invalid email or password."},
+            {"error": "Account not finished setup — check your email for the reset link."},
             status_code=401,
         )
 
