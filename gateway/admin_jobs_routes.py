@@ -22,6 +22,7 @@ import datetime as _dt
 import html
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import HTTPException, Request
@@ -34,6 +35,22 @@ from queries import jobs as job_queries
 from security.rate_limiter import rate_limit, get_client_ip
 
 log = logging.getLogger("admin_jobs")
+
+# Canonical admin filter-bar partial, shipped in commit f30503f. Loaded
+# once at import time (small file, never changes between deploys) and
+# placeholder-substituted per request before being injected into the
+# ``raw_filter_bar`` slot in admin/jobs.html.
+_FILTER_BAR_PARTIAL_PATH = (
+    Path(__file__).parent / "static" / "_partials" / "admin_filter_bar.html"
+)
+try:
+    _FILTER_BAR_PARTIAL = _FILTER_BAR_PARTIAL_PATH.read_text()
+except OSError:
+    # Defensive: an absent partial is a deployment error rather than a
+    # request-time failure. Log loudly but degrade to an empty filter so
+    # the page still renders.
+    log.exception("admin_jobs: failed to load admin_filter_bar partial")
+    _FILTER_BAR_PARTIAL = ""
 
 # Whitelist of allowed status filter values. ``scheduled`` is a synthetic
 # label (no row in ``job_runs`` ever has that status — it's a property of
@@ -207,123 +224,37 @@ def _render_filter_options(names: list[str]) -> str:
     )
 
 
-def _render_filter_mount_script(
+def _render_filter_bar(
     *,
     status_options_html: str,
     filter_q: str,
     filter_since: str,
     filter_until: str,
 ) -> str:
-    """Build the JS that mounts the full filter form on page load.
+    """Render the canonical admin_filter_bar partial for the Recent-runs card.
 
-    The template's filter region is intentionally minimal (a single
-    job-name ``<select>``). To keep the file-level boundary with the
-    template clean, the rest of the filter UI (status, free-text search,
-    date range) is mounted DOM-side from this script: it locates the
-    ``.jobs-card__filters`` div inside the Recent-runs card and replaces
-    it with a full GET form pre-populated from the server-side filter
-    state. The form submits to ``/admin/jobs`` so the URL carries the
-    active filter set.
-
-    All values that come from user input (``filter_q``, dates) are
-    escaped here as HTML attribute values; the status options are
-    pre-rendered by ``_render_status_options`` against the
-    ``_JOB_STATUS_LABELS`` whitelist.
-
-    The script is wrapped so it can be appended to the existing
-    ``raw_filter_options`` slot — the slot lives inside a ``<select>``,
-    so we close that early then emit the script as a sibling.
+    Substitutes the partial's placeholders the same way ``render_page``
+    would: ``raw_*`` keys are inserted verbatim, everything else is
+    HTML-escaped. The Jobs page has no CSV/JSON exporter, so the exports
+    block is stripped from the rendered partial before returning.
     """
-    import json as _json
-    q_attr = _esc(filter_q)
-    since_attr = _esc(filter_since)
-    until_attr = _esc(filter_until)
-    # JSON-encode the option markup so the JS embedding is unambiguous.
-    status_options_json = _json.dumps(status_options_html)
-    # The browser parser closes the surrounding ``<select>`` when it sees
-    # our ``</select>`` here; the literal ``</select>`` later in the
-    # template is then a stray tag that browsers tolerate. The injected
-    # ``<script>`` runs at parse time, so the rest of the page (and its
-    # poll-loop script) hasn't bound to the old dropdown yet — we rebuild
-    # the DOM before the existing script does, and the existing script's
-    # ``document.getElementById('jobs-filter-name')`` lookup transparently
-    # finds the new ``<select>`` because we keep the same id.
-    return (
-        "</select>"
-        "<script>"
-        "(function(){"
-        "var STATUS_OPTS=" + status_options_json + ";"
-        "var Q=" + _json.dumps(filter_q) + ";"
-        "var SINCE=" + _json.dumps(filter_since) + ";"
-        "var UNTIL=" + _json.dumps(filter_until) + ";"
-        "function esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,"
-        "function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;',"
-        "'\"':'&quot;','\\'':'&#39;'})[c];});}"
-        "function mount(){"
-        "var host=document.querySelector('.jobs-card__filters');"
-        "if(!host) return;"
-        "var oldSelect=document.getElementById('jobs-filter-name');"
-        "var oldOptions=oldSelect?oldSelect.innerHTML:'';"
-        "var form=document.createElement('form');"
-        "form.className='jobs-filter';"
-        "form.setAttribute('method','get');"
-        "form.setAttribute('action','/admin/jobs');"
-        "form.setAttribute('aria-label','Filter recent runs');"
-        "form.id='jobs-filter-form';"
-        "form.innerHTML="
-        "'<label class=\"jobs-filter__field\">'"
-        "+'<span class=\"jobs-filter__label\">Search</span>'"
-        "+'<input class=\"jobs-filter__input\" type=\"search\" name=\"q\" id=\"jobs-filter-q\" autocomplete=\"off\" placeholder=\"job name contains\\u2026\" value=\"'+esc(Q)+'\">'"
-        "+'</label>'"
-        "+'<label class=\"jobs-filter__field\">'"
-        "+'<span class=\"jobs-filter__label\">Job</span>'"
-        "+'<select class=\"jobs-filter__input\" name=\"job_name\" id=\"jobs-filter-name\">'+oldOptions+'</select>'"
-        "+'</label>'"
-        "+'<label class=\"jobs-filter__field\">'"
-        "+'<span class=\"jobs-filter__label\">Status</span>'"
-        "+'<select class=\"jobs-filter__input\" name=\"status\" id=\"jobs-filter-status\">'+STATUS_OPTS+'</select>'"
-        "+'</label>'"
-        "+'<label class=\"jobs-filter__field jobs-filter__field--date\">'"
-        "+'<span class=\"jobs-filter__label\">Since</span>'"
-        "+'<input class=\"jobs-filter__input\" type=\"date\" name=\"since\" id=\"jobs-filter-since\" value=\"'+esc(SINCE)+'\">'"
-        "+'</label>'"
-        "+'<label class=\"jobs-filter__field jobs-filter__field--date\">'"
-        "+'<span class=\"jobs-filter__label\">Until</span>'"
-        "+'<input class=\"jobs-filter__input\" type=\"date\" name=\"until\" id=\"jobs-filter-until\" value=\"'+esc(UNTIL)+'\">'"
-        "+'</label>'"
-        "+'<div class=\"jobs-filter__actions\">'"
-        "+'<button class=\"jobs-filter__submit\" type=\"submit\">Apply</button>'"
-        "+'<a class=\"jobs-filter__clear\" href=\"/admin/jobs\">Clear</a>'"
-        "+'</div>';"
-        "var card=host.closest('.jobs-card__head');"
-        "if(card&&card.parentNode){card.parentNode.insertBefore(form,card.nextSibling);host.remove();}"
-        "else{host.replaceWith(form);}"
-        "}"
-        "function injectStyles(){"
-        "if(document.getElementById('jobs-filter-injected-styles'))return;"
-        "var s=document.createElement('style');"
-        "s.id='jobs-filter-injected-styles';"
-        "s.textContent="
-        "'.jobs-filter{display:grid;grid-template-columns:minmax(180px,1.6fr) minmax(140px,1.2fr) minmax(120px,1fr) minmax(120px,1fr) minmax(120px,1fr) auto;gap:var(--space-3,12px);align-items:end;margin-bottom:var(--space-4,16px);padding-bottom:var(--space-4,16px);border-bottom:1px solid var(--border-ghost,var(--border-default))}'"
-        "+'.jobs-filter__field{display:flex;flex-direction:column;gap:4px;min-width:0}'"
-        "+'.jobs-filter .jobs-filter__label{font-family:var(--font-ui);font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em}'"
-        "+'.jobs-filter__input{font-family:var(--font-ui);font-size:13px;padding:6px 10px;border:1px solid var(--border-default,var(--border-strong));background:var(--bg-base);color:var(--text-primary);border-radius:var(--radius-sm,4px);width:100%}'"
-        "+'select.jobs-filter__input{cursor:pointer}'"
-        "+'.jobs-filter__input:focus{outline:2px solid var(--text-primary);outline-offset:2px}'"
-        "+'.jobs-filter__actions{display:flex;align-items:center;gap:var(--space-2,8px)}'"
-        "+'.jobs-filter__submit{font-family:var(--font-ui);font-size:12px;font-weight:500;padding:7px 14px;border:1px solid var(--text-primary);background:var(--text-primary);color:var(--bg-base);border-radius:var(--radius-sm,4px);cursor:pointer}'"
-        "+'.jobs-filter__submit:hover{opacity:0.85}'"
-        "+'.jobs-filter__clear{font-family:var(--font-ui);font-size:12px;color:var(--text-tertiary);text-decoration:none;padding:7px 4px}'"
-        "+'.jobs-filter__clear:hover{color:var(--text-primary);text-decoration:underline}'"
-        "+'@media (max-width:900px){.jobs-filter{grid-template-columns:1fr 1fr}.jobs-filter__actions{grid-column:1 / -1;justify-content:flex-end}}';"
-        "document.head.appendChild(s);"
-        "}"
-        "if(document.readyState==='loading'){"
-        "document.addEventListener('DOMContentLoaded',function(){injectStyles();mount();});"
-        "}else{injectStyles();mount();}"
-        "})();"
-        "</script>"
+    import re as _re
+    rendered = (
+        _FILTER_BAR_PARTIAL
+        .replace("{{ filter_q }}", _esc(filter_q))
+        .replace("{{ raw_status_options }}", status_options_html)
+        .replace("{{ filter_since }}", _esc(filter_since))
+        .replace("{{ filter_until }}", _esc(filter_until))
     )
+    # No CSV/JSON exports on the jobs page — drop the exports block
+    # entirely so we don't render empty <a href=""> elements.
+    rendered = _re.sub(
+        r'<div class="adm-filter-bar__exports">.*?</div>',
+        "",
+        rendered,
+        flags=_re.DOTALL,
+    )
+    return rendered
 
 
 def _parse_date_to_ts(s) -> Optional[int]:
@@ -571,21 +502,16 @@ async def admin_jobs_page(request: Request):
         until_ts=until_ts,
     )
 
-    # The Recent-runs card in admin/jobs.html only exposes a single
-    # ``raw_filter_options`` slot (inside a ``<select>``). We extend that
-    # slot to carry the full filter form: it emits the job-name options
-    # the slot was originally designed for, closes the surrounding
-    # ``<select>`` early, and then injects a small bootstrap script that
-    # mounts the rest of the form (status, search, date range) DOM-side
-    # on page load. See ``_render_filter_mount_script`` for the rationale.
-    filter_slot_html = (
-        _render_filter_options(names)
-        + _render_filter_mount_script(
-            status_options_html=_render_status_options(status_filter),
-            filter_q=q,
-            filter_since=since_str if since_ts is not None else "",
-            filter_until=until_str if until_ts is not None else "",
-        )
+    # Recent-runs filter UI now uses the canonical ``admin_filter_bar``
+    # partial (commit f30503f). The ``job_name`` dropdown stays in the
+    # template since it's a jobs-specific client-side filter that the
+    # polling JS reads directly — it's not part of the server-side
+    # querystring contract (q / status / since / until).
+    filter_bar_html = _render_filter_bar(
+        status_options_html=_render_status_options(status_filter),
+        filter_q=q,
+        filter_since=since_str if since_ts is not None else "",
+        filter_until=until_str if until_ts is not None else "",
     )
 
     return render_admin_page(
@@ -603,5 +529,6 @@ async def admin_jobs_page(request: Request):
         raw_cron_count=str(len(cron)),
         raw_cron_rows=_render_cron_rows(cron),
         raw_recent_rows=_render_recent_rows(recent),
-        raw_filter_options=filter_slot_html,
+        raw_filter_options=_render_filter_options(names),
+        raw_filter_bar=filter_bar_html,
     )
