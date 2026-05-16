@@ -5287,6 +5287,17 @@ async def api_analytics_event(request: Request):
             raw_ip = ""
         ip_hash = _hash_ip(raw_ip)
 
+        # narve_visitor — anonymous opaque cookie minted on first hit.
+        # Lets us group events per browser even when IPs change. Capped
+        # at 128 chars defensively in case a misbehaving client stuffs a
+        # huge value into the cookie. ``None`` is fine (column nullable).
+        try:
+            visitor_id = request.cookies.get("narve_visitor") or None
+            if visitor_id is not None:
+                visitor_id = str(visitor_id)[:128]
+        except Exception:
+            visitor_id = None
+
         db.record_analytics_event(
             event_type=event_type,
             user_id=user_id,
@@ -5296,6 +5307,7 @@ async def api_analytics_event(request: Request):
             ip_hash=ip_hash,
             user_agent_category=ua_cat,
             properties=properties,
+            visitor_id=visitor_id,
         )
     except Exception:
         # Analytics MUST NEVER 500. Log and swallow so beacon callers

@@ -115,13 +115,18 @@ def record_analytics_event(
     ip_hash: str,
     user_agent_category: Optional[str],
     properties: Optional[dict] = None,
+    visitor_id: Optional[str] = None,
 ) -> int:
+    """Insert one analytics event row. ``visitor_id`` is the anonymous
+    cookie-based ID (``narve_visitor``) — pass it so per-browser
+    grouping works across IP changes; ``None`` is fine for legacy
+    callers / clients that haven't set the cookie yet."""
     import json as _json
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO analytics_events "
-            "(event_type, user_id, session_id, page, referrer, ip_hash, user_agent_category, properties, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(event_type, user_id, session_id, page, referrer, ip_hash, user_agent_category, properties, created_at, visitor_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event_type,
                 user_id,
@@ -132,6 +137,7 @@ def record_analytics_event(
                 user_agent_category,
                 _json.dumps(properties or {}),
                 int(time.time()),
+                visitor_id,
             ),
         )
         return cur.lastrowid
