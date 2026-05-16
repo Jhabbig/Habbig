@@ -63,6 +63,39 @@ _SHORTCUTS_VER = _asset_version("shortcuts.js")
 _FEEDBACK_BTN_VER = _asset_version("feedback_button.js")
 _SHORTCUTS_DISC_VER = _asset_version("js/shortcuts-discovery.js")
 _ANALYTICS_VER = _asset_version("analytics.js")
+_COOKIE_CONSENT_JS_VER = _asset_version("cookie_consent.js")
+_COOKIE_CONSENT_CSS_VER = _asset_version("pages/cookie_consent.css")
+
+
+# Consent cookie name (paired with VISITOR_COOKIE). Possible values:
+#   - unset    : first visit, no recorded choice (show banner)
+#   - "accept" : visitor opted in -> mint narve_visitor on next response
+#   - "decline": visitor opted out -> never mint narve_visitor; analytics
+#                 events still record but with visitor_id NULL.
+# Owned here (not auth.cookies) because it's purely a middleware/UI
+# concern — no server-side session machinery reads it.
+CONSENT_COOKIE = "narve_consent"
+
+
+def _read_consent(request) -> str:
+    """Return the narve_consent cookie value (``""``, ``"accept"``, ``"decline"``)."""
+    val = request.cookies.get(CONSENT_COOKIE) or ""
+    # Defensive: tolerate unknown values as "no recorded choice" so a
+    # tampered cookie re-prompts rather than silently opting the user in.
+    if val not in ("accept", "decline"):
+        return ""
+    return val
+
+
+# Cookie consent banner partial (HTML markup). Loaded once at import
+# time so we don't disk-read on every request. The matching CSS + JS
+# ship as separate <link>/<script> tags via _PWA_HEAD_COMMON and
+# _BODY_INJECT below, gated on the same predicate as the partial.
+_COOKIE_CONSENT_PARTIAL_PATH = Path(__file__).parent / "static" / "_partials" / "cookie_consent.html"
+try:
+    _COOKIE_CONSENT_HTML = _COOKIE_CONSENT_PARTIAL_PATH.read_text(encoding="utf-8")
+except OSError:
+    _COOKIE_CONSENT_HTML = ""
 
 
 # Critical first-paint CSS. Inlined into the head so the visible chrome
@@ -147,6 +180,14 @@ _PWA_HEAD_COMMON = (
     '<link rel="preload" href="/_gateway_static/fonts/SourceSerif4-Variable.woff2" '
     'as="font" type="font/woff2" crossorigin>\n'
     f'<link rel="stylesheet" href="/_gateway_static/mobile-a11y.css?v={_MOBILE_A11Y_VER}">\n'
+)
+
+# Cookie consent banner styling. Loaded as a separate sheet (not folded
+# into the head common block) so the dispatch layer can skip it when the
+# banner won't render — saves a request on every authed pageview after
+# the user records a choice.
+_COOKIE_CONSENT_CSS_LINK = (
+    f'<link rel="stylesheet" href="/_gateway_static/pages/cookie_consent.css?v={_COOKIE_CONSENT_CSS_VER}">\n'
 )
 
 _PWA_REDESIGN_LINKS = (
@@ -247,13 +288,27 @@ _ANALYTICS_SCRIPT = (
     f'<script src="/_gateway_static/analytics.js?v={_ANALYTICS_VER}" defer></script>\n'
 )
 
+# Cookie consent banner script. Reads narve_consent, shows the banner on
+# first visit, handles Accept/Decline, sets the consent cookie for 1 year.
+_COOKIE_CONSENT_SCRIPT = (
+    f'<script src="/_gateway_static/cookie_consent.js?v={_COOKIE_CONSENT_JS_VER}" defer></script>\n'
+)
+
 
 def _should_inject_analytics(request) -> bool:
-    """Skip analytics + visitor-cookie work on pre-auth + admin + DNT.
+    """Skip analytics work on pre-auth + admin + DNT + declined consent.
 
       - /gate is the unauthenticated landing — no tracking before login.
       - /admin/* is operator surface — never auto-tracked.
       - DNT: 1 honoured site-wide as a hard skip (cookie + script).
+      - narve_consent=decline -> still inject the tracker (page-view
+        events keep flowing with visitor_id NULL — informs us about
+        traffic shape without joining sessions), but do NOT mint the
+        visitor cookie. The visitor-cookie mint is gated separately
+        in dispatch() on narve_consent=="accept".
+      - narve_consent unset (first visit) -> inject the tracker so the
+        first page-view is captured, but again, no visitor cookie until
+        the user actively accepts.
     """
     if request.headers.get("dnt") == "1":
         return False
@@ -261,6 +316,25 @@ def _should_inject_analytics(request) -> bool:
     if path == "/gate" or path.startswith("/gate/"):
         return False
     if path.startswith("/admin"):
+        return False
+    return True
+
+
+def _should_inject_consent(request) -> bool:
+    """Show the consent banner only when needed.
+
+    Skip on the same surfaces as analytics (pre-auth/admin/DNT — those
+    paths don't track at all, so a consent prompt would be misleading).
+    Skip when the user has already recorded a choice (cookie set to
+    either ``accept`` or ``decline``) — the banner is a one-time gate.
+    """
+    if not _should_inject_analytics(request):
+        return False
+    if _read_consent(request):
+        return False
+    if not _COOKIE_CONSENT_HTML:
+        # Partial failed to load at import time — fail-closed so we
+        # don't ship a broken/empty band to every page.
         return False
     return True
 
@@ -279,6 +353,7 @@ def _inject_into_html(
     host: str | None = None,
     path: str | None = None,
     inject_analytics: bool = False,
+    inject_consent: bool = False,
 ) -> bytes:
     """Apply the six PWA/a11y transforms to an HTML body. Idempotent."""
     # 1. PWA head block (before </head>)
@@ -325,6 +400,15 @@ def _inject_into_html(
         if idx != -1:
             body = body[:idx] + og_block.encode() + body[idx:]
 
+    # 1c. Cookie consent CSS — only when the banner will actually render.
+    # Linked alongside the og:image block so it lands in <head> before
+    # the body parses (avoids an unstyled flash of the banner). Idempotent
+    # via the link href substring — re-proxied responses don't double up.
+    if inject_consent and b'/_gateway_static/pages/cookie_consent.css' not in body:
+        idx = body.rfind(b'</head>')
+        if idx != -1:
+            body = body[:idx] + _COOKIE_CONSENT_CSS_LINK.encode() + body[idx:]
+
     # 2. Viewport normalisation
     body = _VIEWPORT_RE.sub(
         b'<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">',
@@ -340,16 +424,28 @@ def _inject_into_html(
         injected = _BODY_INJECT
         if inject_analytics:
             injected = injected + _ANALYTICS_SCRIPT
+        if inject_consent:
+            # Partial first (markup), then the script that wires it up.
+            # Defer + DOMContentLoaded inside the script handles ordering.
+            injected = injected + _COOKIE_CONSENT_HTML + "\n" + _COOKIE_CONSENT_SCRIPT
 
         def _body_repl(m: re.Match) -> bytes:
             return m.group(1) + b'\n' + injected.encode()
         body = _BODY_OPEN_RE.sub(_body_repl, body, count=1)
-    elif inject_analytics and b'/_gateway_static/analytics.js' not in body:
-        # Skip-link already present (re-proxied response) but no analytics
-        # tag yet — inject the tracker just after <body> so it still fires.
-        def _body_repl_analytics(m: re.Match) -> bytes:
-            return m.group(1) + b'\n' + _ANALYTICS_SCRIPT.encode()
-        body = _BODY_OPEN_RE.sub(_body_repl_analytics, body, count=1)
+    else:
+        # Skip-link already present (re-proxied response). Append the
+        # bits that weren't there yet so this remains idempotent across
+        # any combination of re-proxying.
+        if inject_analytics and b'/_gateway_static/analytics.js' not in body:
+            def _body_repl_analytics(m: re.Match) -> bytes:
+                return m.group(1) + b'\n' + _ANALYTICS_SCRIPT.encode()
+            body = _BODY_OPEN_RE.sub(_body_repl_analytics, body, count=1)
+        if inject_consent and b'data-cookie-consent' not in body:
+            consent_block = _COOKIE_CONSENT_HTML + "\n" + _COOKIE_CONSENT_SCRIPT
+
+            def _body_repl_consent(m: re.Match) -> bytes:
+                return m.group(1) + b'\n' + consent_block.encode()
+            body = _BODY_OPEN_RE.sub(_body_repl_consent, body, count=1)
 
     # 4. Promote main-content div → semantic <main>
     if _MAIN_OPEN in body:
@@ -378,17 +474,29 @@ class PWAInjectionMiddleware(BaseHTTPMiddleware):
         body = b"".join(chunks)
         host = request.headers.get("host") or (request.url.hostname or "")
 
-        # Decide whether to mint the anonymous visitor cookie + inject the
-        # analytics tracker. Both are gated on the same predicate
-        # (_should_inject_analytics) so we honour DNT + skip pre-auth /
-        # admin surfaces in one place.
+        # Decide whether to inject the analytics tracker and / or the
+        # consent banner. Three signals interact:
+        #   - analytics_ok : per _should_inject_analytics (DNT + pre-auth
+        #                    + admin gating). Drives the analytics.js
+        #                    tag.
+        #   - consent_val  : "accept" / "decline" / "" (unset). Drives
+        #                    whether to mint the visitor cookie (accept
+        #                    only) and whether to show the banner (unset
+        #                    only, and only when analytics_ok is True
+        #                    so we don't prompt on surfaces that don't
+        #                    track at all).
+        #   - banner_ok    : per _should_inject_consent — composite of
+        #                    the above.
         analytics_ok = _should_inject_analytics(request)
+        consent_val = _read_consent(request)
+        banner_ok = _should_inject_consent(request)
 
         new_body = _inject_into_html(
             body,
             host=host,
             path=request.url.path,
             inject_analytics=analytics_ok,
+            inject_consent=banner_ok,
         )
 
         headers = dict(response.headers)
@@ -413,9 +521,18 @@ class PWAInjectionMiddleware(BaseHTTPMiddleware):
             for c in upstream_cookies:
                 new_response.headers.append("set-cookie", c)
 
-        # Mint the visitor cookie on first visit. Skipped on DNT + pre-auth
-        # + admin paths via _should_inject_analytics.
-        if analytics_ok and not read_visitor_cookie(request):
+        # Mint the visitor cookie ONLY after explicit consent. ePrivacy /
+        # GDPR require prior opt-in for non-essential cookies; the
+        # narve_visitor cookie is non-essential (analytics is fine
+        # without it — visitor_id just stays NULL server-side). Gates:
+        #   - analytics_ok (DNT + pre-auth + admin)
+        #   - consent_val == "accept" (recorded opt-in)
+        #   - visitor cookie not already present (idempotent)
+        if (
+            analytics_ok
+            and consent_val == "accept"
+            and not read_visitor_cookie(request)
+        ):
             set_visitor_cookie(new_response, request)
 
         return new_response

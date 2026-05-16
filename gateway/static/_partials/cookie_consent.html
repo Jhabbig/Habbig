@@ -1,0 +1,45 @@
+<!--
+  Cookie consent banner — ePrivacy/GDPR explicit prior consent for the
+  non-essential narve_visitor analytics cookie (commit 68ba4aa).
+
+  Injected site-wide by gateway/pwa_middleware.py on the same predicate
+  as analytics (skip /admin/*, /gate, DNT) AND additionally suppressed
+  when the narve_consent cookie is already set (either accept or decline
+  — both count as a recorded choice).
+
+  Two buttons, monochrome, 44x44 tap targets, full-width on mobile.
+  Client logic lives in /_gateway_static/cookie_consent.js.
+
+  TODO(privacy-policy): the link below points at /privacy. The policy
+  page itself (gateway/static/privacy.html — note: NOT under /pages/)
+  still needs a section describing the narve_visitor cookie + the
+  accept/decline mechanism. Out of scope for this change; tracked
+  separately.
+-->
+<aside
+  class="nv-cookie-consent"
+  data-cookie-consent
+  role="region"
+  aria-label="Cookie consent"
+  hidden
+>
+  <div class="nv-cookie-consent__inner">
+    <p class="nv-cookie-consent__copy">
+      We use one analytics cookie to count anonymous page views. No
+      tracking. No third parties. Choose one.
+      <a class="nv-cookie-consent__link" href="/privacy">Privacy policy</a>
+    </p>
+    <div class="nv-cookie-consent__actions">
+      <button
+        type="button"
+        class="nv-cookie-consent__btn nv-cookie-consent__btn--accept"
+        data-cookie-consent-accept
+      >Accept</button>
+      <button
+        type="button"
+        class="nv-cookie-consent__btn nv-cookie-consent__btn--decline"
+        data-cookie-consent-decline
+      >Decline</button>
+    </div>
+  </div>
+</aside>

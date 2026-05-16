@@ -1,0 +1,157 @@
+/* Cookie consent banner — bottom-anchored sticky band.
+ *
+ * Monochrome, Inter, narve tokens throughout. Two equal-weight choices
+ * (Accept = solid black / interactive-bg, Decline = ghost outline) so
+ * neither button is dark-patterned. 44x44 minimum tap targets per HIG.
+ * Mobile (<=640px) goes full-width with a stacked actions row.
+ *
+ * Lives on every site-wide page via pwa_middleware until the user makes
+ * a choice (recorded in the narve_consent cookie). Position is `fixed`
+ * so it stays anchored to the viewport bottom without affecting the
+ * document flow / scroll height. env(safe-area-inset-bottom) keeps it
+ * clear of the iOS home indicator.
+ */
+
+.nv-cookie-consent {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-overlay, 50);
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-default);
+  padding: var(--space-4) var(--page-pad)
+    calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  /* Subtle separation from the page beneath without leaning on a heavy
+     shadow. tokens.css already caps shadow use to modals — this is the
+     one band, so a hairline border carries the work. */
+}
+
+.nv-cookie-consent__inner {
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.nv-cookie-consent__copy {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: var(--text-sm, 14px);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.nv-cookie-consent__link {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  margin-left: var(--space-1);
+  transition: color var(--duration-fast, 0.12s)
+    cubic-bezier(0.2, 0, 0, 1);
+}
+.nv-cookie-consent__link:hover,
+.nv-cookie-consent__link:focus-visible {
+  color: var(--text-secondary);
+  outline: none;
+}
+
+.nv-cookie-consent__actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.nv-cookie-consent__btn {
+  /* 44x44 minimum tap target on all viewports — enforced via min-width
+     + min-height because the inner text may not push the box that far
+     on its own. Padding still drives the comfortable case. */
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm, 14px);
+  font-weight: 500;
+  line-height: 1;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: background var(--duration-fast, 0.12s)
+      cubic-bezier(0.2, 0, 0, 1),
+    color var(--duration-fast, 0.12s) cubic-bezier(0.2, 0, 0, 1),
+    border-color var(--duration-fast, 0.12s) cubic-bezier(0.2, 0, 0, 1);
+}
+
+.nv-cookie-consent__btn--accept {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border: 1px solid var(--interactive-bg);
+}
+.nv-cookie-consent__btn--accept:hover,
+.nv-cookie-consent__btn--accept:focus-visible {
+  background: var(--interactive-hover, var(--interactive-bg));
+  outline: none;
+}
+
+.nv-cookie-consent__btn--decline {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+.nv-cookie-consent__btn--decline:hover,
+.nv-cookie-consent__btn--decline:focus-visible {
+  background: var(--interactive-ghost);
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.nv-cookie-consent__btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* ── Mobile (<= 640px) ────────────────────────────────────────────────
+   Full-width band, stacked rows. Buttons sit side-by-side at equal
+   width so neither dominates. Padding stays comfortable.            */
+@media (max-width: 640px) {
+  .nv-cookie-consent {
+    padding: var(--space-4) var(--space-4)
+      calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .nv-cookie-consent__inner {
+    gap: var(--space-3);
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nv-cookie-consent__copy {
+    flex: 0 0 auto;
+  }
+
+  .nv-cookie-consent__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+
+  .nv-cookie-consent__btn {
+    width: 100%;
+  }
+}
+
+/* Reduce motion: drop the colour transitions so the banner doesn't
+   "fade" on focus — instant state changes only. */
+@media (prefers-reduced-motion: reduce) {
+  .nv-cookie-consent__btn,
+  .nv-cookie-consent__link {
+    transition: none;
+  }
+}
