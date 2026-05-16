@@ -6179,136 +6179,7 @@ async def admin_mark_enquiry_read(request: Request, enquiry_id: int):
 
 
 # ── Admin: Logs section ───────────────────────────────────────────────────
-#
-# Three endpoints back the admin "Logs" tab. All read from the in-memory ring
-# buffer populated by logging_config.configure_logging() so queries are cheap
-# and do not hit disk.
-
-
-def _parse_log_query(request: Request) -> dict:
-    """Extract common log-filter params from query string."""
-    try:
-        limit = int(request.query_params.get("limit", "50") or 50)
-    except ValueError:
-        limit = 50
-    return {
-        "level": (request.query_params.get("level") or "").upper() or None,
-        "service": request.query_params.get("service") or None,
-        "q": request.query_params.get("q") or None,
-        "limit": max(1, min(limit, 500)),
-    }
-
-
-@app.get("/admin/logs/live")
-async def admin_logs_live(request: Request):
-    """Return the most recent structured log records from the ring buffer.
-
-    Query params:
-      level   INFO|WARNING|ERROR — minimum level (default: all)
-      service app|scraper|worker|all — filter by service name
-      q       substring search inside the JSON payload
-      limit   1-500 (default 50)
-    """
-    admin = _require_admin_user(request)
-    if _is_rate_limited(f"admin_logs_live:{admin['email']}", 120, 60):
-        return JSONResponse(
-            {"error": "Log tail polled too frequently."},
-            status_code=429,
-            headers={"Retry-After": "60"},
-        )
-    params = _parse_log_query(request)
-    records = _log_ring_buffer.snapshot(
-        level=params["level"],
-        service=params["service"],
-        contains=params["q"],
-        limit=params["limit"],
-    )
-    return JSONResponse({
-        "records": records,
-        "count": len(records),
-        "capacity": _log_ring_buffer.capacity,
-        "logtail_configured": is_logtail_configured(),
-        "service": _LOG_SERVICE_NAME,
-    })
-
-
-@app.get("/admin/logs/errors")
-async def admin_logs_errors(request: Request):
-    """Return ERROR-level records grouped by (logger, message)."""
-    admin = _require_admin_user(request)
-    if _is_rate_limited(f"admin_logs_errors:{admin['email']}", 60, 60):
-        return JSONResponse(
-            {"error": "Error log polled too frequently."},
-            status_code=429,
-            headers={"Retry-After": "60"},
-        )
-    records = _log_ring_buffer.snapshot(level="ERROR", limit=500)
-
-    grouped: dict = {}
-    for rec in records:
-        logger_name = rec.get("logger", "unknown")
-        msg = (rec.get("message") or "")[:200]
-        key = (logger_name, msg)
-        if key not in grouped:
-            grouped[key] = {
-                "logger": logger_name,
-                "message": msg,
-                "service": rec.get("service"),
-                "count": 0,
-                "first_seen": rec.get("timestamp"),
-                "last_seen": rec.get("timestamp"),
-                "sample": rec,
-            }
-        g = grouped[key]
-        g["count"] += 1
-        ts = rec.get("timestamp")
-        if ts:
-            if not g["first_seen"] or ts < g["first_seen"]:
-                g["first_seen"] = ts
-            if not g["last_seen"] or ts > g["last_seen"]:
-                g["last_seen"] = ts
-
-    groups = sorted(grouped.values(),
-                    key=lambda g: g["last_seen"] or "",
-                    reverse=True)
-    return JSONResponse({
-        "groups": groups,
-        "total_errors": sum(g["count"] for g in groups),
-        "distinct_errors": len(groups),
-    })
-
-
-@app.get("/admin/logs/search")
-async def admin_logs_search(request: Request):
-    """Free-text substring search over the ring buffer.
-
-    For richer queries (regex, multi-day retention) use BetterStack directly.
-    """
-    admin = _require_admin_user(request)
-    if _is_rate_limited(f"admin_logs_search:{admin['email']}", 30, 60):
-        return JSONResponse(
-            {"error": "Log search rate limit reached."},
-            status_code=429,
-            headers={"Retry-After": "60"},
-        )
-    params = _parse_log_query(request)
-    try:
-        limit = int(request.query_params.get("limit", "100") or 100)
-    except ValueError:
-        limit = 100
-    limit = max(1, min(limit, 500))
-    records = _log_ring_buffer.snapshot(
-        level=params["level"],
-        service=params["service"],
-        contains=params["q"],
-        limit=limit,
-    )
-    return JSONResponse({
-        "records": records,
-        "count": len(records),
-        "query": params["q"] or "",
-        "logtail_configured": is_logtail_configured(),
-    })
+# Extracted to admin_logs_routes.py 2026-05-16 (audit #24 MED #1).
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
@@ -8621,6 +8492,21 @@ try:
         _aer_importlib.reload(_aer_sys.modules["admin_emails_routes"])
 except Exception as _exc:  # pragma: no cover
     log.warning("admin_emails_routes import failed: %s — continuing without it", _exc)
+
+
+# In-memory ring-buffer log viewer (/admin/logs/live, /errors, /search).
+# Extracted from server.py 2026-05-16 to close audit #24 MED #1
+# (server.py LOC creep). Same reload-safe side-effect pattern as
+# admin_emails_routes above; must sit before the catch-all so /admin/logs/*
+# isn't swallowed as a 404.
+try:
+    import admin_logs_routes  # noqa: F401,E402
+    import sys as _alr_sys
+    if "admin_logs_routes" in _alr_sys.modules:
+        import importlib as _alr_importlib
+        _alr_importlib.reload(_alr_sys.modules["admin_logs_routes"])
+except Exception as _exc:  # pragma: no cover
+    log.warning("admin_logs_routes import failed: %s — continuing without it", _exc)
 
 
 # Single-pane external-integration health (/admin/integrations + /api/admin/integrations*).
