@@ -3877,6 +3877,13 @@ def _render_email_bulk_footer() -> str:
         'font-variant-numeric:tabular-nums;">0</span> selected'
         '</span>'
         '<span style="display:flex;align-items:center;gap:8px;">'
+        '<button type="button" id="adm-ea-bulk-export" '
+        'style="font-family:var(--font-ui);font-size:12px;'
+        'background:transparent;border:1px solid var(--border-default);'
+        'border-radius:var(--radius-sm,6px);padding:6px 12px;'
+        'color:var(--text-primary);cursor:pointer;">'
+        'Export selected'
+        '</button>'
         '<button type="button" id="adm-ea-bulk-delete" '
         'style="font-family:var(--font-ui);font-size:12px;'
         'background:transparent;border:1px solid var(--border-default);'
@@ -4551,6 +4558,13 @@ def register(app) -> None:
     app.add_api_route(
         "/admin/email-addresses/export.csv", email_addresses_export_csv,
         methods=["GET"], include_in_schema=False,
+    )
+    # POST sibling for "Export selected" — used when the selection's
+    # ``emails=`` querystring would exceed ~2000 chars. Same response
+    # contract as the GET path, payload comes from the form body.
+    app.add_api_route(
+        "/admin/email-addresses/export.csv", email_addresses_export_csv_post,
+        methods=["POST"], include_in_schema=False,
     )
     app.add_api_route(
         "/admin/email-addresses/export.json", email_addresses_export_json,

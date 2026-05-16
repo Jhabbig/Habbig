@@ -411,3 +411,182 @@
   });
 })();
 </script>
+
+<!-- ── Bulk "Export selected" handler ────────────────────────────────
+     Wires the #adm-ea-bulk-export button (rendered server-side by
+     _render_email_bulk_footer in admin_routes.py) to a CSV download
+     scoped to the currently-checked rows.
+
+     Dispatch path:
+       • ≤ 500 emails AND URL stays under 2000 chars → GET with
+         `?emails=...` appended to the active filter querystring. The
+         browser handles download via direct navigation; server sends
+         Content-Disposition: attachment.
+       • Otherwise → POST a form to /admin/email-addresses/export.csv
+         carrying the filter context + email list. Convert the
+         response blob to a download via an in-memory anchor.
+
+     Cap mirrors the server-side `_EMAIL_EXPORT_SELECTION_CAP` (500).
+     CSRF token is pulled from the `_csrf` cookie set by the global
+     CSRF middleware. Errors (cap exceeded, network failure, server
+     4xx/5xx) surface through `narveToast` so the admin sees a clear
+     "× Export failed" instead of a silent no-op. -->
+<script>
+(() => {
+  "use strict";
+  if (window.__admEaExportSelectedInstalled) return;
+  window.__admEaExportSelectedInstalled = true;
+
+  // Mirror of server-side _EMAIL_EXPORT_SELECTION_CAP. Bump both when
+  // you bump the server cap, otherwise the toast wording will lie.
+  const SELECTION_CAP = 500;
+  // Conservative URL ceiling. Real browser/CDN limits sit higher
+  // (~8 KB) but Cloudflare and some proxies still 414 above ~4 KB,
+  // so we cross over to POST well before that.
+  const URL_LIMIT = 2000;
+
+  const EXPORT_URL = "/admin/email-addresses/export.csv";
+
+  function csrfToken() {
+    const m = document.cookie.match(/(?:^|;\s*)_csrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  function toast(msg) {
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg); return; } catch (e) { /* fall through */ }
+    }
+    try { console.info(msg); } catch (e) { /* swallow */ }
+  }
+  function toastError(msg) {
+    if (typeof window.narveToastError === "function") {
+      try { window.narveToastError(msg); return; } catch (e) { /* fall through */ }
+    }
+    if (typeof window.narveToast === "function") {
+      try { window.narveToast(msg, { type: "error" }); return; } catch (e) { /* fall through */ }
+    }
+    try { console.warn(msg); } catch (e) { /* swallow */ }
+  }
+
+  function selectedEmails() {
+    const boxes = document.querySelectorAll("[data-bulk-select]:checked");
+    const out = [];
+    const seen = new Set();
+    boxes.forEach((b) => {
+      const v = (b.value || "").trim().toLowerCase();
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      out.push(v);
+    });
+    return out;
+  }
+
+  // Pull the active filter context off the existing filter form so the
+  // selection export honours the same q/source/status/since/until set
+  // the user is currently looking at (mirrors the page CSV link).
+  function filterContext() {
+    const ctx = { q: "", source: "", status: "", since: "", until: "" };
+    const form = document.querySelector(".adm-ea-filter");
+    if (!form) return ctx;
+    Object.keys(ctx).forEach((k) => {
+      const el = form.querySelector('[name="' + k + '"]');
+      if (el && typeof el.value === "string") ctx[k] = el.value.trim();
+    });
+    return ctx;
+  }
+
+  function buildGetUrl(emails, ctx) {
+    const params = new URLSearchParams();
+    Object.keys(ctx).forEach((k) => {
+      if (ctx[k]) params.set(k, ctx[k]);
+    });
+    params.set("emails", emails.join(","));
+    return EXPORT_URL + "?" + params.toString();
+  }
+
+  function triggerGetDownload(url) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    // Server already sends Content-Disposition: attachment; this hint
+    // just nudges the browser into save-rather-than-navigate behaviour.
+    a.setAttribute("download", "");
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  async function postSelectionDownload(emails, ctx) {
+    const fd = new FormData();
+    Object.keys(ctx).forEach((k) => {
+      if (ctx[k]) fd.append(k, ctx[k]);
+    });
+    fd.append("emails", emails.join(","));
+
+    const headers = {};
+    const csrf = csrfToken();
+    if (csrf) headers["x-csrf-token"] = csrf;
+
+    let resp;
+    try {
+      resp = await fetch(EXPORT_URL, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: headers,
+        body: fd,
+      });
+    } catch (e) {
+      toastError("Export failed — network error");
+      return;
+    }
+
+    if (!resp.ok) {
+      toastError("Export failed — server " + resp.status);
+      return;
+    }
+
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = "email_addresses_selected.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Release after a tick so the download has a chance to start.
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!t || t.id !== "adm-ea-bulk-export") return;
+    ev.preventDefault();
+
+    const emails = selectedEmails();
+    if (emails.length === 0) {
+      toastError("No rows selected");
+      return;
+    }
+    if (emails.length > SELECTION_CAP) {
+      toastError(
+        "Selection too large — cap is " + SELECTION_CAP +
+        " emails per export (you have " + emails.length + ")."
+      );
+      return;
+    }
+
+    const ctx = filterContext();
+    const getUrl = buildGetUrl(emails, ctx);
+
+    if (getUrl.length <= URL_LIMIT) {
+      triggerGetDownload(getUrl);
+      toast("Exporting " + emails.length + " email" + (emails.length === 1 ? "" : "s"));
+      return;
+    }
+
+    // URL would be too long for proxies/CDN — POST the selection.
+    toast("Exporting " + emails.length + " emails");
+    await postSelectionDownload(emails, ctx);
+  });
+})();
+</script>
