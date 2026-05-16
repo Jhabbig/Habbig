@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import HTTPException, Request
@@ -63,6 +64,23 @@ _ADMIN_NOTIFY_EMAIL = (
     or "support@narve.ai"
 )
 _COOKIE_IS_SECURE = (os.environ.get("PRODUCTION", "0") == "1")
+
+
+# Canonical admin filter-bar partial, shipped in commit f30503f. Loaded
+# once at import time (small file, never changes between deploys) and
+# placeholder-substituted per request before being injected into the
+# ``raw_filter_bar`` slot in admin/affiliates.html.
+_FILTER_BAR_PARTIAL_PATH = (
+    Path(__file__).parent / "static" / "_partials" / "admin_filter_bar.html"
+)
+try:
+    _FILTER_BAR_PARTIAL = _FILTER_BAR_PARTIAL_PATH.read_text()
+except OSError:
+    # Defensive: an absent partial is a deployment error rather than a
+    # request-time failure. Log loudly but degrade to an empty filter so
+    # the page still renders.
+    log.exception("affiliate: failed to load admin_filter_bar partial")
+    _FILTER_BAR_PARTIAL = ""
 
 
 # ── Cookie helpers ────────────────────────────────────────────────────
@@ -592,6 +610,43 @@ def _render_affiliate_status_options(active: str) -> str:
     return "".join(out)
 
 
+def _render_affiliates_filter_bar(*, filter_q: str, status_options_html: str) -> str:
+    """Render the canonical admin_filter_bar partial for /admin/affiliates.
+
+    /admin/affiliates only exposes the q + status filters — there is no
+    date-range picker and no CSV/JSON exporter on this surface. We pass
+    empty strings for the unused since/until/export placeholders and
+    strip the date-field <label>s and the exports block from the rendered
+    partial so we don't render a row of empty inputs and dead anchors.
+    """
+    import html as _html
+    import re as _re
+    rendered = (
+        _FILTER_BAR_PARTIAL
+        .replace("{{ filter_q }}", _html.escape(filter_q, quote=True))
+        .replace("{{ raw_status_options }}", status_options_html)
+        .replace("{{ filter_since }}", "")
+        .replace("{{ filter_until }}", "")
+        .replace("{{ export_csv_href }}", "")
+        .replace("{{ export_json_href }}", "")
+    )
+    # Drop the two date-field labels — /admin/affiliates has no since/until.
+    rendered = _re.sub(
+        r'<label class="adm-filter-bar__field adm-filter-bar__field--date">.*?</label>',
+        "",
+        rendered,
+        flags=_re.DOTALL,
+    )
+    # Drop the exports block — no CSV/JSON exporter on this surface.
+    rendered = _re.sub(
+        r'<div class="adm-filter-bar__exports">.*?</div>',
+        "",
+        rendered,
+        flags=_re.DOTALL,
+    )
+    return rendered
+
+
 @app.get("/admin/affiliates", response_class=HTMLResponse)
 async def admin_affiliates_list(request: Request):
     """Admin list view. Also surfaces the pending-payouts queue."""
@@ -644,6 +699,11 @@ async def admin_affiliates_list(request: Request):
         if (filter_q or filter_status) else "No affiliates yet."
     )
 
+    raw_filter_bar = _render_affiliates_filter_bar(
+        filter_q=filter_q,
+        status_options_html=_render_affiliate_status_options(filter_status),
+    )
+
     from admin_shell import render_admin_page
     return render_admin_page(
         request,
@@ -653,9 +713,7 @@ async def admin_affiliates_list(request: Request):
         breadcrumb=[("Admin", "/admin"), ("Affiliates", "/admin/affiliates")],
         total_affiliates=str(len(all_affiliates)),
         pending_payout_count=str(len(pending)),
-        filter_q=filter_q,
-        filter_status=filter_status,
-        raw_status_options=_render_affiliate_status_options(filter_status),
+        raw_filter_bar=raw_filter_bar,
         filter_result_count=f"{len(affiliates)} of {len(all_affiliates)}",
         raw_affiliate_rows="\n".join(rows) or (
             f'<tr><td colspan="7" style="opacity:0.6">{_html.escape(empty_msg)}</td></tr>'

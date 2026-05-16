@@ -47,21 +47,8 @@
               <span class="admin-section-count">{{ total_affiliates }} total</span>
             </div>
 
-            <form class="admin-filter-bar" method="get" action="/admin/affiliates"
-                  role="search" aria-label="Filter affiliates">
-              <input type="search" name="q" id="aff-search"
-                     value="{{ filter_q }}"
-                     placeholder="Filter by slug or label…"
-                     aria-label="Search affiliate slug or label"
-                     autocomplete="off" maxlength="120">
-              <select name="status" aria-label="Filter by status">
-                {{ raw_status_options }}
-              </select>
-              <button type="submit" class="filter-chip active">Apply</button>
-              <a href="/admin/affiliates" class="filter-chip">Clear</a>
-              <span class="filter-spacer"></span>
-              <span class="admin-section-count">{{ filter_result_count }}</span>
-            </form>
+            {{ raw_filter_bar }}
+            <div class="admin-section-count" style="margin:8px 0 12px">{{ filter_result_count }}</div>
 
             <div class="admin-card">
               <table class="admin-table" id="affiliates-table">
