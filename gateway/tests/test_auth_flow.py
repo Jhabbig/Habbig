@@ -55,12 +55,12 @@ migrations.upgrade_to_head()
 import server  # noqa: E402
 import server_features  # noqa: F401,E402
 from auth.cookies import (  # noqa: E402
-    PENDING_TOKEN_COOKIE,
     SESSION_COOKIE,
-    PENDING_TOKEN_TTL,
     SESSION_COOKIE_TTL,
-    sign_pending_token,
 )
+# PENDING_TOKEN_COOKIE / PENDING_TOKEN_TTL / sign_pending_token were deleted
+# 2026-05-16 with the /token invite-gate purge (commits f63d844 + 82170a2).
+# Tests below that referenced them are already skip-marked via _REMOVED.
 from fastapi.testclient import TestClient  # noqa: E402
 
 client = TestClient(server.app)
