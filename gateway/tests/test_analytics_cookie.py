@@ -10,15 +10,21 @@ flag set (HttpOnly=False, Secure=PRODUCTION, SameSite=Lax, 1y Max-Age,
 Coverage matrix
 ---------------
 
-1. First HTML hit without cookie -> Set-Cookie present, flag set correct.
+1. First HTML hit WITH ``narve_consent=accept`` -> Set-Cookie present,
+   flag set correct. (Post commit a558844 the visitor-cookie mint is
+   gated on explicit consent — see the new
+   ``test_first_hit_without_consent_does_not_mint_visitor`` for the
+   first-visit-no-consent path.)
 2. Second hit WITH the cookie    -> idempotent (no re-set).
 3. Cookie value is a non-empty URL-safe string (>=16 chars).
 4. /admin/* hits do NOT mint the cookie.
 5. /gate hits do NOT mint the cookie.
 6. ``DNT: 1`` requests do NOT mint the cookie (Do-Not-Track respected).
-7. POST /api/analytics/event WITH the cookie -> row persisted with
+7. First HTML hit WITHOUT a consent cookie -> no Set-Cookie for
+   narve_visitor (ePrivacy / GDPR opt-in gate).
+8. POST /api/analytics/event WITH the cookie -> row persisted with
    ``visitor_id`` populated (column added by migration 200).
-8. POST /api/analytics/event WITHOUT the cookie -> row persisted with
+9. POST /api/analytics/event WITHOUT the cookie -> row persisted with
    ``visitor_id IS NULL`` (graceful fallback).
 
 The endpoint half of the suite uses the same TestClient/fixture pattern
@@ -112,21 +118,41 @@ class TestVisitorCookieMint(unittest.TestCase):
         except Exception:
             pass
 
-    def _get_html(self, path: str, **kwargs):
+    def _get_html(self, path: str, *, with_consent: bool = True, **kwargs):
+        """Issue an HTML GET. By default attaches ``narve_consent=accept``
+        so the visitor-cookie mint happens (the post commit a558844 gate).
+        Set ``with_consent=False`` to simulate a first-visit / declined
+        / unset-consent state.
+        """
         headers = dict(kwargs.pop("headers", {}) or {})
         headers.setdefault("Host", _TEST_HOST)
+        if with_consent:
+            # Don't clobber an explicit Cookie header the caller already
+            # supplied — just append if needed. Two cookies on one line
+            # via "; " is the standard browser format.
+            existing = headers.get("Cookie")
+            consent_pair = "narve_consent=accept"
+            if existing and "narve_consent=" not in existing:
+                headers["Cookie"] = f"{existing}; {consent_pair}"
+            elif not existing:
+                headers["Cookie"] = consent_pair
         return self.client.get(path, headers=headers, **kwargs)
 
     # ── 1. First hit sets the cookie with the right flags ─────────────
 
     def test_first_hit_sets_cookie_with_expected_flags(self):
-        """First HTML hit without the cookie mints it on the response.
+        """First HTML hit WITH explicit consent mints the visitor cookie.
 
         We pick the public landing (/) because it returns HTML and is
         gated only by the SITE_ACCESS_TOKEN check, which the test env
-        clears. The cookie flags must match what the analytics tracker
-        depends on: HttpOnly=False (JS reads it), SameSite=Lax (survives
-        top-level navs but not cross-site POSTs), Max-Age ~= 1y, Path=/.
+        clears. ``narve_consent=accept`` is attached by ``_get_html`` so
+        the dispatch() gate (analytics_ok && consent_val=="accept" &&
+        no existing visitor cookie) fires — without it the mint is
+        intentionally suppressed for ePrivacy / GDPR compliance.
+
+        The cookie flags must match what the analytics tracker depends
+        on: HttpOnly=False (JS reads it), SameSite=Lax (survives top-
+        level navs but not cross-site POSTs), Max-Age ~= 1y, Path=/.
         """
         r = self._get_html("/")
         # Status varies on this build (200 prerelease, 302 to subdomain),
@@ -255,7 +281,31 @@ class TestVisitorCookieMint(unittest.TestCase):
             f"pre-auth surface must be excluded",
         )
 
-    # ── 6. DNT: 1 is respected ────────────────────────────────────────
+    # ── 6b. First visit WITHOUT consent does NOT mint ─────────────────
+
+    def test_first_hit_without_consent_does_not_mint_visitor(self):
+        """ePrivacy / GDPR gate: a first-visit visitor with no
+        ``narve_consent`` cookie must not receive a Set-Cookie for
+        narve_visitor. The consent banner (commit a558844) makes the
+        visitor cookie opt-in; the dispatch() gate only mints once
+        ``consent_val == "accept"`` is recorded.
+
+        This is the post-consent-banner behaviour: the page-view tracker
+        still injects (so anonymous traffic shape data flows with
+        ``visitor_id`` NULL), but no cross-session grouping cookie is
+        set until the user actively accepts.
+        """
+        # Explicitly omit the consent cookie — _get_html(with_consent=
+        # False) sends a plain GET so dispatch() sees consent_val == "".
+        r = self._get_html("/", with_consent=False)
+        self.assertIsNone(
+            _visitor_set_cookie(r),
+            f"narve_visitor was minted on first visit without explicit consent "
+            f"(status={r.status_code}); the visitor cookie must be gated on "
+            f"narve_consent=accept (ePrivacy/GDPR)",
+        )
+
+    # ── 7. DNT: 1 is respected ────────────────────────────────────────
 
     def test_dnt_request_does_not_set_cookie(self):
         """Visitors who send ``DNT: 1`` are honoured site-wide.

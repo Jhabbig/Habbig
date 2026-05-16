@@ -64,7 +64,17 @@ def _make_user(email: str, password: str, username: str | None = None) -> int:
 class _Base(unittest.TestCase):
     """Per-test isolation: fresh TestClient cookie jar, cleared rate
     limiters. The shared in-memory DB is reset between tests by the
-    autouse conftest fixture."""
+    autouse conftest fixture.
+
+    Rate-limiter note: ``@rate_limit`` on /login uses
+    ``security.rate_limiter.limiter._windows`` (a SlidingWindowRateLimiter
+    instance) rather than ``server._rate_store`` (a separate dict used
+    by hand-written per-email / per-IP checks inside the handlers).
+    BOTH stores must be drained per-test or a sibling test that exhausts
+    one bucket (e.g. ``test_login_post_rate_limit_per_ip`` firing 12 POSTs
+    to fill the 10/300s decorator window) trips the next test's first
+    legitimate POST with a 429.
+    """
 
     def setUp(self):
         client.cookies.clear()
@@ -73,6 +83,11 @@ class _Base(unittest.TestCase):
             _server._rate_store.clear()
             if hasattr(_server, "_login_failures"):
                 _server._login_failures.clear()
+        except Exception:
+            pass
+        try:
+            from security.rate_limiter import limiter as _decorator_limiter
+            _decorator_limiter._windows.clear()
         except Exception:
             pass
 
