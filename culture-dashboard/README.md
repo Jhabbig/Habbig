@@ -67,7 +67,8 @@ dashboard still renders, that section just shows "No data".
 | `index_calc.py` | Composite culture index — log-scaled, weighted. |
 | `surge_calc.py` | Per-item z-score against trailing window — picks the rising items. |
 | `topics.py` | Cross-source topic clustering — Jaccard on title tokens + hashtags. |
-| `edge.py` | Topic ↔ Polymarket-market matcher; filters topics with markets + surge signal. |
+| `edge.py` | Topic ↔ Polymarket-market matcher; computes mispricing score from surge vs. price velocity. |
+| `price_velocity.py` | Trailing 24h price velocity per event from the market_prices table. |
 | `digest.py` | Calls Claude (anthropic SDK) with a packed snapshot to produce the daily culture brief. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
@@ -168,12 +169,21 @@ keywords) and the strongest surge z-score across its items.
 
 ## Market signal ("edges")
 
-`edge.py` filters the topic list down to clusters that (a) have at least
-one matched Polymarket market and (b) are surging beyond
-`CULTURE_EDGE_MIN_SIGNAL` (default z≥1.5). The implied edge is "attention
-is climbing faster than the contract price has caught up to" — but the
-price half of that claim isn't verified yet (next iteration: persist
-Polymarket prices over time and compare velocity directly).
+Each Polymarket sweep also writes a per-event price snapshot
+(`event_slug`, `favorite_question`, `favorite_price`, `volume`) into the
+`market_prices` table. `price_velocity.py` computes the 24-hour percentage
+change in the favorite market's price; `edge.py` enriches every matched
+market with that velocity.
+
+The **mispricing score** is `surge_signal − 10 × min|velocity_pct|`. With
+the default `CULTURE_EDGE_VELOCITY_PENALTY=10`, a 30% market move cancels a
+z=3 surge signal. Edges with `mispricing > 0` are surfaced and ranked.
+
+UI shows three things per edge: surge z-score, mispricing score, and per-market
+price + 24h velocity (green when |Δ|<5%, amber when larger). Velocities require
+≥2 snapshots — first 24h of operation will show "price history building".
+
+`market_prices` is pruned to 30 days each cycle.
 
 ## API
 

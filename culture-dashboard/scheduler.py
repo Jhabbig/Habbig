@@ -129,6 +129,9 @@ async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
             removed = cache.prune_history(days=7)
             if removed:
                 log.info("pruned %d old item_history rows", removed)
+            removed_prices = cache.prune_market_prices(days=30)
+            if removed_prices:
+                log.info("pruned %d old market_prices rows", removed_prices)
         except Exception as e:  # noqa: BLE001
             log.warning("surge worker hiccup: %s", e)
         try:

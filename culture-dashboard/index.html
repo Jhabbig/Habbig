@@ -103,15 +103,27 @@
   .edge-card { background: var(--panel-2); border-radius: 6px;
                padding: 12px 14px; margin-bottom: 8px; font-size: 13px; }
   .edge-head { display: flex; align-items: baseline; justify-content: space-between;
-               margin-bottom: 4px; }
+               gap: 12px; margin-bottom: 4px; }
   .edge-label { font-weight: 600; font-size: 15px; text-transform: capitalize; }
-  .edge-signal { color: var(--good); font-weight: 700; font-size: 14px; }
+  .edge-scores { display: flex; gap: 14px; align-items: baseline; }
+  .edge-score-block { text-align: right; }
+  .edge-score-label { color: var(--muted); font-size: 10px;
+                      text-transform: uppercase; letter-spacing: 0.06em; }
+  .edge-score-value { font-weight: 700; font-size: 14px; line-height: 1; }
+  .edge-score-value.mispricing { color: var(--good); font-size: 16px; }
+  .edge-score-value.signal { color: var(--fg); }
   .edge-meta { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
-  .edge-market { display: block; padding: 6px 0;
-                 border-top: 1px solid var(--border); }
-  .edge-market a { color: var(--accent); text-decoration: none; }
+  .edge-market { display: flex; align-items: baseline; gap: 10px;
+                 padding: 6px 0; border-top: 1px solid var(--border); }
+  .edge-market a { color: var(--accent); text-decoration: none; flex: 1; }
   .edge-market a:hover { text-decoration: underline; }
   .edge-market .vol { color: var(--muted); font-size: 11px; }
+  .edge-market .px { color: var(--fg); font-size: 12px; font-weight: 600;
+                     font-variant-numeric: tabular-nums; }
+  .edge-market .vel { font-size: 11px; font-variant-numeric: tabular-nums; }
+  .edge-market .vel.flat { color: var(--good); }
+  .edge-market .vel.moved { color: var(--warn); }
+  .edge-market .vel.unknown { color: var(--muted); }
 
   .digest { background: linear-gradient(180deg, var(--panel) 0%, #181c22 100%);
             border: 1px solid var(--border); border-left: 3px solid var(--accent);
@@ -374,28 +386,52 @@ async function loadTopics() {
   }
 }
 
+function velocityHtml(pct) {
+  if (pct == null) {
+    return '<span class="vel unknown">— · price history building</span>';
+  }
+  const abs = Math.abs(pct);
+  const cls = abs < 0.05 ? "flat" : "moved";
+  const sign = pct > 0 ? "+" : "";
+  return `<span class="vel ${cls}">24h ${sign}${(pct * 100).toFixed(1)}%</span>`;
+}
+
 async function loadEdges() {
   const r = await fetch("/api/edges?limit=8");
   const data = await r.json();
   const root = document.getElementById("edges-list");
   if (!data.edges.length) {
-    root.innerHTML = '<div class="rising-empty">No surging topics matched to markets yet — needs item history + culture markets to overlap.</div>';
+    root.innerHTML = '<div class="rising-empty">No mispriced edges yet — needs ~24h of item history + market prices to compute velocity.</div>';
     return;
   }
   root.innerHTML = "";
   for (const e of data.edges) {
     const card = document.createElement("div");
     card.className = "edge-card";
-    const markets = e.markets.map(m =>
-      `<div class="edge-market">
+    const markets = e.markets.map(m => {
+      const priceHtml = m.current_price != null
+        ? `<span class="px">${(m.current_price * 100).toFixed(0)}¢</span>` : "";
+      return `<div class="edge-market">
          <a href="${m.url || '#'}" target="_blank" rel="noopener noreferrer">${m.title}</a>
-         <span class="vol">vol ${fmt(m.volume)} · overlap ${m.overlap}</span>
-       </div>`
-    ).join("");
+         ${priceHtml}
+         ${velocityHtml(m.price_velocity_24h_pct)}
+         <span class="vol">vol ${fmt(m.volume)}</span>
+       </div>`;
+    }).join("");
+    const mispricing = e.mispricing_score != null ? e.mispricing_score.toFixed(1) : "—";
     card.innerHTML = `
       <div class="edge-head">
         <span class="edge-label">${e.label}</span>
-        <span class="edge-signal">z ${e.surge_signal.toFixed(1)}</span>
+        <div class="edge-scores">
+          <div class="edge-score-block">
+            <div class="edge-score-label">surge z</div>
+            <div class="edge-score-value signal">${e.surge_signal.toFixed(1)}</div>
+          </div>
+          <div class="edge-score-block">
+            <div class="edge-score-label">mispricing</div>
+            <div class="edge-score-value mispricing">${mispricing}</div>
+          </div>
+        </div>
       </div>
       <div class="edge-meta">spread ${e.spread} sources · ${e.sections.join(" + ")}</div>
       ${markets}`;

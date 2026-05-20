@@ -83,9 +83,15 @@ def build_user_prompt() -> str:
             {
                 "label": e["label"],
                 "surge_signal": e["surge_signal"],
+                "mispricing_score": e.get("mispricing_score"),
+                "min_abs_velocity": e.get("min_abs_velocity"),
                 "sections": e["sections"],
-                "markets": [{"title": m["title"], "volume": m["volume"]}
-                            for m in e["markets"]],
+                "markets": [{
+                    "title": m["title"],
+                    "volume": m["volume"],
+                    "price": m.get("current_price"),
+                    "velocity_24h_pct": m.get("price_velocity_24h_pct"),
+                } for m in e["markets"]],
             }
             for e in edge.compute_edges(limit=6)
         ],

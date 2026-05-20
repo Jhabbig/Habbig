@@ -2,13 +2,13 @@
 
 For each cross-source topic cluster we look up:
   * matching Polymarket markets (Jaccard on title keywords)
-  * the strongest surge z-score across the topic's items (if any)
+  * the strongest surge z-score across the topic's items
+  * the matched markets' 24h price velocity from the market_prices table
 
-An "edge" is then a topic that (a) has at least one matched market and
-(b) is surging beyond a threshold — the implication being that attention
-is climbing faster than the contract price has caught up to. We can't
-verify the price-side claim without a price history (next iteration), so
-this view is best read as "markets worth a look right now".
+A real "edge" is a topic with high surge AND a matched market whose price
+has not yet moved — attention is climbing faster than the contract has
+caught up to. Mispricing score = surge_signal − 10·min(|velocity_pct|);
+edges with mispricing > threshold are surfaced and ranked.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 
 import cache
+import price_velocity
 import surge_calc
 import topics
 
@@ -34,10 +35,15 @@ def _signal_threshold() -> float:
         return 1.5
 
 
+def _velocity_penalty() -> float:
+    """Coefficient applied to |velocity_pct| when computing mispricing score."""
+    try:
+        return float(os.environ.get("CULTURE_EDGE_VELOCITY_PENALTY", "10"))
+    except ValueError:
+        return 10.0
+
+
 def compute_topics_with_markets(limit: int = 20) -> list[dict]:
-    """Cluster every item in cache, attach matched markets + surge signal."""
-    # All currently-live items across every section. limit×2 because spread
-    # only matters when items span sources; raw section caps would starve us.
     rows: list[dict] = []
     for section in (
         "memes", "attention", "entertainment", "markets", "news", "language", "lifestyle"
@@ -55,13 +61,27 @@ def compute_topics_with_markets(limit: int = 20) -> list[dict]:
 
 
 def compute_edges(limit: int = 20) -> list[dict]:
-    """Topics that have matched markets AND a positive surge signal."""
+    """Topics where attention is surging AND a matched market hasn't moved."""
     sig_min = _signal_threshold()
+    penalty = _velocity_penalty()
     out = []
     for c in compute_topics_with_markets(limit=200):
         if not c["markets"]:
             continue
         if c["surge_signal"] is None or c["surge_signal"] < sig_min:
+            continue
+        # Markets without price history pass through unscored; the calmest
+        # quantifiable market within the edge sets the mispricing score.
+        velocities = [m["price_velocity_24h_pct"]
+                      for m in c["markets"]
+                      if m.get("price_velocity_24h_pct") is not None]
+        if velocities:
+            min_abs_vel = min(abs(v) for v in velocities)
+            mispricing = c["surge_signal"] - penalty * min_abs_vel
+        else:
+            min_abs_vel = None
+            mispricing = c["surge_signal"]
+        if mispricing <= 0:
             continue
         out.append({
             "label": c["label"],
@@ -70,20 +90,20 @@ def compute_edges(limit: int = 20) -> list[dict]:
             "sections": c["sections"],
             "spread": c["spread"],
             "surge_signal": c["surge_signal"],
+            "min_abs_velocity": round(min_abs_vel, 4) if min_abs_vel is not None else None,
+            "mispricing_score": round(mispricing, 2),
             "markets": c["markets"],
             "items": c["items"][:5],
         })
-    out.sort(key=lambda e: e["surge_signal"], reverse=True)
+    out.sort(key=lambda e: e["mispricing_score"], reverse=True)
     return out[:limit]
 
 
 def _match_markets(keywords: list[str], market_items: list[dict]) -> list[dict]:
     """Match by overlap coefficient (|inter| / min(|a|,|b|)), not Jaccard.
 
-    Market titles are short ("Will X announce Y in 2026?"); topic vocabularies
-    are wide. Jaccard would underweight a true match because the union grows
-    with topic size. Overlap-coef asks "how much of the smaller set is shared?"
-    which is the right semantic for "does this market mention the topic?".
+    Each matched market is enriched with `price_velocity_24h_pct` (from the
+    market_prices table) so downstream consumers can rank by mispricing.
     """
     if not market_items or not keywords:
         return []
@@ -95,20 +115,37 @@ def _match_markets(keywords: list[str], market_items: list[dict]) -> list[dict]:
         if not mk:
             continue
         inter = kw & mk
-        if len(inter) < 2:    # need at least 2 shared tokens to avoid noise
+        if len(inter) < 2:
             continue
         overlap = len(inter) / min(len(kw), len(mk))
         if overlap < threshold:
             continue
+        extra = m.get("extra") or {}
+        slug = extra.get("event_slug") or _slug_from_url(m.get("url") or "")
+        vel = price_velocity.compute(slug) if slug else None
         out.append({
             "title": m.get("title"),
             "url": m.get("url"),
             "volume": m.get("score"),
             "overlap": round(overlap, 2),
             "shared": sorted(inter)[:6],
+            "event_slug": slug or None,
+            "favorite_question": extra.get("favorite_question"),
+            "current_price": extra.get("favorite_price"),
+            "price_velocity_24h_pct": vel["pct"] if vel else None,
+            "velocity_points": vel["points"] if vel else 0,
         })
     out.sort(key=lambda x: x["overlap"], reverse=True)
     return out[:5]
+
+
+def _slug_from_url(url: str) -> str | None:
+    """Extract the Polymarket slug from a `polymarket.com/event/<slug>` URL."""
+    prefix = "polymarket.com/event/"
+    idx = url.find(prefix)
+    if idx == -1:
+        return None
+    return url[idx + len(prefix):].split("/", 1)[0].split("?", 1)[0] or None
 
 
 def _topic_surge_signal(items: list[dict], surges: dict) -> float | None:

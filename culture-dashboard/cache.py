@@ -110,6 +110,17 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_digests_ts
                 ON digests(ts DESC);
+
+            CREATE TABLE IF NOT EXISTS market_prices (
+                event_slug         TEXT NOT NULL,
+                ts                 REAL NOT NULL,
+                favorite_question  TEXT NOT NULL,
+                favorite_price     REAL NOT NULL,
+                volume             REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (event_slug, ts)
+            );
+            CREATE INDEX IF NOT EXISTS idx_market_prices_lookup
+                ON market_prices(event_slug, ts DESC);
         """)
         # Add phash column to existing DBs that predate the schema bump.
         try:
@@ -358,6 +369,41 @@ def latest_digest() -> dict | None:
         )
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+def record_market_prices(snapshots: list[dict]) -> None:
+    """Append a price snapshot per event. Idempotent on (event_slug, ts)."""
+    if not snapshots:
+        return
+    rows = [(s["event_slug"], s["ts"], s["favorite_question"],
+             float(s["favorite_price"]), float(s.get("volume") or 0))
+            for s in snapshots]
+    with _txn() as c:
+        c.executemany(
+            "INSERT OR IGNORE INTO market_prices "
+            "(event_slug, ts, favorite_question, favorite_price, volume) "
+            "VALUES (?,?,?,?,?)",
+            rows,
+        )
+
+
+def market_price_history(event_slug: str, hours: int = 24) -> list[dict]:
+    cutoff = time.time() - hours * 3600
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, favorite_question, favorite_price, volume "
+            "FROM market_prices WHERE event_slug = ? AND ts >= ? "
+            "ORDER BY ts ASC",
+            (event_slug, cutoff),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def prune_market_prices(days: int = 30) -> int:
+    cutoff = time.time() - days * 86400
+    with _txn() as c:
+        cur = c.execute("DELETE FROM market_prices WHERE ts < ?", (cutoff,))
+        return cur.rowcount
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
