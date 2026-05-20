@@ -17,6 +17,7 @@ import WorldElections from './pages/WorldElections'
 import Historical from './pages/Historical'
 import Backtest from './pages/Backtest'
 import ElectionNight from './pages/ElectionNight'
+import MapPage from './pages/Map'
 import Settings from './pages/Settings'
 
 const AuthContext = createContext(null)
@@ -73,6 +74,7 @@ function Nav() {
 
   const links = [
     { to: '/', label: t('nav.overview'), icon: Home },
+    { to: '/map', label: 'Map', icon: Globe },
     { to: '/races', label: t('nav.races'), icon: BarChart3 },
     { to: '/divergence', label: t('nav.divergence'), icon: GitCompare },
     { to: '/world', label: t('nav.world'), icon: Globe },
@@ -178,6 +180,7 @@ export default function App() {
             <Route path="/world" element={<WorldElections />} />
             <Route path="/historical" element={<Historical />} />
             <Route path="/backtest" element={<Backtest />} />
+            <Route path="/map" element={<MapPage />} />
             <Route path="/election-night" element={<ElectionNight />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />

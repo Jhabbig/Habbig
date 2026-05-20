@@ -71,6 +71,8 @@ export const api = {
   newsRecent: (limit = 30) => request(`/data/news/recent?limit=${limit}`),
   newsLagCurve: (minDeltaPp = 1.0) => request(`/data/news/lag-curve?min_delta_pp=${minDeltaPp}`),
   electionNight: () => request('/data/election-night'),
+  forecastConditional: (given) => request(`/data/forecast/conditional?given=${encodeURIComponent(given)}`),
+  forecastJointSummary: () => request('/data/forecast/joint-summary'),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),

@@ -33,6 +33,7 @@ from alerts import dispatch_divergence_alert
 from smart_money import fetch_smart_money_flows, race_smart_money
 from news import ingest_news, measure_reactions, lag_curve, tag_article
 from election_night import assemble_election_night
+from conditional import compute_conditional, joint_distribution_summary
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -1936,6 +1937,52 @@ def _polling_avg_d_by_race() -> dict[str, float]:
         if total <= 0:
             continue
         out[race_key] = round(agg["d_sum"] / total, 4)
+    return out
+
+
+@app.get("/data/forecast/conditional")
+async def data_forecast_conditional(given: str):
+    """Re-score every race conditional on one race resolving for D or R.
+
+    Query parameter ``given`` is ``"<race_key>=<D|R>"``, e.g.
+    ``given=senate_PA=D``. Internally we run the common-factor swing model
+    in ``conditional.py`` so the response includes a per-race ``delta_pp``
+    showing how the conditional shifts each race vs the unconditional
+    forecast.
+
+    Powers the interactive map: hover a state and the page recolours every
+    other state based on the implied conditional forecast.
+    """
+    if "=" not in given:
+        raise HTTPException(400, "given must be of form '<race_key>=<D|R>'")
+    race_key, outcome = given.split("=", 1)
+    outcome = outcome.strip().upper()
+    if outcome not in ("D", "R"):
+        raise HTTPException(400, "outcome must be D or R")
+
+    base = await data_forecasts(min_confidence=0.0, limit=10_000)
+    forecasts = base.get("forecasts", []) or []
+    result = compute_conditional(
+        forecasts=forecasts,
+        conditioned_race_key=race_key.strip(),
+        conditioned_outcome=outcome,
+    )
+    return result
+
+
+@app.get("/data/forecast/joint-summary")
+async def data_forecast_joint_summary():
+    """Monte-Carlo expected D / R seats per chamber under the swing model.
+
+    Smoother than counting ``forecast_d >= 0.5`` because the swing model
+    captures the across-race correlation that makes wave outcomes more
+    plausible than independent coin flips would suggest.
+    """
+    base = await data_forecasts(min_confidence=0.0, limit=10_000)
+    forecasts = base.get("forecasts", []) or []
+    out = {}
+    for chamber in ("senate", "house", "governor"):
+        out[chamber] = joint_distribution_summary(forecasts, chamber=chamber)
     return out
 
 
