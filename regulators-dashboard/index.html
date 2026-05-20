@@ -131,6 +131,26 @@
   .stance-matches .chip-phrase.neg { color: #ffa657; }
   .stance-link a { color: var(--accent); text-decoration: none; }
   .stance-link a:hover { text-decoration: underline; }
+  .diff-block { padding: 12px 0; border-bottom: 1px solid var(--grid); }
+  .diff-block:last-child { border-bottom: 0; }
+  .diff-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+               margin-bottom: 8px; }
+  .diff-head .reg { font-weight: 600; }
+  .diff-head .stats { font-size: 11px; color: var(--muted);
+                      font-variant-numeric: tabular-nums; }
+  .diff-head .stats .added   { color: #56d364; font-weight: 600; }
+  .diff-head .stats .removed { color: #f85149; font-weight: 600; }
+  .diff-meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  .diff-meta a { color: var(--accent); text-decoration: none; }
+  .diff-meta a:hover { text-decoration: underline; }
+  .diff-text { font-size: 13px; line-height: 1.55; padding: 8px 0;
+               background: #0e1117; border: 1px solid var(--grid);
+               border-radius: 4px; padding: 10px 12px; white-space: pre-wrap;
+               word-break: normal; overflow-wrap: anywhere; }
+  .diff-text ins { background: #1f3a23; color: #56d364; text-decoration: none;
+                   padding: 0 2px; border-radius: 2px; }
+  .diff-text del { background: #3a1f1f; color: #f85149; text-decoration: line-through;
+                   padding: 0 2px; border-radius: 2px; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -162,6 +182,10 @@
   <section class="panel" id="stance-panel">
     <h2>Speech stance — latest per regulator</h2>
     <div id="stance-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
+  <section class="panel" id="diff-panel">
+    <h2>Speech diffs — latest vs prior, per regulator</h2>
+    <div id="diff-body"><div class="heatmap-empty">loading…</div></div>
   </section>
   <section class="panel">
     <h2>Action feed</h2>
@@ -496,6 +520,81 @@ async function loadStance() {
   }
 }
 
+function renderDiffOps(ops) {
+  // ops: [{op: "equal"|"delete"|"insert"|"replace", a: [tokens], b: [tokens]}, …]
+  // Render inline: equal tokens plain, deletes as <del>, inserts as <ins>.
+  // For "replace" ops, emit <del>{a}</del><ins>{b}</ins>.
+  const out = [];
+  for (const op of ops) {
+    const a_text = (op.a || []).join("");
+    const b_text = (op.b || []).join("");
+    if (op.op === "equal") {
+      out.push(escapeHtml(a_text));
+    } else if (op.op === "delete") {
+      out.push(`<del>${escapeHtml(a_text)}</del>`);
+    } else if (op.op === "insert") {
+      out.push(`<ins>${escapeHtml(b_text)}</ins>`);
+    } else if (op.op === "replace") {
+      if (a_text) out.push(`<del>${escapeHtml(a_text)}</del>`);
+      if (b_text) out.push(`<ins>${escapeHtml(b_text)}</ins>`);
+    }
+  }
+  return out.join("");
+}
+
+function renderDiff(data) {
+  const body = document.getElementById("diff-body");
+  const rows = data.diffs || [];
+  if (!rows.length) {
+    body.innerHTML = '<div class="heatmap-empty">No diffs available.</div>';
+    return;
+  }
+  body.innerHTML = rows.map(d => {
+    if (!d.diff) {
+      const reason = d.latest
+        ? `only one recent speech (${escapeHtml((d.latest.published || "").slice(0, 10))})`
+        : "no recent speeches in feed window";
+      return `
+        <div class="diff-block">
+          <div class="diff-head">
+            <span class="reg">${escapeHtml(d.regulator)}</span>
+            <span class="stats">${reason}</span>
+          </div>
+        </div>`;
+    }
+    const s = d.diff.stats;
+    const priorDate  = (d.prior.published  || "").slice(0, 10);
+    const latestDate = (d.latest.published || "").slice(0, 10);
+    const priorLink  = d.prior.link  ? `<a href="${escapeHtml(d.prior.link)}"  target="_blank" rel="noopener noreferrer">prior ↗</a>`  : "prior";
+    const latestLink = d.latest.link ? `<a href="${escapeHtml(d.latest.link)}" target="_blank" rel="noopener noreferrer">latest ↗</a>` : "latest";
+    return `
+      <div class="diff-block">
+        <div class="diff-head">
+          <span class="reg">${escapeHtml(d.regulator)}</span>
+          <span class="stats">
+            <span class="added">+${s.added}</span> /
+            <span class="removed">−${s.removed}</span> words ·
+            ${s.equal} unchanged · similarity ${(d.diff.ratio * 100).toFixed(0)}%
+          </span>
+        </div>
+        <div class="diff-meta">${escapeHtml(priorDate)} → ${escapeHtml(latestDate)} · ${priorLink} · ${latestLink}</div>
+        <div class="diff-text">${renderDiffOps(d.diff.ops)}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadDiff() {
+  try {
+    const r = await fetch("/api/diff");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderDiff(data);
+  } catch (e) {
+    document.getElementById("diff-body").innerHTML =
+      `<div class="heatmap-empty err">diff load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -678,7 +777,8 @@ loadHeatmap();
 loadTopics();
 loadPeople();
 loadStance();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadStance(); }, 5 * 60 * 1000);
+loadDiff();
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>

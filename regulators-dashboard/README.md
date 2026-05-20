@@ -35,6 +35,7 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
 | `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
 | `GET /api/stance` | 30 min (via feed cache) | Per-regulator speech-stance ladder — most-recent speech-tagged item scored on the body's axis |
+| `GET /api/diff` | 30 min (via feed cache) | Per-regulator latest-vs-prior speech diff (token-level ops + stats) |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -79,6 +80,7 @@ python3 -m ingestion.kalshi_client    # Live Kalshi /trade-api/v2/markets fetch,
 python3 -m analysis.market_match      # 4-item × 4-market join fixtures (incl. Lakers false-positive guard)
 python3 -m analysis.people            # Roster dump with days_until + sort order
 python3 -m analysis.stance            # 7 stance fixtures across SEC/FCA/ESMA × pos/neg/neutral
+python3 -m analysis.diff              # latest-vs-prior diff sanity over 4 synthetic items
 ```
 
 ## Files
@@ -104,7 +106,8 @@ regulators-dashboard/
 │   ├── market_match.py             Anchor-weighted Jaccard joiner — items × markets, 4 fixtures
 │   ├── people.py                   Personnel roster loader + days-until + synthetic-item for matcher
 │   ├── stance_keywords.py          Per-regulator stance axes (SEC/FCA/ESMA), tunable
-│   └── stance.py                   Per-regulator stance scorer + 7 fixture self-test
+│   ├── stance.py                   Per-regulator stance scorer + 7 fixture self-test
+│   └── diff.py                     Token-level speech diff (latest vs prior per regulator)
 ├── data/
 │   └── personnel.py                Hand-curated roster (EDIT HERE to add chairs/commissioners)
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
@@ -319,6 +322,31 @@ out thin in practice, we'd add full-body HTML fetching matching the
 pattern. Held until v0.7 has live usage telling us whether summaries
 suffice.
 
+### v1.2 — speech diff viewer
+
+`analysis/diff.py` picks the two most recent speech-tagged items per
+regulator from the feed and computes a token-level diff over their
+concatenated `title + summary`. Output is a list of `{op, a, b}` ops
+(`equal`, `delete`, `insert`, `replace`) where `a`/`b` are token
+sub-lists. The renderer concatenates equal tokens plain, wraps deleted
+ones in `<del>` (red, strike-through), inserts in `<ins>` (green).
+
+Each per-regulator block shows:
+
+  - Header: regulator code · added/removed/equal word counts · similarity %
+  - Meta: prior date → latest date · external links to both source articles
+  - Body: the inline rendered diff
+
+Falls back gracefully when there are fewer than two speeches per
+regulator in the feed window — that regulator's block renders "only
+one recent speech" or "no recent speeches".
+
+**Same scope caveat as v0.7**: v1.2 diffs RSS-level text only. Body
+fetching is the natural lift that would let us diff multi-paragraph
+speech text. The signal in summaries-only is "what changed in the
+headline + lede" — useful for spotting tone shifts ("from 'enforcement'
+to 'robust enforcement'"), less useful for tracking deep prose changes.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -332,18 +360,12 @@ suffice.
 | **v0.6** | ✓ done | Personnel watch — hand-curated roster of chairs/commissioners with term-end dates, days-until badges, source links, and per-row market overlay reusing the v0.5 matcher |
 | **v0.7** | ✓ done | Per-regulator speech stance ladder — SEC `pro-enforcement ↔ light-touch`, FCA `pro-innovation ↔ consumer-first`, ESMA `prescriptive ↔ principles-based`; matched phrases shown as chips |
 | **v1.0** | ✓ done | Closes v1.0 — all seven sub-milestones (v0 → v0.7) shipped on the SEC + FCA + ESMA seed source set |
-| v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
-| v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
-| v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
-| v0.5 | open  | Polymarket / Kalshi overlay — match actions to active markets ("SEC approves X ETF", "Binance settles with DOJ") with same `Trade Poly →` / `Trade Kalshi →` deep-links as `centralbank-dashboard` v0.5 |
-| v0.6 | open  | Personnel tracker — chairs, commissioners, term-end dates, succession watch (hand-curated YAML) |
-| v0.7 | open  | Speech stance ladder — per-regulator hawkish/dovish-style scoring (SEC `pro-enforcement ↔ light-touch`, FCA `pro-innovation ↔ consumer-first`, ESMA `prescriptive ↔ principles-based`) |
-| **v1.0** | open  | All of v0–v0.7 polished + extended source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
-| v1.1 | open  | Auto-scrape Senate Banking / House FS confirmation calendars to refresh personnel table |
-| v1.2 | open  | Statement diff viewer (compare two SEC speeches side-by-side) |
-| v1.3 | open  | Court-filing tracker (PACER scraper for SEC litigation releases) |
-| v1.4 | open  | OFAC SDN delta-per-day UI |
-| v1.5 | open  | Email/RSS alert digest — daily summary keyed on user's filter set |
+| v1.1 | open  | Auto-scrape Senate Banking / House FS confirmation calendars to refresh `data/personnel.py` |
+| **v1.2** | ✓ done | Statement diff viewer — latest-vs-prior speech per regulator with token-level inline diff and similarity score |
+| v1.3 | open  | Court-filing tracker (PACER scraper for SEC litigation releases) — paid feed, deferred |
+| v1.4 | open  | OFAC SDN delta-per-day UI — Treasury `sdn.xml` daily diff |
+| v1.5 | open  | Email/RSS alert digest — daily summary keyed on the user's filter set |
+| later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars
 

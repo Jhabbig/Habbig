@@ -9,6 +9,7 @@ Routes:
   - GET /api/markets            → raw Polymarket + Kalshi market list (debug)
   - GET /api/people             → hand-curated personnel watch with term-end days + matched markets
   - GET /api/stance             → per-regulator speech stance ladder (SEC/FCA/ESMA axes)
+  - GET /api/diff               → latest-vs-prior speech diff per regulator
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -26,6 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ingestion import kalshi_client, polymarket_client, unified_feed
+from analysis import diff as diff_module
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
 from analysis import people as people_roster
@@ -171,6 +173,17 @@ async def api_markets(force: bool = False) -> JSONResponse:
         "polymarket": poly,
         "kalshi": kal,
         "combined_count": poly["count"] + kal["count"],
+    })
+
+
+@app.get("/api/diff")
+async def api_diff(force: bool = False) -> JSONResponse:
+    """Latest-vs-prior speech diff per regulator. Uses the cached feed —
+    no extra fetch cost. v1.2 scope: title + summary only."""
+    data = unified_feed.get_cached(force=force)
+    return JSONResponse({
+        "fetched_at": data["fetched_at"],
+        "diffs": diff_module.compute_all(data["items"]),
     })
 
 
