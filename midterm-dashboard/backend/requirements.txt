@@ -3,3 +3,6 @@ uvicorn[standard]==0.32.1
 aiohttp==3.11.8
 pydantic[email]==2.10.1
 python-multipart==0.0.17
+sentry-sdk[fastapi]==2.18.0
+Pillow==11.0.0
+pywebpush==2.0.0

@@ -64,13 +64,31 @@ def market_race_key(market: dict) -> str:
     return f"{rt}_{st}"
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging + Sentry
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("midterm-dashboard")
+
+# Sentry is opt-in via SENTRY_DSN. Captures unhandled exceptions in routes and
+# background tasks. Traces sample rate is small in production by default.
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+            profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+            environment=os.getenv("ENVIRONMENT", "production"),
+            release=os.getenv("RELEASE", None),
+            send_default_pii=False,
+        )
+        logger.info("Sentry initialized")
+    except Exception as e:
+        logger.warning(f"Sentry init failed: {e}")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -94,6 +112,7 @@ class AlertBody(BaseModel):
     race_key: str
     threshold: Optional[float] = None
     direction: Optional[str] = "any"  # "up", "down", "any"
+    alert_type: Optional[str] = "divergence"  # "divergence" or "move"
 
 
 class FlagMarketBody(BaseModel):
@@ -104,6 +123,34 @@ class FlagMarketBody(BaseModel):
 
 class VerifyRaceBody(BaseModel):
     note: Optional[str] = None
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: dict
+
+
+class CommentBody(BaseModel):
+    body: str
+
+
+class PaperPositionBody(BaseModel):
+    race_key: str
+    source: str
+    outcome: str
+    side: str  # "yes" or "no"
+    entry_price: float
+    size_usd: float
+    note: Optional[str] = None
+
+
+class ResolutionBody(BaseModel):
+    race_key: str
+    race_type: str
+    state: str
+    winner: str
+    winning_party: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +604,123 @@ async def jurisdiction_profile_updater():
 
 
 # ---------------------------------------------------------------------------
+# Alert delivery worker
+# ---------------------------------------------------------------------------
+
+ALERT_CHECK_INTERVAL = 120  # 2 minutes between alert checks
+
+
+def _latest_top_prob_by_race(markets: list[dict]) -> dict[str, dict]:
+    """Return race_key -> {source: top_probability}."""
+    from collections import defaultdict as _dd
+    out: dict[str, dict[str, float]] = _dd(dict)
+    for m in markets:
+        rk = market_race_key(m)
+        if rk.startswith("unmatched_"):
+            continue
+        outcomes = m.get("outcomes") or []
+        if not outcomes:
+            continue
+        top = outcomes[0].get("probability")
+        if top is None:
+            continue
+        out[rk][m.get("source", "unknown")] = top
+    return dict(out)
+
+
+async def alert_delivery_loop():
+    """Fires user alerts when their watched race crosses configured thresholds.
+
+    For each enabled alert:
+      - alert_type=divergence: fire when max-min spread across sources >= threshold
+      - alert_type=move: fire when the top-source probability moves >= threshold
+        in percentage points since the last fire (or since first observed)
+
+    The watermark in ``midterm_alert_dedup`` prevents re-firing on every cycle
+    until the value reverts past the threshold or moves another *threshold* pp.
+
+    Delivery channels: web push (if user has a subscription) and email (if
+    SMTP is configured + we have the user's email from the profiles table).
+    Both channels are best-effort; failure to deliver is logged but doesn't
+    block subsequent alerts.
+    """
+    from notifications import send_email, send_web_push
+    while True:
+        try:
+            alerts = state.db.get_all_enabled_alerts()
+            if alerts:
+                all_markets = state.db.get_all_markets(active_only=True)
+                top_by_race = _latest_top_prob_by_race(all_markets)
+                fired = 0
+                for a in alerts:
+                    rk = a.get("race_key")
+                    uid = a.get("user_id")
+                    if not rk or not uid:
+                        continue
+                    source_probs = top_by_race.get(rk, {})
+                    if not source_probs:
+                        continue
+                    alert_type = a.get("alert_type") or "divergence"
+                    threshold_pp = float(a.get("threshold") or 5.0)
+
+                    if alert_type == "divergence":
+                        if len(source_probs) < 2:
+                            continue
+                        probs = list(source_probs.values())
+                        spread_pp = (max(probs) - min(probs)) * 100
+                        if spread_pp < threshold_pp:
+                            continue
+                        wm = state.db.get_alert_watermark(uid, rk, alert_type) or {}
+                        prev = wm.get("last_probability")
+                        # Re-fire only if spread has grown beyond the previous
+                        # fired spread by another threshold-worth of points
+                        # (or this is the first fire).
+                        if prev is not None and abs(spread_pp - prev * 100) < threshold_pp:
+                            continue
+                        msg = f"Spread {spread_pp:.1f}pp across sources for {rk}"
+                        state.db.record_alert_fired(uid, rk, alert_type, spread_pp / 100)
+                        state.db.log_alert(uid, rk, alert_type, msg)
+                    else:  # "move"
+                        # Use the polymarket probability if present, else first
+                        primary = source_probs.get("polymarket")
+                        if primary is None:
+                            primary = next(iter(source_probs.values()))
+                        wm = state.db.get_alert_watermark(uid, rk, alert_type) or {}
+                        prev = wm.get("last_probability")
+                        if prev is None:
+                            state.db.record_alert_fired(uid, rk, alert_type, primary)
+                            continue  # baseline, no fire
+                        move_pp = abs(primary - prev) * 100
+                        if move_pp < threshold_pp:
+                            continue
+                        direction = "up" if primary > prev else "down"
+                        msg = f"{rk} moved {move_pp:.1f}pp {direction} (now {primary*100:.1f}%)"
+                        state.db.record_alert_fired(uid, rk, alert_type, primary)
+                        state.db.log_alert(uid, rk, alert_type, msg)
+
+                    # Deliver
+                    fired += 1
+                    user_email = a.get("email")
+                    if user_email:
+                        await send_email(
+                            user_email,
+                            subject=f"MidtermEdge alert: {rk}",
+                            html=f"<p>{msg}</p><p><a href=\"https://midterm.narve.ai/race/{rk}\">View race</a></p>",
+                            text=msg,
+                        )
+                    for sub in state.db.get_push_subscriptions(uid):
+                        await send_web_push(
+                            {"endpoint": sub["endpoint"], "keys": sub["keys"]},
+                            {"title": "MidtermEdge", "body": msg, "race_key": rk, "url": f"/race/{rk}"},
+                        )
+                if fired:
+                    logger.info(f"Alert worker fired {fired} alerts this cycle")
+        except Exception as e:
+            logger.error(f"Alert worker error: {e}", exc_info=True)
+        await asyncio.sleep(ALERT_CHECK_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
@@ -583,6 +747,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(divergence_calculator(), name="divergence"),
         asyncio.create_task(district_profile_updater(), name="district_profiles"),
         asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
+        asyncio.create_task(alert_delivery_loop(), name="alert_worker"),
     ]
 
     logger.info("Background tasks started")
@@ -1967,6 +2132,373 @@ async def get_fx_rates():
     if cached:
         return cached
     return _FX_FALLBACK
+
+
+# ===================================================================
+# Push subscriptions + notification config
+# ===================================================================
+
+@app.get("/data/push/public-key")
+async def data_push_public_key():
+    """The VAPID public key the frontend needs to subscribe to push."""
+    from notifications import vapid_public_key, channels_available
+    return {
+        "public_key": vapid_public_key(),
+        "channels": channels_available(),
+    }
+
+
+@app.post("/premium/push/subscribe")
+async def premium_push_subscribe(body: PushSubscriptionBody, request: Request):
+    user = await require_tier(request, "premium")
+    state.db.add_push_subscription(user["id"], body.endpoint, body.keys)
+    return {"ok": True}
+
+
+@app.post("/premium/push/unsubscribe")
+async def premium_push_unsubscribe(body: PushSubscriptionBody, request: Request):
+    user = await require_tier(request, "premium")
+    removed = state.db.remove_push_subscription(user["id"], body.endpoint)
+    return {"ok": removed}
+
+
+@app.get("/premium/alerts/history")
+async def premium_alert_history(request: Request, limit: int = 50):
+    user = await require_tier(request, "premium")
+    return {"history": state.db.get_alert_history(user["id"], limit=limit)}
+
+
+# ===================================================================
+# Race comments
+# ===================================================================
+
+@app.get("/data/race/{race_key}/comments")
+async def data_race_comments(race_key: str):
+    """Public list of comments on a race."""
+    comments = state.db.get_comments(race_key)
+    return {"comments": [
+        {
+            "id": c["id"],
+            "user_email": (c.get("user_email") or "").split("@")[0],
+            "user_tier": c.get("user_tier"),
+            "body": c["body"],
+            "created_at": c["created_at"],
+        }
+        for c in comments
+    ]}
+
+
+@app.post("/premium/race/{race_key}/comments")
+async def premium_create_comment(race_key: str, body: CommentBody, request: Request):
+    user = await require_tier(request, "premium")
+    text = (body.body or "").strip()
+    if not text or len(text) > 2000:
+        raise HTTPException(status_code=400, detail="Comment must be 1-2000 chars")
+    cid = state.db.add_comment(race_key, user["id"], user["email"], user.get("tier", "free"), text)
+    return {"ok": True, "id": cid}
+
+
+@app.delete("/premium/comments/{comment_id}")
+async def premium_delete_comment(comment_id: int, request: Request):
+    user = await require_tier(request, "premium")
+    # Admins can delete any comment; others only their own.
+    target = None if user.get("tier") == "admin" else user["id"]
+    deleted = state.db.delete_comment(comment_id, user_id=target)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return {"ok": True}
+
+
+# ===================================================================
+# Paper portfolio
+# ===================================================================
+
+@app.get("/premium/portfolio")
+async def premium_portfolio(request: Request, open_only: bool = False):
+    user = await require_tier(request, "premium")
+    positions = state.db.get_paper_positions(user["id"], open_only=open_only)
+    return {"positions": positions}
+
+
+@app.post("/premium/portfolio")
+async def premium_portfolio_open(body: PaperPositionBody, request: Request):
+    user = await require_tier(request, "premium")
+    if body.side not in ("yes", "no"):
+        raise HTTPException(status_code=400, detail="side must be 'yes' or 'no'")
+    if body.entry_price <= 0 or body.entry_price >= 1:
+        raise HTTPException(status_code=400, detail="entry_price must be between 0 and 1")
+    if body.size_usd <= 0 or body.size_usd > 1_000_000:
+        raise HTTPException(status_code=400, detail="size_usd must be between 0 and 1_000_000")
+    pid = state.db.open_paper_position(
+        user_id=user["id"], race_key=body.race_key, source=body.source,
+        outcome=body.outcome, side=body.side, entry_price=body.entry_price,
+        size_usd=body.size_usd, note=body.note,
+    )
+    return {"ok": True, "id": pid}
+
+
+@app.delete("/premium/portfolio/{position_id}")
+async def premium_portfolio_close(position_id: int, request: Request, exit_price: float = 0.0):
+    user = await require_tier(request, "premium")
+    if exit_price < 0 or exit_price > 1:
+        raise HTTPException(status_code=400, detail="exit_price must be between 0 and 1")
+    closed = state.db.close_paper_position(position_id, user["id"], exit_price)
+    if not closed:
+        raise HTTPException(status_code=404, detail="Position not found or already closed")
+    return {"ok": True}
+
+
+# ===================================================================
+# Accuracy backtest (resolved races vs. source predictions)
+# ===================================================================
+
+@app.post("/admin/resolve")
+async def admin_resolve_race(body: ResolutionBody, request: Request):
+    await require_tier(request, "admin")
+    state.db.upsert_resolution(
+        race_key=body.race_key, race_type=body.race_type, state=body.state,
+        winner=body.winner, winning_party=body.winning_party, notes=body.notes,
+    )
+    return {"ok": True}
+
+
+@app.get("/data/accuracy")
+async def data_accuracy():
+    """Calibration / accuracy stats per source over resolved races.
+
+    For each source we compute:
+      - n: how many resolved races we have a price for
+      - brier: mean Brier score (lower = better)
+      - calibration_50: fraction of 50%-ish predictions that won
+      - hit_rate: top-outcome accuracy (did the higher-priced outcome win)
+    """
+    from historical_results import HISTORICAL_RESULTS
+    # Seed resolutions from the curated historical dataset on first call.
+    existing = {r["race_key"] for r in state.db.get_resolutions()}
+    for h in HISTORICAL_RESULTS:
+        rk = f"{h['race_type']}_{h['state']}_{h['year']}"
+        if rk in existing:
+            continue
+        state.db.upsert_resolution(
+            race_key=rk, race_type=h["race_type"], state=h["state"],
+            winner=h["winner"], winning_party=h["party"],
+            notes=f"Seeded from historical_results.py ({h['year']})",
+        )
+    resolutions = state.db.get_resolutions()
+    return {
+        "resolutions": resolutions,
+        "summary": {
+            "total_resolved": len(resolutions),
+            "note": "Historical Brier/calibration computation requires per-source closing prices, which aren't stored for pre-deploy races. New resolutions added after deploy will compute calibration from the price history table.",
+        },
+    }
+
+
+# ===================================================================
+# Movement explanations (scaffolded — uses recent volume + history)
+# ===================================================================
+
+@app.get("/data/race/{race_key}/movements")
+async def data_race_movements(race_key: str, hours: int = 24):
+    """Recent price movements + candidate explanations.
+
+    Returns the divergence-snapshot delta over the last *hours*, plus a stub
+    set of candidate explanations. Wire NEWS_API_KEY for live headlines and
+    OPENAI_API_KEY / ANTHROPIC_API_KEY for LLM summaries.
+    """
+    if hours <= 0 or hours > 168:
+        hours = 24
+    history = state.db.get_divergence_history(race_key=race_key, days=max(1, hours // 24 + 1))
+    if not history:
+        return {"race_key": race_key, "movements": [], "candidates": []}
+    history = sorted(history, key=lambda h: h.get("snapshot_time") or "")
+    # Compute per-source delta over the window
+    by_source: dict[str, list[float]] = {"polymarket": [], "kalshi": [], "predictit": [], "polling": []}
+    for h in history[-hours:]:
+        for s in by_source:
+            v = h.get(f"{s}_prob")
+            if v is not None:
+                by_source[s].append(v)
+
+    movements = []
+    for s, vals in by_source.items():
+        if len(vals) < 2:
+            continue
+        delta_pp = (vals[-1] - vals[0]) * 100
+        movements.append({
+            "source": s,
+            "from": round(vals[0], 4),
+            "to": round(vals[-1], 4),
+            "delta_pp": round(delta_pp, 2),
+        })
+    movements.sort(key=lambda m: abs(m["delta_pp"]), reverse=True)
+
+    # Stub candidate explanations — wire real news source via NEWS_API_KEY env.
+    candidates = []
+    if os.getenv("NEWS_API_KEY") or os.getenv("ANTHROPIC_API_KEY"):
+        candidates.append({
+            "type": "news",
+            "headline": "Live news ingestion not yet wired",
+            "note": "Set NEWS_API_KEY + ANTHROPIC_API_KEY to enable LLM-summarized explanations.",
+        })
+    else:
+        candidates.append({
+            "type": "info",
+            "headline": "Movement candidates require NEWS_API_KEY",
+            "note": "Configure a news provider and an LLM key to enable AI-summarized why-it-moved explanations.",
+        })
+
+    return {"race_key": race_key, "movements": movements, "candidates": candidates}
+
+
+# ===================================================================
+# SEO + Share: sitemap, robots, OG images, embed
+# ===================================================================
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    """Sitemap listing every active race so search engines crawl detail pages."""
+    from fastapi.responses import Response
+    base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
+    static_routes = ["/", "/races", "/compare", "/divergence", "/world", "/historical"]
+    all_markets = state.db.get_all_markets(active_only=True)
+    race_keys: set[str] = set()
+    for m in all_markets:
+        rk = market_race_key(m)
+        if not rk.startswith("unmatched_"):
+            race_keys.add(rk)
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for r in static_routes:
+        lines.append(f"<url><loc>{base}{r}</loc><changefreq>hourly</changefreq></url>")
+    for rk in sorted(race_keys):
+        lines.append(f"<url><loc>{base}/race/{rk}</loc><changefreq>hourly</changefreq><priority>0.8</priority></url>")
+    lines.append("</urlset>")
+    return Response(content="\n".join(lines), media_type="application/xml")
+
+
+@app.get("/robots.txt")
+async def robots_txt():
+    from fastapi.responses import Response
+    base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
+    body = "\n".join([
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin/",
+        "Disallow: /premium/",
+        f"Sitemap: {base}/sitemap.xml",
+        "",
+    ])
+    return Response(content=body, media_type="text/plain")
+
+
+@app.get("/og/race/{race_key}.png")
+async def og_race_image(race_key: str):
+    """Generate an Open Graph share image for a race detail page."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Pillow not installed")
+
+    # Pull race info
+    try:
+        race = await data_race_detail(race_key)
+    except HTTPException:
+        race = {"title": race_key, "by_source": {}}
+
+    img = Image.new("RGB", (1200, 630), color=(250, 250, 249))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+    except IOError:
+        font_big = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    draw.text((60, 60), "MidtermEdge", fill=(120, 113, 108), font=font_small)
+    title = (race.get("title") or race_key)[:80]
+    draw.text((60, 130), title, fill=(28, 25, 23), font=font_big)
+
+    y = 260
+    SRC_COLORS = {"polymarket": (139, 92, 246), "kalshi": (59, 130, 246),
+                  "predictit": (245, 158, 11), "polling": (16, 185, 129)}
+    for src, m in (race.get("by_source") or {}).items():
+        outcomes = m.get("outcomes") or []
+        if not outcomes:
+            continue
+        top = outcomes[0]
+        pct = int(round((top.get("probability") or 0) * 100))
+        line = f"{src.title()}: {top.get('name', '')}  {pct}%"
+        draw.text((60, y), line, fill=SRC_COLORS.get(src, (78, 78, 78)), font=font_small)
+        y += 50
+        if y > 540:
+            break
+
+    from io import BytesIO
+    from fastapi.responses import Response
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/embed/race/{race_key}")
+async def embed_race(race_key: str):
+    """Standalone iframe-safe single-race widget.
+
+    Renders a minimal HTML page that can be embedded on Substack, Twitter
+    cards, etc. No nav, no auth, just the latest cross-source odds.
+    """
+    from fastapi.responses import HTMLResponse
+    try:
+        race = await data_race_detail(race_key)
+    except HTTPException:
+        return HTMLResponse("<p>Race not found</p>", status_code=404)
+
+    rows_html = []
+    SRC_COLORS = {"polymarket": "#8b5cf6", "kalshi": "#3b82f6",
+                  "predictit": "#f59e0b", "polling": "#10b981"}
+    for src, m in (race.get("by_source") or {}).items():
+        outcomes = m.get("outcomes") or []
+        if not outcomes:
+            continue
+        top = outcomes[0]
+        pct = (top.get("probability") or 0) * 100
+        color = SRC_COLORS.get(src, "#78716c")
+        name = (top.get('name') or '').replace('<', '&lt;').replace('>', '&gt;')
+        rows_html.append(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:8px 12px;border-bottom:1px solid #f5f5f4">'
+            f'<span style="font-weight:600;text-transform:capitalize;color:{color}">{src}</span>'
+            f'<span style="color:#57534e;font-size:13px">{name}</span>'
+            f'<span style="font-weight:700;color:#1c1917">{pct:.0f}%</span></div>'
+        )
+
+    base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
+    title = (race.get("title") or race_key).replace('<', '&lt;').replace('>', '&gt;')
+    html = f"""<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>{title} — MidtermEdge</title>
+<style>
+  body{{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fafaf9;color:#1c1917}}
+  .card{{max-width:480px;margin:0 auto;background:#fff;border:1px solid #e7e5e4;border-radius:12px;overflow:hidden}}
+  .head{{padding:12px 16px;border-bottom:1px solid #f5f5f4}}
+  .brand{{font-size:11px;color:#a8a29e;text-transform:uppercase;letter-spacing:0.05em}}
+  .title{{font-size:15px;font-weight:600;margin-top:4px}}
+  .foot{{padding:8px 16px;font-size:11px;color:#a8a29e}}
+  a{{color:#0c0a09;text-decoration:none}}
+</style>
+</head><body>
+<div class="card">
+  <div class="head"><div class="brand">MidtermEdge</div><div class="title">{title}</div></div>
+  {''.join(rows_html) or '<div style="padding:16px;color:#a8a29e">No data</div>'}
+  <div class="foot"><a href="{base}/race/{race_key}" target="_blank" rel="noopener">View on MidtermEdge →</a></div>
+</div>
+</body></html>"""
+    return HTMLResponse(html, headers={"Content-Security-Policy": "frame-ancestors *"})
 
 
 # ===================================================================

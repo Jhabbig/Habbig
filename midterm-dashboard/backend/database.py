@@ -215,6 +215,64 @@ CREATE TABLE IF NOT EXISTS midterm_market_race_verifications (
     verified_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS midterm_push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    endpoint    TEXT NOT NULL,
+    keys_json   TEXT NOT NULL,
+    created_at  TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(user_id, endpoint)
+);
+
+CREATE TABLE IF NOT EXISTS midterm_alert_dedup (
+    user_id         TEXT NOT NULL,
+    race_key        TEXT NOT NULL,
+    alert_type      TEXT NOT NULL,
+    last_probability REAL,
+    last_fired_at   TEXT,
+    PRIMARY KEY (user_id, race_key, alert_type)
+);
+
+-- Race resolutions feed the accuracy backtest. ``resolved_prob`` is 1.0 for
+-- the winning outcome, 0.0 for the rest; we only store rows for races that
+-- have settled.
+CREATE TABLE IF NOT EXISTS midterm_race_resolutions (
+    race_key        TEXT PRIMARY KEY,
+    race_type       TEXT,
+    state           TEXT,
+    winner          TEXT,
+    winning_party   TEXT,
+    resolved_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS midterm_race_comments (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_key        TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    user_email      TEXT,
+    user_tier       TEXT,
+    body            TEXT NOT NULL,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_race_time ON midterm_race_comments(race_key, created_at);
+
+CREATE TABLE IF NOT EXISTS midterm_paper_positions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    race_key        TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    outcome         TEXT NOT NULL,
+    side            TEXT NOT NULL CHECK (side IN ('yes', 'no')),
+    entry_price     REAL NOT NULL,
+    size_usd        REAL NOT NULL,
+    opened_at       TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    closed_at       TEXT,
+    exit_price      REAL,
+    note            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_paper_user_open ON midterm_paper_positions(user_id, closed_at);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1003,3 +1061,210 @@ class Database:
                 "SELECT jurisdiction_type, jurisdiction_code FROM midterm_jurisdiction_profiles"
             ).fetchall()
         return {f"{r['jurisdiction_type']}:{r['jurisdiction_code']}" for r in rows}
+
+    # === Push subscriptions =================================================
+
+    def add_push_subscription(self, user_id: str, endpoint: str, keys: dict) -> None:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_push_subscriptions (user_id, endpoint, keys_json)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(user_id, endpoint) DO UPDATE SET
+                         keys_json = excluded.keys_json""",
+                    (user_id, endpoint, json.dumps(keys)),
+                )
+
+    def remove_push_subscription(self, user_id: str, endpoint: str) -> bool:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    "DELETE FROM midterm_push_subscriptions WHERE user_id=? AND endpoint=?",
+                    (user_id, endpoint),
+                )
+                return cur.rowcount > 0
+
+    def get_push_subscriptions(self, user_id: str) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT endpoint, keys_json FROM midterm_push_subscriptions WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                keys = json.loads(r["keys_json"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            out.append({"endpoint": r["endpoint"], "keys": keys})
+        return out
+
+    # === Alert dedup + history =============================================
+
+    def get_alert_watermark(self, user_id: str, race_key: str, alert_type: str) -> dict | None:
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT last_probability, last_fired_at
+                   FROM midterm_alert_dedup
+                   WHERE user_id=? AND race_key=? AND alert_type=?""",
+                (user_id, race_key, alert_type),
+            ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def record_alert_fired(self, user_id: str, race_key: str, alert_type: str, probability: float) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_alert_dedup
+                        (user_id, race_key, alert_type, last_probability, last_fired_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id, race_key, alert_type) DO UPDATE SET
+                         last_probability = excluded.last_probability,
+                         last_fired_at = excluded.last_fired_at""",
+                    (user_id, race_key, alert_type, probability, now),
+                )
+
+    def log_alert(self, user_id: str, race_key: str, alert_type: str, message: str) -> None:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_alert_history (user_id, race_key, alert_type, message)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, race_key, alert_type, message),
+                )
+
+    def get_alert_history(self, user_id: str, limit: int = 50) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM midterm_alert_history
+                   WHERE user_id=? ORDER BY created_at DESC LIMIT ?""",
+                (user_id, min(limit, 500)),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_all_enabled_alerts(self) -> list[dict]:
+        """Every enabled alert across all users; used by the worker loop."""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT a.*, p.email, p.tier
+                   FROM midterm_alert_settings a
+                   LEFT JOIN profiles p ON p.id = a.user_id
+                   WHERE a.enabled = 1"""
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    # === Race resolutions (accuracy backtest) ==============================
+
+    def upsert_resolution(
+        self,
+        race_key: str,
+        race_type: str,
+        state: str,
+        winner: str,
+        winning_party: str | None = None,
+        notes: str | None = None,
+    ) -> None:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_race_resolutions
+                        (race_key, race_type, state, winner, winning_party, notes)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(race_key) DO UPDATE SET
+                         race_type=excluded.race_type,
+                         state=excluded.state,
+                         winner=excluded.winner,
+                         winning_party=excluded.winning_party,
+                         notes=excluded.notes""",
+                    (race_key, race_type, state, winner, winning_party, notes),
+                )
+
+    def get_resolutions(self) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_race_resolutions ORDER BY resolved_at DESC"
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    # === Race comments =====================================================
+
+    def add_comment(
+        self, race_key: str, user_id: str, user_email: str, user_tier: str, body: str,
+    ) -> int:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """INSERT INTO midterm_race_comments
+                        (race_key, user_id, user_email, user_tier, body)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (race_key, user_id, user_email, user_tier, body),
+                )
+                return cur.lastrowid
+
+    def get_comments(self, race_key: str, limit: int = 100) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT * FROM midterm_race_comments
+                   WHERE race_key=? ORDER BY created_at DESC LIMIT ?""",
+                (race_key, min(limit, 500)),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def delete_comment(self, comment_id: int, user_id: str | None = None) -> bool:
+        """Delete a comment. If *user_id* is provided, only that user's own
+        comment is deleted (used for non-admin self-delete)."""
+        with _lock:
+            with _get_conn() as conn:
+                if user_id is None:
+                    cur = conn.execute(
+                        "DELETE FROM midterm_race_comments WHERE id=?", (comment_id,),
+                    )
+                else:
+                    cur = conn.execute(
+                        "DELETE FROM midterm_race_comments WHERE id=? AND user_id=?",
+                        (comment_id, user_id),
+                    )
+                return cur.rowcount > 0
+
+    # === Paper portfolio ===================================================
+
+    def open_paper_position(
+        self, user_id: str, race_key: str, source: str, outcome: str,
+        side: str, entry_price: float, size_usd: float, note: str | None = None,
+    ) -> int:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """INSERT INTO midterm_paper_positions
+                        (user_id, race_key, source, outcome, side, entry_price, size_usd, note)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, race_key, source, outcome, side, entry_price, size_usd, note),
+                )
+                return cur.lastrowid
+
+    def close_paper_position(self, position_id: int, user_id: str, exit_price: float) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """UPDATE midterm_paper_positions
+                       SET closed_at=?, exit_price=?
+                       WHERE id=? AND user_id=? AND closed_at IS NULL""",
+                    (now, exit_price, position_id, user_id),
+                )
+                return cur.rowcount > 0
+
+    def get_paper_positions(self, user_id: str, open_only: bool = False) -> list[dict]:
+        with _get_conn() as conn:
+            if open_only:
+                rows = conn.execute(
+                    "SELECT * FROM midterm_paper_positions WHERE user_id=? AND closed_at IS NULL ORDER BY opened_at DESC",
+                    (user_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM midterm_paper_positions WHERE user_id=? ORDER BY opened_at DESC",
+                    (user_id,),
+                ).fetchall()
+        return [_row_to_dict(r) for r in rows]
