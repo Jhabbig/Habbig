@@ -128,6 +128,51 @@ async def index() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
 
 
+@app.get("/topic/{slug}", response_class=HTMLResponse)
+async def topic_page(slug: str) -> HTMLResponse:
+    # Same SPA shell — the front-end router reads location.pathname and
+    # renders the topic-detail view instead of the main grid.
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/topic/{slug}")
+async def api_topic(slug: str, days: int = 30) -> JSONResponse:
+    days = max(1, min(days, 90))
+    snapshots = cache.topic_snapshots_by_label(slug, days=days)
+    if not snapshots:
+        return JSONResponse({
+            "slug": slug, "label": slug, "snapshots": [],
+            "stats": None, "current": None,
+        })
+    # Stats across the window.
+    surges = [s["surge_signal"] for s in snapshots if s.get("surge_signal") is not None]
+    stats = {
+        "first_seen": snapshots[0]["ts"],
+        "last_seen": snapshots[-1]["ts"],
+        "total_snapshots": len(snapshots),
+        "peak_spread": max(s["spread"] for s in snapshots),
+        "peak_surge": max(surges) if surges else None,
+    }
+    # Try to surface the live cluster that matches this label right now.
+    current = None
+    for t in edge.compute_topics_with_markets(limit=50):
+        if t["label"] == slug:
+            current = {
+                "spread": t["spread"],
+                "sources": t["sources"],
+                "sections": t["sections"],
+                "surge_signal": t.get("surge_signal"),
+                "items": [{"title": i["title"], "url": i.get("url"),
+                           "source": i["source"]} for i in t["items"][:10]],
+                "markets": t.get("markets", []),
+            }
+            break
+    return JSONResponse({
+        "slug": slug, "label": snapshots[-1]["label"],
+        "snapshots": snapshots, "stats": stats, "current": current,
+    })
+
+
 @app.get("/api/index")
 async def api_index() -> JSONResponse:
     return JSONResponse(index_calc.compute())

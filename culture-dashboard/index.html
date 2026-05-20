@@ -176,6 +176,74 @@
   .backtest-example .realised.miss { color: var(--muted); }
   .backtest-example .when { color: var(--muted); font-size: 11px; }
 
+  /* ── Topic-detail page ─────────────────────────────────────────── */
+  .topic-page { max-width: 900px; margin: 0 auto; }
+  .topic-page-head { display: flex; align-items: baseline; gap: 16px;
+                     margin-bottom: 24px; flex-wrap: wrap; }
+  .topic-page-head h1 { margin: 0; font-size: 32px; font-weight: 700;
+                        text-transform: capitalize; }
+  .topic-page-head .back { color: var(--muted); text-decoration: none;
+                           font-size: 13px; }
+  .topic-page-head .back:hover { color: var(--accent); }
+  .topic-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                 gap: 12px; margin-bottom: 22px; }
+  .topic-stat { background: var(--panel); border: 1px solid var(--border);
+                border-radius: 8px; padding: 12px 14px; }
+  .topic-stat .label { color: var(--muted); font-size: 10px;
+                       text-transform: uppercase; letter-spacing: 0.06em; }
+  .topic-stat .value { font-size: 22px; font-weight: 700; color: var(--fg);
+                       font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .topic-chart { background: var(--panel); border: 1px solid var(--border);
+                 border-radius: 10px; padding: 18px; margin-bottom: 22px; }
+  .topic-chart h2 { margin: 0 0 4px; font-size: 14px; }
+  .topic-chart .sub { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .topic-chart svg { width: 100%; height: 220px; display: block; }
+  .topic-current { background: var(--panel); border: 1px solid var(--border);
+                   border-radius: 10px; padding: 18px; margin-bottom: 22px; }
+  .topic-current h2 { margin: 0 0 12px; font-size: 14px; }
+  .topic-current .row { padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .topic-current .row:last-child { border-bottom: none; }
+  .topic-current a { color: var(--accent); text-decoration: none; }
+  .topic-current a:hover { text-decoration: underline; }
+
+  /* Topic-link rendering inside existing topic cards / rising cards. */
+  .topic-label a, .head a.topic-link, .edge-label a {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--muted);
+  }
+  .topic-label a:hover, .head a.topic-link:hover, .edge-label a:hover {
+    color: var(--accent); border-bottom-color: var(--accent);
+  }
+
+  /* ── A11y + mobile pass ─────────────────────────────────────────── */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .skip-link {
+    position: absolute; left: -9999px; top: 8px;
+    background: var(--panel); color: var(--fg);
+    padding: 8px 14px; border: 1px solid var(--accent);
+    border-radius: 4px; z-index: 100;
+  }
+  .skip-link:focus { left: 8px; }
+
+  @media (max-width: 640px) {
+    main { padding: 14px; }
+    header { padding: 14px; flex-wrap: wrap; }
+    header h1 { font-size: 16px; }
+    .index-card .value { font-size: 44px; }
+    .sections { grid-template-columns: 1fr; }
+    .rising-grid { grid-template-columns: 1fr; }
+    .topic-grid { grid-template-columns: 1fr; }
+    .edge-market {
+      flex-wrap: wrap; row-gap: 4px;
+    }
+    .edge-market a { flex-basis: 100%; }
+    button, .card-cta { min-height: 44px; }
+  }
+
   .digest { background: linear-gradient(180deg, var(--panel) 0%, #181c22 100%);
             border: 1px solid var(--border); border-left: 3px solid var(--accent);
             border-radius: 10px; padding: 18px 22px; margin-bottom: 22px; }
@@ -243,16 +311,18 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>State of Culture</h1>
-  <span class="sub" id="updated">loading…</span>
-  <button id="refresh">Refresh now</button>
+<a class="skip-link" href="#main">Skip to content</a>
+<header role="banner">
+  <a href="/" style="color: inherit; text-decoration: none;"><h1>State of Culture</h1></a>
+  <span class="sub" id="updated" aria-live="polite">loading…</span>
+  <button id="refresh" aria-label="Refresh all data now">Refresh now</button>
 </header>
 
-<main>
-  <section class="digest" id="digest">
+<main id="main" role="main">
+  <div id="main-view">
+  <section class="digest" id="digest" aria-labelledby="digest-title">
     <div class="digest-head">
-      <h2>Today in culture</h2>
+      <h2 id="digest-title">Today in culture</h2>
       <div class="digest-meta">
         <span id="digest-meta-text"></span>
         <button id="digest-refresh">Regenerate</button>
@@ -316,7 +386,10 @@
 
   <div class="sections" id="sections"></div>
 
-  <div class="health-strip" id="health"></div>
+  <div class="health-strip" id="health" role="contentinfo"></div>
+  </div>
+
+  <div id="topic-view" class="topic-page" hidden></div>
 </main>
 
 <script>
@@ -446,7 +519,7 @@ async function loadTopics() {
     const surgeHtml = (t.surge_signal != null)
       ? ` · <b>z ${t.surge_signal.toFixed(1)}</b>` : "";
     card.innerHTML = `
-      <div class="topic-label">${t.label}</div>
+      <div class="topic-label"><a href="/topic/${encodeURIComponent(t.label)}">${t.label}</a></div>
       <div class="topic-meta">spread <b>${t.spread}</b> · score ${fmt(t.total_score)}${surgeHtml}</div>
       <div class="topic-sources">${sources}</div>
       <div class="topic-items">${items}</div>
@@ -518,7 +591,7 @@ async function loadEdges() {
     const mispricing = e.mispricing_score != null ? e.mispricing_score.toFixed(1) : "—";
     card.innerHTML = `
       <div class="edge-head">
-        <span class="edge-label">${e.label}</span>
+        <span class="edge-label"><a href="/topic/${encodeURIComponent(e.label)}">${e.label}</a></span>
         <div class="edge-scores">
           <div class="edge-score-block">
             <div class="edge-score-label">surge z</div>
@@ -745,8 +818,138 @@ document.getElementById("refresh").addEventListener("click", async () => {
   setTimeout(refreshAll, 4000);
 });
 
-refreshAll();
-setInterval(refreshAll, 5 * 60 * 1000);
+// ── Router ──────────────────────────────────────────────────────────────
+function routeFromPath() {
+  const path = window.location.pathname;
+  const m = path.match(/^\/topic\/([^/]+)/);
+  return m ? { kind: "topic", slug: decodeURIComponent(m[1]) } : { kind: "main" };
+}
+
+function showMainView() {
+  document.getElementById("main-view").hidden = false;
+  document.getElementById("topic-view").hidden = true;
+  refreshAll();
+}
+
+function showTopicView(slug) {
+  document.getElementById("main-view").hidden = true;
+  const root = document.getElementById("topic-view");
+  root.hidden = false;
+  root.innerHTML = '<div class="empty-state">Loading topic…</div>';
+  loadTopicPage(slug);
+}
+
+async function loadTopicPage(slug) {
+  const root = document.getElementById("topic-view");
+  let data;
+  try {
+    const r = await fetch(`/api/topic/${encodeURIComponent(slug)}?days=30`);
+    data = await r.json();
+  } catch (e) {
+    root.innerHTML = `<div class="empty-state">Failed to load topic.</div>`;
+    return;
+  }
+  if (!data.snapshots.length) {
+    root.innerHTML = `
+      <div class="topic-page-head">
+        <a class="back" href="/">← Back to dashboard</a>
+        <h1>${escapeHtml(slug)}</h1>
+      </div>
+      <div class="empty-state">No snapshots recorded for this topic in the last 30 days.</div>`;
+    return;
+  }
+  const s = data.stats;
+  const firstSeen = new Date(s.first_seen * 1000).toLocaleString();
+  const lastSeen = new Date(s.last_seen * 1000).toLocaleString();
+  const curHtml = data.current ? renderTopicCurrent(data.current) : "";
+  root.innerHTML = `
+    <div class="topic-page-head">
+      <a class="back" href="/">← Back to dashboard</a>
+      <h1>${escapeHtml(data.label)}</h1>
+    </div>
+    <div class="topic-stats" role="group" aria-label="Topic statistics">
+      <div class="topic-stat"><div class="label">Snapshots (30d)</div><div class="value">${s.total_snapshots}</div></div>
+      <div class="topic-stat"><div class="label">Peak spread</div><div class="value">${s.peak_spread}</div></div>
+      <div class="topic-stat"><div class="label">Peak surge z</div><div class="value">${s.peak_surge != null ? s.peak_surge.toFixed(1) : "—"}</div></div>
+      <div class="topic-stat"><div class="label">First seen</div><div class="value" style="font-size:13px">${firstSeen.split(",")[0]}</div></div>
+      <div class="topic-stat"><div class="label">Last seen</div><div class="value" style="font-size:13px">${lastSeen.split(",")[0]}</div></div>
+    </div>
+    <section class="topic-chart" aria-labelledby="tchart-title">
+      <h2 id="tchart-title">Surge signal trajectory</h2>
+      <div class="sub">z-score across ${data.snapshots.length} snapshots over the last 30 days</div>
+      ${renderTopicTrajectoryChart(data.snapshots)}
+    </section>
+    ${curHtml}`;
+}
+
+function renderTopicTrajectoryChart(snapshots) {
+  const pts = snapshots
+    .filter(s => s.surge_signal != null)
+    .map(s => ({ t: s.ts, z: s.surge_signal, spread: s.spread }));
+  if (pts.length < 2) return '<div class="empty-state">Not enough surge data to chart.</div>';
+  const W = 700, H = 220, padL = 36, padR = 12, padT = 12, padB = 28;
+  const tMin = pts[0].t, tMax = pts[pts.length - 1].t;
+  const zVals = pts.map(p => p.z);
+  const zMin = Math.min(0, ...zVals);
+  const zMax = Math.max(...zVals, 1);
+  const tRange = (tMax - tMin) || 1;
+  const zRange = (zMax - zMin) || 1;
+  const x = t => padL + ((t - tMin) / tRange) * (W - padL - padR);
+  const y = z => H - padB - ((z - zMin) / zRange) * (H - padT - padB);
+  const path = pts.map((p, i) =>
+    `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.z).toFixed(1)}`).join(" ");
+  const dots = pts.map(p =>
+    `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.z).toFixed(1)}" r="2.5" fill="var(--accent)">
+      <title>${new Date(p.t * 1000).toLocaleString()} · z=${p.z.toFixed(2)} · spread=${p.spread}</title>
+    </circle>`).join("");
+  // Y-axis labels
+  const yTicks = [zMin, (zMin + zMax) / 2, zMax].map(v =>
+    `<text x="${padL - 4}" y="${y(v).toFixed(1)}" fill="var(--muted)" font-size="10"
+           text-anchor="end" dominant-baseline="middle">${v.toFixed(1)}</text>`).join("");
+  const xTickL = `<text x="${padL}" y="${H - 8}" fill="var(--muted)" font-size="10">${new Date(tMin * 1000).toLocaleDateString()}</text>`;
+  const xTickR = `<text x="${W - padR}" y="${H - 8}" fill="var(--muted)" font-size="10" text-anchor="end">${new Date(tMax * 1000).toLocaleDateString()}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+    aria-label="Surge signal z-score over time">
+    <line x1="${padL}" y1="${y(0).toFixed(1)}" x2="${W - padR}" y2="${y(0).toFixed(1)}"
+          stroke="var(--border)" stroke-dasharray="2,3"/>
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+    ${dots}${yTicks}${xTickL}${xTickR}
+  </svg>`;
+}
+
+function renderTopicCurrent(c) {
+  if (!c) return "";
+  const items = (c.items || []).map(it =>
+    `<div class="row">${it.url
+      ? `<a href="${it.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title)}</a>`
+      : escapeHtml(it.title)} <span style="color:var(--muted);font-size:11px"> · ${it.source}</span></div>`).join("");
+  const markets = (c.markets || []).map(m =>
+    `<div class="row"><a href="${m.url || '#'}" target="_blank" rel="noopener noreferrer">${escapeHtml(m.title)}</a>
+      <span style="color:var(--muted);font-size:11px"> · ${m.current_price != null ? (m.current_price * 100).toFixed(0) + "¢" : ""}
+      ${m.price_velocity_24h_pct != null ? " · 24h " + (m.price_velocity_24h_pct >= 0 ? "+" : "") + (m.price_velocity_24h_pct * 100).toFixed(1) + "%" : ""}</span></div>`).join("");
+  return `<section class="topic-current" aria-labelledby="tcurr-title">
+    <h2 id="tcurr-title">Live cluster (current snapshot)</h2>
+    ${c.surge_signal != null ? `<div style="color:var(--muted);font-size:12px;margin-bottom:8px">surge z = <strong style="color:var(--good)">${c.surge_signal.toFixed(2)}</strong> · spread ${c.spread} sources (${c.sources.join(", ")})</div>` : ""}
+    ${items ? `<div style="font-size:13px;margin-bottom:12px"><div style="color:var(--muted);font-size:11px;margin-bottom:6px;text-transform:uppercase">Items</div>${items}</div>` : ""}
+    ${markets ? `<div style="font-size:13px"><div style="color:var(--muted);font-size:11px;margin-bottom:6px;text-transform:uppercase">Matched markets</div>${markets}</div>` : ""}
+  </section>`;
+}
+
+// Initial route dispatch.
+const initial = routeFromPath();
+if (initial.kind === "topic") {
+  showTopicView(initial.slug);
+} else {
+  showMainView();
+  setInterval(refreshAll, 5 * 60 * 1000);
+}
+
+// Browser back/forward.
+window.addEventListener("popstate", () => {
+  const r = routeFromPath();
+  if (r.kind === "topic") showTopicView(r.slug);
+  else showMainView();
+});
 </script>
 </body>
 </html>

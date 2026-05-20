@@ -223,6 +223,19 @@ renders them as two side-by-side panels so you can compare the
 predictiveness of market-volume surges versus cross-platform attention
 surges.
 
+### Topic permalinks
+
+Every topic label has a stable URL: `/topic/{label}`. Click any topic
+label on the dashboard (in the topics grid, market-signal cards, or
+rising-now cards) to open it. The page shows:
+
+- Aggregate stats over the last 30 days (snapshots, peak spread, peak surge z, first/last seen)
+- SVG trajectory chart of surge z-score across snapshots with hover tooltips
+- The live cluster currently matching that label (items + matched markets with prices)
+
+Front-end router reads `window.location.pathname`; the server returns the
+same `index.html` for `/topic/{slug}` so the URL is shareable.
+
 ### Position-size suggestions
 
 Each matched market on an edge now carries a `position` field with a
@@ -254,6 +267,8 @@ the dashboard is already surfacing.
 | `GET /api/topics?limit=20` | Cross-source topic clusters, each with matched markets + surge signal. |
 | `GET /api/edges?limit=20` | Topics that have matched markets AND a surging signal — the dashboard's "market signal" panel reads this. Includes per-market spread, velocity, and downsampled price trajectory for the inline sparkline. |
 | `GET /api/backtest?days=30` | Hit/weak/miss rate of historical market-source surges plus the per-alert breakdown. |
+| `GET /api/topic/{slug}?days=30` | Topic detail: 30d of snapshots, surge trajectory, current live cluster. |
+| `GET /topic/{slug}` | HTML topic page (same SPA shell; the front-end router renders the detail view). |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |

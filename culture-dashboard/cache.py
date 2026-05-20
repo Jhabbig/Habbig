@@ -471,6 +471,25 @@ def record_topic_snapshots(snapshots: list[dict]) -> None:
         )
 
 
+def topic_snapshots_by_label(label: str, days: int = 30) -> list[dict]:
+    """All snapshots for a given topic label in chronological order."""
+    cutoff = time.time() - days * 86400
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, label, spread, surge_signal, sources_json, "
+            "sections_json, market_slugs_json FROM topic_snapshots "
+            "WHERE label = ? AND ts >= ? ORDER BY ts ASC",
+            (label, cutoff),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for k in ("sources", "sections", "market_slugs"):
+                d[k] = json.loads(d.pop(k + "_json") or "[]")
+            out.append(d)
+        return out
+
+
 def topic_snapshots_since(since_ts: float, min_signal: float = 1.5) -> list[dict]:
     """Snapshots with a non-null surge signal at or above `min_signal`."""
     with _connect() as c:
