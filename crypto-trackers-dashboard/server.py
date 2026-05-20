@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -60,6 +60,7 @@ from ingestion import (
     solana,
     solscan,
     whales,
+    ws_broadcaster,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -473,6 +474,46 @@ async def api_alerts_check() -> JSONResponse:
                          "fetched_at": datetime.now(timezone.utc).isoformat()})
 
 
+# ─── WebSocket live tick ──────────────────────────────────────────────────────
+
+@app.websocket("/ws/prices")
+async def ws_prices(ws: WebSocket):
+    """Live tick broadcast: prices + F&G + BTC mempool + BTC funding.
+
+    Note: SSO middleware doesn't run on websocket handshakes (Starlette
+    routes WS through a separate path). If you're putting this behind
+    the gateway, ensure the gateway forwards the Upgrade header without
+    requiring x-gateway-secret on the WS handshake.
+    """
+    try:
+        await ws_broadcaster.register(ws)
+    except Exception as e:  # noqa: BLE001
+        log.warning("WS accept failed: %s", e)
+        return
+    try:
+        # Send an initial tick immediately so the client gets data fast
+        try:
+            await ws.send_json(ws_broadcaster._build_tick())
+        except Exception:  # noqa: BLE001
+            pass
+        while True:
+            # Keep the connection alive; the broadcaster pushes ticks
+            # asynchronously. We just discard whatever the client sends.
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_broadcaster.unregister(ws)
+
+
+@app.get("/api/ws/status")
+async def api_ws_status() -> JSONResponse:
+    return JSONResponse({
+        "ws_clients": ws_broadcaster.client_count(),
+        "broadcast_path": "/ws/prices",
+    })
+
+
 # ─── Per-source health + persisted cache ──────────────────────────────────────
 
 @app.get("/api/sources")
@@ -611,6 +652,11 @@ async def api_summary() -> JSONResponse:
 
 
 # ─── Background pre-fetch ─────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def _startup_ws() -> None:
+    ws_broadcaster.start()
+
 
 @app.on_event("startup")
 async def _startup() -> None:
