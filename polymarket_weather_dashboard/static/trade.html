@@ -203,6 +203,69 @@ h2 {
   margin-bottom: 12px;
 }
 
+/* Insight panel */
+.insight-panel {
+  margin-top: 16px; padding: 14px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.insight-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 10px;
+}
+.insight-status {
+  font-size: 12px; color: var(--text-muted); padding: 6px 0;
+}
+.insight-status.loading::after {
+  content: " ⏳"; display: inline-block; animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.4; } }
+.insight-rec {
+  display: inline-block; padding: 4px 10px; border-radius: 4px;
+  font-size: 12px; font-weight: 600; letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.insight-rec.BUY_YES   { background: var(--buy-bg); color: var(--accent); }
+.insight-rec.BUY_NO    { background: var(--sell-bg); color: var(--warn); }
+.insight-rec.PASS      { background: var(--bg-card); color: var(--text-muted); }
+.insight-rec.WAIT_AND_SEE { background: var(--bg-card); color: var(--accent); }
+.insight-rec .conf {
+  margin-left: 8px; opacity: 0.7; font-weight: 400; font-size: 11px;
+}
+.insight-headline {
+  font-size: 15px; font-weight: 500; margin-bottom: 12px; line-height: 1.4;
+}
+.insight-section { margin-bottom: 10px; }
+.insight-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.insight-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.insight-list li { margin-bottom: 2px; }
+.insight-suggested {
+  margin: 8px 0; padding: 6px 10px; background: var(--bg-card);
+  border-radius: 4px; font-size: 12px; font-feature-settings: "tnum";
+}
+.insight-disclaimer {
+  margin-top: 12px; font-size: 11px; color: var(--text-muted);
+  font-style: italic;
+}
+.insight-usage {
+  margin-top: 6px; font-size: 10px; color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.insight-stream {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; color: var(--text-muted);
+  max-height: 140px; overflow-y: auto;
+  background: var(--bg-card); padding: 8px; border-radius: 4px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.insight-tail-warning {
+  display: inline-block; margin-left: 6px;
+  background: rgba(240, 168, 104, 0.15); color: var(--warn);
+  padding: 1px 6px; border-radius: 3px; font-size: 10px;
+}
+
 /* Enroll panel */
 .enroll-area textarea {
   width: 100%; min-height: 100px; padding: 8px 10px;
@@ -291,9 +354,41 @@ h2 {
           <span>Max payout</span><span class="v" id="review-payout">$1.00</span>
         </div>
 
-        <button id="place-btn" class="btn btn-primary" style="margin-top: 12px;">Review &amp; place</button>
+        <div class="row-2" style="margin-top: 12px;">
+          <button id="insight-btn" class="btn btn-secondary">Explain this market</button>
+          <button id="place-btn" class="btn btn-primary">Review &amp; place</button>
+        </div>
 
         <div id="result" class="result" style="display: none;"></div>
+
+        <div id="insight-panel" class="insight-panel" style="display: none;">
+          <div class="insight-header">
+            <h2 style="margin: 0;">Actionable insight</h2>
+            <div class="insight-mode">
+              <label style="font-size: 11px;">
+                <input type="checkbox" id="insight-deep" style="width: auto; margin-right: 4px;">
+                Deep mode (Sonnet)
+              </label>
+            </div>
+          </div>
+          <div id="insight-status" class="insight-status">Click "Explain" to stream a recommendation.</div>
+          <div id="insight-card" class="insight-card" style="display: none;">
+            <div id="insight-recommendation" class="insight-rec"></div>
+            <div id="insight-headline" class="insight-headline"></div>
+            <div class="insight-section">
+              <div class="insight-section-label">Key facts</div>
+              <ul id="insight-facts" class="insight-list"></ul>
+            </div>
+            <div class="insight-section">
+              <div class="insight-section-label">Key risks</div>
+              <ul id="insight-risks" class="insight-list"></ul>
+            </div>
+            <div id="insight-suggested" class="insight-suggested"></div>
+            <div id="insight-disclaimer" class="insight-disclaimer"></div>
+            <div id="insight-usage" class="insight-usage"></div>
+          </div>
+          <div id="insight-stream" class="insight-stream" style="display: none;"></div>
+        </div>
       </div>
     </div>
 
@@ -709,6 +804,167 @@ function updateEnrollmentBadge() {
     }
   }, { once: true });
 }
+
+// ─── Insight (LLM) ────────────────────────────────────────────────────────
+
+const insightBtn = document.getElementById("insight-btn");
+const insightDeepToggle = document.getElementById("insight-deep");
+const insightPanel = document.getElementById("insight-panel");
+const insightStatus = document.getElementById("insight-status");
+const insightCard = document.getElementById("insight-card");
+const insightStream = document.getElementById("insight-stream");
+
+function resetInsightPanel(message = "Streaming…") {
+  insightPanel.style.display = "block";
+  insightStatus.textContent = message;
+  insightStatus.className = "insight-status loading";
+  insightCard.style.display = "none";
+  insightStream.style.display = "block";
+  insightStream.textContent = "";
+}
+
+function renderInsight(data) {
+  insightStatus.className = "insight-status";
+  insightStatus.textContent = `${data.model || "model"} · ${data.usage ? `${data.usage.input_tokens || 0} in / ${data.usage.output_tokens || 0} out` : ""}`;
+  insightStream.style.display = "none";
+  insightCard.style.display = "block";
+
+  const insight = data.insight || {};
+  const rec = insight.recommendation || "—";
+  const conf = insight.confidence || "—";
+  const tailFlag = insight.tail_warning
+    ? `<span class="insight-tail-warning">tail risk</span>` : "";
+
+  document.getElementById("insight-recommendation").className = `insight-rec ${rec}`;
+  document.getElementById("insight-recommendation").innerHTML =
+    `${rec.replaceAll("_", " ")}<span class="conf">${conf} confidence</span>${tailFlag}`;
+
+  document.getElementById("insight-headline").textContent = insight.headline || "";
+
+  const facts = document.getElementById("insight-facts");
+  facts.innerHTML = (insight.key_facts || []).map(f =>
+    `<li>${escapeHtml(f)}</li>`).join("");
+
+  const risks = document.getElementById("insight-risks");
+  risks.innerHTML = (insight.key_risks || []).map(r =>
+    `<li>${escapeHtml(r)}</li>`).join("");
+
+  const suggestedEl = document.getElementById("insight-suggested");
+  if (insight.suggested_limit_cents != null) {
+    suggestedEl.textContent = `Suggested limit: ${insight.suggested_limit_cents}¢`;
+    suggestedEl.style.display = "block";
+  } else {
+    suggestedEl.style.display = "none";
+  }
+
+  document.getElementById("insight-disclaimer").textContent =
+    insight.disclaimer || "Not investment advice.";
+
+  if (data.usage) {
+    const u = data.usage;
+    const hit = u.cache_read_input_tokens
+      ? `cache: ${u.cache_read_input_tokens} hit`
+      : (u.cache_creation_input_tokens
+          ? `cache: ${u.cache_creation_input_tokens} written`
+          : "cache: cold");
+    document.getElementById("insight-usage").textContent =
+      `tokens: ${u.input_tokens} in, ${u.output_tokens} out · ${hit}`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+async function streamInsight() {
+  if (!state.selected) return;
+  const mode = insightDeepToggle.checked ? "deep" : "fast";
+  resetInsightPanel(`Streaming (${mode}) …`);
+
+  let response;
+  try {
+    response = await fetch(`/api/insight/${state.selected.ticker}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+  } catch (e) {
+    insightStatus.className = "insight-status";
+    insightStatus.textContent = `Network error: ${e.message}`;
+    return;
+  }
+
+  if (response.status === 401) {
+    insightStatus.className = "insight-status";
+    insightStatus.textContent = "Sign in to use the insight engine.";
+    return;
+  }
+  if (response.status === 404) {
+    insightStatus.className = "insight-status";
+    insightStatus.textContent = "Market not in cache yet — try again in a minute.";
+    return;
+  }
+  if (!response.ok) {
+    insightStatus.className = "insight-status";
+    insightStatus.textContent = `Server error ${response.status}.`;
+    return;
+  }
+
+  // Parse SSE manually — frames are "event: X\ndata: Y\n\n". We accumulate
+  // tokens into the stream view while waiting for the `complete` frame
+  // that carries the parsed JSON.
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let rawJSON = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    // Split on the blank-line frame terminator
+    const frames = buf.split("\n\n");
+    buf = frames.pop();  // keep the partial frame
+    for (const frame of frames) {
+      if (!frame.trim()) continue;
+      let event = "message";
+      let dataStr = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
+      }
+      if (!dataStr) continue;
+      let parsed;
+      try { parsed = JSON.parse(dataStr); } catch (e) { continue; }
+
+      if (event === "start") {
+        insightStatus.textContent = `Streaming (${parsed.model}) …`;
+      } else if (event === "token") {
+        rawJSON += parsed.text || "";
+        insightStream.textContent = rawJSON;
+        insightStream.scrollTop = insightStream.scrollHeight;
+      } else if (event === "complete") {
+        renderInsight(parsed);
+        return;
+      } else if (event === "error") {
+        insightStatus.className = "insight-status";
+        insightStatus.textContent = `Error: ${parsed.error}`;
+        insightStream.style.display = "none";
+        return;
+      }
+    }
+  }
+  // Stream ended without a complete event
+  if (!insightCard.style.display || insightCard.style.display === "none") {
+    insightStatus.className = "insight-status";
+    insightStatus.textContent = "Stream ended without a result.";
+  }
+}
+
+insightBtn.addEventListener("click", streamInsight);
 
 // ─── Boot ─────────────────────────────────────────────────────────────────
 

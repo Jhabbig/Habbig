@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory, make_response
+from flask import Flask, Response, jsonify, request, send_from_directory, make_response, stream_with_context
 from scipy.stats import norm
 
 import weather_calibration as _wcal
@@ -37,6 +37,9 @@ import trade_safety as _safety
 
 # Phase 3 — public track record
 import track_record as _track
+
+# Phase 4 — LLM actionable insight
+import insight as _insight
 
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
@@ -3925,6 +3928,163 @@ def api_healthz():
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "threads": snap,
     })
+
+
+# ─── Phase 4: LLM-powered actionable insight ─────────────────────────────────
+
+def _find_market_in_cache(market_id: str) -> Optional[dict]:
+    """Pull one market by id from the cached parsed_markets snapshot.
+
+    Returns None when no snapshot is loaded yet (cold start) or when the
+    id doesn't match any known market. The endpoint surfaces that as a
+    404 to the caller."""
+    cached = cache_get("parsed_markets")
+    if not cached or not cached.get("markets"):
+        return None
+    for m in cached["markets"]:
+        if m.get("market_id") == market_id:
+            return m
+        if m.get("kalshi_ticker") == market_id:
+            return m
+    return None
+
+
+def _gather_insight_context(market_id: str) -> Optional[dict]:
+    """Assemble the full context dict the LLM needs for one market.
+
+    All data comes from existing helpers in this file — `parse_temperature`,
+    `fetch_multi_model_forecast`, `compute_probability_full`,
+    `get_intraday_max`, `get_intraday_trajectory`, plus the track-record
+    per-station skill table. The insight module itself is pure (no
+    server.py deps), so this is where the wiring lives.
+    """
+    market = _find_market_in_cache(market_id)
+    if not market:
+        return None
+
+    city = market.get("city")
+    target_date = market.get("target_date")
+    station_info = STATION_MAP.get(city or "")
+    if not station_info or not target_date:
+        return None
+    lat, lon = float(station_info[0]), float(station_info[1])
+    icao = station_info[2] if len(station_info) > 2 else None
+
+    # Threshold parsing — uses the same parser that drove the original signal
+    temp_info = _wpure.parse_temperature(market.get("question") or "")
+
+    # Forecast + probability breakdown
+    forecast = None
+    prob_breakdown = None
+    try:
+        forecast = fetch_multi_model_forecast(lat, lon, target_date, station=city)
+        if forecast:
+            intraday_context = None
+            if icao:
+                running = get_intraday_max(icao, target_date) or {}
+                if running.get("running_max") is not None:
+                    intraday_context = {
+                        "running_max": float(running["running_max"]),
+                        "station_residual_std": forecast.get("empirical_sigma_floor") or 2.5,
+                    }
+            prob_breakdown = compute_probability_full(forecast, temp_info,
+                                                      intraday_context=intraday_context)
+    except Exception as e:
+        logger.warning("insight context: forecast failed for %s: %s", market_id, e)
+
+    # Intraday observations (today only)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    intraday_running = None
+    intraday_trajectory = None
+    if icao and target_date == today:
+        intraday_running = get_intraday_max(icao, target_date)
+        intraday_trajectory = get_intraday_trajectory(icao, target_date)
+
+    # Per-station skill from the track-record table
+    station_skill = None
+    try:
+        skill_rows = _track.per_station_skill(_get_conn)
+        for row in skill_rows:
+            if row.get("city") == city:
+                station_skill = {
+                    "city": city,
+                    "n_resolved": row.get("n"),
+                    "win_rate": row.get("win_rate"),
+                    "brier_score": row.get("brier"),
+                }
+                break
+    except Exception:
+        pass
+
+    # Lead time
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+        lead_days = max(0, (dt - datetime.now(timezone.utc).date()).days)
+    except Exception:
+        lead_days = None
+
+    market_for_insight = dict(market)
+    market_for_insight["lead_days"] = lead_days
+    market_for_insight["model_prob"] = (
+        prob_breakdown.get("probability") if prob_breakdown else market.get("model_prob")
+    )
+
+    return _insight.assemble_context(
+        market=market_for_insight,
+        forecast=forecast,
+        temp_info=temp_info,
+        intraday_running=intraday_running,
+        intraday_trajectory=intraday_trajectory,
+        station_skill=station_skill,
+        model_prob_breakdown=prob_breakdown,
+    )
+
+
+def _sse_frame(event: str, data: dict) -> str:
+    """Format one SSE frame. Both header lines are required, double-newline
+    terminator separates frames per the SSE spec."""
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@app.route("/api/insight/<market_id>", methods=["POST"])
+@require_auth
+def api_insight(market_id):
+    """Stream an LLM-generated actionable insight for one market.
+
+    Body / query params:
+        mode   "fast" (default) | "deep" — Haiku 4.5 vs Sonnet 4.6
+
+    Response: text/event-stream with three event types:
+        event: token      — `{text: "..."}` per JSON output delta
+        event: complete   — `{insight: {...}, usage: {...}, model: "..."}`
+        event: error      — `{error: "...", type: "..."}`
+    """
+    body = request.get_json(silent=True) or {}
+    mode = (body.get("mode") or request.args.get("mode") or "fast").lower()
+    model = _insight.MODEL_DEEP if mode == "deep" else _insight.MODEL_FAST
+
+    context = _gather_insight_context(market_id)
+    if context is None:
+        return jsonify({"error": "market not found or not yet loaded"}), 404
+
+    def generate():
+        # Tell the frontend the model up front so it can show "running on
+        # Sonnet..." in the loading state.
+        yield _sse_frame("start", {"model": model, "market_id": market_id})
+        try:
+            for chunk in _insight.stream_insight(context, model=model):
+                yield _sse_frame(chunk.type, chunk.data)
+        except Exception as e:
+            logger.exception("insight stream crashed for %s: %s", market_id, e)
+            yield _sse_frame("error", {"error": str(e), "type": type(e).__name__})
+
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",  # disable nginx buffering when fronted
+        "Connection": "keep-alive",
+    }
+    return Response(stream_with_context(generate()),
+                    mimetype="text/event-stream", headers=headers)
 
 
 @app.route("/api/calibration")
