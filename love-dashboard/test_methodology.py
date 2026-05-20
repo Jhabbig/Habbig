@@ -460,6 +460,53 @@ def test_mover_rule():
     ok("Alpha (+8 over 60d) flagged; Beta (+3) and Gamma (10d old) skipped")
 
 
+def test_merge_prefer_first():
+    print("test: merge_prefer_first keeps left-most non-None values")
+    out = server.merge_prefer_first({"USA": 5.0, "DEU": 4.0}, {"USA": 99.0, "FRA": 3.5})
+    if out != {"USA": 5.0, "DEU": 4.0, "FRA": 3.5}:
+        fail(f"merge precedence wrong: {out}")
+    ok("Eurostat wins over UN for shared keys; UN fills in missing keys")
+
+
+def test_un_csv_parser_merges_globally():
+    print("test: UN CSV + Eurostat merge produces a wider Partnership/Stability layer")
+    _clear_cache()
+    with patch.object(server, "get_country_meta", return_value=META):
+        # Synthetic UN CSV: covers USA and BRA (not in Eurostat fixture)
+        un_csv = "country,marriage_rate,divorce_rate\nUnited States,6.1,2.7\nBrazil,5.0,1.4\n"
+        un_marriage, un_divorce = server._parse_un_marriage_csv(un_csv)
+        if "USA" not in un_marriage or un_marriage["USA"] != 6.1:
+            fail(f"UN parser missed USA marriage: {un_marriage}")
+        if "BRA" not in un_divorce or un_divorce["BRA"] != 1.4:
+            fail(f"UN parser missed BRA divorce: {un_divorce}")
+        ok("UN CSV parses + maps country names -> ISO3 via shared name overrides")
+
+        # Eurostat fixture has DEU; UN provides USA — merge has both
+        eurostat = {"DEU": 4.9, "FRA": 3.5}
+        merged = server.merge_prefer_first(eurostat, un_marriage)
+        if not ({"USA", "DEU", "FRA", "BRA"} <= set(merged.keys())):
+            fail(f"merged should union both feeds; got keys {sorted(merged)}")
+        # Eurostat must win over UN for shared keys — none shared in this fixture,
+        # but verify by injecting one
+        merged_clash = server.merge_prefer_first({"USA": 99.0}, un_marriage)
+        if merged_clash["USA"] != 99.0:
+            fail("Eurostat (left) should win over UN (right) for shared keys")
+        ok("merge widens coverage globally without overwriting Eurostat where present")
+
+
+def test_activity_csv_parser():
+    print("test: activity CSV parses and feeds Activity subscore")
+    _clear_cache()
+    with patch.object(server, "get_country_meta", return_value=META):
+        activity_csv = "country,activity\nUnited States,72.0\nBrazil,68.5\nGermany,55.0\n"
+        out = server._parse_activity_csv(activity_csv)
+        if out.get("USA") != 72.0:
+            fail(f"activity parser missed USA: {out}")
+        if "DEU" not in out or out["DEU"] != 55.0:
+            fail(f"activity parser missed DEU: {out}")
+        ok(f"activity CSV parsed {len(out)} countries; values pass through to percentile rank")
+
+
 def test_outlier_skipped_on_zero_variance():
     print("test: outlier rule skips a tier subscore when variance is zero")
     countries = [
@@ -497,6 +544,9 @@ def main():
     test_closest_peer_rule()
     test_snapshot_store_roundtrip()
     test_mover_rule()
+    test_merge_prefer_first()
+    test_un_csv_parser_merges_globally()
+    test_activity_csv_parser()
     print("\nall tests passed.")
 
 

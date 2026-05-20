@@ -449,9 +449,9 @@
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
     <div class="card" data-subscore="activity">
-      <h3>Activity · <span data-weight>10</span>% <span class="pill tier-c">Tier C — v1.1</span></h3>
+      <h3>Activity · <span data-weight>10</span>% <span class="pill tier-c" id="activity-badge">Tier C — v1.1</span></h3>
       <div class="big">—</div>
-      <div class="sub">Dating-app penetration + Trends "love"/"date" basket. Indicative-only.</div>
+      <div class="sub">Dating-app penetration + Trends "love"/"date" basket (operator-supplied CSV). Indicative-only.</div>
       <div class="bar"><span style="width: 0%"></span></div>
     </div>
   </div>
@@ -682,6 +682,12 @@ async function loadSummary() {
   const cov = d.subscore_coverage || {};
   document.querySelector("#sub-coverage").textContent =
     `coverage: connection ${cov.connection || 0}, partnership ${cov.partnership || 0}, stability ${cov.stability || 0}, activity ${cov.activity || 0}`;
+
+  // Activity card badge flips once the CSV is populated.
+  const activityBadge = document.getElementById("activity-badge");
+  if (activityBadge) {
+    activityBadge.textContent = (cov.activity || 0) > 0 ? "Tier C — indicative" : "Tier C — v1.1";
+  }
 
   document.querySelector("#header-sub").textContent = d.coverage_note ||
     "Global view of marriage, divorce, intimacy & connection.";

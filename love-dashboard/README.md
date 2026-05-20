@@ -1,7 +1,19 @@
-# State of Love Dashboard (v3.0)
+# State of Love Dashboard (v3.1)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.1 adds:**
+
+- **Activity subscore is live** — operator drops a CSV at
+  `data/activity.csv` (columns `country`, `activity`); server
+  percentile-ranks it within income tier and feeds it into the composite
+  at 10% weight. The "Tier C — v1.1" badge flips to "Tier C — indicative"
+  once coverage is non-zero.
+- **Global Partnership + Stability** — `data/un_marriage.csv` (columns
+  `country`, `marriage_rate`, `divorce_rate`) extends coverage from
+  EU + EFTA (~34 countries) to ~150. Eurostat wins where both feeds have a
+  value (fresher); UN DESA fills in everywhere else via `merge_prefer_first`.
 
 **v3.0 adds:**
 
@@ -284,12 +296,22 @@ inversion, cap, cross-tier independence), missing-data policy (≥2 of 3
 Tier-A/B subscores required), and weight renormalization when a subscore is
 missing.
 
+## Data files (operator-supplied)
+
+`data/` is gitignored. Drop these files to light up the corresponding feeds:
+
+| Path | Columns | Feeds |
+|---|---|---|
+| `data/whr.csv` | `country`, `social support` (0-1 or 0-100) | Connection |
+| `data/un_marriage.csv` | `country`, `marriage_rate`, `divorce_rate` (per 1000) | Partnership + Stability globally (UN DESA Demographic Yearbook) |
+| `data/activity.csv` | `country`, `activity` (any scale) | Activity (Tier C — indicative) |
+
+Country names are matched case-insensitively against World Bank metadata
+plus a small overrides table for common informal names (`Russia`/`RUS`,
+`South Korea`/`KOR`, `Czechia`/`CZE`, etc).
+
 ## Roadmap (v3.x)
 
-- **Activity subscore** — Google Trends "love" / "date" basket + dating-app
-  penetration from SimilarWeb / public investor decks.
-- **Global Partnership coverage** — UN DESA Demographic Yearbook XLSX
-  scraper for marriage / divorce data outside Europe.
 - **Trend-reversal + event-overlay rules** — once 12+ months of snapshots
   accumulate, detect direction flips and inflections near known events
   (legalization, war, pandemic, recession).

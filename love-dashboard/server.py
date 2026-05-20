@@ -67,16 +67,18 @@ _cache: "OrderedDict[str, dict]" = OrderedDict()
 _cache_lock = threading.Lock()
 _TTL_DEFAULT = 60 * 60  # 1h
 _TTL = {
-    "country_meta":      7 * 24 * 3600,   # 7d  (income tiers update annually)
-    "eurostat_marriage": 24 * 3600,
-    "eurostat_divorce":  24 * 3600,
-    "wb_adolescent":     24 * 3600,
-    "whr_social_support": 7 * 24 * 3600,  # WHR is annual
-    "summary":           60 * 60,
-    "index":             60 * 60,
-    "index_map":         60 * 60,
-    "subscore_layers":   60 * 60,
-    "sensitivity":       60 * 60,
+    "country_meta":         7 * 24 * 3600,   # 7d  (income tiers update annually)
+    "eurostat_marriage":    24 * 3600,
+    "eurostat_divorce":     24 * 3600,
+    "wb_adolescent":        24 * 3600,
+    "whr_social_support":   7 * 24 * 3600,   # WHR is annual
+    "un_marriage_divorce":  7 * 24 * 3600,   # UN DESA is annual
+    "activity_csv":         24 * 3600,
+    "summary":              60 * 60,
+    "index":                60 * 60,
+    "index_map":            60 * 60,
+    "subscore_layers":      60 * 60,
+    "sensitivity":          60 * 60,
 }
 
 
@@ -436,6 +438,126 @@ def fetch_whr_social_support() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# UN DESA Demographic Yearbook (global Partnership + Stability coverage)
+#
+# Eurostat covers only EU + EFTA. UN DESA publishes the same crude marriage
+# and divorce rates worldwide but as XLSX at unstable URLs. Rather than ship
+# a fragile scraper, we read a CSV the operator drops at `data/un_marriage.csv`.
+# Eurostat takes precedence for any country present in both feeds (it's
+# usually fresher and the rate definitions match per-1000-population).
+#
+# Expected columns (case-insensitive): `country`, `marriage_rate`,
+# `divorce_rate`. Either rate may be blank.
+# ---------------------------------------------------------------------------
+
+UN_MARRIAGE_LOCAL = Path(__file__).parent / "data" / "un_marriage.csv"
+
+
+def _parse_un_marriage_csv(text: str) -> tuple[dict[str, float], dict[str, float]]:
+    """Returns (marriage_rate_by_iso3, divorce_rate_by_iso3) per 1000 pop."""
+    meta = get_country_meta()
+    name_to_iso3 = _whr_name_to_iso3(meta)
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return {}, {}
+    name_col = next((c for c in reader.fieldnames if "country" in c.lower()), None)
+    m_col = next((c for c in reader.fieldnames if "marriage" in c.lower()), None)
+    d_col = next((c for c in reader.fieldnames if "divorce" in c.lower()), None)
+    if not name_col or (not m_col and not d_col):
+        return {}, {}
+    marriage: dict[str, float] = {}
+    divorce: dict[str, float] = {}
+    for row in reader:
+        nm = _normalize_country_name(row.get(name_col) or "")
+        if not nm:
+            continue
+        iso3 = name_to_iso3.get(nm)
+        if not iso3:
+            continue
+        if m_col and row.get(m_col):
+            try: marriage[iso3] = float(row[m_col])
+            except ValueError: pass
+        if d_col and row.get(d_col):
+            try: divorce[iso3] = float(row[d_col])
+            except ValueError: pass
+    return marriage, divorce
+
+
+def fetch_un_marriage_divorce() -> tuple[dict[str, float], dict[str, float]]:
+    if not UN_MARRIAGE_LOCAL.exists():
+        log.info("UN DESA fetcher: no data file at %s — Partnership/Stability rely on Eurostat only", UN_MARRIAGE_LOCAL)
+        return {}, {}
+    try:
+        return _parse_un_marriage_csv(UN_MARRIAGE_LOCAL.read_text())
+    except Exception as exc:
+        log.warning("UN DESA local file %s parse failed: %s", UN_MARRIAGE_LOCAL, exc)
+        return {}, {}
+
+
+# ---------------------------------------------------------------------------
+# Activity subscore (Tier C — proxy data, see methodology)
+#
+# Operator-supplied CSV. Suggested inputs combined and normalized 0-100
+# offline (Google Trends "love"/"date" basket, dating-app penetration from
+# investor decks). We deliberately keep the ETL outside the server: the
+# methodology's "Tier C — indicative only" badge stays honest, and we don't
+# add fragile scraper deps.
+#
+# Expected columns (case-insensitive): `country`, `activity` (any scale;
+# gets percentile-ranked within income tier just like the other subscores).
+# ---------------------------------------------------------------------------
+
+ACTIVITY_LOCAL = Path(__file__).parent / "data" / "activity.csv"
+
+
+def _parse_activity_csv(text: str) -> dict[str, float]:
+    meta = get_country_meta()
+    name_to_iso3 = _whr_name_to_iso3(meta)
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return {}
+    name_col = next((c for c in reader.fieldnames if "country" in c.lower()), None)
+    val_col = next((c for c in reader.fieldnames if "activity" in c.lower()), None)
+    if not name_col or not val_col:
+        return {}
+    out: dict[str, float] = {}
+    for row in reader:
+        nm = _normalize_country_name(row.get(name_col) or "")
+        if not nm:
+            continue
+        iso3 = name_to_iso3.get(nm)
+        if not iso3:
+            continue
+        try:
+            out[iso3] = float(row[val_col])
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def fetch_activity_data() -> dict[str, float]:
+    if not ACTIVITY_LOCAL.exists():
+        log.info("Activity fetcher: no data file at %s — Activity subscore stays empty (Tier C / v1.1)", ACTIVITY_LOCAL)
+        return {}
+    try:
+        return _parse_activity_csv(ACTIVITY_LOCAL.read_text())
+    except Exception as exc:
+        log.warning("Activity local file %s parse failed: %s", ACTIVITY_LOCAL, exc)
+        return {}
+
+
+def merge_prefer_first(*sources: dict[str, float]) -> dict[str, float]:
+    """Union of dicts where the first non-None value wins (left-to-right)."""
+    out: dict[str, float] = {}
+    for src in sources:
+        for k, v in src.items():
+            if v is None:
+                continue
+            out.setdefault(k, v)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Methodology: percentile rank within income tier
 # ---------------------------------------------------------------------------
 
@@ -492,11 +614,25 @@ def _build_subscore_layers() -> dict[str, Any]:
     re-trigger network fetches.
     """
     meta                 = get_country_meta()
-    marriage_rate        = _safe_fetch("eurostat_marriage", eurostat_marriage_rate)
-    divorce_rate         = _safe_fetch("eurostat_divorce",  eurostat_divorce_rate)
+    eurostat_marriage    = _safe_fetch("eurostat_marriage", eurostat_marriage_rate)
+    eurostat_divorce     = _safe_fetch("eurostat_divorce",  eurostat_divorce_rate)
     adolescent_fertility = _safe_fetch("wb_adolescent",
                                        lambda: fetch_wb_indicator("SP.ADO.TFRT"))
     social_support       = _safe_fetch("whr_social_support", fetch_whr_social_support)
+
+    # UN DESA covers the world; Eurostat covers EU+EFTA with fresher numbers.
+    # Use Eurostat where available, fall back to UN for everyone else.
+    try:
+        un_pair = cached("un_marriage_divorce", fetch_un_marriage_divorce)
+    except Exception as exc:
+        log.warning("un_marriage_divorce fetch failed: %s", exc)
+        un_pair = ({}, {})
+    un_marriage, un_divorce = un_pair if isinstance(un_pair, tuple) else ({}, {})
+
+    marriage_rate = merge_prefer_first(eurostat_marriage, un_marriage)
+    divorce_rate  = merge_prefer_first(eurostat_divorce,  un_divorce)
+
+    activity_raw = _safe_fetch("activity_csv", fetch_activity_data)
 
     # Connection: WHR social-support index (0-100), already on the right scale.
     # Rank within income tier so cross-tier comparisons stay fair.
@@ -522,8 +658,10 @@ def _build_subscore_layers() -> dict[str, Any]:
         if v is not None:
             stability_pct[iso] = v
 
-    # Activity: still stubbed in v2.
-    activity_pct: dict[str, float] = {}
+    # Activity (Tier C — indicative only). Percentile-rank within tier just
+    # like the other subscores; the methodology weight is 10% so even a noisy
+    # signal can't dominate the index.
+    activity_pct = percentile_rank_within_tier(activity_raw, higher_is_better=True)
 
     return {
         "meta": meta,
@@ -841,8 +979,8 @@ def sources():
             "eurostat_demo_ndivind":  {"tier": "A", "covers": "EU + EFTA",      "in_use": True,  "feeds": "stability"},
             "world_bank_wdi":         {"tier": "A", "covers": "global",         "in_use": True,  "feeds": "stability + meta"},
             "world_happiness_report": {"tier": "B", "covers": "~150 countries", "in_use": bool(layers["subscores"]["connection"]), "feeds": "connection"},
-            "google_trends":          {"tier": "C", "covers": "global",         "in_use": False, "feeds": "activity"},
-            "un_desa":                {"tier": "A", "covers": "global",         "in_use": False, "feeds": "partnership + stability worldwide"},
+            "un_desa":                {"tier": "A", "covers": "global",         "in_use": UN_MARRIAGE_LOCAL.exists(), "feeds": "partnership + stability worldwide (fallback after Eurostat)"},
+            "activity_csv":           {"tier": "C", "covers": "operator-supplied", "in_use": bool(layers["subscores"]["activity"]), "feeds": "activity"},
         },
     })
 
