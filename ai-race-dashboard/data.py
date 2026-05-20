@@ -453,9 +453,47 @@ TIMELINE = [
     {"date": "2025-11-24", "lab_key": "anthropic", "title": "Claude Opus 4.5", "blurb": "Pushes SWE-bench Verified past 80% on a non-tool track."},
 ]
 
-# ── Polymarket AI-question filter ────────────────────────────────────────────
-# Used to surface AI-flavored prediction markets on the live Polymarket feed.
-# Keep specific enough to avoid false positives like "AI in healthcare" essays.
+# ── Market whitelists ────────────────────────────────────────────────────────
+# Curated lists of Polymarket events + Kalshi series to surface as "Featured
+# AI markets." Editorial, not algorithmic — each entry is a slug/ticker the
+# operator confirmed is the right market. The dashboard pulls the full
+# multi-outcome tree per event, so a single entry can surface many Yes/No
+# probabilities (e.g. "which lab releases the next frontier model" expands to
+# one outcome per lab).
+#
+# Maintenance: visit polymarket.com / kalshi.com, find the event, copy the
+# slug or series ticker, add it here. Bad slugs are silently dropped at fetch
+# time; check /api/markets/featured response or /api/sources status panel.
+
+AI_POLY_EVENT_SLUGS = [
+    # AGI / superintelligence timing
+    "will-agi-arrive-by-2030",
+    "agi-by-2030",
+    "asi-by-2035",
+    # Frontier model races
+    "best-ai-model-2026",
+    "best-ai-model-of-2026",
+    "which-company-will-release-the-best-ai-model-2026",
+    "highest-lmarena-score-end-of-2026",
+    # Lab milestones
+    "openai-1t-valuation-2026",
+    "anthropic-200b-valuation-2026",
+    "xai-revenue-2026",
+    # Industrial / chip
+    "nvidia-2t-market-cap-2026",
+    "us-export-controls-china-ai-2026",
+]
+
+AI_KALSHI_SERIES = [
+    "KXAGI",         # AGI declarations / outcomes
+    "KXAIMODEL",     # frontier-model questions
+    "KXOPENAI",      # OpenAI corporate
+    "KXANTHROPIC",   # Anthropic corporate
+    "KXNVDA",        # Nvidia outcomes (chip side)
+]
+
+# Polymarket keyword filter retained for the "More AI markets" secondary view.
+# Anything matching that *isn't* in a curated event surfaces there.
 AI_MARKET_KEYWORDS = [
     "openai", "anthropic", "claude", "gpt-", "gpt5", "gpt 5", "chatgpt",
     "gemini", "deepmind", "grok", "xai", "elon ai", "deepseek", "qwen",

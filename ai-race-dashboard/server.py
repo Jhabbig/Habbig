@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 import data as ai_data
 import live_data
+import markets as ai_markets
 from ingestion import refresh_all
 
 app = FastAPI(title="AI Race Dashboard")
@@ -248,9 +249,26 @@ async def get_frontier():
 
 @app.get("/api/markets")
 async def get_markets():
+    """Backwards-compat keyword filter — top-volume AI markets on Polymarket."""
     import asyncio
     markets = await asyncio.to_thread(fetch_ai_markets)
     return _json({"markets": markets, "count": len(markets)})
+
+
+@app.get("/api/markets/featured")
+async def get_markets_featured():
+    """Curated AI events (Polymarket + Kalshi) with full multi-outcome trees."""
+    import asyncio
+    payload = await asyncio.to_thread(ai_markets.get_featured)
+    return _json(payload)
+
+
+@app.get("/api/markets/moves")
+async def get_markets_moves(min_change: float = 0.05, limit: int = 12):
+    """Top 24h price movers among AI-tagged Polymarket questions."""
+    import asyncio
+    payload = await asyncio.to_thread(ai_markets.get_movers, min_change, limit)
+    return _json(payload)
 
 
 # ── Background ingestion refresher ───────────────────────────────────────────

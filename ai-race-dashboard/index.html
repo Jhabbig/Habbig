@@ -143,6 +143,63 @@
                 font-size: 12px; }
   .empty-state { color: var(--muted); font-size: 12px; padding: 16px 0; text-align: center; }
 
+  /* Featured events */
+  .event-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .event { background: var(--panel-2); border: 1px solid var(--grid);
+           border-radius: 6px; padding: 14px; }
+  .event .ehead { display: flex; align-items: baseline; gap: 10px;
+                  margin-bottom: 6px; flex-wrap: wrap; }
+  .event .etitle { font-weight: 600; font-size: 14px; }
+  .event .etitle a { color: var(--fg); }
+  .event .etitle a:hover { color: var(--accent); }
+  .event .edesc { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .venue-tag { font-size: 10px; padding: 2px 6px; border-radius: 3px;
+               font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .venue-tag.polymarket { background: #2d1b6911; color: #a78bfa; border: 1px solid #a78bfa55; }
+  .venue-tag.kalshi { background: #0c633f11; color: #34d399; border: 1px solid #34d39955; }
+  .event .evol { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .outcome-row { display: grid; grid-template-columns: 1fr 60px;
+                 gap: 10px; align-items: center; padding: 5px 0; }
+  .outcome-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .outcome-bar { position: relative; height: 14px; background: #0e1117;
+                 border: 1px solid var(--grid); border-radius: 3px; overflow: hidden; }
+  .outcome-bar .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                       background: linear-gradient(90deg, #1f6feb88, #58a6ff); }
+  .outcome-bar .lbl { position: absolute; right: 4px; top: 0; bottom: 0;
+                      display: flex; align-items: center; font-size: 10px;
+                      font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .outcome-prob { font-variant-numeric: tabular-nums; font-weight: 600;
+                  text-align: right; font-size: 12px; }
+
+  /* Movers strip */
+  .movers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px; }
+  .mover { background: var(--panel-2); border: 1px solid var(--grid);
+           border-radius: 6px; padding: 10px 12px; }
+  .mover-q { font-size: 12px; min-height: 36px; }
+  .mover-q a { color: var(--fg); }
+  .mover-q a:hover { color: var(--accent); }
+  .mover-foot { display: flex; align-items: baseline; justify-content: space-between;
+                margin-top: 8px; }
+  .mover-prob { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+  .mover-delta { font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600;
+                 padding: 1px 6px; border-radius: 3px; }
+  .mover-delta.up { background: #56d36422; color: var(--green); }
+  .mover-delta.down { background: #f8514922; color: var(--red); }
+
+  /* Cross-venue spread */
+  .pair-row { display: grid; grid-template-columns: 1fr 1fr 80px;
+              gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+              align-items: center; font-size: 12px; }
+  .pair-row:last-child { border-bottom: 0; }
+  .pair-side { display: flex; flex-direction: column; gap: 2px; }
+  .pair-side .lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+                    color: var(--muted); }
+  .pair-spread { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+  .pair-spread.pos { color: var(--amber); }
+  .pair-spread.neg { color: var(--accent); }
+
   footer { color: var(--muted); font-size: 11px; padding: 16px 24px;
            border-top: 1px solid var(--grid); text-align: center; }
 </style>
@@ -204,10 +261,35 @@
     <div class="labs-grid" id="labs"></div>
   </section>
 
-  <!-- Markets -->
+  <!-- Featured prediction markets -->
+  <section class="panel" id="featured-panel">
+    <h2>Featured AI markets <span style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px" id="featured-counts"></span></h2>
+    <div class="sub">
+      Curated Polymarket events + Kalshi series — see <code>AI_POLY_EVENT_SLUGS</code>
+      and <code>AI_KALSHI_SERIES</code> in <code>data.py</code>. Each card shows
+      every Yes/No outcome bundled into that event.
+    </div>
+    <div class="event-grid" id="featured-events"></div>
+  </section>
+
+  <!-- Cross-venue spreads -->
+  <section class="panel" id="spreads-panel">
+    <h2>Cross-venue spreads</h2>
+    <div class="sub">Same-topic events trading on both Polymarket and Kalshi. Spread is Polymarket Yes − Kalshi Yes (positive ⇒ Polymarket overpriced).</div>
+    <div id="spreads"></div>
+  </section>
+
+  <!-- 24h movers -->
+  <section class="panel" id="movers-panel">
+    <h2>24h movers</h2>
+    <div class="sub">AI-tagged Polymarket questions with the biggest 1-day price swings (≥5pp).</div>
+    <div class="movers" id="movers"></div>
+  </section>
+
+  <!-- Keyword-matched markets (secondary) -->
   <section class="panel" id="markets-panel">
-    <h2>Live AI prediction markets</h2>
-    <div class="sub">Polymarket questions matching AI keywords, sorted by 24h volume.</div>
+    <h2>More AI markets</h2>
+    <div class="sub">Other Polymarket questions matching AI keywords, sorted by 24h volume.</div>
     <div id="markets"></div>
   </section>
 
@@ -538,6 +620,111 @@ async function loadLabs() {
   `).join("");
 }
 
+// ── Featured / Movers / Spreads ───────────────────────────────────────────
+function renderEvent(ev) {
+  const venueClass = ev.venue === "kalshi" ? "kalshi" : "polymarket";
+  const venueLabel = ev.venue === "kalshi" ? "Kalshi" : "Polymarket";
+  // Limit visible outcomes to top 8 by price; collapse the rest.
+  const sorted = (ev.markets || []).slice().sort((a,b) => b.yes_price - a.yes_price);
+  const shown = sorted.slice(0, 8);
+  const hidden = sorted.length - shown.length;
+  const outcomesHTML = shown.map(m => {
+    const pct = Math.max(0, Math.min(1, m.yes_price));
+    const pctLabel = (pct * 100).toFixed(pct < 0.1 ? 1 : 0) + "%";
+    const label = m.yes_outcome || m.question || "Yes";
+    return `<div class="outcome-row">
+      <div class="outcome-label" title="${escapeHTML(m.question)}">${escapeHTML(label)}</div>
+      <div class="outcome-bar"><div class="fill" style="width:${(pct*100).toFixed(1)}%"></div><div class="lbl">${pctLabel}</div></div>
+    </div>`;
+  }).join("");
+  const overflow = hidden > 0 ? `<div style="color:var(--muted);font-size:11px;margin-top:6px">+ ${hidden} more outcome${hidden===1?'':'s'}</div>` : "";
+  const end = ev.end_date ? `<span style="color:var(--muted);font-size:11px">ends ${escapeHTML(ev.end_date.slice(0,10))}</span>` : "";
+  const vol = ev.volume_24h_total ? `<span class="evol">${fmt.vol(ev.volume_24h_total)}/24h</span>` : "";
+  return `<div class="event">
+    <div class="ehead">
+      <span class="venue-tag ${venueClass}">${venueLabel}</span>
+      <span class="etitle"><a href="${escapeHTML(ev.url)}" target="_blank" rel="noopener">${escapeHTML(ev.title)}</a></span>
+      ${end}
+      ${vol}
+    </div>
+    ${ev.description ? `<div class="edesc">${escapeHTML(ev.description)}</div>` : ""}
+    ${outcomesHTML}
+    ${overflow}
+  </div>`;
+}
+
+async function loadFeatured() {
+  const wrap = $("#featured-events");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets/featured");
+    const events = data.events || [];
+    const c = data.counts || {};
+    $("#featured-counts").textContent =
+      `· ${c.polymarket || 0} Polymarket · ${c.kalshi || 0} Kalshi · ${c.cross_venue_pairs || 0} paired`;
+    if (events.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No curated events resolved. Check <code>AI_POLY_EVENT_SLUGS</code> / <code>AI_KALSHI_SERIES</code> in <code>data.py</code> — slugs that don\'t exist are silently dropped.</div>';
+    } else {
+      wrap.innerHTML = events.map(renderEvent).join("");
+    }
+    renderSpreads(data.pairs || []);
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load featured markets: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+function renderSpreads(pairs) {
+  const wrap = $("#spreads");
+  if (!pairs || pairs.length === 0) {
+    wrap.innerHTML = '<div class="empty-state">No same-topic events on both venues right now.</div>';
+    return;
+  }
+  wrap.innerHTML = pairs.map(p => {
+    const sp = p.spread;
+    const spClass = sp >= 0 ? "pos" : "neg";
+    const spLabel = (sp >= 0 ? "+" : "") + (sp * 100).toFixed(1) + "pp";
+    return `<div class="pair-row">
+      <div class="pair-side">
+        <span class="lbl"><span class="venue-tag polymarket">Poly</span> ${(p.polymarket.yes_price*100).toFixed(0)}%</span>
+        <a href="${escapeHTML(p.polymarket.url)}" target="_blank" rel="noopener">${escapeHTML(p.polymarket.title)}</a>
+      </div>
+      <div class="pair-side">
+        <span class="lbl"><span class="venue-tag kalshi">Kalshi</span> ${(p.kalshi.yes_price*100).toFixed(0)}%</span>
+        <a href="${escapeHTML(p.kalshi.url)}" target="_blank" rel="noopener">${escapeHTML(p.kalshi.title)}</a>
+      </div>
+      <div class="pair-spread ${spClass}">${spLabel}</div>
+    </div>`;
+  }).join("");
+}
+
+async function loadMovers() {
+  const wrap = $("#movers");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets/moves");
+    const m = data.movers || [];
+    if (m.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No AI markets moved ≥5pp in the last 24h.</div>';
+      return;
+    }
+    wrap.innerHTML = m.map(row => {
+      const pct = (row.yes_price * 100).toFixed(0) + "%";
+      const delta = row.one_day_change;
+      const deltaClass = delta >= 0 ? "up" : "down";
+      const deltaLabel = (delta >= 0 ? "▲" : "▼") + " " + Math.abs(delta * 100).toFixed(1) + "pp";
+      return `<div class="mover">
+        <div class="mover-q"><a href="${escapeHTML(row.url)}" target="_blank" rel="noopener">${escapeHTML(row.question)}</a></div>
+        <div class="mover-foot">
+          <span class="mover-prob">${pct} → ${escapeHTML(row.yes_outcome)}</span>
+          <span class="mover-delta ${deltaClass}">${deltaLabel}</span>
+        </div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load movers: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
 // ── Markets ───────────────────────────────────────────────────────────────
 async function loadMarkets() {
   const wrap = $("#markets");
@@ -628,8 +815,12 @@ async function boot() {
     await loadTimeline();
     await loadLabs();
     loadSources();
+    loadFeatured();
+    loadMovers();
     loadMarkets();
     $("#refresh-btn").addEventListener("click", triggerRefresh);
+    setInterval(loadFeatured, 90_000);
+    setInterval(loadMovers, 90_000);
     setInterval(loadMarkets, 60_000);
     setInterval(loadSources, 5 * 60_000);
   } catch (e) {

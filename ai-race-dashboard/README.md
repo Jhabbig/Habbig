@@ -57,7 +57,12 @@ DEV_MODE=1 python3 server.py        # → http://127.0.0.1:7070
 - `GET /api/timeline`
 - `GET /api/frontier` — running max-score series per benchmark, computed off
   merged scores (live values bump the curve).
-- `GET /api/markets` — live Polymarket AI markets (60s cache)
+- `GET /api/markets` — keyword-filtered Polymarket AI markets (legacy view)
+- `GET /api/markets/featured` — curated Polymarket events + Kalshi series
+  with full multi-outcome trees; includes cross-venue spread pairs
+- `GET /api/markets/moves?min_change=0.05&limit=12` — top 24h price movers
+  among AI-tagged questions (Polymarket only — Kalshi's public events
+  endpoint doesn't surface a 1d delta)
 - `GET /api/sources` — per-source ingestion status (last fetch, errors,
   entry count)
 - `POST /api/refresh` — force-refresh every ingestion source
@@ -91,6 +96,38 @@ When a public leaderboard restructures and our scrapers break:
 
 To disable live ingestion entirely (e.g. for sandboxed local dev), set
 `DISABLE_INGESTION=1`.
+
+## Featured prediction markets (v2.5)
+
+Two markets layers run side by side:
+
+1. **Curated events** — operator-maintained whitelists in `data.py`:
+   `AI_POLY_EVENT_SLUGS` (Polymarket event slugs) and `AI_KALSHI_SERIES`
+   (Kalshi series tickers). The dashboard fetches the full multi-outcome
+   tree per entry, so one whitelist row can expand to many Yes/No bars
+   (e.g. "which lab releases the best model of 2026" → one bar per lab).
+   Bad slugs are silently dropped at fetch time.
+2. **Keyword-matched markets** — algorithmic discovery via
+   `AI_MARKET_KEYWORDS`, used for the secondary "More AI markets" view
+   and the 24h movers panel.
+
+Code lives in `markets/`:
+- `markets/polymarket.py` — `/events?slug=…` for featured, full markets
+  scan for movers.
+- `markets/kalshi.py` — `/trade-api/v2/events?series_ticker=…&with_nested_markets=true`,
+  prices normalized cents → 0–1.
+- `markets/__init__.py` — aggregator + cross-venue pairer.
+
+**Cross-venue spreads.** When the same topic trades on both venues we pair
+them and surface the Yes-vs-Yes spread (positive ⇒ Polymarket overpriced
+relative to Kalshi). Matching is conservative: requires ≥2 substantive
+token overlap *including* a named entity (lab name, "agi", "nvidia", etc.)
+to avoid pairing on coincidental date matches.
+
+**Adding a new event.** Visit polymarket.com or kalshi.com → find the
+event → copy the slug (Polymarket) or series ticker (Kalshi) → append to
+the relevant list in `data.py`. The featured panel will pick it up within
+90 seconds.
 
 ## Per-cell freshness
 
