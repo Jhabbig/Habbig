@@ -5,10 +5,12 @@ import { Indicators } from './components/Indicators';
 import { GreeksHeatmap } from './components/GreeksHeatmap';
 import { SignalPanel } from './components/SignalPanel';
 import { OptionsScan } from './components/OptionsScan';
+import { AlertManager } from './components/AlertManager';
 import { BacktestPage } from './pages/Backtest';
 import { TradingLive } from './pages/TradingLive';
 import { Community } from './pages/Community';
-import { AlertCircle, Wifi, WifiOff, BarChart3, TrendingUp, Zap, Gauge, Users } from 'lucide-react';
+import { Analytics } from './pages/Analytics';
+import { AlertCircle, Wifi, WifiOff, BarChart3, TrendingUp, Zap, Gauge, Users, Activity } from 'lucide-react';
 
 const TICKERS = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'SPY'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
@@ -16,7 +18,7 @@ const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 export function App() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1m');
-  const [activePage, setActivePage] = useState<'chart' | 'signals' | 'options' | 'trading' | 'backtest' | 'community'>('chart');
+  const [activePage, setActivePage] = useState<'chart' | 'signals' | 'options' | 'trading' | 'analytics' | 'backtest' | 'community'>('chart');
   const { bars, indicators, connected, error } = useWebSocket(selectedTicker);
 
   // Current price for Greeks calculation
@@ -154,6 +156,17 @@ export function App() {
               Trade Live
             </button>
             <button
+              onClick={() => setActivePage('analytics')}
+              className={`py-3 px-4 font-medium border-b-2 transition whitespace-nowrap ${
+                activePage === 'analytics'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Activity className="w-4 h-4 inline mr-2" />
+              Analytics
+            </button>
+            <button
               onClick={() => setActivePage('backtest')}
               className={`py-3 px-4 font-medium border-b-2 transition whitespace-nowrap ${
                 activePage === 'backtest'
@@ -239,6 +252,14 @@ export function App() {
           </div>
         )}
 
+        {/* Analytics Page */}
+        {activePage === 'analytics' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-white mb-4">Advanced Analytics</h2>
+            <Analytics />
+          </div>
+        )}
+
         {/* Backtest Page */}
         {activePage === 'backtest' && (
           <div className="space-y-6">
@@ -255,6 +276,9 @@ export function App() {
           </div>
         )}
       </div>
+
+      {/* Global Alert Manager */}
+      <AlertManager />
     </div>
   );
 }
