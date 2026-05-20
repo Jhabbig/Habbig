@@ -148,6 +148,52 @@ CREATE TABLE IF NOT EXISTS price_daily (
 );
 CREATE INDEX IF NOT EXISTS idx_price_ticker_date ON price_daily(ticker, date DESC);
 
+-- Unusual options activity alerts (paid feed; unusual_whales adapter by default).
+CREATE TABLE IF NOT EXISTS options_flow_trade (
+    alert_id         TEXT PRIMARY KEY,
+    alerted_at       TEXT NOT NULL,
+    ticker           TEXT NOT NULL,
+    side             TEXT,
+    sentiment        TEXT,
+    sweep            INTEGER,
+    strike           REAL,
+    expiry           TEXT,
+    premium          REAL,
+    volume           REAL,
+    open_interest    REAL,
+    volume_oi_ratio  REAL,
+    spot_price       REAL,
+    source           TEXT,
+    raw_url          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_options_ticker ON options_flow_trade(ticker, alerted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_options_alerted ON options_flow_trade(alerted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_options_premium ON options_flow_trade(premium DESC);
+
+-- Dark pool / off-exchange block prints.
+CREATE TABLE IF NOT EXISTS dark_pool_print (
+    print_id      TEXT PRIMARY KEY,
+    executed_at   TEXT NOT NULL,
+    ticker        TEXT NOT NULL,
+    size          REAL,
+    price         REAL,
+    premium       REAL,
+    market_center TEXT,
+    source        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dp_ticker ON dark_pool_print(ticker, executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dp_executed ON dark_pool_print(executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dp_premium ON dark_pool_print(premium DESC);
+
+-- CUSIP → ticker cache (resolved via OpenFIGI for 13F holdings).
+CREATE TABLE IF NOT EXISTS cusip_ticker (
+    cusip       TEXT PRIMARY KEY,
+    ticker      TEXT NOT NULL,
+    name        TEXT,
+    exch_code   TEXT,
+    resolved_at TEXT
+);
+
 -- One row per labeled filing outcome (used to compute Bayesian skill).
 -- filer_type ∈ {insider, activist, congress}; filer_id is the natural key per type
 -- (reporter_cik, filer_cik, representative respectively). source_id is the
@@ -291,6 +337,9 @@ def counts() -> dict[str, int]:
             "congress_trade": cx.execute("SELECT COUNT(*) FROM congress_trade").fetchone()[0],
             "price_daily":    cx.execute("SELECT COUNT(*) FROM price_daily").fetchone()[0],
             "filer_outcome":  cx.execute("SELECT COUNT(*) FROM filer_outcome").fetchone()[0],
+            "options_flow_trade": cx.execute("SELECT COUNT(*) FROM options_flow_trade").fetchone()[0],
+            "dark_pool_print":    cx.execute("SELECT COUNT(*) FROM dark_pool_print").fetchone()[0],
+            "cusip_ticker":       cx.execute("SELECT COUNT(*) FROM cusip_ticker").fetchone()[0],
         }
 
 
@@ -353,6 +402,89 @@ def upsert_congress_trades(rows: list[dict]) -> int:
             rows,
         )
         return cur.rowcount
+
+
+def upsert_options_flow(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO options_flow_trade (
+                alert_id, alerted_at, ticker, side, sentiment, sweep,
+                strike, expiry, premium, volume, open_interest,
+                volume_oi_ratio, spot_price, source, raw_url
+            ) VALUES (
+                :alert_id, :alerted_at, :ticker, :side, :sentiment, :sweep,
+                :strike, :expiry, :premium, :volume, :open_interest,
+                :volume_oi_ratio, :spot_price, :source, :raw_url
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
+def upsert_dark_pool(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO dark_pool_print (
+                print_id, executed_at, ticker, size, price, premium,
+                market_center, source
+            ) VALUES (
+                :print_id, :executed_at, :ticker, :size, :price, :premium,
+                :market_center, :source
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
+def upsert_cusip_tickers(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO cusip_ticker (cusip, ticker, name, exch_code, resolved_at)
+            VALUES (:cusip, :ticker, :name, :exch_code, :resolved_at)
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
+def lookup_cusip_ticker(cusip: str) -> str | None:
+    if not cusip:
+        return None
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT ticker FROM cusip_ticker WHERE cusip = ? LIMIT 1",
+            (cusip.upper(),),
+        ).fetchone()
+    return row["ticker"] if row else None
+
+
+def unresolved_cusips(limit: int = 100) -> list[str]:
+    """CUSIPs that appear in fund_holding without a ticker and aren't in the cache."""
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT DISTINCT h.cusip
+            FROM fund_holding h
+            LEFT JOIN cusip_ticker c ON c.cusip = h.cusip
+            WHERE h.cusip IS NOT NULL AND h.cusip != ''
+              AND h.issuer_ticker IS NULL
+              AND c.cusip IS NULL
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    return [r["cusip"] for r in rows]
 
 
 def upsert_prices(ticker: str, rows: list[tuple[str, float]]) -> int:

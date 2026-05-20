@@ -9,8 +9,12 @@ markets:
 - **Fund quarterly holdings** — SEC Form 13F-HR (institutional managers >$100M AUM)
 - **Congressional trades** — House + Senate periodic transaction reports (STOCK Act)
 - **Bayesian filer skill** — Beta(α,β) posterior per filer, labeled by ticker-vs-SPY forward returns over a configurable horizon
+- **Unusual options activity** — sweep / large-premium options trades (paid feed)
+- **Dark pool prints** — off-exchange block prints (paid feed)
 
-Free public data only — paid options-flow and dark-pool feeds are out of scope.
+Free SEC + Congress + Stooq sources work out of the box. Paid options-flow
+/ dark-pool require an `UNUSUAL_WHALES_API_KEY`; CUSIP→ticker resolution
+via OpenFIGI works key-less at lower throughput.
 
 Port: **8053**. Lives behind the gateway at `whales.narve.ai` in production.
 
@@ -51,6 +55,8 @@ docker compose up --build whales
 | `filings13d.py` | SC 13D / 13G regex extractor: percent of class, shares owned, issuer name. |
 | `filings8k.py` | 8-K filter — scores filings by reported items (1.01, 2.01, 8.01) and M&A keywords ("definitive agreement", "merger", etc.). |
 | `congress.py` | Congressional PTR fetcher — pulls house-stock-watcher and senate-stock-watcher S3 datasets (used by every consumer Congress tracker), normalises field names, dedupes by transaction id. |
+| `options_flow.py` | unusual_whales adapter — pulls flow alerts + dark pool prints, normalises to the dashboard schema. No-op without `UNUSUAL_WHALES_API_KEY`. Vendor-swappable: replace the two `fetch_*` functions to switch to Polygon / CBOE / Tradier. |
+| `openfigi.py` | CUSIP → ticker resolver via OpenFIGI's batch mapping API. Free without a key (25 req/min, batches of 10); accepts `OPENFIGI_API_KEY` for higher throughput. Resolved entries cached in `cusip_ticker`. |
 | `prices.py` | Stooq daily-close fetcher with local SQLite cache. Concurrency-capped, normalises tickers to `<ticker>.us`. Co-fetches SPY as the benchmark. |
 | `bayesian.py` | Beta(α,β) posterior + Wilson-score 95% confidence interval. Hand-rolled to avoid pulling scipy. |
 | `skill.py` | Outcome labeler + skill leaderboards. For each insider buy/sell, activist filing, and congressional trade older than `SKILL_HORIZON_DAYS`, compares ticker forward return to SPY → win/loss. Aggregates per filer into a posterior. |
@@ -87,6 +93,11 @@ docker compose up --build whales
 | `GET /api/ticker-holders?ticker=<X>&limit=100` | Funds holding a given ticker (latest filing per fund). |
 | `GET /api/congress-trades?days=30&chamber=<House\|Senate>&limit=200` | Recent congressional periodic transaction reports. |
 | `GET /api/congress-by-ticker?ticker=<X>` | Congress trades for one ticker. |
+| `GET /api/options-flow?days=&side=<CALL\|PUT>&min_premium=&limit=` | Unusual options activity alerts (paid feed). |
+| `GET /api/options-by-ticker?ticker=<X>&days=` | Options flow for one ticker. |
+| `GET /api/dark-pool?days=&min_premium=&limit=` | Dark pool prints (paid feed). |
+| `GET /api/dark-pool-by-ticker?ticker=<X>&days=` | Dark pool prints for one ticker. |
+| `POST /api/admin/resolve-cusips?limit=` | Resolve unresolved 13F CUSIPs via OpenFIGI; backfills `fund_holding.issuer_ticker`. DEV_MODE only. |
 | `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |
 | `GET /api/skill-detail?filer_type=<...>&filer_id=<X>&horizon_days=30` | Per-filer skill posterior + last N labeled outcomes. |
 | `POST /api/admin/skill-recompute?filer_type=<insider\|activist\|congress\|fund>` | Trigger a skill-labeling pass. DEV_MODE only. |
@@ -164,7 +175,7 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
 - Phase 3b shipped: Bayesian filer-skill posterior over insider /
   activist / congress filings, labeled by ticker-vs-SPY forward returns
   from Stooq. `Skill` tab + per-buyer skill badges on Insider Clusters.
-- Phase 4 shipped (this version):
+- Phase 4 shipped:
   - 13F fund-skill: issuer-name → ticker resolution at ingest (and a
     backfill for already-stored holdings). `fund` filer type in the
     skill model. Outcomes derived from quarter-over-quarter position
@@ -173,9 +184,19 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     (`efts.sec.gov`) — admin endpoint pulls N months of filings in one
     shot so skill posteriors converge immediately rather than over 3
     months of live ingest.
-- Phase 5 candidates: paid options-flow + dark-pool prints (Polygon,
-  CBOE, unusual_whales) — where deal leaks actually surface *before*
-  the 8-K; foreign-equivalent filings (UK Companies House substantial-
-  shareholder notices, EU Transparency Directive 5% notifications);
-  proper CUSIP→ticker map via OpenFIGI (lift 13F resolution from
-  ~70% recall on big-cap to ~95%+).
+- Phase 5 shipped (this version):
+  - Unusual options activity + dark pool prints (unusual_whales adapter,
+    swappable to Polygon / CBOE / Tradier by replacing the two `fetch_*`
+    functions in `options_flow.py`). `Options Flow` and `Dark Pool` tabs
+    in the UI; synthesis score now incorporates call/put skew + dark
+    pool premium.
+  - OpenFIGI CUSIP → ticker resolution. 13F holdings now check the
+    CUSIP cache first, fall back to issuer-name match, and a background
+    pass sends unresolved CUSIPs to OpenFIGI and backfills tickers into
+    `fund_holding`. Lifts 13F ticker coverage from ~70% (big-cap names)
+    to ~95%+.
+- Phase 6 candidates: foreign-equivalent filings (UK Companies House
+  PSC notices, EU Transparency Directive 5% notifications); WebSocket
+  push from unusual_whales for true real-time alerting; volume-weighted
+  fund-skill (today's binary win/loss treats a $1B and a $1M position
+  equally).

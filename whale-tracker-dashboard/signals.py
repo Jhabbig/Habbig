@@ -221,14 +221,25 @@ def ticker_synthesis(ticker: str, window_days: int = 90) -> dict:
 
     holders = ticker_holders(t, limit=50)
     congress = congress_by_ticker(t, limit=50)
+    options = options_by_ticker(t, days=window_days, limit=50)
+    dark = dark_pool_by_ticker(t, days=window_days, limit=50)
     # Congress signal: count buys minus sells in the window.
     cong_buys  = sum(1 for c in congress if (c.get("transaction_type") or "").lower().startswith("p"))
     cong_sells = sum(1 for c in congress if (c.get("transaction_type") or "").lower().startswith("s"))
     congress_score = max(0.0, (cong_buys - cong_sells) * 0.75)
     # Fund signal: presence in 13F filings adds a small structural bonus.
     fund_score = min(2.0, len(holders) * 0.05)
+    # Options flow: bullish (calls/bullish sentiment) - bearish, scaled by aggregate premium.
+    opt_call  = sum(1 for o in options if (o.get("side") == "CALL"))
+    opt_put   = sum(1 for o in options if (o.get("side") == "PUT"))
+    opt_prem  = sum(float(o.get("premium") or 0) for o in options)
+    options_score = round(min(4.0, (opt_call - opt_put) * 0.5 + min(2.0, opt_prem / 1_000_000)), 2)
+    # Dark pool premium suggests institutional accumulation when sustained.
+    dp_prem = sum(float(d.get("premium") or 0) for d in dark)
+    dark_pool_score = round(min(2.0, dp_prem / 5_000_000), 2)
     synthesis_score = round(
-        insider_score + activist_score + ma_score_sum + congress_score + fund_score,
+        insider_score + activist_score + ma_score_sum + congress_score
+        + fund_score + options_score + dark_pool_score,
         2,
     )
 
@@ -243,12 +254,18 @@ def ticker_synthesis(ticker: str, window_days: int = 90) -> dict:
         "fund_holder_count":  len(holders),
         "congress_buy_count": cong_buys,
         "congress_sell_count": cong_sells,
+        "options_call_count": opt_call,
+        "options_put_count":  opt_put,
+        "options_premium":    round(opt_prem, 2),
+        "dark_pool_premium":  round(dp_prem, 2),
         "insider_buys":     insider_buys[:50],
         "insider_sells":    insider_sells[:50],
         "activist_filings": [dict(r) for r in activist_rows],
         "ma_events":        [dict(r) for r in ma_rows],
         "fund_holders":     holders,
         "congress_trades":  congress,
+        "options_flow":     options,
+        "dark_pool":        dark,
     }
 
 
@@ -274,8 +291,14 @@ def hot_leaderboard(window_days: int = 30, limit: int = 50) -> list[dict]:
             UNION
             SELECT ticker FROM congress_trade
               WHERE ticker IS NOT NULL AND disclosure_date >= datetime('now', ?)
+            UNION
+            SELECT ticker FROM options_flow_trade
+              WHERE ticker IS NOT NULL AND alerted_at >= datetime('now', ?)
+            UNION
+            SELECT ticker FROM dark_pool_print
+              WHERE ticker IS NOT NULL AND executed_at >= datetime('now', ?)
             """,
-            (cutoff, cutoff, cutoff, cutoff),
+            (cutoff, cutoff, cutoff, cutoff, cutoff, cutoff),
         ).fetchall()
 
     out: list[dict] = []
@@ -296,6 +319,10 @@ def hot_leaderboard(window_days: int = 30, limit: int = 50) -> list[dict]:
             "fund_holder_count":   s.get("fund_holder_count", 0),
             "congress_buy_count":  s.get("congress_buy_count", 0),
             "congress_sell_count": s.get("congress_sell_count", 0),
+            "options_call_count":  s.get("options_call_count", 0),
+            "options_put_count":   s.get("options_put_count", 0),
+            "options_premium":     s.get("options_premium", 0),
+            "dark_pool_premium":   s.get("dark_pool_premium", 0),
             # First filing URL from any feed, for quick navigation
             "sample_url": (
                 (s["insider_buys"][0]["filing_url"]   if s["insider_buys"]    else None)
@@ -529,6 +556,64 @@ def congress_by_ticker(ticker: str, limit: int = 200) -> list[dict]:
             "SELECT * FROM congress_trade WHERE ticker = ? "
             "ORDER BY disclosure_date DESC LIMIT ?",
             (t, int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recent_options_flow(days: int = 7, side: str | None = None, min_premium: float = 0,
+                        limit: int = 200) -> list[dict]:
+    sql = (
+        "SELECT * FROM options_flow_trade "
+        "WHERE alerted_at >= datetime('now', ?) "
+        "  AND COALESCE(premium, 0) >= ?"
+    )
+    params: list = [f"-{int(days)} days", float(min_premium)]
+    if side in ("CALL", "PUT"):
+        sql += " AND side = ?"
+        params.append(side)
+    sql += " ORDER BY alerted_at DESC LIMIT ?"
+    params.append(int(limit))
+    with connect() as cx:
+        rows = cx.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def options_by_ticker(ticker: str, days: int = 30, limit: int = 200) -> list[dict]:
+    t = (ticker or "").upper().strip()
+    if not t:
+        return []
+    with connect() as cx:
+        rows = cx.execute(
+            "SELECT * FROM options_flow_trade WHERE ticker = ? "
+            "AND alerted_at >= datetime('now', ?) "
+            "ORDER BY alerted_at DESC LIMIT ?",
+            (t, f"-{int(days)} days", int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recent_dark_pool(days: int = 7, min_premium: float = 0, limit: int = 200) -> list[dict]:
+    with connect() as cx:
+        rows = cx.execute(
+            "SELECT * FROM dark_pool_print "
+            "WHERE executed_at >= datetime('now', ?) "
+            "  AND COALESCE(premium, 0) >= ? "
+            "ORDER BY executed_at DESC LIMIT ?",
+            (f"-{int(days)} days", float(min_premium), int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def dark_pool_by_ticker(ticker: str, days: int = 30, limit: int = 200) -> list[dict]:
+    t = (ticker or "").upper().strip()
+    if not t:
+        return []
+    with connect() as cx:
+        rows = cx.execute(
+            "SELECT * FROM dark_pool_print WHERE ticker = ? "
+            "AND executed_at >= datetime('now', ?) "
+            "ORDER BY executed_at DESC LIMIT ?",
+            (t, f"-{int(days)} days", int(limit)),
         ).fetchall()
     return [dict(r) for r in rows]
 

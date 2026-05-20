@@ -273,6 +273,80 @@ async def api_congress_by_ticker(
     return _cached(f"congress_ticker:{t}:{limit}", lambda: signals_mod.congress_by_ticker(t, limit=limit))
 
 
+# ─── Options flow + dark pool ───────────────────────────────────────
+
+@app.get("/api/options-flow")
+async def api_options_flow(
+    days: int = Query(7, ge=1, le=90),
+    side: str | None = Query(None, pattern="^(CALL|PUT)$"),
+    min_premium: float = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    key = f"opt:{days}:{side or 'all'}:{min_premium}:{limit}"
+    return _cached(
+        key,
+        lambda: signals_mod.recent_options_flow(
+            days=days, side=side, min_premium=min_premium, limit=limit
+        ),
+    )
+
+
+@app.get("/api/options-by-ticker")
+async def api_options_by_ticker(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    days: int = Query(30, ge=1, le=180),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    t = ticker.upper().strip()
+    return _cached(
+        f"opt_t:{t}:{days}:{limit}",
+        lambda: signals_mod.options_by_ticker(t, days=days, limit=limit),
+    )
+
+
+@app.get("/api/dark-pool")
+async def api_dark_pool(
+    days: int = Query(7, ge=1, le=90),
+    min_premium: float = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    key = f"dp:{days}:{min_premium}:{limit}"
+    return _cached(
+        key,
+        lambda: signals_mod.recent_dark_pool(
+            days=days, min_premium=min_premium, limit=limit
+        ),
+    )
+
+
+@app.get("/api/dark-pool-by-ticker")
+async def api_dark_pool_by_ticker(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    days: int = Query(30, ge=1, le=180),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    t = ticker.upper().strip()
+    return _cached(
+        f"dp_t:{t}:{days}:{limit}",
+        lambda: signals_mod.dark_pool_by_ticker(t, days=days, limit=limit),
+    )
+
+
+@app.post("/api/admin/resolve-cusips")
+async def api_admin_resolve_cusips(limit: int = Query(500, ge=1, le=5000)):
+    """Resolve up to `limit` unresolved CUSIPs via OpenFIGI. DEV_MODE only."""
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    cusips = db.unresolved_cusips(limit=limit)
+    if not cusips:
+        return {"resolved": 0, "candidates": 0}
+    import openfigi  # local import — heavy adapter
+    resolved = await openfigi.resolve_and_persist(cusips)
+    backfilled = await ingest._backfill_cusip_tickers_into_holdings(cusips)
+    _cache.clear()
+    return {"candidates": len(cusips), "resolved": resolved, "backfilled_holdings": backfilled}
+
+
 # ─── Bayesian skill ─────────────────────────────────────────────────
 
 @app.get("/api/skill-leaderboard")

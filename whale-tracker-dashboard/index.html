@@ -146,6 +146,8 @@
   <button data-tab="funds">Fund Holdings</button>
   <button data-tab="changes">Position Changes</button>
   <button data-tab="congress">Congress</button>
+  <button data-tab="options">Options Flow</button>
+  <button data-tab="darkpool">Dark Pool</button>
   <button data-tab="skill">Skill</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
@@ -309,6 +311,52 @@
         <th class="num">Min $</th><th class="num">Max $</th><th>Source</th>
       </tr></thead>
       <tbody><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ── Options Flow ─────────────────────────────────────────── -->
+  <section id="tab-options" hidden>
+    <div class="controls">
+      <label>Window (days) <input type="number" id="of-days" value="7" min="1" max="90"></label>
+      <label>Side
+        <select id="of-side">
+          <option value="">Both</option>
+          <option value="CALL">CALL</option>
+          <option value="PUT">PUT</option>
+        </select>
+      </label>
+      <label>Min premium $ <input type="number" id="of-prem" value="50000" min="0" step="10000"></label>
+      <label>Limit <input type="number" id="of-limit" value="200" min="1" max="1000"></label>
+      <button id="of-go">Refresh</button>
+      <span class="live">Paid feed (unusual_whales). Empty until <code>UNUSUAL_WHALES_API_KEY</code> is set.</span>
+    </div>
+    <table id="of-table">
+      <thead><tr>
+        <th>Alerted</th><th>Ticker</th><th>Side</th><th>Sentiment</th>
+        <th class="num">Strike</th><th>Expiry</th>
+        <th class="num">Premium</th><th class="num">Vol/OI</th><th class="num">Spot</th>
+        <th>Sweep</th>
+      </tr></thead>
+      <tbody><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ── Dark Pool ────────────────────────────────────────────── -->
+  <section id="tab-darkpool" hidden>
+    <div class="controls">
+      <label>Window (days) <input type="number" id="dp-days" value="7" min="1" max="90"></label>
+      <label>Min premium $ <input type="number" id="dp-prem" value="1000000" min="0" step="100000"></label>
+      <label>Limit <input type="number" id="dp-limit" value="200" min="1" max="1000"></label>
+      <button id="dp-go">Refresh</button>
+      <span class="live">Paid feed (unusual_whales). Empty until <code>UNUSUAL_WHALES_API_KEY</code> is set.</span>
+    </div>
+    <table id="dp-table">
+      <thead><tr>
+        <th>Executed</th><th>Ticker</th>
+        <th class="num">Size</th><th class="num">Price</th><th class="num">Premium</th>
+        <th>Market center</th>
+      </tr></thead>
+      <tbody><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
     </table>
   </section>
 
@@ -676,6 +724,67 @@ async function loadCongress() {
   }
 }
 
+// ── Options Flow ──
+async function loadOptionsFlow() {
+  const days = +$("#of-days").value || 7;
+  const side = $("#of-side").value;
+  const minp = +$("#of-prem").value || 0;
+  const limit = +$("#of-limit").value || 200;
+  const tb = $("#of-table tbody");
+  tb.innerHTML = `<tr><td colspan="10" class="empty">Loading…</td></tr>`;
+  try {
+    const q = new URLSearchParams({days, min_premium: minp, limit});
+    if (side) q.set("side", side);
+    const rows = await fetchJSON(`/api/options-flow?${q.toString()}`);
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="10" class="empty">No options flow. Set <code>UNUSUAL_WHALES_API_KEY</code> to enable.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(fmtDate(r.alerted_at))}</td>
+        <td><span class="ticker">${esc(r.ticker||"—")}</span></td>
+        <td><span class="pill ${r.side==='CALL'?'buy':r.side==='PUT'?'ma':''}">${esc(r.side||"—")}</span></td>
+        <td>${esc(r.sentiment||"—")}</td>
+        <td class="num">${r.strike?Number(r.strike).toFixed(2):"—"}</td>
+        <td>${esc(r.expiry||"—")}</td>
+        <td class="num">${fmtUSD(r.premium)}</td>
+        <td class="num">${r.volume_oi_ratio?Number(r.volume_oi_ratio).toFixed(2):"—"}</td>
+        <td class="num">${r.spot_price?Number(r.spot_price).toFixed(2):"—"}</td>
+        <td>${r.sweep?'<span class="pill ma">sweep</span>':""}</td>
+      </tr>`).join("");
+  } catch(e) {
+    tb.innerHTML = `<tr><td colspan="10" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
+// ── Dark Pool ──
+async function loadDarkPool() {
+  const days = +$("#dp-days").value || 7;
+  const minp = +$("#dp-prem").value || 0;
+  const limit = +$("#dp-limit").value || 200;
+  const tb = $("#dp-table tbody");
+  tb.innerHTML = `<tr><td colspan="6" class="empty">Loading…</td></tr>`;
+  try {
+    const rows = await fetchJSON(`/api/dark-pool?days=${days}&min_premium=${minp}&limit=${limit}`);
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="6" class="empty">No dark pool prints. Set <code>UNUSUAL_WHALES_API_KEY</code> to enable.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(fmtDate(r.executed_at))}</td>
+        <td><span class="ticker">${esc(r.ticker||"—")}</span></td>
+        <td class="num">${fmtNum(r.size)}</td>
+        <td class="num">${r.price?"$"+Number(r.price).toFixed(2):"—"}</td>
+        <td class="num pos">${fmtUSD(r.premium)}</td>
+        <td>${esc(r.market_center||"—")}</td>
+      </tr>`).join("");
+  } catch(e) {
+    tb.innerHTML = `<tr><td colspan="6" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
 // ── Skill (Bayesian filer leaderboard) ──
 const skillBadge = (s) => {
   if (!s || !s.n) return "";
@@ -728,16 +837,20 @@ async function loadSynthesis() {
       <div class="syn-grid">
         <div class="syn-card"><h4>Synthesis Score</h4><div class="v">${r.synthesis_score}</div></div>
         <div class="syn-card"><h4>Insider Buys</h4><div class="v pos">${r.insider_buy_count}</div></div>
-        <div class="syn-card"><h4>Activist Filings</h4><div class="v">${r.activist_count}</div></div>
-        <div class="syn-card"><h4>M&amp;A Events</h4><div class="v">${r.ma_event_count}</div></div>
+        <div class="syn-card"><h4>Activist</h4><div class="v">${r.activist_count}</div></div>
+        <div class="syn-card"><h4>M&amp;A</h4><div class="v">${r.ma_event_count}</div></div>
         <div class="syn-card"><h4>Fund Holders</h4><div class="v">${r.fund_holder_count||0}</div></div>
         <div class="syn-card"><h4>Congress</h4><div class="v"><span class="pos">${r.congress_buy_count||0}</span> / <span class="neg">${r.congress_sell_count||0}</span></div></div>
+        <div class="syn-card"><h4>Options C/P</h4><div class="v"><span class="pos">${r.options_call_count||0}</span> / <span class="neg">${r.options_put_count||0}</span><div class="live" style="font-size:11px">${r.options_premium?fmtUSD(r.options_premium):"$0"}</div></div></div>
+        <div class="syn-card"><h4>Dark Pool</h4><div class="v">${fmtUSD(r.dark_pool_premium)}</div></div>
       </div>
       ${synList("Insider Buys",   r.insider_buys,  insiderRow,  ["Filed","Reporter","Role","Shares","$","Filing"])}
       ${synList("Activist Stakes",r.activist_filings, activistRow, ["Filed","Filer","Type","% Owned","Filing"])}
       ${synList("M&A 8-Ks",       r.ma_events,     maRow,       ["Filed","Items","Headline","Score","Filing"])}
       ${synList("Fund Holders (latest 13F)", r.fund_holders, holderRow, ["Fund","Period","Value","Shares","Put/Call","Filing"])}
       ${synList("Congress Trades", r.congress_trades, congressRow, ["Disclosed","Chamber","Representative","Type","Min $","Max $","Source"])}
+      ${synList("Options Flow", r.options_flow, optionsRow, ["Alerted","Side","Strike","Expiry","Premium","Vol/OI","Spot"])}
+      ${synList("Dark Pool Prints", r.dark_pool, darkPoolRow, ["Executed","Size","Price","Premium","Market center"])}
       ${synList("Insider Sells",  r.insider_sells, insiderRow,  ["Filed","Reporter","Role","Shares","$","Filing"])}
     `;
   } catch(e) {
@@ -799,6 +912,24 @@ const congressRow = r => `
     <td class="num">${fmtUSD(r.amount_max)}</td>
     <td>${r.source_url?`<a href="${esc(r.source_url)}" target="_blank" rel="noopener">PTR</a>`:""}</td>
   </tr>`;
+const optionsRow = r => `
+  <tr>
+    <td>${esc(fmtDate(r.alerted_at))}</td>
+    <td><span class="pill ${r.side==='CALL'?'buy':r.side==='PUT'?'ma':''}">${esc(r.side||"—")}</span></td>
+    <td class="num">${r.strike?Number(r.strike).toFixed(2):"—"}</td>
+    <td>${esc(r.expiry||"—")}</td>
+    <td class="num">${fmtUSD(r.premium)}</td>
+    <td class="num">${r.volume_oi_ratio?Number(r.volume_oi_ratio).toFixed(2):"—"}</td>
+    <td class="num">${r.spot_price?Number(r.spot_price).toFixed(2):"—"}</td>
+  </tr>`;
+const darkPoolRow = r => `
+  <tr>
+    <td>${esc(fmtDate(r.executed_at))}</td>
+    <td class="num">${fmtNum(r.size)}</td>
+    <td class="num">${r.price?"$"+Number(r.price).toFixed(2):"—"}</td>
+    <td class="num pos">${fmtUSD(r.premium)}</td>
+    <td>${esc(r.market_center||"—")}</td>
+  </tr>`;
 
 // ── Whale Leaderboard ──
 async function loadLeaderboard() {
@@ -837,6 +968,8 @@ const loaders = {
   funds:       loadFunds,
   changes:     loadChanges,
   congress:    loadCongress,
+  options:     loadOptionsFlow,
+  darkpool:    loadDarkPool,
   skill:       loadSkill,
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
@@ -850,6 +983,8 @@ $("#ma-go").addEventListener("click", loadMA);
 $("#fl-go").addEventListener("click", loadFunds);
 $("#ch-go").addEventListener("click", loadChanges);
 $("#cg-go").addEventListener("click", loadCongress);
+$("#of-go").addEventListener("click", loadOptionsFlow);
+$("#dp-go").addEventListener("click", loadDarkPool);
 $("#sk-go").addEventListener("click", loadSkill);
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
@@ -868,7 +1003,7 @@ function setLive(text, ok=true) {
   $("nav.tabs").previousElementSibling.querySelector(".live .dot").style.background = ok ? "var(--accent)" : "var(--sell)";
 }
 function updateCountsFromHealth(c) {
-  setLive(`live · ${c.insider_txn||0} insider · ${c.activist_stake||0} 13D/G · ${c.ma_event||0} M&A · ${c.fund_filing||0} 13F · ${c.congress_trade||0} congress`);
+  setLive(`live · ${c.insider_txn||0} insider · ${c.activist_stake||0} 13D/G · ${c.ma_event||0} M&A · ${c.fund_filing||0} 13F · ${c.congress_trade||0} congress · ${c.options_flow_trade||0} opt · ${c.dark_pool_print||0} dp`);
 }
 function connectSSE() {
   const es = new EventSource("/api/stream", { withCredentials: true });

@@ -24,6 +24,8 @@ import filings8k
 import filings13d
 import form4
 import form13f
+import openfigi
+import options_flow
 import skill as skill_mod
 
 log = logging.getLogger("ingest")
@@ -43,11 +45,29 @@ SKILL_PER_PASS      = int(os.environ.get("SKILL_PER_PASS", "200"))
 SKILL_HORIZON_DAYS  = int(os.environ.get("SKILL_HORIZON_DAYS", "30"))
 _last_skill_run = 0.0
 
+# Options flow + dark pool pull cadence. Real-time would mean WebSockets;
+# poll-based at this cadence is good enough for the dashboard's update
+# pattern. No-op when UNUSUAL_WHALES_API_KEY is unset.
+OPTIONS_FLOW_INTERVAL_S = int(os.environ.get("OPTIONS_FLOW_INTERVAL_S", "120"))
+OPTIONS_FLOW_LIMIT      = int(os.environ.get("OPTIONS_FLOW_LIMIT", "200"))
+_last_options_run = 0.0
+
+# OpenFIGI cadence — slow, only kicks in when there are unresolved CUSIPs.
+OPENFIGI_INTERVAL_S = int(os.environ.get("OPENFIGI_INTERVAL_S", "1800"))
+OPENFIGI_PER_PASS   = int(os.environ.get("OPENFIGI_PER_PASS", "500"))
+_last_openfigi_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
-    global _last_congress_run
-    results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0, "13f_filings": 0, "13f_holdings": 0, "congress": 0, "skill_labeled": 0}
+    global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run
+    results = {
+        "form4": 0, "13d": 0, "13g": 0, "8k": 0,
+        "13f_filings": 0, "13f_holdings": 0,
+        "congress": 0, "skill_labeled": 0,
+        "options_flow": 0, "dark_pool": 0,
+        "cusips_resolved": 0,
+    }
 
     # Refresh CIK→ticker map (no-op if already current).
     try:
@@ -96,8 +116,24 @@ async def run_once() -> dict[str, int]:
         except Exception as e:
             log.exception("congress ingest failed: %s", e)
 
+    # Options flow + dark pool — no-op without UNUSUAL_WHALES_API_KEY
+    if options_flow.is_configured() and now - _last_options_run >= OPTIONS_FLOW_INTERVAL_S:
+        try:
+            results["options_flow"] = await _ingest_options_flow()
+            results["dark_pool"] = await _ingest_dark_pool()
+            _last_options_run = now
+        except Exception as e:
+            log.exception("options/dark-pool ingest failed: %s", e)
+
+    # OpenFIGI CUSIP→ticker resolution for unresolved 13F holdings
+    if now - _last_openfigi_run >= OPENFIGI_INTERVAL_S:
+        try:
+            results["cusips_resolved"] = await _resolve_unresolved_cusips()
+            _last_openfigi_run = now
+        except Exception as e:
+            log.exception("openfigi resolve failed: %s", e)
+
     # Bayesian skill labeling — also slow cadence
-    global _last_skill_run
     if now - _last_skill_run >= SKILL_INTERVAL_S:
         try:
             res = await skill_mod.run_pass(horizon_days=SKILL_HORIZON_DAYS, limit=SKILL_PER_PASS)
@@ -390,15 +426,23 @@ async def _process_13f(entry: dict) -> tuple[int, int]:
     if not holdings:
         return (0, 0)
 
-    # Resolve issuer_ticker for each holding via the issuer-name index.
-    # 13F INFORMATION TABLE entries only carry CUSIP + issuer name (no CIK),
-    # and free CUSIP→ticker maps don't exist — so we fuzzy-match on
-    # normalised issuer name. Big-cap issuers hit reliably.
+    # Resolve issuer_ticker for each holding. Strategy is:
+    #   1. cusip → ticker lookup against the local cache (OpenFIGI-fed)
+    #   2. fallback to issuer-name normalised match against company_tickers.json
+    # Step 1 hits any CUSIP we've previously resolved; step 2 catches everything
+    # else with big-cap recall. Unresolved CUSIPs accumulate and get sent to
+    # OpenFIGI on the next ingest pass.
     for h in holdings:
-        if not h.get("issuer_ticker") and h.get("issuer_name"):
-            t = cik_ticker.resolve_ticker_from_name(h["issuer_name"])
-            if t:
-                h["issuer_ticker"] = t
+        if not h.get("issuer_ticker"):
+            cusip = h.get("cusip")
+            if cusip:
+                t = db.lookup_cusip_ticker(cusip)
+                if t:
+                    h["issuer_ticker"] = t
+            if not h.get("issuer_ticker") and h.get("issuer_name"):
+                t = cik_ticker.resolve_ticker_from_name(h["issuer_name"])
+                if t:
+                    h["issuer_ticker"] = t
 
     total_value = sum((h["value"] or 0) for h in holdings)
 
@@ -436,6 +480,55 @@ async def _ingest_congress() -> int:
 
 
 # ───────────────────────────── Backfill helper ─────────────────────────────
+
+# ───────────────────────────── Options flow / dark pool ─────────────────────────────
+
+async def _ingest_options_flow() -> int:
+    rows = await options_flow.fetch_flow_alerts(limit=OPTIONS_FLOW_LIMIT)
+    rows = [r for r in rows if r.get("alert_id") and r.get("ticker")]
+    return db.upsert_options_flow(rows) if rows else 0
+
+
+async def _ingest_dark_pool() -> int:
+    rows = await options_flow.fetch_dark_pool_prints(limit=OPTIONS_FLOW_LIMIT)
+    rows = [r for r in rows if r.get("print_id") and r.get("ticker")]
+    return db.upsert_dark_pool(rows) if rows else 0
+
+
+# ───────────────────────────── OpenFIGI ─────────────────────────────
+
+async def _resolve_unresolved_cusips() -> int:
+    cusips = db.unresolved_cusips(limit=OPENFIGI_PER_PASS)
+    if not cusips:
+        return 0
+    resolved = await openfigi.resolve_and_persist(cusips)
+    if resolved:
+        # Backfill the tickers we just learned into fund_holding.
+        n = await _backfill_cusip_tickers_into_holdings(cusips)
+        log.info("openfigi: resolved %d, backfilled %d fund_holding rows", resolved, n)
+    return resolved
+
+
+async def _backfill_cusip_tickers_into_holdings(cusips: list[str]) -> int:
+    if not cusips:
+        return 0
+    updated = 0
+    with db.connect() as cx:
+        for c in cusips:
+            row = cx.execute(
+                "SELECT ticker FROM cusip_ticker WHERE cusip = ? LIMIT 1",
+                (c,),
+            ).fetchone()
+            if not row:
+                continue
+            cur = cx.execute(
+                "UPDATE fund_holding SET issuer_ticker = ? "
+                "WHERE cusip = ? AND issuer_ticker IS NULL",
+                (row["ticker"], c),
+            )
+            updated += cur.rowcount
+    return updated
+
 
 async def backfill_filings(form_types: list[str], *, start_date: str, end_date: str,
                            max_per_form: int = 500) -> dict[str, int]:
@@ -581,13 +674,18 @@ async def backfill_tickers() -> dict[str, int]:
                     (t, r["accession"]),
                 )
                 updated["ma_event"] += 1
-        # 13F holdings: issuer_name → ticker via the unambiguous name index.
+        # 13F holdings: try the CUSIP→ticker cache first (populated by OpenFIGI),
+        # then fall back to the unambiguous issuer-name index.
         h_rows = cx.execute(
-            "SELECT accession, line_no, issuer_name FROM fund_holding "
-            "WHERE issuer_ticker IS NULL AND issuer_name IS NOT NULL AND issuer_name != ''"
+            "SELECT accession, line_no, cusip, issuer_name FROM fund_holding "
+            "WHERE issuer_ticker IS NULL"
         ).fetchall()
         for r in h_rows:
-            t = cik_ticker.resolve_ticker_from_name(r["issuer_name"])
+            t = None
+            if r["cusip"]:
+                t = db.lookup_cusip_ticker(r["cusip"])
+            if not t and r["issuer_name"]:
+                t = cik_ticker.resolve_ticker_from_name(r["issuer_name"])
             if t:
                 cx.execute(
                     "UPDATE fund_holding SET issuer_ticker = ? "
