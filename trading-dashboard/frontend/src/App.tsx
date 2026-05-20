@@ -11,7 +11,8 @@ import { TradingLive } from './pages/TradingLive';
 import { Community } from './pages/Community';
 import { Analytics } from './pages/Analytics';
 import { AdvancedGreeks } from './pages/AdvancedGreeks';
-import { AlertCircle, Wifi, WifiOff, BarChart3, TrendingUp, Zap, Gauge, Users, Activity, Percent } from 'lucide-react';
+import { MultiAsset } from './pages/MultiAsset';
+import { AlertCircle, Wifi, WifiOff, BarChart3, TrendingUp, Zap, Gauge, Users, Activity, Percent, Grid } from 'lucide-react';
 
 const TICKERS = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'SPY'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
@@ -19,7 +20,7 @@ const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 export function App() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1m');
-  const [activePage, setActivePage] = useState<'chart' | 'signals' | 'options' | 'advanced' | 'trading' | 'analytics' | 'backtest' | 'community'>('chart');
+  const [activePage, setActivePage] = useState<'chart' | 'signals' | 'options' | 'advanced' | 'multiasset' | 'trading' | 'analytics' | 'backtest' | 'community'>('chart');
   const { bars, indicators, connected, error } = useWebSocket(selectedTicker);
 
   // Current price for Greeks calculation
@@ -157,6 +158,17 @@ export function App() {
               Advanced
             </button>
             <button
+              onClick={() => setActivePage('multiasset')}
+              className={`py-3 px-4 font-medium border-b-2 transition whitespace-nowrap ${
+                activePage === 'multiasset'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Grid className="w-4 h-4 inline mr-2" />
+              Multi-Asset
+            </button>
+            <button
               onClick={() => setActivePage('trading')}
               className={`py-3 px-4 font-medium border-b-2 transition whitespace-nowrap ${
                 activePage === 'trading'
@@ -261,6 +273,14 @@ export function App() {
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-white mb-4">Advanced Greeks Analysis</h2>
             <AdvancedGreeks />
+          </div>
+        )}
+
+        {/* Multi-Asset Page */}
+        {activePage === 'multiasset' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-white mb-4">Multi-Asset Trading</h2>
+            <MultiAsset />
           </div>
         )}
 
