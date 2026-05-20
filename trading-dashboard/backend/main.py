@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from tier1_adapters import get_facade, RealtimeFacade
+from backtest_engine import SimpleBacktestEngine, BacktestResult
 
 # Logging
 logging.basicConfig(
@@ -79,6 +80,50 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: float
     facade_connected: bool
+
+
+class BacktestRequest(BaseModel):
+    """Backtest request."""
+    ticker: str
+    strategy: str  # "rsi", "ma_crossover"
+    days: int = 30
+    initial_capital: float = 100000.0
+    position_size_pct: float = 0.1
+
+    # RSI strategy params
+    rsi_oversold: float = 30.0
+    rsi_overbought: float = 70.0
+    rsi_period: int = 14
+
+    # MA crossover params
+    fast_period: int = 12
+    slow_period: int = 26
+
+
+class BacktestResponse(BaseModel):
+    """Backtest results response."""
+    ticker: str
+    strategy: str
+    start_date: str
+    end_date: str
+    initial_capital: float
+    final_equity: float
+    total_return_pct: float
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    calmar_ratio: float
+    max_drawdown_pct: float
+    avg_drawdown_pct: float
+    equity_curve: list
+    trades: list
+    bar_count: int
 
 
 # ============================================================================
@@ -284,6 +329,98 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str):
             connected_clients[ticker].discard(websocket)
             if not connected_clients[ticker]:
                 del connected_clients[ticker]
+
+
+# ============================================================================
+# Backtest Endpoint
+# ============================================================================
+
+@app.post("/api/backtest", response_model=BacktestResponse)
+async def run_backtest(request: BacktestRequest):
+    """
+    Run a backtest with specified strategy and parameters.
+
+    Strategies:
+    - rsi: RSI-based buy/sell signals
+    - ma_crossover: Moving average crossover
+    """
+    if not facade:
+        return {"error": "Facade not initialized"}
+
+    try:
+        # Fetch historical bars (demo: generate synthetic data)
+        from datetime import datetime, timedelta
+        import random
+
+        bars = []
+        price = 150.0
+        ts = int((datetime.now() - timedelta(days=request.days)).timestamp())
+
+        for i in range(request.days * 48):  # Assume ~48 5-min bars per day
+            change = random.gauss(0, 0.8)
+            price += change
+            price = max(price, 50)
+
+            bars.append({
+                'timestamp': ts + (i * 300),
+                'open': price,
+                'high': price + abs(random.gauss(0, 0.5)),
+                'low': price - abs(random.gauss(0, 0.5)),
+                'close': price + random.gauss(0, 0.3),
+                'volume': random.randint(100000, 1000000)
+            })
+
+        # Run backtest
+        engine = SimpleBacktestEngine(initial_capital=request.initial_capital)
+
+        if request.strategy.lower() == "rsi":
+            result = engine.run_rsi_strategy(
+                bars,
+                rsi_oversold=request.rsi_oversold,
+                rsi_overbought=request.rsi_overbought,
+                rsi_period=request.rsi_period,
+                position_size_pct=request.position_size_pct,
+            )
+        elif request.strategy.lower() == "ma_crossover":
+            result = engine.run_ma_crossover_strategy(
+                bars,
+                fast_period=request.fast_period,
+                slow_period=request.slow_period,
+                position_size_pct=request.position_size_pct,
+            )
+        else:
+            return {"error": f"Unknown strategy: {request.strategy}"}
+
+        # Convert result to dict
+        result_dict = {
+            "ticker": request.ticker,
+            "strategy": request.strategy,
+            "start_date": result.start_date,
+            "end_date": result.end_date,
+            "initial_capital": result.initial_capital,
+            "final_equity": result.final_equity,
+            "total_return_pct": result.total_return_pct,
+            "total_trades": result.total_trades,
+            "winning_trades": result.winning_trades,
+            "losing_trades": result.losing_trades,
+            "win_rate": result.win_rate,
+            "avg_win": result.avg_win,
+            "avg_loss": result.avg_loss,
+            "profit_factor": result.profit_factor,
+            "sharpe_ratio": result.sharpe_ratio,
+            "sortino_ratio": result.sortino_ratio,
+            "calmar_ratio": result.calmar_ratio,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "avg_drawdown_pct": result.avg_drawdown_pct,
+            "equity_curve": result.equity_curve,
+            "trades": result.trades,
+            "bar_count": result.bar_count,
+        }
+        return result_dict
+
+    except Exception as e:
+        log.error(f"Error running backtest: {e}", exc_info=True)
+        return {"error": str(e)}
 
 
 # ============================================================================

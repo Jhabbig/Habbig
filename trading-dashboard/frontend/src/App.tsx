@@ -3,7 +3,8 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { Chart } from './components/Chart';
 import { Indicators } from './components/Indicators';
 import { GreeksHeatmap } from './components/GreeksHeatmap';
-import { AlertCircle, Wifi, WifiOff } from 'lucide-react';
+import { BacktestPage } from './pages/Backtest';
+import { AlertCircle, Wifi, WifiOff, BarChart3, TrendingUp } from 'lucide-react';
 
 const TICKERS = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'SPY'];
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
@@ -11,6 +12,7 @@ const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 export function App() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1m');
+  const [activePage, setActivePage] = useState<'trading' | 'backtest'>('trading');
   const { bars, indicators, connected, error } = useWebSocket(selectedTicker);
 
   // Current price for Greeks calculation
@@ -99,8 +101,40 @@ export function App() {
         </div>
       </div>
 
+      {/* Navigation Tabs */}
+      <div className="bg-gray-800 border-b border-gray-700 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-4 items-center">
+            <button
+              onClick={() => setActivePage('trading')}
+              className={`py-3 px-4 font-medium border-b-2 transition ${
+                activePage === 'trading'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4 inline mr-2" />
+              Trading
+            </button>
+            <button
+              onClick={() => setActivePage('backtest')}
+              className={`py-3 px-4 font-medium border-b-2 transition ${
+                activePage === 'backtest'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 inline mr-2" />
+              Backtest
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main Content */}
       <div className="max-w-7xl mx-auto p-4">
+        {/* Trading Page */}
+        {activePage === 'trading' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Chart - Left Side (spans 2 columns on large screens) */}
           <div className="lg:col-span-2 space-y-4">
@@ -120,11 +154,17 @@ export function App() {
         {/* Bottom Info */}
         <div className="mt-8 p-4 bg-gray-800 rounded-lg border border-gray-700 text-sm text-gray-400">
           <p>
-            📊 <strong>Week 1 MVP</strong>: Real-time charting with 10 streaming indicators,
-            Greeks heatmap, and WebSocket live updates. Built with Tier 1 backend
-            integration.
+            📊 <strong>Week 1-2 MVP</strong>: Real-time charting with 10+ streaming indicators,
+            Greeks heatmap, multi-panel technical analysis, and WebSocket live updates.
           </p>
         </div>
+        </div>
+        )}
+
+        {/* Backtest Page */}
+        {activePage === 'backtest' && (
+          <BacktestPage />
+        )}
       </div>
     </div>
   );
