@@ -73,6 +73,7 @@ export const api = {
   electionNight: () => request('/data/election-night'),
   forecastConditional: (given) => request(`/data/forecast/conditional?given=${encodeURIComponent(given)}`),
   forecastJointSummary: () => request('/data/forecast/joint-summary'),
+  forecastWave: (swingPp) => request(`/data/forecast/wave?swing_pp=${encodeURIComponent(swingPp)}`),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),

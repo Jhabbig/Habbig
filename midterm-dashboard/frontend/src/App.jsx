@@ -18,6 +18,8 @@ import Historical from './pages/Historical'
 import Backtest from './pages/Backtest'
 import ElectionNight from './pages/ElectionNight'
 import MapPage from './pages/Map'
+import Methodology from './pages/Methodology'
+import { EmbedForecast, EmbedChamber, EmbedMap } from './pages/Embed'
 import Settings from './pages/Settings'
 
 const AuthContext = createContext(null)
@@ -81,6 +83,7 @@ function Nav() {
     { to: '/historical', label: t('nav.historical'), icon: History },
     { to: '/backtest', label: 'Backtest', icon: Activity },
     { to: '/election-night', label: 'Election Night', icon: Activity },
+    { to: '/methodology', label: 'Method', icon: BarChart3 },
   ]
 
   if (user?.tier === 'admin') {
@@ -166,7 +169,34 @@ function ProtectedRoute({ children, tier }) {
   return children
 }
 
+// Embed routes are rendered without the nav shell so they iframe cleanly
+// into newsroom articles. We detect the embed prefix and short-circuit
+// the layout chrome.
+function EmbedShell() {
+  return (
+    <div className="min-h-screen p-3 bg-transparent">
+      <Routes>
+        <Route path="/embed/forecast/:raceKey" element={<EmbedForecast />} />
+        <Route path="/embed/chamber/:chamber" element={<EmbedChamber />} />
+        <Route path="/embed/map/:chamber" element={<EmbedMap />} />
+      </Routes>
+    </div>
+  )
+}
+
+
 export default function App() {
+  const isEmbed = typeof window !== 'undefined'
+    && window.location.pathname.startsWith('/embed/')
+
+  if (isEmbed) {
+    return (
+      <AuthProvider>
+        <EmbedShell />
+      </AuthProvider>
+    )
+  }
+
   return (
     <AuthProvider>
       <div className="min-h-screen bg-stone-50">
@@ -182,6 +212,7 @@ export default function App() {
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/election-night" element={<ElectionNight />} />
+            <Route path="/methodology" element={<Methodology />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />

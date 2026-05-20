@@ -80,6 +80,80 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
+def apply_wave_swing(
+    forecasts: list[dict],
+    *,
+    swing_pp: float,
+) -> dict:
+    """Apply a fixed national-environment swing to every race.
+
+    ``swing_pp`` is in percentage points; positive favours D, negative
+    favours R. Internally we convert to logit space and apply the same
+    competitive-sensitivity scaling as the conditional model so safe-seat
+    races barely budge while coin-flip races move the most. This is the
+    plain "what does a D+5 wave look like" view.
+
+    Returns ``{"swing_pp": float, "races": [...], "chambers": {...}}``
+    with chamber-level expected seat counts under the swing.
+    """
+    try:
+        swing_pp = float(swing_pp)
+    except (TypeError, ValueError):
+        swing_pp = 0.0
+    # Convert pp to logit space using a heuristic gain: a 5pp generic-ballot
+    # swing is empirically worth roughly 0.20 in logit-space at the median
+    # competitive race. We expose the input in pp because that's how
+    # newsroom audiences think about it.
+    delta_logit = (swing_pp / 100.0) * 4.0  # tuned so swing_pp=5 → ~0.20 logit on competitive races
+
+    out_races: list[dict] = []
+    chamber_counts: dict[str, dict[str, int]] = {}
+
+    for f in forecasts:
+        p = f.get("forecast_d")
+        if p is None:
+            out_races.append({**f, "delta_pp": 0.0})
+            continue
+        sens = _competitive_sensitivity(float(p))
+        new_p = _sigmoid(_logit(float(p)) + delta_logit * sens)
+        delta = new_p - float(p)
+        if abs(delta) > MAX_DELTA:
+            delta = MAX_DELTA if delta > 0 else -MAX_DELTA
+            new_p = max(0.0, min(1.0, float(p) + delta))
+        out_races.append({
+            **f,
+            "forecast_d": round(new_p, 4),
+            "delta_pp": round(delta * 100, 2),
+        })
+
+        # Tally per-chamber expected D / R wins under the swing
+        rt = (f.get("race_type") or "").lower()
+        if rt in ("senate", "house", "governor"):
+            bucket = chamber_counts.setdefault(rt, {"d": 0, "r": 0, "total": 0, "expected_d": 0.0})
+            bucket["total"] += 1
+            bucket["expected_d"] += new_p
+            if new_p >= 0.5:
+                bucket["d"] += 1
+            else:
+                bucket["r"] += 1
+
+    chambers = {}
+    for rt, b in chamber_counts.items():
+        chambers[rt] = {
+            "d": b["d"],
+            "r": b["r"],
+            "total": b["total"],
+            "expected_d": round(b["expected_d"], 2),
+            "expected_r": round(b["total"] - b["expected_d"], 2),
+        }
+
+    return {
+        "swing_pp": round(swing_pp, 2),
+        "races": out_races,
+        "chambers": chambers,
+    }
+
+
 def _competitive_sensitivity(p: float) -> float:
     """Sensitivity peaks at p=0.5 (coin-flip races move the most) and drops
     to ~0 at the tails (a 95% D race barely budges on a normal wave)."""

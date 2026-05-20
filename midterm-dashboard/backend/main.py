@@ -33,7 +33,8 @@ from alerts import dispatch_divergence_alert
 from smart_money import fetch_smart_money_flows, race_smart_money
 from news import ingest_news, measure_reactions, lag_curve, tag_article
 from election_night import assemble_election_night
-from conditional import compute_conditional, joint_distribution_summary
+from conditional import compute_conditional, joint_distribution_summary, apply_wave_swing
+import api_v1
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -764,15 +765,60 @@ app.add_middleware(
 )
 
 
+# Paths that are intended to be consumed by third parties — open CORS and
+# allow framing so journalists / partners can embed and call the API.
+PUBLIC_API_PREFIXES = ("/v1/", "/embed/")
+
+
+@app.middleware("http")
+async def public_cors_middleware(request: Request, call_next):
+    """Permissive CORS for ``/v1/*`` and ``/embed/*``. Preflights short-circuit
+    here so they don't fall through to the credentialed CORS middleware."""
+    path = request.url.path
+    is_public = path.startswith(PUBLIC_API_PREFIXES)
+    if is_public and request.method == "OPTIONS":
+        return JSONResponse(
+            status_code=204,
+            content=None,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                "Access-Control-Max-Age": "86400",
+            },
+        )
+    response = await call_next(request)
+    if is_public:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "X-narve-version"
+        response.headers["X-narve-version"] = "v1"
+    return response
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # Embed routes intentionally allow framing so iframes work cross-origin;
+    # everything else stays locked down with DENY.
+    is_embed = request.url.path.startswith("/embed/")
+    if not is_embed:
+        response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+    if is_embed:
+        # SPA needs inline-style budget for embedded charts; framing allowed
+        # because the route exists to be iframed.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'; frame-ancestors *"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'"
+        )
     return response
 
 
@@ -1970,6 +2016,19 @@ async def data_forecast_conditional(given: str):
     return result
 
 
+@app.get("/data/forecast/wave")
+async def data_forecast_wave(swing_pp: float = 0.0):
+    """Scenario: apply a fixed national swing (in pp) to every race.
+
+    ``swing_pp`` positive = wave toward D, negative = wave toward R. Powers
+    the interactive wave slider on the map page: drag from R+10 → D+10 and
+    watch the chamber control bars + map flip in real time.
+    """
+    base = await data_forecasts(min_confidence=0.0, limit=10_000)
+    forecasts = base.get("forecasts", []) or []
+    return apply_wave_swing(forecasts, swing_pp=swing_pp)
+
+
 @app.get("/data/forecast/joint-summary")
 async def data_forecast_joint_summary():
     """Monte-Carlo expected D / R seats per chamber under the swing model.
@@ -2541,6 +2600,14 @@ async def get_fx_rates():
     if cached:
         return cached
     return _FX_FALLBACK
+
+
+# ===================================================================
+# Public v1 API — registered after all /data/* handlers so v1 can delegate
+# to them. The v1 endpoints have permissive CORS via public_cors_middleware.
+# ===================================================================
+
+api_v1.register(app, get_state=lambda: state)
 
 
 # ===================================================================

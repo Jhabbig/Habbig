@@ -28,6 +28,9 @@ export default function MapPage() {
   const [hovered, setHovered] = useState(null)
   const [selected, setSelected] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Wave-scenario state. Live-updates the map as the slider moves.
+  const [waveSwing, setWaveSwing] = useState(0)
+  const [waveData, setWaveData] = useState(null)
 
   function refresh() {
     Promise.all([
@@ -46,10 +49,29 @@ export default function MapPage() {
   }, [])
   useDataStream(() => refresh())
 
-  // Filter to the active chamber and index by state.
+  // Filter to the active chamber and index by state. Source precedence:
+  //   1. Conditional view (if active) — highest priority
+  //   2. Wave scenario (if non-zero) — applied to base forecasts
+  //   3. Base election-night snapshot
   const racesByState = useMemo(() => {
     if (!data) return {}
-    const rows = conditional?.races || data.races || []
+    let rows = data.races || []
+    if (conditional?.races) {
+      rows = conditional.races
+    } else if (waveData?.races) {
+      // Wave response carries the swung forecasts but not call_state. Recompute
+      // a quick call state for display so the map colours respond to the slider.
+      rows = waveData.races.map((r) => {
+        const p = r.forecast_d
+        let call_state = 'tossup'
+        if (p == null) call_state = 'unknown'
+        else if (p >= 0.90) call_state = 'called_d'
+        else if (p <= 0.10) call_state = 'called_r'
+        else if (p >= 0.65) call_state = 'lean_d'
+        else if (p <= 0.35) call_state = 'lean_r'
+        return { ...r, call_state }
+      })
+    }
     const map = {}
     for (const r of rows) {
       if ((r.race_type || '').toLowerCase() !== chamber) continue
@@ -60,7 +82,19 @@ export default function MapPage() {
       }
     }
     return map
-  }, [data, conditional, chamber])
+  }, [data, conditional, waveData, chamber])
+
+  // Debounced wave fetch — re-runs when the slider settles.
+  useEffect(() => {
+    if (waveSwing === 0) {
+      setWaveData(null)
+      return
+    }
+    const t = setTimeout(() => {
+      api.forecastWave?.(waveSwing).then(setWaveData).catch(() => setWaveData(null))
+    }, 150)
+    return () => clearTimeout(t)
+  }, [waveSwing])
 
   async function applyCondition(raceKey, outcome) {
     setConditionedKey(raceKey)
@@ -128,6 +162,48 @@ export default function MapPage() {
           </div>
         </div>
       )}
+
+      {/* Wave-election scenario slider. When non-zero it recolours the map
+          to show the implied calls under a national swing. Conditional view
+          takes precedence if active. */}
+      <div className="bg-stone-900 text-white rounded-xl p-4 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs uppercase tracking-wider text-stone-400">
+            Wave scenario {waveSwing !== 0 && (conditional?.available ? '(overridden by conditional)' : '')}
+          </div>
+          <div className="text-xs tabular-nums">
+            {waveSwing === 0 ? 'neutral' : (waveSwing > 0 ? `D+${waveSwing.toFixed(1)}pp` : `R+${Math.abs(waveSwing).toFixed(1)}pp`)}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-rose-300 text-xs">R+10</span>
+          <input
+            type="range"
+            min={-10}
+            max={10}
+            step={0.5}
+            value={waveSwing}
+            onChange={(e) => setWaveSwing(parseFloat(e.target.value))}
+            className="flex-1 accent-amber-400"
+            disabled={!!conditional?.available}
+          />
+          <span className="text-blue-300 text-xs">D+10</span>
+          {waveSwing !== 0 && (
+            <button
+              onClick={() => setWaveSwing(0)}
+              className="text-[10px] text-stone-400 hover:text-stone-200 underline"
+            >
+              reset
+            </button>
+          )}
+        </div>
+        {waveData?.chambers?.[chamber] && (
+          <div className="text-[10px] text-stone-400 mt-2 tabular-nums">
+            Under this swing · {chamber}: D wins {waveData.chambers[chamber].d} / R wins {waveData.chambers[chamber].r}
+            {' · '}expected D {waveData.chambers[chamber].expected_d}
+          </div>
+        )}
+      </div>
 
       {conditional?.available && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 flex items-center gap-3 text-sm">
