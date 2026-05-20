@@ -31,6 +31,7 @@ from infrastructure_data import (
 import cross_dashboard
 import analyst_db
 import event_extractor
+import forecast_matcher
 import nlq_translator
 
 analyst_db.init_db()
@@ -8858,7 +8859,13 @@ async def analyst_entity(entity_id: str, request: Request):
         limit=min(200, int(qp.get("limit") or 50)),
     )
     graph = analyst_db.entity_graph(entity_id, depth=1, limit_per_hop=15)
-    return _json({"entity": ent, "events": recent, "graph": graph})
+    forecasts: list[dict] = []
+    try:
+        markets = await asyncio.to_thread(fetch_polymarket)
+        forecasts = forecast_matcher.markets_for_entity(ent, markets, limit=5)
+    except Exception as e:
+        print(f"[analyst_entity] forecast match failed: {e}")
+    return _json({"entity": ent, "events": recent, "graph": graph, "forecasts": forecasts})
 
 
 @app.get("/api/analyst/entities")

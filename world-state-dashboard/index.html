@@ -2309,6 +2309,33 @@ body.am-tl-hidden    { padding-bottom: 0; }
   font-family: var(--mono); color: var(--text-2); font-size: 10px;
 }
 
+/* Forecast (Polymarket) rows inside the dossier */
+.am-forecast-list { display: flex; flex-direction: column; gap: 6px; }
+.am-forecast-row {
+  display: block; text-decoration: none; color: var(--text-0);
+  background: var(--bg-2); border: 1px solid var(--border-light);
+  border-radius: var(--radius-xs); padding: 8px 10px;
+}
+.am-forecast-row:hover { border-color: var(--green); }
+.am-forecast-q {
+  font-size: 11px; line-height: 1.35; margin-bottom: 6px;
+}
+.am-forecast-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; color: var(--text-2);
+}
+.am-forecast-bar {
+  flex: 1; height: 4px; background: var(--bg-3); border-radius: 2px;
+  overflow: hidden; min-width: 40px;
+}
+.am-forecast-bar span {
+  display: block; height: 100%; background: var(--text-2);
+}
+.am-forecast-bar.hot span { background: var(--green-bright); }
+.am-forecast-bar.cold span { background: #c45a4a; }
+.am-forecast-price { color: var(--text-0); }
+.am-forecast-vol { color: var(--text-2); }
+
 /* Natural-language query input */
 .am-nlq {
   display: flex; gap: 4px;
@@ -7819,6 +7846,26 @@ function togglePinMap() {
     `;
   }
 
+  function forecastRowHtml(m) {
+    const price = Number(m.top_price || 0);
+    const pct = Math.round(price * 100);
+    const outcome = m.top_outcome || 'YES';
+    const vol = Number(m.volume_24h || 0);
+    const volLabel = vol >= 1e6 ? `$${(vol/1e6).toFixed(1)}M` : vol >= 1e3 ? `$${(vol/1e3).toFixed(0)}K` : `$${vol.toFixed(0)}`;
+    const url = m.slug ? `https://polymarket.com/event/${encodeURIComponent(m.slug)}` : '';
+    const barClass = price >= 0.6 ? 'hot' : price <= 0.3 ? 'cold' : '';
+    return `
+      <a class="am-forecast-row" href="${escHtml(url)}" target="_blank" rel="noopener">
+        <div class="am-forecast-q">${escHtml(m.question || m.slug || '')}</div>
+        <div class="am-forecast-meta">
+          <span class="am-forecast-bar ${barClass}"><span style="width:${pct}%"></span></span>
+          <span class="am-forecast-price">${pct}% ${escHtml(outcome)}</span>
+          <span class="am-forecast-vol">${volLabel} 24h</span>
+        </div>
+      </a>
+    `;
+  }
+
   function bindDossierClicks(root) {
     root.querySelectorAll('.am-actor-pill').forEach(el => {
       el.addEventListener('click', () => openEntity(el.dataset.id));
@@ -7840,6 +7887,7 @@ function togglePinMap() {
     const body = document.getElementById('am-drawer-body');
     const events = d.events || [];
     const graph = (d.graph && d.graph.edges) || [];
+    const forecasts = d.forecasts || [];
     const nodeMap = {};
     (d.graph && d.graph.nodes || []).forEach(n => nodeMap[n.id] = n);
 
@@ -7851,6 +7899,15 @@ function togglePinMap() {
         </div>
         ${events.length ? events.map(eventCardHtml).join('') : '<div class="am-tl-stat">No events on file.</div>'}
       </div>
+      ${forecasts.length ? `<div class="am-d-section">
+        <div class="am-d-section-title">
+          <span>Live markets</span>
+          <span class="am-tl-stat">Polymarket · ${forecasts.length}</span>
+        </div>
+        <div class="am-forecast-list">
+          ${forecasts.map(forecastRowHtml).join('')}
+        </div>
+      </div>` : ''}
       <div class="am-d-section">
         <div class="am-d-section-title">
           <span>Co-occurring entities</span>
