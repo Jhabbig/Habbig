@@ -23,6 +23,16 @@ the indicators that drive it:
 | Initial jobless claims | `ICSA` | weekly | Leading job-loss signal. |
 | Personal saving rate | `PSAVERT` | monthly | How much slack households have. |
 
+An **Election-Cycle Forecast** sits right under the mood banner — the
+flagship signal. It runs an OLS regression of incumbent-party House seat
+change on UMich consumer sentiment in April of each midterm year
+(1978-2022, n=12), then projects the current sentiment reading forward to
+the next midterm with a 90% prediction interval. The scatter plot to the
+right shows every historical cycle, the regression line, the prediction
+band, and where today sits in that distribution. R² is published openly —
+it's lower than political narratives imply, and the dashboard is up-front
+about that uncertainty.
+
 A **state-level "Where it hurts" panel** below the national cards: a
 swing-state strip (PA, MI, WI, AZ, GA, NV, NC) plus the five most-stressed
 and five least-stressed states, each ranked by where its current
@@ -78,6 +88,9 @@ python3 server.py
 - `GET /api/mood` — composite voter-mood index with per-component breakdown
 - `GET /api/states` — state-level unemployment + own-history percentile
   stress score (50 states + DC, plus swing-state strip)
+- `GET /api/election-cycle` — historical mood → midterm seat-change OLS
+  regression with current implied seat change for the incumbent's party
+  (90% prediction interval)
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness

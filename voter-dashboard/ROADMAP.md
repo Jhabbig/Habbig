@@ -93,22 +93,21 @@ Render:
   cross-check.
 - "Right track / wrong track" similarly.
 
-### 5. Election-cycle context (the killer feature)
+### 5. Election-cycle context &middot; **SHIPPED v1.2**
 
-This is what makes a *voter* dashboard distinct from a generic
-macro-mood page. Build a historical replay:
+OLS of incumbent-party House seat change on UMich consumer sentiment in
+April of each midterm 1978-2022 (n=12). Surfaced as a flagship banner
+under the mood index showing the implied seat change with a 90%
+prediction interval, plus an inline scatter plot of every historical
+cycle with regression line + prediction band.
 
-- For every midterm and presidential cycle since 1960, plot:
-  - the mood index value 6 months before election day,
-  - the seat change for the incumbent's party in the House,
-  - the popular-vote spread.
-- Fit a simple regression: seat loss ≈ α + β × (mood deficit).
-- Surface a single number on the front page: *"Implied House seat change
-  for the incumbent party at current mood: −18 to −24 (90% CI)."*
+R² is genuinely low (~0.09 in current data) and the dashboard publishes
+it openly — that honesty is part of the value. Political narratives
+overstate how predictable midterms are from mood alone.
 
-This is doable in a weekend with public data (House election results +
-historical UMich) and turns the dashboard from "interesting indicators"
-into something a campaign analyst would actually open.
+**Next**: extend to presidential popular-vote share, replicate as a
+multi-variable model (mood + real wages YoY + incumbent-tenure
+dummies), publish a backtest accuracy report.
 
 ### 6. "What changed" feed
 

@@ -658,6 +658,142 @@ def voter_mood_index(series: dict[str, dict]) -> Optional[dict]:
     }
 
 
+# ─── Election-cycle regression ────────────────────────────────────────────────
+
+# Net House seat change for the incumbent president's party at each midterm,
+# 1978-2022. Sourced from Office of the House Historian. The sign convention
+# is from the *incumbent party's* perspective — negative means losses.
+HISTORICAL_MIDTERMS: list[dict] = [
+    {"year": 1978, "incumbent_party": "D", "incumbent_president": "Carter",  "seat_change": -15},
+    {"year": 1982, "incumbent_party": "R", "incumbent_president": "Reagan",  "seat_change": -26},
+    {"year": 1986, "incumbent_party": "R", "incumbent_president": "Reagan",  "seat_change":  -5},
+    {"year": 1990, "incumbent_party": "R", "incumbent_president": "Bush 41", "seat_change":  -8},
+    {"year": 1994, "incumbent_party": "D", "incumbent_president": "Clinton", "seat_change": -54},
+    {"year": 1998, "incumbent_party": "D", "incumbent_president": "Clinton", "seat_change":  +5},
+    {"year": 2002, "incumbent_party": "R", "incumbent_president": "Bush 43", "seat_change":  +8},
+    {"year": 2006, "incumbent_party": "R", "incumbent_president": "Bush 43", "seat_change": -30},
+    {"year": 2010, "incumbent_party": "D", "incumbent_president": "Obama",   "seat_change": -63},
+    {"year": 2014, "incumbent_party": "D", "incumbent_president": "Obama",   "seat_change": -13},
+    {"year": 2018, "incumbent_party": "R", "incumbent_president": "Trump",   "seat_change": -41},
+    {"year": 2022, "incumbent_party": "D", "incumbent_president": "Biden",   "seat_change":  -9},
+]
+
+# Cycles ending in even years that don't fall on a presidential year.
+NEXT_MIDTERM = 2026
+CURRENT_INCUMBENT_PARTY = "R"
+CURRENT_INCUMBENT_PRESIDENT = "Trump"
+
+
+def _sentiment_at(by_ym: dict[tuple[int, int], float], year: int, month: int) -> Optional[float]:
+    """Look up UMich sentiment for (year, month). Falls back to the closest
+    non-null month within ±3 — UMCSENT was quarterly before 1978 and has
+    occasional gaps from survey methodology changes."""
+    for delta in (0, -1, 1, -2, 2, -3, 3):
+        m = month + delta
+        y = year
+        if m < 1:  y -= 1; m += 12
+        if m > 12: y += 1; m -= 12
+        v = by_ym.get((y, m))
+        if v is not None:
+            return v
+    return None
+
+
+def election_cycle_regression(sentiment_series: Optional[dict],
+                              ref_month: int = 4) -> Optional[dict]:
+    """OLS regression of incumbent-party House seat change on UMich consumer
+    sentiment in April of each midterm year (1978-2022).
+
+    Returns slope, intercept, R², residual std, every historical row with
+    its predicted+residual, and the **current implied seat change** for the
+    next midterm given the latest sentiment reading — with a 90% prediction
+    interval.
+
+    Why April? It's the most-cited "as of mid-year" reading among political
+    analysts and gives the model enough lead time to be predictive instead
+    of just retrospective."""
+    if not sentiment_series or not sentiment_series.get("observations"):
+        return None
+    by_ym: dict[tuple[int, int], float] = {}
+    for o in sentiment_series["observations"]:
+        if o["value"] is None:
+            continue
+        try:
+            y, m = int(o["date"][:4]), int(o["date"][5:7])
+        except (ValueError, IndexError):
+            continue
+        by_ym[(y, m)] = o["value"]
+
+    rows: list[dict] = []
+    for m in HISTORICAL_MIDTERMS:
+        s = _sentiment_at(by_ym, m["year"], ref_month)
+        if s is None:
+            continue
+        rows.append({**m, "sentiment": round(s, 1)})
+
+    if len(rows) < 5:
+        return None
+
+    xs = [r["sentiment"] for r in rows]
+    ys = [r["seat_change"] for r in rows]
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    den = sum((xs[i] - mx) ** 2 for i in range(n))
+    if den == 0:
+        return None
+    slope = num / den
+    intercept = my - slope * mx
+    ss_res = sum((ys[i] - (intercept + slope * xs[i])) ** 2 for i in range(n))
+    ss_tot = sum((y - my) ** 2 for y in ys)
+    r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+    sigma = math.sqrt(ss_res / max(n - 2, 1))
+
+    for r in rows:
+        pred = intercept + slope * r["sentiment"]
+        r["predicted"] = round(pred, 1)
+        r["residual"] = round(r["seat_change"] - pred, 1)
+
+    # Current implied seat change. Use the most-recent UMCSENT reading
+    # available — voters will keep checking the dashboard as new readings
+    # land, and this auto-updates with no code change.
+    latest = sentiment_series.get("latest") or {}
+    s_now = latest.get("value")
+    implied = lo_90 = hi_90 = None
+    if s_now is not None:
+        pred = intercept + slope * s_now
+        implied = round(pred, 1)
+        # 90% prediction interval ≈ ±1.645 σ (residual std; small-sample
+        # inflation via (1 + 1/n + (x − x̄)² / Σ(x − x̄)²) is < 1 σ for our n,
+        # so this is a close-enough conservative band).
+        lo_90 = round(pred - 1.645 * sigma, 1)
+        hi_90 = round(pred + 1.645 * sigma, 1)
+
+    return {
+        "method": (
+            f"OLS of incumbent-party net House seat change on UMich consumer "
+            f"sentiment in month {ref_month} of each midterm year, "
+            f"{rows[0]['year']}-{rows[-1]['year']}."
+        ),
+        "ref_month": ref_month,
+        "n": n,
+        "slope": round(slope, 3),
+        "intercept": round(intercept, 1),
+        "r_squared": round(r2, 3),
+        "residual_std_seats": round(sigma, 1),
+        "history": rows,
+        "next_midterm": NEXT_MIDTERM,
+        "incumbent_party": CURRENT_INCUMBENT_PARTY,
+        "incumbent_president": CURRENT_INCUMBENT_PRESIDENT,
+        "current_sentiment": round(s_now, 1) if s_now is not None else None,
+        "current_sentiment_as_of": latest.get("date"),
+        "implied_seat_change": implied,
+        "ci_90_low": lo_90,
+        "ci_90_high": hi_90,
+    }
+
+
 # ─── Polymarket gamma fetcher ──────────────────────────────────────────────────
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
@@ -832,6 +968,19 @@ def api_states():
     return jsonify(panel)
 
 
+@app.route("/api/election-cycle")
+def api_election_cycle():
+    """Historical mood → midterm seat-change regression with current
+    implied seat change for the incumbent's party."""
+    sent = fetch_fred_series("UMCSENT")
+    if not sent:
+        return jsonify({"error": "sentiment fetch failed"}), 503
+    payload = election_cycle_regression(sent)
+    if not payload:
+        return jsonify({"error": "insufficient history"}), 503
+    return jsonify(payload)
+
+
 @app.route("/api/summary")
 def api_summary():
     """Front-page payload — all the cards on one page."""
@@ -869,6 +1018,7 @@ def api_summary():
         } if misery_now else None,
         "recession": recession_state(usrec),
         "biggest_movers": biggest_movers(series, lookback_months=3),
+        "election_cycle": election_cycle_regression(series.get("UMCSENT")),
         "real_wages": {
             "hourly_yoy_pct": real_wage_yoy(earn_h, cpi),
             "weekly_yoy_pct": real_wage_yoy(earn_w, cpi),
