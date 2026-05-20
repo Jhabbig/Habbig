@@ -18,7 +18,8 @@ from typing import Optional
 from analysis.arbitrage import _normalise_symbol
 
 
-def aggregate(*, binance: Optional[dict] = None, okx: Optional[dict] = None) -> dict:
+def aggregate(*, binance: Optional[dict] = None, okx: Optional[dict] = None,
+              bybit: Optional[dict] = None) -> dict:
     by_base: dict[str, dict] = {}
     venues_used: list[str] = []
 
@@ -50,6 +51,8 @@ def aggregate(*, binance: Optional[dict] = None, okx: Optional[dict] = None) -> 
         _ingest(binance.get("by_symbol_top") or [], "binance")
     if okx and not okx.get("error"):
         _ingest(okx.get("by_symbol_top") or [], "okx")
+    if bybit and not bybit.get("error"):
+        _ingest(bybit.get("by_symbol_top") or [], "bybit (proxy)")
 
     rows = sorted(by_base.values(), key=lambda x: x["total_usd"], reverse=True)
     long_squeeze = max(rows, key=lambda r: r["long_liq_usd"], default=None)

@@ -41,6 +41,7 @@ from ingestion import (
     binance_liquidations,
     btc_treasuries,
     bybit,
+    bybit_liquidations,
     coinbase,
     coingecko,
     defillama,
@@ -48,6 +49,7 @@ from ingestion import (
     etherscan_gas,
     etherscan_token,
     fear_greed,
+    hyperliquid,
     kraken,
     mempool_btc,
     news,
@@ -327,11 +329,23 @@ async def api_liq_okx(limit: int = 100) -> JSONResponse:
     return JSONResponse(okx_liquidations.recent_liquidations(limit=limit))
 
 
+@app.get("/api/liquidations/bybit")
+async def api_liq_bybit() -> JSONResponse:
+    return JSONResponse(bybit_liquidations.probable_liquidations())
+
+
 @app.get("/api/liquidations/aggregate")
 async def api_liq_aggregate() -> JSONResponse:
     bin_liq = binance_liquidations.recent_liquidations(100)
     okx_liq = okx_liquidations.recent_liquidations(100)
-    return JSONResponse(liquidations_agg.aggregate(binance=bin_liq, okx=okx_liq))
+    by_liq = bybit_liquidations.probable_liquidations()
+    return JSONResponse(liquidations_agg.aggregate(
+        binance=bin_liq, okx=okx_liq, bybit=by_liq))
+
+
+@app.get("/api/hyperliquid/market")
+async def api_hyperliquid() -> JSONResponse:
+    return JSONResponse(hyperliquid.market_state())
 
 
 # ─── On-chain context per coin ────────────────────────────────────────────────
@@ -413,7 +427,7 @@ async def api_summary() -> JSONResponse:
     (univ, glob, trend, fng, chains, dexs, stables, fut, premium,
      binance_spot, bybit_spot, okx_spot,
      news_headlines, btc_net, eth_gas, liq, okx_liq, dex_prices, treasuries,
-     sol_net, whales_eth, whales_btc) = await asyncio.gather(
+     sol_net, whales_eth, whales_btc, hl_market, bybit_liq) = await asyncio.gather(
         _to_thread(coingecko.universe, 200),
         _to_thread(coingecko.global_metrics),
         _to_thread(coingecko.trending),
@@ -436,6 +450,8 @@ async def api_summary() -> JSONResponse:
         _to_thread(solana.network_status),
         _to_thread(whales.exchange_balances_eth),
         _to_thread(whales.large_btc_transactions, 100.0),
+        _to_thread(hyperliquid.market_state),
+        _to_thread(bybit_liquidations.probable_liquidations),
     )
 
     # Quick aggregate: top 10 movers (gainers + losers) from the universe
@@ -489,8 +505,14 @@ async def api_summary() -> JSONResponse:
                                   + (okx_liq.get("total_notional_usd", 0) or 0),
             "biggest": liq.get("biggest") or okx_liq.get("biggest"),
             "by_symbol_top": liquidations_agg.aggregate(
-                binance=liq, okx=okx_liq
+                binance=liq, okx=okx_liq, bybit=bybit_liq
             ).get("rows", [])[:8],
+            "venues_used": ["binance", "okx", "bybit (proxy)"],
+        },
+        "hyperliquid": {
+            "count": hl_market.get("count", 0),
+            "top_volume": (hl_market.get("rows") or [])[:8],
+            "error": hl_market.get("error"),
         },
         "dex_prices": dex_prices,
         "whales": {
@@ -548,6 +570,8 @@ async def _startup() -> None:
         ("solana_priority_fees",  lambda: solana.priority_fees(),                        60),
         ("whales_eth",            lambda: whales.exchange_balances_eth(),                300),
         ("whales_btc",            lambda: whales.large_btc_transactions(100),            120),
+        ("hyperliquid",           lambda: hyperliquid.market_state(),                    60),
+        ("bybit_proxy_liq",       lambda: bybit_liquidations.probable_liquidations(),    120),
         ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
     ])
 
