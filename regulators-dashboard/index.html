@@ -58,6 +58,13 @@
   .tag.personnel   { background: #d29922; color: #0e1117; }
   .tag.other       { background: #30363d; color: var(--muted); }
   .tag-extra { color: var(--muted); font-size: 10px; margin-left: 4px; cursor: help; }
+  .sev { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px;
+         font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; cursor: help;
+         margin-left: 4px; white-space: nowrap; }
+  .sev.low    { background: #30363d; color: var(--fg); }
+  .sev.medium { background: #d29922; color: #0e1117; }
+  .sev.high   { background: #f0883e; color: #0e1117; }
+  .sev.severe { background: #f85149; color: #fff; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -97,6 +104,15 @@
       <span class="chip" data-tag="personnel">Personnel</span>
       <span class="chip" data-tag="other">Other</span>
     </div>
+    <div class="filters">
+      <span class="hint">Severity:</span>
+      <span class="chip active" data-sev="">All</span>
+      <span class="chip" data-sev="severe">$100M+</span>
+      <span class="chip" data-sev="high">$10–100M</span>
+      <span class="chip" data-sev="medium">$1–10M</span>
+      <span class="chip" data-sev="low">&lt;$1M</span>
+      <span class="chip" data-sev="none">unscored</span>
+    </div>
     <table>
       <thead>
         <tr>
@@ -114,7 +130,7 @@
 </main>
 
 <script>
-let state = { jurisdiction: "", tag: "", q: "" };
+let state = { jurisdiction: "", tag: "", sev: "", q: "" };
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -136,6 +152,7 @@ async function load() {
   const params = new URLSearchParams();
   if (state.jurisdiction) params.set("jurisdiction", state.jurisdiction);
   if (state.tag) params.set("tag", state.tag);
+  if (state.sev) params.set("severity", state.sev);
   if (state.q) params.set("q", state.q);
 
   let data;
@@ -182,12 +199,24 @@ async function load() {
         extraEl = `<span class="tag-extra" title="${escapeHtml(tip)}">+${extraTags.length}</span>`;
       }
 
+      let sevEl = "";
+      if (it.severity) {
+        const s = it.severity;
+        const nativeFmt = s.currency === "USD" ? `$${s.amount_native.toLocaleString()}`
+          : s.currency === "GBP" ? `£${s.amount_native.toLocaleString()}`
+          : s.currency === "EUR" ? `€${s.amount_native.toLocaleString()}`
+          : `${s.amount_native.toLocaleString()} ${s.currency}`;
+        const usdNote = s.currency === "USD" ? "" : ` ≈ $${Math.round(s.amount_usd).toLocaleString()}`;
+        const tip = `${nativeFmt}${usdNote} (${s.context_word})`;
+        sevEl = `<span class="sev ${escapeHtml(s.bucket)}" title="${escapeHtml(tip)}">${escapeHtml(s.bucket)}</span>`;
+      }
+
       return `
         <tr>
           <td class="date">${escapeHtml(fmtDate(it.published))}</td>
           <td><span class="jx ${jxCls}">${jx}</span></td>
           <td class="src">${escapeHtml(it.source)}</td>
-          <td>${primaryChip}${extraEl}</td>
+          <td>${primaryChip}${extraEl}${sevEl}</td>
           <td class="title">${link}${summary}</td>
         </tr>`;
     }).join("");
@@ -214,6 +243,15 @@ document.querySelectorAll(".chip[data-tag]").forEach(el => {
     document.querySelectorAll(".chip[data-tag]").forEach(c => c.classList.remove("active"));
     el.classList.add("active");
     state.tag = el.dataset.tag;
+    load();
+  });
+});
+
+document.querySelectorAll(".chip[data-sev]").forEach(el => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".chip[data-sev]").forEach(c => c.classList.remove("active"));
+    el.classList.add("active");
+    state.sev = el.dataset.sev;
     load();
   });
 });

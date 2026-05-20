@@ -74,6 +74,7 @@ async def api_feed(
     jurisdiction: str = "",
     source: str = "",
     tag: str = "",
+    severity: str = "",
     q: str = "",
     force: bool = False,
 ) -> JSONResponse:
@@ -98,6 +99,13 @@ async def api_feed(
                 return True
             return any(t in wanted for t in it.get("tags", []))
         items = [it for it in items if tag_hit(it)]
+    if severity:
+        wanted = {s.strip().lower() for s in severity.split(",") if s.strip()}
+        def sev_hit(it: dict) -> bool:
+            sev = it.get("severity")
+            bucket = sev["bucket"] if sev else "none"
+            return bucket in wanted
+        items = [it for it in items if sev_hit(it)]
     if q:
         needle = q.lower().strip()
         if needle:

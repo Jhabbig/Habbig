@@ -14,6 +14,7 @@ Port: **7080**.
 |---|---|---|
 | **v0**   | **Action feed** — unified table of last 90 days across SEC / FCA / ESMA: date, jurisdiction badge, body, headline (links to source), summary. Jurisdiction chips and free-text search. Per-source status row. | RSS — `defusedxml`-parsed |
 | **v0.1** | **Type classifier** — every item tagged as `enforcement` / `rulemaking` / `guidance` / `speech` / `personnel` / `other` via rule-based keyword matching on title + summary. Color-coded chip per row; matched phrases shown on hover; type-filter chips. Multi-tag honest (an item matching two categories surfaces both). | rules — `analysis/classifier_keywords.py` |
+| **v0.2** | **Severity score** — enforcement-tagged items get a fine amount extracted via context-anchored regex (USD / GBP / EUR), bucketed `low (<$1M)` / `medium ($1M–10M)` / `high ($10M–100M)` / `severe ($100M+)`. Native amount and ≈USD shown on hover; severity-filter chips. Largest amount wins when multiple are mentioned. | rules — `analysis/severity.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -23,7 +24,7 @@ per-source status row flips to red; other sources keep working).
 | Path | Cache | Purpose |
 |---|---|---|
 | `GET /` | — | Dashboard UI |
-| `GET /api/feed?days=90&jurisdiction=&source=&tag=&q=` | 30 min | Unified action feed with filters |
+| `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&q=` | 30 min | Unified action feed with filters |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -31,6 +32,7 @@ Filter semantics:
   - `jurisdiction` — comma-separated codes (`US,UK,EU`), case-insensitive
   - `source` — comma-separated source codes (`SEC,FCA,ESMA`), case-insensitive
   - `tag` — comma-separated category tags (`enforcement,rulemaking,guidance,speech,personnel,other`), matches `primary_tag` or any element of `tags`. The literal `other` matches items where the classifier scored zero.
+  - `severity` — comma-separated severity buckets (`low,medium,high,severe,none`). `none` matches enforcement items where no amount was extracted, and every non-enforcement item.
   - `q` — case-insensitive substring match on title or summary
 
 ## Run locally
@@ -55,8 +57,9 @@ Smoke-test individual modules:
 python3 -m ingestion.sec_rss          # SEC press releases
 python3 -m ingestion.fca_rss          # FCA news
 python3 -m ingestion.esma_rss         # ESMA news
-python3 -m ingestion.unified_feed     # merged feed + per-source status + classifier tags
+python3 -m ingestion.unified_feed     # merged feed + per-source status + classifier tags + severity
 python3 -m analysis.classifier        # 11 fixture headlines across all 6 categories
+python3 -m analysis.severity          # 13 fixture amounts (incl. multi-amount + false-positive guard)
 ```
 
 ## Files
@@ -72,7 +75,8 @@ regulators-dashboard/
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
-│   └── classifier.py               Rule-based scorer + 11 fixture self-test
+│   ├── classifier.py               Rule-based scorer + 11 fixture self-test
+│   └── severity.py                 Fine-amount extractor (USD/GBP/EUR) + bucketing + 13 fixtures
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -131,12 +135,35 @@ picking the highest scorer.
 single-word phrases that collide with English stop-words ("its", "names")
 — the file's docstring spells out the gotchas.
 
+### v0.2 — severity scoring
+
+`analysis/severity.py` runs only on items tagged `enforcement`. It:
+
+1. Finds every context-word occurrence (`fine` / `penalty` / `settle` /
+   `pay` / `disgorge` / `restitution`).
+2. Scans an 80-character window on either side for a monetary amount —
+   currency symbol (`$£€`) or ISO code (`USD/GBP/EUR`) plus a number
+   plus an optional magnitude word (`million`, `billion`, `m`, `bn`,
+   `k`, etc.).
+3. Converts to USD-equivalent via a fixed FX table (USD=1.00, GBP≈1.25,
+   EUR≈1.10). Buckets are 10× apart so 20% FX moves don't shift a
+   bucket — refresh the constants annually if it matters.
+4. Returns the largest amount across all valid (context, amount) pairs.
+   "Pay $5,000 in restitution and $200 million in penalties" → severe.
+
+The context-word anchor is the false-positive guard: "Quarterly profits
+hit $10 billion at JPMorgan" has no enforcement context and returns
+None. Belt-and-braces: `classify_item` skips severity entirely unless
+`primary_tag == "enforcement"`, so a passing "$5M revenue" inside a
+rulemaking doc can't leak through.
+
 ## Roadmap
 
 | Step | Status | Adds |
 |---|---|---|
 | **v0**   | ✓ done | Action feed (SEC + FCA + ESMA, RSS) |
 | **v0.1** | ✓ done | Auto-classifier — type tag (`enforcement` / `rulemaking` / `speech` / `guidance` / `personnel` / `other`) via keyword rules; matched phrases shown on hover; type-filter chips |
+| **v0.2** | ✓ done | Severity score — fine-amount regex (USD/GBP/EUR) + USD-equivalent bucketing (low / medium / high / severe) on enforcement-tagged items; native + USD shown on hover; severity-filter chips |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
@@ -173,8 +200,16 @@ single-word phrases that collide with English stop-words ("its", "names")
   jurisdictions added later (BaFin, JFSA, FINMA) will need their own
   phrase dictionaries — the architecture supports this; the dictionary
   doesn't yet.
-- **Severity scoring lands in v0.2.** Until then, "$200M settlement" and
-  "$5,000 fine" both render as `enforcement` with no magnitude signal.
+- **Severity FX is fixed, not live.** Bucket thresholds are 10× apart
+  so 20% FX moves don't shift a bucket, but a borderline £80M vs $100M
+  case is approximate. Refresh `FX_TO_USD` in `analysis/severity.py`
+  annually.
+- **Severity is title+summary only.** Long press releases that put the
+  fine in paragraph six aren't reached. v0 doesn't fetch body HTML;
+  adding that is on the wider roadmap.
+- **English context words only.** Translated headlines from BaFin /
+  JFSA / FINMA won't match the `fine|penalty|settle|pay|disgorge`
+  anchor list. Per-language extensions land alongside those sources.
 - **Polymarket overlay coverage is thin** outside crypto ETFs and
   big-name settlements, so v0.5 will only annotate a small fraction of
   action cards. That's expected.

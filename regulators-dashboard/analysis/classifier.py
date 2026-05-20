@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 
 from .classifier_keywords import CATEGORIES
+from .severity import extract as extract_severity
 
 
 @dataclass
@@ -84,17 +85,28 @@ def classify(text: str) -> ClassifyResult:
 
 def classify_item(item: dict) -> dict:
     """Run `classify()` on `title + summary` and attach result fields to the
-    item in-place. Returns the same dict for caller convenience."""
+    item in-place. Returns the same dict for caller convenience.
+
+    Also runs v0.2 severity extraction. We always call `extract_severity`
+    — the context-word anchor in `severity.py` is strict enough that
+    non-enforcement items will return None on their own. Belt-and-braces:
+    we still skip the severity field if the primary tag isn't enforcement,
+    so a passing reference to "$5M revenue" in a rulemaking doc can't
+    leak through if the regex ever loosens."""
     text = (item.get("title", "") + " " + item.get("summary", "")).strip()
     r = classify(text)
     item["primary_tag"] = r.primary
     item["tags"] = sorted(set(item.get("tags", []) + r.tags))
-    # Per-category matched phrases — kept compact for transport.
     item["matched_phrases"] = {
-        cat: [m["phrase"] for m in mlist[:5]]  # top 5 per category
+        cat: [m["phrase"] for m in mlist[:5]]
         for cat, mlist in r.matches.items()
         if mlist
     }
+    if r.primary == "enforcement":
+        sev = extract_severity(text)
+        item["severity"] = sev.to_dict() if sev else None
+    else:
+        item["severity"] = None
     return item
 
 
