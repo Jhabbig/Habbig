@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from sqlmodel import func, select
 
 from app.config import yaml_config
+from app.credibility.calibration import compute_calibration
 from app.credibility.category_scores import compute_category_credibility, smoothed_accuracy
 from app.credibility.decay import decay_weighted_accuracy
 from app.credibility.diversity import category_spread_penalty
 from app.db import AsyncSession
-from app.models import CredibilitySnapshot, Source, SourcePredictionRecord
+from app.models import CredibilitySnapshot, Prediction, RawPost, Source, SourcePredictionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,28 @@ class CredibilityEngine:
         source.global_credibility = round(max(0.0, min(1.0, accuracy_component + engagement_component + verified_component + volume_component + manual_component)), 4)
         cat_cred = await compute_category_credibility(session, handle, source.global_credibility)
         source.category_credibility = cat_cred
+
+        # Calibration metrics: Brier score over the source's probability-bearing
+        # resolved predictions. Joins back to the prediction rows via raw_post_id
+        # (SPR doesn't carry predicted_outcome / predicted_probability itself).
+        try:
+            stmt = (
+                select(Prediction)
+                .join(RawPost, Prediction.raw_post_id == RawPost.id)
+                .where(
+                    RawPost.author_handle == handle,
+                    Prediction.predicted_probability.isnot(None),
+                    Prediction.resolved == True,  # noqa: E712
+                    Prediction.resolved_correct.isnot(None),
+                )
+            )
+            preds = (await session.exec(stmt)).all()
+            calib = compute_calibration(preds)
+            source.brier_score = calib.brier_score
+            source.brier_n = calib.n_scored
+        except Exception as exc:
+            logger.warning("Calibration compute failed for %s: %s", handle, exc)
+
         source.last_seen = datetime.now(timezone.utc)
         session.add(source)
 

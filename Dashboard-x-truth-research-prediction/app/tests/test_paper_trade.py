@@ -139,6 +139,77 @@ async def test_summary_counts_open_and_settled(session):
     assert s["wins"] == 1
 
 
+def test_sharpe_and_drawdown_empty():
+    from app.processing.paper_trade import _sharpe_and_drawdown
+    sharpe, mdd, curve = _sharpe_and_drawdown([])
+    assert sharpe is None and mdd == 0.0 and curve == []
+
+
+def test_sharpe_positive_for_steady_gains():
+    from app.processing.paper_trade import _sharpe_and_drawdown
+    # 5 days of small consistent gains: should produce a positive Sharpe.
+    sharpe, mdd, curve = _sharpe_and_drawdown([
+        ("2026-01-01", 1.0),
+        ("2026-01-02", 1.0),
+        ("2026-01-03", 0.5),
+        ("2026-01-04", 1.2),
+        ("2026-01-05", 0.8),
+    ])
+    assert sharpe is not None and sharpe > 0
+    assert mdd == 0.0  # never went down, peak-to-trough is zero
+    assert len(curve) == 5
+    assert curve[-1][1] == 4.5  # cumulative P&L = 1+1+0.5+1.2+0.8
+
+
+def test_drawdown_captures_peak_to_trough():
+    from app.processing.paper_trade import _sharpe_and_drawdown
+    # +3, then -5 -> peak at +3, trough at -2 -> drawdown = -5
+    _, mdd, curve = _sharpe_and_drawdown([
+        ("2026-01-01", 3.0),
+        ("2026-01-02", -5.0),
+    ])
+    assert mdd == -5.0
+    # curve[1] = (date, cum=-2, drawdown=-5)
+    assert curve[1][1] == -2.0
+    assert curve[1][2] == -5.0
+
+
+@pytest.mark.asyncio
+async def test_backtest_returns_sharpe_and_drawdown(session):
+    from app.models import RawPost, SourcePredictionRecord
+    src = _src(global_credibility=0.7)
+    session.add(src)
+    rp = RawPost(id="t:42", platform="twitter", author_handle="alice", content="text" * 5)
+    session.add(rp)
+    # Three resolved predictions on different days, mixed outcomes.
+    import datetime as _dt
+    base = _dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc)
+    for i, (won, days) in enumerate([(True, 1), (False, 2), (True, 3)]):
+        pred = _pred(
+            id=None, raw_post_id="t:42",
+            market_slug=f"m-{i}",
+            market_implied_probability=0.40,
+            ev_score=0.30,
+            resolved=True,
+            resolved_correct=won,
+            market_close_time=base + _dt.timedelta(days=days),
+        )
+        session.add(pred)
+        await session.commit()
+        await session.refresh(pred)
+        session.add(SourcePredictionRecord(handle="alice", prediction_id=pred.id, market_slug=f"m-{i}", category="politics"))
+    await session.commit()
+
+    result = await backtest(session, TradeFilter())
+    assert result["n_signals"] == 3
+    assert result["wins"] == 2
+    # Curve has 3 days of cumulative P&L.
+    assert len(result["daily_curve"]) == 3
+    # Sharpe is computable (>= 2 days) and drawdown is non-positive.
+    assert result["sharpe"] is not None
+    assert result["max_drawdown_usd"] <= 0
+
+
 @pytest.mark.asyncio
 async def test_backtest_replay_finds_resolved_predictions(session):
     from app.models import RawPost, SourcePredictionRecord

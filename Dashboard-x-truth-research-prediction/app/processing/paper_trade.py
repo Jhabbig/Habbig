@@ -169,13 +169,53 @@ async def summary(session: AsyncSession) -> dict:
     }
 
 
+def _sharpe_and_drawdown(daily_pnl: list[tuple[str, float]]) -> tuple[Optional[float], float, list[tuple[str, float, float]]]:
+    """Compute annualised Sharpe + max drawdown + the (date, cumulative_pnl, drawdown) curve.
+
+    Returns:
+      sharpe: mean/std of daily P&L, annualised by sqrt(252). None if <2 days.
+      max_drawdown: peak-to-trough decline of cumulative P&L (signed, e.g. -3.42).
+      curve: list of (date_iso, cumulative_pnl, drawdown_from_peak) per day.
+
+    Uses 252 (trading days/yr) as the standard finance convention. Strategy
+    backtests on prediction markets aren't truly daily — markets resolve on
+    arbitrary cadences — but per-day P&L aggregation is the standard way to
+    make Sharpe and drawdown comparable across strategies.
+    """
+    if not daily_pnl:
+        return None, 0.0, []
+
+    # Sort by date ascending.
+    sorted_days = sorted(daily_pnl, key=lambda x: x[0])
+    cumulative = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    curve: list[tuple[str, float, float]] = []
+    pnls = [pnl for _, pnl in sorted_days]
+    for date_iso, pnl in sorted_days:
+        cumulative += pnl
+        peak = max(peak, cumulative)
+        dd = cumulative - peak  # negative or zero
+        max_dd = min(max_dd, dd)
+        curve.append((date_iso, round(cumulative, 4), round(dd, 4)))
+
+    sharpe: Optional[float] = None
+    if len(pnls) >= 2:
+        mean = sum(pnls) / len(pnls)
+        variance = sum((p - mean) ** 2 for p in pnls) / (len(pnls) - 1)
+        std = variance ** 0.5
+        if std > 0:
+            import math
+            sharpe = round((mean / std) * math.sqrt(252), 3)
+    return sharpe, round(max_dd, 4), curve
+
+
 async def backtest(session: AsyncSession, filt: TradeFilter) -> dict:
     """Replay every resolved prediction under the given filter and report P&L.
 
-    This is the offline complement to ``maybe_open_trade`` — same qualification
-    logic, same settlement math, applied to every historical prediction whose
-    market has resolved. The point is to validate the (EV, credibility)
-    threshold knobs before turning them on in production.
+    Returns headline P&L + per-category breakdown + a daily cumulative-P&L
+    curve + annualised Sharpe ratio + max drawdown. Strategy is bucketed by
+    the prediction's market close date (the day the bet would have settled).
     """
     from app.models import RawPost, SourcePredictionRecord
     # Pre-load every source keyed by handle so the inner loop does an O(1)
@@ -193,6 +233,7 @@ async def backtest(session: AsyncSession, filt: TradeFilter) -> dict:
     n = wins = 0
     total_pnl = 0.0
     by_category: dict[str, dict[str, float]] = {}
+    daily: dict[str, float] = {}
     for pred in rows:
         handle = handle_for_pred.get(pred.id) or handle_for_post.get(pred.raw_post_id, "")
         source = sources_by_handle.get(handle)
@@ -211,6 +252,14 @@ async def backtest(session: AsyncSession, filt: TradeFilter) -> dict:
         cb["n"] += 1
         cb["wins"] += 1 if won else 0
         cb["pnl"] += pnl
+        # Bucket by the day the bet resolved (market_close_time when known;
+        # extracted_at as a fallback so we always land somewhere).
+        bucket_dt = pred.market_close_time or pred.extracted_at
+        if bucket_dt is not None:
+            day = bucket_dt.strftime("%Y-%m-%d")
+            daily[day] = daily.get(day, 0.0) + pnl
+
+    sharpe, max_dd, curve = _sharpe_and_drawdown(list(daily.items()))
     return {
         "n_signals": n,
         "wins": wins,
@@ -218,6 +267,9 @@ async def backtest(session: AsyncSession, filt: TradeFilter) -> dict:
         "hit_rate": wins / n if n else None,
         "total_pnl_usd": round(total_pnl, 2),
         "roi": round(total_pnl / (filt.stake_usd * n), 4) if n else None,
+        "sharpe": sharpe,
+        "max_drawdown_usd": max_dd,
         "by_category": {k: {"n": v["n"], "wins": v["wins"], "pnl": round(v["pnl"], 2)} for k, v in by_category.items()},
+        "daily_curve": [{"date": d, "cum_pnl": c, "drawdown": dd} for d, c, dd in curve],
         "filter": {"min_ev": filt.min_ev, "min_credibility": filt.min_credibility, "stake_usd": filt.stake_usd},
     }

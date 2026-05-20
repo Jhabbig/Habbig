@@ -75,6 +75,28 @@ async def run_pipeline() -> dict:
             logger.error("TruthSocial scrape failed: %s", exc)
             stats["errors"].append(f"TruthSocial: {exc}")
 
+        try:
+            from app.scrapers.reddit import RedditScraper
+            reddit = RedditScraper()
+            if reddit.is_available():
+                posts = await reddit.fetch(keywords, limit)
+                all_posts.extend(posts)
+                stats["posts_fetched"] += len(posts)
+        except Exception as exc:
+            logger.error("Reddit scrape failed: %s", exc)
+            stats["errors"].append(f"Reddit: {exc}")
+
+        try:
+            from app.scrapers.rss import RSSScraper
+            rss = RSSScraper()
+            if rss.is_available():
+                posts = await rss.fetch(keywords, limit)
+                all_posts.extend(posts)
+                stats["posts_fetched"] += len(posts)
+        except Exception as exc:
+            logger.error("RSS scrape failed: %s", exc)
+            stats["errors"].append(f"RSS: {exc}")
+
         for post in all_posts:
             existing = await session.exec(select(RawPost).where(RawPost.id == post.id))
             if existing.first() is None:

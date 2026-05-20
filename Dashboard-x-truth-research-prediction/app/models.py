@@ -111,6 +111,8 @@ class Source(SQLModel, table=True):
     accuracy_unlocked: bool = False
     accuracy_global: Optional[float] = None
     decay_weighted_accuracy: Optional[float] = None
+    brier_score: Optional[float] = None  # lower is better; null when no probability-bearing predictions
+    brier_n: int = 0  # number of resolved probability predictions that fed Brier
     last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

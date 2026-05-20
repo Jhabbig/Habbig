@@ -733,20 +733,31 @@ async def leaderboard(request: Request, session: AsyncSession = Depends(get_sess
     result = await session.exec(stmt)
     all_sources = result.all()
     if not all_sources:
-        return HTMLResponse('<tr><td colspan="8" class="text-center py-16 text-gray-600">No sources tracked yet.</td></tr>')
+        return HTMLResponse('<tr><td colspan="9" class="text-center py-16 text-gray-600">No sources tracked yet.</td></tr>')
     rows = []
     for rank, s in enumerate(all_sources, 1):
         cb = _cred_bar_color(s.global_credibility)
         pl = '<span class="text-blue-400">X</span>' if s.platform == "twitter" else '<span class="text-purple-400">TS</span>'
         acc = f"{s.accuracy_global:.0%}" if s.accuracy_global is not None else "\u2014"
         rec = f"{s.correct_qualifying}/{s.qualifying_predictions}" if s.qualifying_predictions > 0 else "0/0"
+        # Brier — lower is better; <0.18 green, <0.25 amber, else red.
+        if s.brier_score is None:
+            brier_html = '<span class="text-xs text-gray-600">—</span>'
+        else:
+            _bcol = ("text-green-400" if s.brier_score < 0.18
+                     else "text-amber-400" if s.brier_score < 0.25
+                     else "text-red-400")
+            brier_html = (
+                f'<span class="text-xs font-mono {_bcol}" title="Brier score (lower=better); n={s.brier_n}">'
+                f'{s.brier_score:.3f}<span class="text-gray-500 ml-1">({s.brier_n})</span></span>'
+            )
         cp = "".join(f'<span class="text-[10px] px-1.5 py-0.5 rounded-full {_cred_color(v)}">{c[:4]}</span> ' for c in (s.categories_predicted_in or [])[:5] if (v := (s.category_credibility or {}).get(c)) is not None)
         th = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Trusted</span>' if s.trusted is True else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">Untrusted</span>' if s.trusted is False else ""
         st = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Rated</span>' if s.accuracy_unlocked else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-500/10 text-gray-500 border border-gray-500/20">Unrated</span>'
         rk = ['', '<span class="text-lg">&#129351;</span>', '<span class="text-lg">&#129352;</span>', '<span class="text-lg">&#129353;</span>']
         rk_html = rk[rank] if rank <= 3 else f'<span class="text-sm text-gray-500 font-mono">{rank}</span>'
         tb = f'<div class="flex gap-1"><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": true}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs {"bg-green-600 text-white" if s.trusted is True else "bg-white/5 text-gray-500 hover:bg-white/10"}">+</button><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": false}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs {"bg-red-600 text-white" if s.trusted is False else "bg-white/5 text-gray-500 hover:bg-white/10"}">-</button><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": null}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs bg-white/5 text-gray-500 hover:bg-white/10">&#8635;</button></div>'
-        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] group"><td class="px-4 py-3 text-center w-12">{rk_html}</td><td class="px-4 py-3"><div class="flex items-center gap-2"><span class="font-medium text-gray-200">@{_esc(s.handle)}</span>{pl}{th}{st}</div></td><td class="px-4 py-3 w-40"><div class="flex items-center gap-2"><div class="flex-1 bg-gray-700/30 rounded-full h-2"><div class="{cb} h-2 rounded-full" style="width:{int(s.global_credibility*100)}%"></div></div><span class="text-sm font-mono text-gray-300 w-10 text-right">{s.global_credibility:.2f}</span></div></td><td class="px-4 py-3 text-sm text-gray-400">{acc}</td><td class="px-4 py-3 text-sm text-gray-400 font-mono">{rec}</td><td class="px-4 py-3"><div class="flex gap-1 flex-wrap">{cp}</div></td><td class="px-4 py-3 text-xs text-gray-500">{s.follower_count:,}</td><td class="px-4 py-3 opacity-0 group-hover:opacity-100 transition-opacity">{tb}</td></tr>')
+        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] group"><td class="px-4 py-3 text-center w-12">{rk_html}</td><td class="px-4 py-3"><div class="flex items-center gap-2"><span class="font-medium text-gray-200">@{_esc(s.handle)}</span>{pl}{th}{st}</div></td><td class="px-4 py-3 w-40"><div class="flex items-center gap-2"><div class="flex-1 bg-gray-700/30 rounded-full h-2"><div class="{cb} h-2 rounded-full" style="width:{int(s.global_credibility*100)}%"></div></div><span class="text-sm font-mono text-gray-300 w-10 text-right">{s.global_credibility:.2f}</span></div></td><td class="px-4 py-3 text-sm text-gray-400">{acc}</td><td class="px-4 py-3 text-sm text-gray-400 font-mono">{rec}</td><td class="px-4 py-3">{brier_html}</td><td class="px-4 py-3"><div class="flex gap-1 flex-wrap">{cp}</div></td><td class="px-4 py-3 text-xs text-gray-500">{s.follower_count:,}</td><td class="px-4 py-3 opacity-0 group-hover:opacity-100 transition-opacity">{tb}</td></tr>')
     return HTMLResponse("\n".join(rows))
 
 

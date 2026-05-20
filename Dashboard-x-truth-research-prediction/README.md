@@ -6,13 +6,13 @@ Subdomain when running behind the narve.ai gateway: `truth.narve.ai` (port 18789
 
 ## What it does
 
-- **Scrapes X + TruthSocial** every 5 min for posts containing prediction-style language. Per-user API keys (Profile → API Keys) are used in addition to env-var keys.
+- **Scrapes four sources** every 5 min: X (Twitter), TruthSocial, **Reddit** (configurable subreddits via `config.yaml`), and **RSS / Substack** (any feeds you list). Per-user API keys (Profile → API Keys) are used in addition to env-var keys.
 - **Two-stage prediction extraction**: precise regex first (free, fast), then Claude (LLM fallback) for natural-language predictions the regex misses. Results are cached by content hash so repeat posts cost nothing. Defaults to `claude-opus-4-7`; swap to `claude-haiku-4-5` via `LLM_EXTRACTOR_MODEL` for ~5× lower cost.
 - **Matches predictions to markets** on Polymarket *and* Kalshi via Jaccard token-overlap (≥3 shared tokens, strict category gating).
-- **Scores credibility** per source — Bayesian-smoothed accuracy, decay-weighted by half-life, category-spread + dominance penalties, manual trust override.
+- **Scores credibility** per source — Bayesian-smoothed accuracy, decay-weighted by half-life, category-spread + dominance penalties, manual trust override, **plus Brier-score calibration** for probability-bearing predictions (lower is better; surfaced as a colored column on the Leaderboard).
 - **Picks the better side**: for every prediction with a matched market, computes the EV of buying YES vs buying NO at the live price, surfaces the higher-EV side as a `BUY YES` / `BUY NO` signal.
 - **Opens a paper-trade** ($1 stake) every time the system fires a signal that clears the EV + credibility filter. Settles when the market resolves. Running P&L visible in the Performance tab.
-- **Backtest harness** at `/backtest?min_ev=0.10&min_credibility=0.55&stake_usd=1` replays historical resolved predictions under tunable thresholds.
+- **Backtest harness** with tunable thresholds (min EV / min credibility / stake) — replays every resolved prediction, returns total P&L, ROI, **annualised Sharpe**, **max drawdown**, per-category breakdown, and a **cumulative daily P&L curve** chart. The "would I trust this with real money?" interface.
 - **Telegram alerts** on each new signal (per-user opt-in, bot token Fernet-encrypted at rest).
 - **DB-backed sessions** so a process restart no longer logs everyone out.
 

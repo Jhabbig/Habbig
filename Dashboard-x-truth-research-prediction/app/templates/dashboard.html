@@ -154,8 +154,8 @@
 <!-- =============== LEADERBOARD TAB =============== -->
 <div id="tab-leaderboard" class="tab-panel">
     <div class="mb-4"><h2 class="text-lg font-semibold" style="color:var(--text-primary)">Source Leaderboard</h2><p class="text-xs themed-text mt-0.5">Ranked by credibility. Hover to adjust trust.</p></div>
-    <div class="overflow-x-auto rounded-xl border themed-border"><table class="w-full text-sm"><thead><tr class="themed-card text-[10px] uppercase tracking-wider themed-muted"><th class="px-4 py-2.5 text-center font-medium w-12">#</th><th class="px-4 py-2.5 text-left font-medium">Source</th><th class="px-4 py-2.5 text-left font-medium">Credibility</th><th class="px-4 py-2.5 text-left font-medium">Accuracy</th><th class="px-4 py-2.5 text-left font-medium">Record</th><th class="px-4 py-2.5 text-left font-medium">Categories</th><th class="px-4 py-2.5 text-left font-medium">Followers</th><th class="px-4 py-2.5 text-left font-medium w-24">Trust</th></tr></thead>
-    <tbody id="leaderboard-content" hx-get="/leaderboard" hx-trigger="load" hx-swap="innerHTML"><tr><td colspan="8" class="text-center py-16 themed-muted">Loading...</td></tr></tbody></table></div>
+    <div class="overflow-x-auto rounded-xl border themed-border"><table class="w-full text-sm"><thead><tr class="themed-card text-[10px] uppercase tracking-wider themed-muted"><th class="px-4 py-2.5 text-center font-medium w-12">#</th><th class="px-4 py-2.5 text-left font-medium">Source</th><th class="px-4 py-2.5 text-left font-medium">Credibility</th><th class="px-4 py-2.5 text-left font-medium">Accuracy</th><th class="px-4 py-2.5 text-left font-medium">Record</th><th class="px-4 py-2.5 text-left font-medium" title="Brier score — lower is better. Only counts probability-bearing predictions.">Brier</th><th class="px-4 py-2.5 text-left font-medium">Categories</th><th class="px-4 py-2.5 text-left font-medium">Followers</th><th class="px-4 py-2.5 text-left font-medium w-24">Trust</th></tr></thead>
+    <tbody id="leaderboard-content" hx-get="/leaderboard" hx-trigger="load" hx-swap="innerHTML"><tr><td colspan="9" class="text-center py-16 themed-muted">Loading...</td></tr></tbody></table></div>
 </div>
 
 <!-- =============== MARKETS TAB =============== -->
@@ -235,6 +235,7 @@ function switchTab(tab) {
 }
 
 // Backtest knob runner
+let _btChart = null;
 async function runBacktest() {
     const ev = parseFloat(document.getElementById('bt-min-ev').value || '0.10');
     const cred = parseFloat(document.getElementById('bt-min-cred').value || '0.55');
@@ -248,18 +249,46 @@ async function runBacktest() {
         const pnlClass = (d.total_pnl_usd || 0) >= 0 ? 'text-green-400' : 'text-red-400';
         const hr = d.hit_rate != null ? `${(d.hit_rate*100).toFixed(0)}%` : '—';
         const roi = d.roi != null ? `${(d.roi*100).toFixed(1)}%` : '—';
+        // Sharpe: >1 is good, >2 is great, <0 is losing
+        const sharpe = d.sharpe != null ? d.sharpe.toFixed(2) : '—';
+        const sharpeClass = d.sharpe == null ? 'text-gray-500'
+            : d.sharpe >= 1 ? 'text-green-400'
+            : d.sharpe >= 0 ? 'text-amber-400' : 'text-red-400';
+        const drawdown = d.max_drawdown_usd != null ? d.max_drawdown_usd.toFixed(2) : '—';
         let cats = '';
         for (const [k,v] of Object.entries(d.by_category || {})) {
             const cClass = v.pnl >= 0 ? 'text-green-400' : 'text-red-400';
             cats += `<tr class="border-b border-white/5"><td class="px-3 py-1.5 text-xs">${k}</td><td class="px-3 py-1.5 text-xs">${v.n}</td><td class="px-3 py-1.5 text-xs">${v.wins}</td><td class="px-3 py-1.5 text-xs font-mono ${cClass}">${v.pnl >= 0 ? '+' : ''}${v.pnl.toFixed(2)}</td></tr>`;
         }
         out.innerHTML = `
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
                 <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Signals</div><div class="text-2xl font-bold text-gray-200">${d.n_signals}</div></div>
                 <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Hit rate</div><div class="text-2xl font-bold text-gray-200">${hr}</div><div class="text-xs text-gray-500 mt-1">${d.wins}W / ${d.losses}L</div></div>
                 <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">P&amp;L</div><div class="text-2xl font-bold ${pnlClass}">${(d.total_pnl_usd || 0) >= 0 ? '+' : ''}${(d.total_pnl_usd || 0).toFixed(2)}</div></div>
                 <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">ROI</div><div class="text-2xl font-bold text-gray-200">${roi}</div></div>
-            </div>` + (cats ? `<div class="rounded-xl border border-white/5 overflow-hidden"><table class="w-full"><thead class="themed-card"><tr><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Category</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">N</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Wins</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">P&amp;L</th></tr></thead><tbody>${cats}</tbody></table></div>` : '');
+                <div class="rounded-xl p-4 border border-white/5 themed-card" title="Annualised Sharpe ratio. >1 good, >2 great, <0 losing."><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Sharpe</div><div class="text-2xl font-bold ${sharpeClass}">${sharpe}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card" title="Worst peak-to-trough decline. Smaller (closer to zero) is better."><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Max DD</div><div class="text-2xl font-bold text-red-400">${drawdown}</div></div>
+            </div>
+            ${d.daily_curve && d.daily_curve.length > 1 ? '<div class="rounded-xl p-4 border border-white/5 themed-card mb-4"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Cumulative P&amp;L (daily)</div><canvas id="bt-curve" height="120"></canvas></div>' : ''}
+            ${cats ? `<div class="rounded-xl border border-white/5 overflow-hidden"><table class="w-full"><thead class="themed-card"><tr><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Category</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">N</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Wins</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">P&amp;L</th></tr></thead><tbody>${cats}</tbody></table></div>` : ''}`;
+        // Render the daily curve chart (if Chart.js is loaded and we have ≥2 points).
+        if (d.daily_curve && d.daily_curve.length > 1 && window.Chart) {
+            const canvas = document.getElementById('bt-curve');
+            if (canvas) {
+                if (_btChart) { _btChart.destroy(); }
+                const labels = d.daily_curve.map(x => x.date);
+                const cum = d.daily_curve.map(x => x.cum_pnl);
+                const dd = d.daily_curve.map(x => x.drawdown);
+                _btChart = new Chart(canvas, {
+                    type: 'line',
+                    data: {labels, datasets: [
+                        {label: 'Cumulative P&L', data: cum, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0},
+                        {label: 'Drawdown', data: dd, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 1.5, fill: true, tension: 0.2, pointRadius: 0},
+                    ]},
+                    options: {responsive: true, plugins: {legend: {display: true, labels: {color: '#9ca3af', font: {size: 10}}}}, scales: {x: {ticks: {color: '#6b7280', maxRotation: 45, autoSkip: true, maxTicksLimit: 10}, grid: {display: false}}, y: {ticks: {color: '#6b7280'}, grid: {color: 'rgba(255,255,255,0.03)'}}}}
+                });
+            }
+        }
     } catch (e) {
         out.innerHTML = '<span class="text-red-400">Backtest failed</span>';
     }
