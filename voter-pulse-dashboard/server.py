@@ -26,7 +26,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from analysis import elections as election_analysis
 from analysis import eras as era_analysis
 from analysis import mood_index
-from ingestion import fred_client, polls_client, polymarket_client
+from analysis import state_mood as state_mood_analysis
+from ingestion import fred_client, polls_client, polymarket_client, states_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -125,6 +126,12 @@ async def api_backtest(force: bool = False) -> JSONResponse:
     return JSONResponse(_backtest_payload(force=force))
 
 
+@app.get("/api/states")
+async def api_states(force: bool = False) -> JSONResponse:
+    raw = states_client.get_cached(force=force)
+    return JSONResponse({**state_mood_analysis.compose(raw), "fetched_at": raw.get("fetched_at")})
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
@@ -142,6 +149,8 @@ async def api_summary(force: bool = False) -> JSONResponse:
     composed["label"] = mood_index.label_for(composed["overall"])
     eras = era_analysis.compose(life["series"], ERA_SERIES)
     backtest = _backtest_payload(force=force)
+    raw_states = states_client.get_cached(force=force)
+    states = {**state_mood_analysis.compose(raw_states), "fetched_at": raw_states.get("fetched_at")}
     return JSONResponse({
         "mood": composed,
         "life": life,
@@ -149,6 +158,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
         "polls": polls,
         "eras": eras,
         "backtest": backtest,
+        "states": states,
     })
 
 

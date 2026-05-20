@@ -148,6 +148,50 @@
   table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
   table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
 
+  /* ── State tile map ──────────────────────────────────────────────────── */
+  .map-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 24px; }
+  @media (max-width: 820px) { .map-wrap { grid-template-columns: 1fr; } }
+  .tile-grid {
+    display: grid; grid-template-columns: repeat(11, 1fr);
+    grid-auto-rows: minmax(40px, auto); gap: 4px; min-width: 0;
+  }
+  .tile {
+    border-radius: 4px; padding: 6px 4px; text-align: center;
+    background: #21262d; color: #c9d1d9; font-size: 11px; line-height: 1.2;
+    cursor: pointer; user-select: none; transition: transform 0.08s;
+    border: 1px solid transparent;
+  }
+  .tile:hover { transform: scale(1.06); border-color: var(--fg); z-index: 2; }
+  .tile.selected { border-color: var(--accent); }
+  .tile .code { font-weight: 700; letter-spacing: 0.04em; }
+  .tile .val  { font-size: 10px; opacity: 0.85; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile.empty { background: transparent; cursor: default; }
+  .tile.empty:hover { transform: none; border-color: transparent; }
+  .tile.nodata { background: #30363d; color: var(--muted); }
+
+  .map-legend { display: flex; align-items: center; gap: 8px; font-size: 11px;
+                color: var(--muted); margin-top: 10px; }
+  .map-legend .gradient {
+    height: 10px; flex: 1; border-radius: 4px;
+    background: linear-gradient(90deg, #56d364 0%, #d29922 50%, #f85149 100%);
+  }
+
+  .map-side { font-size: 12px; }
+  .map-side h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .map-side ol { margin: 0 0 14px; padding-left: 22px; }
+  .map-side ol li { margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+
+  .state-detail {
+    background: var(--panel-2); border: 1px solid var(--grid); border-radius: 6px;
+    padding: 12px; margin-bottom: 12px;
+  }
+  .state-detail .head { display: flex; justify-content: space-between; align-items: baseline; }
+  .state-detail .name { font-weight: 700; font-size: 14px; }
+  .state-detail .reg { color: var(--muted); font-size: 11px; }
+  .state-detail .big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .state-detail .row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; color: var(--muted); }
+
   /* ── Backtest ─────────────────────────────────────────────────────────── */
   .bt-hero {
     display: grid; grid-template-columns: 280px 1fr; gap: 24px;
@@ -288,6 +332,41 @@
     <p class="desc">Average reading of each indicator across every president since 1947. Current term highlighted.</p>
     <div class="era-wrap"><table class="era" id="eraTable"><tbody><tr><td>loading…</td></tr></tbody></table></div>
     <p class="footnote">Inauguration dates from <code>analysis/eras.py</code>. Cells are simple means over all observations in the term — interpret with caution; presidents inherit conditions they did not create.</p>
+  </section>
+
+  <!-- STATE TILE MAP -->
+  <section class="panel">
+    <h2>Across America — by state</h2>
+    <p class="desc">Each state's unemployment rate, coloured against a 3% → 9% band. Click a tile for the trend.</p>
+    <div class="map-wrap">
+      <div>
+        <div class="tile-grid" id="tileGrid"></div>
+        <div class="map-legend">
+          <span>better (3%)</span>
+          <span class="gradient"></span>
+          <span>worse (9%+)</span>
+        </div>
+      </div>
+      <div class="map-side">
+        <div class="state-detail" id="stateDetail">
+          <div class="head">
+            <span class="name" id="sdName">click a state</span>
+            <span class="reg" id="sdRegion"></span>
+          </div>
+          <div class="big" id="sdValue">—</div>
+          <div class="row"><span>vs 1 year ago</span><span id="sd1y">—</span></div>
+          <div class="row"><span>vs 4 years ago</span><span id="sd4y">—</span></div>
+          <div class="row"><span>FRED series</span><span id="sdSid">—</span></div>
+        </div>
+        <h4>Lowest unemployment</h4>
+        <ol id="rankLow"><li>loading…</li></ol>
+        <h4>Highest unemployment</h4>
+        <ol id="rankHigh"><li>loading…</li></ol>
+        <h4>Biggest 1y improvements</h4>
+        <ol id="rankImp"><li>loading…</li></ol>
+      </div>
+    </div>
+    <p class="footnote">Source: BLS LAUS state unemployment via FRED (one series per state, pattern <code>{ST}UR</code>). National benchmark shown for context: <span id="natBench">—</span>.</p>
   </section>
 
   <!-- BACKTEST -->
@@ -614,6 +693,91 @@ function renderEras(payload) {
   }
 }
 
+const STATE_INDEX = {};
+
+function colorForUnrate(v) {
+  // 3% → green, 6% → amber, 9%+ → red. Linear in HSL hue.
+  if (v == null) return "#30363d";
+  const t = Math.max(0, Math.min(1, (v - 3) / 6));
+  const hue = (1 - t) * 120; // 120 green → 0 red
+  return `hsl(${hue.toFixed(0)}, 55%, 38%)`;
+}
+
+function renderStates(payload) {
+  if (!payload) return;
+  const states = payload.states || [];
+  STATE_INDEX.byPostal = Object.fromEntries(states.map(s => [s.postal, s]));
+
+  // Tile grid — fixed 11-column layout, place each state at its (row, col)
+  const ROWS = 9, COLS = 11;
+  const grid = document.getElementById("tileGrid");
+  const cells = Array.from({ length: ROWS * COLS }, () => null);
+  for (const s of states) {
+    if (!s.tile) continue;
+    cells[s.tile.row * COLS + s.tile.col] = s;
+  }
+  grid.innerHTML = cells.map((s, i) => {
+    if (!s) return `<div class="tile empty"></div>`;
+    const v = s.latest ? s.latest.value : null;
+    const bg = colorForUnrate(v);
+    const noData = v == null;
+    return `
+      <div class="tile ${noData ? "nodata" : ""}" data-postal="${escapeAttr(s.postal)}"
+           style="${noData ? "" : `background:${bg}`}">
+        <div class="code">${escapeHtml(s.postal)}</div>
+        <div class="val">${v == null ? "—" : v.toFixed(1)}</div>
+      </div>`;
+  }).join("");
+
+  grid.querySelectorAll(".tile[data-postal]").forEach(el => {
+    el.addEventListener("click", () => {
+      grid.querySelectorAll(".tile.selected").forEach(t => t.classList.remove("selected"));
+      el.classList.add("selected");
+      showStateDetail(el.dataset.postal);
+    });
+  });
+
+  // Rankings
+  function rankList(postals, valueLabel) {
+    return postals.map(p => {
+      const s = STATE_INDEX.byPostal[p];
+      if (!s) return `<li>${escapeHtml(p)}</li>`;
+      return `<li><strong>${escapeHtml(s.postal)}</strong> ${escapeHtml(s.name)} — ${valueLabel(s)}</li>`;
+    }).join("");
+  }
+  const r = payload.rankings || {};
+  document.getElementById("rankLow").innerHTML  = rankList(r.lowest_unemployment  || [], s => s.latest ? `${s.latest.value.toFixed(1)}%` : "—");
+  document.getElementById("rankHigh").innerHTML = rankList(r.highest_unemployment || [], s => s.latest ? `${s.latest.value.toFixed(1)}%` : "—");
+  document.getElementById("rankImp").innerHTML  = rankList(r.biggest_1y_improvers || [], s => s.delta_1y_pp == null ? "—" : `${s.delta_1y_pp.toFixed(1)}pp`);
+
+  // National benchmark
+  const b = payload.benchmark || {};
+  document.getElementById("natBench").textContent =
+    (b.median == null) ? "—" :
+      `median ${b.median.toFixed(1)}% · range ${b.min.toFixed(1)}–${b.max.toFixed(1)}% across ${b.n} states`;
+
+  // Auto-select the largest population state with data (just pick CA if present, else first w/ data)
+  const initial = STATE_INDEX.byPostal["CA"] && STATE_INDEX.byPostal["CA"].latest ? "CA"
+                  : (states.find(s => s.latest) || {}).postal;
+  if (initial) {
+    const el = grid.querySelector(`.tile[data-postal="${initial}"]`);
+    if (el) { el.classList.add("selected"); showStateDetail(initial); }
+  }
+}
+
+function showStateDetail(postal) {
+  const s = STATE_INDEX.byPostal && STATE_INDEX.byPostal[postal];
+  if (!s) return;
+  document.getElementById("sdName").textContent = s.name;
+  document.getElementById("sdRegion").textContent = s.region || "";
+  document.getElementById("sdValue").textContent = s.latest ? s.latest.value.toFixed(1) + "%" : "—";
+  document.getElementById("sd1y").textContent = s.delta_1y_pp == null ? "—" : (s.delta_1y_pp >= 0 ? "+" : "") + s.delta_1y_pp.toFixed(1) + " pp";
+  document.getElementById("sd4y").textContent = s.delta_4y_pp == null ? "—" : (s.delta_4y_pp >= 0 ? "+" : "") + s.delta_4y_pp.toFixed(1) + " pp";
+  document.getElementById("sdSid").textContent = s.series_id;
+  document.getElementById("sd1y").style.color = s.delta_1y_pp == null ? "" : (s.delta_1y_pp > 0 ? "#f85149" : "#56d364");
+  document.getElementById("sd4y").style.color = s.delta_4y_pp == null ? "" : (s.delta_4y_pp > 0 ? "#f85149" : "#56d364");
+}
+
 function renderBacktest(payload) {
   if (!payload) return;
   const headlineNum = document.getElementById("btHeadline");
@@ -727,6 +891,7 @@ async function load() {
     renderIndicators((data.life && data.life.series) || []);
     renderPolls(data.polls);
     renderEras(data.eras);
+    renderStates(data.states);
     renderBacktest(data.backtest);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;

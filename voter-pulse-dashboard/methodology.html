@@ -77,6 +77,7 @@
       <tr><td>Real disposable personal income</td><td><code>DSPIC96</code></td><td>Monthly</td><td>BEA via FRED</td></tr>
       <tr><td>Consumer sentiment</td><td><code>UMCSENT</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
       <tr><td>Inflation expectations (1 year)</td><td><code>MICH</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
+      <tr><td>State unemployment (50 + DC)</td><td><code>{ST}UR</code></td><td>Monthly</td><td>BLS LAUS via FRED</td></tr>
     </tbody>
   </table>
 
@@ -147,6 +148,23 @@
     presidential term. Inauguration dates are hard-coded
     (<code>analysis/eras.py</code>); we include eras from 1947 onward.
     Eras with no overlapping observations show <em>no data</em>.
+  </p>
+
+  <h2>State-level mood (the "Across America" map)</h2>
+  <p>
+    Each state's tile shows its current seasonally-adjusted unemployment
+    rate from BLS LAUS, fetched via FRED as <code>{ST}UR</code>
+    (e.g. <code>CAUR</code>, <code>TXUR</code>). Colour is a linear
+    interpolation from green at 3% to red at 9%+ — the same band the
+    national pocketbook sub-score uses, so a state tile and the national
+    gauge are visually comparable. Tiles for states with no observation
+    show grey.
+  </p>
+  <p class="note">
+    The tile-grid is a "tilegram" — each state gets one equal-size tile
+    arranged roughly geographically. It deliberately distorts area so
+    Rhode Island and Texas read at the same weight. For population-weighted
+    comparisons use the rankings panel rather than the map.
   </p>
 
   <h2>The election backtest</h2>
