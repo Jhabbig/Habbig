@@ -11,7 +11,9 @@ matters most to traders in the long run.
 
 Port: **7054**. Lives behind the gateway at `trackers.narve.ai` in production.
 
-## What's built (v0)
+## What's built (v0.1)
+
+**14 upstream feeds**, all free / no API key required (Etherscan optional).
 
 | Panel | Source | Refresh |
 |---|---|---|
@@ -21,8 +23,15 @@ Port: **7054**. Lives behind the gateway at `trackers.narve.ai` in production.
 | **Top gainers/losers (24h)** | CoinGecko universe slice | 60 s |
 | **Cross-exchange arbitrage** Binance/Coinbase/Kraken/Bybit/OKX | Per-exchange tickers joined on normalised base symbol; net of round-trip taker fees | 60 s |
 | **Funding rates** (USDT perps, Binance+Bybit) | Binance premiumIndex + Bybit V5 tickers | 30 s |
-| **DeFi TVL** chains + stablecoins | DefiLlama `/v2/chains`, `/protocols`, `/stablecoins`, `/overview/dexs` | 15 min |
+| **DeFi TVL** chains + stablecoins + DEXs | DefiLlama `/v2/chains`, `/protocols`, `/stablecoins`, `/overview/dexs` | 15 min |
 | **Trending coins** | CoinGecko `/search/trending` | 5 min |
+| **News aggregator** (7 outlets, deduped) | RSS multi-feed: CoinDesk, Decrypt, The Block, Bitcoin Magazine, Bankless, Cointelegraph, crypto.news | 10 min |
+| **BTC network metrics** (fees, mempool, tip, difficulty adj.) | mempool.space | 60 s |
+| **BTC hashrate** | mempool.space `/api/v1/mining/hashrate/3d` | 1 h |
+| **ETH gas oracle** | Etherscan gas oracle (optional `ETHERSCAN_API_KEY`) | 60 s |
+| **Binance liquidations** | `/fapi/v1/allForceOrders` (last 100, aggregated by symbol+side) | 60 s |
+| **Cross-DEX spot prices** for 17 tracked tokens across 6 chains | DefiLlama `/coins/prices/current` | 60 s |
+| **BTC treasuries** (ETFs + public co's + govts) | Curated 2025-Q3 snapshot (no flaky scrape dependency) | n/a |
 | **Per-source health** | In-process latency EMA + success rate | 30 s |
 | **Disk-persisted cache** | YTD-grade survival across process restarts | n/a |
 
@@ -99,6 +108,13 @@ python3 -m ingestion.fear_greed
 | `GET /api/sentiment/fear_greed?days=` | 1 h | Alternative.me Fear & Greed |
 | `GET /api/cross_exchange/spreads?min_volume_usd=&top_n=` | 60 s | Cross-exchange arbitrage scanner |
 | `GET /api/funding/rates` | 30 s | Funding-rate aggregator (Binance + Bybit) |
+| `GET /api/news?limit=` | 10 min | Aggregated headlines (7 RSS sources, deduped) |
+| `GET /api/network/btc` | 60 s | BTC fees + mempool + tip + difficulty adjustment |
+| `GET /api/network/btc/hashrate` | 1 h | 3-day BTC hashrate series |
+| `GET /api/network/eth/gas` | 60 s | ETH gas oracle (gwei: safe / propose / fast / base) |
+| `GET /api/liquidations/binance` | 60 s | Recent Binance USDT-perp liquidations, by symbol |
+| `GET /api/dex/prices` | 60 s | Cross-DEX spot prices for 17 curated tokens |
+| `GET /api/btc/treasuries` | n/a | BTC holdings by ETF / public co / govt / private (2025-Q3) |
 | `GET /api/sources` | live | Per-upstream health + persisted-cache view |
 
 ## Files
@@ -140,11 +156,11 @@ crypto-trackers-dashboard/
 | Step | Status | Adds |
 |---|---|---|
 | v0   | ✓ done | Universe + multi-exchange + cross-arb + funding + DeFi + F&G + source health |
-| v0.1 | open | Liquidation heatmap (Coinglass-style aggregation across venues) |
+| v0.1 | ✓ done | News aggregator (7 RSS sources) + BTC/ETH network metrics + Binance liquidations + cross-DEX prices + BTC treasuries |
 | v0.2 | open | Whale-transaction tracker (Whale Alert mirror + exchange in/outflows) |
-| v0.3 | open | On-chain context (Etherscan / Solscan / Basescan basic stats per coin) |
-| v0.4 | open | News aggregator (CoinDesk + Decrypt + The Block + crypto.news RSS) |
-| v0.5 | open | Network metrics (hash rate / gas / mempool depth / miner flows) |
+| v0.3 | open | On-chain context (Etherscan / Solscan / Basescan tx counts + holder counts per coin) |
+| v0.4 | open | Coinglass-style multi-venue liquidation heatmap (Bybit + OKX + Hyperliquid websockets) |
+| v0.5 | open | Solana priority-fee tracker + Solana validator stake + Jito tip stream |
 | v0.6 | open | Per-coin detail page with TradingView-style candlestick chart |
 | v0.7 | open | Token unlocks calendar + IDO / new listings calendar |
 | v0.8 | open | Smart-money wallet tracker (top wallet PnL leaderboard) |

@@ -36,12 +36,18 @@ from ingestion import (
     _health,
     _persistence,
     binance,
+    binance_liquidations,
+    btc_treasuries,
     bybit,
     coinbase,
     coingecko,
     defillama,
+    defillama_prices,
+    etherscan_gas,
     fear_greed,
     kraken,
+    mempool_btc,
+    news,
     okx,
 )
 
@@ -272,6 +278,51 @@ async def api_funding_rates() -> JSONResponse:
     ))
 
 
+# ─── News ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/news")
+async def api_news(limit: int = 60) -> JSONResponse:
+    return JSONResponse(news.headlines(limit=max(5, min(limit, 200))))
+
+
+# ─── Network metrics (BTC + ETH) ──────────────────────────────────────────────
+
+@app.get("/api/network/btc")
+async def api_network_btc() -> JSONResponse:
+    return JSONResponse(mempool_btc.network_status())
+
+
+@app.get("/api/network/btc/hashrate")
+async def api_btc_hashrate() -> JSONResponse:
+    return JSONResponse(mempool_btc.recent_hashrate())
+
+
+@app.get("/api/network/eth/gas")
+async def api_eth_gas() -> JSONResponse:
+    return JSONResponse(etherscan_gas.eth_gas_oracle())
+
+
+# ─── Liquidations ─────────────────────────────────────────────────────────────
+
+@app.get("/api/liquidations/binance")
+async def api_liq_binance(limit: int = 100) -> JSONResponse:
+    return JSONResponse(binance_liquidations.recent_liquidations(limit=limit))
+
+
+# ─── DEX prices ───────────────────────────────────────────────────────────────
+
+@app.get("/api/dex/prices")
+async def api_dex_prices() -> JSONResponse:
+    return JSONResponse(defillama_prices.cross_dex_prices())
+
+
+# ─── BTC treasuries ───────────────────────────────────────────────────────────
+
+@app.get("/api/btc/treasuries")
+async def api_btc_treasuries() -> JSONResponse:
+    return JSONResponse(btc_treasuries.holdings_table())
+
+
 # ─── Per-source health + persisted cache ──────────────────────────────────────
 
 @app.get("/api/sources")
@@ -294,7 +345,8 @@ async def api_summary() -> JSONResponse:
     """Single payload for the front page. Fans out to ~12 upstreams in
     parallel so a slow venue doesn't dominate page-load latency."""
     (univ, glob, trend, fng, chains, dexs, stables, fut, premium,
-     binance_spot, bybit_spot, okx_spot) = await asyncio.gather(
+     binance_spot, bybit_spot, okx_spot,
+     news_headlines, btc_net, eth_gas, liq, dex_prices, treasuries) = await asyncio.gather(
         _to_thread(coingecko.universe, 200),
         _to_thread(coingecko.global_metrics),
         _to_thread(coingecko.trending),
@@ -307,6 +359,12 @@ async def api_summary() -> JSONResponse:
         _to_thread(binance.spot_ticker_24h),
         _to_thread(bybit.tickers, "spot"),
         _to_thread(okx.tickers, "SPOT"),
+        _to_thread(news.headlines, 30),
+        _to_thread(mempool_btc.network_status),
+        _to_thread(etherscan_gas.eth_gas_oracle),
+        _to_thread(binance_liquidations.recent_liquidations, 100),
+        _to_thread(defillama_prices.cross_dex_prices),
+        _to_thread(btc_treasuries.holdings_table),
     )
 
     # Quick aggregate: top 10 movers (gainers + losers) from the universe
@@ -347,6 +405,25 @@ async def api_summary() -> JSONResponse:
             "okx_spot_symbols": (okx_spot.get("count") if not okx_spot.get("error") else 0),
         },
         "universe_count": univ.get("count", 0),
+        "news_top": (news_headlines.get("headlines") or [])[:10],
+        "news_count": news_headlines.get("count", 0),
+        "network": {
+            "btc": btc_net,
+            "eth_gas": eth_gas,
+        },
+        "liquidations": {
+            "count": liq.get("count", 0),
+            "total_notional_usd": liq.get("total_notional_usd", 0),
+            "biggest": liq.get("biggest"),
+            "by_symbol_top": (liq.get("by_symbol_top") or [])[:8],
+        },
+        "dex_prices": dex_prices,
+        "btc_treasuries": {
+            "total_tracked_btc": treasuries.get("total_tracked_btc"),
+            "pct_of_supply_tracked": treasuries.get("pct_of_supply_tracked"),
+            "by_type": treasuries.get("by_type"),
+            "top_holdings": (treasuries.get("holdings") or [])[:10],
+        },
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -371,6 +448,12 @@ async def _startup() -> None:
         ("defillama_dexs",        lambda: defillama.dex_overview(),       900),
         ("defillama_stables",     lambda: defillama.stablecoins(),        1800),
         ("fear_greed",            lambda: fear_greed.index(30),           3600),
+        ("news",                  lambda: news.headlines(60),             600),
+        ("mempool_btc",           lambda: mempool_btc.network_status(),   60),
+        ("mempool_hashrate",      lambda: mempool_btc.recent_hashrate(),  3600),
+        ("eth_gas",               lambda: etherscan_gas.eth_gas_oracle(), 60),
+        ("binance_liq",           lambda: binance_liquidations.recent_liquidations(100), 60),
+        ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
     ])
 
 

@@ -203,6 +203,31 @@
   </section>
 
   <section>
+    <h2>Network metrics <small>BTC + ETH on-chain conditions</small></h2>
+    <div id="network-grid" class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px"></div>
+  </section>
+
+  <section>
+    <h2>Liquidations <small>Binance USDT-perp force orders &middot; last 100</small></h2>
+    <div id="liq-table"></div>
+  </section>
+
+  <section>
+    <h2>Cross-DEX prices <small>DefiLlama aggregator &middot; spot prices on-chain</small></h2>
+    <div id="dex-prices-table"></div>
+  </section>
+
+  <section>
+    <h2>News <small>7-outlet RSS aggregator &middot; deduped &middot; newest first</small></h2>
+    <div id="news-list"></div>
+  </section>
+
+  <section>
+    <h2>BTC treasuries <small>ETFs + public companies + governments &middot; % of 19.8M supply</small></h2>
+    <div id="treasuries-table"></div>
+  </section>
+
+  <section>
     <h2>Source health <small>per-upstream freshness, latency, success rate</small></h2>
     <div id="sources-grid" class="sources-grid"></div>
   </section>
@@ -503,6 +528,138 @@
     }
   }
 
+  // ─── Network metrics ───────────────────────────────────────────────────────
+  function renderNetwork(s) {
+    const net = s.network || {};
+    const btc = net.btc || {};
+    const fees = btc.fees_sat_per_vb || {};
+    const mem = btc.mempool || {};
+    const diff = btc.difficulty_adjustment || {};
+    const gas = net.eth_gas || {};
+    const target = document.getElementById("network-grid");
+    const cards = [];
+    cards.push(`<div class="card">
+      <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin:0 0 8px">BTC fees (sat/vB)</h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-variant-numeric:tabular-nums">
+        <div><div style="font-size:22px;font-weight:700">${fmt(fees.fastest)}</div><div style="font-size:11px;color:var(--text-3)">fastest</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(fees['30min'])}</div><div style="font-size:11px;color:var(--text-3)">30 min</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(fees['60min'])}</div><div style="font-size:11px;color:var(--text-3)">1 h</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(fees.economy)}</div><div style="font-size:11px;color:var(--text-3)">economy</div></div>
+      </div></div>`);
+    cards.push(`<div class="card">
+      <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin:0 0 8px">BTC mempool</h3>
+      <div style="font-size:22px;font-weight:700">${fmtBig(mem.count)}<span style="font-size:11px;color:var(--text-3)"> pending</span></div>
+      <div style="font-size:12px;color:var(--text-2)">total fee ${fmtBig((mem.total_fee_sats || 0) / 100_000_000)} BTC</div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px">vsize ${fmtBig(mem.vsize)} vB</div>
+    </div>`);
+    cards.push(`<div class="card">
+      <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin:0 0 8px">BTC tip + retarget</h3>
+      <div style="font-size:22px;font-weight:700">${fmt(btc.block_height)}</div>
+      <div style="font-size:12px;color:var(--text-2)">${diff.difficulty_change_pct != null ? `Δ ${pct(diff.difficulty_change_pct, 2)} next retarget` : "no retarget data"}</div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:4px">${diff.progress_pct != null ? `cycle ${diff.progress_pct.toFixed(1)}%` : ""}</div>
+    </div>`);
+    cards.push(`<div class="card">
+      <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin:0 0 8px">ETH gas (gwei)</h3>
+      ${gas && !gas.error ? `<div style="display:flex;gap:14px;flex-wrap:wrap;font-variant-numeric:tabular-nums">
+        <div><div style="font-size:22px;font-weight:700">${fmt(gas.fast_gwei, 1)}</div><div style="font-size:11px;color:var(--text-3)">fast</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(gas.propose_gwei, 1)}</div><div style="font-size:11px;color:var(--text-3)">avg</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(gas.safe_gwei, 1)}</div><div style="font-size:11px;color:var(--text-3)">safe</div></div>
+        <div><div style="font-size:22px;font-weight:700">${fmt(gas.base_fee_gwei, 2)}</div><div style="font-size:11px;color:var(--text-3)">base</div></div>
+      </div>` : `<div style="font-size:14px;color:var(--accent-2)">${escapeHtml(gas.error || 'unavailable')}</div>
+                 <div style="font-size:11px;color:var(--text-3);margin-top:4px">Set ETHERSCAN_API_KEY for ETH gas.</div>`}
+    </div>`);
+    target.innerHTML = cards.join("");
+  }
+
+  // ─── Liquidations ──────────────────────────────────────────────────────────
+  function renderLiq(s) {
+    const liq = s.liquidations || {};
+    const target = document.getElementById("liq-table");
+    const top = liq.by_symbol_top || [];
+    if (!top.length) {
+      target.innerHTML = `<div class="card">No recent liquidation data. <span class="muted">(Binance restricted allForceOrders to authenticated keys in some regions - set BINANCE_API_KEY in v0.x.)</span></div>`;
+      return;
+    }
+    const rows = top.map(r => `<tr>
+      <td><strong>${escapeHtml(r.symbol || '?')}</strong></td>
+      <td class="num">$${fmtBig(r.total_usd)}</td>
+      <td class="num down">$${fmtBig(r.long_liq_usd)}</td>
+      <td class="num up">$${fmtBig(r.short_liq_usd)}</td>
+      <td class="num muted">${fmt(r.count)}</td>
+    </tr>`).join("");
+    const biggest = liq.biggest;
+    target.innerHTML = `<table><thead><tr>
+      <th>Symbol</th><th>Total liquidated</th><th>Longs liq'd</th><th>Shorts liq'd</th><th>Events</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="footer" style="margin-top:8px">Total in window: $${fmtBig(liq.total_notional_usd)} across ${fmt(liq.count)} liquidations.
+    ${biggest ? ` Biggest: <strong>${escapeHtml(biggest.symbol)}</strong> ${biggest.side === 'SELL' ? '(long)' : '(short)'} $${fmtBig(biggest.notional_usd)}.` : ''}</div>`;
+  }
+
+  // ─── DEX prices ────────────────────────────────────────────────────────────
+  function renderDexPrices(s) {
+    const target = document.getElementById("dex-prices-table");
+    const tokens = (s.dex_prices && s.dex_prices.tokens) || [];
+    if (!tokens.length) { target.innerHTML = '<div class="card">DEX prices unavailable.</div>'; return; }
+    const rows = tokens.map(t => `<tr>
+      <td><strong>${escapeHtml(t.symbol)}</strong></td>
+      <td class="muted">${escapeHtml(t.chain || '?')}</td>
+      <td class="num">${fmtPrice(t.price_usd)}</td>
+      <td class="num muted">${t.confidence != null ? (t.confidence * 100).toFixed(1) + '%' : '-'}</td>
+      <td class="muted" style="font-family:monospace;font-size:10px">${escapeHtml((t.address || '').slice(0, 16))}…</td>
+    </tr>`).join("");
+    target.innerHTML = `<table><thead><tr>
+      <th>Token</th><th>Chain</th><th>Spot price</th><th>Confidence</th><th>Address</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="footer" style="margin-top:8px">Source: DefiLlama coins aggregator. Confidence is a 0-100% liquidity-weighted reliability score.</div>`;
+  }
+
+  // ─── News ──────────────────────────────────────────────────────────────────
+  function renderNews(s) {
+    const target = document.getElementById("news-list");
+    const items = s.news_top || [];
+    if (!items.length) { target.innerHTML = '<div class="card">No headlines yet.</div>'; return; }
+    target.innerHTML = `<div class="card">${items.map(h => {
+      const ago = h._epoch ? (() => {
+        const dt = Math.round((Date.now()/1000) - h._epoch);
+        if (dt < 60) return `${dt}s`;
+        if (dt < 3600) return `${Math.round(dt/60)}m`;
+        if (dt < 86400) return `${Math.round(dt/3600)}h`;
+        return `${Math.round(dt/86400)}d`;
+      })() : "-";
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          ${pill(h.source, 'info')}
+          <span style="font-size:11px;color:var(--text-3)">${ago} ago</span>
+        </div>
+        <div style="margin-top:3px"><a href="${escapeHtml(h.url || '#')}" target="_blank" rel="noopener" style="color:var(--text-1);font-weight:500">${escapeHtml(h.title)}</a></div>
+        ${h.summary ? `<div style="font-size:12px;color:var(--text-2);margin-top:3px">${escapeHtml(h.summary)}</div>` : ''}
+      </div>`;
+    }).join("")}</div>`;
+  }
+
+  // ─── BTC Treasuries ───────────────────────────────────────────────────────
+  function renderTreasuries(s) {
+    const t = s.btc_treasuries || {};
+    const target = document.getElementById("treasuries-table");
+    if (!t.top_holdings) { target.innerHTML = '<div class="card">Treasuries data unavailable.</div>'; return; }
+    const byType = t.by_type || {};
+    const summaryRow = Object.values(byType).map(b =>
+      `<div style="text-align:center"><div style="font-size:18px;font-weight:700">${fmtBig(b.btc)}</div><div style="font-size:11px;color:var(--text-3)">${escapeHtml(b.type)} (${b.pct_of_supply}%)</div></div>`).join("");
+    const rows = (t.top_holdings || []).map(h => `<tr>
+      <td><strong>${escapeHtml(h.name)}</strong></td>
+      <td>${pill(h.type, h.type === 'ETF' ? 'info' : h.type === 'Public' ? 'up' : h.type === 'Govt' ? 'warn' : 'down')}</td>
+      <td class="num">${fmtBig(h.btc)} BTC</td>
+      <td class="num muted">${h.pct_of_supply.toFixed(3)}%</td>
+    </tr>`).join("");
+    target.innerHTML = `<div class="card">
+      <div style="display:flex;gap:24px;justify-content:space-around;align-items:center;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">${summaryRow}</div>
+      <table><thead><tr>
+        <th>Holder</th><th>Type</th><th>BTC held</th><th>% of supply</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div class="footer" style="margin-top:8px">${escapeHtml(t.total_tracked_btc?.toLocaleString() || '?')} BTC tracked (${t.pct_of_supply_tracked || 0}% of 19.8M supply). 2025-Q3 snapshot.</div>
+    </div>`;
+  }
+
   // ─── Source health ─────────────────────────────────────────────────────────
   async function loadSources() {
     try {
@@ -531,6 +688,11 @@
       renderFng(s);
       renderMovers(s);
       renderDefi(s);
+      renderNetwork(s);
+      renderLiq(s);
+      renderDexPrices(s);
+      renderNews(s);
+      renderTreasuries(s);
       setUpdated(s.fetched_at);
     } catch (e) {
       document.getElementById("crit-strip").innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
