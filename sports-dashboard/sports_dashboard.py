@@ -1066,6 +1066,257 @@ def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
         return [], None
 
 
+# ── Player props ────────────────────────────────────────────────────────────
+# The Odds API exposes player props on a per-event endpoint, which is much
+# more expensive than the per-sport h2h/spreads/totals call. We cache
+# aggressively (10 min TTL per event) and only fetch for events that are
+# imminent (next 6 hours) to keep monthly quota burn manageable.
+
+PROP_MARKETS_BY_SPORT = {
+    # NBA props that overlap with Kalshi's coverage (KXNBAPTS / KXNBA3PT / KXNBAAST / KXNBAREB)
+    "basketball_nba": "player_points,player_rebounds,player_assists,player_threes",
+    # NFL — most-traded prop markets
+    "americanfootball_nfl": "player_pass_tds,player_pass_yds,player_rush_yds,player_receptions,player_anytime_td",
+    # MLB — batter + pitcher headliners
+    "baseball_mlb": "batter_hits,batter_home_runs,batter_total_bases,pitcher_strikeouts",
+    # NHL — scoring side
+    "icehockey_nhl": "player_goals,player_assists,player_points,player_shots",
+}
+
+PROP_CACHE_TTL_SECONDS = 600  # 10 min — props move less than h2h
+PROP_EVENT_LOOKAHEAD_HOURS = 6  # only fetch for games this close to kickoff
+
+# {(sport, event_id): {"ts": float, "data": list[dict], "remaining": int|None}}
+_PROP_CACHE: dict[tuple[str, str], dict] = {}
+
+
+def fetch_player_props_for_event(sport_key: str, event_id: str) -> tuple[list[dict], str | None]:
+    """Fetch player-prop odds for one event. Cached for PROP_CACHE_TTL_SECONDS.
+
+    Returns (raw_event_dict_list, remaining_quota). The Odds API returns a
+    single event-shaped dict, but we wrap it in a list so the parser
+    signature matches parse_odds_events.
+    """
+    if not ODDS_API_KEY:
+        return [], None
+    markets = PROP_MARKETS_BY_SPORT.get(sport_key)
+    if not markets:
+        return [], None
+
+    key = (sport_key, event_id)
+    now = time.time()
+    cached = _PROP_CACHE.get(key)
+    if cached and (now - cached["ts"]) < PROP_CACHE_TTL_SECONDS:
+        return cached["data"], cached["remaining"]
+
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "us",  # player props are US-side only at the major books
+        "markets": markets,
+        "oddsFormat": "decimal",
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+    except requests.RequestException as e:
+        log.warning("Player-prop fetch network error for %s/%s: %s", sport_key, event_id, e)
+        return [], None
+    if resp.status_code == 429:
+        _ODDS_QUOTA["exhausted_count"] += 1
+        M_ODDS_EXHAUSTED.inc()
+        return [], None
+    if resp.status_code == 404:
+        # Event has no props posted yet (typical for distant future games)
+        return [], None
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        log.debug("Player-prop fetch non-OK %s/%s: %s", sport_key, event_id, e)
+        return [], None
+    remaining = _record_odds_quota(resp)
+    data = [resp.json()] if resp.json() else []
+    _PROP_CACHE[key] = {"ts": now, "data": data, "remaining": remaining}
+    return data, remaining
+
+
+def fetch_imminent_events(sport_key: str) -> list[dict]:
+    """List events starting within PROP_EVENT_LOOKAHEAD_HOURS. Cheap call
+    (no markets in the params), used to gate the per-event prop fetch.
+    """
+    if not ODDS_API_KEY:
+        return []
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events"
+    params = {"apiKey": ODDS_API_KEY}
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+        if resp.status_code != 200:
+            return []
+        _record_odds_quota(resp)
+    except requests.RequestException:
+        return []
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=PROP_EVENT_LOOKAHEAD_HOURS)
+    out: list[dict] = []
+    for ev in resp.json() or []:
+        dt = _parse_iso_utc(ev.get("commence_time", ""))
+        if dt is None:
+            continue
+        # Include in-progress games (started up to 4 hours ago)
+        if (now - timedelta(hours=4)) <= dt <= cutoff:
+            out.append(ev)
+    return out
+
+
+# ── Player-name normalization ───────────────────────────────────────────────
+# Bookmakers, Kalshi, and Polymarket all spell player names slightly
+# differently ("LeBron James" vs "L. James" vs "lebron-james"). We
+# normalize to lowercase first-initial-last-name form for matching, and
+# keep a small alias table for the cases where that doesn't work
+# (suffixes, hyphenation, common nicknames).
+
+PLAYER_NAME_ALIASES = {
+    # Common-name collisions resolved by team affiliation in match logic;
+    # this table is for spelling/nickname normalization only.
+    "lebron": "lebron james",
+    "kd": "kevin durant",
+    "steph": "stephen curry",
+    "steph curry": "stephen curry",
+    "giannis": "giannis antetokounmpo",
+    "luka": "luka doncic",
+    "jokic": "nikola jokic",
+    "embiid": "joel embiid",
+    "tatum": "jayson tatum",
+    "ja": "ja morant",
+    "shai": "shai gilgeous-alexander",
+    "sga": "shai gilgeous-alexander",
+    "kawhi": "kawhi leonard",
+    "pg": "paul george",
+    "pg13": "paul george",
+    "ad": "anthony davis",
+    "cp3": "chris paul",
+    "klay": "klay thompson",
+    "dame": "damian lillard",
+    "dame lillard": "damian lillard",
+    "mahomes": "patrick mahomes",
+    "lamar": "lamar jackson",
+    "josh allen": "josh allen",
+    "ja'marr chase": "ja'marr chase",
+    "ja marr chase": "ja'marr chase",
+    "mcdavid": "connor mcdavid",
+    "ovi": "alexander ovechkin",
+    "ohtani": "shohei ohtani",
+}
+
+_PLAYER_NAME_STRIP = re.compile(r"[^a-z'\s-]")
+
+
+def normalize_player_name(name: str) -> str:
+    """Lowercase, strip suffixes (Jr./Sr./II/III), collapse spaces, apply
+    alias table. Returns a canonical form for fuzzy matching."""
+    if not name:
+        return ""
+    n = name.lower().strip()
+    n = _PLAYER_NAME_STRIP.sub("", n)
+    # Strip suffixes
+    for suffix in (" jr", " sr", " ii", " iii", " iv"):
+        if n.endswith(suffix):
+            n = n[: -len(suffix)].strip()
+    # Collapse internal whitespace
+    n = " ".join(n.split())
+    return PLAYER_NAME_ALIASES.get(n, n)
+
+
+def parse_player_props(raw: list[dict]) -> list[dict]:
+    """Parse The Odds API per-event player-prop response into a flat list
+    of {player, market, line, books{}} dicts.
+
+    The Odds API shape for player props is:
+      event:
+        bookmakers: [
+          {key, title, markets: [
+            {key: 'player_points', outcomes: [
+              {name: 'Over', description: 'LeBron James', point: 25.5, price: 1.85},
+              {name: 'Under', description: 'LeBron James', point: 25.5, price: 1.95},
+              ...
+            ]}
+          ]}
+        ]
+
+    We pivot to per-(player, market, line) rows so each row can be matched
+    against Kalshi and Polymarket independently.
+    """
+    out: list[dict] = []
+    for ev in raw:
+        commence_time = ev.get("commence_time", "")
+        home = ev.get("home_team", "")
+        away = ev.get("away_team", "")
+        event_id = ev.get("id", "")
+
+        # First pass: collect per-(player, market, line) book quotes
+        # Key: (player_norm, market_key, line)
+        bucket: dict[tuple[str, str, float], dict] = {}
+        for bk in ev.get("bookmakers") or []:
+            bk_key = bk.get("key", "")
+            for mkt in bk.get("markets") or []:
+                market_key = mkt.get("key", "")
+                if not market_key.startswith(("player_", "batter_", "pitcher_")):
+                    continue
+                for oc in mkt.get("outcomes") or []:
+                    side = (oc.get("name") or "").lower()  # "over" or "under"
+                    if side not in ("over", "under", "yes", "no"):
+                        continue
+                    player_raw = oc.get("description") or oc.get("name") or ""
+                    if not player_raw or player_raw.lower() in ("over", "under", "yes", "no"):
+                        continue
+                    try:
+                        line = float(oc.get("point") or 0)
+                        price = float(oc.get("price") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    implied = (1.0 / price) * 100.0
+                    player_norm = normalize_player_name(player_raw)
+                    key = (player_norm, market_key, round(line, 1))
+                    if key not in bucket:
+                        bucket[key] = {
+                            "player": player_raw,
+                            "player_norm": player_norm,
+                            "market": market_key,
+                            "line": round(line, 1),
+                            "books": {},
+                        }
+                    if bk_key not in bucket[key]["books"]:
+                        bucket[key]["books"][bk_key] = {"title": bk.get("title", bk_key)}
+                    bucket[key]["books"][bk_key][f"{side}_prob"] = round(implied, 2)
+                    bucket[key]["books"][bk_key][f"{side}_odds"] = price
+
+        # Second pass: enrich each row with event meta + de-vigged consensus
+        for row in bucket.values():
+            row["event"] = f"{away} @ {home}" if home and away else (home or away or "")
+            row["event_id"] = event_id
+            row["commence_time"] = commence_time
+            # Mean over_prob and under_prob across books that quoted both sides.
+            over_probs = [b["over_prob"] for b in row["books"].values() if "over_prob" in b]
+            under_probs = [b["under_prob"] for b in row["books"].values() if "under_prob" in b]
+            paired = [(b["over_prob"], b["under_prob"])
+                      for b in row["books"].values()
+                      if "over_prob" in b and "under_prob" in b]
+            row["consensus_over_pp"] = round(sum(over_probs) / len(over_probs), 2) if over_probs else None
+            row["consensus_under_pp"] = round(sum(under_probs) / len(under_probs), 2) if under_probs else None
+            if paired:
+                vig_per_book = [(o + u) - 100.0 for o, u in paired]
+                row["vig_pct"] = round(sum(vig_per_book) / len(vig_per_book), 2)
+                # De-vigged consensus = over_prob / (over_prob + under_prob), averaged
+                devigged = [o / (o + u) * 100.0 for o, u in paired if (o + u) > 0]
+                row["consensus_over_devigged"] = round(sum(devigged) / len(devigged), 2) if devigged else None
+            else:
+                row["vig_pct"] = 0.0
+                row["consensus_over_devigged"] = row["consensus_over_pp"]
+            out.append(row)
+    return out
+
+
 def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
     """Parse odds into structured events with implied probabilities."""
     events = []
@@ -1394,6 +1645,275 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
                 break
 
     return all_markets
+
+
+def _kalshi_series_to_market(event_ticker: str) -> str | None:
+    """Map a Kalshi event ticker prefix to a The Odds API market_key.
+
+    Kalshi NBA props: KXNBAPTS → player_points, KXNBA3PT → player_threes,
+    KXNBAAST → player_assists, KXNBAREB → player_rebounds. Extensible
+    to other sports as Kalshi adds them.
+    """
+    et = (event_ticker or "").upper()
+    if "NBAPTS" in et: return "player_points"
+    if "NBA3PT" in et: return "player_threes"
+    if "NBAAST" in et: return "player_assists"
+    if "NBAREB" in et: return "player_rebounds"
+    return None
+
+
+_KALSHI_LINE_RE = re.compile(r"-T?(\d+(?:\.\d+)?)(?:-\w+)?$")
+
+
+def _extract_kalshi_prop_line(ticker: str) -> float | None:
+    """Pull the threshold (e.g. 26.5 or 27) off the tail of a Kalshi ticker."""
+    if not ticker:
+        return None
+    m = _KALSHI_LINE_RE.search(ticker)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_kalshi_prop_player(market: dict) -> str | None:
+    """Best-effort player-name extraction. Tries yes_sub_title, then a
+    couple of regex patterns over the market title."""
+    sub = (market.get("yes_sub_title") or "").strip()
+    if sub and sub.lower() not in ("yes", "no", ""):
+        return sub
+    title = (market.get("title") or "").strip()
+    # Pattern: "Will <Player> score/throw/hit ... ?"
+    m = re.match(
+        r"(?:will\s+)?([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+        r"(?:score|throw|hit|record|achieve|have|get|pass|rush|catch)",
+        title.lower(),
+    )
+    if m:
+        return m.group(1).strip()
+    # Pattern: "<Player> <stat>" at start of title
+    m = re.match(
+        r"^([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+        r"(points|3\-?pt|threes|assists|rebounds|td|tds|yards)",
+        title.lower(),
+    )
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def parse_kalshi_player_props(parsed_kalshi: list[dict]) -> list[dict]:
+    """Reshape parse_kalshi_markets output into a flat list of player-prop
+    rows ready for cross-venue matching. Each row is one (player, market,
+    line) quote at Kalshi.
+
+    Kalshi prop tier convention: a ticker ending in "T27" means
+    "score >= 27", which mathematically equals "over 26.5" on a book.
+    We expose `line_book_equivalent` = ticker_line - 0.5 so matching
+    against book lines is straightforward.
+    """
+    out: list[dict] = []
+    for ev in parsed_kalshi or []:
+        if ev.get("market_type") != "props":
+            continue
+        market_key = _kalshi_series_to_market(ev.get("event_ticker", ""))
+        if not market_key:
+            continue
+        for team_name, data in (ev.get("teams") or {}).items():
+            ticker = data.get("ticker", "")
+            line_raw = _extract_kalshi_prop_line(ticker)
+            if line_raw is None:
+                continue
+            # Try to extract player from team_name first (Kalshi's yes_sub_title);
+            # fall back to title parsing on the parent event.
+            player_raw = team_name
+            if not player_raw or player_raw.lower() in ("yes", "no"):
+                player_raw = _extract_kalshi_prop_player({"title": ev.get("title", "")}) or ""
+            player_norm = normalize_player_name(player_raw)
+            if not player_norm:
+                continue
+            out.append({
+                "player": player_raw,
+                "player_norm": player_norm,
+                "market": market_key,
+                # Kalshi-native line: "score N or more" threshold
+                "line_kalshi": line_raw,
+                # Book-equivalent line: book "over N-0.5" == Kalshi "T(N)"
+                "line_book_equivalent": round(line_raw - 0.5, 1),
+                "yes_prob": data.get("implied_prob"),
+                "yes_bid": data.get("yes_bid"),
+                "yes_ask": data.get("yes_ask"),
+                "volume": data.get("volume", 0),
+                "ticker": ticker,
+                "event_ticker": ev.get("event_ticker", ""),
+                "event_title": ev.get("title", ""),
+            })
+    return out
+
+
+def match_player_props_cross_venue(
+    book_props: list[dict],
+    kalshi_props: list[dict],
+    poly_markets: list[dict] | None = None,
+) -> list[dict]:
+    """Join book player-prop rows to Kalshi (and optionally Polymarket)
+    by (player_norm, market, line). Returns enriched rows with
+    divergences and signal flags.
+
+    Matching is exact on (player_norm, market, line); books use
+    continuous half-integer lines so the equality holds when Kalshi's
+    book-equivalent line lines up.
+    """
+    # Index Kalshi by (player_norm, market, line_book_equivalent) for O(1) lookup
+    kalshi_idx: dict[tuple[str, str, float], dict] = {}
+    for kp in kalshi_props or []:
+        key = (kp["player_norm"], kp["market"], kp["line_book_equivalent"])
+        # Prefer higher-volume Kalshi market if duplicates
+        existing = kalshi_idx.get(key)
+        if existing is None or (kp.get("volume") or 0) > (existing.get("volume") or 0):
+            kalshi_idx[key] = kp
+
+    # Same for Polymarket: filter to prop-shaped questions and key by
+    # extracted (player, market, line).
+    poly_idx: dict[tuple[str, str, float], dict] = {}
+    for pm in poly_markets or []:
+        info = _extract_poly_prop_info(pm)
+        if info is None:
+            continue
+        key = (info["player_norm"], info["market"], info["line"])
+        poly_idx[key] = {**pm, **info}
+
+    out: list[dict] = []
+    for bp in book_props:
+        key = (bp["player_norm"], bp["market"], bp["line"])
+        k = kalshi_idx.get(key)
+        p = poly_idx.get(key)
+
+        # Pick best book line for each side (highest implied prob = cheapest)
+        best_book_over = None
+        best_book_under = None
+        for bk_key, bk_data in (bp.get("books") or {}).items():
+            if "over_prob" in bk_data:
+                if best_book_over is None or bk_data["over_prob"] > best_book_over["prob"]:
+                    best_book_over = {"book": bk_key, "title": bk_data.get("title"),
+                                       "prob": bk_data["over_prob"],
+                                       "odds": bk_data.get("over_odds")}
+            if "under_prob" in bk_data:
+                if best_book_under is None or bk_data["under_prob"] > best_book_under["prob"]:
+                    best_book_under = {"book": bk_key, "title": bk_data.get("title"),
+                                        "prob": bk_data["under_prob"],
+                                        "odds": bk_data.get("under_odds")}
+
+        # De-vigged consensus = our "fair" probability of OVER
+        fair_over = bp.get("consensus_over_devigged") or bp.get("consensus_over_pp")
+
+        divergences: dict = {}
+        if k and fair_over is not None and k.get("yes_prob") is not None:
+            # Positive = Kalshi YES underprices the over (we should buy YES)
+            divergences["kalshi"] = round(fair_over - float(k["yes_prob"]), 2)
+        if p and fair_over is not None and p.get("yes_prob") is not None:
+            divergences["polymarket"] = round(fair_over - float(p["yes_prob"]), 2)
+
+        max_abs_div = max((abs(v) for v in divergences.values()), default=0.0)
+
+        # Signal: any divergence exceeds threshold AND we have a sharp book quote
+        is_signal = max_abs_div >= DIVERGENCE_THRESHOLD and bool(bp.get("books"))
+
+        out.append({
+            "player": bp["player"],
+            "player_norm": bp["player_norm"],
+            "market": bp["market"],
+            "line": bp["line"],
+            "event": bp.get("event", ""),
+            "commence_time": bp.get("commence_time", ""),
+            "consensus_over_pp": bp.get("consensus_over_pp"),
+            "consensus_over_devigged": bp.get("consensus_over_devigged"),
+            "consensus_under_pp": bp.get("consensus_under_pp"),
+            "vig_pct": bp.get("vig_pct"),
+            "books": bp.get("books"),
+            "best_book_over": best_book_over,
+            "best_book_under": best_book_under,
+            "kalshi": {
+                "yes_prob": k.get("yes_prob") if k else None,
+                "ticker": k.get("ticker") if k else None,
+                "line_kalshi": k.get("line_kalshi") if k else None,
+                "volume": k.get("volume") if k else None,
+                "trade_url": f"https://kalshi.com/markets/{k['ticker'].lower()}" if k and k.get("ticker") else None,
+            } if k else None,
+            "polymarket": {
+                "yes_prob": p.get("yes_prob") if p else None,
+                "slug": p.get("slug") if p else None,
+                "trade_url": f"https://polymarket.com/market/{p['slug']}" if p and p.get("slug") else None,
+            } if p else None,
+            "divergences": divergences,
+            "max_divergence_pp": round(max_abs_div, 2),
+            "is_signal": is_signal,
+        })
+
+    # Sort: signals first, then by absolute divergence
+    out.sort(key=lambda r: (-int(r["is_signal"]), -r["max_divergence_pp"]))
+    return out
+
+
+# Patterns that suggest a Polymarket market is a player prop
+_POLY_PROP_STAT_PATTERNS = [
+    (r"point", "player_points"),
+    (r"3-?pt|three-?pointer|threes?", "player_threes"),
+    (r"assist", "player_assists"),
+    (r"rebound", "player_rebounds"),
+    (r"touchdown|td", "player_anytime_td"),
+    (r"passing yards?|pass yds?", "player_pass_yds"),
+    (r"rushing yards?|rush yds?", "player_rush_yds"),
+    (r"strikeout|k's?", "pitcher_strikeouts"),
+    (r"home run|hr", "batter_home_runs"),
+    (r"goal", "player_goals"),
+]
+
+_POLY_PROP_QUESTION_RE = re.compile(
+    r"(?:will\s+)?([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+    r"(?:score|throw|hit|record|achieve|have|get|pass for)\s+"
+    r"(?:at\s+least\s+|over\s+)?(\d+(?:\.\d+)?)\+?\s*"
+    r"(point|3-?pt|three-?pointer|threes?|assist|rebound|touchdown|td|"
+    r"passing yards?|rushing yards?|strikeout|home run|hr|goal)",
+    re.IGNORECASE,
+)
+
+
+def _extract_poly_prop_info(pm: dict) -> dict | None:
+    """Try to parse a Polymarket market dict into a player-prop tuple.
+    Returns None if the question doesn't look like a prop."""
+    q = (pm.get("market_question") or "").lower()
+    if not q:
+        return None
+    m = _POLY_PROP_QUESTION_RE.search(q)
+    if not m:
+        return None
+    player = m.group(1).strip()
+    try:
+        threshold = float(m.group(2))
+    except ValueError:
+        return None
+    stat_word = m.group(3)
+    market_key = None
+    for pat, key in _POLY_PROP_STAT_PATTERNS:
+        if re.search(pat, stat_word, re.IGNORECASE):
+            market_key = key
+            break
+    if not market_key:
+        return None
+    # Polymarket "score N+" means score >= N == book "over N-0.5"
+    line = round(threshold - 0.5, 1)
+    # Yes price = book over_prob
+    yes = (pm.get("outcomes") or {}).get("Yes") or {}
+    yes_prob = yes.get("implied_prob")
+    return {
+        "player_norm": normalize_player_name(player),
+        "market": market_key,
+        "line": line,
+        "yes_prob": yes_prob,
+    }
 
 
 def parse_kalshi_markets(raw: list[dict]) -> list[dict]:
@@ -6460,13 +6980,8 @@ def _format_player_props(parsed_kalshi: list[dict]) -> list[dict]:
 
 @app.get("/api/kalshi/player-props")
 async def api_kalshi_player_props(request: Request):
-    """Surface Kalshi player-prop markets for a given sport.
-
-    Returns Kalshi-side prices only — comparing against bookmaker player
-    props requires The Odds API's `player_props` market (paid tier) and is
-    not yet wired in. For now this lets users see what's tradeable and
-    compare manually against their book.
-    """
+    """Kalshi-only player-prop feed. Kept for backwards compatibility;
+    new clients should use /api/player-props/cross-venue."""
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -6479,6 +6994,69 @@ async def api_kalshi_player_props(request: Request):
         "sport": sport,
         "props": _format_player_props(parsed),
     })
+
+
+def _build_cross_venue_player_props(sport: str) -> dict:
+    """Fetch book player-props for imminent games, join against Kalshi
+    and Polymarket prop markets, return the cross-venue table.
+
+    Cost-controlled: only fetches book props for events starting in the
+    next PROP_EVENT_LOOKAHEAD_HOURS, and only N events per request to
+    cap quota burn. Cached per event at PROP_CACHE_TTL_SECONDS.
+    """
+    if sport not in PROP_MARKETS_BY_SPORT:
+        return {"sport": sport, "props": [], "error": "sport not configured for props"}
+
+    # Always-available: Kalshi side (no per-event call)
+    kalshi_raw = fetch_kalshi_markets(sport)
+    kalshi_parsed = parse_kalshi_markets(kalshi_raw)
+    kalshi_props = parse_kalshi_player_props(kalshi_parsed)
+
+    # Polymarket: use cached poly markets we already fetched in the main loop
+    global _poly_cache
+    poly_markets = parse_polymarket_events(_poly_cache.get("_global", []))
+
+    # Book side: imminent events only
+    events = fetch_imminent_events(sport)
+    # Cap to 12 events per call to bound quota burn (12 NBA games × 1 call = 12)
+    events = events[:12]
+
+    all_book_props: list[dict] = []
+    for ev in events:
+        ev_id = ev.get("id")
+        if not ev_id:
+            continue
+        raw, _remaining = fetch_player_props_for_event(sport, ev_id)
+        if not raw:
+            continue
+        all_book_props.extend(parse_player_props(raw))
+
+    rows = match_player_props_cross_venue(all_book_props, kalshi_props, poly_markets)
+    return {
+        "sport": sport,
+        "n_events_fetched": len(events),
+        "n_book_props": len(all_book_props),
+        "n_kalshi_props": len(kalshi_props),
+        "props": rows,
+        # Surface a Kalshi-only fallback so the page still works if the
+        # user has no Odds API key (props will be Kalshi-side only).
+        "kalshi_only_props": _format_player_props(kalshi_parsed),
+    }
+
+
+@app.get("/api/player-props/cross-venue")
+async def api_player_props_cross_venue(request: Request):
+    """Cross-venue player-prop comparison: book consensus vs Kalshi vs Polymarket.
+
+    Joins on (player, market, line). Books use continuous half-integer
+    lines; Kalshi uses discrete tiers (T(N) maps to book over N-0.5);
+    Polymarket prop questions are extracted by regex.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    return JSONResponse(await asyncio.to_thread(_build_cross_venue_player_props, sport))
 
 
 # ---------------------------------------------------------------------------

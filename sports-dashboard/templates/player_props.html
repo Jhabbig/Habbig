@@ -3,45 +3,92 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Player Props (Kalshi) · Sharpe</title>
+<title>Player Props · Sharpe</title>
 <style>
   :root {
     --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
-    --card: #111218; --accent: #3b82f6;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+    --amber: #f59e0b;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
          font-size: 14px; line-height: 1.5; }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
   h1 { font-size: 24px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 16px; }
-  .controls { display: flex; gap: 12px; margin: 16px 0; }
-  select { background: var(--card); color: var(--fg); border: 1px solid var(--border);
-           border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  .controls { display: flex; gap: 12px; margin: 16px 0; align-items: center;
+              flex-wrap: wrap; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border);
+                  border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  .summary {
+    display: flex; gap: 18px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 16px; font-size: 13px;
+  }
+  .summary b { color: var(--accent); font-weight: 600; }
   table { width: 100%; border-collapse: collapse; background: var(--card);
-          border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; }
   th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-size: 11px; text-transform: uppercase;
-       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13;
+       white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  td.num { text-align: right; }
+  tr.signal { background: rgba(16, 185, 129, 0.06); }
+  tr.signal:hover { background: rgba(16, 185, 129, 0.10); }
+  tr:hover { background: rgba(255, 255, 255, 0.02); }
+  .player-cell .name { font-weight: 600; }
+  .player-cell .event { color: var(--muted); font-size: 11px; }
+  .market-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    background: #1c1e26; color: var(--muted); font-size: 11px;
+  }
+  .div-pos { color: var(--green); font-weight: 600; }
+  .div-neg { color: var(--red); font-weight: 600; }
+  .div-flat { color: var(--muted); }
+  .trade-btn {
+    display: inline-block; padding: 4px 10px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; text-decoration: none;
+    background: rgba(59, 130, 246, 0.15); color: var(--accent);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+  .trade-btn:hover { background: rgba(59, 130, 246, 0.25); }
+  .empty { padding: 60px; text-align: center; color: var(--muted); }
+  .badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge-signal { background: var(--green); color: #fff; }
+  .badge-kalshi-only { background: var(--amber); color: #08090e; }
+  .small { color: var(--muted); font-size: 11px; }
+  .book-name { font-size: 11px; color: var(--muted); }
   a, a:visited { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .ticker { font-family: ui-monospace, SFMono-Regular, monospace;
-            font-size: 12px; color: var(--muted); }
+  .header-link { font-size: 13px; color: var(--muted); }
+  .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 4px;
+           overflow: hidden; }
+  .modes button { background: var(--card); color: var(--muted); border: 0;
+                  padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .modes button.active { background: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Kalshi Player Props</h1>
+  <h1>Player Props</h1>
   <p class="sub">
-    Live Kalshi player-prop markets. Compare against your sportsbook to find
-    edge. <a href="/">← Back to dashboard</a>
+    Cross-venue player-prop EV: bookmaker consensus vs Kalshi vs Polymarket.
+    Joins on (player, stat, line). Signals fire when divergence ≥ 5 pp.
+    <a class="header-link" href="/">← Back to dashboard</a>
   </p>
   <div class="controls">
-    <label>Sport
+    <label class="field">Sport
       <select id="sport">
         <option value="basketball_nba" selected>NBA</option>
         <option value="americanfootball_nfl">NFL</option>
@@ -49,51 +96,216 @@
         <option value="baseball_mlb">MLB</option>
       </select>
     </label>
+    <label class="field">Stat
+      <select id="market">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label class="field">Min divergence (pp)
+      <input id="minDiv" type="number" min="0" max="30" step="0.5" value="0">
+    </label>
+    <label class="field">Signals only
+      <select id="signalsOnly">
+        <option value="0" selected>No</option>
+        <option value="1">Yes</option>
+      </select>
+    </label>
+    <div class="modes">
+      <button id="mode-cross" class="active" data-mode="cross">Cross-venue</button>
+      <button id="mode-kalshi" data-mode="kalshi">Kalshi only</button>
+    </div>
   </div>
+  <div id="summary" class="summary" style="display:none"></div>
   <div id="content">
     <div class="empty">Loading…</div>
   </div>
 </div>
 <script>
-function fmtPct(n, d=1) { return n == null ? "—" : Number(n).toFixed(d) + "%"; }
-function fmtUSD(n) { return n == null ? "—" : "$" + Number(n).toLocaleString(); }
-function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+const MARKET_LABELS = {
+  player_points: "Points",
+  player_threes: "3PTs",
+  player_assists: "Assists",
+  player_rebounds: "Rebounds",
+  player_pass_yds: "Pass Yds",
+  player_pass_tds: "Pass TDs",
+  player_rush_yds: "Rush Yds",
+  player_receptions: "Receptions",
+  player_anytime_td: "Anytime TD",
+  batter_hits: "Hits",
+  batter_home_runs: "HRs",
+  batter_total_bases: "Total Bases",
+  pitcher_strikeouts: "Strikeouts",
+  player_goals: "Goals",
+  player_shots: "Shots",
+};
 
-async function load() {
-  const sport = document.getElementById("sport").value;
-  const r = await fetch(`/api/kalshi/player-props?sport=${encodeURIComponent(sport)}`);
-  if (!r.ok) {
-    document.getElementById("content").innerHTML =
-      '<div class="empty">' + (r.status === 401 ? 'Sign in required.' : 'Error ' + r.status) + '</div>';
+let allProps = [];
+let mode = "cross";
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmt(n, d = 1) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPP(n) { return n == null ? "—" : (n >= 0 ? "+" : "") + Number(n).toFixed(1); }
+function fmtPct(n, d = 1) { return n == null ? "—" : Number(n).toFixed(d) + "%"; }
+function divClass(n) {
+  if (n == null) return "div-flat";
+  if (Math.abs(n) < 1) return "div-flat";
+  return n > 0 ? "div-pos" : "div-neg";
+}
+
+function populateMarketOptions() {
+  const sel = $("market");
+  sel.innerHTML = '<option value="">All</option>';
+  const markets = Array.from(new Set(allProps.map(p => p.market))).sort();
+  markets.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = MARKET_LABELS[m] || m;
+    sel.appendChild(opt);
+  });
+}
+
+function renderCross(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">' +
+      'No book-side player props available right now. ' +
+      'This may be because games are not imminent (we only fetch within 6 hours of tip-off) ' +
+      'or your Odds API key is missing.</div>';
     return;
   }
-  const d = await r.json();
-  const props = d.props || [];
-  if (!props.length) {
-    document.getElementById("content").innerHTML =
-      '<div class="empty">No live player props for this sport right now.</div>';
+  let html = '<table><thead><tr>' +
+    '<th>Player / Event</th><th>Stat</th><th class="num">Line</th>' +
+    '<th class="num">Books (best OVER)</th>' +
+    '<th class="num">Consensus (devig)</th>' +
+    '<th class="num">Vig</th>' +
+    '<th class="num">Kalshi YES</th>' +
+    '<th class="num">Δ Book vs Kalshi</th>' +
+    '<th class="num">Δ Book vs Poly</th>' +
+    '<th></th></tr></thead><tbody>';
+  for (const r of rows) {
+    const trClass = r.is_signal ? "signal" : "";
+    const k = r.kalshi || {};
+    const p = r.polymarket || {};
+    const bestOver = r.best_book_over || {};
+    const dKal = (r.divergences || {}).kalshi;
+    const dPoly = (r.divergences || {}).polymarket;
+    const tradeLinks = [];
+    if (bestOver.book) tradeLinks.push('<span class="book-name">via ' + esc(bestOver.title || bestOver.book) + '</span>');
+    if (k.trade_url) tradeLinks.push('<a class="trade-btn" href="' + k.trade_url + '" target="_blank" rel="noopener">Kalshi →</a>');
+    if (p.trade_url) tradeLinks.push('<a class="trade-btn" href="' + p.trade_url + '" target="_blank" rel="noopener">Poly →</a>');
+
+    html += '<tr class="' + trClass + '">' +
+      '<td><div class="player-cell"><div class="name">' + esc(r.player) +
+        (r.is_signal ? ' <span class="badge badge-signal">EV</span>' : '') +
+        '</div><div class="event">' + esc(r.event) + '</div></div></td>' +
+      '<td><span class="market-pill">' + esc(MARKET_LABELS[r.market] || r.market) + '</span></td>' +
+      '<td class="num">' + fmt(r.line, 1) + '</td>' +
+      '<td class="num">' + (bestOver.prob != null ? fmtPct(bestOver.prob) : '—') + '</td>' +
+      '<td class="num">' + (r.consensus_over_devigged != null ? fmtPct(r.consensus_over_devigged) : '—') + '</td>' +
+      '<td class="num small">' + (r.vig_pct != null ? fmtPct(r.vig_pct) : '—') + '</td>' +
+      '<td class="num">' + (k.yes_prob != null ? fmtPct(k.yes_prob) : '—') + '</td>' +
+      '<td class="num ' + divClass(dKal) + '">' + fmtPP(dKal) + '</td>' +
+      '<td class="num ' + divClass(dPoly) + '">' + fmtPP(dPoly) + '</td>' +
+      '<td>' + tradeLinks.join(' ') + '</td>' +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
+}
+
+function renderKalshiOnly(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">No live Kalshi player props for this sport.</div>';
     return;
   }
   let html = '<table><thead><tr>' +
     '<th>Player / Prop</th><th>Event</th>' +
     '<th class="num">YES Mid</th><th class="num">Bid</th><th class="num">Ask</th>' +
-    '<th class="num">Volume</th><th>Trade</th></tr></thead><tbody>';
-  for (const p of props) {
-    const tradeUrl = p.ticker ? `https://kalshi.com/markets/${p.ticker.toLowerCase()}` : "";
-    html += `<tr>
-      <td>${esc(p.player)}<div class="ticker">${esc(p.ticker)}</div></td>
-      <td>${esc(p.event)}</td>
-      <td class="num">${fmtPct(p.implied_prob)}</td>
-      <td class="num">${p.yes_bid != null ? "$" + Number(p.yes_bid).toFixed(2) : "—"}</td>
-      <td class="num">${p.yes_ask != null ? "$" + Number(p.yes_ask).toFixed(2) : "—"}</td>
-      <td class="num">${fmtUSD(p.volume)}</td>
-      <td>${tradeUrl ? '<a href="' + tradeUrl + '" target="_blank" rel="noopener">Trade →</a>' : ""}</td>
-    </tr>`;
+    '<th class="num">Volume</th><th></th></tr></thead><tbody>';
+  for (const p of rows) {
+    const tradeUrl = p.ticker ? 'https://kalshi.com/markets/' + p.ticker.toLowerCase() : "";
+    html += '<tr>' +
+      '<td>' + esc(p.player) + '<div class="small">' + esc(p.ticker) + '</div></td>' +
+      '<td>' + esc(p.event) + '</td>' +
+      '<td class="num">' + fmtPct(p.implied_prob) + '</td>' +
+      '<td class="num">' + (p.yes_bid != null ? '$' + Number(p.yes_bid).toFixed(2) : '—') + '</td>' +
+      '<td class="num">' + (p.yes_ask != null ? '$' + Number(p.yes_ask).toFixed(2) : '—') + '</td>' +
+      '<td class="num">' + (p.volume != null ? '$' + Number(p.volume).toLocaleString() : '—') + '</td>' +
+      '<td>' + (tradeUrl ? '<a class="trade-btn" href="' + tradeUrl + '" target="_blank" rel="noopener">Trade →</a>' : '') + '</td>' +
+    '</tr>';
   }
-  html += "</tbody></table>";
-  document.getElementById("content").innerHTML = html;
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
 }
-document.getElementById("sport").addEventListener("change", load);
+
+function applyFiltersAndRender() {
+  const market = $("market").value;
+  const minDiv = parseFloat($("minDiv").value || "0");
+  const signalsOnly = $("signalsOnly").value === "1";
+  let rows = allProps;
+  if (mode === "cross") {
+    if (market) rows = rows.filter(r => r.market === market);
+    if (minDiv > 0) rows = rows.filter(r => (r.max_divergence_pp || 0) >= minDiv);
+    if (signalsOnly) rows = rows.filter(r => r.is_signal);
+    renderCross(rows);
+  } else {
+    renderKalshiOnly(rows);
+  }
+}
+
+async function load() {
+  const sport = $("sport").value;
+  $("content").innerHTML = '<div class="empty">Loading…</div>';
+  $("summary").style.display = "none";
+  const url = mode === "cross"
+    ? `/api/player-props/cross-venue?sport=${encodeURIComponent(sport)}`
+    : `/api/kalshi/player-props?sport=${encodeURIComponent(sport)}`;
+  let r;
+  try { r = await fetch(url); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (!r.ok) {
+    $("content").innerHTML = '<div class="empty">' +
+      (r.status === 401 ? 'Sign in required.' : 'Error ' + r.status) + '</div>';
+    return;
+  }
+  const d = await r.json();
+  if (mode === "cross") {
+    allProps = d.props || [];
+    if (allProps.length === 0 && (d.kalshi_only_props || []).length > 0) {
+      // No book props (no key / no imminent games) — fall back to Kalshi
+      mode = "kalshi";
+      document.querySelectorAll(".modes button").forEach(b => b.classList.toggle("active", b.dataset.mode === "kalshi"));
+      allProps = d.kalshi_only_props;
+      renderKalshiOnly(allProps);
+      $("summary").style.display = "block";
+      $("summary").innerHTML = 'Book-side props unavailable; showing Kalshi-only feed.';
+      return;
+    }
+    populateMarketOptions();
+    $("summary").style.display = "block";
+    $("summary").innerHTML =
+      `<b>${d.n_book_props || 0}</b> book props · ` +
+      `<b>${d.n_kalshi_props || 0}</b> Kalshi props · ` +
+      `<b>${d.n_events_fetched || 0}</b> events scanned · ` +
+      `<b>${allProps.filter(p => p.is_signal).length}</b> EV signals`;
+  } else {
+    allProps = d.props || [];
+    $("summary").style.display = "block";
+    $("summary").innerHTML = `<b>${allProps.length}</b> Kalshi props`;
+  }
+  applyFiltersAndRender();
+}
+
+["sport"].forEach(id => $(id).addEventListener("change", load));
+["market", "minDiv", "signalsOnly"].forEach(id => $(id).addEventListener("change", applyFiltersAndRender));
+document.querySelectorAll(".modes button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    mode = btn.dataset.mode;
+    document.querySelectorAll(".modes button").forEach(b =>
+      b.classList.toggle("active", b === btn));
+    load();
+  });
+});
 load();
 </script>
 </body>
