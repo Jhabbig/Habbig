@@ -1,15 +1,23 @@
 import aiohttp
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+from data_sources.fips import STATE_NAMES, STATE_FIPS
 
 logger = logging.getLogger(__name__)
 
 PREDICTIT_API = "https://www.predictit.org/api/marketdata/all/"
 
+
 class PredictItAggregator:
-    """Fetches midterm election data from PredictIt."""
+    """Fetches midterm election data from PredictIt.
+
+    PredictIt's CFTC no-action letter has expired and the platform has been
+    winding down — the public marketdata endpoint may return empty or 404.
+    The aggregator logs a warning and yields an empty list so the rest of
+    the dashboard keeps working.
+    """
 
     def __init__(self, session: Optional[aiohttp.ClientSession] = None):
         self._session = session
@@ -31,13 +39,13 @@ class PredictItAggregator:
         try:
             async with session.get(PREDICTIT_API, timeout=aiohttp.ClientTimeout(total=20)) as resp:
                 if resp.status != 200:
-                    logger.error(f"PredictIt API error: {resp.status}")
+                    logger.info(f"PredictIt returned {resp.status} (likely shutdown)")
                     return []
                 data = await resp.json()
                 markets = data.get("markets", [])
                 return self._normalize_markets(markets)
         except Exception as e:
-            logger.error(f"PredictIt fetch error: {e}")
+            logger.warning(f"PredictIt fetch error: {e}")
             return []
 
     def _normalize_markets(self, markets: list[dict]) -> list[dict]:
@@ -96,22 +104,19 @@ class PredictItAggregator:
         return normalized
 
     def _extract_state(self, title: str) -> Optional[str]:
-        states = {
-            "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-            "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
-            "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
-            "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
-            "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
-            "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
-            "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
-            "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
-            "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
-            "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
-            "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
-            "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
-            "Wisconsin": "WI", "Wyoming": "WY"
-        }
-        for name, abbr in states.items():
-            if name.lower() in title.lower() or f" {abbr} " in f" {title} ":
+        if not title:
+            return None
+        title_lower = title.lower()
+        # Full names first; abbreviations only for codes that don't collide
+        # with English words.
+        for abbr, name in STATE_NAMES.items():
+            if name.lower() in title_lower:
+                return abbr
+        ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA", "AK", "AR", "DE"}
+        padded = f" {title} "
+        for abbr in STATE_FIPS:
+            if abbr in ambiguous_abbrs:
+                continue
+            if f" {abbr} " in padded:
                 return abbr
         return None
