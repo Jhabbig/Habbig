@@ -398,6 +398,32 @@ CREATE TABLE IF NOT EXISTS crypto_tax_settings (
     lt_rate              REAL NOT NULL DEFAULT 0.15,
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ── Push: subscriptions (one row per device) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_push_subscriptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    endpoint    TEXT NOT NULL,
+    p256dh      TEXT NOT NULL,           -- client public key (base64url)
+    auth        TEXT NOT NULL,           -- client auth secret (base64url)
+    user_agent  TEXT DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, endpoint)
+);
+CREATE INDEX IF NOT EXISTS idx_push_user ON crypto_push_subscriptions(user_id);
+
+-- ── Push: pending notifications (service worker fetches these) ──────────────
+CREATE TABLE IF NOT EXISTS crypto_pending_notifications (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    url          TEXT DEFAULT '/long-term',
+    tag          TEXT DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_user ON crypto_pending_notifications(user_id, delivered_at);
 """
 
 
@@ -1711,6 +1737,86 @@ def upsert_tax_settings(user_id: str, settings: dict) -> None:
              int(settings["harvest_min_age_days"]),
              float(settings["st_rate"]),
              float(settings["lt_rate"])),
+        )
+
+
+# ── Push subscriptions ──────────────────────────────────────────────────────
+
+def upsert_push_subscription(user_id: str, endpoint: str, p256dh: str,
+                             auth: str, user_agent: str = "") -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_push_subscriptions
+                 (user_id, endpoint, p256dh, auth, user_agent)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, endpoint) DO UPDATE SET
+                 p256dh = excluded.p256dh,
+                 auth = excluded.auth,
+                 user_agent = excluded.user_agent""",
+            (user_id, endpoint, p256dh, auth, user_agent),
+        )
+        return int(cur.lastrowid)
+
+
+def get_push_subscriptions(user_id: str) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, endpoint, p256dh, auth, user_agent, created_at "
+            "FROM crypto_push_subscriptions WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def delete_push_subscription(user_id: str, endpoint: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_push_subscriptions WHERE user_id = ? AND endpoint = ?",
+            (user_id, endpoint),
+        )
+
+
+def delete_push_subscription_by_id(sub_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM crypto_push_subscriptions WHERE id = ?", (sub_id,))
+
+
+# ── Pending notifications ───────────────────────────────────────────────────
+
+def insert_pending_notification(user_id: str, title: str, body: str,
+                                 url: str, tag: str = "") -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_pending_notifications
+                 (user_id, title, body, url, tag)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, title, body, url, tag),
+        )
+        return int(cur.lastrowid)
+
+
+def get_pending_notifications(user_id: str, limit: int = 20) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT id, title, body, url, tag, created_at
+               FROM crypto_pending_notifications
+               WHERE user_id = ? AND delivered_at IS NULL
+               ORDER BY created_at DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+    return _rows(rows)
+
+
+def mark_notifications_delivered(user_id: str, ids: list[int]) -> None:
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    with _conn() as c:
+        c.execute(
+            f"UPDATE crypto_pending_notifications "
+            f"SET delivered_at = datetime('now') "
+            f"WHERE user_id = ? AND id IN ({placeholders})",
+            (user_id, *ids),
         )
 
 

@@ -41,6 +41,7 @@ import backtest as bt
 import exchanges as xch
 import execution as exec_mod
 import tax as tax_mod
+import push as push_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -534,6 +535,15 @@ async def execution_ticker():
             summary = await asyncio.to_thread(exec_mod.tick_due_schedules)
             if summary["checked"]:
                 print(f"[exec] {summary}")
+            # Fire push for every actionable outcome.
+            for a in summary.get("actions", []):
+                if a.get("action") in ("placed", "blocked", "filled"):
+                    try:
+                        push_mod.notify_execution(
+                            a["user_id"], a["ticker"], a["action"], a.get("reason", ""),
+                        )
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"[exec] tick error: {type(e).__name__}: {e}")
         try:
@@ -585,6 +595,10 @@ def _evaluate_long_term_alerts():
                 db.mark_long_term_alert_fired(a["id"])
                 db.log_alert(a["user_id"], a["ticker"], f"long_term:{atype}",
                              f"{atype} threshold reached", confidence=0.0)
+                push_mod.notify_long_term_alert(
+                    a["user_id"], a["ticker"], atype,
+                    f"{atype.replace('_',' ').title()} threshold reached for {a['ticker']}.",
+                )
             except Exception:
                 pass
 
@@ -5513,6 +5527,206 @@ async def tax_export(year: int, request: Request):
     )
 
 
+# ===================================================================
+# PUSH NOTIFICATIONS — Phase 5.1
+# ===================================================================
+
+@app.get("/api/push/vapid-key")
+async def get_vapid_key(request: Request):
+    """Server public key used by pushManager.subscribe()."""
+    try:
+        return {"key": push_mod.get_vapid_public_key_b64()}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    sub = payload.get("subscription") or {}
+    endpoint = str(sub.get("endpoint", "")).strip()
+    keys = sub.get("keys", {})
+    p256dh = str(keys.get("p256dh", "")).strip()
+    auth = str(keys.get("auth", "")).strip()
+    if not endpoint or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="endpoint + keys.p256dh + keys.auth required")
+    ua = request.headers.get("user-agent", "")[:200]
+    sub_id = db.upsert_push_subscription(user["id"], endpoint, p256dh, auth, ua)
+    return {"ok": True, "id": sub_id}
+
+
+@app.delete("/api/push/subscribe")
+async def push_unsubscribe(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    endpoint = str(payload.get("endpoint", "")).strip()
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="endpoint required")
+    db.delete_push_subscription(user["id"], endpoint)
+    return {"ok": True}
+
+
+@app.get("/api/push/subscriptions")
+async def list_push_subscriptions(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    subs = db.get_push_subscriptions(user["id"])
+    return {"subscriptions": [
+        {"id": s["id"], "endpoint": s["endpoint"][:80] + "…",
+         "user_agent": s["user_agent"], "created_at": s["created_at"]} for s in subs
+    ]}
+
+
+@app.post("/api/push/test")
+async def push_test(request: Request):
+    """Send a test push to all of this user's subscriptions."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    result = await asyncio.to_thread(
+        push_mod.notify_user, user["id"],
+        "CryptoEdge test",
+        "Push notifications are wired up. You'll get alerts for cycle indicators, DCA fills, and the circuit breaker.",
+        "/long-term",
+        "test",
+    )
+    return result
+
+
+@app.get("/api/notifications/pending")
+async def pending_notifications(request: Request):
+    """Service worker fetches this on each `push` event to render a
+    notification with content. Marks all returned notifications as
+    delivered."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_pending_notifications(user["id"], limit=5)
+    if rows:
+        db.mark_notifications_delivered(user["id"], [r["id"] for r in rows])
+    return {"notifications": [dict(r) for r in rows]}
+
+
+# ── PWA assets ──────────────────────────────────────────────────────────────
+
+@app.get("/manifest.webmanifest")
+async def webmanifest():
+    """PWA manifest. Lets the browser offer "Add to home screen".
+    Standalone display gives the app a chromeless UI on mobile."""
+    return JSONResponse({
+        "name": "CryptoEdge — Long-term",
+        "short_name": "CryptoEdge",
+        "description": "Cycle-aware DCA, on-chain analytics, auto-execution, tax-optimal selling.",
+        "start_url": "/long-term",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0a0d12",
+        "theme_color": "#0a0d12",
+        "icons": [
+            {"src": "/favicon.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    })
+
+
+@app.get("/service-worker.js")
+async def service_worker():
+    """Service worker. Stays in the page root so it can intercept network
+    requests for any path under /. Caches the long-term page shell + handles
+    push events by fetching the pending-notification queue."""
+    sw_js = r"""
+const CACHE = 'cryptoedge-v1';
+const SHELL = ['/long-term', '/favicon.png', '/manifest.webmanifest'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    try { await cache.addAll(SHELL); } catch(err) { console.warn('shell cache:', err); }
+    self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil((async () => {
+    const names = await caches.keys();
+    for (const n of names) if (n !== CACHE) await caches.delete(n);
+    self.clients.claim();
+  })());
+});
+
+// Network-first for everything (we want fresh data); fall back to cache for
+// the page shell when offline.
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  e.respondWith((async () => {
+    try {
+      const fresh = await fetch(req);
+      if (fresh && fresh.ok && SHELL.includes(new URL(req.url).pathname)) {
+        const cache = await caches.open(CACHE);
+        cache.put(req, fresh.clone());
+      }
+      return fresh;
+    } catch(err) {
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      throw err;
+    }
+  })());
+});
+
+// Push handler — fetch the pending notification queue and render up to 5.
+self.addEventListener('push', (e) => {
+  e.waitUntil((async () => {
+    let notifs = [];
+    try {
+      const r = await fetch('/api/notifications/pending', {credentials: 'include'});
+      if (r.ok) notifs = (await r.json()).notifications || [];
+    } catch(err) {}
+    if (!notifs.length) {
+      // No queued content — show a generic "open the app" prompt.
+      return self.registration.showNotification('CryptoEdge', {
+        body: 'New activity. Tap to open.',
+        icon: '/favicon.png',
+        badge: '/favicon.png',
+        tag: 'generic',
+      });
+    }
+    for (const n of notifs) {
+      await self.registration.showNotification(n.title, {
+        body: n.body,
+        icon: '/favicon.png',
+        badge: '/favicon.png',
+        tag: n.tag || ('n-' + n.id),
+        data: {url: n.url || '/long-term'},
+        renotify: !!n.tag,
+      });
+    }
+  })());
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/long-term';
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
+    for (const c of all) {
+      if (c.url.includes(url)) { c.focus(); return; }
+    }
+    self.clients.openWindow(url);
+  })());
+});
+"""
+    return Response(content=sw_js, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+
 # ── HTML page ───────────────────────────────────────────────────────────────
 
 @app.get("/long-term", response_class=HTMLResponse)
@@ -5528,7 +5742,13 @@ def _long_term_html() -> str:
     return r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0d12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CryptoEdge">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/favicon.png">
 <title>CryptoEdge — Long-term Holding</title>
 <style>
 :root{--bg:#0a0d12;--card:#131820;--card2:#1a2029;--muted:#7d8a99;--text:#e6edf5;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--yellow:#eab308;--purple:#a855f7;--border:#222a36}
@@ -5574,6 +5794,24 @@ input:focus,select:focus{outline:0;border-color:var(--blue)}
 .legend{font-size:.75em;color:var(--muted);margin-top:4px}
 hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 .kbd{background:var(--card2);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:.85em}
+.tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tabs::-webkit-scrollbar{height:3px}
+.tabs::-webkit-scrollbar-thumb{background:var(--border)}
+@media (max-width:700px){
+  .wrap{padding:12px}
+  h1{font-size:1.25em}
+  .tab{padding:8px 10px;font-size:.85em;white-space:nowrap}
+  table{display:block;overflow-x:auto;white-space:nowrap}
+  th,td{padding:6px 8px;font-size:.85em}
+  .actionrow{flex-direction:column;align-items:stretch}
+  .actionrow .field{width:100%}
+  input,select,textarea,button{font-size:16px}  /* prevent iOS zoom on focus */
+  .grid{grid-template-columns:1fr}
+  button{padding:10px 14px;min-height:44px}     /* iOS touch target */
+}
+@supports (padding-bottom: env(safe-area-inset-bottom)){
+  body{padding-bottom: env(safe-area-inset-bottom)}
+}
 </style>
 </head><body><div class="wrap">
 <h1>Long-term Holding</h1>
@@ -5762,6 +6000,18 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     <button id="exec-dca">Run DCA now</button>
     <button id="exec-rebal" class="ghost">Run rebalance</button>
     <span id="exec-msg"></span>
+  </div>
+
+  <h2>Push notifications</h2>
+  <div class="card">
+    <div class="note">Install this page as an app (Add to Home Screen) for the best mobile experience. Notifications fire when: a long-term alert threshold is crossed, the executor places or blocks an order, or the portfolio circuit breaker trips.</div>
+    <div class="actionrow" style="margin-top:8px">
+      <button id="push-enable">Enable notifications</button>
+      <button id="push-test" class="ghost">Send test push</button>
+      <button id="push-disable" class="ghost danger">Disable on this device</button>
+      <span id="push-msg"></span>
+    </div>
+    <div id="push-subs" style="margin-top:8px"></div>
   </div>
 
   <h2>Execution log</h2>
@@ -6574,6 +6824,93 @@ document.getElementById('dp-add').onclick = async () => {
     loadDispositions(); loadLots(); loadHarvest();
   } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
 };
+
+// ── Push notifications + PWA ───────────────────────────────────────────────
+
+function urlBase64ToUint8Array(b64){
+  const padding = '='.repeat((4 - b64.length % 4) % 4);
+  const base64 = (b64 + padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i=0; i<raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function registerServiceWorker(){
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    return await navigator.serviceWorker.register('/service-worker.js', {scope: '/'});
+  } catch(e) { console.warn('SW register failed:', e); return null; }
+}
+
+async function pushEnable(){
+  const msg = document.getElementById('push-msg');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    msg.innerHTML = '<span class="err">Push not supported in this browser.</span>';
+    return;
+  }
+  msg.innerHTML = ' requesting permission…';
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { msg.innerHTML = '<span class="err">Permission denied.</span>'; return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const {key} = await api('/api/push/vapid-key');
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    }
+    await api('/api/push/subscribe', {method:'POST', body: JSON.stringify({subscription: sub})});
+    msg.innerHTML = '<span class="ok">Enabled on this device.</span>';
+    loadPushSubs();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+}
+document.getElementById('push-enable').onclick = pushEnable;
+
+document.getElementById('push-test').onclick = async () => {
+  const msg = document.getElementById('push-msg'); msg.innerHTML = ' sending…';
+  try {
+    const r = await api('/api/push/test', {method:'POST'});
+    msg.innerHTML = `<span class="ok">Sent to ${r.sent} device(s).</span>`;
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+document.getElementById('push-disable').onclick = async () => {
+  const msg = document.getElementById('push-msg');
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await api('/api/push/subscribe', {method:'DELETE', body: JSON.stringify({endpoint: sub.endpoint})});
+      await sub.unsubscribe();
+    }
+    msg.innerHTML = '<span class="ok">Disabled on this device.</span>';
+    loadPushSubs();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+async function loadPushSubs(){
+  const out = document.getElementById('push-subs');
+  try {
+    const r = await api('/api/push/subscriptions');
+    if (!r.subscriptions.length) { out.innerHTML = '<div class="note">No devices subscribed yet.</div>'; return; }
+    out.innerHTML = '<div class="note"><b>Subscribed devices:</b></div>' + r.subscriptions.map(s =>
+      `<div style="font-size:.85em;color:var(--muted);margin:3px 0">${s.user_agent || 'unknown'} — since ${s.created_at}</div>`
+    ).join('');
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+// Extend loadExecution to also load push state
+const _prevLoadExecution = loadExecution;
+loadExecution = async function(){
+  await _prevLoadExecution();
+  await loadPushSubs();
+};
+
+// Register SW eagerly so the cache primes while the user browses.
+registerServiceWorker();
 
 loadOverview();
 </script>
