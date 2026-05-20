@@ -137,6 +137,33 @@
   .timeline-tooltip { position: absolute; background: #161b22; border: 1px solid var(--grid);
                       border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
                       max-width: 240px; z-index: 20; display: none; }
+  /* ─── Conclave panel ─── */
+  .conclave-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;
+                   margin-bottom: 16px; }
+  .papabile-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px;
+                   margin-bottom: 16px; }
+  .papabile-row { background: #0e1117; border: 1px solid var(--grid); border-radius: 4px; padding: 8px 10px;
+                  display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; }
+  .papabile-row .pct { font-weight: 700; font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .papabile-row .who { font-weight: 600; font-size: 13px; }
+  .papabile-row .why { color: var(--muted); font-size: 11px; line-height: 1.35; }
+  .cardinal-row { display: grid; grid-template-columns: 1fr 70px 90px 110px 90px; gap: 10px; align-items: center;
+                  padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .cardinal-row:last-child { border-bottom: 0; }
+  .cardinal-row .who { font-weight: 600; }
+  .cardinal-row .role { color: var(--muted); font-size: 11px; }
+  .cardinal-row .num { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+  .wing-pill { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 10px;
+               font-weight: 600; }
+  .wing-progressive  { background: #1a4a26; color: #7ee2a8; }
+  .wing-moderate     { background: #243a5c; color: #9bc4ff; }
+  .wing-conservative { background: #5a4116; color: #f7c873; }
+  .wing-traditional  { background: #5a1d1d; color: #ffb3b0; }
+  .tier-pill { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+  .tier-3 { background: #d29922; color: #0e1117; }
+  .tier-2 { background: #58a6ff; color: #0e1117; }
+  .tier-1 { background: #30363d; color: var(--muted); }
+  .tier-0 { background: transparent; color: var(--muted); }
   /* ─── Leader cards ─── */
   .leaders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
   .leader-card { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 12px; }
@@ -229,7 +256,17 @@
   <section class="panel">
     <h2>Religious leaders — actuarial</h2>
     <div id="leaders">loading…</div>
-    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). Religious leaders generally have above-average longevity; treat SSA as a conservative prior. Sorted by 1-year mortality probability — most market-relevant first.</p>
+    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 32 historical religious leaders (mean age at death 79.2y). Sorted by 1-year mortality probability — most market-relevant first.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Conclave model — College of Cardinals + papabile</h2>
+    <div id="conclave-hero" class="conclave-hero"></div>
+    <h3>Papabile — Vaticanist consensus priors</h3>
+    <div id="papabile" class="papabile-list">loading…</div>
+    <h3>Cardinal-electors (sample of the most influential / most discussed)</h3>
+    <div id="cardinals">loading…</div>
+    <p class="footnote">Sources: Vatican Press Office, the College of Cardinals Report (cardinalsreport.com), Vaticanist English-language press (Allen/Crux, Magister, La Croix, The Pillar). 'Wing' assignments are journalistic shorthand — cardinals don't run on platforms. Priors sum to ~59%; the residual ~41% is the field (historically, the next pope is often not a top-tier papabile — Bergoglio 2013, Wojtyła 1978). Updated at each consistory.</p>
   </section>
 
   <section class="panel">
@@ -332,11 +369,12 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, fullR, ldrR, ctyR, calR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
+  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
     fetchJson("/api/leaders"),
+    fetchJson("/api/conclave"),
     fetchJson("/api/countries"),
     fetchJson("/api/calendar?upcoming=1&days=365"),
     fetchJson("/api/cults"),
@@ -353,6 +391,7 @@ async function load() {
     initRegistry(fullR.value);
   }
   if (ldrR.status === "fulfilled") renderLeaders(ldrR.value);
+  if (concR.status === "fulfilled") renderConclave(concR.value);
   if (ctyR.status === "fulfilled") renderCountries(ctyR.value);
   if (calR.status === "fulfilled") renderCalendar(calR.value);
   if (cultR.status === "fulfilled") { window._cults = cultR.value; renderCults(""); }
@@ -630,6 +669,52 @@ function renderLeaders(d) {
       ${succession}
     </div>`;
   }).join("") + '</div>';
+}
+
+// ─── Conclave ─────────────────────────────────────────────────────────────
+
+function renderConclave(d) {
+  const ag = d.college_aggregates;
+  const hero = document.getElementById("conclave-hero");
+  hero.innerHTML = [
+    {l: "Total cardinals",    v: ag.total_cardinals},
+    {l: "Electors (<80)",     v: ag.total_electors},
+    {l: "2/3 majority",       v: ag.two_thirds_threshold},
+    {l: "Created by Francis", v: ag.by_appointer.Francis + " electors"},
+    {l: "Papabile priors",    v: (100 - d.rules.field_residual_pct) + "%"},
+    {l: "Field residual",     v: d.rules.field_residual_pct + "%"},
+  ].map(s => `<div class="stat"><div class="label">${escapeHtml(s.l)}</div><div class="value">${escapeHtml(String(s.v))}</div></div>`).join("");
+
+  // Papabile cards
+  const papabileSorted = [...d.papabile_priors].sort((a, b) => b.prior_pct - a.prior_pct);
+  document.getElementById("papabile").innerHTML = papabileSorted.map(p => `
+    <div class="papabile-row">
+      <div class="pct">${p.prior_pct.toFixed(1)}%</div>
+      <div>
+        <div class="who">${escapeHtml(p.name)}</div>
+        <div class="why">${escapeHtml(p.rationale)}</div>
+      </div>
+    </div>`).join("");
+
+  // Cardinal-electors table — show top ~25 (papabile_tier desc)
+  const cards = d.cardinals.slice(0, 30);
+  const header = `<div class="cardinal-row" style="font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
+    <div>Cardinal / Role</div><div class="num">Age</div><div>Region</div><div>Appointed by</div><div>Wing · Tier</div>
+  </div>`;
+  document.getElementById("cardinals").innerHTML = header + cards.map(c => {
+    const wing = `<span class="wing-pill wing-${c.wing}">${escapeHtml(c.wing)}</span>`;
+    const tier = `<span class="tier-pill tier-${c.papabile_tier}">T${c.papabile_tier}</span>`;
+    return `<div class="cardinal-row">
+      <div>
+        <div class="who">${escapeHtml(c.name)}${c.elector ? "" : " <span style=\"color:var(--muted);font-size:10px\">(non-elector)</span>"}</div>
+        <div class="role">${escapeHtml(c.role)} · ${escapeHtml(c.country)}</div>
+      </div>
+      <div class="num">${c.age}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.region)}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.appointed_by)}</div>
+      <div>${wing} ${tier}</div>
+    </div>`;
+  }).join("");
 }
 
 // ─── Country composition ──────────────────────────────────────────────────

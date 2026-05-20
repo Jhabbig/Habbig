@@ -37,6 +37,7 @@ from defusedxml import ElementTree as DET
 from flask import Flask, jsonify, request, send_from_directory
 
 import actuarial
+import cardinals as cd
 import historical_leaders as hl
 import religion_data as rd
 
@@ -458,6 +459,47 @@ def api_leaders():
     })
 
 
+@app.route("/api/conclave")
+def api_conclave():
+    """College of Cardinals + papabile priors + aggregate stats. The flagship."""
+    region = (request.args.get("region") or "").strip()
+    wing = (request.args.get("wing") or "").strip()
+    only_electors = request.args.get("electors") in ("1", "true", "yes")
+    only_papabile = request.args.get("papabile") in ("1", "true", "yes")
+
+    cards = list(cd.CARDINALS)
+    if region:
+        cards = [c for c in cards if c.get("region") == region]
+    if wing:
+        cards = [c for c in cards if c.get("wing") == wing]
+    if only_electors:
+        cards = [c for c in cards if c.get("elector")]
+    if only_papabile:
+        cards = [c for c in cards if (c.get("papabile_tier") or 0) >= 2]
+
+    # Sort: papabile_tier desc, then age asc (younger = more conclave value)
+    cards.sort(key=lambda c: (-(c.get("papabile_tier") or 0), c.get("age") or 999))
+
+    # Compute sample breakdowns for the filtered set
+    from collections import Counter
+    sample_breakdown = {
+        "by_region":    dict(Counter(c["region"] for c in cards)),
+        "by_appointer": dict(Counter(c["appointed_by"] for c in cards)),
+        "by_wing":      dict(Counter(c["wing"] for c in cards)),
+    }
+
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "source": "Vatican Press Office, College of Cardinals Report, Vaticanist press consensus",
+        "sample_size": len(cards),
+        "cardinals": cards,
+        "papabile_priors": cd.PAPABILE_PRIORS,
+        "rules": cd.CONCLAVE_RULES,
+        "college_aggregates": cd.COLLEGE_AGGREGATES,
+        "sample_breakdown": sample_breakdown,
+    })
+
+
 @app.route("/api/historical-leaders")
 def api_historical_leaders():
     """Cohort used to calibrate the religious-leader hazard ratio."""
@@ -563,6 +605,8 @@ def api_summary():
         "religions_tracked": len(rd.WORLD_RELIGIONS),
         "registry_size": len(rd.RELIGIONS_FULL),
         "leaders_tracked": len(rd.RELIGIOUS_LEADERS),
+        "cardinals_profiled": len(cd.CARDINALS),
+        "papabile_tracked": len(cd.PAPABILE_PRIORS),
         "countries_tracked": len(rd.COUNTRY_RELIGION),
         "calendar_events": len(rd.RELIGIOUS_CALENDAR_2026),
         "cults_tracked": len(cults),
