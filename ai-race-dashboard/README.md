@@ -97,6 +97,28 @@ When a public leaderboard restructures and our scrapers break:
 To disable live ingestion entirely (e.g. for sandboxed local dev), set
 `DISABLE_INGESTION=1`.
 
+## Capability views (v2.6)
+
+Three derived views built off the same `/api/models` payload — no extra
+endpoints, so they update automatically when live scrapers bump scores.
+
+- **Benchmark saturation** — horizontal bars per benchmark showing
+  current best vs. effective ceiling, with a gray tick for the
+  informed-human reference where one applies. Ceilings live in
+  `BENCHMARKS[*].ceiling` in `data.py`; null = unbounded (e.g. LMArena
+  Elo) so the bar uses a visual cap and no ceiling tick.
+- **Lab capability radars** — one mini-radar per lab, taking the lab's
+  highest-average-normalized-score model. Each axis is normalized to its
+  benchmark's `floor`/`ceiling`. Spiky polygons = specialist; round =
+  balanced.
+- **First-to-X waterfall** — matrix showing which model first crossed
+  each public threshold per benchmark, with release date. Dashed cells
+  haven't been crossed yet by anything in the tracked set.
+
+When you add a new benchmark to `BENCHMARKS`, populate `floor`,
+`ceiling`, and `human_baseline` (the latter may be `None`) — all three
+views adapt without UI changes.
+
 ## Featured prediction markets (v2.5)
 
 Two markets layers run side by side:

@@ -188,6 +188,55 @@
   .mover-delta.up { background: #56d36422; color: var(--green); }
   .mover-delta.down { background: #f8514922; color: var(--red); }
 
+  /* Saturation gauges */
+  .sat-row { display: grid; grid-template-columns: 160px 1fr 80px;
+             gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .sat-row:last-child { border-bottom: 0; }
+  .sat-name { font-weight: 600; font-size: 13px; }
+  .sat-name .scale { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .sat-track { position: relative; height: 18px; background: #0e1117;
+               border: 1px solid var(--grid); border-radius: 3px; overflow: visible; }
+  .sat-fill { position: absolute; left: 0; top: 0; bottom: 0;
+              background: linear-gradient(90deg, #1f6feb88, #58a6ff); border-radius: 2px; }
+  .sat-ceiling { position: absolute; top: -3px; bottom: -3px; width: 2px;
+                 background: var(--amber); }
+  .sat-human { position: absolute; top: -3px; bottom: -3px; width: 2px;
+               background: var(--muted); }
+  .sat-pct { font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+  .sat-legend { color: var(--muted); font-size: 11px; margin-top: 8px;
+                display: flex; gap: 18px; flex-wrap: wrap; }
+  .sat-legend .swatch { display: inline-block; width: 16px; height: 4px;
+                        margin-right: 4px; vertical-align: middle; }
+
+  /* Capability radars (small multiples) */
+  .radars { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px; }
+  .radar-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 12px; text-align: center; }
+  .radar-card .head { display: flex; align-items: center; justify-content: center;
+                      gap: 6px; margin-bottom: 4px; font-weight: 600; font-size: 13px; }
+  .radar-card .model { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  .radar-card svg { width: 100%; height: 200px; }
+  .radar-card svg .axis { stroke: var(--grid); }
+  .radar-card svg text { fill: var(--muted); font-size: 9px;
+                         font-family: -apple-system, sans-serif; }
+
+  /* First-to-X matrix */
+  .ftx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ftx-table th { text-align: center; padding: 6px 4px; color: var(--muted);
+                  font-size: 10px; text-transform: uppercase; }
+  .ftx-table td { padding: 6px 4px; border-top: 1px solid var(--grid);
+                  text-align: center; }
+  .ftx-table td.label { text-align: left; font-weight: 600; }
+  .ftx-cell { display: inline-flex; flex-direction: column; gap: 1px;
+              line-height: 1.2; padding: 4px 6px; border-radius: 3px;
+              min-width: 90px; background: #0e1117; border: 1px solid var(--grid); }
+  .ftx-cell .who { font-weight: 600; font-size: 11px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+  .ftx-cell .when { color: var(--muted); font-size: 10px; }
+  .ftx-cell.unreached { color: var(--muted); background: transparent; border-style: dashed; }
+
   /* Cross-venue spread */
   .pair-row { display: grid; grid-template-columns: 1fr 1fr 80px;
               gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
@@ -245,6 +294,42 @@
     <div class="chart-toolbar" id="bench-buttons"></div>
     <svg id="frontier-chart" viewBox="0 0 800 320" preserveAspectRatio="none"></svg>
     <div class="legend" id="frontier-legend"></div>
+  </section>
+
+  <!-- Saturation gauges -->
+  <section class="panel" id="saturation-panel">
+    <h2>Benchmark saturation</h2>
+    <div class="sub">
+      How close is each public benchmark to its effective ceiling? Blue fill
+      = current best score. Amber tick = ceiling (effective max). Gray tick
+      = informed-human reference where one applies.
+    </div>
+    <div id="saturation"></div>
+    <div class="sat-legend">
+      <span><span class="swatch" style="background:#58a6ff"></span>Current best</span>
+      <span><span class="swatch" style="background:var(--amber)"></span>Ceiling</span>
+      <span><span class="swatch" style="background:var(--muted)"></span>Human reference</span>
+    </div>
+  </section>
+
+  <!-- Lab capability radars -->
+  <section class="panel" id="radars-panel">
+    <h2>Lab capability radars</h2>
+    <div class="sub">
+      Best model per lab plotted across every benchmark, normalized to its
+      floor/ceiling. Spiky polygons = specialist; round polygons = balanced.
+    </div>
+    <div class="radars" id="radars"></div>
+  </section>
+
+  <!-- First-to-X waterfall -->
+  <section class="panel" id="ftx-panel">
+    <h2>First-to-X</h2>
+    <div class="sub">
+      First model + month to clear each public threshold per benchmark.
+      Dashed cells haven't been crossed yet.
+    </div>
+    <div style="overflow-x:auto"><table class="ftx-table" id="ftx"></table></div>
   </section>
 
   <!-- Timeline -->
@@ -463,6 +548,196 @@ async function loadModels() {
   STATE.bestPerBench = computeBest(data.models, data.benchmarks);
   $("#header-as-of").textContent = "as of " + (data.as_of || "");
   renderLeaderboard();
+  renderSaturation();
+  renderRadars();
+  renderFirstToX();
+}
+
+// ── Saturation ─────────────────────────────────────────────────────────────
+function renderSaturation() {
+  const {benchmarks, models, bestPerBench} = STATE;
+  const wrap = $("#saturation");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  wrap.innerHTML = benchmarks.map(b => {
+    const best = bestPerBench[b.key];
+    if (best == null) return "";
+    const floor = b.floor ?? 0;
+    // For unbounded scales (LMArena Elo) use a visual cap above current best
+    // so the bar still fills sensibly without a ceiling marker.
+    const hardCeiling = b.ceiling;
+    const visualMax = hardCeiling ?? Math.max(best + 50, b.scale === "Elo" ? 1500 : 100);
+    const winnerModel = models.find(m => (m.scores || {})[b.key] === best);
+    const winnerName = winnerModel ? winnerModel.name : "";
+
+    const fillPct = Math.max(0, Math.min(100, ((best - floor) / (visualMax - floor)) * 100));
+    const ceilingPct = hardCeiling != null
+      ? Math.max(0, Math.min(100, ((hardCeiling - floor) / (visualMax - floor)) * 100))
+      : null;
+    const humanPct = b.human_baseline != null
+      ? Math.max(0, Math.min(100, ((b.human_baseline - floor) / (visualMax - floor)) * 100))
+      : null;
+
+    const satTxt = hardCeiling != null
+      ? `${((best / hardCeiling) * 100).toFixed(0)}%`
+      : (b.scale === "Elo" ? Math.round(best).toString() : best.toFixed(1));
+
+    const ceilingHTML = ceilingPct != null
+      ? `<span class="sat-ceiling" style="left:${ceilingPct.toFixed(2)}%" title="ceiling: ${hardCeiling}"></span>`
+      : "";
+    const humanHTML = humanPct != null
+      ? `<span class="sat-human" style="left:${humanPct.toFixed(2)}%" title="human reference: ${b.human_baseline}"></span>`
+      : "";
+
+    return `<div class="sat-row">
+      <div class="sat-name">${escapeHTML(b.name)}<br><span class="scale">${escapeHTML(winnerName)}</span></div>
+      <div class="sat-track" title="${escapeHTML(b.what || '')}">
+        <span class="sat-fill" style="width:${fillPct.toFixed(2)}%"></span>
+        ${humanHTML}
+        ${ceilingHTML}
+      </div>
+      <div class="sat-pct">${satTxt}</div>
+    </div>`;
+  }).join("");
+}
+
+// ── Capability radars ──────────────────────────────────────────────────────
+function bestModelPerLab(models) {
+  // For each lab, pick the model with the highest *average normalized score*
+  // across the benchmarks it reports — proxy for "frontier offering."
+  const byLab = new Map();
+  for (const m of models) {
+    if (!m.scores) continue;
+    const norms = [];
+    for (const b of STATE.benchmarks) {
+      const s = m.scores[b.key];
+      if (s == null) continue;
+      const floor = b.floor ?? 0;
+      const ceil = b.ceiling ?? (b.scale === "Elo" ? 1500 : 100);
+      norms.push(Math.max(0, Math.min(1, (s - floor) / (ceil - floor))));
+    }
+    if (!norms.length) continue;
+    const avg = norms.reduce((a,b) => a+b, 0) / norms.length;
+    const prev = byLab.get(m.lab_key);
+    if (!prev || avg > prev.avg) {
+      byLab.set(m.lab_key, {model: m, avg});
+    }
+  }
+  return [...byLab.values()].sort((a,b) => b.avg - a.avg);
+}
+
+function renderRadars() {
+  const {benchmarks, models} = STATE;
+  const wrap = $("#radars");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  const picks = bestModelPerLab(models);
+  if (!picks.length) { wrap.innerHTML = '<div class="empty-state">No data.</div>'; return; }
+
+  const W = 220, H = 200, cx = W/2, cy = H/2 + 6, R = 72;
+  const N = benchmarks.length;
+
+  // Pre-compute axis endpoints (shared across all radars).
+  const axes = benchmarks.map((b, i) => {
+    const angle = (-Math.PI/2) + (i * 2*Math.PI / N);
+    return {
+      b, angle,
+      x: cx + Math.cos(angle) * R,
+      y: cy + Math.sin(angle) * R,
+      lx: cx + Math.cos(angle) * (R + 14),
+      ly: cy + Math.sin(angle) * (R + 14),
+    };
+  });
+  const rings = [0.25, 0.5, 0.75, 1.0];
+
+  wrap.innerHTML = picks.map(({model: m}) => {
+    const points = axes.map(a => {
+      const score = (m.scores || {})[a.b.key];
+      if (score == null) return null;
+      const floor = a.b.floor ?? 0;
+      const ceil = a.b.ceiling ?? (a.b.scale === "Elo" ? 1500 : 100);
+      const t = Math.max(0, Math.min(1, (score - floor) / (ceil - floor)));
+      return {x: cx + Math.cos(a.angle) * R * t, y: cy + Math.sin(a.angle) * R * t};
+    });
+    const validPoints = points.filter(p => p);
+    const path = validPoints.length >= 3
+      ? "M " + validPoints.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ") + " Z"
+      : "";
+
+    const ringsHTML = rings.map(t =>
+      `<circle class="axis" cx="${cx}" cy="${cy}" r="${(R*t).toFixed(1)}" fill="none" stroke-dasharray="2 3"/>`
+    ).join("");
+    const axesHTML = axes.map(a =>
+      `<line class="axis" x1="${cx}" y1="${cy}" x2="${a.x.toFixed(1)}" y2="${a.y.toFixed(1)}"/>` +
+      `<text x="${a.lx.toFixed(1)}" y="${a.ly.toFixed(1)}" text-anchor="${a.lx > cx+2 ? 'start' : a.lx < cx-2 ? 'end' : 'middle'}" dominant-baseline="${a.ly > cy ? 'hanging' : 'auto'}">${escapeHTML(a.b.name)}</text>`
+    ).join("");
+    const pointsHTML = validPoints.map(p =>
+      `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${escapeHTML(m.lab_color)}"/>`
+    ).join("");
+
+    return `<div class="radar-card">
+      <div class="head">
+        <span class="lab-dot" style="background:${escapeHTML(m.lab_color)}"></span>
+        ${escapeHTML(m.lab_name)}
+      </div>
+      <div class="model">${escapeHTML(m.name)} · ${escapeHTML(m.released || '')}</div>
+      <svg viewBox="0 0 ${W} ${H}">
+        ${ringsHTML}
+        ${axesHTML}
+        <path d="${path}" fill="${escapeHTML(m.lab_color)}33" stroke="${escapeHTML(m.lab_color)}" stroke-width="1.5"/>
+        ${pointsHTML}
+      </svg>
+    </div>`;
+  }).join("");
+}
+
+// ── First-to-X waterfall ───────────────────────────────────────────────────
+const FTX_THRESHOLDS = {
+  pct: [50, 70, 80, 90],
+  elo: [1200, 1300, 1400],
+};
+
+function renderFirstToX() {
+  const {benchmarks, models} = STATE;
+  const wrap = $("#ftx");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  // Pre-sort models by release date so .find() returns the earliest crosser.
+  const sorted = models.slice().sort((a, b) => (a.released || "").localeCompare(b.released || ""));
+
+  const headerThresholds = (b) => b.scale === "Elo" ? FTX_THRESHOLDS.elo : FTX_THRESHOLDS.pct;
+  // For the table header we'll show the union — separate columns per
+  // threshold-family because Elo thresholds don't apply to % benchmarks.
+  const headers = ['<th class="label">Benchmark</th>'].concat(
+    [...FTX_THRESHOLDS.pct, ...FTX_THRESHOLDS.elo].map(t => `<th>≥${t}</th>`)
+  );
+
+  const rows = benchmarks.map(b => {
+    const cells = [`<td class="label">${escapeHTML(b.name)}<br><span style="color:var(--muted);font-size:11px;font-weight:400">${escapeHTML(b.scale)}</span></td>`];
+    const myThresholds = headerThresholds(b);
+    const allCols = [...FTX_THRESHOLDS.pct, ...FTX_THRESHOLDS.elo];
+    for (const t of allCols) {
+      if (!myThresholds.includes(t)) {
+        cells.push('<td></td>');
+        continue;
+      }
+      const winner = sorted.find(m => {
+        const s = (m.scores || {})[b.key];
+        return s != null && s >= t;
+      });
+      if (winner) {
+        cells.push(`<td><span class="ftx-cell">
+          <span class="who" style="color:${escapeHTML(winner.lab_color)}">${escapeHTML(winner.name)}</span>
+          <span class="when">${escapeHTML(winner.released || '')}</span>
+        </span></td>`);
+      } else {
+        cells.push('<td><span class="ftx-cell unreached"><span class="who">—</span><span class="when">unreached</span></span></td>');
+      }
+    }
+    return `<tr>${cells.join("")}</tr>`;
+  });
+
+  wrap.innerHTML = `<thead><tr>${headers.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 
 // ── Frontier chart ─────────────────────────────────────────────────────────

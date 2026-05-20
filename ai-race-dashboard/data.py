@@ -142,8 +142,15 @@ LABS = [
 ]
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
-# Each model row scores against a subset of these. `higher_is_better` is True
-# for all current entries; kept explicit so we can add cost/latency later.
+# Per-row fields:
+#   ceiling         — effective max (≤100 for % benchmarks; null for unbounded
+#                     scales like Elo). Some ceilings are below 100 because the
+#                     benchmark contains some unanswerable/mislabeled items
+#                     (MMLU-Pro). Estimates — adjust as evidence accumulates.
+#   floor           — display floor (0 for %, 1100 for LMArena).
+#   human_baseline  — approximate informed-human reference. null when no clean
+#                     human baseline exists or isn't directly comparable.
+# These power the saturation gauges and capability radars.
 BENCHMARKS = [
     {
         "key": "mmlu_pro",
@@ -151,6 +158,7 @@ BENCHMARKS = [
         "what": "Hard multiple-choice across 14 disciplines.",
         "scale": "% accuracy",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 92, "human_baseline": 65,
     },
     {
         "key": "gpqa_diamond",
@@ -158,6 +166,7 @@ BENCHMARKS = [
         "what": "Graduate-level science Q&A (the 'diamond' subset).",
         "scale": "% accuracy",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 95, "human_baseline": 70,
     },
     {
         "key": "swe_bench_verified",
@@ -165,6 +174,7 @@ BENCHMARKS = [
         "what": "Resolves real GitHub issues (verified subset).",
         "scale": "% solved",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 100, "human_baseline": None,
     },
     {
         "key": "aime_2024",
@@ -172,6 +182,7 @@ BENCHMARKS = [
         "what": "American Invitational Math Exam, 30 problems.",
         "scale": "% correct",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 100, "human_baseline": 50,
     },
     {
         "key": "hle",
@@ -179,6 +190,7 @@ BENCHMARKS = [
         "what": "Closed-book expert-curated frontier exam.",
         "scale": "% correct",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 50, "human_baseline": 5,
     },
     {
         "key": "lmarena_elo",
@@ -186,6 +198,7 @@ BENCHMARKS = [
         "what": "Crowd-sourced pairwise preference Elo.",
         "scale": "Elo",
         "higher_is_better": True,
+        "floor": 1100, "ceiling": None, "human_baseline": None,
     },
     {
         "key": "livecodebench",
@@ -193,6 +206,7 @@ BENCHMARKS = [
         "what": "Continuously refreshed coding contest problems.",
         "scale": "% solved",
         "higher_is_better": True,
+        "floor": 0, "ceiling": 100, "human_baseline": None,
     },
 ]
 
