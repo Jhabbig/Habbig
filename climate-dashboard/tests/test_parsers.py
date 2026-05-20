@@ -15,12 +15,14 @@ from app import math_utils
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
+from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
 from app.models import markets
 from app.models import methane as methane_model
+from app.models import n2o as n2o_model
 from app.models import sea_ice as sea_ice_model
 from app.models import temperature as temperature_model
 
@@ -56,6 +58,13 @@ def test_methane_parser_produces_monthly_ppb():
     assert series[0]["ppb"] == 1929.41
     # Series should be ordered by month
     assert [s["month"] for s in series] == list(range(1, 13))
+
+
+def test_n2o_parser_produces_monthly_ppb():
+    series = n2o_src.parse(_load("n2o_sample.csv"))
+    assert len(series) == 24
+    assert series[0]["year"] == 2023 and series[0]["month"] == 1
+    assert series[-1]["ppb"] > series[0]["ppb"]  # monotone-ish rise
 
 
 def test_gistemp_parser_handles_partial_year():
@@ -141,6 +150,15 @@ def test_methane_projection_against_fixture():
     proj = methane_model.projection({"monthly": raw})
     assert proj is not None
     assert proj["residual_std_ppb"] >= 2.0  # floor
+
+
+def test_n2o_projection_against_fixture():
+    raw = n2o_src.parse(_load("n2o_sample.csv"))
+    proj = n2o_model.projection({"monthly": raw})
+    assert proj is not None
+    assert proj["residual_std_ppb"] >= 0.3  # tightest floor of the three
+    # N₂O rises ~1 ppb/yr in reality; fixture should give a positive trend
+    assert 0.5 < proj["ppb_per_year"] < 3.0
 
 
 def test_temperature_projection_against_fixture():

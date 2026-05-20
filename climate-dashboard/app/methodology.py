@@ -44,6 +44,18 @@ MODELS = [
         "code": "app/models/methane.py",
     },
     {
+        "id": "n2o_year_end_projection",
+        "name": "Year-end atmospheric N₂O",
+        "summary": "Same 24-month linear regression as CO₂/CH₄, applied to NOAA GML globally-averaged nitrous oxide. N₂O rises ~1 ppb/yr and is very smooth, so the σ floor is the tightest (0.3 ppb).",
+        "inputs": ["NOAA GML globally-averaged monthly N₂O (ppb)"],
+        "outputs": {
+            "projected_year_end_ppb": "Year-end N₂O projection",
+            "ppb_per_year": "Fitted slope",
+            "residual_std_ppb": "Floored at 0.3 ppb",
+        },
+        "code": "app/models/n2o.py",
+    },
+    {
         "id": "arctic_min_projection",
         "name": "Arctic annual-minimum sea ice extent",
         "summary": "Linear regression of the last 25 years' annual minimum extents against year. Current year is excluded from the fit until its minimum is reached (mid-September).",
@@ -97,6 +109,10 @@ BACKTESTS = [
     {
         "id": "methane_backtest",
         "summary": "Same June-cutoff 24-month regression as CO₂, scored against the actual December reading.",
+    },
+    {
+        "id": "n2o_backtest",
+        "summary": "Same June-cutoff 24-month regression as CO₂/CH₄, scored against the actual December N₂O reading.",
     },
 ]
 

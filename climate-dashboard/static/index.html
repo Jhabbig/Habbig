@@ -260,7 +260,7 @@
 <body>
 <header>
   <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
-  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ · NSIDC sea ice · OISST · ENSO · backtest · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a></div>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O · NSIDC sea ice · OISST · ENSO · backtest · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a></div>
 </header>
 <main>
 
@@ -460,6 +460,7 @@ async function loadCards() {
   const co2Data = await getJSON("/api/co2");
   const seaData = await getJSON("/api/sea-ice");
   const ch4Data = await getJSON("/api/methane");
+  const n2oData = await getJSON("/api/n2o");
 
   const cards = [];
   // Each entry: {id, history, forecast, color} — wired to fan-chart containers
@@ -572,6 +573,43 @@ async function loadCards() {
         ${threshHtml}
         <div class="fanchart" id="ch4-fan"></div>
         ${calibBadge(s.methane.calibration)}
+      </div>
+    `);
+  }
+
+  // Nitrous oxide card (N₂O)
+  if (s?.n2o?.latest) {
+    const l = s.n2o.latest;
+    const p = s.n2o.projection;
+    const thr = s.n2o.thresholds;
+    const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
+    const threshHtml = liveThr.length ? `
+      <div class="thresholds">
+        ${liveThr.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    if (p) {
+      const monthly = (n2oData?.monthly || []).slice(-60);
+      fans.push({
+        id: "n2o-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppb })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppb,
+                    sigma: p.residual_std_ppb || 0.5 },
+        color: "#fb923c",
+      });
+    }
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric nitrous oxide (N₂O)</h3>
+        <div class="big">${fmt(l.ppb, 1)} <span style="font-size:14px;color:var(--text-2)">ppb</span></div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 2)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 2)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
+        ${threshHtml}
+        <div class="fanchart" id="n2o-fan"></div>
+        ${calibBadge(s.n2o.calibration)}
       </div>
     `);
   }
@@ -820,6 +858,15 @@ async function loadBacktest() {
       <td class="num"><span class="${errCls(r.error_ppb / 10)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 1)} ppb</span></td>
     </tr>
   `).join("");
+  const n2oRows = (b.n2o || []).map(r => `
+    <tr>
+      <td>N₂O year-end ppb</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_year_end_ppb, 2)}</td>
+      <td class="num">${fmt(r.actual_dec_ppb, 2)}</td>
+      <td class="num"><span class="${errCls(r.error_ppb / 1)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 2)} ppb</span></td>
+    </tr>
+  `).join("");
   root.innerHTML = `
     <table>
       <thead>
@@ -831,7 +878,7 @@ async function loadBacktest() {
           <th class="num">Error</th>
         </tr>
       </thead>
-      <tbody>${tempRows}${co2Rows}${ch4Rows}</tbody>
+      <tbody>${tempRows}${co2Rows}${ch4Rows}${n2oRows}</tbody>
     </table>
     <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);line-height:1.5">
       <b>Method:</b> ${b.method?.gistemp || ""} ${b.method?.co2 || ""} ${b.method?.methane || ""}

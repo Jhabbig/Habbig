@@ -22,6 +22,7 @@ from flask import Flask, jsonify, send_from_directory
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
+from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
 from app.fetchers import polymarket as polymarket_src
 from app.fetchers import sea_ice as sea_ice_src
@@ -31,6 +32,7 @@ from app.models import co2 as co2_model
 from app.models import calibration
 from app.models import markets as markets_model
 from app.models import methane as methane_model
+from app.models import n2o as n2o_model
 from app.models import sea_ice as sea_ice_model
 from app.models import temperature as temperature_model
 
@@ -114,6 +116,16 @@ def api_methane():
                     "thresholds": methane_model.threshold_probs(proj)})
 
 
+@app.route("/api/n2o")
+def api_n2o():
+    n = n2o_src.fetch()
+    if not n:
+        return jsonify({"error": "N2O fetch failed"}), 503
+    proj = n2o_model.projection(n)
+    return jsonify({**n, "projection": proj,
+                    "thresholds": n2o_model.threshold_probs(proj)})
+
+
 @app.route("/api/sea-ice")
 def api_sea_ice():
     s = sea_ice_src.fetch()
@@ -184,11 +196,13 @@ def api_summary():
     s = sea_ice_src.fetch()
     o = oni_src.fetch()
     ch4 = methane_src.fetch()
+    n2o = n2o_src.fetch()
     gp = temperature_model.projection(g) if g else None
     cp = co2_model.projection(c) if c else None
     ap = sea_ice_model.arctic_min_projection(s) if s else None
     aap = sea_ice_model.antarctic_min_projection(s) if s else None
     mp = methane_model.projection(ch4) if ch4 else None
+    np_ = n2o_model.projection(n2o) if n2o else None
     return jsonify({
         "gistemp": {
             "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
@@ -211,6 +225,13 @@ def api_summary():
             "calibration": calibration.summary(
                 methane_model.backtest(ch4) if ch4 else [], "error_ppb", "ppb"),
         },
+        "n2o": {
+            "latest": n2o["latest"] if n2o else None,
+            "projection": np_,
+            "thresholds": n2o_model.threshold_probs(np_),
+            "calibration": calibration.summary(
+                n2o_model.backtest(n2o) if n2o else [], "error_ppb", "ppb"),
+        },
         "sea_ice": {
             "record_check": sea_ice_model.daily_record_check(s) if s else None,
             "arctic_projection": ap,
@@ -229,22 +250,27 @@ def api_backtest():
     g = gistemp_src.fetch()
     c = co2_src.fetch()
     ch4 = methane_src.fetch()
+    n2o = n2o_src.fetch()
     gist_rows = temperature_model.backtest(g) if g else []
     co2_rows = co2_model.backtest(c) if c else []
     ch4_rows = methane_model.backtest(ch4) if ch4 else []
+    n2o_rows = n2o_model.backtest(n2o) if n2o else []
     return jsonify({
         "gistemp": gist_rows,
         "co2": co2_rows,
         "methane": ch4_rows,
+        "n2o": n2o_rows,
         "calibration": {
             "gistemp": calibration.summary(gist_rows, "error_c", "°C"),
             "co2": calibration.summary(co2_rows, "error_ppm", "ppm"),
             "methane": calibration.summary(ch4_rows, "error_ppb", "ppb"),
+            "n2o": calibration.summary(n2o_rows, "error_ppb", "ppb"),
         },
         "method": {
             "gistemp": "Replays the YTD-anomaly + historical-drift model 'as of June' for each year, scored vs the actual J-D mean.",
             "co2": "Refits the 24-month linear regression at June of each year, scored vs the actual December reading.",
             "methane": "Same June-cutoff 24-month regression as CO₂, scored vs the actual December reading.",
+            "n2o": "Same June-cutoff 24-month regression as CO₂/CH₄, scored vs the actual December reading.",
         },
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
