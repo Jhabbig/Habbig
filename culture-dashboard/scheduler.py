@@ -186,6 +186,10 @@ async def digest_worker(stop: asyncio.Event, period: int | None = None) -> None:
                     d["model"], d["input_tokens"], d["output_tokens"],
                     d["cache_read_tokens"],
                 )
+                # Fire downstream webhook (Slack/Discord/raw JSON), if configured.
+                if os.environ.get("DIGEST_WEBHOOK_URL", "").strip():
+                    if await digest.fire_webhook(d):
+                        log.info("digest pushed to DIGEST_WEBHOOK_URL")
         except Exception as e:  # noqa: BLE001
             log.warning("digest generation failed: %s", e)
         try:

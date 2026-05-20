@@ -52,6 +52,67 @@ Rules:
 """
 
 
+def webhook_payload(d: dict) -> dict:
+    """Shape the digest for the configured webhook target.
+
+    Format auto-detected from DIGEST_WEBHOOK_URL (Slack vs Discord) unless
+    DIGEST_WEBHOOK_FORMAT explicitly overrides. Defaults to raw JSON.
+    """
+    url = os.environ.get("DIGEST_WEBHOOK_URL", "").strip().lower()
+    fmt = os.environ.get("DIGEST_WEBHOOK_FORMAT", "").strip().lower()
+    if not fmt:
+        if "slack.com" in url:
+            fmt = "slack"
+        elif "discord" in url:
+            fmt = "discord"
+        else:
+            fmt = "json"
+
+    body = d.get("body_md", "")
+    if fmt == "slack":
+        return {
+            "text": "Today in culture",
+            "blocks": [
+                {"type": "header",
+                 "text": {"type": "plain_text", "text": "Today in culture"}},
+                {"type": "section",
+                 "text": {"type": "mrkdwn", "text": body[:2900]}},
+                {"type": "context",
+                 "elements": [{"type": "mrkdwn",
+                               "text": f"_via {d.get('model', '?')} · "
+                                       f"{d.get('output_tokens', 0)} out / "
+                                       f"{d.get('input_tokens', 0)} in_"}]},
+            ],
+        }
+    if fmt == "discord":
+        return {"content": f"**Today in culture**\n\n{body[:1900]}"}
+    return {
+        "type": "culture.digest",
+        "ts": d.get("ts"),
+        "model": d.get("model"),
+        "body_md": body,
+        "input_tokens": d.get("input_tokens"),
+        "output_tokens": d.get("output_tokens"),
+    }
+
+
+async def fire_webhook(d: dict) -> bool:
+    """POST the digest to DIGEST_WEBHOOK_URL if set. Returns True on 2xx."""
+    url = os.environ.get("DIGEST_WEBHOOK_URL", "").strip()
+    if not url or not d:
+        return False
+    try:
+        import httpx
+        payload = webhook_payload(d)
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(url, json=payload)
+            r.raise_for_status()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("digest webhook POST failed: %s", e)
+        return False
+
+
 def build_user_prompt() -> str:
     """Pack current dashboard state into a single user message."""
     snapshot: dict[str, Any] = {

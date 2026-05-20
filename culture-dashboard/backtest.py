@@ -52,20 +52,24 @@ def _slug_from_key(key: str) -> str | None:
     return slug or None
 
 
-def validate(days: int = 30, limit: int = 200) -> dict:
-    """Replay culture_markets surge alerts and check the next-24h price move."""
+def validate(days: int = 30, limit: int = 200,
+             threshold_pct: float | None = None,
+             window_hours: int | None = None) -> dict:
+    """Replay culture_markets surge alerts AND topic snapshots; classify outcomes."""
+    thr = threshold_pct if threshold_pct is not None else _threshold_pct()
+    win = window_hours if window_hours is not None else _window_hours()
     return {
-        "markets": _validate_market_alerts(days=days, limit=limit),
-        "topics": _validate_topic_snapshots(days=days, limit=limit),
+        "markets": _validate_market_alerts(days, limit, thr, win),
+        "topics": _validate_topic_snapshots(days, limit, thr, win),
     }
 
 
-def _validate_market_alerts(days: int, limit: int) -> dict:
+def _validate_market_alerts(days: int, limit: int,
+                            threshold: float, window_hours: int) -> dict:
     since = time.time() - days * 86400
     alerts = cache.market_alerts(source="culture_markets", since_ts=since)
-    threshold = _threshold_pct()
     weak_threshold = threshold / 2
-    window_s = _window_hours() * 3600
+    window_s = window_hours * 3600
 
     examples: list[dict] = []
     hit = weak = miss = insufficient = 0
@@ -109,7 +113,7 @@ def _validate_market_alerts(days: int, limit: int) -> dict:
     total = hit + weak + miss
     return {
         "window_days": days,
-        "window_hours": _window_hours(),
+        "window_hours": window_hours,
         "threshold_pct": threshold,
         "total_alerts": len(alerts),
         "validatable": total,
@@ -121,17 +125,17 @@ def _validate_market_alerts(days: int, limit: int) -> dict:
     }
 
 
-def _validate_topic_snapshots(days: int, limit: int) -> dict:
+def _validate_topic_snapshots(days: int, limit: int,
+                              threshold: float, window_hours: int) -> dict:
     """Did high-signal cross-source topics precede price moves in their matched markets?
 
     For each snapshot with surge_signal >= 1.5 and ≥1 matched market, we
-    average the realised |Δ| across matched markets over the next 24h.
+    average the realised |Δ| across matched markets over the next window.
     """
     since = time.time() - days * 86400
     snapshots = cache.topic_snapshots_since(since_ts=since, min_signal=1.5)
-    threshold = _threshold_pct()
     weak_threshold = threshold / 2
-    window_s = _window_hours() * 3600
+    window_s = window_hours * 3600
 
     examples: list[dict] = []
     hit = weak = miss = insufficient = 0
@@ -175,6 +179,9 @@ def _validate_topic_snapshots(days: int, limit: int) -> dict:
 
     total = hit + weak + miss
     return {
+        "window_days": days,
+        "window_hours": window_hours,
+        "threshold_pct": threshold,
         "total_snapshots": len(snapshots),
         "validatable": total,
         "hit_rate": round(hit / total, 3) if total else None,

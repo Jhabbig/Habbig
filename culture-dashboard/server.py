@@ -215,10 +215,27 @@ async def api_digest() -> JSONResponse:
 
 
 @app.get("/api/backtest")
-async def api_backtest(days: int = 30, limit: int = 50) -> JSONResponse:
+async def api_backtest(
+    days: int = 30,
+    limit: int = 50,
+    threshold_pct: float | None = None,
+    window_hours: int | None = None,
+) -> JSONResponse:
     days = max(1, min(days, 365))
     limit = max(1, min(limit, 500))
-    return JSONResponse(backtest.validate(days=days, limit=limit))
+    if threshold_pct is not None:
+        threshold_pct = max(0.001, min(threshold_pct, 0.5))
+    if window_hours is not None:
+        window_hours = max(1, min(window_hours, 24 * 14))
+    return JSONResponse(backtest.validate(
+        days=days, limit=limit,
+        threshold_pct=threshold_pct, window_hours=window_hours,
+    ))
+
+
+@app.get("/compare", response_class=HTMLResponse)
+async def compare_page() -> HTMLResponse:
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.post("/api/digest/refresh")

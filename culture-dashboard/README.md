@@ -223,6 +223,32 @@ renders them as two side-by-side panels so you can compare the
 predictiveness of market-volume surges versus cross-platform attention
 surges.
 
+### Digest delivery
+
+Set `DIGEST_WEBHOOK_URL` to receive every generated digest as it lands.
+Format auto-detected from the URL (Slack incoming-webhook → blocks
+payload; Discord webhook → markdown content) or overridden via
+`DIGEST_WEBHOOK_FORMAT=slack|discord|json`. The raw JSON shape
+(`type: "culture.digest"`, with `body_md` + token counts) is the default
+and is what you want for piping into a custom downstream.
+
+### Topic comparison
+
+`/compare?a=foo&b=bar&c=baz&d=qux` overlays up to four topic surge
+trajectories on a single chart with per-topic stat cards (snapshots,
+peak spread, peak surge z, last seen). Useful for asking "is this
+spiking together with that?" Direct links from anywhere works — the
+labels in the topics grid + market signal panel are click-throughs to
+`/topic/...`, and you can stitch two of those into a comparison URL.
+
+### Backtest tunable
+
+The signal-validation panel header has three live controls — window
+(7-90 days), hit threshold (1-20%), and look-ahead horizon (6h-7d).
+Each change re-fetches `/api/backtest?days=…&threshold_pct=…&window_hours=…`
+and re-renders both blocks. Useful for finding the calibration that
+matches your bankroll's risk tolerance.
+
 ### Topic permalinks
 
 Every topic label has a stable URL: `/topic/{label}`. Click any topic
@@ -269,6 +295,8 @@ the dashboard is already surfacing.
 | `GET /api/backtest?days=30` | Hit/weak/miss rate of historical market-source surges plus the per-alert breakdown. |
 | `GET /api/topic/{slug}?days=30` | Topic detail: 30d of snapshots, surge trajectory, current live cluster. |
 | `GET /topic/{slug}` | HTML topic page (same SPA shell; the front-end router renders the detail view). |
+| `GET /compare?a=x&b=y[&c=z&d=w]` | HTML overlay of up to 4 topic trajectories on one chart, with per-topic stat cards. |
+| `GET /api/backtest?days=30&threshold_pct=0.05&window_hours=24` | Hit/weak/miss rates. All three parameters are tunable from the dashboard's backtest controls. |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |
