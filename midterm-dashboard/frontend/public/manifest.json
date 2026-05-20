@@ -1,0 +1,13 @@
+{
+  "name": "MidtermEdge",
+  "short_name": "MidtermEdge",
+  "description": "Cross-source prediction market dashboard for the 2026 US midterms.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafaf9",
+  "theme_color": "#1c1917",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

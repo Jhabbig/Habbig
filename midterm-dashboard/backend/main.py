@@ -750,6 +750,16 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(alert_delivery_loop(), name="alert_worker"),
     ]
 
+    # Optional Polymarket WS consumer — gated on POLYMARKET_WS_ENABLED so the
+    # default deployment continues to use 5-min polling.
+    from aggregators.polymarket_ws import PolymarketWebSocket, ws_enabled
+    if ws_enabled():
+        state.polymarket_ws = PolymarketWebSocket(state.db, session=state.http_session)
+        state.background_tasks.append(
+            asyncio.create_task(state.polymarket_ws.run(), name="polymarket_ws")
+        )
+        logger.info("Polymarket WS consumer started")
+
     logger.info("Background tasks started")
     yield
 

@@ -79,6 +79,34 @@ export const api = {
   removeWatchlist: (key) => request(`/premium/watchlist/${key}`, { method: 'DELETE' }),
   detailedComparison: (key) => request(`/premium/detailed-comparison/${key}`),
 
+  // Alerts
+  alerts: () => request('/premium/alerts'),
+  createAlert: (race_key, threshold, alert_type = 'divergence') =>
+    request('/premium/alerts', { method: 'POST', body: JSON.stringify({ race_key, threshold, alert_type }) }),
+  alertHistory: (limit = 50) => request(`/premium/alerts/history?limit=${limit}`),
+
+  // Push
+  pushConfig: () => request('/data/push/public-key'),
+  pushSubscribe: (endpoint, keys) =>
+    request('/premium/push/subscribe', { method: 'POST', body: JSON.stringify({ endpoint, keys }) }),
+  pushUnsubscribe: (endpoint, keys) =>
+    request('/premium/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint, keys }) }),
+
+  // Comments
+  comments: (raceKey) => request(`/data/race/${encodeURIComponent(raceKey)}/comments`),
+  postComment: (raceKey, body) =>
+    request(`/premium/race/${encodeURIComponent(raceKey)}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+  deleteComment: (id) => request(`/premium/comments/${id}`, { method: 'DELETE' }),
+
+  // Paper portfolio
+  portfolio: (openOnly = false) => request(`/premium/portfolio${openOnly ? '?open_only=true' : ''}`),
+  openPosition: (p) => request('/premium/portfolio', { method: 'POST', body: JSON.stringify(p) }),
+  closePosition: (id, exit_price) => request(`/premium/portfolio/${id}?exit_price=${exit_price}`, { method: 'DELETE' }),
+
+  // Accuracy + movements
+  accuracy: () => request('/data/accuracy'),
+  movements: (raceKey, hours = 24) => request(`/data/race/${encodeURIComponent(raceKey)}/movements?hours=${hours}`),
+
   // Admin
   adminStats: () => request('/admin/stats'),
   adminUsers: (limit = 100, offset = 0) => request(`/admin/users?limit=${limit}&offset=${offset}`),

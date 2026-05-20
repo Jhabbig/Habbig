@@ -3,7 +3,9 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtMoney, fmtNum } from '../lib/settings'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
-import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X } from 'lucide-react'
+import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X, Share2, Code2 } from 'lucide-react'
+import Comments from '../lib/Comments'
+import Movements from '../lib/Movements'
 
 const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
 const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
@@ -1089,6 +1091,33 @@ export default function RaceDetail() {
             {polls.length > 30 && <p className="text-xs text-stone-400 text-center py-2">Showing 30 of {polls.length} polls</p>}
           </div>
         </div>
+      )}
+
+      {race?.race_key && <Movements raceKey={race.race_key} hours={24} />}
+      {race?.race_key && <Comments raceKey={race.race_key} currentUser={currentUser} />}
+
+      {race?.race_key && (
+        <section aria-labelledby="share-heading"
+          className="bg-white shadow-sm border border-stone-100 rounded-xl p-4 sm:p-6 mb-6">
+          <h3 id="share-heading" className="text-sm font-semibold text-stone-800 flex items-center gap-2 mb-3">
+            <Share2 className="h-4 w-4 text-stone-500" aria-hidden="true" />Share &amp; embed
+          </h3>
+          <div className="space-y-2 text-xs">
+            <button onClick={() => {
+                const url = `${window.location.origin}/race/${race.race_key}`
+                navigator.clipboard?.writeText(url)
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-stone-100 text-stone-700 hover:bg-stone-200">
+              <Share2 className="h-3.5 w-3.5" aria-hidden="true" /> Copy link
+            </button>
+            <details className="mt-2">
+              <summary className="cursor-pointer text-stone-600 inline-flex items-center gap-1.5">
+                <Code2 className="h-3.5 w-3.5" aria-hidden="true" /> Embed code
+              </summary>
+              <pre className="mt-2 p-2 bg-stone-50 border border-stone-100 rounded-md overflow-x-auto text-[11px] text-stone-700">{`<iframe src="${window.location.origin}/embed/race/${race.race_key}" width="480" height="280" frameborder="0" style="border:0;border-radius:12px"></iframe>`}</pre>
+            </details>
+          </div>
+        </section>
       )}
     </div>
   )

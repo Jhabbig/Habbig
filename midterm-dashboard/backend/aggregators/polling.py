@@ -38,7 +38,13 @@ class PollingAggregator:
             await self._session.close()
 
     async def fetch_all_polls(self) -> dict:
-        """Fetch all available polling data."""
+        """Fetch all available polling data, falling back to Silver Bulletin
+        if 538 returns nothing.
+
+        538 was wound down in 2024 and the CSVs may go dark. If any poll type
+        is empty after the 538 fetch, retry it via the Silver Bulletin
+        fallback so the dashboard keeps showing polling data.
+        """
         now = datetime.now(timezone.utc)
         if self._cache_time and (now - self._cache_time).total_seconds() < self._cache_ttl:
             return self._polling_cache
@@ -50,7 +56,21 @@ class PollingAggregator:
                 results[poll_type] = polls
                 logger.info(f"Fetched {len(polls)} {poll_type} polls from 538")
             else:
-                logger.warning(f"No {poll_type} polls available from 538")
+                logger.warning(f"No {poll_type} polls from 538; trying fallback")
+
+        # Fallback: Silver Bulletin for any poll type that 538 didn't return
+        missing = [pt for pt in FIVETHIRTYEIGHT_URLS if pt not in results]
+        if missing:
+            try:
+                from .silver_bulletin import SilverBulletinFallback
+                sb = SilverBulletinFallback(session=await self._get_session())
+                for pt in missing:
+                    polls = await sb.fetch_polls(pt)
+                    if polls:
+                        results[pt] = polls
+                        logger.info(f"Fetched {len(polls)} {pt} polls from Silver Bulletin fallback")
+            except Exception as e:
+                logger.warning(f"Silver Bulletin fallback failed: {e}")
 
         if results:
             self._polling_cache = results

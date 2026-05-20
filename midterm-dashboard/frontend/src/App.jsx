@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-r
 import { api } from './lib/api'
 import { SettingsProvider } from './lib/settings'
 import { useT } from './lib/i18n'
-import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History } from 'lucide-react'
+import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History, Bell, Briefcase } from 'lucide-react'
 
 import ErrorBoundary from './lib/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
@@ -18,6 +18,8 @@ import Account from './pages/Account'
 import WorldElections from './pages/WorldElections'
 import Historical from './pages/Historical'
 import Settings from './pages/Settings'
+import Notifications from './pages/Notifications'
+import Portfolio from './pages/Portfolio'
 
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -82,6 +84,12 @@ function Nav() {
     { to: '/historical', label: t('nav.historical'), icon: History },
   ]
 
+  if (user) {
+    links.push({ to: '/notifications', label: 'Alerts', icon: Bell })
+  }
+  if (user && (user.tier === 'premium' || user.tier === 'admin')) {
+    links.push({ to: '/portfolio', label: 'Portfolio', icon: Briefcase })
+  }
   if (user?.tier === 'admin') {
     links.push({ to: '/admin', label: t('nav.admin'), icon: Shield })
   }
@@ -186,6 +194,8 @@ export default function App() {
               <Route path="/register" element={<Register />} />
               <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+              <Route path="/portfolio" element={<ProtectedRoute tier="premium"><Portfolio /></ProtectedRoute>} />
               <Route path="/admin" element={<ProtectedRoute tier="admin"><AdminDashboard /></ProtectedRoute>} />
             </Routes>
           </ErrorBoundary>
