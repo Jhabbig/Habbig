@@ -301,6 +301,53 @@ CREATE TABLE IF NOT EXISTS crypto_indicator_backtests (
     PRIMARY KEY (indicator, ticker, horizon_days, computed_at)
 );
 CREATE INDEX IF NOT EXISTS idx_backtest_lookup ON crypto_indicator_backtests(indicator, ticker, horizon_days);
+
+-- ── Auto-execution: exchange credentials ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_exchange_credentials (
+    user_id     TEXT NOT NULL,
+    exchange    TEXT NOT NULL,         -- coinbase | kraken
+    encrypted   TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, exchange)
+);
+
+-- ── Auto-execution: per-user safety limits ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_safety_limits (
+    user_id              TEXT PRIMARY KEY,
+    dry_run              INTEGER NOT NULL DEFAULT 1,
+    max_order_usd        REAL NOT NULL DEFAULT 500.0,
+    max_daily_usd        REAL NOT NULL DEFAULT 1000.0,
+    circuit_breaker_pct  REAL NOT NULL DEFAULT 0.10,
+    limit_offset_bps     INTEGER NOT NULL DEFAULT 50,
+    limit_ttl_seconds    INTEGER NOT NULL DEFAULT 3600,
+    fallback_to_market   INTEGER NOT NULL DEFAULT 0,
+    preferred_exchange   TEXT NOT NULL DEFAULT 'coinbase',
+    updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Auto-execution: append-only execution log ───────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_executions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          TEXT NOT NULL,
+    ticker           TEXT NOT NULL,
+    exchange         TEXT NOT NULL,
+    side             TEXT NOT NULL,         -- buy | sell
+    action           TEXT NOT NULL,         -- placed | filled | dry_run | skipped | blocked | cancelled_ttl
+    reason           TEXT,
+    usd_amount       REAL,
+    limit_price      REAL,
+    fill_price       REAL,
+    fill_qty         REAL,
+    order_id         TEXT,
+    client_order_id  TEXT,
+    status           TEXT NOT NULL DEFAULT 'open',   -- open | filled | cancelled
+    raw              TEXT DEFAULT '{}',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exec_user ON crypto_executions(user_id);
+CREATE INDEX IF NOT EXISTS idx_exec_user_created ON crypto_executions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exec_open ON crypto_executions(user_id, status, action);
 """
 
 
@@ -1296,6 +1343,188 @@ def get_latest_backtest_results() -> list[Row]:
                ) x ON b.indicator = x.indicator AND b.ticker = x.ticker
                   AND b.horizon_days = x.horizon_days AND b.computed_at = x.m
                ORDER BY b.indicator, b.ticker, b.horizon_days"""
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Exchange credentials ────────────────────────────────────────────────────
+
+def upsert_exchange_credentials(user_id: str, exchange: str, encrypted: str) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_exchange_credentials (user_id, exchange, encrypted, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id, exchange) DO UPDATE SET
+                 encrypted = excluded.encrypted,
+                 updated_at = datetime('now')""",
+            (user_id, exchange, encrypted),
+        )
+
+
+def get_exchange_credentials(user_id: str, exchange: str) -> Optional[str]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT encrypted FROM crypto_exchange_credentials "
+            "WHERE user_id = ? AND exchange = ?",
+            (user_id, exchange),
+        ).fetchone()
+    return row["encrypted"] if row else None
+
+
+def delete_exchange_credentials(user_id: str, exchange: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_exchange_credentials WHERE user_id = ? AND exchange = ?",
+            (user_id, exchange),
+        )
+
+
+def list_exchange_credentials(user_id: str) -> list[str]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT exchange FROM crypto_exchange_credentials WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    return [r["exchange"] for r in rows]
+
+
+# ── Safety limits ───────────────────────────────────────────────────────────
+
+def get_safety_limits(user_id: str) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            """SELECT dry_run, max_order_usd, max_daily_usd, circuit_breaker_pct,
+                      limit_offset_bps, limit_ttl_seconds, fallback_to_market,
+                      preferred_exchange, updated_at
+               FROM crypto_safety_limits WHERE user_id = ?""",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    out = _row(row)
+    # SQLite stores ints; Python-side it's nicer to expose booleans.
+    if out:
+        out["dry_run"] = bool(out["dry_run"])
+        out["fallback_to_market"] = bool(out["fallback_to_market"])
+    return out
+
+
+def upsert_safety_limits(user_id: str, safety: dict) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_safety_limits
+                 (user_id, dry_run, max_order_usd, max_daily_usd, circuit_breaker_pct,
+                  limit_offset_bps, limit_ttl_seconds, fallback_to_market,
+                  preferred_exchange, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 dry_run=excluded.dry_run,
+                 max_order_usd=excluded.max_order_usd,
+                 max_daily_usd=excluded.max_daily_usd,
+                 circuit_breaker_pct=excluded.circuit_breaker_pct,
+                 limit_offset_bps=excluded.limit_offset_bps,
+                 limit_ttl_seconds=excluded.limit_ttl_seconds,
+                 fallback_to_market=excluded.fallback_to_market,
+                 preferred_exchange=excluded.preferred_exchange,
+                 updated_at=datetime('now')""",
+            (user_id,
+             1 if safety["dry_run"] else 0,
+             float(safety["max_order_usd"]),
+             float(safety["max_daily_usd"]),
+             float(safety["circuit_breaker_pct"]),
+             int(safety["limit_offset_bps"]),
+             int(safety["limit_ttl_seconds"]),
+             1 if safety["fallback_to_market"] else 0,
+             str(safety["preferred_exchange"])),
+        )
+
+
+# ── Executions ──────────────────────────────────────────────────────────────
+
+def log_execution(user_id: str, decision: dict, raw: dict | None = None) -> int:
+    """Persist an execution decision. Returns the inserted row id."""
+    raw_json = json.dumps(raw or {})
+    status = "open" if decision.get("action") == "placed" else "logged"
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_executions
+                 (user_id, ticker, exchange, side, action, reason,
+                  usd_amount, limit_price, order_id, client_order_id, status, raw)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id,
+             str(decision.get("ticker", "")),
+             str(decision.get("exchange", "")),
+             str(decision.get("side", "")),
+             str(decision.get("action", "")),
+             str(decision.get("reason", "")),
+             decision.get("usd_amount"),
+             decision.get("limit_price"),
+             decision.get("order_id"),
+             decision.get("client_order_id"),
+             status,
+             raw_json),
+        )
+        return int(cur.lastrowid)
+
+
+def update_execution_status(exec_id: int, status: str,
+                            fill_price: float | None = None,
+                            fill_qty: float | None = None) -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE crypto_executions
+               SET status = ?,
+                   fill_price = COALESCE(?, fill_price),
+                   fill_qty = COALESCE(?, fill_qty)
+               WHERE id = ?""",
+            (status, fill_price, fill_qty, exec_id),
+        )
+
+
+def get_executions(user_id: str, limit: int = 200) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM crypto_executions WHERE user_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_executions_since(user_id: str, hours: int = 24) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM crypto_executions WHERE user_id = ? AND created_at >= ?",
+            (user_id, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_open_executions_before(user_id: str, cutoff_iso: str) -> list[Row]:
+    """Open (status='open', action='placed') orders older than cutoff_iso."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM crypto_executions
+               WHERE user_id = ? AND status = 'open' AND action = 'placed'
+                 AND created_at < ? AND order_id IS NOT NULL""",
+            (user_id, cutoff_iso),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_due_dca_schedules() -> list[Row]:
+    """Schedules where next_run_at <= now (or is unset) AND active = 1.
+    Returns user_id alongside ticker for the cross-user cron loop."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT user_id, ticker, frequency, base_amount_usd, use_multiplier,
+                      next_run_at, last_run_at
+               FROM crypto_dca_schedule
+               WHERE active = 1
+                 AND (next_run_at IS NULL OR next_run_at <= ?)""",
+            (now,),
         ).fetchall()
     return _rows(rows)
 

@@ -42,6 +42,8 @@ docker compose up --build crypto
 | `derivatives.py` | Binance USDT-M Futures fetcher — funding rate, open interest, perp basis. Persists time-series in `crypto_derivatives_series`. Computes funding composite (BTC+ETH weighted), OI trend signal. Refreshed hourly. |
 | `macro.py` | Macro overlay — DXY, US10Y, VIX, M2, gold. Pulls FRED (needs free API key) + Stooq (no key for DXY/gold). Computes BTC correlation (90d), per-series crypto-tailwind/-headwind signal, and a composite macro regime. Refreshed every 12 h. |
 | `backtest.py` | Walk-forward backtester for cycle indicators. At every historical date, recomputes each indicator with only data available then, measures 30/90/365d forward returns vs unconditional baseline. Persists to `crypto_indicator_backtests`. Re-run on every long-term refresh. |
+| `exchanges.py` | Spot exchange adapters — Coinbase Advanced Trade (JWT/ES256) and Kraken (HMAC-SHA512). Common interface: `get_balances`, `get_price`, `place_limit_buy`, `place_market_buy`, `cancel_order`. Credentials stored Fernet-encrypted per user in `crypto_exchange_credentials`. |
+| `execution.py` | Auto-execution engine. Reads `crypto_dca_schedule` and runs each due leg through a 7-step safety gauntlet (dry-run gate, per-order cap, daily cap, portfolio circuit breaker, asset whitelist, adapter check, price discovery). Places limit orders 0.5% below mid with 1h TTL + optional market fallback. Append-only log in `crypto_executions`. Dry-run is the default. |
 
 **HTML / data**
 | File | Purpose |

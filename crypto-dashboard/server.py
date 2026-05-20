@@ -38,6 +38,8 @@ import indicators as ind
 import derivatives as deriv
 import macro
 import backtest as bt
+import exchanges as xch
+import execution as exec_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -470,6 +472,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(long_term_refresher()))
     _bg_tasks.add(asyncio.create_task(derivatives_refresher()))
     _bg_tasks.add(asyncio.create_task(macro_refresher()))
+    _bg_tasks.add(asyncio.create_task(execution_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
@@ -517,6 +520,35 @@ async def macro_refresher():
         except Exception as e:
             print(f"[macro] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(12 * 3600)
+
+
+async def execution_ticker():
+    """Process due DCA schedules + reconcile stale orders every 5 minutes.
+    All execution still passes through the safety gauntlet — dry-run by
+    default, per-order and per-day caps, circuit breaker. We rely on
+    those rails; this task just decides *when* to evaluate."""
+    await asyncio.sleep(120)  # let the price/onchain data load first
+    while True:
+        try:
+            summary = await asyncio.to_thread(exec_mod.tick_due_schedules)
+            if summary["checked"]:
+                print(f"[exec] {summary}")
+        except Exception as e:
+            print(f"[exec] tick error: {type(e).__name__}: {e}")
+        try:
+            # Reconcile stale orders for every user that has at least one open.
+            with db._conn() as c:
+                user_ids = [r["user_id"] for r in c.execute(
+                    "SELECT DISTINCT user_id FROM crypto_executions "
+                    "WHERE status='open' AND order_id IS NOT NULL"
+                ).fetchall()]
+            for uid in user_ids:
+                n = await asyncio.to_thread(exec_mod.reconcile_open_orders, uid)
+                if n:
+                    print(f"[exec] reconciled {n} stale orders for {uid}")
+        except Exception as e:
+            print(f"[exec] reconcile error: {type(e).__name__}: {e}")
+        await asyncio.sleep(300)
 
 
 def _evaluate_long_term_alerts():
@@ -5183,6 +5215,158 @@ async def delete_long_term_alert(ticker: str, alert_type: str, request: Request)
     return {"ok": True}
 
 
+# ===================================================================
+# AUTO-EXECUTION — Phase 2
+# ===================================================================
+# Every order route here is gated by Fernet-encrypted creds + the safety
+# gauntlet in execution.py. Default is dry-run; flipping that is a
+# deliberate user action that requires confirming each safety field.
+
+@app.post("/api/exchanges/credentials")
+async def save_exchange_creds(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    exchange = str(payload.get("exchange", "")).lower()
+    if exchange not in ("coinbase", "kraken"):
+        raise HTTPException(status_code=400, detail="exchange must be coinbase or kraken")
+    if exchange == "coinbase":
+        api_key = str(payload.get("api_key", "")).strip()
+        pem = str(payload.get("private_key_pem", "")).strip()
+        if not api_key or "BEGIN" not in pem:
+            raise HTTPException(status_code=400, detail="api_key + private_key_pem required for Coinbase")
+        creds = {"api_key": api_key, "private_key_pem": pem}
+    else:
+        api_key = str(payload.get("api_key", "")).strip()
+        secret = str(payload.get("secret", "")).strip()
+        if not api_key or not secret:
+            raise HTTPException(status_code=400, detail="api_key + secret required for Kraken")
+        creds = {"api_key": api_key, "secret": secret}
+    # Validate by trying to instantiate the adapter.
+    try:
+        if exchange == "coinbase":
+            adapter = xch.CoinbaseAdapter(creds["api_key"], creds["private_key_pem"])
+        else:
+            adapter = xch.KrakenAdapter(creds["api_key"], creds["secret"])
+        ok, msg = await asyncio.to_thread(adapter.test_connection)
+        if not ok:
+            return JSONResponse({"error": msg}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    xch.save_exchange_credentials(user["id"], exchange, creds)
+    return {"ok": True, "exchange": exchange, "message": msg}
+
+
+@app.delete("/api/exchanges/credentials/{exchange}")
+async def delete_exchange_creds(exchange: str, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    xch.delete_exchange_credentials(user["id"], exchange.lower())
+    return {"ok": True}
+
+
+@app.get("/api/exchanges/configured")
+async def list_configured_exchanges(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"exchanges": xch.configured_exchanges(user["id"])}
+
+
+@app.get("/api/exchanges/test/{exchange}")
+async def test_exchange_connection(exchange: str, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    adapter = xch.get_adapter(user["id"], exchange.lower())
+    if not adapter:
+        return JSONResponse({"error": "not configured"}, status_code=404)
+    ok, msg = await asyncio.to_thread(adapter.test_connection)
+    return {"ok": ok, "message": msg}
+
+
+@app.get("/api/exchanges/balances")
+async def get_exchange_balances(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    out = {}
+    for name in xch.configured_exchanges(user["id"]):
+        adapter = xch.get_adapter(user["id"], name)
+        if not adapter:
+            continue
+        try:
+            balances = await asyncio.to_thread(adapter.get_balances)
+            out[name] = [b.to_dict() for b in balances]
+        except Exception as e:
+            out[name] = {"error": str(e)}
+    return {"balances": out}
+
+
+# ── Safety limits ───────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/safety")
+async def get_safety(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return exec_mod.get_safety_for(user["id"])
+
+
+@app.post("/api/long-term/safety")
+async def set_safety(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    return exec_mod.update_safety_for(user["id"], payload or {})
+
+
+# ── Execution ──────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/executions")
+async def list_executions(request: Request, limit: int = 100):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_executions(user["id"], limit=min(max(1, limit), 500))
+    return {"executions": [dict(r) for r in rows]}
+
+
+@app.get("/api/long-term/executions/preview")
+async def preview_executions(request: Request):
+    """What would the executor do right now? Dry-run preview of every active
+    DCA schedule for this user."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    preview = await asyncio.to_thread(exec_mod.preview_dca, user["id"])
+    return {"preview": preview}
+
+
+@app.post("/api/long-term/executions/dca/{ticker}")
+async def run_dca_now(ticker: str, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ticker = ticker.upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=404, detail="Unknown ticker")
+    decision = await asyncio.to_thread(exec_mod.execute_dca_now, user["id"], ticker)
+    return decision.to_dict()
+
+
+@app.post("/api/long-term/executions/rebalance")
+async def run_rebalance_now(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    decisions = await asyncio.to_thread(exec_mod.execute_rebalance_now, user["id"])
+    return {"decisions": [d.to_dict() for d in decisions]}
+
+
 # ── HTML page ───────────────────────────────────────────────────────────────
 
 @app.get("/long-term", response_class=HTMLResponse)
@@ -5259,6 +5443,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="tab" data-tab="targets">Targets &amp; Rebalance</div>
   <div class="tab" data-tab="dca">DCA Plan</div>
   <div class="tab" data-tab="alerts">Risk Alerts</div>
+  <div class="tab" data-tab="execution">Execution</div>
 </div>
 
 <section data-section="overview">
@@ -5375,6 +5560,68 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     <th>Ticker</th><th>Type</th><th>Threshold</th><th>Last fired</th><th></th></tr></thead><tbody></tbody></table>
 </section>
 
+<section data-section="execution" hidden>
+  <h2>Auto-execution</h2>
+  <div class="note" style="color:var(--yellow);font-weight:600">⚠ Dry-run mode is ON by default. Real orders are <b>never</b> placed unless you explicitly flip dry-run off and supply working exchange credentials.</div>
+
+  <h2 style="margin-top:18px">Exchange connections</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Coinbase Advanced Trade</h3>
+      <div class="note">Create an Advanced Trade API key at <span class="kbd">coinbase.com/settings/api</span> with <b>view + trade</b> scopes only — never withdraw.</div>
+      <div class="field"><label>API Key (UUID)</label><input id="cb-key" type="text" placeholder="00000000-0000-0000-0000-000000000000"></div>
+      <div class="field"><label>EC Private Key (PEM)</label><textarea id="cb-pem" rows="4" placeholder="-----BEGIN EC PRIVATE KEY-----..." style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:7px 10px;border-radius:6px;font-family:monospace;font-size:.8em;width:100%"></textarea></div>
+      <div class="actionrow">
+        <button id="cb-save">Save &amp; test</button>
+        <button id="cb-del" class="ghost danger">Disconnect</button>
+        <span id="cb-msg"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Kraken</h3>
+      <div class="note">Create an API key at <span class="kbd">kraken.com/u/security/api</span> with <b>Query Funds</b> + <b>Create Orders</b> only — disable withdraw.</div>
+      <div class="field"><label>API Key</label><input id="kr-key" type="text"></div>
+      <div class="field"><label>API Secret (base64)</label><input id="kr-secret" type="password"></div>
+      <div class="actionrow">
+        <button id="kr-save">Save &amp; test</button>
+        <button id="kr-del" class="ghost danger">Disconnect</button>
+        <span id="kr-msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <h2>Safety limits</h2>
+  <div id="safety-form" class="grid"></div>
+  <div class="actionrow" style="margin-top:8px">
+    <button id="safety-save">Save safety limits</button>
+    <span id="safety-msg"></span>
+  </div>
+
+  <h2>Live balances</h2>
+  <div id="balances-out" style="margin-top:8px"></div>
+
+  <h2>What would the executor do right now?</h2>
+  <div class="actionrow">
+    <button id="preview-btn" class="ghost">Refresh preview</button>
+  </div>
+  <table id="preview-table"><thead><tr>
+    <th>Ticker</th><th>Action</th><th>USD</th><th>Limit price</th><th>Exchange</th><th>Reason</th></tr></thead><tbody></tbody></table>
+
+  <h2>Manual triggers</h2>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="exec-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <button id="exec-dca">Run DCA now</button>
+    <button id="exec-rebal" class="ghost">Run rebalance</button>
+    <span id="exec-msg"></span>
+  </div>
+
+  <h2>Execution log</h2>
+  <table id="exec-table"><thead><tr>
+    <th>When</th><th>Ticker</th><th>Side</th><th>Action</th><th>Reason</th><th>USD</th><th>Limit</th><th>Status</th></tr></thead><tbody></tbody></table>
+</section>
+
 <script>
 const TICKERS = ["BTC","ETH","SOL","DOGE","XRP"];
 const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
@@ -5404,6 +5651,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (which === 'targets') loadTargets();
   if (which === 'dca') loadDCA();
   if (which === 'alerts') loadAlerts();
+  if (which === 'execution') loadExecution();
 });
 
 const SIG_CLASS = {bullish:'r-calm', bearish:'r-defensive', neutral:'r-neutral', unavailable:'r-neutral'};
@@ -5541,6 +5789,193 @@ document.getElementById('bt-rerun').onclick = async () => {
     loadBacktests();
   } catch(e) { msg.textContent = ' ' + e.message; }
 };
+
+// ── Execution tab ──────────────────────────────────────────────────────────
+
+const SAFETY_FIELDS = [
+  {k: 'dry_run', label: 'Dry-run mode (orders logged, never sent)', type: 'checkbox'},
+  {k: 'preferred_exchange', label: 'Preferred exchange', type: 'select', options: ['coinbase','kraken']},
+  {k: 'max_order_usd', label: 'Max single order (USD)', type: 'number', step: 10},
+  {k: 'max_daily_usd', label: 'Max total spend per day (USD)', type: 'number', step: 50},
+  {k: 'circuit_breaker_pct', label: 'Pause if portfolio drops by (24h)', type: 'number', step: 0.01, format: 'pct'},
+  {k: 'limit_offset_bps', label: 'Limit price offset (basis points below mid)', type: 'number', step: 5},
+  {k: 'limit_ttl_seconds', label: 'Cancel unfilled limits after (seconds)', type: 'number', step: 60},
+  {k: 'fallback_to_market', label: 'After TTL, fall back to market order', type: 'checkbox'},
+];
+
+async function loadExecution(){
+  await loadSafetyForm();
+  await loadConfiguredExchanges();
+  await loadBalances();
+  await loadPreview();
+  await loadExecLog();
+}
+
+async function loadSafetyForm(){
+  const form = document.getElementById('safety-form');
+  form.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const s = await api('/api/long-term/safety');
+    form.innerHTML = '';
+    for (const f of SAFETY_FIELDS) {
+      const wrap = document.createElement('div'); wrap.className = 'card';
+      let inputHtml;
+      if (f.type === 'checkbox') {
+        inputHtml = `<input type="checkbox" id="sf-${f.k}" ${s[f.k] ? 'checked' : ''}> <span>${f.label}</span>`;
+      } else if (f.type === 'select') {
+        inputHtml = `<label>${f.label}</label><select id="sf-${f.k}">${
+          f.options.map(o => `<option value="${o}" ${o===s[f.k]?'selected':''}>${o}</option>`).join('')
+        }</select>`;
+      } else {
+        const v = f.format === 'pct' ? s[f.k] : s[f.k];
+        inputHtml = `<label>${f.label}</label><input type="number" id="sf-${f.k}" step="${f.step||1}" value="${v}">`;
+      }
+      wrap.innerHTML = inputHtml;
+      form.appendChild(wrap);
+    }
+  } catch(e) { form.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+document.getElementById('safety-save').onclick = async () => {
+  const msg = document.getElementById('safety-msg'); msg.innerHTML = '';
+  const payload = {};
+  for (const f of SAFETY_FIELDS) {
+    const el = document.getElementById('sf-'+f.k);
+    if (!el) continue;
+    if (f.type === 'checkbox') payload[f.k] = el.checked;
+    else if (f.type === 'select') payload[f.k] = el.value;
+    else payload[f.k] = parseFloat(el.value);
+  }
+  try {
+    await api('/api/long-term/safety', {method:'POST', body: JSON.stringify(payload)});
+    msg.innerHTML = '<span class="ok">Saved.</span>';
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+async function loadConfiguredExchanges(){
+  try {
+    const r = await api('/api/exchanges/configured');
+    const cbConfigured = r.exchanges.includes('coinbase');
+    const krConfigured = r.exchanges.includes('kraken');
+    document.getElementById('cb-msg').innerHTML = cbConfigured ? '<span class="ok">connected</span>' : '<span class="note">not connected</span>';
+    document.getElementById('kr-msg').innerHTML = krConfigured ? '<span class="ok">connected</span>' : '<span class="note">not connected</span>';
+  } catch(e) {}
+}
+
+document.getElementById('cb-save').onclick = async () => {
+  const msg = document.getElementById('cb-msg'); msg.innerHTML = ' testing…';
+  try {
+    const r = await api('/api/exchanges/credentials', {method:'POST', body: JSON.stringify({
+      exchange: 'coinbase',
+      api_key: document.getElementById('cb-key').value,
+      private_key_pem: document.getElementById('cb-pem').value,
+    })});
+    msg.innerHTML = '<span class="ok">'+r.message+'</span>';
+    loadConfiguredExchanges(); loadBalances();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+document.getElementById('cb-del').onclick = async () => {
+  if (!confirm('Disconnect Coinbase?')) return;
+  await api('/api/exchanges/credentials/coinbase', {method:'DELETE'});
+  loadConfiguredExchanges(); loadBalances();
+};
+document.getElementById('kr-save').onclick = async () => {
+  const msg = document.getElementById('kr-msg'); msg.innerHTML = ' testing…';
+  try {
+    const r = await api('/api/exchanges/credentials', {method:'POST', body: JSON.stringify({
+      exchange: 'kraken',
+      api_key: document.getElementById('kr-key').value,
+      secret: document.getElementById('kr-secret').value,
+    })});
+    msg.innerHTML = '<span class="ok">'+r.message+'</span>';
+    loadConfiguredExchanges(); loadBalances();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+document.getElementById('kr-del').onclick = async () => {
+  if (!confirm('Disconnect Kraken?')) return;
+  await api('/api/exchanges/credentials/kraken', {method:'DELETE'});
+  loadConfiguredExchanges(); loadBalances();
+};
+
+async function loadBalances(){
+  const out = document.getElementById('balances-out');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const r = await api('/api/exchanges/balances');
+    const names = Object.keys(r.balances);
+    if (!names.length) { out.innerHTML = '<div class="note">No exchanges connected.</div>'; return; }
+    let html = '';
+    for (const name of names) {
+      const b = r.balances[name];
+      if (b.error) { html += `<div><b>${name}</b>: <span class="err">${b.error}</span></div>`; continue; }
+      const rows = b.filter(x => x.total > 0.0001).map(x => `<tr><td>${x.asset}</td><td>${fmt(x.available,8)}</td><td>${fmt(x.total,8)}</td></tr>`).join('');
+      html += `<div style="margin-bottom:12px"><b>${name}</b><table style="margin-top:4px"><thead><tr><th>Asset</th><th>Available</th><th>Total</th></tr></thead><tbody>${rows||'<tr><td colspan="3" style="color:var(--muted)">empty</td></tr>'}</tbody></table></div>`;
+    }
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+document.getElementById('preview-btn').onclick = loadPreview;
+async function loadPreview(){
+  const tbody = document.querySelector('#preview-table tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const r = await api('/api/long-term/executions/preview');
+    if (!r.preview.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No active DCA schedules.</td></tr>'; return; }
+    tbody.innerHTML = '';
+    for (const p of r.preview) {
+      const actCls = p.action === 'dry_run' ? 'r-neutral' : p.action === 'blocked' ? 'r-defensive' : p.action === 'placed' ? 'r-calm' : 'r-watchful';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${p.ticker}</td><td class="${actCls}">${p.action}</td>
+        <td>${usd(p.usd_amount)}</td>
+        <td>${p.limit_price==null?'—':usd(p.limit_price)}</td>
+        <td>${p.exchange}</td>
+        <td style="font-size:.85em">${p.reason}${p.dca_reason ? ' · '+p.dca_reason : ''}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="6" class="err">${e.message}</td></tr>`; }
+}
+
+document.getElementById('exec-dca').onclick = async () => {
+  const ticker = document.getElementById('exec-ticker').value;
+  const msg = document.getElementById('exec-msg'); msg.innerHTML = ' running…';
+  try {
+    const r = await api('/api/long-term/executions/dca/'+ticker, {method:'POST'});
+    msg.innerHTML = ` <span class="${r.action==='placed'?'ok':r.action==='blocked'?'err':'note'}">${r.action}: ${r.reason}</span>`;
+    loadExecLog(); loadPreview();
+  } catch(e) { msg.innerHTML = ' <span class="err">'+e.message+'</span>'; }
+};
+
+document.getElementById('exec-rebal').onclick = async () => {
+  if (!confirm('Run rebalance now? Sells are blocked in Phase 2 — only buys will execute.')) return;
+  const msg = document.getElementById('exec-msg'); msg.innerHTML = ' running…';
+  try {
+    const r = await api('/api/long-term/executions/rebalance', {method:'POST'});
+    msg.innerHTML = ` <span class="note">${r.decisions.length} legs evaluated</span>`;
+    loadExecLog();
+  } catch(e) { msg.innerHTML = ' <span class="err">'+e.message+'</span>'; }
+};
+
+async function loadExecLog(){
+  const tbody = document.querySelector('#exec-table tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const r = await api('/api/long-term/executions');
+    if (!r.executions.length) { tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">No execution history yet.</td></tr>'; return; }
+    tbody.innerHTML = '';
+    for (const e of r.executions) {
+      const actCls = e.action === 'placed' ? 'r-calm' : e.action === 'blocked' ? 'r-defensive' : e.action === 'dry_run' ? 'r-neutral' : 'r-watchful';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td style="font-size:.85em">${e.created_at}</td><td>${e.ticker}</td>
+        <td>${e.side}</td><td class="${actCls}">${e.action}</td>
+        <td style="font-size:.85em">${e.reason||''}</td>
+        <td>${e.usd_amount==null?'—':usd(e.usd_amount)}</td>
+        <td>${e.limit_price==null?'—':usd(e.limit_price)}</td>
+        <td>${e.status}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="8" class="err">${e.message}</td></tr>`; }
+}
 
 async function loadOverview(){
   const grid = document.getElementById('overview-grid');
