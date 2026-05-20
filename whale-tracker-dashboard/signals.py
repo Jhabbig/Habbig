@@ -224,6 +224,55 @@ def ticker_synthesis(ticker: str, window_days: int = 90) -> dict:
     }
 
 
+def hot_leaderboard(window_days: int = 30, limit: int = 50) -> list[dict]:
+    """Cross-signal hot tickers: ranked by combined synthesis score.
+
+    Pulls every ticker that appears in any of the three feeds in the
+    window, runs the same composite scoring used by `ticker_synthesis`,
+    and returns the top N. This is the "most going on right now" view.
+    """
+    cutoff = f"-{int(window_days)} days"
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT issuer_ticker AS ticker FROM insider_txn
+              WHERE issuer_ticker IS NOT NULL AND is_buy = 1 AND filed_at >= datetime('now', ?)
+            UNION
+            SELECT issuer_ticker AS ticker FROM activist_stake
+              WHERE issuer_ticker IS NOT NULL AND filed_at >= datetime('now', ?)
+            UNION
+            SELECT issuer_ticker AS ticker FROM ma_event
+              WHERE issuer_ticker IS NOT NULL AND filed_at >= datetime('now', ?)
+            """,
+            (cutoff, cutoff, cutoff),
+        ).fetchall()
+
+    out: list[dict] = []
+    for r in rows:
+        t = r["ticker"]
+        if not t:
+            continue
+        s = ticker_synthesis(t, window_days=window_days)
+        if (s.get("synthesis_score") or 0) <= 0:
+            continue
+        out.append({
+            "ticker":              t,
+            "score":               s["synthesis_score"],
+            "insider_buy_count":   s["insider_buy_count"],
+            "insider_sell_count":  s["insider_sell_count"],
+            "activist_count":      s["activist_count"],
+            "ma_event_count":      s["ma_event_count"],
+            # First filing URL from any feed, for quick navigation
+            "sample_url": (
+                (s["insider_buys"][0]["filing_url"]   if s["insider_buys"]    else None)
+                or (s["activist_filings"][0]["filing_url"] if s["activist_filings"] else None)
+                or (s["ma_events"][0]["filing_url"]   if s["ma_events"]       else None)
+            ),
+        })
+    out.sort(key=lambda r: r["score"], reverse=True)
+    return out[:int(limit)]
+
+
 def whale_leaderboard(window_days: int = 90) -> list[dict]:
     """Most active filers across both insider txns and activist stakes."""
     cutoff = f"-{int(window_days)} days"

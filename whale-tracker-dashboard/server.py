@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import time
@@ -23,9 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+import cik_ticker
 import db
+import events
 import ingest
 import signals as signals_mod
 
@@ -108,6 +111,8 @@ def _cached(key: str, builder):
 @app.on_event("startup")
 async def _startup():
     db.init_db()
+    # Warm the CIK→ticker map so the very first request gets enriched data.
+    asyncio.create_task(cik_ticker.ensure_loaded())
     if os.environ.get("DISABLE_INGEST", "").strip() == "1":
         log.warning("ingest disabled via DISABLE_INGEST=1")
         return
@@ -118,7 +123,53 @@ async def _startup():
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "counts": db.counts(), "ingest": db.get_ingest_state()}
+    return {
+        "ok": True,
+        "counts": db.counts(),
+        "ingest": db.get_ingest_state(),
+        "sse_subscribers": events.subscriber_count(),
+    }
+
+
+@app.get("/api/stream")
+async def api_stream(request: Request):
+    """Server-Sent Events stream — pushes ingest events to subscribers.
+
+    Emits:
+      - `hello`  : initial connection with current counts
+      - `ingest` : after each ingest pass that found new filings
+      - SSE comments every 20s as keepalives
+    """
+    async def gen():
+        q = events.subscribe()
+        try:
+            yield f"event: hello\ndata: {json.dumps({'counts': db.counts()})}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    evt = await asyncio.wait_for(q.get(), timeout=20.0)
+                    payload = json.dumps(evt["payload"])
+                    yield f"event: {evt['type']}\ndata: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            events.unsubscribe(q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/hot")
+async def api_hot(
+    days: int = Query(30, ge=1, le=180),
+    limit: int = Query(50, ge=1, le=200),
+):
+    key = f"hot:{days}:{limit}"
+    return _cached(key, lambda: signals_mod.hot_leaderboard(window_days=days, limit=limit))
 
 
 @app.get("/api/insider-clusters")
@@ -174,6 +225,16 @@ async def api_admin_ingest_now():
     res = await ingest.run_once()
     _cache.clear()
     return {"inserted": res, "counts": db.counts()}
+
+
+@app.post("/api/admin/backfill-tickers")
+async def api_admin_backfill_tickers():
+    """Backfill issuer_ticker on rows ingested before the CIK map was available."""
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    updated = await ingest.backfill_tickers()
+    _cache.clear()
+    return {"updated": updated}
 
 
 # ─── static ──────────────────────────────────────────────────────────

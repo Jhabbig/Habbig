@@ -137,7 +137,8 @@
 </header>
 
 <nav class="tabs">
-  <button data-tab="clusters" class="active">Insider Clusters</button>
+  <button data-tab="hot" class="active">Hot Now</button>
+  <button data-tab="clusters">Insider Clusters</button>
   <button data-tab="insider">Recent Insider Buys</button>
   <button data-tab="activist">Activist Stakes</button>
   <button data-tab="ma">M&amp;A Feed</button>
@@ -147,8 +148,29 @@
 
 <main>
 
+  <!-- ── Hot Now (cross-signal leaderboard) ─────────────────────── -->
+  <section id="tab-hot">
+    <div class="controls">
+      <label>Window (days) <input type="number" id="hot-days" value="30" min="1" max="180"></label>
+      <label>Limit <input type="number" id="hot-limit" value="50" min="1" max="200"></label>
+      <button id="hot-go">Refresh</button>
+      <span class="live" id="hot-meta">cross-signal ranking · insider + activist + M&amp;A</span>
+    </div>
+    <table id="hot-table">
+      <thead><tr>
+        <th>Ticker</th>
+        <th class="num">Score</th>
+        <th class="num">Insider Buys</th>
+        <th class="num">Activist</th>
+        <th class="num">M&amp;A</th>
+        <th>Latest filing</th>
+      </tr></thead>
+      <tbody><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
   <!-- ── Insider Clusters ───────────────────────────────────────── -->
-  <section id="tab-clusters">
+  <section id="tab-clusters" hidden>
     <div class="controls">
       <label>Window (days) <input type="number" id="cl-days" value="30" min="1" max="180"></label>
       <label>Min buyers <input type="number" id="cl-min" value="3" min="2" max="20"></label>
@@ -283,6 +305,34 @@ $$("nav.tabs button").forEach(b => b.addEventListener("click", () => {
   $$("main > section").forEach(s => s.hidden = (s.id !== "tab-" + t));
   loaders[t] && loaders[t]();
 }));
+
+// ── Hot Now ──
+async function loadHot() {
+  const days  = +$("#hot-days").value  || 30;
+  const limit = +$("#hot-limit").value || 50;
+  const tb = $("#hot-table tbody");
+  tb.innerHTML = `<tr><td colspan="6" class="empty">Loading…</td></tr>`;
+  try {
+    const rows = await fetchJSON(`/api/hot?days=${days}&limit=${limit}`);
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="6" class="empty">No signals in window yet. Ingest may still be warming up.</td></tr>`;
+      $("#hot-meta").textContent = `0 tickers · ${days}d window`;
+      return;
+    }
+    tb.innerHTML = rows.map(r => `
+      <tr>
+        <td><span class="ticker">${esc(r.ticker)}</span></td>
+        <td class="num">${r.score}</td>
+        <td class="num pos">${r.insider_buy_count}${r.insider_sell_count?` <span class="neg">(${r.insider_sell_count}S)</span>`:""}</td>
+        <td class="num">${r.activist_count?`<span class="pill activist">${r.activist_count}</span>`:"—"}</td>
+        <td class="num">${r.ma_event_count?`<span class="pill ma">${r.ma_event_count}</span>`:"—"}</td>
+        <td>${r.sample_url?`<a href="${esc(r.sample_url)}" target="_blank" rel="noopener">SEC</a>`:""}</td>
+      </tr>`).join("");
+    $("#hot-meta").textContent = `${rows.length} ticker${rows.length===1?"":"s"} · ${days}d window · ranked by combined signal`;
+  } catch(e) {
+    tb.innerHTML = `<tr><td colspan="6" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
 
 // ── Insider Clusters ──
 async function loadClusters() {
@@ -485,6 +535,7 @@ async function loadLeaderboard() {
 }
 
 const loaders = {
+  hot:         loadHot,
   clusters:    loadClusters,
   insider:     loadInsiderRecent,
   activist:    loadActivist,
@@ -493,6 +544,7 @@ const loaders = {
   leaderboard: loadLeaderboard,
 };
 
+$("#hot-go").addEventListener("click", loadHot);
 $("#cl-go").addEventListener("click", loadClusters);
 $("#ib-go").addEventListener("click", loadInsiderRecent);
 $("#ac-go").addEventListener("click", loadActivist);
@@ -501,24 +553,50 @@ $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
 $("#sy-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") loadSynthesis(); });
 
-// initial load + auto-refresh every 60s on visible tab
-loadClusters();
+// Initial load on the active tab.
+loadHot();
+
+// ── SSE live stream ──
+// Pushes ingest events from the server. When a new filing lands, we
+// refresh the active tab + live indicator immediately rather than
+// waiting for the next poll.
+let sseRetry = 1000;
+function setLive(text, ok=true) {
+  $("#live-text").textContent = text;
+  $("nav.tabs").previousElementSibling.querySelector(".live .dot").style.background = ok ? "var(--accent)" : "var(--sell)";
+}
+function updateCountsFromHealth(c) {
+  setLive(`live · ${c.insider_txn||0} insider · ${c.activist_stake||0} 13D/G · ${c.ma_event||0} M&A`);
+}
+function connectSSE() {
+  const es = new EventSource("/api/stream", { withCredentials: true });
+  es.addEventListener("hello", (e) => {
+    sseRetry = 1000;
+    try { updateCountsFromHealth(JSON.parse(e.data).counts || {}); } catch {}
+  });
+  es.addEventListener("ingest", (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      updateCountsFromHealth(d.counts || {});
+      // Re-render the visible tab on any new data.
+      const active = $("nav.tabs button.active").dataset.tab;
+      loaders[active] && loaders[active]();
+    } catch {}
+  });
+  es.onerror = () => {
+    setLive("reconnecting…", false);
+    es.close();
+    sseRetry = Math.min(sseRetry * 2, 30_000);
+    setTimeout(connectSSE, sseRetry);
+  };
+}
+connectSSE();
+
+// Fallback poll every 60s in case SSE drops silently. Cheap.
 setInterval(() => {
   const active = $("nav.tabs button.active").dataset.tab;
   loaders[active] && loaders[active]();
 }, 60_000);
-
-// liveness ping
-async function tickLive() {
-  try {
-    const h = await fetchJSON("/healthz");
-    const c = h.counts || {};
-    $("#live-text").textContent = `live · ${c.insider_txn||0} insider · ${c.activist_stake||0} 13D/G · ${c.ma_event||0} M&A`;
-  } catch {
-    $("#live-text").textContent = "offline";
-  }
-}
-tickLive(); setInterval(tickLive, 30_000);
 </script>
 </body>
 </html>

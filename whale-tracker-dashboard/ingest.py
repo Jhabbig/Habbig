@@ -15,8 +15,10 @@ import asyncio
 import logging
 import os
 
+import cik_ticker
 import db
 import edgar
+import events
 import filings8k
 import filings13d
 import form4
@@ -30,6 +32,12 @@ PER_FEED_COUNT    = int(os.environ.get("INGEST_FEED_COUNT", "40"))
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
     results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0}
+
+    # Refresh CIK→ticker map (no-op if already current).
+    try:
+        await cik_ticker.ensure_loaded()
+    except Exception as e:
+        log.info("cik_ticker refresh skipped: %s", e)
 
     # Form 4 — insider transactions
     try:
@@ -54,6 +62,9 @@ async def run_once() -> dict[str, int]:
         results["8k"] = await _ingest_8k()
     except Exception as e:
         log.exception("8-K ingest failed: %s", e)
+
+    if any(results.values()):
+        events.broadcast("ingest", {"inserted": results, "counts": db.counts()})
 
     return results
 
@@ -189,6 +200,12 @@ async def _build_13_row(entry: dict, form_type: str) -> dict | None:
     if not issuer_name:
         issuer_name = issuer_name_extracted
 
+    # Fall back to the official CIK→ticker map if the filing didn't surface one.
+    if not issuer_ticker and issuer_cik:
+        issuer_ticker = cik_ticker.lookup_ticker(issuer_cik) or ""
+        if not issuer_name:
+            issuer_name = cik_ticker.lookup_name(issuer_cik) or ""
+
     return {
         "accession":     accession,
         "filed_at":      entry.get("filed_at", ""),
@@ -219,12 +236,14 @@ async def _ingest_8k() -> int:
         score = filings8k.score_8k(items, headline=entry.get("title", ""), body_excerpt=entry.get("summary", ""))
         if score < 2.0:
             continue
+        cik = entry.get("filer_cik", "")
+        ticker = cik_ticker.lookup_ticker(cik) if cik else None
         row = {
             "accession":     accession,
             "filed_at":      entry.get("filed_at", ""),
             "issuer_name":   entry.get("filer_name", ""),
-            "issuer_ticker": None,  # populated later by enrichment if we add it
-            "issuer_cik":    entry.get("filer_cik", ""),
+            "issuer_ticker": ticker,
+            "issuer_cik":    cik,
             "items":         ",".join(items),
             "headline":      entry.get("title", "")[:300],
             "ma_score":      score,
@@ -233,3 +252,41 @@ async def _ingest_8k() -> int:
         if db.upsert_ma_event(row):
             inserted += 1
     return inserted
+
+
+# ───────────────────────────── Backfill helper ─────────────────────────────
+
+async def backfill_tickers() -> dict[str, int]:
+    """Backfill issuer_ticker for activist/MA rows that don't have one.
+
+    Useful after the first cik_tickers fetch or after rows were ingested
+    before the map was available.
+    """
+    await cik_ticker.ensure_loaded()
+    updated = {"activist_stake": 0, "ma_event": 0}
+    with db.connect() as cx:
+        a_rows = cx.execute(
+            "SELECT accession, issuer_cik FROM activist_stake "
+            "WHERE issuer_ticker IS NULL AND issuer_cik IS NOT NULL AND issuer_cik != ''"
+        ).fetchall()
+        for r in a_rows:
+            t = cik_ticker.lookup_ticker(r["issuer_cik"])
+            if t:
+                cx.execute(
+                    "UPDATE activist_stake SET issuer_ticker = ? WHERE accession = ?",
+                    (t, r["accession"]),
+                )
+                updated["activist_stake"] += 1
+        m_rows = cx.execute(
+            "SELECT accession, issuer_cik FROM ma_event "
+            "WHERE issuer_ticker IS NULL AND issuer_cik IS NOT NULL AND issuer_cik != ''"
+        ).fetchall()
+        for r in m_rows:
+            t = cik_ticker.lookup_ticker(r["issuer_cik"])
+            if t:
+                cx.execute(
+                    "UPDATE ma_event SET issuer_ticker = ? WHERE accession = ?",
+                    (t, r["accession"]),
+                )
+                updated["ma_event"] += 1
+    return updated

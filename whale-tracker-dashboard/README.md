@@ -34,13 +34,15 @@ docker compose up --build whales
 **Python**
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app — routes, gateway SSO middleware, 30s response cache, startup ingest task. |
-| `ingest.py` | Background loop polling EDGAR Atom feeds for Form 4, SC 13D, SC 13G, 8-K every `INGEST_INTERVAL_S` seconds. |
+| `server.py` | FastAPI app — routes, gateway SSO middleware (with `/healthz` exempt), 30s response cache, startup ingest task, SSE stream endpoint. |
+| `ingest.py` | Background loop polling EDGAR Atom feeds for Form 4, SC 13D, SC 13G, 8-K every `INGEST_INTERVAL_S` seconds. Refreshes the CIK→ticker map and broadcasts an `ingest` event when new filings land. |
 | `edgar.py` | Polite EDGAR client: rate-limited (10 req/sec cap), Atom feed parsing, per-filing index.json + primary-doc URL helpers. |
+| `cik_ticker.py` | CIK→ticker lookup, cached from `https://www.sec.gov/files/company_tickers.json`. Used to enrich 13D/G and 8-K rows where the filing index doesn't carry a ticker. |
+| `events.py` | In-process pub/sub for the SSE live stream — bounded queues per subscriber, drops oldest on overflow so a slow client never wedges ingest. |
 | `form4.py` | Form 4 XML parser. Emits one `insider_txn` row per transaction; tags `is_buy=1` only on open-market purchases (code P, non-derivative, shares > 0). |
 | `filings13d.py` | SC 13D / 13G regex extractor: percent of class, shares owned, issuer name. |
 | `filings8k.py` | 8-K filter — scores filings by reported items (1.01, 2.01, 8.01) and M&A keywords ("definitive agreement", "merger", etc.). |
-| `signals.py` | Computes ranked feeds over the persisted DB: insider clusters, recent buys, activist stakes, M&A events, ticker synthesis, whale leaderboard. |
+| `signals.py` | Computes ranked feeds over the persisted DB: insider clusters, recent buys, activist stakes, M&A events, ticker synthesis, hot leaderboard (cross-signal), whale leaderboard. |
 | `db.py` | SQLite schema + helpers (`insider_txn`, `activist_stake`, `ma_event`, `ingest_state`). WAL mode. |
 
 **Frontend / data**
@@ -62,14 +64,17 @@ docker compose up --build whales
 
 | Route | Returns |
 |---|---|
+| `GET /api/hot?days=30&limit=50` | Cross-signal "hot now" ranking — tickers ranked by combined synthesis score across insider buys, activist stakes, and M&A 8-Ks. |
 | `GET /api/insider-clusters?days=30&min_buyers=3` | Tickers with N+ distinct insider buyers in window, ranked by # buyers + seniority-weighted score + total $. |
 | `GET /api/insider-recent?days=7&min_value=100000` | Recent material insider buys above $-threshold. |
 | `GET /api/activist-stakes?days=14` | Recent SC 13D/13G filings. |
 | `GET /api/ma-feed?days=7&min_score=2.0` | Recent 8-Ks flagged as M&A by item codes + keyword scoring. |
 | `GET /api/synthesis?ticker=XYZ&days=90` | Composite per-ticker view: insider buys, activist filings, M&A 8-Ks + a single ranked synthesis score. |
 | `GET /api/whale-leaderboard?days=90` | Most active filers (insiders + activists). |
+| `GET /api/stream` | Server-Sent Events — emits `hello` on connect and `ingest` after each pass that finds new filings. 20s keepalive comments. |
 | `POST /api/admin/ingest-now` | Trigger an ingest pass synchronously. DEV_MODE only. |
-| `GET /healthz` | Liveness + table counts + last-ingest state. |
+| `POST /api/admin/backfill-tickers` | Backfill `issuer_ticker` on 13D/G and 8-K rows ingested before the CIK→ticker map was loaded. DEV_MODE only. |
+| `GET /healthz` | Liveness + table counts + last-ingest state + active SSE subscriber count. |
 | `GET /` | Dashboard HTML. |
 
 ## Data sources
@@ -108,6 +113,10 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
 - Schema is denormalised; reads are cheap and the dashboard is happy with
   ~100k rows. If the DB grows past that, partition by year or move the
   cold table out.
-- Phase 2 candidates: 13F holdings (quarterly, 45-day lag), Congress PTRs,
-  unusual options activity, dark pool prints, foreign-equivalent filings
-  (UK Companies House substantial-shareholder notices).
+- Phase 2 shipped (this version): CIK→ticker enrichment, SSE live stream,
+  cross-signal "Hot Now" leaderboard.
+- Phase 3 candidates: 13F holdings (quarterly, 45-day lag), Congress PTRs
+  (House + Senate), Bayesian fund-skill scoring with forward-return calibration
+  (requires daily-price data via Stooq/Yahoo/Polygon), unusual options activity
+  (paid: Polygon, CBOE, unusual_whales), dark pool prints, foreign-equivalent
+  filings (UK Companies House substantial-shareholder notices).
