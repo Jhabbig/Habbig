@@ -17,6 +17,7 @@ Port: **7080**.
 | **v0.2** | **Severity score** — enforcement-tagged items get a fine amount extracted via context-anchored regex (USD / GBP / EUR), bucketed `low (<$1M)` / `medium ($1M–10M)` / `high ($10M–100M)` / `severe ($100M+)`. Native amount and ≈USD shown on hover; severity-filter chips. Largest amount wins when multiple are mentioned. | rules — `analysis/severity.py` |
 | **v0.3** | **Activity heatmap** — per-regulator strip of stacked weekly bars across the last 12 weeks, segments colored by type tag. Shared Y scale so SEC vs FCA vs ESMA volumes are visually comparable. Per-bar hover shows tag breakdown + weekly total. Inline SVG, no JS deps. | aggregation — `analysis/heatmap.py` |
 | **v0.4** | **Topic clusters** — every item tagged with zero or more topics from `crypto / etf / aml / disclosure / marketstructure / privatefunds / cyber / climate`. Multi-topic honest (a crypto-AML enforcement fires both). Dynamic topic-filter chip row with per-topic count badges sourced from `/api/topics`; matched phrases shown on hover; topic pills inline under each headline. | rules — `analysis/topic_keywords.py` |
+| **v0.5** | **Polymarket / Kalshi overlay** — every action gets matched against the active Polymarket Gamma + Kalshi public market lists via anchor-token-weighted Jaccard; top-3 matches surface as small `Poly 14¢ yes ↗` / `Kalshi 87¢ yes ↗` deep-link buttons under the headline. Hover shows the full market question + shared anchor tokens + score. Read-only on trades — clicks open the venue in a new tab. New `Has market match` filter chip. | Polymarket Gamma API + Kalshi public `/trade-api/v2/markets` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -26,9 +27,10 @@ per-source status row flips to red; other sources keep working).
 | Path | Cache | Purpose |
 |---|---|---|
 | `GET /` | — | Dashboard UI |
-| `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&topic=&q=` | 30 min | Unified action feed with filters |
+| `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&topic=&has_market=&q=` | 30 min (feed) + 5 min (markets) | Unified action feed with filters + matched markets |
 | `GET /api/heatmap?weeks=12` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52) |
 | `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
+| `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -38,6 +40,7 @@ Filter semantics:
   - `tag` — comma-separated category tags (`enforcement,rulemaking,guidance,speech,personnel,other`), matches `primary_tag` or any element of `tags`. The literal `other` matches items where the classifier scored zero.
   - `severity` — comma-separated severity buckets (`low,medium,high,severe,none`). `none` matches enforcement items where no amount was extracted, and every non-enforcement item.
   - `topic` — comma-separated topic keys (`crypto,etf,aml,disclosure,marketstructure,privatefunds,cyber,climate`). Match is "any-of" — an item with `topics=[crypto, aml]` matches `topic=crypto` or `topic=aml`.
+  - `has_market` — `true` to keep only items with at least one Polymarket / Kalshi match.
   - `q` — case-insensitive substring match on title or summary
 
 ## Run locally
@@ -67,6 +70,9 @@ python3 -m analysis.classifier        # 11 fixture headlines across all 6 catego
 python3 -m analysis.severity          # 13 fixture amounts (incl. multi-amount + false-positive guard)
 python3 -m analysis.heatmap           # aggregation smoke against synthetic items
 python3 -m analysis.topics            # 8 fixture headlines, multi-topic & negative cases
+python3 -m ingestion.polymarket_client  # Live Gamma API fetch, normalized
+python3 -m ingestion.kalshi_client    # Live Kalshi /trade-api/v2/markets fetch, normalized
+python3 -m analysis.market_match      # 4-item × 4-market join fixtures (incl. Lakers false-positive guard)
 ```
 
 ## Files
@@ -79,6 +85,8 @@ regulators-dashboard/
 │   ├── sec_rss.py                  SEC press-release feed (US)
 │   ├── fca_rss.py                  FCA news feed (UK)
 │   ├── esma_rss.py                 ESMA news feed (EU)
+│   ├── polymarket_client.py        Polymarket Gamma API → normalized binary markets (5-min cache)
+│   ├── kalshi_client.py            Kalshi /trade-api/v2/markets → normalized markets (5-min cache)
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
@@ -86,7 +94,8 @@ regulators-dashboard/
 │   ├── severity.py                 Fine-amount extractor (USD/GBP/EUR) + bucketing + 13 fixtures
 │   ├── heatmap.py                  ISO-week × regulator × tag aggregation
 │   ├── topic_keywords.py           Eight-topic phrase dictionary (tunable)
-│   └── topics.py                   Multi-topic extractor + 8 fixture self-test
+│   ├── topics.py                   Multi-topic extractor + 8 fixture self-test
+│   └── market_match.py             Anchor-weighted Jaccard joiner — items × markets, 4 fixtures
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -201,6 +210,38 @@ is "an enforcement action" (type) **about** "crypto + AML" (topics).
 Both filters compose — `tag=enforcement&topic=crypto` returns crypto-
 related enforcement actions.
 
+### v0.5 — Polymarket / Kalshi overlay
+
+`ingestion/polymarket_client.py` pulls active markets from the public
+Gamma API and keeps the binary YES/NO ones. `ingestion/kalshi_client.py`
+does the same against Kalshi's public `/trade-api/v2/markets`. Both
+normalize to a shared shape (`source`, `question`, `yes_price`,
+`no_price`, `end_date`, `url`). 5-min cache, independent from the
+30-min RSS cache.
+
+`analysis/market_match.py` tokenizes both sides (item title + summary,
+market question), drops stopwords + tokens shorter than 3 chars, then
+requires at least one **anchor token** (regulator code, marquee topic
+keyword, named exchange) in the overlap before scoring. Score is
+**anchor-weighted Jaccard**: anchor tokens count 3× in the numerator,
+so `{sec, ftx}` between an item and a market with 14 tokens in the
+union scores 0.43 (matches) — plain Jaccard at 2/14 = 0.14 would have
+missed. Threshold 0.18, minimum 2 shared tokens, top 3 matches per
+item.
+
+**Read-only on trades**, same posture as `centralbank-dashboard` v0.5.
+The buttons are `<a target="_blank">` to the venue's own market URL —
+users execute orders in the venue UI with their own accounts. Phase 2
+(in-app trade execution) is gated behind paying users.
+
+Known imperfection: the matcher will surface markets that are
+*topically* related but resolve on a slightly different event ("Will
+the SEC charge FTX executives?" surfacing for an item about an SEC
+charge against an FTX-adjacent firm). The full market question is
+shown on hover; users verify on the venue before acting. Lifting
+matcher precision needs richer entity extraction — deferred until
+v0.5 has live usage telling us which false-positive shapes matter.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -210,6 +251,7 @@ related enforcement actions.
 | **v0.2** | ✓ done | Severity score — fine-amount regex (USD/GBP/EUR) + USD-equivalent bucketing (low / medium / high / severe) on enforcement-tagged items; native + USD shown on hover; severity-filter chips |
 | **v0.3** | ✓ done | Activity heatmap — per-regulator weekly stacked-bar SVG over the last 12 weeks, segments colored by type tag, shared Y scale across regulators |
 | **v0.4** | ✓ done | Topic clusters — multi-topic tagging (crypto/etf/aml/disclosure/marketstructure/privatefunds/cyber/climate); per-topic count chips above the feed; topic pills inline under each headline |
+| **v0.5** | ✓ done | Polymarket / Kalshi overlay — anchor-weighted Jaccard match between actions and active markets; per-item deep-link buttons (read-only on trade); `has_market` filter |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
@@ -256,6 +298,17 @@ related enforcement actions.
 - **English context words only.** Translated headlines from BaFin /
   JFSA / FINMA won't match the `fine|penalty|settle|pay|disgorge`
   anchor list. Per-language extensions land alongside those sources.
+- **Market matcher trades precision for recall.** Anchor-weighted
+  Jaccard catches "SEC + FTX" or "FCA + Bitcoin + ETF" reliably but
+  will sometimes surface a market that's topically related on a
+  different specific event. Full market question + deep-link is shown
+  on hover so users verify on the venue. Tightening precision needs
+  per-entity extraction — deferred until usage tells us which
+  false-positive shapes matter.
+- **Polymarket / Kalshi outage modes are independent.** Each client
+  has its own 5-min cache; one going down leaves the other's badges
+  surfaced. The `market_sources` field in `/api/feed` exposes
+  per-venue status for the UI to render.
 - **Polymarket overlay coverage is thin** outside crypto ETFs and
   big-name settlements, so v0.5 will only annotate a small fraction of
   action cards. That's expected.

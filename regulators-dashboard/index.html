@@ -75,6 +75,17 @@
            color: var(--muted); background: #21262d; margin: 2px 4px 0 0; }
   .chip .badge-count { color: var(--muted); font-weight: 400; margin-left: 4px; }
   .chip.active .badge-count { color: #0e1117; }
+  .markets { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .market { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px;
+            border-radius: 4px; border: 1px solid var(--grid); background: #0e1117;
+            font-size: 11px; text-decoration: none; color: var(--fg); cursor: pointer; }
+  .market:hover { border-color: var(--accent); }
+  .market .src { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                 letter-spacing: 0.05em; }
+  .market .price { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .market.poly .price   { color: #58a6ff; }
+  .market.kalshi .price { color: #56d364; }
+  .market .arrow { color: var(--muted); font-size: 10px; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -133,6 +144,11 @@
       <span class="chip active" data-topic="">All</span>
       <!-- chips populated by loadTopics() -->
     </div>
+    <div class="filters">
+      <span class="hint">Markets:</span>
+      <span class="chip active" data-mkt="">All items</span>
+      <span class="chip" data-mkt="true">Has Polymarket / Kalshi match</span>
+    </div>
     <table>
       <thead>
         <tr>
@@ -150,7 +166,7 @@
 </main>
 
 <script>
-let state = { jurisdiction: "", tag: "", sev: "", topic: "", q: "" };
+let state = { jurisdiction: "", tag: "", sev: "", topic: "", hasMarket: false, q: "" };
 
 const TAG_COLORS = {
   enforcement: "#f85149",
@@ -305,6 +321,7 @@ async function load() {
   if (state.tag) params.set("tag", state.tag);
   if (state.sev) params.set("severity", state.sev);
   if (state.topic) params.set("topic", state.topic);
+  if (state.hasMarket) params.set("has_market", "true");
   if (state.q) params.set("q", state.q);
 
   let data;
@@ -360,6 +377,25 @@ async function load() {
         }).join("") + '</div>';
       }
 
+      let marketsEl = "";
+      if (it.markets && it.markets.length) {
+        marketsEl = '<div class="markets">' + it.markets.map(m => {
+          const yes = m.yes_price !== null && m.yes_price !== undefined
+            ? Math.round(m.yes_price * 100) + "¢"
+            : "—";
+          const cls = m.source === "polymarket" ? "poly" : "kalshi";
+          const label = m.source === "polymarket" ? "Poly" : "Kalshi";
+          const tip = `${m.question}\n\n` +
+            `Yes: ${yes}` + (m.end_date ? `  •  ends ${String(m.end_date).slice(0, 10)}` : "") +
+            `\nmatch: ${m.match_tokens.join(", ")}  (score ${m.match_score})`;
+          return `<a class="market ${cls}" href="${escapeHtml(m.url || "#")}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(tip)}">` +
+                 `<span class="src">${label}</span>` +
+                 `<span class="price">${escapeHtml(yes)} yes</span>` +
+                 `<span class="arrow">↗</span>` +
+                 `</a>`;
+        }).join("") + '</div>';
+      }
+
       let sevEl = "";
       if (it.severity) {
         const s = it.severity;
@@ -378,7 +414,7 @@ async function load() {
           <td><span class="jx ${jxCls}">${jx}</span></td>
           <td class="src">${escapeHtml(it.source)}</td>
           <td>${primaryChip}${extraEl}${sevEl}</td>
-          <td class="title">${link}${summary}${topicsEl}</td>
+          <td class="title">${link}${summary}${topicsEl}${marketsEl}</td>
         </tr>`;
     }).join("");
   }
@@ -423,6 +459,15 @@ document.querySelector('.chip[data-topic=""]').addEventListener("click", () => {
   document.querySelector('.chip[data-topic=""]').classList.add("active");
   state.topic = "";
   load();
+});
+
+document.querySelectorAll(".chip[data-mkt]").forEach(el => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".chip[data-mkt]").forEach(c => c.classList.remove("active"));
+    el.classList.add("active");
+    state.hasMarket = el.dataset.mkt === "true";
+    load();
+  });
 });
 
 let qTimer;

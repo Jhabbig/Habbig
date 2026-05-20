@@ -3,8 +3,10 @@
 
 Routes:
   - GET /                       → index.html
-  - GET /api/feed?…             → unified action feed (filters: days, jurisdiction, source, tag, severity, q)
+  - GET /api/feed?…             → unified action feed + market matches (filters: days, jurisdiction, source, tag, severity, topic, has_market, q)
   - GET /api/heatmap?weeks=12   → per-week, per-regulator, per-tag aggregation
+  - GET /api/topics?days=90     → per-topic counts (drives the topic-filter chip badges)
+  - GET /api/markets            → raw Polymarket + Kalshi market list (debug)
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -21,8 +23,9 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ingestion import unified_feed
+from ingestion import kalshi_client, polymarket_client, unified_feed
 from analysis import heatmap as heatmap_aggr
+from analysis import market_match
 from analysis.topic_keywords import TOPICS, TOPIC_LABELS
 
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +82,7 @@ async def api_feed(
     tag: str = "",
     severity: str = "",
     topic: str = "",
+    has_market: bool = False,
     q: str = "",
     force: bool = False,
 ) -> JSONResponse:
@@ -122,10 +126,25 @@ async def api_feed(
                 or needle in it.get("summary", "").lower()
             ]
 
+    # v0.5: attach market matches per item (5-min market cache, in-memory
+    # join). Use a fresh shallow-copy list so the cached unified_feed items
+    # aren't mutated across requests.
+    poly = polymarket_client.get_cached()
+    kal = kalshi_client.get_cached()
+    all_markets = poly["markets"] + kal["markets"]
+    items = market_match.attach_matches(items, all_markets)
+
+    if has_market:
+        items = [it for it in items if it.get("markets")]
+
     return JSONResponse({
         "fetched_at": data["fetched_at"],
         "since_days": data["since_days"],
         "sources": data["sources"],
+        "market_sources": [
+            {"name": "polymarket", "ok": poly["ok"], "count": poly["count"], "error": poly["error"]},
+            {"name": "kalshi",     "ok": kal["ok"],  "count": kal["count"],  "error": kal["error"]},
+        ],
         "items": items,
         "count": len(items),
     })
@@ -136,6 +155,19 @@ async def api_heatmap(weeks: int = 12, force: bool = False) -> JSONResponse:
     weeks = max(4, min(weeks, 52))
     data = unified_feed.get_cached(force=force, since_days=max(90, weeks * 7))
     return JSONResponse(heatmap_aggr.aggregate(data["items"], data["sources"], weeks=weeks))
+
+
+@app.get("/api/markets")
+async def api_markets(force: bool = False) -> JSONResponse:
+    """Raw market list for debugging the join. Returns the combined
+    Polymarket + Kalshi normalized markets that the matcher sees."""
+    poly = polymarket_client.get_cached(force=force)
+    kal = kalshi_client.get_cached(force=force)
+    return JSONResponse({
+        "polymarket": poly,
+        "kalshi": kal,
+        "combined_count": poly["count"] + kal["count"],
+    })
 
 
 @app.get("/api/topics")
