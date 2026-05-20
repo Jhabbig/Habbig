@@ -71,7 +71,8 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 # Prometheus metrics (optional — degrade to no-op if not installed).
@@ -445,6 +446,19 @@ def _init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_alert_rules_user ON sports_alert_rules(user_id, enabled);
+            -- Web Push subscriptions (one per device per user)
+            CREATE TABLE IF NOT EXISTS sports_push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                user_agent TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_pushed_at TEXT,
+                UNIQUE(user_id, endpoint)
+            );
+            CREATE INDEX IF NOT EXISTS idx_push_user ON sports_push_subscriptions(user_id);
             CREATE TABLE IF NOT EXISTS sports_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sport TEXT,
@@ -738,6 +752,11 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
+
+# Static asset mount for the PWA manifest, service worker, icons.
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
@@ -5305,6 +5324,81 @@ def _signal_matches_rule(signal: dict, sport: str, rule: dict) -> bool:
     return False
 
 
+# ── Web Push (VAPID) ────────────────────────────────────────────────────────
+# Set VAPID_PUBLIC_KEY (base64url) + VAPID_PRIVATE_KEY + VAPID_SUBJECT
+# (mailto:...) to enable push. Generate keys with: pywebpush vapid_key.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@narve.ai")
+
+# Lazy import — pywebpush is optional. Without it, /api/push/subscribe
+# still works (subscriptions are stored), but actual push delivery is a no-op.
+try:
+    from pywebpush import webpush as _webpush, WebPushException as _WebPushException
+    _PUSH_AVAILABLE = bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+except ImportError:
+    _webpush = None
+    _WebPushException = Exception
+    _PUSH_AVAILABLE = False
+
+
+def _send_web_push(user_id: str, payload: dict) -> int:
+    """Push `payload` to every registered subscription for user_id.
+
+    Returns count of successful deliveries. Removes dead subscriptions
+    (410 Gone) from the DB so we don't keep retrying them forever.
+    """
+    if not _PUSH_AVAILABLE or not _webpush:
+        return 0
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, endpoint, p256dh, auth FROM sports_push_subscriptions WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    if not rows:
+        return 0
+    delivered = 0
+    dead_ids: list[int] = []
+    for r in rows:
+        try:
+            _webpush(
+                subscription_info={
+                    "endpoint": r["endpoint"],
+                    "keys": {"p256dh": r["p256dh"], "auth": r["auth"]},
+                },
+                data=json.dumps(payload),
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_SUBJECT},
+                ttl=300,
+            )
+            delivered += 1
+            M_ALERT_SEND.labels(channel="webpush", result="ok").inc()
+        except _WebPushException as e:
+            M_ALERT_SEND.labels(channel="webpush", result="error").inc()
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 410:  # Gone — subscription is permanently dead
+                dead_ids.append(r["id"])
+            else:
+                log.warning("Web push error (status=%s): %s", status, e)
+        except Exception as e:
+            M_ALERT_SEND.labels(channel="webpush", result="error").inc()
+            log.warning("Web push generic error: %s", e)
+    if dead_ids:
+        with _get_db() as conn:
+            placeholders = ",".join("?" for _ in dead_ids)
+            conn.execute(
+                f"DELETE FROM sports_push_subscriptions WHERE id IN ({placeholders})",
+                dead_ids,
+            )
+    if delivered:
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_push_subscriptions SET last_pushed_at = ? WHERE user_id = ?",
+                (datetime.now(timezone.utc).isoformat(), user_id),
+            )
+    return delivered
+
+
 def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
     """Dispatch one alert via the rule's configured channel(s)."""
     user_id = rule.get("user_id")
@@ -5320,8 +5414,9 @@ def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
             (user_id,),
         ).fetchone()
     if not cfg:
-        return
-    cfg = dict(cfg)
+        cfg = {}
+    else:
+        cfg = dict(cfg)
     channel = (rule.get("channel") or "telegram").lower()
 
     if channel in ("telegram", "both"):
@@ -5353,6 +5448,18 @@ def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
             except Exception as e:
                 M_ALERT_SEND.labels(channel="webhook_rule", result="error").inc()
                 log.warning("Rule alert (webhook) error: %s", e)
+
+    if channel in ("push", "both"):
+        push_payload = {
+            "title": f"Sharpe — {len(payload.get('signals', []))} signal(s)",
+            "body": msg.split("\n", 1)[0] if msg else "New +EV signal",
+            "tag": f"rule-{rule.get('id', '')}",
+            "data": {"url": "/", "rule_id": rule.get("id")},
+        }
+        try:
+            _send_web_push(user_id, push_payload)
+        except Exception as e:
+            log.warning("Web push dispatch error: %s", e)
 
 
 def _eval_alert_rules(sport: str, signals: list[dict]) -> None:
@@ -7103,7 +7210,7 @@ async def update_watchlist_threshold(item_id: int, request: Request):
 # ---------------------------------------------------------------------------
 
 _ALLOWED_MARKET_TYPES = {"h2h", "spreads", "totals", "futures", "props"}
-_ALLOWED_CHANNELS = {"telegram", "webhook", "both"}
+_ALLOWED_CHANNELS = {"telegram", "webhook", "push", "both"}
 
 
 def _validate_rule_body(body: dict) -> tuple[dict | None, str | None]:
@@ -7283,6 +7390,95 @@ async def delete_alert_rule(rule_id: int, request: Request):
         if cur.rowcount == 0:
             return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Web Push: subscription CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/push/vapid-public-key")
+async def push_vapid_public_key():
+    """Public key the browser needs to register a subscription. Anonymous —
+    the key is public by design. Returns 503 if push isn't configured."""
+    if not VAPID_PUBLIC_KEY:
+        return JSONResponse(
+            {"error": "Web Push not configured (VAPID_PUBLIC_KEY unset)"},
+            status_code=503,
+        )
+    return JSONResponse({"public_key": VAPID_PUBLIC_KEY,
+                          "push_available": _PUSH_AVAILABLE})
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    """Persist a PushManager.subscribe() result. Idempotent on
+    (user_id, endpoint)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    endpoint = body.get("endpoint") or ""
+    keys = body.get("keys") or {}
+    p256dh = keys.get("p256dh") or ""
+    auth = keys.get("auth") or ""
+    if not (endpoint and p256dh and auth):
+        return JSONResponse({"error": "endpoint + keys.p256dh + keys.auth required"}, status_code=400)
+    if not endpoint.startswith("https://"):
+        return JSONResponse({"error": "endpoint must be HTTPS"}, status_code=400)
+    ua = (request.headers.get("user-agent") or "")[:200]
+    with _get_db() as conn:
+        # Upsert by (user_id, endpoint) — keys can rotate
+        conn.execute(
+            """INSERT INTO sports_push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, endpoint) DO UPDATE SET
+                 p256dh = excluded.p256dh,
+                 auth = excluded.auth,
+                 user_agent = excluded.user_agent""",
+            (user["id"], endpoint, p256dh, auth, ua),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.delete("/api/push/subscribe")
+async def push_unsubscribe(request: Request):
+    """Remove a push subscription by its endpoint."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    endpoint = body.get("endpoint") or ""
+    if not endpoint:
+        return JSONResponse({"error": "endpoint required"}, status_code=400)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_push_subscriptions WHERE user_id = ? AND endpoint = ?",
+            (user["id"], endpoint),
+        )
+    return JSONResponse({"status": "ok", "deleted": cur.rowcount})
+
+
+@app.post("/api/push/test")
+async def push_test(request: Request):
+    """Fire a test push notification to the current user. Useful for
+    debugging the subscription flow without waiting for a real signal."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    delivered = _send_web_push(user["id"], {
+        "title": "Sharpe — test push",
+        "body": "If you see this, push is wired up correctly.",
+        "tag": "sharpe-test",
+        "data": {"url": "/"},
+    })
+    return JSONResponse({"status": "ok", "delivered": delivered,
+                          "push_available": _PUSH_AVAILABLE})
 
 
 # ---------------------------------------------------------------------------
@@ -7871,6 +8067,25 @@ async def api_cross_book_arbitrage(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     sport = request.query_params.get("sport", "basketball_nba")
     return JSONResponse(await asyncio.to_thread(_build_cross_book_arbitrage, sport))
+
+
+# ── PWA: serve manifest and service worker from root paths so the worker
+# can control the whole origin (browsers scope sw.js to its own directory).
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    return FileResponse(str(_STATIC_DIR / "manifest.json"), media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def pwa_service_worker():
+    return FileResponse(str(_STATIC_DIR / "sw.js"), media_type="application/javascript",
+                         headers={"Service-Worker-Allowed": "/"})
+
+
+@app.get("/favicon.png")
+async def favicon():
+    return FileResponse(str(_STATIC_DIR / "favicon.png"), media_type="image/png")
 
 
 @app.get("/trades", response_class=HTMLResponse)
