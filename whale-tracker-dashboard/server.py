@@ -277,7 +277,7 @@ async def api_congress_by_ticker(
 
 @app.get("/api/skill-leaderboard")
 async def api_skill_leaderboard(
-    filer_type: str | None = Query(None, pattern="^(insider|activist|congress)$"),
+    filer_type: str | None = Query(None, pattern="^(insider|activist|congress|fund)$"),
     min_n: int = Query(5, ge=1, le=100),
     horizon_days: int = Query(30, ge=1, le=180),
     limit: int = Query(50, ge=1, le=500),
@@ -293,7 +293,7 @@ async def api_skill_leaderboard(
 
 @app.get("/api/skill-detail")
 async def api_skill_detail(
-    filer_type: str = Query(..., pattern="^(insider|activist|congress)$"),
+    filer_type: str = Query(..., pattern="^(insider|activist|congress|fund)$"),
     filer_id: str = Query(..., min_length=1, max_length=200),
     horizon_days: int = Query(30, ge=1, le=180),
     recent_limit: int = Query(50, ge=1, le=500),
@@ -312,13 +312,36 @@ async def api_skill_detail(
 async def api_admin_skill_recompute(
     horizon_days: int = Query(30, ge=1, le=180),
     limit: int = Query(500, ge=1, le=5000),
+    filer_type: str | None = Query(None, pattern="^(insider|activist|congress|fund)$"),
 ):
     """Manually trigger a skill-labeling pass. DEV_MODE only."""
     if not _DEV_MODE:
         return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
-    res = await skill_mod.run_pass(horizon_days=horizon_days, limit=limit)
+    res = await skill_mod.run_pass(horizon_days=horizon_days, limit=limit, filer_type=filer_type)
     _cache.clear()
     return {"result": res, "counts": db.counts()}
+
+
+@app.post("/api/admin/backfill")
+async def api_admin_backfill(
+    forms: str = Query("4,SC 13D,SC 13G,8-K", description="comma-separated form types"),
+    start_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    max_per_form: int = Query(500, ge=1, le=10000),
+):
+    """Pull historical filings via EDGAR full-text search. DEV_MODE only.
+
+    Used to warm the skill model with months of history on day one rather
+    than waiting for the rolling Atom feed to accumulate.
+    """
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    form_list = [f.strip() for f in forms.split(",") if f.strip()]
+    res = await ingest.backfill_filings(
+        form_list, start_date=start_date, end_date=end_date, max_per_form=max_per_form,
+    )
+    _cache.clear()
+    return {"inserted": res, "counts": db.counts()}
 
 
 @app.post("/api/admin/ingest-now")

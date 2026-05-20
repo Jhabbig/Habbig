@@ -89,7 +89,8 @@ docker compose up --build whales
 | `GET /api/congress-by-ticker?ticker=<X>` | Congress trades for one ticker. |
 | `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |
 | `GET /api/skill-detail?filer_type=<...>&filer_id=<X>&horizon_days=30` | Per-filer skill posterior + last N labeled outcomes. |
-| `POST /api/admin/skill-recompute` | Trigger a skill-labeling pass. DEV_MODE only. |
+| `POST /api/admin/skill-recompute?filer_type=<insider\|activist\|congress\|fund>` | Trigger a skill-labeling pass. DEV_MODE only. |
+| `POST /api/admin/backfill?forms=4,SC 13D&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&max_per_form=500` | Historical EDGAR full-text-search backfill. Warms the skill model on day one. DEV_MODE only. |
 | `GET /api/synthesis?ticker=XYZ&days=90` | Composite per-ticker view: insider, activist, M&A, fund holders, congress trades + single ranked synthesis score. |
 | `GET /api/whale-leaderboard?days=90` | Most active filers (insiders + activists). |
 | `GET /api/stream` | Server-Sent Events — emits `hello` on connect and `ingest` after each pass that finds new filings. 20s keepalive comments. |
@@ -160,12 +161,21 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
 - Phase 3a shipped: 13F fund holdings + quarter-over-quarter position
   changes + per-ticker fund holders; Congressional periodic transaction
   reports (House + Senate).
-- Phase 3b shipped (this version): Bayesian filer-skill posterior over
-  insider / activist / congress filings, labeled by ticker-vs-SPY forward
-  returns from Stooq. New `Skill` tab + per-buyer skill badges on the
-  Insider Clusters tab.
-- Phase 4 candidates: 13F fund-skill scoring (needs CUSIP→ticker enrichment
-  to label outcomes), unusual options activity (paid: Polygon, CBOE,
-  unusual_whales), dark pool prints, foreign-equivalent filings (UK
-  Companies House substantial-shareholder notices), historical EDGAR
-  backfill so the skill model has more observations on day one.
+- Phase 3b shipped: Bayesian filer-skill posterior over insider /
+  activist / congress filings, labeled by ticker-vs-SPY forward returns
+  from Stooq. `Skill` tab + per-buyer skill badges on Insider Clusters.
+- Phase 4 shipped (this version):
+  - 13F fund-skill: issuer-name → ticker resolution at ingest (and a
+    backfill for already-stored holdings). `fund` filer type in the
+    skill model. Outcomes derived from quarter-over-quarter position
+    changes (new = buy, exit = sell).
+  - Historical EDGAR backfill via the full-text search API
+    (`efts.sec.gov`) — admin endpoint pulls N months of filings in one
+    shot so skill posteriors converge immediately rather than over 3
+    months of live ingest.
+- Phase 5 candidates: paid options-flow + dark-pool prints (Polygon,
+  CBOE, unusual_whales) — where deal leaks actually surface *before*
+  the 8-K; foreign-equivalent filings (UK Companies House substantial-
+  shareholder notices, EU Transparency Directive 5% notifications);
+  proper CUSIP→ticker map via OpenFIGI (lift 13F resolution from
+  ~70% recall on big-cap to ~95%+).

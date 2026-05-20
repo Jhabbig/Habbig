@@ -80,6 +80,64 @@ async def fetch_json(url: str) -> Any:
         return r.json()
 
 
+EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
+
+
+async def search_filings(form_type: str, *, start_date: str, end_date: str,
+                         offset: int = 0, size: int = 100) -> list[dict]:
+    """EDGAR full-text search — used for historical backfill.
+
+    Returns a list of {accession, filer_cik, filer_name, filed_at, link, form_type}
+    entries. EFTS responses cap at 100 per page; use offset to paginate.
+    """
+    params = {
+        "q":          "",
+        "dateRange":  "custom",
+        "startdt":    start_date,
+        "enddt":      end_date,
+        "forms":      form_type,
+        "from":       str(offset),
+        "size":       str(min(int(size), 100)),
+    }
+    url = EFTS_URL + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    await _throttle()
+    async with _sem, _client() as cx:
+        # EFTS lives on efts.sec.gov, not www.sec.gov — override the Host header.
+        r = await cx.get(url, headers={"Host": "efts.sec.gov"})
+        r.raise_for_status()
+        data = r.json()
+
+    out: list[dict] = []
+    hits = (data.get("hits") or {}).get("hits") or []
+    for h in hits:
+        src = h.get("_source", {})
+        # EFTS id format: "<accession-no-dashes>:<doc-name>"
+        eid = h.get("_id") or ""
+        accession_nodash = eid.split(":", 1)[0]
+        if len(accession_nodash) == 18:
+            accession = f"{accession_nodash[:10]}-{accession_nodash[10:12]}-{accession_nodash[12:]}"
+        else:
+            accession = accession_nodash
+        ciks = src.get("ciks") or []
+        names = src.get("display_names") or []
+        cik = ciks[0] if ciks else ""
+        # Names come like "APPLE INC (0000320193) (Reporting)"
+        name_raw = names[0] if names else ""
+        m = re.match(r"^\s*(.*?)\s*\(\d+\)", name_raw)
+        name = m.group(1).strip() if m else name_raw
+        out.append({
+            "form_type":  form_type,
+            "accession":  accession,
+            "filer_cik":  cik,
+            "filer_name": name,
+            "filed_at":   src.get("file_date", ""),
+            "link":       f"{EDGAR_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type={form_type}",
+            "title":      f"{form_type} - {name_raw}",
+            "summary":    " ".join(src.get("items") or []),
+        })
+    return out
+
+
 async def recent_atom(form_type: str, count: int = 40) -> list[dict]:
     """Return parsed entries from the EDGAR 'getcurrent' Atom feed.
 

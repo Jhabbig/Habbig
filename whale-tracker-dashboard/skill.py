@@ -52,108 +52,230 @@ def _shift_days(date_str: str, days: int) -> str:
     return (d + dt.timedelta(days=days)).isoformat()
 
 
-def _candidates(horizon_days: int = DEFAULT_HORIZON_DAYS, limit: int = PER_PASS_LIMIT) -> list[dict]:
+def _candidates(horizon_days: int = DEFAULT_HORIZON_DAYS, limit: int = PER_PASS_LIMIT,
+                filer_type: str | None = None) -> list[dict]:
     """Gather (filer_type, filer_id, source_id, direction, ticker, filing_date)
     rows that are old enough to label but don't yet have an outcome.
+
+    When `filer_type` is provided, only candidates of that type are emitted.
+    Useful for running per-type skill passes at different horizons (e.g.
+    insider 30d, fund 90d).
     """
     cutoff_date = _shift_days(_today(), -horizon_days)
+    want = filer_type if filer_type in ("insider", "activist", "congress", "fund") else None
     rows: list[dict] = []
 
     with db.connect() as cx:
-        # Insiders — open-market purchases (is_buy=1) and sales (txn_code='S').
-        for r in cx.execute(
-            """
-            SELECT accession, line_no, reporter_cik, issuer_ticker,
-                   COALESCE(txn_date, substr(filed_at, 1, 10)) AS filing_date,
-                   txn_code, is_buy
-            FROM insider_txn
-            WHERE issuer_ticker IS NOT NULL
-              AND COALESCE(txn_date, substr(filed_at, 1, 10)) <= ?
-              AND reporter_cik IS NOT NULL AND reporter_cik != ''
-              AND (is_buy = 1 OR txn_code = 'S')
-            LIMIT ?
-            """,
-            (cutoff_date, limit * 4),
-        ).fetchall():
-            source_id = f"{r['accession']}:{r['line_no']}"
-            if db.have_outcome("insider", r["reporter_cik"], source_id, horizon_days):
-                continue
-            direction = "buy" if r["is_buy"] else "sell"
-            rows.append({
-                "filer_type": "insider",
-                "filer_id":   r["reporter_cik"],
-                "source_id":  source_id,
-                "direction":  direction,
-                "ticker":     r["issuer_ticker"],
-                "filing_date": r["filing_date"],
-            })
+        if want in (None, "insider"):
+            rows.extend(_insider_candidates(cx, cutoff_date, horizon_days, limit * 4))
+        if want in (None, "activist"):
+            rows.extend(_activist_candidates(cx, cutoff_date, horizon_days, limit * 2))
+        if want in (None, "congress"):
+            rows.extend(_congress_candidates(cx, cutoff_date, horizon_days, limit * 2))
+        if want in (None, "fund"):
+            rows.extend(_fund_candidates(cx, cutoff_date, horizon_days, limit * 2))
 
-        for r in cx.execute(
-            """
-            SELECT accession, filer_cik, issuer_ticker, substr(filed_at, 1, 10) AS filing_date
-            FROM activist_stake
-            WHERE issuer_ticker IS NOT NULL
-              AND filer_cik IS NOT NULL AND filer_cik != ''
-              AND substr(filed_at, 1, 10) <= ?
-            LIMIT ?
-            """,
-            (cutoff_date, limit * 2),
-        ).fetchall():
-            source_id = r["accession"]
-            if db.have_outcome("activist", r["filer_cik"], source_id, horizon_days):
-                continue
-            rows.append({
-                "filer_type": "activist",
-                "filer_id":   r["filer_cik"],
-                "source_id":  source_id,
-                "direction":  "buy",
-                "ticker":     r["issuer_ticker"],
-                "filing_date": r["filing_date"],
-            })
-
-        for r in cx.execute(
-            """
-            SELECT transaction_id, representative, ticker, transaction_date, transaction_type
-            FROM congress_trade
-            WHERE ticker IS NOT NULL
-              AND representative IS NOT NULL AND representative != ''
-              AND transaction_date IS NOT NULL
-              AND transaction_date <= ?
-            LIMIT ?
-            """,
-            (cutoff_date, limit * 2),
-        ).fetchall():
-            t = (r["transaction_type"] or "").lower()
-            if t.startswith("p"):
-                direction = "buy"
-            elif t.startswith("s"):
-                direction = "sell"
-            else:
-                continue
-            filer = _normalise_name(r["representative"])
-            if db.have_outcome("congress", filer, r["transaction_id"], horizon_days):
-                continue
-            rows.append({
-                "filer_type": "congress",
-                "filer_id":   filer,
-                "source_id":  r["transaction_id"],
-                "direction":  direction,
-                "ticker":     r["ticker"],
-                "filing_date": r["transaction_date"],
-            })
-
-    # Skill labeling is most informative when prioritised by recency.
     rows.sort(key=lambda r: r["filing_date"], reverse=True)
     return rows[:limit]
+
+
+def _insider_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> list[dict]:
+    out: list[dict] = []
+    for r in cx.execute(
+        """
+        SELECT accession, line_no, reporter_cik, issuer_ticker,
+               COALESCE(txn_date, substr(filed_at, 1, 10)) AS filing_date,
+               txn_code, is_buy
+        FROM insider_txn
+        WHERE issuer_ticker IS NOT NULL
+          AND COALESCE(txn_date, substr(filed_at, 1, 10)) <= ?
+          AND reporter_cik IS NOT NULL AND reporter_cik != ''
+          AND (is_buy = 1 OR txn_code = 'S')
+        LIMIT ?
+        """,
+        (cutoff_date, int(limit)),
+    ).fetchall():
+        source_id = f"{r['accession']}:{r['line_no']}"
+        if db.have_outcome("insider", r["reporter_cik"], source_id, horizon_days):
+            continue
+        out.append({
+            "filer_type": "insider",
+            "filer_id":   r["reporter_cik"],
+            "source_id":  source_id,
+            "direction":  "buy" if r["is_buy"] else "sell",
+            "ticker":     r["issuer_ticker"],
+            "filing_date": r["filing_date"],
+        })
+    return out
+
+
+def _activist_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> list[dict]:
+    out: list[dict] = []
+    for r in cx.execute(
+        """
+        SELECT accession, filer_cik, issuer_ticker, substr(filed_at, 1, 10) AS filing_date
+        FROM activist_stake
+        WHERE issuer_ticker IS NOT NULL
+          AND filer_cik IS NOT NULL AND filer_cik != ''
+          AND substr(filed_at, 1, 10) <= ?
+        LIMIT ?
+        """,
+        (cutoff_date, int(limit)),
+    ).fetchall():
+        source_id = r["accession"]
+        if db.have_outcome("activist", r["filer_cik"], source_id, horizon_days):
+            continue
+        out.append({
+            "filer_type": "activist",
+            "filer_id":   r["filer_cik"],
+            "source_id":  source_id,
+            "direction":  "buy",
+            "ticker":     r["issuer_ticker"],
+            "filing_date": r["filing_date"],
+        })
+    return out
+
+
+def _congress_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> list[dict]:
+    out: list[dict] = []
+    for r in cx.execute(
+        """
+        SELECT transaction_id, representative, ticker, transaction_date, transaction_type
+        FROM congress_trade
+        WHERE ticker IS NOT NULL
+          AND representative IS NOT NULL AND representative != ''
+          AND transaction_date IS NOT NULL
+          AND transaction_date <= ?
+        LIMIT ?
+        """,
+        (cutoff_date, int(limit)),
+    ).fetchall():
+        t = (r["transaction_type"] or "").lower()
+        if t.startswith("p"):
+            direction = "buy"
+        elif t.startswith("s"):
+            direction = "sell"
+        else:
+            continue
+        filer = _normalise_name(r["representative"])
+        if db.have_outcome("congress", filer, r["transaction_id"], horizon_days):
+            continue
+        out.append({
+            "filer_type": "congress",
+            "filer_id":   filer,
+            "source_id":  r["transaction_id"],
+            "direction":  direction,
+            "ticker":     r["ticker"],
+            "filing_date": r["transaction_date"],
+        })
+    return out
+
+
+def _fund_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> list[dict]:
+    """Emit one outcome candidate per quarter-over-quarter position change.
+
+    For each fund: compare its latest filing to the prior filing; new
+    positions + increases become 'buy' outcomes, exits + decreases become
+    'sell' outcomes. Only ticker-resolved holdings are emitted (no ticker
+    = can't fetch a price). filing_date is the period_of_report — that's
+    the position-establish date for skill purposes.
+    """
+    out: list[dict] = []
+    funds = cx.execute(
+        """
+        SELECT DISTINCT fund_cik
+        FROM fund_filing
+        WHERE period_of_report IS NOT NULL
+          AND period_of_report <= ?
+        """,
+        (cutoff_date,),
+    ).fetchall()
+
+    for fund in funds:
+        cik = fund["fund_cik"]
+        # We need the last two filings to diff. Iterate older→newer so we
+        # also catch deeper history when backfilled.
+        all_filings = cx.execute(
+            """
+            SELECT accession, period_of_report
+            FROM fund_filing
+            WHERE fund_cik = ? AND period_of_report IS NOT NULL
+            ORDER BY period_of_report ASC
+            """,
+            (cik,),
+        ).fetchall()
+        if len(all_filings) < 2:
+            continue
+
+        prev_acc = None
+        for cur in all_filings:
+            if prev_acc is None:
+                prev_acc = cur["accession"]
+                continue
+            if cur["period_of_report"] > cutoff_date:
+                break
+            cur_rows = cx.execute(
+                "SELECT cusip, issuer_ticker FROM fund_holding "
+                "WHERE accession = ? AND issuer_ticker IS NOT NULL",
+                (cur["accession"],),
+            ).fetchall()
+            prev_rows = cx.execute(
+                "SELECT cusip, issuer_ticker FROM fund_holding "
+                "WHERE accession = ? AND issuer_ticker IS NOT NULL",
+                (prev_acc,),
+            ).fetchall()
+
+            prev_cusips = {r["cusip"]: r["issuer_ticker"] for r in prev_rows if r["cusip"]}
+            cur_cusips  = {r["cusip"]: r["issuer_ticker"] for r in cur_rows  if r["cusip"]}
+
+            for cusip, ticker in cur_cusips.items():
+                if not ticker:
+                    continue
+                source_id = f"{cur['accession']}:{cusip}:new"
+                if cusip in prev_cusips:
+                    continue  # not new
+                if db.have_outcome("fund", cik, source_id, horizon_days):
+                    continue
+                out.append({
+                    "filer_type": "fund",
+                    "filer_id":   cik,
+                    "source_id":  source_id,
+                    "direction":  "buy",
+                    "ticker":     ticker,
+                    "filing_date": cur["period_of_report"],
+                })
+
+            for cusip, ticker in prev_cusips.items():
+                if not ticker or cusip in cur_cusips:
+                    continue
+                source_id = f"{cur['accession']}:{cusip}:exit"
+                if db.have_outcome("fund", cik, source_id, horizon_days):
+                    continue
+                out.append({
+                    "filer_type": "fund",
+                    "filer_id":   cik,
+                    "source_id":  source_id,
+                    "direction":  "sell",
+                    "ticker":     ticker,
+                    "filing_date": cur["period_of_report"],
+                })
+
+            prev_acc = cur["accession"]
+            if len(out) >= limit:
+                break
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _normalise_name(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
-async def run_pass(horizon_days: int = DEFAULT_HORIZON_DAYS, limit: int = PER_PASS_LIMIT) -> dict:
+async def run_pass(horizon_days: int = DEFAULT_HORIZON_DAYS, limit: int = PER_PASS_LIMIT,
+                   filer_type: str | None = None) -> dict:
     """Label up to `limit` pending outcomes. Returns a small summary."""
-    cands = _candidates(horizon_days=horizon_days, limit=limit)
+    cands = _candidates(horizon_days=horizon_days, limit=limit, filer_type=filer_type)
     if not cands:
         return {"labeled": 0, "skipped_no_price": 0, "candidates": 0}
 
@@ -233,6 +355,11 @@ def _filer_display_names() -> dict[tuple[str, str], str]:
             "FROM activist_stake WHERE filer_cik IS NOT NULL"
         ).fetchall():
             out[("activist", r["id"])] = r["name"] or r["id"]
+        for r in cx.execute(
+            "SELECT DISTINCT fund_cik AS id, fund_name AS name "
+            "FROM fund_filing WHERE fund_cik IS NOT NULL"
+        ).fetchall():
+            out[("fund", r["id"])] = r["name"] or r["id"]
         # Congress filer_id is already a name.
     return out
 
@@ -242,7 +369,7 @@ def leaderboard(filer_type: str | None = None, min_n: int = 5, limit: int = 50,
     """Top filers by posterior mean (high-confidence skilled first)."""
     where = ["horizon_days = ?"]
     params: list = [horizon_days]
-    if filer_type in ("insider", "activist", "congress"):
+    if filer_type in ("insider", "activist", "congress", "fund"):
         where.append("filer_type = ?")
         params.append(filer_type)
     sql = (

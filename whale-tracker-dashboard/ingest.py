@@ -390,13 +390,15 @@ async def _process_13f(entry: dict) -> tuple[int, int]:
     if not holdings:
         return (0, 0)
 
-    # Resolve issuer_ticker per holding via CIK→ticker map when the
-    # issuer name matches a known ticker — strict CUSIP→ticker mapping
-    # isn't free, so we fall back to issuer-name keying for now.
+    # Resolve issuer_ticker for each holding via the issuer-name index.
+    # 13F INFORMATION TABLE entries only carry CUSIP + issuer name (no CIK),
+    # and free CUSIP→ticker maps don't exist — so we fuzzy-match on
+    # normalised issuer name. Big-cap issuers hit reliably.
     for h in holdings:
-        # Most holding rows don't have a CIK (only CUSIP). We leave
-        # issuer_ticker NULL; the UI surfaces issuer_name.
-        pass
+        if not h.get("issuer_ticker") and h.get("issuer_name"):
+            t = cik_ticker.resolve_ticker_from_name(h["issuer_name"])
+            if t:
+                h["issuer_ticker"] = t
 
     total_value = sum((h["value"] or 0) for h in holdings)
 
@@ -435,14 +437,125 @@ async def _ingest_congress() -> int:
 
 # ───────────────────────────── Backfill helper ─────────────────────────────
 
+async def backfill_filings(form_types: list[str], *, start_date: str, end_date: str,
+                           max_per_form: int = 500) -> dict[str, int]:
+    """Pull historical filings via EDGAR full-text search and route them
+    through the same per-form handlers used by the live ingest.
+
+    This is what warms the skill model on day one — without it we'd only
+    have the rolling 40-entry Atom feed and have to wait months for the
+    posteriors to converge.
+
+    `form_types` accepts: '4', 'SC 13D', 'SC 13G', '8-K', '13F-HR'.
+    Stops once `max_per_form` filings are processed per form.
+    """
+    await cik_ticker.ensure_loaded()
+    results: dict[str, int] = {}
+
+    for form in form_types:
+        inserted = 0
+        offset = 0
+        page_size = 100
+        while inserted < max_per_form:
+            try:
+                hits = await edgar.search_filings(
+                    form, start_date=start_date, end_date=end_date,
+                    offset=offset, size=page_size,
+                )
+            except Exception as e:
+                log.warning("backfill %s search failed at offset %d: %s", form, offset, e)
+                break
+            if not hits:
+                break
+            # Process this page via the same logic as live ingest.
+            try:
+                if form == "4":
+                    todo = [e for e in hits if e.get("accession")
+                            and not db.have_accession("insider_txn", e["accession"])]
+                    sem = asyncio.Semaphore(4)
+                    async def hf(e):
+                        async with sem:
+                            rows = await _fetch_form4_rows(e)
+                            if rows:
+                                return db.upsert_insider_txns(rows)
+                            return 0
+                    counts = await asyncio.gather(*(hf(e) for e in todo))
+                    inserted += sum(counts)
+                elif form in ("SC 13D", "SC 13G"):
+                    sem = asyncio.Semaphore(4)
+                    async def h13(e):
+                        async with sem:
+                            if not e.get("accession") or db.have_accession("activist_stake", e["accession"]):
+                                return 0
+                            row = await _build_13_row(e, form)
+                            return 1 if (row and db.upsert_activist_stake(row)) else 0
+                    counts = await asyncio.gather(*(h13(e) for e in hits))
+                    inserted += sum(counts)
+                elif form == "8-K":
+                    for e in hits:
+                        accession = e.get("accession") or ""
+                        if not accession or db.have_accession("ma_event", accession):
+                            continue
+                        items = filings8k.parse_items_from_summary(e.get("summary", ""))
+                        score = filings8k.score_8k(
+                            items,
+                            headline=e.get("title", ""),
+                            body_excerpt=e.get("summary", ""),
+                        )
+                        if score < 2.0:
+                            continue
+                        cik = e.get("filer_cik", "")
+                        ticker = cik_ticker.lookup_ticker(cik) if cik else None
+                        row = {
+                            "accession":     accession,
+                            "filed_at":      e.get("filed_at", ""),
+                            "issuer_name":   e.get("filer_name", ""),
+                            "issuer_ticker": ticker,
+                            "issuer_cik":    cik,
+                            "items":         ",".join(items),
+                            "headline":      e.get("title", "")[:300],
+                            "ma_score":      score,
+                            "filing_url":    e.get("link", ""),
+                        }
+                        if db.upsert_ma_event(row):
+                            inserted += 1
+                elif form == "13F-HR":
+                    todo = [e for e in hits if e.get("accession")
+                            and not db.have_accession("fund_filing", e["accession"])]
+                    sem = asyncio.Semaphore(2)
+                    async def h13f(e):
+                        async with sem:
+                            try:
+                                nf, _ = await _process_13f(e)
+                                return nf
+                            except Exception:
+                                return 0
+                    counts = await asyncio.gather(*(h13f(e) for e in todo))
+                    inserted += sum(counts)
+                else:
+                    log.info("backfill: skipping unsupported form %r", form)
+                    break
+            except Exception as e:
+                log.exception("backfill %s page-process failed: %s", form, e)
+                break
+
+            if len(hits) < page_size:
+                break
+            offset += page_size
+
+        results[form] = inserted
+
+    return results
+
+
 async def backfill_tickers() -> dict[str, int]:
-    """Backfill issuer_ticker for activist/MA rows that don't have one.
+    """Backfill issuer_ticker for activist/MA/13F-holding rows that don't have one.
 
     Useful after the first cik_tickers fetch or after rows were ingested
     before the map was available.
     """
     await cik_ticker.ensure_loaded()
-    updated = {"activist_stake": 0, "ma_event": 0}
+    updated = {"activist_stake": 0, "ma_event": 0, "fund_holding": 0}
     with db.connect() as cx:
         a_rows = cx.execute(
             "SELECT accession, issuer_cik FROM activist_stake "
@@ -468,4 +581,18 @@ async def backfill_tickers() -> dict[str, int]:
                     (t, r["accession"]),
                 )
                 updated["ma_event"] += 1
+        # 13F holdings: issuer_name → ticker via the unambiguous name index.
+        h_rows = cx.execute(
+            "SELECT accession, line_no, issuer_name FROM fund_holding "
+            "WHERE issuer_ticker IS NULL AND issuer_name IS NOT NULL AND issuer_name != ''"
+        ).fetchall()
+        for r in h_rows:
+            t = cik_ticker.resolve_ticker_from_name(r["issuer_name"])
+            if t:
+                cx.execute(
+                    "UPDATE fund_holding SET issuer_ticker = ? "
+                    "WHERE accession = ? AND line_no = ?",
+                    (t, r["accession"], r["line_no"]),
+                )
+                updated["fund_holding"] += 1
     return updated
