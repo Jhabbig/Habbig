@@ -507,6 +507,54 @@ def test_activity_csv_parser():
         ok(f"activity CSV parsed {len(out)} countries; values pass through to percentile rank")
 
 
+def test_trend_reversal_rule():
+    print("test: rule_trend_reversal fires on 2-leg trend then opposite-direction flip")
+    from datetime import date, timedelta
+    today = date.today()
+
+    def hist(*points):
+        return [{"date": (today - timedelta(days=d)).isoformat(), "composite": c}
+                for d, c in points]
+
+    countries = [
+        # AAA: 60, 65, 70, 64 -> up, up, down (reversal). Net legs +5, +5, -6.
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 64.0, "used": ["connection","partnership","stability"]},
+        # BBB: 70, 65, 60, 64 -> down, down, up (reversal) — should also fire
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 64.0, "used": ["connection","partnership","stability"]},
+        # CCC: 60, 65, 70, 75 -> up, up, up. Same direction, no reversal.
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 75.0, "used": ["connection","partnership","stability"]},
+        # DDD: 60, 65, 70, 69 -> up, up, down but last leg is only -1 (too small)
+        {"iso3": "DDD", "name": "Delta", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 69.0, "used": ["connection","partnership","stability"]},
+        # EEE: not enough history (only one point)
+        {"iso3": "EEE", "name": "Eps",   "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 64.0, "used": ["connection","partnership","stability"]},
+    ]
+    history = {
+        "AAA": hist((90, 60), (60, 65), (30, 70)),
+        "BBB": hist((90, 70), (60, 65), (30, 60)),
+        "CCC": hist((90, 60), (60, 65), (30, 70)),
+        "DDD": hist((90, 60), (60, 65), (30, 70)),
+        "EEE": hist((30, 70)),
+    }
+    out = insights_module.rule_trend_reversal(countries, lambda iso3: history.get(iso3, []))
+    isos = sorted(i.iso3 for i in out)
+    if isos != ["AAA", "BBB"]:
+        fail(f"trend_reversal should fire only on AAA and BBB; got {isos}")
+    titles = " | ".join(i.title for i in out)
+    if "up, then down" not in titles or "down, then up" not in titles:
+        fail(f"both directions of reversal should be represented in titles: {titles}")
+    ok("Alpha (up-then-down) and Beta (down-then-up) fire; same-direction Gamma, too-small-flip Delta, no-history Eps all skipped")
+
+
 def test_outlier_skipped_on_zero_variance():
     print("test: outlier rule skips a tier subscore when variance is zero")
     countries = [
@@ -544,6 +592,7 @@ def main():
     test_closest_peer_rule()
     test_snapshot_store_roundtrip()
     test_mover_rule()
+    test_trend_reversal_rule()
     test_merge_prefer_first()
     test_un_csv_parser_merges_globally()
     test_activity_csv_parser()

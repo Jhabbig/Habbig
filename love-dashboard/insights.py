@@ -33,6 +33,8 @@ CAP_IMPACT_DELTA = 2.0         # partnership cap reduced score by >= 2 pct point
 CLOSEST_PEER_DIST = 12.0       # max Euclidean distance to count as "lookalike"
 MOVER_MIN_DAYS = 30            # earliest comparison snapshot >= N days old
 MOVER_MIN_DELTA = 5.0          # composite must have shifted >= 5 pct pts
+TREND_LEG_DELTA = 3.0          # each leg of a trend must move >= 3 pct pts
+TREND_SAMPLE_TOLERANCE = 15    # accept a snapshot within +/- N days of the target spacing
 MAX_INSIGHTS_PER_RULE = 4
 MAX_TOTAL_INSIGHTS = 16
 
@@ -457,6 +459,92 @@ def rule_mover(countries: list[dict], history_accessor) -> list[Insight]:
     return out
 
 
+def _nearest_snapshot(history: list[dict], target_date, tolerance_days: int) -> dict | None:
+    """Closest snapshot to `target_date`, within +/- tolerance_days."""
+    from datetime import date as _date
+    best = None
+    best_diff = None
+    for pt in history:
+        if pt.get("composite") is None:
+            continue
+        try:
+            pt_date = _date.fromisoformat(pt["date"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        diff = abs((pt_date - target_date).days)
+        if diff > tolerance_days:
+            continue
+        if best_diff is None or diff < best_diff:
+            best, best_diff = pt, diff
+    return best
+
+
+def rule_trend_reversal(countries: list[dict], history_accessor) -> list[Insight]:
+    """Country was trending one direction for ~2 months, then flipped.
+
+    Samples composite at roughly -90/-60/-30 days ago and now. Detects an
+    A-then-B pattern where the first two legs share a sign (each >=
+    TREND_LEG_DELTA) and the third leg reverses (also >= TREND_LEG_DELTA).
+    Returns empty until enough history accrues, like rule_mover.
+    """
+    from datetime import date as _date, timedelta
+    today = _date.today()
+    targets = [today - timedelta(days=d) for d in (90, 60, 30)]
+
+    candidates: list[tuple[dict, tuple[float, float, float], float, float]] = []
+    for c in countries:
+        comp_now = c.get("composite")
+        if comp_now is None:
+            continue
+        history = history_accessor(c["iso3"])
+        if not history:
+            continue
+        samples = [_nearest_snapshot(history, t, TREND_SAMPLE_TOLERANCE) for t in targets]
+        if any(s is None for s in samples):
+            continue
+        c90, c60, c30 = (s["composite"] for s in samples)
+        legs = (c60 - c90, c30 - c60, comp_now - c30)
+        # First two legs same sign, each significant
+        if abs(legs[0]) < TREND_LEG_DELTA or abs(legs[1]) < TREND_LEG_DELTA:
+            continue
+        if (legs[0] > 0) != (legs[1] > 0):
+            continue
+        # Third leg significant AND opposite direction
+        if abs(legs[2]) < TREND_LEG_DELTA:
+            continue
+        if (legs[2] > 0) == (legs[0] > 0):
+            continue
+        candidates.append((c, legs, c90, comp_now))
+    # Rank by magnitude of the reversal leg — biggest surprise first
+    candidates.sort(key=lambda t: -abs(t[1][2]))
+
+    out: list[Insight] = []
+    for c, legs, c90, now in candidates[:MAX_INSIGHTS_PER_RULE]:
+        was_up = legs[0] > 0
+        prior = "up" if was_up else "down"
+        flipped = "down" if was_up else "up"
+        out.append(Insight(
+            kind="trend_reversal",
+            severity="warn",
+            iso3=c["iso3"],
+            country=c["name"],
+            title=f"{c['name']} reverses: {prior}, then {flipped}",
+            body=(
+                f"Composite was trending {prior} for ~2 months "
+                f"({legs[0]:+.1f}, then {legs[1]:+.1f}) and has now flipped to "
+                f"{legs[2]:+.1f} in the last month. Net move since 90 days ago: "
+                f"{now - c90:+.1f} pts."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "leg 1 (90→60d)",  "value": round(legs[0], 1)},
+                {"label": "leg 2 (60→30d)",  "value": round(legs[1], 1)},
+                {"label": "leg 3 (30d→now)", "value": round(legs[2], 1)},
+            ],
+        ))
+    return out
+
+
 def generate_insights(
     countries: list[dict],
     meta: dict[str, dict],
@@ -476,6 +564,7 @@ def generate_insights(
         pool.extend(rule_cap_impact(countries, partnership_uncapped))
     if history_accessor is not None:
         pool.extend(rule_mover(countries, history_accessor))
+        pool.extend(rule_trend_reversal(countries, history_accessor))
 
     severity_rank = {"alert": 0, "warn": 1, "info": 2}
     confidence_rank = {"high": 0, "medium": 1, "low": 2}

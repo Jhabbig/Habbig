@@ -1,9 +1,16 @@
-# State of Love Dashboard (v3.1)
+# State of Love Dashboard (v3.2)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
 
-**v3.1 adds:**
+**v3.2 adds:**
+
+- **Trend-reversal insight** — samples a country's composite at roughly
+  -90 / -60 / -30 days and today. Fires when the first two legs share a
+  direction (each ≥3pp) and the third leg flips (also ≥3pp). Auto-quiet
+  until ~90 days of snapshots accrue, same shape as `rule_mover`.
+
+**v3.1 added:**
 
 - **Activity subscore is live** — operator drops a CSV at
   `data/activity.csv` (columns `country`, `activity`); server
@@ -312,8 +319,8 @@ plus a small overrides table for common informal names (`Russia`/`RUS`,
 
 ## Roadmap (v3.x)
 
-- **Trend-reversal + event-overlay rules** — once 12+ months of snapshots
-  accumulate, detect direction flips and inflections near known events
-  (legalization, war, pandemic, recession).
+- **Event-overlay rule** — needs a curated event registry (legalization
+  dates, war start dates, recession bands per country). Detect composite
+  inflections within 12 months of an event.
 - **Loneliness layer** — Meta-Gallup *State of Social Connections* once we
   agree on a parser for their PDF / report-level CSV.
