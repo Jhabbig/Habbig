@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Regulators Dashboard — FastAPI backend.
 
-v0 surface:
-  - GET /                       → index.html (action feed UI)
-  - GET /api/feed?days=&q=&jurisdiction=&source=  → unified action feed
+Routes:
+  - GET /                       → index.html
+  - GET /api/feed?…             → unified action feed (filters: days, jurisdiction, source, tag, severity, q)
+  - GET /api/heatmap?weeks=12   → per-week, per-regulator, per-tag aggregation
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -21,6 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ingestion import unified_feed
+from analysis import heatmap as heatmap_aggr
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -122,6 +124,13 @@ async def api_feed(
         "items": items,
         "count": len(items),
     })
+
+
+@app.get("/api/heatmap")
+async def api_heatmap(weeks: int = 12, force: bool = False) -> JSONResponse:
+    weeks = max(4, min(weeks, 52))
+    data = unified_feed.get_cached(force=force, since_days=max(90, weeks * 7))
+    return JSONResponse(heatmap_aggr.aggregate(data["items"], data["sources"], weeks=weeks))
 
 
 @app.get("/healthz")

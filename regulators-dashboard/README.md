@@ -15,6 +15,7 @@ Port: **7080**.
 | **v0**   | **Action feed** — unified table of last 90 days across SEC / FCA / ESMA: date, jurisdiction badge, body, headline (links to source), summary. Jurisdiction chips and free-text search. Per-source status row. | RSS — `defusedxml`-parsed |
 | **v0.1** | **Type classifier** — every item tagged as `enforcement` / `rulemaking` / `guidance` / `speech` / `personnel` / `other` via rule-based keyword matching on title + summary. Color-coded chip per row; matched phrases shown on hover; type-filter chips. Multi-tag honest (an item matching two categories surfaces both). | rules — `analysis/classifier_keywords.py` |
 | **v0.2** | **Severity score** — enforcement-tagged items get a fine amount extracted via context-anchored regex (USD / GBP / EUR), bucketed `low (<$1M)` / `medium ($1M–10M)` / `high ($10M–100M)` / `severe ($100M+)`. Native amount and ≈USD shown on hover; severity-filter chips. Largest amount wins when multiple are mentioned. | rules — `analysis/severity.py` |
+| **v0.3** | **Activity heatmap** — per-regulator strip of stacked weekly bars across the last 12 weeks, segments colored by type tag. Shared Y scale so SEC vs FCA vs ESMA volumes are visually comparable. Per-bar hover shows tag breakdown + weekly total. Inline SVG, no JS deps. | aggregation — `analysis/heatmap.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -25,6 +26,7 @@ per-source status row flips to red; other sources keep working).
 |---|---|---|
 | `GET /` | — | Dashboard UI |
 | `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&q=` | 30 min | Unified action feed with filters |
+| `GET /api/heatmap?weeks=12` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52) |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -60,6 +62,7 @@ python3 -m ingestion.esma_rss         # ESMA news
 python3 -m ingestion.unified_feed     # merged feed + per-source status + classifier tags + severity
 python3 -m analysis.classifier        # 11 fixture headlines across all 6 categories
 python3 -m analysis.severity          # 13 fixture amounts (incl. multi-amount + false-positive guard)
+python3 -m analysis.heatmap           # aggregation smoke against synthetic items
 ```
 
 ## Files
@@ -76,7 +79,8 @@ regulators-dashboard/
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
 │   ├── classifier.py               Rule-based scorer + 11 fixture self-test
-│   └── severity.py                 Fine-amount extractor (USD/GBP/EUR) + bucketing + 13 fixtures
+│   ├── severity.py                 Fine-amount extractor (USD/GBP/EUR) + bucketing + 13 fixtures
+│   └── heatmap.py                  ISO-week × regulator × tag aggregation
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -157,6 +161,20 @@ None. Belt-and-braces: `classify_item` skips severity entirely unless
 `primary_tag == "enforcement"`, so a passing "$5M revenue" inside a
 rulemaking doc can't leak through.
 
+### v0.3 — activity heatmap
+
+`analysis/heatmap.py` buckets every item into an ISO week (Monday-start),
+groups by source code, and counts by `primary_tag`. The endpoint returns
+a rectangular grid (regulator × week × tag, zeros included) so the UI
+renders without per-cell null checks. Y axis uses the **global** weekly
+max across all regulators, so a "FCA went quiet, SEC ramping" pattern is
+visible by eyeballing row densities side-by-side.
+
+The chart is inline SVG with `<title>` tooltips per stacked segment —
+no Chart.js, no dependencies. Stacking order matches the canonical tag
+order from the classifier (`enforcement` at the bottom of each column
+since it's the most editorially impactful).
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -164,6 +182,7 @@ rulemaking doc can't leak through.
 | **v0**   | ✓ done | Action feed (SEC + FCA + ESMA, RSS) |
 | **v0.1** | ✓ done | Auto-classifier — type tag (`enforcement` / `rulemaking` / `speech` / `guidance` / `personnel` / `other`) via keyword rules; matched phrases shown on hover; type-filter chips |
 | **v0.2** | ✓ done | Severity score — fine-amount regex (USD/GBP/EUR) + USD-equivalent bucketing (low / medium / high / severe) on enforcement-tagged items; native + USD shown on hover; severity-filter chips |
+| **v0.3** | ✓ done | Activity heatmap — per-regulator weekly stacked-bar SVG over the last 12 weeks, segments colored by type tag, shared Y scale across regulators |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |

@@ -65,6 +65,12 @@
   .sev.medium { background: #d29922; color: #0e1117; }
   .sev.high   { background: #f0883e; color: #0e1117; }
   .sev.severe { background: #f85149; color: #fff; }
+  .heatmap svg { width: 100%; height: auto; display: block; }
+  .heatmap-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+                    font-size: 11px; color: var(--muted); }
+  .heatmap-legend .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 4px;
+                            vertical-align: middle; border-radius: 2px; }
+  .heatmap-empty { color: var(--muted); padding: 24px 0; text-align: center; font-size: 12px; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -84,6 +90,11 @@
   <span class="meta" id="meta">loading…</span>
 </header>
 <main>
+  <section class="panel heatmap" id="heatmap-panel">
+    <h2>Activity heatmap — last 12 weeks</h2>
+    <div class="heatmap-legend" id="heatmap-legend"></div>
+    <div id="heatmap-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
   <section class="panel">
     <h2>Action feed</h2>
     <div class="filters">
@@ -132,6 +143,16 @@
 <script>
 let state = { jurisdiction: "", tag: "", sev: "", q: "" };
 
+const TAG_COLORS = {
+  enforcement: "#f85149",
+  rulemaking:  "#1f6feb",
+  guidance:    "#2ea043",
+  speech:      "#8957e5",
+  personnel:   "#d29922",
+  other:       "#30363d",
+};
+const TAG_ORDER = ["enforcement","rulemaking","guidance","speech","personnel","other"];
+
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -142,6 +163,99 @@ function fmtDate(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return iso.slice(0, 10);
   return d.toISOString().slice(0, 10);
+}
+
+function renderHeatmap(data) {
+  const legend = document.getElementById("heatmap-legend");
+  const body = document.getElementById("heatmap-body");
+
+  legend.innerHTML = TAG_ORDER.map(t =>
+    `<span><span class="swatch" style="background:${TAG_COLORS[t]}"></span>${t}</span>`
+  ).join("");
+
+  const totalActions = data.regulators.reduce((s, r) => s + r.total, 0);
+  if (!totalActions) {
+    body.innerHTML = '<div class="heatmap-empty">No actions in the last 12 weeks.</div>';
+    return;
+  }
+
+  const W = 800, ROW_H = 70, LABEL_W = 120, RIGHT_PAD = 12;
+  const stripW = W - LABEL_W - RIGHT_PAD;
+  const nWeeks = data.weeks.length;
+  const barW = Math.max(4, Math.floor(stripW / nWeeks) - 4);
+  const cellW = stripW / nWeeks;
+  const maxBarH = ROW_H - 24;
+  const yMax = Math.max(1, data.global_max);
+  const H = data.regulators.length * ROW_H + 18;
+
+  const svgParts = [`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Regulator activity heatmap">`];
+
+  data.regulators.forEach((reg, ri) => {
+    const yTop = ri * ROW_H + 10;
+    // Label column on the left
+    svgParts.push(
+      `<text x="8" y="${yTop + 14}" fill="#e6edf3" font-size="13" font-weight="600">${escapeHtml(reg.code)}</text>` +
+      `<text x="8" y="${yTop + 32}" fill="#8b949e" font-size="10">${escapeHtml(reg.jurisdiction)} · ${reg.total} action${reg.total === 1 ? "" : "s"}</text>`
+    );
+
+    // Bars
+    reg.by_week.forEach((wk, wi) => {
+      const cx = LABEL_W + wi * cellW + (cellW - barW) / 2;
+      const baseline = yTop + ROW_H - 12;
+      if (wk.total === 0) {
+        // empty tick — small gray bar at baseline for visibility
+        svgParts.push(
+          `<rect x="${cx}" y="${baseline - 1}" width="${barW}" height="1" fill="#21262d"><title>Week of ${escapeHtml(wk.week)}: no actions</title></rect>`
+        );
+        return;
+      }
+      // Stack from bottom up in TAG_ORDER
+      let yCursor = baseline;
+      const tipLines = [`Week of ${wk.week}`];
+      for (const tag of TAG_ORDER) {
+        const c = wk.by_tag[tag] || 0;
+        if (c) tipLines.push(`${tag}: ${c}`);
+      }
+      tipLines.push(`total: ${wk.total}`);
+      const tip = tipLines.join("\n");
+      for (const tag of TAG_ORDER) {
+        const c = wk.by_tag[tag] || 0;
+        if (!c) continue;
+        const segH = (c / yMax) * maxBarH;
+        yCursor -= segH;
+        svgParts.push(
+          `<rect x="${cx}" y="${yCursor}" width="${barW}" height="${segH}" fill="${TAG_COLORS[tag]}">` +
+          `<title>${escapeHtml(tip)}</title></rect>`
+        );
+      }
+    });
+
+    // X-axis tick: first and last week labels under each row
+    if (reg.by_week.length) {
+      const firstCx = LABEL_W + 0 * cellW + cellW / 2;
+      const lastCx  = LABEL_W + (nWeeks - 1) * cellW + cellW / 2;
+      const yLabel = yTop + ROW_H - 1;
+      svgParts.push(
+        `<text x="${firstCx}" y="${yLabel}" fill="#8b949e" font-size="9" text-anchor="middle">${escapeHtml(reg.by_week[0].week)}</text>`,
+        `<text x="${lastCx}" y="${yLabel}" fill="#8b949e" font-size="9" text-anchor="middle">${escapeHtml(reg.by_week[reg.by_week.length-1].week)}</text>`
+      );
+    }
+  });
+
+  svgParts.push("</svg>");
+  body.innerHTML = svgParts.join("");
+}
+
+async function loadHeatmap() {
+  try {
+    const r = await fetch("/api/heatmap?weeks=12");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderHeatmap(data);
+  } catch (e) {
+    document.getElementById("heatmap-body").innerHTML =
+      `<div class="heatmap-empty err">heatmap load failed: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 async function load() {
@@ -263,7 +377,8 @@ document.getElementById("q").addEventListener("input", e => {
 });
 
 load();
-setInterval(load, 5 * 60 * 1000);
+loadHeatmap();
+setInterval(() => { load(); loadHeatmap(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>
