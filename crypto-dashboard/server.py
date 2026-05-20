@@ -42,6 +42,7 @@ import exchanges as xch
 import execution as exec_mod
 import tax as tax_mod
 import push as push_mod
+import strategy as strat_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -5785,6 +5786,138 @@ self.addEventListener('notificationclick', (e) => {
                     headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
+# ===================================================================
+# STRATEGIES — Phase 4
+# ===================================================================
+
+@app.get("/api/long-term/strategies")
+async def list_strategies(request: Request):
+    """User's own strategies, all visibilities."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    items = await asyncio.to_thread(strat_mod.list_user_strategies, user["id"])
+    return {"strategies": items}
+
+
+@app.get("/api/long-term/strategies/marketplace")
+async def marketplace(request: Request, limit: int = 50):
+    """All public strategies, newest first."""
+    items = await asyncio.to_thread(strat_mod.list_public_strategies, min(max(1, limit), 100))
+    return {"strategies": items}
+
+
+@app.get("/api/long-term/strategies/leaderboard")
+async def leaderboard_api(request: Request, limit: int = 25):
+    rows = await asyncio.to_thread(strat_mod.leaderboard, min(max(1, limit), 100))
+    return {"leaderboard": rows}
+
+
+@app.get("/api/long-term/strategies/{strategy_id}")
+async def get_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    uid = user["id"] if user else None
+    s = await asyncio.to_thread(strat_mod.get_strategy, strategy_id, uid)
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategy not found or private")
+    return s
+
+
+@app.post("/api/long-term/strategies")
+async def create_strategy_api(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    rules = payload.get("rules") or {}
+    visibility = str(payload.get("visibility", "private"))
+    try:
+        strategy = strat_mod.Strategy.from_dict(rules)
+        sid = await asyncio.to_thread(
+            strat_mod.create_strategy, user["id"], strategy, None, visibility,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"id": sid}
+
+
+@app.put("/api/long-term/strategies/{strategy_id}")
+async def update_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    rules = payload.get("rules") or {}
+    visibility = payload.get("visibility")
+    strategy = strat_mod.Strategy.from_dict(rules)
+    ok = await asyncio.to_thread(
+        strat_mod.update_strategy, user["id"], strategy_id, strategy, visibility,
+    )
+    if not ok:
+        raise HTTPException(status_code=403, detail="Not owner or strategy not found")
+    return {"ok": True}
+
+
+@app.delete("/api/long-term/strategies/{strategy_id}")
+async def delete_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = await asyncio.to_thread(strat_mod.delete_strategy, user["id"], strategy_id)
+    if not ok:
+        raise HTTPException(status_code=403, detail="Not owner or strategy not found")
+    return {"ok": True}
+
+
+@app.post("/api/long-term/strategies/{strategy_id}/backtest")
+async def run_strategy_backtest(strategy_id: int, request: Request):
+    """Backtest the strategy and persist the result. Owner-only (or public)."""
+    user = _get_session_user(request)
+    uid = user["id"] if user else None
+    s = await asyncio.to_thread(strat_mod.get_strategy, strategy_id, uid)
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategy not found or private")
+    result = await asyncio.to_thread(strat_mod.run_and_save_backtest, strategy_id)
+    if "error" in result:
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.post("/api/long-term/strategies/{strategy_id}/fork")
+async def fork_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    new_name = payload.get("name")
+    new_id = await asyncio.to_thread(
+        strat_mod.fork_strategy, user["id"], strategy_id, new_name,
+    )
+    if not new_id:
+        raise HTTPException(status_code=404, detail="source strategy not found or not public")
+    return {"id": new_id}
+
+
+@app.post("/api/long-term/strategies/{strategy_id}/follow")
+async def follow_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = await asyncio.to_thread(strat_mod.follow_strategy, user["id"], strategy_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="strategy not public")
+    return {"ok": True}
+
+
+@app.delete("/api/long-term/strategies/{strategy_id}/follow")
+async def unfollow_strategy_api(strategy_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    await asyncio.to_thread(strat_mod.unfollow_strategy, user["id"], strategy_id)
+    return {"ok": True}
+
+
 # ── HTML page ───────────────────────────────────────────────────────────────
 
 @app.get("/long-term", response_class=HTMLResponse)
@@ -5887,6 +6020,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="tab" data-tab="alerts">Risk Alerts</div>
   <div class="tab" data-tab="execution">Execution</div>
   <div class="tab" data-tab="tax">Taxes</div>
+  <div class="tab" data-tab="strategies">Strategies</div>
 </div>
 
 <section data-section="overview">
@@ -6077,6 +6211,78 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     <th>When</th><th>Ticker</th><th>Side</th><th>Action</th><th>Reason</th><th>USD</th><th>Limit</th><th>Status</th></tr></thead><tbody></tbody></table>
 </section>
 
+<section data-section="strategies" hidden>
+  <h2>Strategies</h2>
+  <div class="note">A strategy composes DCA cadence + cycle-aware multiplier + optional harvest rules. Backtests run against historical daily bars; public strategies are ranked on a Sharpe-vs-drawdown leaderboard.</div>
+
+  <div class="tabs" style="margin-top:6px;border-bottom-color:var(--card2)">
+    <div class="tab active" data-stab="mine">My strategies</div>
+    <div class="tab" data-stab="leaderboard">Leaderboard</div>
+    <div class="tab" data-stab="marketplace">Marketplace</div>
+    <div class="tab" data-stab="edit">New / edit</div>
+  </div>
+
+  <div data-sub="mine">
+    <div id="my-list" style="margin-top:10px"></div>
+  </div>
+
+  <div data-sub="leaderboard" hidden>
+    <table id="lb-table"><thead><tr>
+      <th>Rank</th><th>Name</th><th>Ticker</th><th>Return</th><th>Sharpe</th><th>Sortino</th><th>Max DD</th><th>Trades</th><th>Score</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div data-sub="marketplace" hidden>
+    <div id="market-list" style="margin-top:10px"></div>
+  </div>
+
+  <div data-sub="edit" hidden>
+    <input type="hidden" id="st-id" value="">
+    <div class="grid">
+      <div class="card">
+        <h3>Identity</h3>
+        <div class="field"><label>Name</label><input id="st-name" type="text"></div>
+        <div class="field"><label>Description</label><textarea id="st-desc" rows="3" style="background:var(--card2);color:var(--text);border:1px solid var(--border);padding:7px 10px;border-radius:6px;width:100%"></textarea></div>
+        <div class="field"><label>Base ticker</label>
+          <select id="st-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+        </div>
+        <div class="field"><label>Starting capital (USD)</label><input id="st-cap" type="number" step="100" value="10000"></div>
+        <div class="field"><label>Visibility</label>
+          <select id="st-vis"><option value="private">Private</option><option value="public">Public (on leaderboard)</option></select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>DCA</h3>
+        <div class="field"><label><input id="st-dca" type="checkbox" checked> DCA enabled</label></div>
+        <div class="field"><label>Amount (USD)</label><input id="st-dca-amt" type="number" step="10" value="100"></div>
+        <div class="field"><label>Frequency</label>
+          <select id="st-dca-freq"><option value="daily">Daily</option><option value="weekly" selected>Weekly</option><option value="monthly">Monthly</option></select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Cycle multipliers</h3>
+        <div class="field"><label>Bullish drawdown threshold</label><input id="st-bdd" type="number" step="0.05" value="-0.40"></div>
+        <div class="field"><label>Bullish drawdown multiplier</label><input id="st-bddm" type="number" step="0.1" value="2.0"></div>
+        <div class="field"><label>Bearish Mayer threshold</label><input id="st-bmt" type="number" step="0.1" value="2.4"></div>
+        <div class="field"><label>Bearish Mayer multiplier</label><input id="st-bmm" type="number" step="0.1" value="0.5"></div>
+        <div class="field"><label>Pause-buys Mayer threshold</label><input id="st-pmt" type="number" step="0.1" value="2.7"></div>
+      </div>
+      <div class="card">
+        <h3>Harvest</h3>
+        <div class="field"><label><input id="st-harv" type="checkbox"> Harvest losses</label></div>
+        <div class="field"><label>Min loss to harvest ($)</label><input id="st-hmin" type="number" step="10" value="100"></div>
+        <div class="field"><label>Min age (days)</label><input id="st-hage" type="number" step="1" value="30"></div>
+      </div>
+    </div>
+    <div class="actionrow" style="margin-top:10px">
+      <button id="st-save">Save</button>
+      <button id="st-backtest" class="ghost">Save &amp; backtest</button>
+      <button id="st-delete" class="ghost danger">Delete</button>
+      <span id="st-msg"></span>
+    </div>
+    <div id="st-result" style="margin-top:14px"></div>
+  </div>
+</section>
+
 <section data-section="tax" hidden>
   <h2>Tax settings</h2>
   <div class="actionrow">
@@ -6188,6 +6394,19 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (which === 'alerts') loadAlerts();
   if (which === 'execution') loadExecution();
   if (which === 'tax') loadTax();
+  if (which === 'strategies') loadStrategies();
+});
+
+// Sub-tabs inside the Strategies section
+document.querySelectorAll('[data-stab]').forEach(t => t.onclick = () => {
+  document.querySelectorAll('[data-stab]').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  const w = t.dataset.stab;
+  document.querySelectorAll('[data-sub]').forEach(s => s.hidden = s.dataset.sub !== w);
+  if (w === 'mine') loadMyStrategies();
+  if (w === 'leaderboard') loadLeaderboard();
+  if (w === 'marketplace') loadMarketplace();
+  if (w === 'edit') resetEditor();
 });
 
 const SIG_CLASS = {bullish:'r-calm', bearish:'r-defensive', neutral:'r-neutral', unavailable:'r-neutral'};
@@ -6899,6 +7118,255 @@ document.getElementById('dp-add').onclick = async () => {
     loadDispositions(); loadLots(); loadHarvest();
   } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
 };
+
+// ── Strategies ──────────────────────────────────────────────────────────────
+
+function readEditor() {
+  return {
+    name: document.getElementById('st-name').value || 'untitled',
+    description: document.getElementById('st-desc').value,
+    base_ticker: document.getElementById('st-ticker').value,
+    starting_capital_usd: parseFloat(document.getElementById('st-cap').value || 10000),
+    dca_enabled: document.getElementById('st-dca').checked,
+    dca_amount_usd: parseFloat(document.getElementById('st-dca-amt').value || 100),
+    dca_frequency: document.getElementById('st-dca-freq').value,
+    bullish_dd_threshold: parseFloat(document.getElementById('st-bdd').value),
+    bullish_dd_multiplier: parseFloat(document.getElementById('st-bddm').value),
+    bearish_mayer_threshold: parseFloat(document.getElementById('st-bmt').value),
+    bearish_mayer_multiplier: parseFloat(document.getElementById('st-bmm').value),
+    pause_mayer_threshold: parseFloat(document.getElementById('st-pmt').value),
+    harvest_enabled: document.getElementById('st-harv').checked,
+    harvest_min_loss_usd: parseFloat(document.getElementById('st-hmin').value || 100),
+    harvest_min_age_days: parseInt(document.getElementById('st-hage').value || 30),
+  };
+}
+
+function writeEditor(s) {
+  document.getElementById('st-id').value = s.id || '';
+  document.getElementById('st-name').value = s.name || '';
+  document.getElementById('st-desc').value = s.description || '';
+  document.getElementById('st-ticker').value = s.rules?.base_ticker || s.base_ticker || 'BTC';
+  document.getElementById('st-cap').value = s.rules?.starting_capital_usd || s.starting_capital_usd || 10000;
+  document.getElementById('st-vis').value = s.visibility || 'private';
+  const r = s.rules || {};
+  document.getElementById('st-dca').checked = r.dca_enabled !== false;
+  document.getElementById('st-dca-amt').value = r.dca_amount_usd ?? 100;
+  document.getElementById('st-dca-freq').value = r.dca_frequency || 'weekly';
+  document.getElementById('st-bdd').value = r.bullish_dd_threshold ?? -0.40;
+  document.getElementById('st-bddm').value = r.bullish_dd_multiplier ?? 2.0;
+  document.getElementById('st-bmt').value = r.bearish_mayer_threshold ?? 2.4;
+  document.getElementById('st-bmm').value = r.bearish_mayer_multiplier ?? 0.5;
+  document.getElementById('st-pmt').value = r.pause_mayer_threshold ?? 2.7;
+  document.getElementById('st-harv').checked = r.harvest_enabled === true;
+  document.getElementById('st-hmin').value = r.harvest_min_loss_usd ?? 100;
+  document.getElementById('st-hage').value = r.harvest_min_age_days ?? 30;
+}
+
+function resetEditor() {
+  writeEditor({rules: {}, visibility: 'private'});
+  document.getElementById('st-result').innerHTML = '';
+  document.getElementById('st-msg').innerHTML = '';
+}
+
+function loadStrategies() { loadMyStrategies(); }
+
+async function loadMyStrategies(){
+  const out = document.getElementById('my-list');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const r = await api('/api/long-term/strategies');
+    if (!r.strategies.length) { out.innerHTML = '<div class="note">No strategies yet — switch to "New / edit".</div>'; return; }
+    out.innerHTML = '';
+    for (const s of r.strategies) {
+      const bt = s.latest_backtest;
+      const ret = bt ? pct(bt.total_return_pct) : '—';
+      const sharpe = bt && bt.sharpe != null ? fmt(bt.sharpe, 2) : '—';
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = `
+        <h3>${s.name} <span class="pill ${s.visibility==='public'?'p-expansion':'p-neutral'}">${s.visibility}</span></h3>
+        <div class="row"><span class="l">Asset</span><span class="v">${s.base_ticker}</span></div>
+        <div class="row"><span class="l">Starting capital</span><span class="v">${usd(s.starting_capital_usd)}</span></div>
+        <div class="row"><span class="l">Latest backtest return</span><span class="v">${ret}</span></div>
+        <div class="row"><span class="l">Sharpe</span><span class="v">${sharpe}</span></div>
+        <div class="actionrow" style="margin-top:8px">
+          <button class="ghost" data-edit="${s.id}">Edit</button>
+          <button class="ghost" data-backtest="${s.id}">Backtest</button>
+        </div>`;
+      out.appendChild(card);
+    }
+    out.querySelectorAll('button[data-edit]').forEach(b => b.onclick = () => editStrategy(parseInt(b.dataset.edit)));
+    out.querySelectorAll('button[data-backtest]').forEach(b => b.onclick = () => runBacktest(parseInt(b.dataset.backtest)));
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+async function loadLeaderboard(){
+  const tbody = document.querySelector('#lb-table tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const r = await api('/api/long-term/strategies/leaderboard');
+    if (!r.leaderboard.length) { tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No backtested public strategies yet.</td></tr>'; return; }
+    tbody.innerHTML = '';
+    r.leaderboard.forEach((row, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${i+1}</td><td>${row.name}</td><td>${row.base_ticker}</td>
+        <td class="${row.total_return_pct>=0?'gain':'loss'}">${pct(row.total_return_pct)}</td>
+        <td>${fmt(row.sharpe,2)}</td><td>${fmt(row.sortino,2)}</td>
+        <td class="loss">${pct(row.max_drawdown_pct)}</td>
+        <td>${row.trade_count}</td>
+        <td><b>${fmt(row.score,2)}</b></td>
+        <td><button class="ghost" data-fork="${row.id}">Fork</button></td>`;
+      tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('button[data-fork]').forEach(b => b.onclick = () => forkStrategy(parseInt(b.dataset.fork)));
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="10" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadMarketplace(){
+  const out = document.getElementById('market-list');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const r = await api('/api/long-term/strategies/marketplace');
+    if (!r.strategies.length) { out.innerHTML = '<div class="note">No public strategies yet.</div>'; return; }
+    out.innerHTML = '';
+    for (const s of r.strategies) {
+      const bt = s.latest_backtest;
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = `
+        <h3>${s.name}</h3>
+        <div class="note">${s.description || ''}</div>
+        <div class="row"><span class="l">Asset · capital</span><span class="v">${s.base_ticker} · ${usd(s.starting_capital_usd)}</span></div>
+        ${bt ? `
+        <div class="row"><span class="l">Return</span><span class="v ${bt.total_return_pct>=0?'gain':'loss'}">${pct(bt.total_return_pct)}</span></div>
+        <div class="row"><span class="l">Sharpe / Max DD</span><span class="v">${fmt(bt.sharpe,2)} / ${pct(bt.max_drawdown_pct)}</span></div>
+        ` : '<div class="note">No backtest yet</div>'}
+        <div class="actionrow" style="margin-top:8px">
+          <button class="ghost" data-fork="${s.id}">Fork to my library</button>
+        </div>`;
+      out.appendChild(card);
+    }
+    out.querySelectorAll('button[data-fork]').forEach(b => b.onclick = () => forkStrategy(parseInt(b.dataset.fork)));
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
+
+async function editStrategy(id){
+  try {
+    const s = await api('/api/long-term/strategies/'+id);
+    writeEditor(s);
+    document.querySelectorAll('[data-stab]').forEach(x => x.classList.remove('active'));
+    document.querySelector('[data-stab="edit"]').classList.add('active');
+    document.querySelectorAll('[data-sub]').forEach(x => x.hidden = x.dataset.sub !== 'edit');
+    // If there's a recent backtest, render it.
+    if (s.latest_backtest) renderBacktest(s.latest_backtest);
+  } catch(e) { alert(e.message); }
+}
+
+async function forkStrategy(id){
+  try {
+    const r = await api('/api/long-term/strategies/'+id+'/fork', {method:'POST', body: JSON.stringify({})});
+    alert('Forked to your library (id ' + r.id + ').');
+    loadMyStrategies();
+  } catch(e) { alert(e.message); }
+}
+
+document.getElementById('st-save').onclick = async () => {
+  const msg = document.getElementById('st-msg'); msg.innerHTML = '';
+  const id = document.getElementById('st-id').value;
+  const body = {rules: readEditor(), visibility: document.getElementById('st-vis').value};
+  try {
+    if (id) {
+      await api('/api/long-term/strategies/'+id, {method:'PUT', body: JSON.stringify(body)});
+      msg.innerHTML = '<span class="ok">Updated.</span>';
+    } else {
+      const r = await api('/api/long-term/strategies', {method:'POST', body: JSON.stringify(body)});
+      document.getElementById('st-id').value = r.id;
+      msg.innerHTML = '<span class="ok">Created (id '+r.id+').</span>';
+    }
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+document.getElementById('st-backtest').onclick = async () => {
+  const msg = document.getElementById('st-msg'); msg.innerHTML = ' saving + running…';
+  document.getElementById('st-save').onclick();  // not awaited but fires save flow
+  let id = document.getElementById('st-id').value;
+  if (!id) {
+    // Save first to get an id.
+    const body = {rules: readEditor(), visibility: document.getElementById('st-vis').value};
+    try {
+      const r = await api('/api/long-term/strategies', {method:'POST', body: JSON.stringify(body)});
+      id = r.id;
+      document.getElementById('st-id').value = id;
+    } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; return; }
+  }
+  try {
+    const result = await api('/api/long-term/strategies/'+id+'/backtest', {method:'POST'});
+    msg.innerHTML = '<span class="ok">Backtest done.</span>';
+    renderBacktest(result);
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+document.getElementById('st-delete').onclick = async () => {
+  const id = document.getElementById('st-id').value;
+  if (!id) { resetEditor(); return; }
+  if (!confirm('Delete this strategy and its backtests?')) return;
+  try {
+    await api('/api/long-term/strategies/'+id, {method:'DELETE'});
+    resetEditor();
+    loadMyStrategies();
+  } catch(e) { document.getElementById('st-msg').innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+async function runBacktest(id){
+  try {
+    const result = await api('/api/long-term/strategies/'+id+'/backtest', {method:'POST'});
+    // Switch to edit tab with this strategy and render the result.
+    const s = await api('/api/long-term/strategies/'+id);
+    writeEditor(s);
+    document.querySelectorAll('[data-stab]').forEach(x => x.classList.remove('active'));
+    document.querySelector('[data-stab="edit"]').classList.add('active');
+    document.querySelectorAll('[data-sub]').forEach(x => x.hidden = x.dataset.sub !== 'edit');
+    renderBacktest(result);
+  } catch(e) { alert(e.message); }
+}
+
+function renderBacktest(r){
+  if (!r) return;
+  const isLatestRow = r.start_date && r.final_value_usd != null;
+  const totalRet = r.total_return_pct;
+  const sharpe = r.sharpe;
+  const sortino = r.sortino;
+  const maxDD = r.max_drawdown_pct;
+
+  // SVG sparkline of the equity curve.
+  let svg = '';
+  if (r.equity_curve && r.equity_curve.length > 1) {
+    const w = 600, h = 140, p = 8;
+    const vals = r.equity_curve.map(x => x[1]);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const range = (max - min) || 1;
+    const dx = (w - 2*p) / (vals.length - 1);
+    const pts = vals.map((v,i) => `${(p + i*dx).toFixed(1)},${(h - p - ((v - min)/range)*(h-2*p)).toFixed(1)}`).join(' ');
+    svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="160" style="background:var(--card2);border-radius:8px;margin-top:10px">
+      <polyline fill="none" stroke="${totalRet>=0?'#22c55e':'#ef4444'}" stroke-width="2" points="${pts}"/>
+      <text x="${p}" y="${p+10}" fill="#7d8a99" font-size="10">${usd(min)}</text>
+      <text x="${p}" y="${h-2}" fill="#7d8a99" font-size="10">${r.start_date || r.equity_curve[0][0]}</text>
+      <text x="${w-p}" y="${p+10}" fill="#7d8a99" font-size="10" text-anchor="end">${usd(max)}</text>
+      <text x="${w-p}" y="${h-2}" fill="#7d8a99" font-size="10" text-anchor="end">${r.end_date || r.equity_curve[r.equity_curve.length-1][0]}</text>
+    </svg>`;
+  }
+  const cls = (v) => v == null ? '' : (v >= 0 ? 'gain' : 'loss');
+  document.getElementById('st-result').innerHTML = `
+    <div class="card">
+      <h3>Backtest result</h3>
+      <div class="row"><span class="l">Window</span><span class="v">${r.start_date} → ${r.end_date} (${r.days||'—'} days)</span></div>
+      <div class="row"><span class="l">Final value</span><span class="v">${usd(r.final_value_usd)}</span></div>
+      <div class="row"><span class="l">Total return</span><span class="v ${cls(totalRet)}"><b>${pct(totalRet)}</b></span></div>
+      <div class="row"><span class="l">Sharpe / Sortino</span><span class="v">${fmt(sharpe,2)} / ${fmt(sortino,2)}</span></div>
+      <div class="row"><span class="l">Max drawdown</span><span class="v loss">${pct(maxDD)}</span></div>
+      <div class="row"><span class="l">Trades</span><span class="v">${r.trade_count} (${r.buys||0} buys, ${r.sells||0} sells)</span></div>
+      ${r.final_qty != null ? `<div class="row"><span class="l">Final position</span><span class="v">${fmt(r.final_qty,6)} ${r.ticker || ''}, ${usd(r.final_cash_usd)} cash</span></div>` : ''}
+      ${svg}
+    </div>`;
+}
 
 // ── Push notifications + PWA ───────────────────────────────────────────────
 

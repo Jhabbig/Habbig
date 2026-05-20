@@ -424,6 +424,48 @@ CREATE TABLE IF NOT EXISTS crypto_pending_notifications (
     delivered_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pending_user ON crypto_pending_notifications(user_id, delivered_at);
+
+-- ── Strategies (Phase 4) ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_strategies (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id         TEXT NOT NULL,
+    name                  TEXT NOT NULL,
+    description           TEXT DEFAULT '',
+    rules_json            TEXT NOT NULL,
+    base_ticker           TEXT NOT NULL,
+    starting_capital_usd  REAL NOT NULL DEFAULT 10000.0,
+    visibility            TEXT NOT NULL DEFAULT 'private',  -- private | public
+    forked_from_id        INTEGER,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_strategies_owner ON crypto_strategies(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_strategies_public ON crypto_strategies(visibility, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS crypto_strategy_backtests (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_id         INTEGER NOT NULL,
+    start_date          TEXT NOT NULL,
+    end_date            TEXT NOT NULL,
+    final_value_usd     REAL NOT NULL,
+    total_return_pct    REAL NOT NULL,
+    sharpe              REAL,
+    sortino             REAL,
+    max_drawdown_pct    REAL NOT NULL,
+    win_rate            REAL,
+    trade_count         INTEGER NOT NULL DEFAULT 0,
+    equity_curve_json   TEXT NOT NULL DEFAULT '[]',
+    computed_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (strategy_id) REFERENCES crypto_strategies(id)
+);
+CREATE INDEX IF NOT EXISTS idx_strat_bt_strategy ON crypto_strategy_backtests(strategy_id, computed_at DESC);
+
+CREATE TABLE IF NOT EXISTS crypto_strategy_follows (
+    user_id      TEXT NOT NULL,
+    strategy_id  INTEGER NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, strategy_id)
+);
 """
 
 
@@ -1831,6 +1873,145 @@ def mark_notifications_delivered(user_id: str, ids: list[int]) -> None:
             f"WHERE user_id = ? AND id IN ({placeholders})",
             (user_id, *ids),
         )
+
+
+# ── Strategies (Phase 4) ────────────────────────────────────────────────────
+
+def insert_strategy(owner_user_id: str, name: str, description: str,
+                    rules_json: str, base_ticker: str,
+                    starting_capital_usd: float, visibility: str,
+                    forked_from_id: int | None = None) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_strategies
+                 (owner_user_id, name, description, rules_json, base_ticker,
+                  starting_capital_usd, visibility, forked_from_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (owner_user_id, name, description, rules_json, base_ticker,
+             starting_capital_usd, visibility, forked_from_id),
+        )
+        return int(cur.lastrowid)
+
+
+def update_strategy_row(strategy_id: int, name: str, description: str,
+                        rules_json: str, base_ticker: str,
+                        starting_capital_usd: float, visibility: str) -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE crypto_strategies SET
+                 name=?, description=?, rules_json=?, base_ticker=?,
+                 starting_capital_usd=?, visibility=?, updated_at=datetime('now')
+               WHERE id=?""",
+            (name, description, rules_json, base_ticker, starting_capital_usd,
+             visibility, strategy_id),
+        )
+
+
+def delete_strategy_row(strategy_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM crypto_strategy_follows WHERE strategy_id = ?", (strategy_id,))
+        c.execute("DELETE FROM crypto_strategy_backtests WHERE strategy_id = ?", (strategy_id,))
+        c.execute("DELETE FROM crypto_strategies WHERE id = ?", (strategy_id,))
+
+
+def get_strategy(strategy_id: int) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM crypto_strategies WHERE id = ?", (strategy_id,),
+        ).fetchone()
+    return _row(row)
+
+
+def list_strategies_for_user(user_id: str) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM crypto_strategies WHERE owner_user_id = ? "
+            "ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def list_public_strategies(limit: int = 50) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM crypto_strategies WHERE visibility = 'public' "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def insert_strategy_backtest(strategy_id: int, start_date: str, end_date: str,
+                              final_value_usd: float, total_return_pct: float,
+                              sharpe: float, sortino: float,
+                              max_drawdown_pct: float, win_rate: float,
+                              trade_count: int, equity_curve_json: str) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_strategy_backtests
+                 (strategy_id, start_date, end_date, final_value_usd,
+                  total_return_pct, sharpe, sortino, max_drawdown_pct,
+                  win_rate, trade_count, equity_curve_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (strategy_id, start_date, end_date, final_value_usd,
+             total_return_pct, sharpe, sortino, max_drawdown_pct,
+             win_rate, trade_count, equity_curve_json),
+        )
+        return int(cur.lastrowid)
+
+
+def get_latest_strategy_backtest(strategy_id: int) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            """SELECT * FROM crypto_strategy_backtests
+               WHERE strategy_id = ? ORDER BY computed_at DESC LIMIT 1""",
+            (strategy_id,),
+        ).fetchone()
+    return _row(row)
+
+
+def upsert_strategy_follow(user_id: str, strategy_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_strategy_follows (user_id, strategy_id)
+               VALUES (?, ?) ON CONFLICT DO NOTHING""",
+            (user_id, strategy_id),
+        )
+
+
+def delete_strategy_follow(user_id: str, strategy_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "DELETE FROM crypto_strategy_follows WHERE user_id = ? AND strategy_id = ?",
+            (user_id, strategy_id),
+        )
+
+
+def leaderboard_data(limit: int) -> list[Row]:
+    """Join strategies with their most-recent backtest, public-only."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT s.id, s.name, s.description, s.base_ticker,
+                      s.owner_user_id, s.created_at,
+                      b.start_date, b.end_date, b.final_value_usd,
+                      b.total_return_pct, b.sharpe, b.sortino,
+                      b.max_drawdown_pct, b.win_rate, b.trade_count,
+                      b.computed_at
+               FROM crypto_strategies s
+               JOIN (
+                 SELECT bb.* FROM crypto_strategy_backtests bb
+                 INNER JOIN (
+                   SELECT strategy_id, MAX(computed_at) AS m
+                   FROM crypto_strategy_backtests
+                   GROUP BY strategy_id
+                 ) x ON bb.strategy_id = x.strategy_id AND bb.computed_at = x.m
+               ) b ON b.strategy_id = s.id
+               WHERE s.visibility = 'public'
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return _rows(rows)
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────
