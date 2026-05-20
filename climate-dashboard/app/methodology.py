@@ -95,6 +95,17 @@ MODELS = [
         },
         "code": "app/models/markets.py",
     },
+    {
+        "id": "kelly_position_sizing",
+        "name": "Kelly position sizing",
+        "summary": "Standard Kelly criterion applied to each binary market: f* = (p·b − q) / b, where p is the model probability of YES, q=1−p, and b=(1−implied)/implied. We compute f* for both YES and NO sides and surface the larger positive value. Output is rendered as a percentage of bankroll, or — if a bankroll is set — as a $ amount. Display defaults to Half-Kelly (¼–½ Kelly are the standard real-world multipliers; full Kelly's drawdowns are brutal). The bankroll is stored only in the browser's localStorage and never leaves the device.",
+        "inputs": ["Model probability + implied probability from each market"],
+        "outputs": {
+            "side": "YES or NO — whichever side has positive expected log-growth",
+            "fraction": "Recommended Kelly fraction of bankroll, before the multiplier",
+        },
+        "code": "static/index.html (kellyBet)",
+    },
 ]
 
 BACKTESTS = [

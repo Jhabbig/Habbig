@@ -212,6 +212,50 @@
     letter-spacing: 0.05em;
   }
   .market-count b { color: var(--text-1); font-weight: 600; }
+
+  .kelly-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .kelly-row .label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .kelly-row input, .kelly-row select {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 6px 9px;
+    border-radius: 6px;
+    font-size: 13px;
+    width: 130px;
+  }
+  .kelly-row .help {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .kelly-row .help a { color: var(--text-3); }
+  .kelly-row .help a:hover { color: var(--accent); }
+  .kelly-yes { color: var(--good); font-weight: 600; }
+  .kelly-no { color: var(--accent-2); font-weight: 600; }
+  .kelly-side {
+    font-size: 10px;
+    color: var(--text-3);
+    margin-left: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   .thresholds {
     display: flex;
     flex-wrap: wrap;
@@ -361,6 +405,18 @@
   </select>
 </div>
 <div id="market-count" class="market-count"></div>
+<div class="kelly-row">
+  <span class="label">Position sizing</span>
+  <span class="label">Bankroll $</span>
+  <input id="bankroll" type="number" placeholder="Optional" min="0" step="100" />
+  <span class="label">Fraction</span>
+  <select id="kelly-fraction">
+    <option value="0.25">Quarter-Kelly</option>
+    <option value="0.5" selected>Half-Kelly</option>
+    <option value="1">Full-Kelly</option>
+  </select>
+  <span class="help">Kelly suggests fraction of bankroll for an edge bet at the implied price. Half-Kelly is the standard real-world default — full Kelly's drawdowns are brutal. <a href="/methodology">More</a></span>
+</div>
 <div id="markets"></div>
 
 <div class="section-title">Model performance — last 5 years</div>
@@ -1021,6 +1077,44 @@ window.addEventListener("resize", () => {
 
 let _allMarkets = [];
 
+// ─── Kelly position sizing ────────────────────────────────────────────────────
+//
+// Standard Kelly for a single binary bet: f* = (p·b − q) / b, where
+//   p = model probability of YES
+//   q = 1 − p
+//   b = (1 − implied_p) / implied_p  (the payout-per-$ if YES wins)
+// A negative f* on the YES side means YES is unprofitable at the implied price —
+// we then compute the NO-side Kelly and take that direction if it's positive.
+// "Half-Kelly" multiplier is the standard real-world default; it cuts expected
+// drawdown ~4× at ~75% of full-Kelly's growth rate.
+function kellyBet(modelP, impliedP) {
+  if (modelP == null || impliedP == null) return null;
+  if (impliedP <= 0 || impliedP >= 1) return null;
+  // YES side
+  const bY = (1 - impliedP) / impliedP;
+  const fY = (modelP * bY - (1 - modelP)) / bY;
+  // NO side
+  const pN = 1 - modelP, impN = 1 - impliedP;
+  const bN = (1 - impN) / impN;
+  const fN = (pN * bN - (1 - pN)) / bN;
+  if (fY <= 0 && fN <= 0) return { side: null, fraction: 0 };
+  return fY >= fN
+    ? { side: "YES", fraction: fY }
+    : { side: "NO", fraction: fN };
+}
+
+function fmtKelly(bet, multiplier, bankroll) {
+  if (!bet || bet.side === null || bet.fraction <= 0) return "—";
+  const scaled = bet.fraction * multiplier;
+  const sideCls = bet.side === "YES" ? "kelly-yes" : "kelly-no";
+  if (bankroll && bankroll > 0) {
+    const dollars = Math.round(scaled * bankroll);
+    if (dollars < 1) return "—";
+    return `<span class="${sideCls}">$${dollars.toLocaleString()}</span><span class="kelly-side">${bet.side}</span>`;
+  }
+  return `<span class="${sideCls}">${(scaled * 100).toFixed(1)}%</span><span class="kelly-side">${bet.side}</span>`;
+}
+
 function categorizeMarket(m) {
   const t = ((m._event_title || "") + " " + (m.question || "")).toLowerCase();
   if (/\bmethane\b|\bch4\b|\bppb\b/.test(t)) return "methane";
@@ -1043,6 +1137,9 @@ function renderMarkets() {
   const minLiqRaw = document.getElementById("min-liq").value;
   const minLiq = minLiqRaw === "" ? null : Number(minLiqRaw);
   const scoredOnly = document.getElementById("scored-only").checked;
+  const bankrollRaw = document.getElementById("bankroll").value;
+  const bankroll = bankrollRaw === "" ? null : Number(bankrollRaw);
+  const kFrac = Number(document.getElementById("kelly-fraction").value) || 0.5;
 
   let rows = _allMarkets.slice();
   if (q) {
@@ -1101,13 +1198,13 @@ function renderMarkets() {
             <th class="num">Implied</th>
             <th class="num">Model</th>
             <th class="num">Edge</th>
+            <th class="num">Kelly</th>
             <th class="num">Liquidity</th>
             <th>Ends</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map(m => {
-            const slug = m.slug || (m._event_title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
             const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
             const impl = m._implied_p !== null && m._implied_p !== undefined ? pct(m._implied_p) : "—";
             const mp = m._model_p !== null && m._model_p !== undefined ? pct(m._model_p) : "—";
@@ -1115,6 +1212,8 @@ function renderMarkets() {
             const edgeHtml = edge === null || edge === undefined ? "—" :
               edge > 0 ? `<span class="edge-pos">+${edge.toFixed(1)} pp</span>` :
                           `<span class="edge-neg">${edge.toFixed(1)} pp</span>`;
+            const kelly = kellyBet(m._model_p, m._implied_p);
+            const kHtml = fmtKelly(kelly, kFrac, bankroll);
             const liq = m.liquidity ? Number(m.liquidity).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
             const end = m.endDate ? new Date(m.endDate).toISOString().slice(0, 10) : "—";
             const q = m.question || "";
@@ -1130,6 +1229,7 @@ function renderMarkets() {
               <td class="num">${impl}</td>
               <td class="num">${mp}</td>
               <td class="num">${edgeHtml}</td>
+              <td class="num">${kHtml}</td>
               <td class="num">${liq}</td>
               <td>${end}</td>
             </tr>`;
@@ -1211,11 +1311,29 @@ async function loadBacktest() {
   `;
 }
 
-["search", "min-edge", "min-liq"].forEach(id => {
+["search", "min-edge", "min-liq", "bankroll"].forEach(id => {
   document.getElementById(id).addEventListener("input", renderMarkets);
 });
-["topic", "sort", "scored-only"].forEach(id => {
+["topic", "sort", "scored-only", "kelly-fraction"].forEach(id => {
   document.getElementById(id).addEventListener("change", renderMarkets);
+});
+
+// Persist bankroll + Kelly fraction across page loads. Bankroll is sensitive
+// so we only store it in localStorage on this device — never sent anywhere.
+const _LS_BANKROLL = "climate.bankroll";
+const _LS_KFRAC = "climate.kellyFraction";
+(function restoreSizing() {
+  const br = localStorage.getItem(_LS_BANKROLL);
+  if (br) document.getElementById("bankroll").value = br;
+  const kf = localStorage.getItem(_LS_KFRAC);
+  if (kf) document.getElementById("kelly-fraction").value = kf;
+})();
+document.getElementById("bankroll").addEventListener("input", e => {
+  if (e.target.value) localStorage.setItem(_LS_BANKROLL, e.target.value);
+  else localStorage.removeItem(_LS_BANKROLL);
+});
+document.getElementById("kelly-fraction").addEventListener("change", e => {
+  localStorage.setItem(_LS_KFRAC, e.target.value);
 });
 
 loadRegime();
