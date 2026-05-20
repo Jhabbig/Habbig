@@ -81,6 +81,7 @@ _TTL: dict[str, int] = {
     "fred:MORTGAGE30US": 60 * 60 * 6,  # weekly
     "fred:ICSA": 60 * 60 * 6,       # weekly
     "polymarket": 60 * 5,            # markets move
+    "approval": 60 * 60 * 6,         # 538's archived CSV, refreshed when GitHub mirror updates
 }
 
 
@@ -794,6 +795,359 @@ def election_cycle_regression(sentiment_series: Optional[dict],
     }
 
 
+# ─── Presidential approval (538 archived CSV) ─────────────────────────────────
+
+# FiveThirtyEight published a comprehensive aggregated approval-polls CSV
+# updated daily until ABC/Disney shut the site down in mid-2024. The data
+# is still mirrored on the public GitHub repo `fivethirtyeight/data`. We
+# pull from the raw GitHub URL — keyless, stable as long as the repo exists.
+#
+# Heads-up: this dataset is *frozen* at the 538 shutdown date. The
+# dashboard surfaces an explicit "as of" pill so users see the staleness.
+# A v2 follow-up will splice in a live source (RCP scrape, Silver Bulletin
+# API, or a custom poll aggregator) to extend past the freeze date.
+APPROVAL_CSV_URLS = [
+    # Primary: GitHub raw. Most stable.
+    "https://raw.githubusercontent.com/fivethirtyeight/data/master/polls/president_approval_polls.csv",
+    # Fallback: the original projects.fivethirtyeight.com URL (still serves
+    # the archived snapshot at time of writing).
+    "https://projects.fivethirtyeight.com/polls/data/president_approval_polls.csv",
+]
+
+
+def _parse_iso_date(s: str) -> Optional[str]:
+    """Accept either 'YYYY-MM-DD' or 'M/D/YY' / 'M/D/YYYY' and emit ISO."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    parts = s.split("/")
+    if len(parts) != 3:
+        return None
+    try:
+        m, d, y = int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+    if y < 100:
+        y += 2000 if y < 70 else 1900
+    return f"{y:04d}-{m:02d}-{d:02d}"
+
+
+def fetch_approval_polls() -> Optional[list[dict]]:
+    """Pull the 538 approval-polls CSV. Returns a list of dicts shaped for
+    aggregation: {date, pollster, sample_size, subgroup, approve, disapprove,
+    president}."""
+    cached = cache_get("approval")
+    if cached is not None:
+        return cached
+    text: Optional[str] = None
+    for url in APPROVAL_CSV_URLS:
+        r = _http_get(url, timeout=30)
+        if r and r.text:
+            text = r.text
+            logger.info("Approval polls fetched from %s (%d bytes)", url, len(text))
+            break
+    if not text:
+        return None
+
+    reader = csv.DictReader(io.StringIO(text))
+    out: list[dict] = []
+    for row in reader:
+        # 538's column names changed over the dataset's life. Look up
+        # several common spellings.
+        end_date = row.get("end_date") or row.get("enddate")
+        date_iso = _parse_iso_date(end_date) if end_date else None
+        if not date_iso:
+            continue
+        try:
+            approve = float(row.get("approve") or row.get("yes") or 0)
+            disapprove = float(row.get("disapprove") or row.get("no") or 0)
+        except (TypeError, ValueError):
+            continue
+        if approve <= 0 and disapprove <= 0:
+            continue
+        try:
+            sample_size = float(row.get("sample_size") or row.get("samplesize") or 0) or None
+        except (TypeError, ValueError):
+            sample_size = None
+        out.append({
+            "date": date_iso,
+            "pollster": (row.get("pollster") or row.get("pollster_rating_name") or "").strip(),
+            "sample_size": sample_size,
+            "subgroup": (row.get("subgroup") or row.get("subject") or "").strip(),
+            "approve": approve,
+            "disapprove": disapprove,
+            "president": (row.get("president") or row.get("politician") or "").strip(),
+        })
+    out.sort(key=lambda r: r["date"])
+    cache_set("approval", out)
+    return out
+
+
+def _bucket_weekly(polls: list[dict]) -> list[dict]:
+    """Bucket polls by ISO week of their end-date and emit a weekly time
+    series of weighted (sample-size) mean approve/disapprove/net."""
+    if not polls:
+        return []
+    from datetime import datetime as _dt
+    buckets: dict[str, list[dict]] = {}
+    for p in polls:
+        try:
+            d = _dt.strptime(p["date"], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        iso_year, iso_week, _ = d.isocalendar()
+        key = f"{iso_year:04d}-W{iso_week:02d}"
+        buckets.setdefault(key, []).append(p)
+    series: list[dict] = []
+    for key in sorted(buckets):
+        rows = buckets[key]
+        # Weight by sample size; if missing, treat as 600 (typical national poll).
+        wts = [(r.get("sample_size") or 600.0) for r in rows]
+        w_sum = sum(wts) or 1.0
+        appr = sum(r["approve"] * w for r, w in zip(rows, wts)) / w_sum
+        disa = sum(r["disapprove"] * w for r, w in zip(rows, wts)) / w_sum
+        series.append({
+            "week": key,
+            "end_date": max(r["date"] for r in rows),
+            "approve": round(appr, 1),
+            "disapprove": round(disa, 1),
+            "net": round(appr - disa, 1),
+            "n_polls": len(rows),
+        })
+    return series
+
+
+def approval_aggregate(polls: Optional[list[dict]]) -> Optional[dict]:
+    """Headline approval card: weekly weighted average, latest 30-day
+    rolling, sparkline over the last ~2 years."""
+    if not polls:
+        return None
+    # Pick the most recent president (modal in last 90 days of polls).
+    by_date = sorted(polls, key=lambda r: r["date"])
+    tail = by_date[-2000:]  # latest ~2000 polls
+    name_counts: dict[str, int] = {}
+    for p in tail:
+        if p.get("president"):
+            name_counts[p["president"]] = name_counts.get(p["president"], 0) + 1
+    incumbent = max(name_counts, key=name_counts.get) if name_counts else ""
+    # Filter to that president, all-respondent subgroups only.
+    relevant = [
+        p for p in by_date
+        if p.get("president") == incumbent
+        and p.get("subgroup", "").lower() in ("", "all polls", "all", "adults", "voters")
+    ]
+    if not relevant:
+        return None
+    weekly = _bucket_weekly(relevant)
+    if not weekly:
+        return None
+    latest_week = weekly[-1]
+    # 4-week rolling average to smooth out the very latest noise.
+    recent = weekly[-4:]
+    rec_wt = sum(w["n_polls"] for w in recent) or 1
+    smoothed_net = round(sum(w["net"] * w["n_polls"] for w in recent) / rec_wt, 1)
+    smoothed_appr = round(sum(w["approve"] * w["n_polls"] for w in recent) / rec_wt, 1)
+    smoothed_disa = round(sum(w["disapprove"] * w["n_polls"] for w in recent) / rec_wt, 1)
+    # Year-ago comparison
+    if len(weekly) >= 52:
+        net_52w = weekly[-52]["net"]
+        net_change_52w = round(latest_week["net"] - net_52w, 1)
+    else:
+        net_change_52w = None
+    spark_weeks = weekly[-104:]   # last ~2y
+    return {
+        "incumbent": incumbent,
+        "as_of": latest_week["end_date"],
+        "approve_pct": smoothed_appr,
+        "disapprove_pct": smoothed_disa,
+        "net_pct": smoothed_net,
+        "net_change_52w": net_change_52w,
+        "n_polls_4w": sum(w["n_polls"] for w in recent),
+        "spark": [{"date": w["end_date"], "value": w["net"]} for w in spark_weeks],
+        "source": "FiveThirtyEight archived approval-polls CSV (frozen at site shutdown)",
+    }
+
+
+# ─── Vibecession quantifier ────────────────────────────────────────────────────
+
+def _percentile_series_monthly(observations: list[dict],
+                                lookback_months: int = 240,
+                                min_history: int = 36) -> list[dict]:
+    """For each non-null monthly observation, compute its percentile within
+    the prior `lookback_months` non-null observations.
+
+    Returns a list of {date, percentile_0_1}. Skips months where we don't
+    yet have `min_history` prior observations to compare against."""
+    non_null = [o for o in observations if o["value"] is not None]
+    out: list[dict] = []
+    for i in range(len(non_null)):
+        prior = non_null[max(0, i - lookback_months):i]
+        if len(prior) < min_history:
+            continue
+        v = non_null[i]["value"]
+        below = sum(1 for w in prior if w["value"] < v)
+        out.append({"date": non_null[i]["date"], "percentile": round(below / len(prior), 4)})
+    return out
+
+
+def _yoy_series_dated(observations: list[dict], months: int = 12) -> list[dict]:
+    """Build {date, value=YoY%} from a level series. Same as _yoy_series
+    (the existing front-end helper) but exposed for vibecession."""
+    non_null = [o for o in observations if o["value"] is not None]
+    out: list[dict] = []
+    for i in range(months, len(non_null)):
+        prev = non_null[i - months]["value"]
+        if prev <= 0:
+            continue
+        cur = non_null[i]["value"]
+        out.append({"date": non_null[i]["date"],
+                    "value": (cur / prev - 1.0) * 100})
+    return out
+
+
+def _join_by_month(series_lists: list[list[dict]]) -> list[tuple[str, list[float]]]:
+    """Inner-join several {date, value-ish} series on YYYY-MM. Returns a
+    list of (yyyy-mm, [v_from_each_series]) in chronological order."""
+    if not series_lists:
+        return []
+    keyed = []
+    for s in series_lists:
+        d: dict[str, float] = {}
+        for o in s:
+            ym = o.get("date", "")[:7]
+            # accept either {value} or {percentile}
+            v = o.get("value")
+            if v is None:
+                v = o.get("percentile")
+            if v is None:
+                continue
+            d[ym] = v
+        keyed.append(d)
+    common = set.intersection(*(set(d.keys()) for d in keyed))
+    return sorted([(ym, [d[ym] for d in keyed]) for ym in common])
+
+
+def vibecession_gap(series: dict[str, dict],
+                    history_months: int = 120) -> Optional[dict]:
+    """The vibecession index: sentiment percentile minus fundamentals
+    percentile, both measured against the prior 20 years monthly.
+
+    Components of fundamentals (all 0-1, higher = better for voters):
+      - jobs:      1 − UNRATE percentile vs prior 20y
+      - inflation: 1 − CPI-YoY percentile vs prior 20y
+      - real wages: sigmoid of real-wage YoY (centered at 0)
+
+    gap = sentiment_percentile − mean(fundamentals)
+      gap >  0.10 → voters feel BETTER than fundamentals would suggest
+      gap < −0.10 → 'vibecession' — voters feel worse than reality
+      |gap| ≤ 0.10 → vibes and fundamentals align
+
+    Returns the current value plus a monthly history so the front-end can
+    plot the gap over time. The fully transparent formula is exposed in
+    the response so users can audit it."""
+    sent = series.get("UMCSENT")
+    unr  = series.get("UNRATE")
+    cpi  = series.get("CPIAUCSL")
+    earn = series.get("CES0500000003")
+    if not (sent and unr and cpi and earn):
+        return None
+
+    sent_pct = _percentile_series_monthly(sent["observations"])
+    unr_pct  = _percentile_series_monthly(unr["observations"])
+
+    # Inflation: build YoY first, then percentile-rank the YoY series.
+    cpi_yoy_obs = _yoy_series_dated(cpi["observations"], 12)
+    # Reshape so _percentile_series_monthly can ingest it.
+    cpi_yoy_as_obs = [{"date": o["date"], "value": o["value"]} for o in cpi_yoy_obs]
+    cpi_yoy_pct = _percentile_series_monthly(cpi_yoy_as_obs)
+
+    # Real wages: monthly YoY of hourly earnings minus monthly CPI YoY.
+    earn_yoy = _yoy_series_dated(earn["observations"], 12)
+    # Join earnings YoY and CPI YoY by month, then real_yoy ≈ earn_yoy − cpi_yoy
+    rw_score_series: list[dict] = []
+    cpi_by_ym = {o["date"][:7]: o["value"] for o in cpi_yoy_obs}
+    for o in earn_yoy:
+        ym = o["date"][:7]
+        c = cpi_by_ym.get(ym)
+        if c is None:
+            continue
+        # real ≈ nominal − inflation (close to (1+n)/(1+c) − 1 at small values)
+        real = o["value"] - c
+        # Sigmoid centered at 0 — same as the national mood index.
+        score = 1.0 / (1.0 + math.exp(-real))
+        rw_score_series.append({"date": o["date"], "value": round(score, 4)})
+
+    # Inverted percentile helpers (higher = better)
+    def _invert(s: list[dict]) -> list[dict]:
+        return [{"date": o["date"], "value": round(1.0 - o["percentile"], 4)} for o in s]
+
+    jobs_score      = _invert(unr_pct)
+    inflation_score = _invert(cpi_yoy_pct)
+
+    # Join sentiment-pct + 3 fundamentals scores by month. The vibecession
+    # value at month m is sent_pct(m) − mean(jobs(m), inflation(m), rw(m)).
+    rows = _join_by_month([
+        [{"date": o["date"], "value": o["percentile"]} for o in sent_pct],
+        jobs_score,
+        inflation_score,
+        rw_score_series,
+    ])
+    history: list[dict] = []
+    for ym, vals in rows:
+        s_pct, jobs, inf, rw = vals
+        fundamentals = (jobs + inf + rw) / 3.0
+        gap = s_pct - fundamentals
+        history.append({
+            "month": ym,
+            "sentiment_pct": round(s_pct, 4),
+            "fundamentals_pct": round(fundamentals, 4),
+            "gap": round(gap, 4),
+        })
+    if not history:
+        return None
+
+    latest = history[-1]
+    gap_now = latest["gap"]
+
+    # Verbal characterisation
+    if gap_now > 0.10:
+        flavor = "voters feel BETTER than fundamentals would suggest"
+    elif gap_now < -0.10:
+        flavor = "vibecession — voters feel worse than fundamentals would suggest"
+    else:
+        flavor = "vibes and fundamentals align"
+
+    # Historical extremes for context
+    sorted_by_gap = sorted(history, key=lambda r: r["gap"])
+    most_vibecession = sorted_by_gap[0]
+    least_vibecession = sorted_by_gap[-1]
+
+    # Rank latest among the full history (lower rank = more vibecession)
+    rank_among_all = sum(1 for r in history if r["gap"] < gap_now) + 1
+
+    return {
+        "method": (
+            "sentiment_percentile(t) − mean(jobs(t), inflation(t), real_wages(t)) "
+            "where each component is computed monthly versus its own prior-20y "
+            "history. Real-wages component uses sigmoid of real-wage YoY (= "
+            "hourly earnings YoY − CPI YoY)."
+        ),
+        "as_of": latest["month"],
+        "gap": gap_now,
+        "sentiment_pct": latest["sentiment_pct"],
+        "fundamentals_pct": latest["fundamentals_pct"],
+        "flavor": flavor,
+        "rank_among_history": rank_among_all,
+        "history_length": len(history),
+        "most_vibecession_month": {"month": most_vibecession["month"], "gap": most_vibecession["gap"]},
+        "least_vibecession_month": {"month": least_vibecession["month"], "gap": least_vibecession["gap"]},
+        # Trim history to ~10y so the payload stays compact
+        "history": history[-history_months:],
+    }
+
+
 # ─── Polymarket gamma fetcher ──────────────────────────────────────────────────
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
@@ -981,6 +1335,30 @@ def api_election_cycle():
     return jsonify(payload)
 
 
+@app.route("/api/approval")
+def api_approval():
+    """Presidential approval — weighted weekly average from the 538
+    archived approval-polls CSV."""
+    polls = fetch_approval_polls()
+    if not polls:
+        return jsonify({"error": "approval polls unavailable"}), 503
+    agg = approval_aggregate(polls)
+    if not agg:
+        return jsonify({"error": "no relevant polls"}), 503
+    return jsonify(agg)
+
+
+@app.route("/api/vibecession")
+def api_vibecession():
+    """The vibecession index — sentiment percentile minus fundamentals
+    percentile, both vs the prior 20-year monthly distribution."""
+    series = fetch_all_fred_parallel()
+    payload = vibecession_gap(series)
+    if not payload:
+        return jsonify({"error": "insufficient data"}), 503
+    return jsonify(payload)
+
+
 @app.route("/api/summary")
 def api_summary():
     """Front-page payload — all the cards on one page."""
@@ -1019,6 +1397,8 @@ def api_summary():
         "recession": recession_state(usrec),
         "biggest_movers": biggest_movers(series, lookback_months=3),
         "election_cycle": election_cycle_regression(series.get("UMCSENT")),
+        "vibecession": vibecession_gap(series),
+        "approval": approval_aggregate(fetch_approval_polls()),
         "real_wages": {
             "hourly_yoy_pct": real_wage_yoy(earn_h, cpi),
             "weekly_yoy_pct": real_wage_yoy(earn_w, cpi),

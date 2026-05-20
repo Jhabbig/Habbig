@@ -77,21 +77,40 @@ This is the single biggest "claim, not display" win — being able to say
 "real wages are up for the top quintile and down for the bottom" instead
 of "real wages are up 0.4%".
 
-### 4. Approval & "right-track / wrong-track" ingestion
+### 4. Approval ingestion &middot; **SHIPPED v1.3 (historical)**
 
-Approval polling is heterogeneously published; pulling it cleanly is real
-work. Order of preference:
-1. **Polymarket implied** — already in v1; treat as the headline number.
-2. **Silver Bulletin / 538 archives** — they used to publish a daily CSV
-   of poll-aggregate approval. Check whether the current home publishes
-   one. Cache aggressively (12h TTL) since it's daily.
-3. **Polling reports / RealClearPolitics scrape** — fragile, last resort.
+Pulls 538's archived `president_approval_polls.csv` from the GitHub
+mirror, auto-detects the most-recent incumbent, computes a 4-week
+sample-size-weighted rolling net, and surfaces a 52-week sparkline. When
+the latest poll is > 60 days old the card flags itself as "historical".
 
-Render:
-- A "Job approval" card alongside sentiment: current %, 30-day change,
-  spark, and the Polymarket EOY-approval implied band underneath as a
-  cross-check.
-- "Right track / wrong track" similarly.
+**Still to do**:
+- Splice a live source past the 538 freeze date — Polymarket
+  end-of-year approval markets (which we already fetch) can give an
+  implied current approval; RCP scrape or Silver Bulletin API otherwise.
+- "Right track / wrong track" parallel ingestion.
+- Pollster-by-pollster scorecard (rolling Brier vs the eventual result).
+
+### 4b. Vibecession quantifier &middot; **SHIPPED v1.3**
+
+`gap(t) = sentiment_percentile(t) − fundamentals_percentile(t)`, both
+computed monthly against the prior 20 years. Fundamentals composite is
+the mean of three 0-1 sub-scores: 1 − unemployment percentile,
+1 − CPI-YoY percentile, sigmoid of real-wage YoY.
+
+Rendered as a card next to approval with a big signed gap number, the
+sentiment-vs-fundamentals scores side-by-side, a rank-among-history line
+("rank 24 of 384 months"), and a sparkline of the gap with red/green
+fills for negative/positive territory. The full method is exposed in
+the JSON payload — no black box.
+
+This is the dashboard's most novel single number — nobody else
+publishes the gap as a quantitative series. v2 should add:
+- Multi-component decomposition (which fundamental is most out of step
+  with sentiment).
+- "Vibe regime" classification: persistent positive gap (e.g. 2017-19)
+  vs persistent negative gap (e.g. 2022-24).
+- The same gap by partisan / demographic cut once those splits land.
 
 ### 5. Election-cycle context &middot; **SHIPPED v1.2**
 

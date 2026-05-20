@@ -33,6 +33,19 @@ band, and where today sits in that distribution. R² is published openly —
 it's lower than political narratives imply, and the dashboard is up-front
 about that uncertainty.
 
+A **Vibecession + Approval row** sits below the forecast:
+
+- **Vibecession index** — `sentiment_percentile − fundamentals_percentile`,
+  both measured monthly against the prior 20 years. Positive = voters feel
+  better than the data suggests; negative = voters feel worse. Sparkline
+  shows the gap over the last ~10 years with red/green fills for negative /
+  positive territory. No other free dashboard publishes this number.
+- **Presidential approval** — weighted 4-week rolling net approval from
+  FiveThirtyEight's archived approval-polls CSV (mirrored on the
+  `fivethirtyeight/data` GitHub repo). 538 stopped updating in mid-2024;
+  if the latest poll is > 60 days old, the card surfaces a "historical"
+  pill so the staleness is obvious.
+
 A **state-level "Where it hurts" panel** below the national cards: a
 swing-state strip (PA, MI, WI, AZ, GA, NV, NC) plus the five most-stressed
 and five least-stressed states, each ranked by where its current
@@ -91,6 +104,11 @@ python3 server.py
 - `GET /api/election-cycle` — historical mood → midterm seat-change OLS
   regression with current implied seat change for the incumbent's party
   (90% prediction interval)
+- `GET /api/approval` — weighted weekly presidential approval aggregate
+  from FiveThirtyEight's archived CSV (1945-2024 depending on the
+  president), 52-week sparkline + 4-week rolling smoothed net
+- `GET /api/vibecession` — the vibecession index: sentiment percentile
+  minus fundamentals percentile, monthly history + verbal flavor
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness
