@@ -16,6 +16,7 @@ Port: **7080**.
 | **v0.1** | **Type classifier** — every item tagged as `enforcement` / `rulemaking` / `guidance` / `speech` / `personnel` / `other` via rule-based keyword matching on title + summary. Color-coded chip per row; matched phrases shown on hover; type-filter chips. Multi-tag honest (an item matching two categories surfaces both). | rules — `analysis/classifier_keywords.py` |
 | **v0.2** | **Severity score** — enforcement-tagged items get a fine amount extracted via context-anchored regex (USD / GBP / EUR), bucketed `low (<$1M)` / `medium ($1M–10M)` / `high ($10M–100M)` / `severe ($100M+)`. Native amount and ≈USD shown on hover; severity-filter chips. Largest amount wins when multiple are mentioned. | rules — `analysis/severity.py` |
 | **v0.3** | **Activity heatmap** — per-regulator strip of stacked weekly bars across the last 12 weeks, segments colored by type tag. Shared Y scale so SEC vs FCA vs ESMA volumes are visually comparable. Per-bar hover shows tag breakdown + weekly total. Inline SVG, no JS deps. | aggregation — `analysis/heatmap.py` |
+| **v0.4** | **Topic clusters** — every item tagged with zero or more topics from `crypto / etf / aml / disclosure / marketstructure / privatefunds / cyber / climate`. Multi-topic honest (a crypto-AML enforcement fires both). Dynamic topic-filter chip row with per-topic count badges sourced from `/api/topics`; matched phrases shown on hover; topic pills inline under each headline. | rules — `analysis/topic_keywords.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -25,8 +26,9 @@ per-source status row flips to red; other sources keep working).
 | Path | Cache | Purpose |
 |---|---|---|
 | `GET /` | — | Dashboard UI |
-| `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&q=` | 30 min | Unified action feed with filters |
+| `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&topic=&q=` | 30 min | Unified action feed with filters |
 | `GET /api/heatmap?weeks=12` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52) |
+| `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -35,6 +37,7 @@ Filter semantics:
   - `source` — comma-separated source codes (`SEC,FCA,ESMA`), case-insensitive
   - `tag` — comma-separated category tags (`enforcement,rulemaking,guidance,speech,personnel,other`), matches `primary_tag` or any element of `tags`. The literal `other` matches items where the classifier scored zero.
   - `severity` — comma-separated severity buckets (`low,medium,high,severe,none`). `none` matches enforcement items where no amount was extracted, and every non-enforcement item.
+  - `topic` — comma-separated topic keys (`crypto,etf,aml,disclosure,marketstructure,privatefunds,cyber,climate`). Match is "any-of" — an item with `topics=[crypto, aml]` matches `topic=crypto` or `topic=aml`.
   - `q` — case-insensitive substring match on title or summary
 
 ## Run locally
@@ -63,6 +66,7 @@ python3 -m ingestion.unified_feed     # merged feed + per-source status + classi
 python3 -m analysis.classifier        # 11 fixture headlines across all 6 categories
 python3 -m analysis.severity          # 13 fixture amounts (incl. multi-amount + false-positive guard)
 python3 -m analysis.heatmap           # aggregation smoke against synthetic items
+python3 -m analysis.topics            # 8 fixture headlines, multi-topic & negative cases
 ```
 
 ## Files
@@ -80,7 +84,9 @@ regulators-dashboard/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
 │   ├── classifier.py               Rule-based scorer + 11 fixture self-test
 │   ├── severity.py                 Fine-amount extractor (USD/GBP/EUR) + bucketing + 13 fixtures
-│   └── heatmap.py                  ISO-week × regulator × tag aggregation
+│   ├── heatmap.py                  ISO-week × regulator × tag aggregation
+│   ├── topic_keywords.py           Eight-topic phrase dictionary (tunable)
+│   └── topics.py                   Multi-topic extractor + 8 fixture self-test
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -175,6 +181,26 @@ no Chart.js, no dependencies. Stacking order matches the canonical tag
 order from the classifier (`enforcement` at the bottom of each column
 since it's the most editorially impactful).
 
+### v0.4 — topic clusters
+
+`analysis/topic_keywords.py` defines eight orthogonal topics; an action
+can match any subset. The scorer is identical in mechanics to the v0.1
+type classifier (`Σ weight × count` per topic, fire on score ≥ 1) but
+multi-tag rather than winner-takes-all. Matched phrases are exposed in
+the API and rendered as a hover tooltip on each topic pill.
+
+The dynamic topic-filter chip row above the action feed is populated
+from `/api/topics`, which returns per-topic counts across the cached
+window — so a reader sees `Crypto (23)` / `AML (17)` / `ETF (8)` at a
+glance and can drill in with one click. Each item row carries small
+topic pills below the headline so the relationship between filter and
+result is visible.
+
+**Topic vs type:** topics are orthogonal to the type classifier. An item
+is "an enforcement action" (type) **about** "crypto + AML" (topics).
+Both filters compose — `tag=enforcement&topic=crypto` returns crypto-
+related enforcement actions.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -183,6 +209,7 @@ since it's the most editorially impactful).
 | **v0.1** | ✓ done | Auto-classifier — type tag (`enforcement` / `rulemaking` / `speech` / `guidance` / `personnel` / `other`) via keyword rules; matched phrases shown on hover; type-filter chips |
 | **v0.2** | ✓ done | Severity score — fine-amount regex (USD/GBP/EUR) + USD-equivalent bucketing (low / medium / high / severe) on enforcement-tagged items; native + USD shown on hover; severity-filter chips |
 | **v0.3** | ✓ done | Activity heatmap — per-regulator weekly stacked-bar SVG over the last 12 weeks, segments colored by type tag, shared Y scale across regulators |
+| **v0.4** | ✓ done | Topic clusters — multi-topic tagging (crypto/etf/aml/disclosure/marketstructure/privatefunds/cyber/climate); per-topic count chips above the feed; topic pills inline under each headline |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |

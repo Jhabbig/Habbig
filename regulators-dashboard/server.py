@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ingestion import unified_feed
 from analysis import heatmap as heatmap_aggr
+from analysis.topic_keywords import TOPICS, TOPIC_LABELS
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ async def api_feed(
     source: str = "",
     tag: str = "",
     severity: str = "",
+    topic: str = "",
     q: str = "",
     force: bool = False,
 ) -> JSONResponse:
@@ -108,6 +110,9 @@ async def api_feed(
             bucket = sev["bucket"] if sev else "none"
             return bucket in wanted
         items = [it for it in items if sev_hit(it)]
+    if topic:
+        wanted = {t.strip().lower() for t in topic.split(",") if t.strip()}
+        items = [it for it in items if any(t in wanted for t in it.get("topics", []))]
     if q:
         needle = q.lower().strip()
         if needle:
@@ -131,6 +136,29 @@ async def api_heatmap(weeks: int = 12, force: bool = False) -> JSONResponse:
     weeks = max(4, min(weeks, 52))
     data = unified_feed.get_cached(force=force, since_days=max(90, weeks * 7))
     return JSONResponse(heatmap_aggr.aggregate(data["items"], data["sources"], weeks=weeks))
+
+
+@app.get("/api/topics")
+async def api_topics(days: int = 90, force: bool = False) -> JSONResponse:
+    """Per-topic action counts over the cached feed window. Drives the
+    topic-filter chip badges; not the individual-item view (that's /api/feed).
+    """
+    days = max(1, min(days, 365))
+    data = unified_feed.get_cached(force=force, since_days=days)
+    counts: dict[str, int] = {key: 0 for key in TOPICS.keys()}
+    for it in data["items"]:
+        for t in it.get("topics", []):
+            if t in counts:
+                counts[t] += 1
+    return JSONResponse({
+        "fetched_at": data["fetched_at"],
+        "since_days": data["since_days"],
+        "total_items": len(data["items"]),
+        "topics": [
+            {"key": key, "label": TOPIC_LABELS.get(key, key), "count": counts[key]}
+            for key in TOPICS.keys()
+        ],
+    })
 
 
 @app.get("/healthz")

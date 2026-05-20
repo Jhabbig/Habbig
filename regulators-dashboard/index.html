@@ -71,6 +71,10 @@
   .heatmap-legend .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 4px;
                             vertical-align: middle; border-radius: 2px; }
   .heatmap-empty { color: var(--muted); padding: 24px 0; text-align: center; font-size: 12px; }
+  .topic { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px;
+           color: var(--muted); background: #21262d; margin: 2px 4px 0 0; }
+  .chip .badge-count { color: var(--muted); font-weight: 400; margin-left: 4px; }
+  .chip.active .badge-count { color: #0e1117; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -124,6 +128,11 @@
       <span class="chip" data-sev="low">&lt;$1M</span>
       <span class="chip" data-sev="none">unscored</span>
     </div>
+    <div class="filters" id="topic-filter-row">
+      <span class="hint">Topic:</span>
+      <span class="chip active" data-topic="">All</span>
+      <!-- chips populated by loadTopics() -->
+    </div>
     <table>
       <thead>
         <tr>
@@ -141,7 +150,7 @@
 </main>
 
 <script>
-let state = { jurisdiction: "", tag: "", sev: "", q: "" };
+let state = { jurisdiction: "", tag: "", sev: "", topic: "", q: "" };
 
 const TAG_COLORS = {
   enforcement: "#f85149",
@@ -246,6 +255,34 @@ function renderHeatmap(data) {
   body.innerHTML = svgParts.join("");
 }
 
+async function loadTopics() {
+  const row = document.getElementById("topic-filter-row");
+  let data;
+  try {
+    const r = await fetch("/api/topics");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    data = await r.json();
+  } catch (e) {
+    return;  // silent — feed still works without the topic filter row
+  }
+  // Keep the "All" chip; append one chip per topic with its count.
+  const existing = row.querySelectorAll(".chip[data-topic]");
+  existing.forEach(el => { if (el.dataset.topic !== "") el.remove(); });
+  data.topics.forEach(t => {
+    const span = document.createElement("span");
+    span.className = "chip";
+    span.dataset.topic = t.key;
+    span.innerHTML = `${escapeHtml(t.label)}<span class="badge-count">${t.count}</span>`;
+    span.addEventListener("click", () => {
+      row.querySelectorAll(".chip[data-topic]").forEach(c => c.classList.remove("active"));
+      span.classList.add("active");
+      state.topic = t.key;
+      load();
+    });
+    row.appendChild(span);
+  });
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -267,6 +304,7 @@ async function load() {
   if (state.jurisdiction) params.set("jurisdiction", state.jurisdiction);
   if (state.tag) params.set("tag", state.tag);
   if (state.sev) params.set("severity", state.sev);
+  if (state.topic) params.set("topic", state.topic);
   if (state.q) params.set("q", state.q);
 
   let data;
@@ -313,6 +351,15 @@ async function load() {
         extraEl = `<span class="tag-extra" title="${escapeHtml(tip)}">+${extraTags.length}</span>`;
       }
 
+      let topicsEl = "";
+      if (it.topics && it.topics.length) {
+        topicsEl = '<div>' + it.topics.map(t => {
+          const phrases = (it.matched_topic_phrases && it.matched_topic_phrases[t]) || [];
+          const tip = phrases.length ? `${t}: ${phrases.join(", ")}` : t;
+          return `<span class="topic" title="${escapeHtml(tip)}">${escapeHtml(t)}</span>`;
+        }).join("") + '</div>';
+      }
+
       let sevEl = "";
       if (it.severity) {
         const s = it.severity;
@@ -331,7 +378,7 @@ async function load() {
           <td><span class="jx ${jxCls}">${jx}</span></td>
           <td class="src">${escapeHtml(it.source)}</td>
           <td>${primaryChip}${extraEl}${sevEl}</td>
-          <td class="title">${link}${summary}</td>
+          <td class="title">${link}${summary}${topicsEl}</td>
         </tr>`;
     }).join("");
   }
@@ -370,6 +417,14 @@ document.querySelectorAll(".chip[data-sev]").forEach(el => {
   });
 });
 
+// The "All" topic chip is static; topic chips with values are appended by loadTopics().
+document.querySelector('.chip[data-topic=""]').addEventListener("click", () => {
+  document.querySelectorAll(".chip[data-topic]").forEach(c => c.classList.remove("active"));
+  document.querySelector('.chip[data-topic=""]').classList.add("active");
+  state.topic = "";
+  load();
+});
+
 let qTimer;
 document.getElementById("q").addEventListener("input", e => {
   clearTimeout(qTimer);
@@ -378,7 +433,8 @@ document.getElementById("q").addEventListener("input", e => {
 
 load();
 loadHeatmap();
-setInterval(() => { load(); loadHeatmap(); }, 5 * 60 * 1000);
+loadTopics();
+setInterval(() => { load(); loadHeatmap(); loadTopics(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from .classifier_keywords import CATEGORIES
 from .severity import extract as extract_severity
+from .topics import attach_topics
 
 
 @dataclass
@@ -107,6 +108,7 @@ def classify_item(item: dict) -> dict:
         item["severity"] = sev.to_dict() if sev else None
     else:
         item["severity"] = None
+    attach_topics(item)
     return item
 
 
