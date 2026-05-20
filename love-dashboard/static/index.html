@@ -263,6 +263,7 @@
   .insight.weakness_flag { border-left-color: var(--accent-2); }
   .insight.cap_impact { border-left-color: var(--info); }
   .insight.closest_peer { border-left-color: var(--accent); }
+  .insight.mover { border-left-color: var(--warn); }
   .insight .meta {
     display: flex; gap: 8px; flex-wrap: wrap;
     font-size: 10px; color: var(--text-3);
@@ -308,6 +309,23 @@
   .stability-badge.high { background: rgba(52, 211, 153, 0.15); color: var(--good); }
   .stability-badge.medium { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
   .stability-badge.low { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
+
+  .sparkline-card {
+    background: var(--bg-2); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px;
+  }
+  .sparkline-card .header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .sparkline-card .header .delta { letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+  .sparkline-card .header .delta.up { color: var(--good); }
+  .sparkline-card .header .delta.down { color: var(--accent-2); }
+  .sparkline-card svg { display: block; width: 100%; height: 56px; }
+  .sparkline-card svg path.line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+  .sparkline-card svg path.area { fill: rgba(244, 114, 182, 0.15); stroke: none; }
+  .sparkline-card svg circle.dot { fill: var(--accent); }
+  .sparkline-card .empty { font-size: 12px; color: var(--text-3); padding: 12px 0 4px; }
 
   /* Drill-down modal */
   .modal-backdrop {
@@ -935,12 +953,64 @@ async function openCountry(iso3) {
   const modal = document.getElementById("modal");
   const content = document.getElementById("modal-content");
   modal.classList.add("on");
-  content.innerHTML = `<div style="color:var(--text-3)">loading ${iso3}…</div>`;
-  let d;
-  try { d = await fetchJSON(`/api/country/${encodeURIComponent(iso3)}` + weightQS()); }
-  catch (err) { content.innerHTML = `<div style="color:var(--accent-2)">Failed to load ${esc(iso3)}: ${esc(err.message)}</div>`; return; }
-  if (d.error) { content.innerHTML = `<div style="color:var(--text-2)">${esc(d.error)}</div>`; return; }
-  renderCountryDetail(d, content);
+  content.innerHTML = `<div style="color:var(--text-3)">loading ${esc(iso3)}…</div>`;
+  let detail, history;
+  try {
+    [detail, history] = await Promise.all([
+      fetchJSON(`/api/country/${encodeURIComponent(iso3)}` + weightQS()),
+      fetchJSON(`/api/history/${encodeURIComponent(iso3)}?days=365`).catch(() => ({ points: [] })),
+    ]);
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--accent-2)">Failed to load ${esc(iso3)}: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (detail.error) { content.innerHTML = `<div style="color:var(--text-2)">${esc(detail.error)}</div>`; return; }
+  detail._history = history.points || [];
+  renderCountryDetail(detail, content);
+}
+
+function renderSparkline(points) {
+  const pts = (points || []).filter(p => p && p.composite != null);
+  if (pts.length === 0) {
+    return `
+      <div class="sparkline-card">
+        <div class="header">Composite history <span>—</span></div>
+        <div class="empty">No history yet. The dashboard records one snapshot per UTC day; this country gets a sparkline once at least two days are stored.</div>
+      </div>`;
+  }
+  if (pts.length === 1) {
+    return `
+      <div class="sparkline-card">
+        <div class="header">Composite history <span>1 point</span></div>
+        <div class="empty">Single snapshot on ${esc(pts[0].date)} · composite ${fmt(pts[0].composite)}. More points accumulate daily.</div>
+      </div>`;
+  }
+  const W = 320, H = 56, pad = 4;
+  const vals = pts.map(p => p.composite);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = Math.max(1e-6, hi - lo);
+  const x = i => pad + (i * (W - 2 * pad)) / (pts.length - 1);
+  const y = v => (H - pad) - ((v - lo) / span) * (H - 2 * pad);
+  let path = `M ${x(0).toFixed(2)} ${y(vals[0]).toFixed(2)}`;
+  for (let i = 1; i < pts.length; i++) path += ` L ${x(i).toFixed(2)} ${y(vals[i]).toFixed(2)}`;
+  const area = path + ` L ${x(pts.length - 1).toFixed(2)} ${H} L ${x(0).toFixed(2)} ${H} Z`;
+  const first = vals[0], last = vals[vals.length - 1];
+  const delta = last - first;
+  const deltaCls = delta > 0 ? "up" : delta < 0 ? "down" : "";
+  const deltaStr = delta === 0 ? "flat" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} pts`;
+  return `
+    <div class="sparkline-card">
+      <div class="header">
+        <span>Composite · ${pts.length} snapshot${pts.length === 1 ? "" : "s"} (${esc(pts[0].date)} → ${esc(pts[pts.length-1].date)})</span>
+        <span class="delta ${deltaCls}">${esc(deltaStr)}</span>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <path class="area" d="${area}" />
+        <path class="line" d="${path}" />
+        <circle class="dot" cx="${x(pts.length - 1).toFixed(2)}" cy="${y(last).toFixed(2)}" r="2.5" />
+      </svg>
+    </div>`;
 }
 
 function renderStability(s) {
@@ -994,6 +1064,7 @@ function renderCountryDetail(c, root) {
       </div>
       ${renderStability(c.sensitivity)}
     </div>
+    ${renderSparkline(c._history)}
     <div class="subscore-rows">
       ${SUBSCORES.map(subRow).join("")}
     </div>

@@ -31,6 +31,8 @@ WEAKNESS_COMPOSITE = 75.0      # composite >= 75 (top quartile)
 WEAKNESS_SUBSCORE = 20.0       # any subscore <= 20 (bottom quintile)
 CAP_IMPACT_DELTA = 2.0         # partnership cap reduced score by >= 2 pct points
 CLOSEST_PEER_DIST = 12.0       # max Euclidean distance to count as "lookalike"
+MOVER_MIN_DAYS = 30            # earliest comparison snapshot >= N days old
+MOVER_MIN_DELTA = 5.0          # composite must have shifted >= 5 pct pts
 MAX_INSIGHTS_PER_RULE = 4
 MAX_TOTAL_INSIGHTS = 16
 
@@ -392,11 +394,75 @@ def rule_closest_peer(countries: list[dict]) -> list[Insight]:
     return out
 
 
+def rule_mover(countries: list[dict], history_accessor) -> list[Insight]:
+    """Biggest composite shift vs the oldest snapshot at least MOVER_MIN_DAYS ago.
+
+    Quietly returns [] until the snapshot store has enough history; the
+    server bootstraps the store the first time data flows through, so the
+    rule lights up automatically once a few days have accumulated.
+    """
+    from datetime import date as _date
+
+    today = _date.today()
+    candidates: list[tuple[dict, float, float, int]] = []
+    for c in countries:
+        comp = c.get("composite")
+        if comp is None:
+            continue
+        history = history_accessor(c["iso3"])
+        if not history:
+            continue
+        # find the earliest point that's at least MOVER_MIN_DAYS old
+        baseline = None
+        for pt in history:
+            try:
+                pt_date = _date.fromisoformat(pt["date"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if pt.get("composite") is None:
+                continue
+            if (today - pt_date).days >= MOVER_MIN_DAYS:
+                baseline = pt
+                break
+        if baseline is None:
+            continue
+        delta = comp - baseline["composite"]
+        if abs(delta) < MOVER_MIN_DELTA:
+            continue
+        days_ago = (today - _date.fromisoformat(baseline["date"])).days
+        candidates.append((c, comp, baseline["composite"], delta, days_ago))
+    candidates.sort(key=lambda t: -abs(t[3]))
+
+    out: list[Insight] = []
+    for c, now, before, delta, days_ago in candidates[:MAX_INSIGHTS_PER_RULE]:
+        direction = "↑" if delta > 0 else "↓"
+        out.append(Insight(
+            kind="mover",
+            severity="info" if abs(delta) < 10 else "warn",
+            iso3=c["iso3"],
+            country=c["name"],
+            title=f"{c['name']} {direction} {abs(delta):.1f} pts in {days_ago} days",
+            body=(
+                f"Composite moved from {before:.1f} to {now:.1f} since "
+                f"{days_ago} days ago — a {delta:+.1f} pt shift. Driven by the "
+                f"subscore changes visible in the country drill-down."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "today",       "value": round(now, 1)},
+                {"label": f"−{days_ago}d","value": round(before, 1)},
+                {"label": "Δ",            "value": round(delta, 1)},
+            ],
+        ))
+    return out
+
+
 def generate_insights(
     countries: list[dict],
     meta: dict[str, dict],
     *,
     partnership_uncapped: dict[str, float] | None = None,
+    history_accessor=None,
 ) -> list[dict]:
     pool: list[Insight] = []
     pool.extend(rule_peer_leader(countries))
@@ -408,6 +474,8 @@ def generate_insights(
     pool.extend(rule_coverage_gap(countries, meta))
     if partnership_uncapped is not None:
         pool.extend(rule_cap_impact(countries, partnership_uncapped))
+    if history_accessor is not None:
+        pool.extend(rule_mover(countries, history_accessor))
 
     severity_rank = {"alert": 0, "warn": 1, "info": 2}
     confidence_rank = {"high": 0, "medium": 1, "low": 2}

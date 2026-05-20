@@ -12,6 +12,7 @@ from unittest.mock import patch
 import insights as insights_module
 import sensitivity as sensitivity_module
 import server
+import snapshots as snapshots_module
 
 
 def _clear_cache():
@@ -384,6 +385,81 @@ def test_closest_peer_rule():
     ok("Alpha paired with Beta (cross-tier); same-tier same-region Gamma excluded")
 
 
+def test_snapshot_store_roundtrip():
+    print("test: snapshot store writes, dedupes per day, and reads back ordered")
+    import os, tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        db = Path(d) / "snapshots.db"
+        rows = [
+            {"iso3": "USA", "composite": 71.0, "subscores": {"connection": 80, "partnership": 65, "stability": 70, "activity": None}, "used": ["connection","partnership","stability"]},
+            {"iso3": "DEU", "composite": 66.0, "subscores": {"connection": 75, "partnership": 60, "stability": 65, "activity": None}, "used": ["connection","partnership","stability"]},
+        ]
+
+        # Synthetic history: a year ago, six months ago, today.
+        snapshots_module.record_snapshot([{**rows[0], "composite": 60.0}], db, snap_date="2025-05-20")
+        snapshots_module.record_snapshot([{**rows[0], "composite": 65.0}], db, snap_date="2025-11-20")
+        snapshots_module.record_snapshot(rows, db, snap_date="2026-05-20")
+        # Idempotency: re-writing today is a no-op replace, not an append.
+        snapshots_module.record_snapshot(rows, db, snap_date="2026-05-20")
+
+        n = snapshots_module.n_snapshots(db)
+        if n["dates"] != 3:
+            fail(f"expected 3 distinct dates, got {n}")
+        ok(f"three distinct snapshot dates, {n['rows']} total rows (idempotent upsert)")
+
+        history = snapshots_module.get_country_history("USA", db, days=400)
+        if [h["date"] for h in history] != ["2025-05-20", "2025-11-20", "2026-05-20"]:
+            fail(f"history order/contents wrong: {[h['date'] for h in history]}")
+        if [h["composite"] for h in history] != [60.0, 65.0, 71.0]:
+            fail(f"history composites wrong: {[h['composite'] for h in history]}")
+        ok("get_country_history returns ascending by date with full subscore payload")
+
+        glob = snapshots_module.get_global_history(db, days=400)
+        if len(glob) != 3:
+            fail(f"global history should have 3 days, got {len(glob)}")
+        # On 2026-05-20 the global avg should be mean(71, 66) = 68.5
+        latest = [p for p in glob if p["date"] == "2026-05-20"][0]
+        if abs(latest["composite"] - 68.5) > 1e-6:
+            fail(f"global avg for 2026-05-20 should be 68.5, got {latest['composite']}")
+        ok("get_global_history aggregates correctly across countries")
+
+
+def test_mover_rule():
+    print("test: rule_mover fires only when |delta| >= 5 and baseline >= 30 days old")
+    today_iso = snapshots_module.today_utc()
+    from datetime import date, timedelta
+    today = date.fromisoformat(today_iso)
+
+    countries = [
+        # Alpha: composite up 8 from 60 days ago -> should fire
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 78.0, "used": ["connection","partnership","stability"]},
+        # Beta: composite up only 3 -> too small
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 73.0, "used": ["connection","partnership","stability"]},
+        # Gamma: composite down 7 but only 10 days of history -> too recent
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 70, "stability": 70, "activity": None},
+         "composite": 63.0, "used": ["connection","partnership","stability"]},
+    ]
+    history = {
+        "AAA": [{"date": (today - timedelta(days=60)).isoformat(), "composite": 70.0}],
+        "BBB": [{"date": (today - timedelta(days=60)).isoformat(), "composite": 70.0}],
+        "CCC": [{"date": (today - timedelta(days=10)).isoformat(), "composite": 70.0}],
+    }
+    out = insights_module.rule_mover(countries, lambda iso3: history.get(iso3, []))
+    isos = [i.iso3 for i in out]
+    if isos != ["AAA"]:
+        fail(f"rule_mover should pick only AAA (|delta|>=5 and >=30d old), got {isos}")
+    if "↑" not in out[0].title or "Alpha" not in out[0].title:
+        fail(f"mover title should call out direction + name; got: {out[0].title}")
+    ok("Alpha (+8 over 60d) flagged; Beta (+3) and Gamma (10d old) skipped")
+
+
 def test_outlier_skipped_on_zero_variance():
     print("test: outlier rule skips a tier subscore when variance is zero")
     countries = [
@@ -419,6 +495,8 @@ def main():
     test_weakness_flag_rule()
     test_cap_impact_rule()
     test_closest_peer_rule()
+    test_snapshot_store_roundtrip()
+    test_mover_rule()
     print("\nall tests passed.")
 
 

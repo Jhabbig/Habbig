@@ -34,6 +34,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import insights as insights_module
 import sensitivity as sensitivity_module
+import snapshots as snapshots_module
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("love")
@@ -335,6 +336,7 @@ import re
 from pathlib import Path
 
 WHR_LOCAL = Path(__file__).parent / "data" / "whr.csv"
+SNAPSHOTS_DB = Path(__file__).parent / "data" / "snapshots.db"
 
 # WHR uses informal country names; map the ones that don't match the WB name
 # directly. Lookup is case-insensitive and ignores punctuation.
@@ -666,12 +668,33 @@ def health():
     return jsonify({"ok": True, "ts": time.time()})
 
 
+def _record_daily_snapshot() -> None:
+    """Opportunistic snapshot: writes today's rankings to the sqlite history
+    store if we don't already have a row for today. Cheap (one indexed
+    query) and only fires the actual insert when the UTC day rolls over."""
+    try:
+        if snapshots_module.has_snapshot_for(SNAPSHOTS_DB):
+            return
+        countries = cached("index_map", lambda: compute_subscores())
+        ranked = [c for c in countries.values() if c.get("composite") is not None]
+        if not ranked:
+            return
+        n = snapshots_module.record_snapshot(ranked, SNAPSHOTS_DB)
+        if n:
+            log.info("snapshots: wrote %d rows for today", n)
+    except Exception as exc:
+        # History is non-critical; never let a snapshot error fail a request.
+        log.warning("snapshot write failed: %s", exc)
+
+
 @app.get("/api/summary")
 def summary():
     weights = _parse_weight_params(request.args)
     if weights:
         return jsonify(build_summary(weights))
-    return jsonify(cached("summary", build_summary))
+    payload = cached("summary", build_summary)
+    _record_daily_snapshot()
+    return jsonify(payload)
 
 
 @app.get("/api/index")
@@ -768,11 +791,41 @@ def insights_route():
     countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
     layers = cached("subscore_layers", _build_subscore_layers)
     partnership_uncapped = (layers.get("extras") or {}).get("partnership_uncapped") or {}
+
+    # Time-series rule_mover needs the history store. Bind the path now so
+    # the rule stays unit-testable with a synthetic accessor.
+    def history_for(iso3: str) -> list[dict]:
+        return snapshots_module.get_country_history(iso3, SNAPSHOTS_DB)
+
     return jsonify(insights_module.generate_insights(
         list(countries.values()),
         layers["meta"],
         partnership_uncapped=partnership_uncapped,
+        history_accessor=history_for,
     ))
+
+
+@app.get("/api/history/<iso>")
+def history_country(iso: str):
+    iso = iso.upper()
+    days = request.args.get("days", default=365, type=int)
+    days = max(1, min(days, 3650))
+    return jsonify({
+        "iso3":   iso,
+        "days":   days,
+        "points": snapshots_module.get_country_history(iso, SNAPSHOTS_DB, days=days),
+    })
+
+
+@app.get("/api/history/global")
+def history_global():
+    days = request.args.get("days", default=365, type=int)
+    days = max(1, min(days, 3650))
+    return jsonify({
+        "days":   days,
+        "points": snapshots_module.get_global_history(SNAPSHOTS_DB, days=days),
+        "store":  snapshots_module.n_snapshots(SNAPSHOTS_DB),
+    })
 
 
 @app.get("/api/sources")
