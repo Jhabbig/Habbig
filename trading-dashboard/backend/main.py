@@ -17,6 +17,8 @@ from pydantic import BaseModel
 
 from tier1_adapters import get_facade, RealtimeFacade
 from backtest_engine import SimpleBacktestEngine, BacktestResult
+from signal_engine import EnsembleSignalEngine, Signal
+from options_scanner import OptionsScanEngine, ScanResult
 
 # Logging
 logging.basicConfig(
@@ -124,6 +126,70 @@ class BacktestResponse(BaseModel):
     equity_curve: list
     trades: list
     bar_count: int
+
+
+class SignalRequest(BaseModel):
+    """AI signal generation request."""
+    ticker: str
+    price: float
+    rsi_14: float
+    rsi_7: float
+    rsi_21: float
+    macd_line: float
+    macd_signal: float
+    macd_histogram: float
+    bb_upper_20: float
+    bb_middle_20: float
+    bb_lower_20: float
+    bb_position: float
+    atr_14: float
+    atr_7: float
+    obv: float
+    roc_5: float
+    roc_10: float
+    sma_20: float = 0.0
+    sma_50: float = 0.0
+    sma_200: float = 0.0
+    ema_12: float = 0.0
+    ema_26: float = 0.0
+
+
+class SignalResponse(BaseModel):
+    """AI signal response."""
+    timestamp: int
+    ticker: str
+    signal: str
+    confidence: float
+    price: float
+    reasoning: list[str]
+
+
+class OptionChainItem(BaseModel):
+    """Single option in chain."""
+    strike: float
+    volume: int = 0
+    iv: float = 0.0
+    iv_percentile: float = 0.0
+
+
+class ScanRequest(BaseModel):
+    """Options scanner request."""
+    ticker: str
+    calls: list[OptionChainItem]
+    puts: list[OptionChainItem]
+    spot_price: float
+    screening_type: str = "all"  # all, unusual_volume, iv_spike, skew_shifts, earnings_move
+
+
+class ScanResultResponse(BaseModel):
+    """Options scan result response."""
+    ticker: str
+    strike: float
+    option_type: str
+    signal: str
+    severity: str
+    value: float
+    timestamp: int
 
 
 # ============================================================================
@@ -241,6 +307,112 @@ async def get_greeks(
         return greeks
     except Exception as e:
         log.error(f"Error computing Greeks: {e}")
+        return {"error": str(e)}
+
+
+# ============================================================================
+# AI Signals Endpoint
+# ============================================================================
+
+@app.post("/api/signals", response_model=SignalResponse)
+async def generate_signal(request: SignalRequest):
+    """
+    Generate AI trading signal using ensemble of technical indicators.
+    Returns BUY/SELL/HOLD with confidence and reasoning.
+    """
+    try:
+        from stock_dashboard.data.streaming_indicators import IndicatorValues
+
+        indicators = IndicatorValues(
+            timestamp=int(datetime.now().timestamp()),
+            rsi_14=request.rsi_14,
+            rsi_7=request.rsi_7,
+            rsi_21=request.rsi_21,
+            macd_line=request.macd_line,
+            macd_signal=request.macd_signal,
+            macd_histogram=request.macd_histogram,
+            bb_upper_20=request.bb_upper_20,
+            bb_middle_20=request.bb_middle_20,
+            bb_lower_20=request.bb_lower_20,
+            bb_position=request.bb_position,
+            atr_14=request.atr_14,
+            atr_7=request.atr_7,
+            obv=request.obv,
+            roc_5=request.roc_5,
+            roc_10=request.roc_10,
+            sma_20=request.sma_20,
+            sma_50=request.sma_50,
+            sma_200=request.sma_200,
+            ema_12=request.ema_12,
+            ema_26=request.ema_26,
+        )
+
+        signal = EnsembleSignalEngine.generate_signal(
+            indicators,
+            price=request.price,
+            timestamp=int(datetime.now().timestamp()),
+            ticker=request.ticker
+        )
+
+        return {
+            "timestamp": signal.timestamp,
+            "ticker": signal.ticker,
+            "signal": signal.signal,
+            "confidence": signal.confidence,
+            "price": signal.price,
+            "reasoning": signal.reasoning
+        }
+    except Exception as e:
+        log.error(f"Error generating signal: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
+# ============================================================================
+# Options Scanner Endpoint
+# ============================================================================
+
+@app.post("/api/scan/options", response_model=list[ScanResultResponse])
+async def scan_options(request: ScanRequest):
+    """
+    Scan options chain for unusual activity.
+    Detects: volume spikes, IV spikes, skew shifts, implied earnings moves.
+    """
+    try:
+        scanner = OptionsScanEngine()
+
+        # Convert to dict format expected by scanner
+        calls = [{"strike": c.strike, "volume": c.volume, "iv": c.iv, "iv_percentile": c.iv_percentile} for c in request.calls]
+        puts = [{"strike": p.strike, "volume": p.volume, "iv": p.iv, "iv_percentile": p.iv_percentile} for p in request.puts]
+
+        timestamp = int(datetime.now().timestamp())
+        results = []
+
+        if request.screening_type in ["all", "unusual_volume"]:
+            results.extend(scanner.scan_unusual_volume(request.ticker, calls, puts, timestamp))
+        if request.screening_type in ["all", "iv_spike"]:
+            results.extend(scanner.scan_iv_spikes(request.ticker, calls, puts, timestamp))
+        if request.screening_type in ["all", "skew_shifts"]:
+            results.extend(scanner.scan_skew_shifts(request.ticker, calls, puts, request.spot_price, timestamp))
+        if request.screening_type in ["all", "earnings_move"]:
+            results.extend(scanner.scan_earnings_move(request.ticker, calls, puts, request.spot_price, timestamp))
+
+        # Convert ScanResult to response format
+        response = [
+            {
+                "ticker": r.ticker,
+                "strike": r.strike,
+                "option_type": r.option_type,
+                "signal": r.signal,
+                "severity": r.severity,
+                "value": r.value,
+                "timestamp": r.timestamp
+            }
+            for r in results
+        ]
+
+        return response
+    except Exception as e:
+        log.error(f"Error scanning options: {e}", exc_info=True)
         return {"error": str(e)}
 
 
