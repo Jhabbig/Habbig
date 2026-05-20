@@ -32,12 +32,13 @@ from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
 
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
+import digest as digest_mod                                    # noqa: E402
 import edge                                                    # noqa: E402
 import index_calc                                              # noqa: E402
 import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
 from scheduler import (                                        # noqa: E402
-    Scheduler, index_history_worker, phash_worker, surge_worker,
+    Scheduler, digest_worker, index_history_worker, phash_worker, surge_worker,
 )
 from scrapers import registry                                  # noqa: E402
 
@@ -105,6 +106,8 @@ async def on_startup() -> None:
         index_history_worker(_workers_stop), name="culture-history"))
     _worker_tasks.append(asyncio.create_task(
         surge_worker(_workers_stop), name="culture-surges"))
+    _worker_tasks.append(asyncio.create_task(
+        digest_worker(_workers_stop), name="culture-digest"))
 
 
 @app.on_event("shutdown")
@@ -154,6 +157,25 @@ async def api_topics(limit: int = 20) -> JSONResponse:
 async def api_edges(limit: int = 20) -> JSONResponse:
     limit = max(1, min(limit, 100))
     return JSONResponse({"edges": edge.compute_edges(limit=limit)})
+
+
+@app.get("/api/digest")
+async def api_digest() -> JSONResponse:
+    return JSONResponse({
+        "digest": cache.latest_digest(),
+        "configured": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+        "default_model": digest_mod.DEFAULT_MODEL,
+    })
+
+
+@app.post("/api/digest/refresh")
+async def api_digest_refresh() -> JSONResponse:
+    async def _run() -> None:
+        d = await asyncio.to_thread(digest_mod.generate)
+        if d:
+            cache.record_digest(d)
+    asyncio.create_task(_run())
+    return JSONResponse({"queued": True})
 
 
 @app.get("/api/section/{section}")

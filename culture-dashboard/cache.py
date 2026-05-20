@@ -98,6 +98,18 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_surge_alerts_recent
                 ON surge_alerts(source, key, alerted_at DESC);
+
+            CREATE TABLE IF NOT EXISTS digests (
+                ts                  REAL PRIMARY KEY,
+                model               TEXT NOT NULL,
+                body_md             TEXT NOT NULL,
+                input_tokens        INTEGER NOT NULL DEFAULT 0,
+                output_tokens       INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+                cache_create_tokens INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_digests_ts
+                ON digests(ts DESC);
         """)
         # Add phash column to existing DBs that predate the schema bump.
         try:
@@ -322,6 +334,30 @@ def prune_history(days: int = 7) -> int:
     with _txn() as c:
         cur = c.execute("DELETE FROM item_history WHERE ts < ?", (cutoff,))
         return cur.rowcount
+
+
+def record_digest(d: dict) -> None:
+    with _txn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO digests "
+            "(ts, model, body_md, input_tokens, output_tokens, "
+            " cache_read_tokens, cache_create_tokens) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (d["ts"], d["model"], d["body_md"],
+             d["input_tokens"], d["output_tokens"],
+             d["cache_read_tokens"], d["cache_create_tokens"]),
+        )
+
+
+def latest_digest() -> dict | None:
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, model, body_md, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_create_tokens FROM digests "
+            "ORDER BY ts DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

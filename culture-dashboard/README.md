@@ -68,6 +68,7 @@ dashboard still renders, that section just shows "No data".
 | `surge_calc.py` | Per-item z-score against trailing window — picks the rising items. |
 | `topics.py` | Cross-source topic clustering — Jaccard on title tokens + hashtags. |
 | `edge.py` | Topic ↔ Polymarket-market matcher; filters topics with markets + surge signal. |
+| `digest.py` | Calls Claude (anthropic SDK) with a packed snapshot to produce the daily culture brief. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
 | `scrapers/tiktok.py` | TikTok trending — Apify / RapidAPI / unofficial. |
@@ -133,6 +134,25 @@ doesn't spam.
 
 `item_history` is auto-pruned to the last 7 days every cycle.
 
+## Today-in-culture digest (LLM)
+
+If `ANTHROPIC_API_KEY` is set, a background worker calls Claude every hour
+(`CULTURE_DIGEST_INTERVAL` seconds) and packs the current dashboard state
+(composite index, surges, topics, edges, top news/memes) into a single
+JSON snapshot. Claude returns a 150-200 word markdown digest rendered in
+the panel at the top of the page.
+
+Default model is `claude-haiku-4-5` (cheapest). Flip to `claude-opus-4-7`
+via `CULTURE_DIGEST_MODEL` for richer prose. The system prompt carries a
+1-hour `cache_control` marker for forward compatibility — it doesn't
+engage at the current prompt size, but will if the prompt grows past the
+model's cache-min threshold (≥4096 tokens on Haiku 4.5 / Opus 4.7).
+
+`POST /api/digest/refresh` regenerates on demand; the dashboard's
+"Regenerate" button fires this. Per-digest token counts (input, output,
+cache read, cache create) are persisted in the `digests` table for cost
+auditing.
+
 ## Cross-platform topic clustering
 
 `topics.py` runs greedy centroid-based Jaccard clustering on item titles
@@ -159,6 +179,8 @@ Polymarket prices over time and compare velocity directly).
 
 | Endpoint | Returns |
 |---|---|
+| `GET /api/digest` | Latest LLM digest (markdown + token counts + model). |
+| `POST /api/digest/refresh` | Regenerate on demand. |
 | `GET /api/index` | Composite + per-section scores, calibration. |
 | `GET /api/index/history?hours=72` | Time series of overall score (max 30d). |
 | `GET /api/surges?limit=20` | Items with positive z-score vs trailing 7-day baseline, with their full trajectory. |

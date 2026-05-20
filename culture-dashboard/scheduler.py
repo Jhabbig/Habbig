@@ -17,6 +17,7 @@ import httpx
 
 import cache
 import dedup
+import digest
 import index_calc
 import surge_calc
 from models import Item
@@ -130,6 +131,31 @@ async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
                 log.info("pruned %d old item_history rows", removed)
         except Exception as e:  # noqa: BLE001
             log.warning("surge worker hiccup: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=period)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def digest_worker(stop: asyncio.Event, period: int | None = None) -> None:
+    """Regenerate the LLM culture digest on a fixed cadence."""
+    if period is None:
+        try:
+            period = int(os.environ.get("CULTURE_DIGEST_INTERVAL", "3600"))
+        except ValueError:
+            period = 3600
+    while not stop.is_set():
+        try:
+            d = await asyncio.to_thread(digest.generate)
+            if d:
+                cache.record_digest(d)
+                log.info(
+                    "digest refreshed via %s (%d in / %d out / %d cached read)",
+                    d["model"], d["input_tokens"], d["output_tokens"],
+                    d["cache_read_tokens"],
+                )
+        except Exception as e:  # noqa: BLE001
+            log.warning("digest generation failed: %s", e)
         try:
             await asyncio.wait_for(stop.wait(), timeout=period)
         except asyncio.TimeoutError:
