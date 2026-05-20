@@ -68,6 +68,16 @@
   #chart-svg .vol-up { fill: rgba(52,211,153,0.35); }
   #chart-svg .vol-down { fill: rgba(239,68,68,0.35); }
   #chart-svg .ma { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+  #chart-svg .bb-band { fill: rgba(56,189,248,0.06); }
+  #chart-svg .bb-line { fill: none; stroke: rgba(56,189,248,0.6); stroke-width: 0.8; }
+  #chart-svg .rsi-line { fill: none; stroke: #c084fc; stroke-width: 1.2; }
+  #chart-svg .rsi-zone { fill: rgba(192,132,252,0.06); }
+  #chart-svg .rsi-tick { stroke: rgba(192,132,252,0.4); stroke-width: 0.3; stroke-dasharray: 2 2; }
+  #chart-svg .macd-line { fill: none; stroke: #38bdf8; stroke-width: 1.2; }
+  #chart-svg .macd-sig  { fill: none; stroke: #f59e0b; stroke-width: 1.2; }
+  #chart-svg .macd-hist-up { fill: rgba(52,211,153,0.6); }
+  #chart-svg .macd-hist-dn { fill: rgba(239,68,68,0.6); }
+  #chart-svg .indicator-label { fill: var(--text-3); font-size: 9px; font-family: monospace; }
   #chart-svg .cursor-line { stroke: rgba(255,255,255,0.2); stroke-width: 0.5; stroke-dasharray: 2 2; }
 
   .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 12px; }
@@ -99,6 +109,10 @@
       <button data-int="4h">4h</button>
       <button data-int="1d">1d</button>
       <button data-int="1w">1w</button>
+      <span style="flex:1"></span>
+      <button data-ind="bb" class="active" title="Bollinger Bands (20, 2σ)">BB</button>
+      <button data-ind="rsi" class="active" title="Relative Strength Index">RSI</button>
+      <button data-ind="macd" class="active" title="MACD (12,26,9)">MACD</button>
     </div>
     <div class="chart-card"><svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none"></svg></div>
   </section>
@@ -213,6 +227,7 @@
 
   // ─── Candlestick chart (inline SVG) ──────────────────────────────────────
   let _chartInterval = "1h";
+  const _indicators = { bb: true, rsi: true, macd: true };
 
   function ema(values, period) {
     if (!values.length || period <= 1) return values.slice();
@@ -224,6 +239,80 @@
     return out;
   }
 
+  function sma(values, period) {
+    const out = new Array(values.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+      sum += values[i];
+      if (i >= period) sum -= values[i - period];
+      if (i >= period - 1) out[i] = sum / period;
+    }
+    return out;
+  }
+
+  function stddev(values, period) {
+    const out = new Array(values.length).fill(null);
+    for (let i = period - 1; i < values.length; i++) {
+      const slice = values.slice(i - period + 1, i + 1);
+      const m = slice.reduce((a, b) => a + b, 0) / slice.length;
+      const v = slice.reduce((a, b) => a + (b - m) ** 2, 0) / slice.length;
+      out[i] = Math.sqrt(v);
+    }
+    return out;
+  }
+
+  function bollingerBands(closes, period = 20, mult = 2) {
+    const ma = sma(closes, period);
+    const sd = stddev(closes, period);
+    const upper = ma.map((m, i) => m == null ? null : m + mult * sd[i]);
+    const lower = ma.map((m, i) => m == null ? null : m - mult * sd[i]);
+    return { ma, upper, lower };
+  }
+
+  function rsi(closes, period = 14) {
+    if (closes.length < period + 1) return new Array(closes.length).fill(null);
+    const out = new Array(closes.length).fill(null);
+    let gainSum = 0, lossSum = 0;
+    for (let i = 1; i <= period; i++) {
+      const d = closes[i] - closes[i - 1];
+      if (d > 0) gainSum += d; else lossSum -= d;
+    }
+    let avgGain = gainSum / period;
+    let avgLoss = lossSum / period;
+    out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    for (let i = period + 1; i < closes.length; i++) {
+      const d = closes[i] - closes[i - 1];
+      const gain = d > 0 ? d : 0;
+      const loss = d < 0 ? -d : 0;
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+      out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    }
+    return out;
+  }
+
+  function macd(closes, fast = 12, slow = 26, signal = 9) {
+    const efast = ema(closes, fast);
+    const eslow = ema(closes, slow);
+    const macdLine = efast.map((v, i) => v - eslow[i]);
+    const signalLine = ema(macdLine, signal);
+    const hist = macdLine.map((v, i) => v - signalLine[i]);
+    return { macd: macdLine, signal: signalLine, hist };
+  }
+
+  function pathFromValues(values, x0, xStep, w_half, yScale) {
+    let path = "";
+    let started = false;
+    values.forEach((v, i) => {
+      if (v == null || !isFinite(v)) { started = false; return; }
+      const x = x0 + i * xStep + w_half;
+      const y = yScale(v);
+      path += (started ? " L" : "M") + x + " " + y;
+      started = true;
+    });
+    return path;
+  }
+
   function renderCandles(bars) {
     const svg = document.getElementById("chart-svg");
     svg.innerHTML = "";
@@ -232,10 +321,20 @@
       return;
     }
 
-    const W = 1200, H = 540;
-    const CHART_H = 400, VOL_H = 100, PAD_TOP = 10, PAD_BOTTOM = 30, PAD_LEFT = 8, PAD_RIGHT = 70;
+    const W = 1200;
+    const CHART_H = 360, VOL_H = 60;
+    const RSI_H = _indicators.rsi ? 80 : 0;
+    const MACD_H = _indicators.macd ? 100 : 0;
+    const PAD_TOP = 10, PAD_LEFT = 8, PAD_RIGHT = 70;
+    const GAP = 10, AXIS_BOTTOM = 30;
     const chartTop = PAD_TOP, chartBottom = PAD_TOP + CHART_H;
-    const volTop = chartBottom + 10, volBottom = volTop + VOL_H;
+    const volTop = chartBottom + GAP, volBottom = volTop + VOL_H;
+    const rsiTop = _indicators.rsi ? volBottom + GAP : volBottom;
+    const rsiBottom = rsiTop + RSI_H;
+    const macdTop = _indicators.macd ? rsiBottom + GAP : rsiBottom;
+    const macdBottom = macdTop + MACD_H;
+    const H = macdBottom + AXIS_BOTTOM;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
     const n = bars.length;
     const xStep = (W - PAD_LEFT - PAD_RIGHT) / n;
@@ -306,6 +405,84 @@
     const ema20 = ema(closes, 20);
     const emaPath = ema20.map((v, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${yScale(v)}`).join(" ");
 
+    // Bollinger bands (20, 2σ)
+    let bbSvg = "";
+    if (_indicators.bb) {
+      const bb = bollingerBands(closes, 20, 2);
+      const upperPath = pathFromValues(bb.upper, PAD_LEFT, xStep, candleW / 2, yScale);
+      const lowerPath = pathFromValues(bb.lower, PAD_LEFT, xStep, candleW / 2, yScale);
+      // Build a single filled band by combining upper (left→right) with lower reversed
+      let bandPath = "";
+      let started = false;
+      bb.upper.forEach((v, i) => {
+        if (v == null || !isFinite(v)) { return; }
+        const x = PAD_LEFT + i * xStep + candleW / 2;
+        const y = yScale(v);
+        bandPath += (started ? " L" : "M") + x + " " + y;
+        started = true;
+      });
+      for (let i = bb.lower.length - 1; i >= 0; i--) {
+        const v = bb.lower[i];
+        if (v == null || !isFinite(v)) continue;
+        const x = PAD_LEFT + i * xStep + candleW / 2;
+        const y = yScale(v);
+        bandPath += " L" + x + " " + y;
+      }
+      bandPath += " Z";
+      bbSvg = `<path class="bb-band" d="${bandPath}"/>
+               <path class="bb-line" d="${upperPath}"/>
+               <path class="bb-line" d="${lowerPath}"/>`;
+    }
+
+    // RSI subplot
+    let rsiSvg = "";
+    if (_indicators.rsi) {
+      const rsiVals = rsi(closes, 14);
+      const rsiScale = (v) => rsiBottom - (v / 100) * RSI_H;
+      const rsiPath = pathFromValues(rsiVals, PAD_LEFT, xStep, candleW / 2, rsiScale);
+      // 30 / 70 overbought-oversold zones
+      const y30 = rsiScale(30), y70 = rsiScale(70), y50 = rsiScale(50);
+      rsiSvg = `
+        <rect class="rsi-zone" x="${PAD_LEFT}" y="${y70}" width="${W - PAD_LEFT - PAD_RIGHT}" height="${rsiScale(70) - rsiScale(100)}" opacity="0"/>
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y30}" x2="${W - PAD_RIGHT}" y2="${y30}"/>
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y50}" x2="${W - PAD_RIGHT}" y2="${y50}"/>
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y70}" x2="${W - PAD_RIGHT}" y2="${y70}"/>
+        <text x="${W - PAD_RIGHT + 4}" y="${y30 + 3}" class="indicator-label">30</text>
+        <text x="${W - PAD_RIGHT + 4}" y="${y50 + 3}" class="indicator-label">50</text>
+        <text x="${W - PAD_RIGHT + 4}" y="${y70 + 3}" class="indicator-label">70</text>
+        <text x="${PAD_LEFT + 4}" y="${rsiTop + 12}" class="indicator-label">RSI(14)</text>
+        <path class="rsi-line" d="${rsiPath}"/>`;
+    }
+
+    // MACD subplot
+    let macdSvg = "";
+    if (_indicators.macd) {
+      const m = macd(closes, 12, 26, 9);
+      const allMacdVals = m.macd.concat(m.signal).concat(m.hist).filter(v => v != null && isFinite(v));
+      const macdMax = Math.max(...allMacdVals, 0.01);
+      const macdMin = Math.min(...allMacdVals, -0.01);
+      const macdRange = Math.max(macdMax - macdMin, 0.01);
+      const macdScale = (v) => macdBottom - ((v - macdMin) / macdRange) * MACD_H;
+      const macdPath = pathFromValues(m.macd, PAD_LEFT, xStep, candleW / 2, macdScale);
+      const sigPath = pathFromValues(m.signal, PAD_LEFT, xStep, candleW / 2, macdScale);
+      const histBars = m.hist.map((v, i) => {
+        if (v == null || !isFinite(v)) return "";
+        const x = PAD_LEFT + i * xStep;
+        const y = macdScale(v);
+        const y0 = macdScale(0);
+        const top = Math.min(y, y0);
+        const h = Math.abs(y - y0);
+        return `<rect class="${v >= 0 ? 'macd-hist-up' : 'macd-hist-dn'}" x="${x}" y="${top}" width="${candleW}" height="${Math.max(h, 0.5)}"/>`;
+      }).join("");
+      const y0 = macdScale(0);
+      macdSvg = `
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y0}" x2="${W - PAD_RIGHT}" y2="${y0}"/>
+        ${histBars}
+        <path class="macd-line" d="${macdPath}"/>
+        <path class="macd-sig"  d="${sigPath}"/>
+        <text x="${PAD_LEFT + 4}" y="${macdTop + 12}" class="indicator-label">MACD(12,26,9)</text>`;
+    }
+
     // Latest price marker on right
     const last = bars[n - 1];
     const lastY = yScale(last.close);
@@ -315,14 +492,17 @@
     svg.innerHTML = `
       ${groups.join("")}
       ${timeLabels.join("")}
+      ${bbSvg}
       ${candles.join("")}
       ${volBars.join("")}
+      ${rsiSvg}
+      ${macdSvg}
       <path class="ma" d="${emaPath}"/>
       <line x1="${PAD_LEFT}" y1="${lastY}" x2="${W - PAD_RIGHT}" y2="${lastY}" stroke="${lastColor}" stroke-width="0.6" stroke-dasharray="3 2"/>
       <rect x="${W - PAD_RIGHT + 2}" y="${lastY - 9}" width="65" height="18" fill="${lastColor}" rx="2"/>
       <text x="${W - PAD_RIGHT + 4}" y="${lastY + 4}" fill="black" font-size="11" font-weight="600" font-family="monospace">${fmtPrice(last.close)}</text>
       <text x="${PAD_LEFT + 4}" y="${PAD_TOP + 12}" fill="${lastColor}" font-size="13" font-weight="600">${escapeHtml(_coinSymbol)}USDT &middot; ${_chartInterval}</text>
-      <text x="${PAD_LEFT + 4}" y="${volTop + 12}" fill="var(--text-3)" font-size="10" font-family="monospace">Volume (24h base units)</text>
+      <text x="${PAD_LEFT + 4}" y="${volTop + 12}" fill="var(--text-3)" font-size="10" font-family="monospace">Volume</text>
     `;
   }
 
@@ -539,8 +719,16 @@
   }
 
   // ─── Init ────────────────────────────────────────────────────────────────
-  document.querySelectorAll("#chart-controls button").forEach(b => {
+  document.querySelectorAll("#chart-controls button[data-int]").forEach(b => {
     b.addEventListener("click", () => loadChart(b.dataset.int));
+  });
+  document.querySelectorAll("#chart-controls button[data-ind]").forEach(b => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.ind;
+      _indicators[k] = !_indicators[k];
+      b.classList.toggle("active", _indicators[k]);
+      loadChart(_chartInterval);
+    });
   });
 
   loadCoin().then(() => {
