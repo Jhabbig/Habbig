@@ -37,6 +37,7 @@ from defusedxml import ElementTree as DET
 from flask import Flask, jsonify, request, send_from_directory
 
 import actuarial
+import historical_leaders as hl
 import religion_data as rd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -421,12 +422,19 @@ def api_leaders():
         actu = None
         if age is not None and age > 0:
             sex = L.get("sex", "M")
+            hr = hl.MORTALITY_HAZARD_RATIO_RELIGIOUS
             actu = {
                 "age": round(age, 2),
+                # SSA baseline
                 "p_alive_1y":  round(actuarial.survival_prob(age, sex,  12), 4),
                 "p_alive_5y":  round(actuarial.survival_prob(age, sex,  60), 4),
                 "p_alive_10y": round(actuarial.survival_prob(age, sex, 120), 4),
                 "p_dies_1y":   round(1 - actuarial.survival_prob(age, sex, 12),  4),
+                # Religious-office adjusted (HR = 0.85, see historical_leaders.py)
+                "p_alive_1y_adj":  round(actuarial.survival_prob(age, sex,  12, hazard_ratio=hr), 4),
+                "p_alive_5y_adj":  round(actuarial.survival_prob(age, sex,  60, hazard_ratio=hr), 4),
+                "p_alive_10y_adj": round(actuarial.survival_prob(age, sex, 120, hazard_ratio=hr), 4),
+                "p_dies_1y_adj":   round(1 - actuarial.survival_prob(age, sex, 12, hazard_ratio=hr), 4),
             }
         # Years in office
         took = L.get("took_office") or ""
@@ -443,8 +451,22 @@ def api_leaders():
         "fetched_at": int(time.time()),
         "ref_date": ref.isoformat(),
         "model": "SSA 2022 period life table; per-month survival walk forward.",
+        "adjusted_hazard_ratio": hl.MORTALITY_HAZARD_RATIO_RELIGIOUS,
+        "adjustment_basis": f"{hl.COHORT_SIZE} historical religious leaders, mean age at death {hl.COHORT_MEAN_AGE_AT_DEATH:.1f}y",
         "count": len(out),
         "leaders": out,
+    })
+
+
+@app.route("/api/historical-leaders")
+def api_historical_leaders():
+    """Cohort used to calibrate the religious-leader hazard ratio."""
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "count": hl.COHORT_SIZE,
+        "mean_age_at_death": round(hl.COHORT_MEAN_AGE_AT_DEATH, 2),
+        "hazard_ratio": hl.MORTALITY_HAZARD_RATIO_RELIGIOUS,
+        "leaders": hl.HISTORICAL_LEADERS_DECEASED,
     })
 
 

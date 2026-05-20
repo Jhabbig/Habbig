@@ -611,11 +611,13 @@ function renderLeaders(d) {
     const succession = L.succession ? `<div class="succession">Succession: ${escapeHtml(L.succession)}</div>` : "";
     const yio = L.years_in_office !== null && L.years_in_office !== undefined
       ? `· ${L.years_in_office.toFixed(1)} yrs in office` : "";
+    const adj = a && a.p_dies_1y_adj !== undefined
+      ? ` <span style="color:var(--muted);font-size:10px">(adj ${(a.p_dies_1y_adj*100).toFixed(1)}%)</span>` : "";
     const actuHtml = a ? `
       <div class="actu-grid">
-        <div class="actu ${dieCls}"><div class="lbl">P(dies 1y)</div><div class="val">${(a.p_dies_1y*100).toFixed(1)}%</div></div>
-        <div class="actu"><div class="lbl">P(alive 5y)</div><div class="val">${(a.p_alive_5y*100).toFixed(0)}%</div></div>
-        <div class="actu"><div class="lbl">P(alive 10y)</div><div class="val">${(a.p_alive_10y*100).toFixed(0)}%</div></div>
+        <div class="actu ${dieCls}"><div class="lbl">P(dies 1y)</div><div class="val">${(a.p_dies_1y*100).toFixed(1)}%${adj}</div></div>
+        <div class="actu"><div class="lbl">P(alive 5y)</div><div class="val">${(a.p_alive_5y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_5y_adj*100).toFixed(0)}%</span></div></div>
+        <div class="actu"><div class="lbl">P(alive 10y)</div><div class="val">${(a.p_alive_10y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_10y_adj*100).toFixed(0)}%</span></div></div>
       </div>` : "";
     return `<div class="leader-card">
       <div class="head">

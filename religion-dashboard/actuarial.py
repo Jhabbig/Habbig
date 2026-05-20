@@ -51,11 +51,13 @@ def _interp_q(age: float, sex: str) -> float:
     return table[anchors[-1]]
 
 
-def survival_prob(age_years: float, sex: str, months_ahead: float) -> float:
+def survival_prob(age_years: float, sex: str, months_ahead: float, *, hazard_ratio: float = 1.0) -> float:
     """P(person aged `age_years` (sex M/F) is alive `months_ahead` months from now).
 
     Walks forward in monthly steps, recomputing q at each step so the rate
-    reflects the leader's age at that point in time.
+    reflects the leader's age at that point in time. Pass `hazard_ratio` < 1.0
+    to apply a multiplier representing a longevity advantage (e.g. religious
+    leaders — see historical_leaders.MORTALITY_HAZARD_RATIO_RELIGIOUS).
     """
     if months_ahead <= 0:
         return 1.0
@@ -64,6 +66,10 @@ def survival_prob(age_years: float, sex: str, months_ahead: float) -> float:
     cur = age_years
     while months_left > 0 and p_alive > 1e-9:
         annual_q = _interp_q(cur, sex)
+        if hazard_ratio != 1.0:
+            # Scale on the survival side to stay in [0, 1].
+            s_year = (1.0 - annual_q) ** hazard_ratio
+            annual_q = 1.0 - s_year
         step = min(12.0, months_left)
         # P(survive step months) = (1 - annual_q)^(step/12)
         p_alive *= (1.0 - annual_q) ** (step / 12.0)
