@@ -467,6 +467,123 @@ TIMELINE = [
     {"date": "2025-11-24", "lab_key": "anthropic", "title": "Claude Opus 4.5", "blurb": "Pushes SWE-bench Verified past 80% on a non-tool track."},
 ]
 
+# ── Compute scoreboard ───────────────────────────────────────────────────────
+# Per-lab compute posture. Numbers are estimates from public reporting
+# (lab announcements, SemiAnalysis, Reuters/Bloomberg supply-chain stories,
+# CEO public statements). H100-equivalents are a rough common-denominator —
+# for TPU-only labs we annotate `compute_class` instead. Every row carries
+# its own `as_of` because compute changes faster than valuations.
+COMPUTE = [
+    {
+        "lab_key": "openai",
+        "h100_equivalents_k": 800,            # K = thousands; via MS Azure + Stargate ramp
+        "compute_class": "H100-eq + GB200",
+        "flagship_cluster": "Stargate Abilene (multi-GW phased)",
+        "capex_2025_usd_b": 50,
+        "as_of": "2025-12",
+        "source": "MS/Oracle Stargate announcements; partner press",
+    },
+    {
+        "lab_key": "anthropic",
+        "h100_equivalents_k": 400,
+        "compute_class": "AWS Trainium + GCP TPU + H100",
+        "flagship_cluster": "Project Rainier (AWS, multi-site)",
+        "capex_2025_usd_b": None,
+        "as_of": "2025-11",
+        "source": "AWS Project Rainier disclosures; Anthropic blog",
+    },
+    {
+        "lab_key": "google_deepmind",
+        "h100_equivalents_k": None,           # TPU-only; no clean H100-eq number
+        "compute_class": "TPU v5p / v6e (Trillium)",
+        "flagship_cluster": "GCE/SuperPod fabric (multi-GW)",
+        "capex_2025_usd_b": 75,               # parent Alphabet AI capex
+        "as_of": "2025-10",
+        "source": "Alphabet Q3'25 earnings; Google Cloud Next",
+    },
+    {
+        "lab_key": "xai",
+        "h100_equivalents_k": 200,
+        "compute_class": "H100 + H200 + GB200",
+        "flagship_cluster": "Colossus 1 (Memphis, 200K) → Colossus 2 (~1M target)",
+        "capex_2025_usd_b": 20,
+        "as_of": "2025-11",
+        "source": "Nvidia/Supermicro press; Musk public statements",
+    },
+    {
+        "lab_key": "meta",
+        "h100_equivalents_k": 1000,
+        "compute_class": "H100 + GB200",
+        "flagship_cluster": "Hyperion (LA), Prometheus (OH); 5-GW class roadmap",
+        "capex_2025_usd_b": 65,
+        "as_of": "2025-10",
+        "source": "Meta Q3'25 earnings; Zuckerberg public roadmap",
+    },
+    {
+        "lab_key": "deepseek",
+        "h100_equivalents_k": 50,             # incl. H800 stockpile
+        "compute_class": "H800 + H100 (constrained)",
+        "flagship_cluster": "High-Flyer Fire-Flyer cluster",
+        "capex_2025_usd_b": None,
+        "as_of": "2025-09",
+        "source": "DeepSeek V3 paper; SemiAnalysis estimates",
+    },
+    {
+        "lab_key": "alibaba",
+        "h100_equivalents_k": None,
+        "compute_class": "Ascend 910B + reported H20",
+        "flagship_cluster": "Alibaba Cloud regional zones",
+        "capex_2025_usd_b": 53,               # 3-yr $53B commitment, prorated
+        "as_of": "2025-02",
+        "source": "Alibaba 3-yr AI capex announcement (Feb 2025)",
+    },
+    {
+        "lab_key": "mistral",
+        "h100_equivalents_k": 20,
+        "compute_class": "H100 (partner clouds)",
+        "flagship_cluster": "Scaleway / OVHcloud partnerships",
+        "capex_2025_usd_b": None,
+        "as_of": "2025-09",
+        "source": "Mistral press; partner cloud announcements",
+    },
+]
+
+# ── Export-control timeline ──────────────────────────────────────────────────
+# US chip-export rules + responses. Separate from MODELS timeline because the
+# cadence and audience differ — these matter for compute distribution, not
+# capability.
+EXPORT_CONTROLS = [
+    {"date": "2022-10-07", "scope": "US BIS",  "title": "Initial advanced-chip controls", "blurb": "A100/H100 banned from China; ushers in the chip-race era."},
+    {"date": "2023-10-17", "scope": "US BIS",  "title": "Tightening rules", "blurb": "H800/A800 (China-spec downclocks) banned; performance-density caps."},
+    {"date": "2024-03-29", "scope": "China",   "title": "Domestic-substitution push", "blurb": "Huawei Ascend 910B ramp; SMIC 5nm-class yield reports."},
+    {"date": "2024-12-02", "scope": "US BIS",  "title": "HBM + tool controls", "blurb": "HBM2e+ + advanced lithography tools added to entity list."},
+    {"date": "2025-01-13", "scope": "US BIS",  "title": "AI Diffusion rule (tier framework)", "blurb": "Three-tier export framework; allies get GPU caps without licenses."},
+    {"date": "2025-05-13", "scope": "US BIS",  "title": "AI Diffusion rule rescinded", "blurb": "Trump admin reverses tier framework; case-by-case licensing returns."},
+    {"date": "2025-07-22", "scope": "US BIS",  "title": "H20 licensing reopens to China", "blurb": "Nvidia H20 export licenses granted again under conditions."},
+    {"date": "2025-10-30", "scope": "US BIS",  "title": "New compute-cap framework", "blurb": "Threshold-based controls on next-gen chips above defined FLOP/s density."},
+]
+
+# ── Big Tech AI capex tracker ────────────────────────────────────────────────
+# Quarterly capex (USD billions) for the AI-spending hyperscalers. Sources are
+# each company's earnings releases. We keep ~6 quarters back so a sparkline
+# can show the ramp clearly. Update each earnings season.
+CAPEX_QUARTERLY = [
+    # quarter → {ticker: capex_usd_b}
+    {"q": "2024-Q1", "msft": 14.0, "meta": 6.7,  "googl": 12.0, "amzn": 14.9},
+    {"q": "2024-Q2", "msft": 19.0, "meta": 8.5,  "googl": 13.2, "amzn": 17.6},
+    {"q": "2024-Q3", "msft": 20.0, "meta": 9.2,  "googl": 13.1, "amzn": 22.6},
+    {"q": "2024-Q4", "msft": 22.6, "meta": 14.8, "googl": 14.3, "amzn": 27.8},
+    {"q": "2025-Q1", "msft": 21.4, "meta": 13.2, "googl": 17.2, "amzn": 24.3},
+    {"q": "2025-Q2", "msft": 24.2, "meta": 17.0, "googl": 22.4, "amzn": 31.4},
+    {"q": "2025-Q3", "msft": 34.9, "meta": 19.4, "googl": 24.0, "amzn": 34.2},
+]
+CAPEX_TICKERS = [
+    {"ticker": "msft",  "name": "Microsoft", "color": "#00a4ef"},
+    {"ticker": "googl", "name": "Alphabet",  "color": "#4285f4"},
+    {"ticker": "meta",  "name": "Meta",      "color": "#1877f2"},
+    {"ticker": "amzn",  "name": "Amazon",    "color": "#ff9900"},
+]
+
 # ── Market whitelists ────────────────────────────────────────────────────────
 # Curated lists of Polymarket events + Kalshi series to surface as "Featured
 # AI markets." Editorial, not algorithmic — each entry is a slug/ticker the

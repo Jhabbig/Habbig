@@ -55,6 +55,9 @@ DEV_MODE=1 python3 server.py        # → http://127.0.0.1:7070
   `score_meta` with provenance (`curated` / `live:<source>`), `as_of`, and a
   `stale` flag.
 - `GET /api/timeline`
+- `GET /api/compute` — per-lab compute scoreboard
+- `GET /api/export-controls` — chip export-control timeline
+- `GET /api/capex` — Big Tech quarterly AI capex
 - `GET /api/frontier` — running max-score series per benchmark, computed off
   merged scores (live values bump the curve).
 - `GET /api/markets` — keyword-filtered Polymarket AI markets (legacy view)
@@ -96,6 +99,26 @@ When a public leaderboard restructures and our scrapers break:
 
 To disable live ingestion entirely (e.g. for sandboxed local dev), set
 `DISABLE_INGESTION=1`.
+
+## Compute & infra (v2.2)
+
+The "industrial layer" view — the inputs that drive the race rather than
+the model outputs.
+
+- **Compute scoreboard** — per-lab H100-equivalents (common-denominator
+  estimates from public reporting), flagship cluster, 2025 announced AI
+  capex. TPU-only labs (Google DeepMind) annotated separately. Bar widths
+  normalize against the highest-disclosed fleet.
+- **Chip export-control timeline** — US BIS rules + non-US responses,
+  separate from the model timeline because cadence and audience differ.
+- **Big Tech AI capex** — quarterly capex sparklines for the four
+  hyperscalers (MSFT, GOOGL, META, AMZN), curated from earnings releases.
+  Latest combined quarter is displayed below the cards.
+
+All three views are curated in `data.py` (`COMPUTE`, `EXPORT_CONTROLS`,
+`CAPEX_QUARTERLY` + `CAPEX_TICKERS`). Compute is the most volatile — most
+rows carry their own `as_of`. Capex needs a refresh each earnings season
+(append a row to `CAPEX_QUARTERLY` with the new quarter's numbers).
 
 ## Capability views (v2.6)
 

@@ -241,6 +241,34 @@ async def get_timeline():
     return _json({"events": rows, "as_of": ai_data.DATASET_AS_OF})
 
 
+@app.get("/api/compute")
+async def get_compute():
+    rows = []
+    for c in ai_data.COMPUTE:
+        lab = ai_data.lab_by_key(c["lab_key"]) or {}
+        rows.append({
+            **c,
+            "lab_name": lab.get("name", c["lab_key"]),
+            "lab_color": lab.get("color", "#888"),
+            "country": lab.get("country", ""),
+        })
+    return _json({"compute": rows, "as_of": ai_data.DATASET_AS_OF})
+
+
+@app.get("/api/export-controls")
+async def get_export_controls():
+    return _json({"events": ai_data.EXPORT_CONTROLS, "as_of": ai_data.DATASET_AS_OF})
+
+
+@app.get("/api/capex")
+async def get_capex():
+    return _json({
+        "quarterly": ai_data.CAPEX_QUARTERLY,
+        "tickers": ai_data.CAPEX_TICKERS,
+        "as_of": ai_data.DATASET_AS_OF,
+    })
+
+
 @app.get("/api/frontier")
 async def get_frontier():
     """Running max-score series per benchmark, computed off merged scores."""

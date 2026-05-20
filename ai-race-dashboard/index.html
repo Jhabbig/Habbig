@@ -237,6 +237,61 @@
   .ftx-cell .when { color: var(--muted); font-size: 10px; }
   .ftx-cell.unreached { color: var(--muted); background: transparent; border-style: dashed; }
 
+  /* Compute scoreboard */
+  .cmp-row { display: grid; grid-template-columns: 180px 110px 1fr 110px;
+             gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .cmp-row:last-child { border-bottom: 0; }
+  .cmp-lab { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .cmp-h100 { font-variant-numeric: tabular-nums; }
+  .cmp-h100 .num { font-weight: 700; font-size: 14px; }
+  .cmp-h100 .unit { color: var(--muted); font-size: 10px; margin-left: 3px; }
+  .cmp-cluster { color: var(--fg); font-size: 12px; }
+  .cmp-cluster .cls { color: var(--muted); font-size: 11px; display: block; }
+  .cmp-capex { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .cmp-capex .asof { color: var(--muted); font-size: 10px; display: block; font-weight: 400; }
+  .h100-bar { height: 6px; background: #0e1117; border: 1px solid var(--grid);
+              border-radius: 2px; margin-top: 4px; position: relative; overflow: hidden; }
+  .h100-bar .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                    background: linear-gradient(90deg, #1f6feb88, #58a6ff); }
+
+  /* Export controls timeline */
+  .xc-row { display: grid; grid-template-columns: 110px 70px 1fr;
+            gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+            align-items: start; }
+  .xc-row:last-child { border-bottom: 0; }
+  .xc-date { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .xc-scope { font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+              padding: 2px 6px; border-radius: 3px; text-align: center;
+              background: #f8514922; color: var(--red); border: 1px solid #f8514955;
+              text-transform: uppercase; }
+  .xc-scope.china { background: #d2992222; color: var(--amber); border-color: #d2992255; }
+  .xc-title { font-weight: 600; font-size: 13px; }
+  .xc-blurb { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Capex sparklines */
+  .capex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                gap: 10px; }
+  .capex-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 12px; }
+  .capex-card .head { display: flex; align-items: center; justify-content: space-between;
+                      margin-bottom: 4px; }
+  .capex-card .name { font-weight: 600; font-size: 13px; display: inline-flex;
+                      align-items: center; gap: 6px; }
+  .capex-card .latest { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; }
+  .capex-card .delta { font-size: 11px; padding: 1px 5px; border-radius: 3px;
+                       font-weight: 600; margin-left: 6px; }
+  .capex-card .delta.up { background: #56d36422; color: var(--green); }
+  .capex-card .delta.down { background: #f8514922; color: var(--red); }
+  .capex-card .sub { color: var(--muted); font-size: 10px; margin-bottom: 6px; }
+  .capex-card svg { width: 100%; height: 60px; display: block; }
+  .capex-total { background: var(--panel-2); border: 1px solid var(--grid);
+                 border-radius: 6px; padding: 12px; margin-top: 10px; }
+  .capex-total .lbl { color: var(--muted); font-size: 11px;
+                      text-transform: uppercase; letter-spacing: 0.04em; }
+  .capex-total .val { font-variant-numeric: tabular-nums; font-weight: 700;
+                      font-size: 22px; margin-top: 4px; }
+
   /* Cross-venue spread */
   .pair-row { display: grid; grid-template-columns: 1fr 1fr 80px;
               gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
@@ -344,6 +399,35 @@
     <h2>Lab snapshots</h2>
     <div class="sub">Last-known valuation, headline model, compute posture.</div>
     <div class="labs-grid" id="labs"></div>
+  </section>
+
+  <!-- Compute scoreboard -->
+  <section class="panel" id="compute-panel">
+    <h2>Compute scoreboard</h2>
+    <div class="sub">
+      H100-equivalents (estimates, common-denominator across mixed fleets);
+      flagship cluster + 2025 announced AI capex. TPU-only labs annotated
+      separately. Bar widths normalize against the highest-disclosed fleet.
+    </div>
+    <div id="compute"></div>
+  </section>
+
+  <!-- Export controls timeline -->
+  <section class="panel" id="xc-panel">
+    <h2>Chip export-control timeline</h2>
+    <div class="sub">US BIS rules + non-US responses. Separate from model
+      timeline because cadence and audience differ.</div>
+    <div id="xc"></div>
+  </section>
+
+  <!-- Big Tech capex sparklines -->
+  <section class="panel" id="capex-panel">
+    <h2>Big Tech AI capex</h2>
+    <div class="sub">Quarterly capex (USD billions) reported by the four
+      hyperscalers. Curated from earnings releases — update each quarter.</div>
+    <div class="capex-grid" id="capex"></div>
+    <div class="capex-total"><span class="lbl">Latest combined quarter</span>
+      <div class="val" id="capex-total"></div></div>
   </section>
 
   <!-- Featured prediction markets -->
@@ -895,6 +979,99 @@ async function loadLabs() {
   `).join("");
 }
 
+// ── Compute / Export controls / Capex ─────────────────────────────────────
+async function loadCompute() {
+  const data = await fetchJSON("/api/compute");
+  const rows = data.compute || [];
+  if (rows.length === 0) { $("#compute").innerHTML = ""; return; }
+  const maxH = Math.max(...rows.map(r => r.h100_equivalents_k || 0));
+  $("#compute").innerHTML = rows.map(r => {
+    const h100 = r.h100_equivalents_k;
+    const bar = (h100 != null && maxH > 0)
+      ? `<div class="h100-bar"><div class="fill" style="width:${(h100/maxH*100).toFixed(1)}%"></div></div>`
+      : "";
+    const h100Cell = h100 != null
+      ? `<div><span class="num">${h100}</span><span class="unit">K H100-eq</span>${bar}</div>`
+      : `<div style="color:var(--muted);font-size:11px">${escapeHTML(r.compute_class || "—")}</div>`;
+    const capexCell = r.capex_2025_usd_b != null
+      ? `<div>$${r.capex_2025_usd_b}B<span class="asof">${escapeHTML(r.as_of || '')}</span></div>`
+      : `<div style="color:var(--muted)">—<span class="asof">${escapeHTML(r.as_of || '')}</span></div>`;
+    return `<div class="cmp-row">
+      <div class="cmp-lab">
+        <span class="lab-dot" style="background:${escapeHTML(r.lab_color)}"></span>
+        <span>${escapeHTML(r.lab_name)}<br><span style="color:var(--muted);font-size:11px;font-weight:400">${escapeHTML(r.country)}</span></span>
+      </div>
+      <div class="cmp-h100">${h100Cell}</div>
+      <div class="cmp-cluster">${escapeHTML(r.flagship_cluster || "")}<span class="cls">${escapeHTML(r.compute_class || "")}</span></div>
+      <div class="cmp-capex">${capexCell}</div>
+    </div>`;
+  }).join("");
+}
+
+async function loadExportControls() {
+  const data = await fetchJSON("/api/export-controls");
+  const events = (data.events || []).slice().reverse();  // newest first
+  $("#xc").innerHTML = events.map(ev => {
+    const scope = (ev.scope || "").toLowerCase();
+    const scopeClass = scope.includes("china") ? "china" : "";
+    return `<div class="xc-row">
+      <div class="xc-date">${escapeHTML(ev.date)}</div>
+      <div class="xc-scope ${scopeClass}">${escapeHTML(ev.scope || "")}</div>
+      <div>
+        <div class="xc-title">${escapeHTML(ev.title)}</div>
+        <div class="xc-blurb">${escapeHTML(ev.blurb)}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderCapexSpark(values, color) {
+  const W = 200, H = 60, pad = 4;
+  if (!values.length) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => pad + (i * (W - 2*pad)) / Math.max(1, values.length - 1));
+  const ys = values.map(v => pad + (H - 2*pad) * (1 - (v - min) / range));
+  const path = xs.map((x, i) => `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(" ");
+  const area = path + ` L ${xs[xs.length-1].toFixed(1)} ${H-pad} L ${pad} ${H-pad} Z`;
+  const lastX = xs[xs.length-1], lastY = ys[ys.length-1];
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <path d="${area}" fill="${color}22" stroke="none"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.5"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="${color}"/>
+  </svg>`;
+}
+
+async function loadCapex() {
+  const data = await fetchJSON("/api/capex");
+  const quarters = data.quarterly || [];
+  const tickers = data.tickers || [];
+  if (!quarters.length) { $("#capex").innerHTML = '<div class="empty-state">No capex data.</div>'; return; }
+  const lastQ = quarters[quarters.length - 1];
+  const prevQ = quarters[quarters.length - 2];
+  $("#capex").innerHTML = tickers.map(t => {
+    const series = quarters.map(q => q[t.ticker]).filter(v => v != null);
+    const latest = lastQ[t.ticker];
+    const prev = prevQ ? prevQ[t.ticker] : null;
+    const delta = (prev != null && latest != null) ? (latest - prev) : null;
+    const deltaPct = (delta != null && prev) ? (delta / prev) * 100 : null;
+    const deltaClass = delta == null ? "" : (delta >= 0 ? "up" : "down");
+    const deltaLabel = delta == null ? ""
+      : `<span class="delta ${deltaClass}">${delta >= 0 ? "+" : ""}${deltaPct.toFixed(0)}%</span>`;
+    return `<div class="capex-card">
+      <div class="head">
+        <span class="name"><span class="lab-dot" style="background:${escapeHTML(t.color)}"></span>${escapeHTML(t.name)}</span>
+        <span class="latest">$${latest}B${deltaLabel}</span>
+      </div>
+      <div class="sub">${escapeHTML(lastQ.q)} · ${quarters.length} quarters shown</div>
+      ${renderCapexSpark(series, t.color)}
+    </div>`;
+  }).join("");
+
+  const total = tickers.reduce((acc, t) => acc + (lastQ[t.ticker] || 0), 0);
+  $("#capex-total").textContent = `$${total.toFixed(0)}B · ${lastQ.q}`;
+}
+
 // ── Featured / Movers / Spreads ───────────────────────────────────────────
 function renderEvent(ev) {
   const venueClass = ev.venue === "kalshi" ? "kalshi" : "polymarket";
@@ -1089,6 +1266,9 @@ async function boot() {
     await loadFrontier();
     await loadTimeline();
     await loadLabs();
+    loadCompute();
+    loadExportControls();
+    loadCapex();
     loadSources();
     loadFeatured();
     loadMovers();
