@@ -2943,6 +2943,7 @@ async def admin_generate_superuser_key(
     name: str = Form(""),
     dashboards: str = Form(""),
     expires_in_days: str = Form(""),
+    custom_key: str = Form(""),
 ):
     user = _require_admin_user(request)
     form_data = await request.form()
@@ -2952,12 +2953,18 @@ async def admin_generate_superuser_key(
 
     dashboards_list = [d.strip() for d in dashboards.split(",") if d.strip()]
     expires_days = int(expires_in_days) if expires_in_days else None
+    custom_key_str = custom_key.strip() if custom_key else None
 
-    key = db.create_superuser_key(
-        name=name.strip() or "Investor Key",
-        dashboards=dashboards_list or None,
-        expires_in_days=expires_days,
-    )
+    try:
+        key = db.create_superuser_key(
+            name=name.strip() or "Investor Key",
+            dashboards=dashboards_list or None,
+            expires_in_days=expires_days,
+            custom_key=custom_key_str,
+        )
+    except ValueError as e:
+        log.warning("Admin %s failed to create superuser key: %s", user["email"], str(e))
+        raise HTTPException(status_code=400, detail=str(e))
 
     log.info("Admin %s generated superuser key: %s (name=%s)", user["email"], key, name)
     csrf_token = _get_csrf_token(request)

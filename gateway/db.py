@@ -1190,18 +1190,30 @@ def generate_superuser_key() -> str:
     return secrets.token_urlsafe(24)
 
 
-def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None) -> str:
+def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None, custom_key: str | None = None) -> str:
     """Create a new superuser key.
 
     Args:
         name: Human-readable name for the key
         dashboards: List of dashboard keys this superuser can access (empty = all)
         expires_in_days: Number of days until key expires (None = never expires)
+        custom_key: Optional custom key string (e.g., "Julian-habbig"). If not provided, generates random.
 
     Returns:
         The generated superuser key
     """
-    key = generate_superuser_key()
+    key = custom_key if custom_key else generate_superuser_key()
+
+    # Validate custom key if provided
+    if custom_key:
+        if not custom_key.strip():
+            raise ValueError("Custom key cannot be empty")
+        if len(custom_key) < 3:
+            raise ValueError("Custom key must be at least 3 characters")
+        # Allow alphanumeric, hyphens, underscores
+        if not all(c.isalnum() or c in ('-', '_') for c in custom_key):
+            raise ValueError("Custom key can only contain alphanumeric characters, hyphens, and underscores")
+
     now = int(time.time())
     expires_at = None
     if expires_in_days is not None:
