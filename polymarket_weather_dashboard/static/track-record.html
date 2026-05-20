@@ -301,6 +301,23 @@ footer a { color: var(--accent); }
     <div id="insight-conf-table" style="margin-top: 12px;"></div>
   </div>
 
+  <h2>LLM vs raw model — head-to-head</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      For every resolved insight, both the raw model signal (edge ≥ 5pp → BUY)
+      and the LLM's recommendation are scored against the actual outcome.
+      The interesting cells are where they disagree.
+    </p>
+    <div class="grid" id="h2h-cards" style="margin-top: 12px;">
+      <div class="card"><div class="label">Resolved sample</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">Agreement rate</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">Raw win rate</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">LLM win rate</div><div class="value skeleton"></div></div>
+    </div>
+    <div id="h2h-disagree" style="margin-top: 14px;"></div>
+    <div id="h2h-matrix" style="margin-top: 14px;"></div>
+  </div>
+
   <h2>Per-day chain</h2>
   <div class="section">
     <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
@@ -492,6 +509,60 @@ async function loadDayDetail(date) {
 document.getElementById("day-detail-close").addEventListener("click", () => {
   document.getElementById("day-detail").style.display = "none";
 });
+
+async function loadHeadToHead() {
+  try {
+    const h2h = await fetchJSON("/api/insight/head_to_head?days=180");
+    document.getElementById("h2h-cards").innerHTML = `
+      <div class="card"><div class="label">Resolved sample</div>
+        <div class="value">${fmtNum(h2h.n || 0)}</div></div>
+      <div class="card"><div class="label">Agreement rate</div>
+        <div class="value">${fmtPct(h2h.agreement_rate)}</div></div>
+      <div class="card"><div class="label">Raw win rate</div>
+        <div class="value">${fmtPct(h2h.raw.win_rate)}</div>
+        <div class="sub">${h2h.raw.n_betted || 0} bets · PnL ${h2h.raw.total_pnl >= 0 ? "+" : ""}${(h2h.raw.total_pnl || 0).toFixed(2)}</div></div>
+      <div class="card"><div class="label">LLM win rate</div>
+        <div class="value">${fmtPct(h2h.llm.win_rate)}</div>
+        <div class="sub">${h2h.llm.n_betted || 0} bets · PnL ${h2h.llm.total_pnl >= 0 ? "+" : ""}${(h2h.llm.total_pnl || 0).toFixed(2)}</div></div>
+    `;
+    const dis = h2h.when_disagree || {};
+    if (dis.n_betted > 0) {
+      document.getElementById("h2h-disagree").innerHTML = `
+        <h3 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 0 0 6px;">When they disagree</h3>
+        <table><thead><tr><th></th><th>n betted</th><th>Win rate</th></tr></thead>
+          <tbody>
+            <tr><td>Raw model</td><td>${dis.n_betted}</td><td>${fmtPct(dis.raw_win_rate)}</td></tr>
+            <tr><td>LLM</td><td>${dis.n_betted}</td><td>${fmtPct(dis.llm_win_rate)}</td></tr>
+          </tbody></table>`;
+    } else {
+      document.getElementById("h2h-disagree").innerHTML = "";
+    }
+    // Render the (raw × llm) cell matrix
+    const cells = h2h.matrix || {};
+    const rawKeys = ["BUY_YES", "BUY_NO", "PASS"];
+    const llmKeys = ["BUY_YES", "BUY_NO", "PASS", "WAIT_AND_SEE"];
+    let html = `<h3 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 0 0 6px;">Agreement matrix (raw × LLM)</h3>`;
+    html += `<table><thead><tr><th>raw \\ llm</th>`;
+    llmKeys.forEach(k => html += `<th>${k.replaceAll('_', ' ')}</th>`);
+    html += `</tr></thead><tbody>`;
+    rawKeys.forEach(r => {
+      html += `<tr><td>${r.replaceAll('_', ' ')}</td>`;
+      llmKeys.forEach(l => {
+        const cell = (cells[r] || {})[l];
+        if (!cell || cell.n === 0) {
+          html += `<td style="color: var(--text-muted)">—</td>`;
+        } else {
+          html += `<td>${cell.n}<br><span style="font-size: 10px; color: var(--text-muted);">raw ${cell.raw_wins} / llm ${cell.llm_wins}</span></td>`;
+        }
+      });
+      html += `</tr>`;
+    });
+    html += `</tbody></table>`;
+    document.getElementById("h2h-matrix").innerHTML = html;
+  } catch (e) {
+    document.getElementById("h2h-cards").innerHTML = `<div class="empty-state">${e.status === 401 ? "Sign in to view head-to-head." : "Unavailable."}</div>`;
+  }
+}
 
 async function loadInsightCalibration() {
   try {
@@ -750,6 +821,7 @@ function renderCityChart(stations) {
     renderChain(manifest.rollups);
     renderVerify(verify);
     loadInsightCalibration();
+    loadHeadToHead();
   } catch (e) {
     document.getElementById("verify-banner").innerHTML =
       `<strong>Couldn't load track-record data:</strong> ${e.message}`;

@@ -703,9 +703,13 @@ def stream_insight(context: dict, *,
     client : anthropic.Anthropic, optional
         Injectable for tests. Defaults to a fresh client from env.
     """
-    if model not in VALID_MODELS:
-        logger.info("insight: unknown model %r, falling back to %s",
-                    model, MODEL_FAST)
+    # Validation of user-provided model strings lives in the endpoint
+    # (it knows the request's `mode` and picks the right tier). Internal
+    # callers — the ensemble module especially — pass model strings
+    # outside VALID_MODELS (e.g. "claude-opus-4-7") on purpose, so we
+    # trust the caller here. The endpoint is the gate.
+    if not model:
+        logger.info("insight: empty model, defaulting to %s", MODEL_FAST)
         model = MODEL_FAST
 
     cli = client if client is not None else _client()

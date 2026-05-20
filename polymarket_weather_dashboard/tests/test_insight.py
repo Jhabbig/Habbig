@@ -332,8 +332,11 @@ def test_stream_insight_passes_cache_control_to_sdk():
     assert kwargs["model"] == insight.MODEL_FAST
 
 
-def test_stream_insight_coerces_unknown_model_to_fast():
-    """A stray ?model=opus shouldn't pick an arbitrary expensive model."""
+def test_stream_insight_passes_arbitrary_model_through():
+    """`stream_insight` trusts the caller's model choice — validation
+    lives at the HTTP boundary, not inside the streaming wrapper.
+    The ensemble module specifically depends on being able to pass
+    Opus 4.7 here without coercion."""
     stream = _build_canned_stream(
         {"recommendation": "PASS", "confidence": "low", "headline": "x",
          "key_facts": ["x"], "key_risks": ["x"], "suggested_limit_cents": None,
@@ -341,7 +344,22 @@ def test_stream_insight_coerces_unknown_model_to_fast():
         deltas=["{}"],
     )
     client = _FakeClient(stream)
-    list(insight.stream_insight({"market_id": "m1"}, model="opus-4-7", client=client))
+    list(insight.stream_insight({"market_id": "m1"},
+                                 model="claude-opus-4-7", client=client))
+    assert client.messages.last_kwargs["model"] == "claude-opus-4-7"
+
+
+def test_stream_insight_defaults_empty_model_to_fast():
+    """Empty string still defaults to MODEL_FAST so a misconfigured
+    caller doesn't fail with a confusing API error."""
+    stream = _build_canned_stream(
+        {"recommendation": "PASS", "confidence": "low", "headline": "x",
+         "key_facts": ["x"], "key_risks": ["x"], "suggested_limit_cents": None,
+         "tail_warning": False, "disclaimer": "Not investment advice."},
+        deltas=["{}"],
+    )
+    client = _FakeClient(stream)
+    list(insight.stream_insight({"market_id": "m1"}, model="", client=client))
     assert client.messages.last_kwargs["model"] == insight.MODEL_FAST
 
 

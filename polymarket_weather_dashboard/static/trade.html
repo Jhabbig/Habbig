@@ -210,6 +210,59 @@ h2 {
   text-transform: uppercase; letter-spacing: 0.5px; margin-left: 4px;
 }
 
+/* Ensemble */
+.ensemble-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-top: 8px;
+}
+@media (max-width: 700px) { .ensemble-grid { grid-template-columns: 1fr; } }
+.ensemble-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px; font-size: 12px;
+}
+.ensemble-card .em-model {
+  font-family: ui-monospace, monospace; font-size: 10px;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.ensemble-card .em-rec {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.ensemble-card .em-rec.BUY_YES { background: var(--buy-bg); color: var(--accent); }
+.ensemble-card .em-rec.BUY_NO  { background: var(--sell-bg); color: var(--warn); }
+.ensemble-card .em-rec.PASS    { background: var(--bg-soft); color: var(--text-muted); }
+.ensemble-card .em-rec.WAIT_AND_SEE { background: var(--bg-soft); color: var(--accent); }
+.ensemble-card .em-headline { line-height: 1.4; margin-bottom: 4px; }
+.ensemble-card .em-conf { font-size: 10px; color: var(--text-muted); }
+.ensemble-card.em-failed { opacity: 0.5; }
+.ensemble-agreement-pill {
+  padding: 2px 8px; border-radius: 3px; font-weight: 600;
+  font-size: 10px; letter-spacing: 0.5px;
+}
+.ensemble-agreement-pill.unanimous { background: var(--buy-bg); color: var(--accent); }
+.ensemble-agreement-pill.majority  { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
+.ensemble-agreement-pill.split     { background: var(--sell-bg); color: var(--warn); }
+
+/* Webhooks settings */
+.webhook-row {
+  background: var(--bg-soft); padding: 10px 12px; border-radius: 4px;
+  margin-bottom: 8px; font-size: 12px;
+}
+.webhook-row .wh-url {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  color: var(--text-muted); word-break: break-all; margin-bottom: 4px;
+}
+.webhook-row .wh-meta { color: var(--text-muted); font-size: 11px; }
+.webhook-row .wh-stats { color: var(--text-muted); font-size: 10px; margin-top: 4px; }
+.webhook-row.wh-disabled { opacity: 0.5; }
+.webhook-row .wh-actions { display: flex; gap: 6px; margin-top: 6px; }
+.webhook-row .wh-actions button {
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+  border-radius: 3px; padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.webhook-row .wh-actions button:hover { background: var(--border); }
+
 /* Confirmation modal */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -386,9 +439,19 @@ h2 {
           <span>Max payout</span><span class="v" id="review-payout">$1.00</span>
         </div>
 
-        <div class="row-2" style="margin-top: 12px;">
-          <button id="insight-btn" class="btn btn-secondary">Explain this market</button>
+        <div class="row-3" style="margin-top: 12px;">
+          <button id="insight-btn" class="btn btn-secondary">Explain</button>
+          <button id="ensemble-btn" class="btn btn-secondary" title="Run Haiku + Sonnet + Opus 4.7 in parallel">Ensemble</button>
           <button id="place-btn" class="btn btn-primary">Review &amp; place</button>
+        </div>
+
+        <div id="ensemble-panel" class="insight-panel" style="display: none;">
+          <div class="insight-header">
+            <h2 style="margin: 0;">Ensemble (3 models)</h2>
+            <span id="ensemble-agreement-badge" style="font-size: 11px;"></span>
+          </div>
+          <div id="ensemble-status" class="insight-status">Running…</div>
+          <div id="ensemble-grid" class="ensemble-grid"></div>
         </div>
 
         <div id="result" class="result" style="display: none;"></div>
@@ -456,6 +519,51 @@ h2 {
           Click any row to load that market's full history.
         </p>
         <div id="feed-list"><div class="placeholder">Loading…</div></div>
+      </div>
+
+      <div class="section">
+        <h2>Webhooks</h2>
+        <p style="font-size: 11px; color: var(--text-muted); margin: 0 0 10px;">
+          Fire insights to Discord / Slack / a generic JSON endpoint.
+          Filters narrow which insights notify.
+        </p>
+        <div id="webhook-list"><div class="placeholder">Loading…</div></div>
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
+          <div class="field">
+            <label>URL (https only)</label>
+            <input id="wh-url" type="url" placeholder="https://discord.com/api/webhooks/...">
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label>Kind</label>
+              <select id="wh-kind">
+                <option value="discord">Discord</option>
+                <option value="slack">Slack</option>
+                <option value="generic">Generic JSON</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Min confidence</label>
+              <select id="wh-conf">
+                <option value="low">low</option>
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+              </select>
+            </div>
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label>Min |edge| (0.0–1.0)</label>
+              <input id="wh-edge" type="number" step="0.01" min="0" max="1" value="0.10">
+            </div>
+            <div class="field">
+              <label>Recommendations (CSV; blank = all)</label>
+              <input id="wh-rec" type="text" placeholder="BUY_YES,BUY_NO">
+            </div>
+          </div>
+          <button id="wh-add-btn" class="btn btn-secondary">Add webhook</button>
+          <div id="wh-add-status" class="enroll-status" style="display: none;"></div>
+        </div>
       </div>
 
       <div class="section enroll-area" id="enroll">
@@ -1007,6 +1115,168 @@ async function streamInsight() {
 
 insightBtn.addEventListener("click", streamInsight);
 
+// ─── Ensemble (Haiku + Sonnet + Opus) ────────────────────────────────────
+
+const ensembleBtn = document.getElementById("ensemble-btn");
+const ensemblePanel = document.getElementById("ensemble-panel");
+const ensembleStatus = document.getElementById("ensemble-status");
+const ensembleGrid = document.getElementById("ensemble-grid");
+const ensembleBadge = document.getElementById("ensemble-agreement-badge");
+
+ensembleBtn.addEventListener("click", async () => {
+  if (!state.selected) return;
+  ensemblePanel.style.display = "block";
+  ensembleStatus.textContent = "Running 3 models in parallel… ~5–8s.";
+  ensembleStatus.className = "insight-status loading";
+  ensembleGrid.innerHTML = "";
+  ensembleBadge.innerHTML = "";
+  try {
+    const data = await fetchJSON(`/api/insight/${state.selected.ticker}/ensemble`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    renderEnsemble(data);
+  } catch (e) {
+    ensembleStatus.className = "insight-status";
+    ensembleStatus.textContent = `Failed: ${e.body && e.body.error || e.message}`;
+  }
+});
+
+function renderEnsemble(data) {
+  ensembleStatus.className = "insight-status";
+  const agreement = data.agreement || {};
+  const level = agreement.level || "no_data";
+  const label = level === "unanimous" ? `✓ Unanimous: ${agreement.majority || ''}`
+              : level === "majority"  ? `Majority ${agreement.majority || ''} (${agreement.majority_count || 0}/${agreement.n_valid || 0})`
+              : level === "split"     ? "✗ Split — models disagree"
+                                       : "No data";
+  ensembleBadge.innerHTML = `<span class="ensemble-agreement-pill ${level}">${label}</span>`;
+  ensembleStatus.textContent = `${data.n_complete} of ${data.n_complete + data.n_failed} models completed.`;
+  ensembleGrid.innerHTML = (data.members || []).map(m => {
+    if (!m.insight) {
+      return `<div class="ensemble-card em-failed">
+        <div class="em-model">${escapeHtml(m.model || '')}</div>
+        <div class="em-rec PASS">FAILED</div>
+        <div class="em-headline">${escapeHtml((m.error || {}).error || 'no result')}</div>
+      </div>`;
+    }
+    const ins = m.insight;
+    const rec = ins.recommendation || "—";
+    return `<div class="ensemble-card">
+      <div class="em-model">${escapeHtml(m.model || '')}</div>
+      <div class="em-rec ${rec}">${rec.replaceAll('_', ' ')}</div>
+      <div class="em-headline">${escapeHtml(ins.headline || '')}</div>
+      <div class="em-conf">${ins.confidence || ''} confidence
+        ${ins.suggested_limit_cents != null ? '· limit ' + ins.suggested_limit_cents + '¢' : ''}
+        ${ins.tail_warning ? '· tail risk' : ''}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ─── Webhooks ─────────────────────────────────────────────────────────────
+
+const webhookList = document.getElementById("webhook-list");
+const whAddBtn = document.getElementById("wh-add-btn");
+const whAddStatus = document.getElementById("wh-add-status");
+
+async function loadWebhooks() {
+  try {
+    const data = await fetchJSON("/api/insight/webhooks");
+    renderWebhooks(data.webhooks || []);
+  } catch (e) {
+    if (e.status === 401) {
+      webhookList.innerHTML = `<div class="placeholder">Sign in to manage webhooks.</div>`;
+    } else {
+      webhookList.innerHTML = `<div class="placeholder">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+}
+
+function renderWebhooks(hooks) {
+  if (hooks.length === 0) {
+    webhookList.innerHTML = `<div class="placeholder">No webhooks yet.</div>`;
+    return;
+  }
+  webhookList.innerHTML = hooks.map(h => {
+    const filterLabel = h.recommendation_filter || "all";
+    const lastFired = h.last_fired_at ? new Date(h.last_fired_at).toLocaleString() : "never";
+    return `<div class="webhook-row ${h.enabled ? '' : 'wh-disabled'}" data-id="${h.id}">
+      <div class="wh-url">${escapeHtml(h.url)}</div>
+      <div class="wh-meta">
+        ${escapeHtml(h.kind)} · ≥ ${(h.min_abs_edge * 100).toFixed(0)}pp edge · ≥ ${escapeHtml(h.min_confidence)} · ${escapeHtml(filterLabel)}
+      </div>
+      <div class="wh-stats">
+        ${h.enabled ? 'enabled' : 'auto-disabled'} · ${h.total_fires} fires · last ${lastFired}
+        ${h.last_error ? '· last error: ' + escapeHtml(h.last_error) : ''}
+      </div>
+      <div class="wh-actions">
+        <button data-act="toggle">${h.enabled ? 'Disable' : 'Enable'}</button>
+        <button data-act="test">Test fire</button>
+        <button data-act="delete">Remove</button>
+      </div>
+    </div>`;
+  }).join("");
+  webhookList.querySelectorAll(".webhook-row").forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('[data-act="toggle"]').addEventListener("click", async () => {
+      const enabled = !row.classList.contains("wh-disabled");
+      await fetchJSON(`/api/insight/webhooks/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      loadWebhooks();
+    });
+    row.querySelector('[data-act="test"]').addEventListener("click", async () => {
+      try {
+        const r = await fetchJSON(`/api/insight/webhooks/${id}/test`, { method: "POST" });
+        alert(r.ok ? `Test fired (HTTP ${r.status}).` : `Test failed: ${r.error}`);
+        loadWebhooks();
+      } catch (e) {
+        alert(`Test failed: ${e.message}`);
+      }
+    });
+    row.querySelector('[data-act="delete"]').addEventListener("click", async () => {
+      if (!confirm("Remove this webhook?")) return;
+      await fetchJSON(`/api/insight/webhooks/${id}`, { method: "DELETE" });
+      loadWebhooks();
+    });
+  });
+}
+
+whAddBtn.addEventListener("click", async () => {
+  const url = document.getElementById("wh-url").value.trim();
+  const kind = document.getElementById("wh-kind").value;
+  const conf = document.getElementById("wh-conf").value;
+  const edge = parseFloat(document.getElementById("wh-edge").value) || 0.10;
+  const rec = document.getElementById("wh-rec").value.trim();
+  whAddStatus.style.display = "block";
+  whAddStatus.className = "enroll-status";
+  if (!url.startsWith("https://")) {
+    whAddStatus.textContent = "URL must start with https://";
+    return;
+  }
+  try {
+    await fetchJSON("/api/insight/webhooks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url, kind, min_confidence: conf, min_abs_edge: edge,
+        recommendation_filter: rec,
+      }),
+    });
+    document.getElementById("wh-url").value = "";
+    document.getElementById("wh-rec").value = "";
+    whAddStatus.className = "enroll-status enrolled";
+    whAddStatus.textContent = "✓ Added.";
+    loadWebhooks();
+  } catch (e) {
+    whAddStatus.textContent = `✗ ${e.body && e.body.error || e.message}`;
+  }
+});
+
 // ─── Live insights feed ───────────────────────────────────────────────────
 
 async function loadFeed() {
@@ -1060,6 +1330,7 @@ document.getElementById("search-input").addEventListener("input", e => filterMar
 loadMarkets();
 loadSummary();
 loadFeed();
+loadWebhooks();
 setInterval(loadSummary, 30000);
 setInterval(loadFeed, 60000);  // refresh feed every minute
 </script>

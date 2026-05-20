@@ -41,6 +41,9 @@ import track_record as _track
 # Phase 4 — LLM actionable insight
 import insight as _insight
 import insight_storage as _istore
+import insight_compare as _icompare
+import insight_ensemble as _iens
+import insight_webhooks as _iwh
 
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
@@ -398,6 +401,27 @@ CREATE TABLE IF NOT EXISTS insight_resolutions (
     FOREIGN KEY (insight_id) REFERENCES insight_log(id)
 );
 CREATE INDEX IF NOT EXISTS idx_insight_res_market ON insight_resolutions(market_id);
+
+-- Per-user webhook configs. URL is required; filters narrow what
+-- fires through. `enabled` flips to 0 automatically after the auto-
+-- disable threshold of consecutive failures so a misconfigured URL
+-- can't burn outbound capacity forever.
+CREATE TABLE IF NOT EXISTS insight_webhooks (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id                  TEXT NOT NULL,
+    url                      TEXT NOT NULL,
+    kind                     TEXT NOT NULL,         -- discord | slack | generic
+    min_confidence           TEXT NOT NULL DEFAULT 'medium',
+    min_abs_edge             REAL NOT NULL DEFAULT 0.10,
+    recommendation_filter    TEXT DEFAULT '',       -- CSV; empty = all
+    enabled                  INTEGER NOT NULL DEFAULT 1,
+    created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_fired_at            TEXT,
+    last_error               TEXT,
+    consecutive_failures     INTEGER NOT NULL DEFAULT 0,
+    total_fires              INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_insight_wh_user ON insight_webhooks(user_id, created_at);
 """
 
 
@@ -4128,15 +4152,21 @@ def api_insight(market_id):
                     # Persist before yielding so the row is visible to /api/insight/feed
                     # by the time the user sees the rendered card.
                     latency_ms = int((time.monotonic() - start_mono) * 1000)
+                    insight_row = None
                     try:
-                        _istore.log_insight(
+                        insight_id = _istore.log_insight(
                             _get_conn, market_id=market_id,
                             context=context, complete_data=chunk.data,
                             model=model, mode=mode, latency_ms=latency_ms,
                             triggered_by="user",
                         )
+                        if insight_id:
+                            insight_row = _istore.get_insight(_get_conn, insight_id)
                     except Exception as log_e:
                         logger.warning("insight log write failed: %s", log_e)
+                    # Fan out to webhooks asynchronously so SSE doesn't wait
+                    if insight_row:
+                        _iwh.dispatch_async(_get_conn, insight_row)
                 yield _sse_frame(chunk.type, chunk.data)
         except Exception as e:
             logger.exception("insight stream crashed for %s: %s", market_id, e)
@@ -4227,6 +4257,187 @@ def api_public_track_insights():
         "date": date_iso,
         "insights": _istore.insights_for_date(_get_conn, date_iso, limit=limit),
     })
+
+
+@app.route("/api/insight/head_to_head")
+@require_auth
+def api_insight_head_to_head():
+    """LLM recommendation vs raw model signal on resolved insights.
+
+    Returns aggregate win rate + PnL for both surfaces over the same
+    sample, plus an agreement matrix (raw_call × llm_call) so the
+    disagreement cells are inspectable.
+    """
+    days = max(7, min(365, int(request.args.get("days", 180))))
+    threshold = float(request.args.get("threshold", 0.05))
+    return jsonify(_icompare.head_to_head_stats(
+        _get_conn, days=days, raw_threshold=threshold,
+    ))
+
+
+@app.route("/api/insight/<market_id>/ensemble", methods=["POST"])
+@require_auth
+def api_insight_ensemble(market_id):
+    """Run Haiku + Sonnet + Opus 4.7 in parallel on the same context;
+    return all three insights plus an agreement summary.
+
+    Synchronous (no SSE) because the latency is dominated by Opus and
+    progressive reveal would be marginal UX gain for substantial
+    complexity. Cost is ~3¢ after caches warm up.
+    """
+    context = _gather_insight_context(market_id)
+    if context is None:
+        return jsonify({"error": "market not found or not yet loaded"}), 404
+
+    result = _iens.run_ensemble(context)
+
+    # Log each member so the ledger / feed / calibration all reflect
+    # ensemble runs the same way single-tier calls do.
+    fired_rows = []
+    for m in result.get("members", []):
+        if not m.get("insight"):
+            continue  # member errored — don't log empty rows
+        complete_data = {
+            "insight": m["insight"],
+            "usage": m.get("usage") or {},
+            "model": m["model"],
+            "stop_reason": m.get("stop_reason"),
+        }
+        try:
+            row_id = _istore.log_insight(
+                _get_conn, market_id=market_id,
+                context=context, complete_data=complete_data,
+                model=m["model"], mode="ensemble",
+                latency_ms=None, triggered_by="user",
+            )
+            if row_id:
+                row = _istore.get_insight(_get_conn, row_id)
+                if row:
+                    fired_rows.append(row)
+        except Exception as e:
+            logger.warning("ensemble log write failed for %s: %s", m["model"], e)
+
+    # Webhooks fire only on the strongest signal in the ensemble — the
+    # majority recommendation when present, on its highest-confidence
+    # member. Avoids spamming the same alert three times.
+    agreement = result.get("agreement", {})
+    if agreement.get("level") in ("unanimous", "majority") and fired_rows:
+        majority = agreement.get("majority")
+        candidates = [r for r in fired_rows if r.get("recommendation") == majority]
+        if candidates:
+            conf_rank = {"high": 2, "medium": 1, "low": 0}
+            best = max(candidates,
+                       key=lambda r: conf_rank.get(r.get("confidence") or "low", 0))
+            _iwh.dispatch_async(_get_conn, best)
+
+    return jsonify(result)
+
+
+@app.route("/api/insight/webhooks", methods=["GET"])
+@require_auth
+def api_webhooks_list():
+    user = _get_user_from_request()
+    user_id = (user or {}).get("id") or (user or {}).get("email") if user else None
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    return jsonify({"webhooks": _iwh.list_webhooks(_get_conn, user_id)})
+
+
+@app.route("/api/insight/webhooks", methods=["POST"])
+@require_auth
+def api_webhooks_create():
+    user = _get_user_from_request()
+    user_id = (user or {}).get("id") or (user or {}).get("email") if user else None
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    body = request.get_json(silent=True) or {}
+    url = (body.get("url") or "").strip()
+    kind = (body.get("kind") or "generic").lower().strip()
+    if not url.startswith("https://"):
+        return jsonify({"error": "url must be https"}), 400
+    if kind not in _iwh.VALID_KINDS:
+        return jsonify({"error": f"kind must be one of {sorted(_iwh.VALID_KINDS)}"}), 400
+    min_conf = (body.get("min_confidence") or "medium").lower()
+    if min_conf not in ("low", "medium", "high"):
+        return jsonify({"error": "min_confidence must be low|medium|high"}), 400
+    try:
+        min_edge = float(body.get("min_abs_edge", 0.10))
+    except (TypeError, ValueError):
+        return jsonify({"error": "min_abs_edge must be a number"}), 400
+    if min_edge < 0 or min_edge > 1:
+        return jsonify({"error": "min_abs_edge must be in [0, 1]"}), 400
+    rec_filter = (body.get("recommendation_filter") or "").strip()
+    wid = _iwh.create_webhook(
+        _get_conn, user_id=user_id, url=url, kind=kind,
+        min_confidence=min_conf, min_abs_edge=min_edge,
+        recommendation_filter=rec_filter,
+    )
+    return jsonify({"ok": True, "id": wid})
+
+
+@app.route("/api/insight/webhooks/<int:webhook_id>", methods=["PUT"])
+@require_auth
+def api_webhooks_update(webhook_id):
+    user = _get_user_from_request()
+    user_id = (user or {}).get("id") or (user or {}).get("email") if user else None
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    if "enabled" in body:
+        fields["enabled"] = 1 if body["enabled"] else 0
+    if "min_confidence" in body:
+        mc = (body["min_confidence"] or "").lower()
+        if mc not in ("low", "medium", "high"):
+            return jsonify({"error": "bad min_confidence"}), 400
+        fields["min_confidence"] = mc
+    if "min_abs_edge" in body:
+        try:
+            fields["min_abs_edge"] = float(body["min_abs_edge"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "bad min_abs_edge"}), 400
+    if "recommendation_filter" in body:
+        fields["recommendation_filter"] = str(body["recommendation_filter"] or "").strip()
+    if not fields:
+        return jsonify({"ok": False, "reason": "no allowed fields"})
+    changed = _iwh.update_webhook(_get_conn, webhook_id, user_id, **fields)
+    return jsonify({"ok": True, "changed": changed})
+
+
+@app.route("/api/insight/webhooks/<int:webhook_id>", methods=["DELETE"])
+@require_auth
+def api_webhooks_delete(webhook_id):
+    user = _get_user_from_request()
+    user_id = (user or {}).get("id") or (user or {}).get("email") if user else None
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    ok = _iwh.delete_webhook(_get_conn, webhook_id, user_id)
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/insight/webhooks/<int:webhook_id>/test", methods=["POST"])
+@require_auth
+def api_webhooks_test(webhook_id):
+    """Fire a synthetic test payload — confirms the URL accepts our
+    format before the next real insight matches."""
+    user = _get_user_from_request()
+    user_id = (user or {}).get("id") or (user or {}).get("email") if user else None
+    if not user_id:
+        return jsonify({"error": "auth"}), 401
+    wh = _iwh.get_webhook(_get_conn, webhook_id, user_id)
+    if not wh:
+        return jsonify({"error": "not found"}), 404
+    test_row = {
+        "market_id": "TEST-MARKET",
+        "recommendation": "BUY_YES",
+        "confidence": "high",
+        "headline": "Test webhook — narve.ai weather dashboard.",
+        "edge": 0.15,
+        "suggested_limit_cents": 60,
+        "tail_warning": False,
+        "triggered_by": "test",
+    }
+    return jsonify(_iwh.fire(wh, test_row, conn_factory=_get_conn))
 
 
 @app.route("/api/calibration")
@@ -5832,12 +6043,21 @@ def _insight_auto_loop():
                 if complete_data is None:
                     continue
                 latency_ms = int((time.monotonic() - start_mono) * 1000)
-                _istore.log_insight(
+                insight_id = _istore.log_insight(
                     _get_conn, market_id=market_id,
                     context=context, complete_data=complete_data,
                     model=_insight.MODEL_FAST, mode="fast",
                     latency_ms=latency_ms, triggered_by="auto",
                 )
+                # Auto-mode insights fire webhooks too — that's the
+                # whole point of auto-mode for users who set them up.
+                if insight_id:
+                    try:
+                        row = _istore.get_insight(_get_conn, insight_id)
+                        if row:
+                            _iwh.dispatch_async(_get_conn, row)
+                    except Exception as e:
+                        logger.warning("auto webhook dispatch failed: %s", e)
                 generated += 1
             if generated:
                 logger.info("auto-insight pass: generated %d", generated)
