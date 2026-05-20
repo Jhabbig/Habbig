@@ -99,16 +99,27 @@ def compute_edges(limit: int = 20) -> list[dict]:
     return out[:limit]
 
 
+def _max_spread_bps() -> float:
+    """Wider spreads = thinner liquidity. Markets above this are filtered."""
+    try:
+        return float(os.environ.get("CULTURE_MAX_SPREAD_BPS", "500"))
+    except ValueError:
+        return 500.0
+
+
 def _match_markets(keywords: list[str], market_items: list[dict]) -> list[dict]:
     """Match by overlap coefficient (|inter| / min(|a|,|b|)), not Jaccard.
 
-    Each matched market is enriched with `price_velocity_24h_pct` (from the
-    market_prices table) so downstream consumers can rank by mispricing.
+    Each matched market is enriched with `price_velocity_24h_pct` and
+    `spread_bps` from market_prices, plus a downsampled trajectory for
+    the inline sparkline. Markets wider than CULTURE_MAX_SPREAD_BPS are
+    dropped — wide spread = thin liquidity = unreliable price signal.
     """
     if not market_items or not keywords:
         return []
     kw = set(keywords)
     threshold = _market_match_threshold()
+    max_spread = _max_spread_bps()
     out = []
     for m in market_items:
         mk = topics.extract_keywords(m)
@@ -123,6 +134,10 @@ def _match_markets(keywords: list[str], market_items: list[dict]) -> list[dict]:
         extra = m.get("extra") or {}
         slug = extra.get("event_slug") or _slug_from_url(m.get("url") or "")
         vel = price_velocity.compute(slug) if slug else None
+        spread = (vel.get("spread_bps") if vel else None) or extra.get("spread_bps")
+        # Filter wide-spread markets unless we have no spread data at all.
+        if spread is not None and spread > max_spread:
+            continue
         out.append({
             "title": m.get("title"),
             "url": m.get("url"),
@@ -131,9 +146,11 @@ def _match_markets(keywords: list[str], market_items: list[dict]) -> list[dict]:
             "shared": sorted(inter)[:6],
             "event_slug": slug or None,
             "favorite_question": extra.get("favorite_question"),
-            "current_price": extra.get("favorite_price"),
+            "current_price": extra.get("mid_price") or extra.get("favorite_price"),
+            "spread_bps": spread,
             "price_velocity_24h_pct": vel["pct"] if vel else None,
             "velocity_points": vel["points"] if vel else 0,
+            "trajectory": price_velocity.trajectory(slug) if slug else [],
         })
     out.sort(key=lambda x: x["overlap"], reverse=True)
     return out[:5]

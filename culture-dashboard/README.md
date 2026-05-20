@@ -68,7 +68,8 @@ dashboard still renders, that section just shows "No data".
 | `surge_calc.py` | Per-item z-score against trailing window — picks the rising items. |
 | `topics.py` | Cross-source topic clustering — Jaccard on title tokens + hashtags. |
 | `edge.py` | Topic ↔ Polymarket-market matcher; computes mispricing score from surge vs. price velocity. |
-| `price_velocity.py` | Trailing 24h price velocity per event from the market_prices table. |
+| `price_velocity.py` | Trailing 24h price velocity (mid-price) + downsampled trajectory per event. |
+| `backtest.py` | Predictive validation: hit-rate of historical market-source surges vs realised 24h price moves. |
 | `digest.py` | Calls Claude (anthropic SDK) with a packed snapshot to produce the daily culture brief. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
@@ -185,6 +186,32 @@ price + 24h velocity (green when |Δ|<5%, amber when larger). Velocities require
 
 `market_prices` is pruned to 30 days each cycle.
 
+### Order-book depth
+
+Each price snapshot also captures `best_bid` / `best_ask` / `mid_price` /
+`spread_bps`. Velocity is computed against **mid-price** (more honest than
+last-trade, which can lag). Markets wider than `CULTURE_MAX_SPREAD_BPS`
+(default 500 = 5%) are dropped from the edges panel — wide spread = thin
+liquidity = unreliable price signal.
+
+### Signal validation (backtest)
+
+`backtest.py` walks every historical `surge_alerts` entry where the source
+is `culture_markets`, extracts the event slug, and compares the price at
+the alert time vs. the price `CULTURE_BACKTEST_WINDOW_HOURS` later
+(default 24h). Realised |Δ| ≥ `CULTURE_BACKTEST_HIT_THRESHOLD` (default 5%)
+counts as a hit, half-that-or-more as a weak hit, otherwise a miss.
+
+Returned via `GET /api/backtest?days=30` and rendered in the "Signal
+validation" panel under the edges. This is a backwards-looking sanity check
+— it answers "when our surge alarm fired on a culture market, did the
+price actually move?".
+
+Note: topic-level surges (Reddit, TikTok, etc.) are *not* yet backtested
+because we don't persist which topic clusters existed at past timestamps.
+That requires snapshotting cluster state at each scrape, deferred to a
+later iteration.
+
 ## API
 
 | Endpoint | Returns |
@@ -195,7 +222,8 @@ price + 24h velocity (green when |Δ|<5%, amber when larger). Velocities require
 | `GET /api/index/history?hours=72` | Time series of overall score (max 30d). |
 | `GET /api/surges?limit=20` | Items with positive z-score vs trailing 7-day baseline, with their full trajectory. |
 | `GET /api/topics?limit=20` | Cross-source topic clusters, each with matched markets + surge signal. |
-| `GET /api/edges?limit=20` | Topics that have matched markets AND a surging signal — the dashboard's "market signal" panel reads this. |
+| `GET /api/edges?limit=20` | Topics that have matched markets AND a surging signal — the dashboard's "market signal" panel reads this. Includes per-market spread, velocity, and downsampled price trajectory for the inline sparkline. |
+| `GET /api/backtest?days=30` | Hit/weak/miss rate of historical market-source surges plus the per-alert breakdown. |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |

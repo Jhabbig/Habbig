@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI, HTTPException, Request           # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
 
+import backtest                                                # noqa: E402
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
 import digest as digest_mod                                    # noqa: E402
@@ -166,6 +167,13 @@ async def api_digest() -> JSONResponse:
         "configured": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
         "default_model": digest_mod.DEFAULT_MODEL,
     })
+
+
+@app.get("/api/backtest")
+async def api_backtest(days: int = 30, limit: int = 50) -> JSONResponse:
+    days = max(1, min(days, 365))
+    limit = max(1, min(limit, 500))
+    return JSONResponse(backtest.validate(days=days, limit=limit))
 
 
 @app.post("/api/digest/refresh")

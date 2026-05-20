@@ -58,7 +58,7 @@ async def _polymarket(snapshots: list[dict]) -> list[Item]:
                 if vol < 1000:
                     continue
                 slug = ev.get("slug") or ""
-                fav_q, fav_price = _favorite_market(ev)
+                fav = _favorite_market(ev)
                 out.append(Item(
                     section=SECTION,
                     source=NAME,
@@ -70,47 +70,90 @@ async def _polymarket(snapshots: list[dict]) -> list[Item]:
                     extra={"venue": "polymarket", "tag": tag,
                            "liquidity": ev.get("liquidity"),
                            "event_slug": slug,
-                           "favorite_question": fav_q,
-                           "favorite_price": fav_price},
+                           "favorite_question": fav["question"],
+                           "favorite_price": fav["price"],
+                           "best_bid": fav["best_bid"],
+                           "best_ask": fav["best_ask"],
+                           "mid_price": fav["mid_price"],
+                           "spread_bps": fav["spread_bps"]},
                 ))
-                if slug and fav_price is not None:
+                if slug and fav["price"] is not None:
                     snapshots.append({
                         "event_slug": slug,
                         "ts": now,
-                        "favorite_question": fav_q or "",
-                        "favorite_price": fav_price,
+                        "favorite_question": fav["question"] or "",
+                        "favorite_price": fav["price"],
                         "volume": vol,
+                        "best_bid": fav["best_bid"],
+                        "best_ask": fav["best_ask"],
+                        "mid_price": fav["mid_price"],
+                        "spread_bps": fav["spread_bps"],
                     })
     return out
 
 
-def _favorite_market(ev: dict) -> tuple[str | None, float | None]:
+def _favorite_market(ev: dict) -> dict:
     """Pick the leading market within an event by `lastTradePrice`.
 
-    Single-market events: returns market[0] (typically yes/no, "Yes" leg).
-    Multi-market events: returns the candidate with highest lastTradePrice.
+    Returns a dict with: question, price (lastTradePrice), best_bid, best_ask,
+    mid_price ((bid+ask)/2), spread_bps. Any sub-field may be None when the
+    market is thinly traded or the API omitted it.
     """
     markets = ev.get("markets") or []
-    best_q: str | None = None
-    best_price: float | None = None
-    for m in markets:
+    best_idx = -1
+    best_price = -1.0
+    for i, m in enumerate(markets):
         try:
             price = float(m.get("lastTradePrice") or 0)
         except (TypeError, ValueError):
             continue
-        if best_price is None or price > best_price:
+        if price > best_price:
             best_price = price
-            best_q = m.get("question") or m.get("groupItemTitle") or ev.get("title")
-    if best_price is None and markets:
-        # No lastTradePrice — try outcomePrices[0] as a fallback.
+            best_idx = i
+    if best_idx == -1 and markets:
+        # Fall back to outcomePrices[0] on the first market.
         m = markets[0]
-        prices = m.get("outcomePrices")
-        if isinstance(prices, str):
-            try:
-                arr = json.loads(prices)
-                if arr:
-                    best_price = float(arr[0])
-                    best_q = m.get("question") or ev.get("title")
-            except (json.JSONDecodeError, ValueError):
-                pass
-    return best_q, best_price
+        return {
+            "question": m.get("question") or ev.get("title"),
+            "price": _outcome_price_zero(m),
+            "best_bid": None, "best_ask": None,
+            "mid_price": None, "spread_bps": None,
+        }
+    if best_idx == -1:
+        return {"question": None, "price": None, "best_bid": None,
+                "best_ask": None, "mid_price": None, "spread_bps": None}
+
+    m = markets[best_idx]
+    bid = _to_float(m.get("bestBid"))
+    ask = _to_float(m.get("bestAsk"))
+    mid = (bid + ask) / 2 if (bid is not None and ask is not None) else None
+    spread_bps = ((ask - bid) / mid * 10_000) if (mid and bid is not None and ask is not None and mid > 0) else None
+    return {
+        "question": m.get("question") or m.get("groupItemTitle") or ev.get("title"),
+        "price": float(m.get("lastTradePrice") or 0),
+        "best_bid": bid,
+        "best_ask": ask,
+        "mid_price": mid,
+        "spread_bps": round(spread_bps, 1) if spread_bps is not None else None,
+    }
+
+
+def _to_float(v) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _outcome_price_zero(m: dict) -> float | None:
+    prices = m.get("outcomePrices")
+    if isinstance(prices, str):
+        try:
+            arr = json.loads(prices)
+            if arr:
+                return float(arr[0])
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None

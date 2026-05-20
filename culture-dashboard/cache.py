@@ -117,11 +117,20 @@ def init_db() -> None:
                 favorite_question  TEXT NOT NULL,
                 favorite_price     REAL NOT NULL,
                 volume             REAL NOT NULL DEFAULT 0,
+                best_bid           REAL,
+                best_ask           REAL,
+                mid_price          REAL,
+                spread_bps         REAL,
                 PRIMARY KEY (event_slug, ts)
             );
             CREATE INDEX IF NOT EXISTS idx_market_prices_lookup
                 ON market_prices(event_slug, ts DESC);
         """)
+        for col in ("best_bid", "best_ask", "mid_price", "spread_bps"):
+            try:
+                c.execute(f"ALTER TABLE market_prices ADD COLUMN {col} REAL")
+            except sqlite3.OperationalError:
+                pass
         # Add phash column to existing DBs that predate the schema bump.
         try:
             c.execute("ALTER TABLE items ADD COLUMN phash TEXT")
@@ -376,13 +385,16 @@ def record_market_prices(snapshots: list[dict]) -> None:
     if not snapshots:
         return
     rows = [(s["event_slug"], s["ts"], s["favorite_question"],
-             float(s["favorite_price"]), float(s.get("volume") or 0))
+             float(s["favorite_price"]), float(s.get("volume") or 0),
+             s.get("best_bid"), s.get("best_ask"),
+             s.get("mid_price"), s.get("spread_bps"))
             for s in snapshots]
     with _txn() as c:
         c.executemany(
             "INSERT OR IGNORE INTO market_prices "
-            "(event_slug, ts, favorite_question, favorite_price, volume) "
-            "VALUES (?,?,?,?,?)",
+            "(event_slug, ts, favorite_question, favorite_price, volume, "
+            " best_bid, best_ask, mid_price, spread_bps) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
             rows,
         )
 
@@ -391,10 +403,37 @@ def market_price_history(event_slug: str, hours: int = 24) -> list[dict]:
     cutoff = time.time() - hours * 3600
     with _connect() as c:
         cur = c.execute(
-            "SELECT ts, favorite_question, favorite_price, volume "
+            "SELECT ts, favorite_question, favorite_price, volume, "
+            "best_bid, best_ask, mid_price, spread_bps "
             "FROM market_prices WHERE event_slug = ? AND ts >= ? "
             "ORDER BY ts ASC",
             (event_slug, cutoff),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def market_price_at(event_slug: str, ts: float, tolerance_s: float = 3600) -> dict | None:
+    """Return the snapshot closest to `ts` within `tolerance_s` seconds."""
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, favorite_price, mid_price, volume "
+            "FROM market_prices WHERE event_slug = ? "
+            "AND ts BETWEEN ? AND ? "
+            "ORDER BY ABS(ts - ?) ASC LIMIT 1",
+            (event_slug, ts - tolerance_s, ts + tolerance_s, ts),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def market_alerts(source: str, since_ts: float) -> list[dict]:
+    """Surge alerts on a given source since `since_ts`. Used by backtest."""
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT key, alerted_at, z_score FROM surge_alerts "
+            "WHERE source = ? AND alerted_at >= ? "
+            "ORDER BY alerted_at ASC",
+            (source, since_ts),
         )
         return [dict(r) for r in cur.fetchall()]
 
