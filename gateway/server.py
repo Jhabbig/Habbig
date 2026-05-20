@@ -2731,9 +2731,84 @@ def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", c
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
         "raw_new_superuser_key_banner": new_superuser_key_banner,
+        "raw_key_rows": _build_key_rows(csrf_token=csrf_token),
         "raw_enquiry_rows": _build_enquiry_rows(csrf_token=csrf_token),
         "raw_revenue_content": _build_revenue_content(),
     }
+
+
+def _build_key_rows(csrf_token: str = "") -> str:
+    """Generate HTML rows for superuser keys management."""
+    keys = db.list_superuser_keys()
+    if not keys:
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No investor keys yet.</div></div></div>'
+
+    import datetime as _dt
+    rows = []
+    now = int(time.time())
+
+    for k in keys:
+        # Determine status
+        if not k["active"]:
+            status = "disabled"
+            status_text = "Disabled"
+        elif k["expires_at"] and k["expires_at"] <= now:
+            status = "expired"
+            status_text = "Expired"
+        else:
+            status = "active"
+            status_text = "Active"
+
+        # Format metadata
+        dashboards_text = ", ".join(k["dashboards"]) if k["dashboards"] else "All dashboards"
+        aspects_text = ", ".join(k["aspects"]) if k["aspects"] else "None"
+
+        expires_text = ""
+        if k["expires_at"]:
+            expires_dt = _dt.datetime.fromtimestamp(k["expires_at"], tz=_dt.timezone.utc)
+            expires_text = f"Expires: {expires_dt.strftime('%Y-%m-%d')}"
+
+        last_used_text = ""
+        if k["last_used_at"]:
+            used_dt = _dt.datetime.fromtimestamp(k["last_used_at"], tz=_dt.timezone.utc)
+            last_used_text = f"Last used: {used_dt.strftime('%Y-%m-%d %H:%M')}"
+
+        created_dt = _dt.datetime.fromtimestamp(k["created_at"], tz=_dt.timezone.utc)
+        created_text = f"Created: {created_dt.strftime('%Y-%m-%d')}"
+
+        # Status dot and button
+        toggle_btn_text = "Enable" if status == "disabled" else "Disable"
+        toggle_btn_color = "var(--green)" if status == "disabled" else "var(--text-secondary)"
+
+        # Build row
+        rows.append(
+            f'<div class="admin-row key-row" data-status="{status}" data-key-id="{k["id"]}">'
+            f'<div class="admin-row-info">'
+            f'<div class="admin-row-main">'
+            f'<span class="key-status-dot {status}"></span>'
+            f'<strong>{html.escape(k["name"])}</strong>'
+            f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary);font-size:11px">{status_text}</span>'
+            f'</div>'
+            f'<div class="admin-row-meta">'
+            f'<span>Dashboards: {html.escape(dashboards_text)}</span>'
+            f'<span>Aspects: {html.escape(aspects_text)}</span>'
+            f'<span>{created_text}</span>'
+        )
+        if expires_text:
+            rows.append(f'<span>{expires_text}</span>')
+        if last_used_text:
+            rows.append(f'<span>{last_used_text}</span>')
+        rows.append(
+            f'</div>'
+            f'</div>'
+            f'<div class="admin-row-actions" style="display:flex;gap:6px">'
+            f'<button class="btn btn-primary-outline" style="font-size:11px" onclick="toggleKeyStatus({k["id"]}, this)">{toggle_btn_text}</button>'
+            f'<button class="btn btn-danger" style="font-size:11px" onclick="deleteKey({k["id"]})">Delete</button>'
+            f'</div>'
+            f'</div>'
+        )
+
+    return "".join(rows)
 
 
 def _build_enquiry_rows(csrf_token: str = "") -> str:
