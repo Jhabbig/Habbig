@@ -29,7 +29,10 @@
   }
   header h1 { margin: 0; font-size: 18px; font-weight: 600; }
   header .tag { color: var(--accent); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 11px; }
-  header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .meta.right { margin-left: auto; }
+  header a.metholink { color: var(--accent); text-decoration: none; font-size: 12px; }
+  header a.metholink:hover { text-decoration: underline; }
 
   main {
     padding: 24px;
@@ -123,6 +126,28 @@
   .price-bar > div { height: 100%; background: var(--accent); }
   .price-bar > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
 
+  /* ── Polling chart ────────────────────────────────────────────────────── */
+  .poll-grid { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: center; }
+  @media (max-width: 720px) { .poll-grid { grid-template-columns: 1fr; } }
+  .poll-stat { text-align: center; }
+  .poll-stat .num { font-size: 36px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .poll-stat .num.approve { color: var(--good); }
+  .poll-stat .num.disapprove { color: var(--bad); }
+  .poll-stat .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .poll-stat .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .poll-chart { height: 160px; width: 100%; }
+
+  /* ── Era table ───────────────────────────────────────────────────────── */
+  .era-wrap { overflow-x: auto; }
+  table.era { font-size: 12px; }
+  table.era th, table.era td { padding: 6px 10px; white-space: nowrap; }
+  table.era th.metric { text-align: left; min-width: 160px; }
+  table.era td.label { font-weight: 600; }
+  table.era .party-D { color: #58a6ff; font-size: 10px; margin-left: 6px; letter-spacing: 0.05em; }
+  table.era .party-R { color: #ff8a80; font-size: 10px; margin-left: 6px; letter-spacing: 0.05em; }
+  table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
+  table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
+
   .footnote { color: var(--muted); font-size: 11px; margin-top: 14px; }
   .err { color: var(--bad); font-size: 13px; }
   .skeleton { color: var(--muted); padding: 24px 0; text-align: center; }
@@ -133,7 +158,8 @@
   <span class="tag">narve.ai</span>
   <h1>Voter Pulse</h1>
   <span class="meta">How voters feel and how their lives are going.</span>
-  <span class="meta" id="updated">loading…</span>
+  <span class="meta right" id="updated">loading…</span>
+  <a class="metholink" href="/methodology">methodology &rarr;</a>
 </header>
 
 <main>
@@ -188,6 +214,36 @@
     <h2>What people say</h2>
     <p class="desc">Survey-based read on how households feel.</p>
     <div class="ind-grid" id="grid-sentiment"><div class="skeleton">loading…</div></div>
+  </section>
+
+  <!-- POLLING -->
+  <section class="panel">
+    <h2>What the polls say</h2>
+    <p class="desc">Monthly aggregate of every public approval poll and the generic congressional ballot.</p>
+    <div class="poll-grid">
+      <div>
+        <div class="poll-stat">
+          <div class="lbl">Approval</div>
+          <div class="num approve" id="pollApprove">—</div>
+          <div class="sub" id="pollApproveSub">no data</div>
+        </div>
+        <div class="poll-stat" style="margin-top: 16px;">
+          <div class="lbl">Generic ballot (D − R)</div>
+          <div class="num" id="pollGeneric">—</div>
+          <div class="sub" id="pollGenericSub">no data</div>
+        </div>
+      </div>
+      <svg class="poll-chart" id="pollChart" viewBox="0 0 600 160" preserveAspectRatio="none"></svg>
+    </div>
+    <p class="footnote">Source: archived FiveThirtyEight poll CSVs. Aggregated monthly, unweighted.</p>
+  </section>
+
+  <!-- BY ADMINISTRATION -->
+  <section class="panel">
+    <h2>By administration</h2>
+    <p class="desc">Average reading of each indicator across every president since 1947. Current term highlighted.</p>
+    <div class="era-wrap"><table class="era" id="eraTable"><tbody><tr><td>loading…</td></tr></tbody></table></div>
+    <p class="footnote">Inauguration dates from <code>analysis/eras.py</code>. Cells are simple means over all observations in the term — interpret with caution; presidents inherit conditions they did not create.</p>
   </section>
 
   <!-- POLITICS / MARKETS -->
@@ -390,6 +446,108 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+function renderPolls(payload) {
+  const approval = (payload && payload.approval) || [];
+  const generic  = (payload && payload.generic_ballot) || [];
+  const latestA  = payload && payload.latest_approval;
+  const latestG  = payload && payload.latest_generic_ballot;
+
+  if (latestA) {
+    document.getElementById("pollApprove").textContent = latestA.approve.toFixed(1) + "%";
+    document.getElementById("pollApproveSub").textContent =
+      `${latestA.politician || "current"} · ${latestA.date.slice(0, 7)} · ${latestA.n_polls} polls · disapprove ${latestA.disapprove.toFixed(1)}%`;
+  }
+  if (latestG) {
+    const m = latestG.margin_d_minus_r;
+    const sign = m >= 0 ? "+" : "";
+    document.getElementById("pollGeneric").textContent = `${sign}${m.toFixed(1)} pp`;
+    document.getElementById("pollGeneric").style.color = m >= 0 ? "#58a6ff" : "#ff8a80";
+    document.getElementById("pollGenericSub").textContent =
+      `D ${latestG.dem.toFixed(1)} · R ${latestG.rep.toFixed(1)} · ${latestG.date.slice(0, 7)}`;
+  }
+
+  // Render approval chart — last 60 months
+  const chart = document.getElementById("pollChart");
+  const recent = approval.slice(-60);
+  if (!recent.length) { chart.innerHTML = ""; return; }
+  const W = 600, H = 160, PAD = 10;
+  const xs = (i) => PAD + (i / Math.max(1, recent.length - 1)) * (W - 2 * PAD);
+  const yLow = 25, yHigh = 65;
+  const ys = (v) => H - PAD - ((v - yLow) / (yHigh - yLow)) * (H - 2 * PAD);
+  const path = (key) => recent.map((p, i) => (i ? "L" : "M") + xs(i).toFixed(1) + "," + ys(p[key]).toFixed(1)).join(" ");
+  chart.innerHTML = `
+    <g>
+      <line x1="${PAD}" x2="${W - PAD}" y1="${ys(50).toFixed(1)}" y2="${ys(50).toFixed(1)}" stroke="#30363d" stroke-dasharray="2,3"/>
+      <path d="${path('disapprove')}" fill="none" stroke="#f85149" stroke-width="1.5"/>
+      <path d="${path('approve')}" fill="none" stroke="#56d364" stroke-width="1.8"/>
+    </g>
+    <g font-size="9" fill="#8b949e">
+      <text x="${PAD}" y="${ys(60).toFixed(1)}">60%</text>
+      <text x="${PAD}" y="${ys(40).toFixed(1)}">40%</text>
+    </g>`;
+}
+
+function renderEras(payload) {
+  const tbl = document.getElementById("eraTable");
+  if (!payload || !payload.eras || !payload.eras.length) {
+    tbl.innerHTML = '<tbody><tr><td>no data</td></tr></tbody>';
+    return;
+  }
+  const eras = payload.eras;
+  const seriesMap = payload.series || {};
+  const metricLabels = {
+    CPIAUCSL: ["CPI YoY (term avg %)", v => v == null ? "—" : v.toFixed(1) + "%", "yoy"],
+    UNRATE:   ["Unemployment (avg %)", v => v == null ? "—" : v.toFixed(1) + "%", "mean"],
+    UMCSENT:  ["UMich sentiment (avg)", v => v == null ? "—" : v.toFixed(0), "mean"],
+    MORTGAGE30US: ["30-yr mortgage (avg %)", v => v == null ? "—" : v.toFixed(1) + "%", "mean"],
+    GASREGW:  ["Gas (avg $/gal)", v => v == null ? "—" : "$" + v.toFixed(2), "mean"],
+  };
+
+  // For CPI we want YoY-of-the-index averaged over the term, not the index level. Compute it.
+  function eraYoYForCPI(rows) {
+    // rows is the per-era stat array. We don't have YoY per era pre-computed,
+    // so approximate: term-end mean / term-start mean − 1 annualised over term-length.
+    // Cleaner: use the series points to compute YoY per month, then average within era.
+    // We have only stat rows here — fallback: use first/last mean ratio.
+    return rows.map(r => {
+      if (r.mean == null || r.min == null || r.max == null || r.n_points < 13) {
+        return { ...r, derived: null };
+      }
+      // Rough YoY proxy: (max/min)^(1/(years)) − 1 in percent.
+      const years = Math.max(1, r.n_points / 12);
+      const yoy = (Math.pow(r.max / r.min, 1 / years) - 1) * 100;
+      return { ...r, derived: yoy };
+    });
+  }
+
+  let html = '<thead><tr><th class="metric">Indicator</th>';
+  for (const e of eras) {
+    html += `<th class="cell">${escapeHtml(e.label)}<span class="party-${e.party}">${e.party}</span></th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (const [sid, [lbl, fmtFn, kind]] of Object.entries(metricLabels)) {
+    const rows = seriesMap[sid] || [];
+    const cooked = sid === "CPIAUCSL" ? eraYoYForCPI(rows) : rows;
+    html += `<tr><td class="label">${escapeHtml(lbl)}</td>`;
+    for (let i = 0; i < eras.length; i++) {
+      const r = cooked[i] || {};
+      const v = sid === "CPIAUCSL" ? r.derived : r.mean;
+      const isNow = i === eras.length - 1;
+      html += `<td class="cell${isNow ? ' nowcell' : ''}">${fmtFn(v)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  tbl.innerHTML = html;
+
+  // Highlight the current term row visually via background-color on the column
+  // (CSS doesn't easily target a column; we already injected `nowcell` per cell)
+  for (const cell of tbl.querySelectorAll('.nowcell')) {
+    cell.style.background = "rgba(236, 72, 153, 0.08)";
+  }
+}
+
 async function load() {
   try {
     const r = await fetch("/api/summary", { credentials: "same-origin" });
@@ -397,6 +555,8 @@ async function load() {
     const data = await r.json();
     setMood(data.mood);
     renderIndicators((data.life && data.life.series) || []);
+    renderPolls(data.polls);
+    renderEras(data.eras);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;
     document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());

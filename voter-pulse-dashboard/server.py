@@ -23,8 +23,9 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from analysis import eras as era_analysis
 from analysis import mood_index
-from ingestion import fred_client, polymarket_client
+from ingestion import fred_client, polls_client, polymarket_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -32,6 +33,10 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="Voter Pulse Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
+METHODOLOGY_PATH = Path(__file__).parent / "methodology.html"
+
+# Series we surface in the "by administration" comparison table.
+ERA_SERIES = ["CPIAUCSL", "UNRATE", "UMCSENT", "MORTGAGE30US", "GASREGW"]
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
@@ -72,6 +77,11 @@ async def index() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
 
 
+@app.get("/methodology", response_class=HTMLResponse)
+async def methodology() -> HTMLResponse:
+    return HTMLResponse(METHODOLOGY_PATH.read_text(encoding="utf-8"))
+
+
 @app.get("/api/life")
 async def api_life(force: bool = False) -> JSONResponse:
     return JSONResponse(fred_client.get_cached(force=force))
@@ -80,6 +90,17 @@ async def api_life(force: bool = False) -> JSONResponse:
 @app.get("/api/markets")
 async def api_markets(force: bool = False) -> JSONResponse:
     return JSONResponse(polymarket_client.get_cached(force=force))
+
+
+@app.get("/api/polls")
+async def api_polls(force: bool = False) -> JSONResponse:
+    return JSONResponse(polls_client.get_cached(force=force))
+
+
+@app.get("/api/eras")
+async def api_eras(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=force)
+    return JSONResponse(era_analysis.compose(life["series"], ERA_SERIES))
 
 
 @app.get("/api/mood")
@@ -94,12 +115,16 @@ async def api_mood(force: bool = False) -> JSONResponse:
 async def api_summary(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
     markets = polymarket_client.get_cached(force=force)
+    polls = polls_client.get_cached(force=force)
     composed = mood_index.compose(life["series"])
     composed["label"] = mood_index.label_for(composed["overall"])
+    eras = era_analysis.compose(life["series"], ERA_SERIES)
     return JSONResponse({
         "mood": composed,
         "life": life,
         "markets": markets,
+        "polls": polls,
+        "eras": eras,
     })
 
 

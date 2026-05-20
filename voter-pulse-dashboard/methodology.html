@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voter Pulse — methodology</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --fg: #e6edf3;
+    --muted: #8b949e; --accent: #ec4899; --grid: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--grid);
+           display: flex; align-items: baseline; gap: 16px; }
+  header .tag { color: var(--accent); font-weight: 600; letter-spacing: 0.05em;
+                text-transform: uppercase; font-size: 11px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header a { color: var(--accent); text-decoration: none; margin-left: auto; }
+  main { padding: 32px 24px; max-width: 840px; margin: 0 auto; }
+  h2 { margin: 32px 0 12px; font-size: 18px; }
+  h3 { margin: 24px 0 8px; font-size: 14px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.06em; }
+  p { color: #c9d1d9; }
+  code { background: #21262d; padding: 1px 6px; border-radius: 3px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 24px;
+          font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase;
+       font-size: 11px; letter-spacing: 0.05em; }
+  td a { color: var(--accent); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  .formula { background: #21262d; border-left: 3px solid var(--accent);
+             padding: 12px 16px; border-radius: 4px; font-size: 13px;
+             font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="tag">narve.ai</span>
+  <h1>Voter Pulse — methodology</h1>
+  <a href="/">&larr; back to dashboard</a>
+</header>
+
+<main>
+  <p>
+    Voter Pulse blends macro indicators, survey sentiment, polling
+    aggregates, and prediction-market prices into a single read on how
+    voters feel and how their lives are going. The numbers and sources
+    behind every panel are listed here.
+  </p>
+
+  <h2>Data sources</h2>
+
+  <h3>FRED economic series</h3>
+  <p>
+    All FRED series are pulled from the public CSV endpoint
+    (<code>https://fred.stlouisfed.org/graph/fredgraph.csv?id=…</code>) — no
+    API key. Cached for 12 hours, since these series update at most monthly.
+  </p>
+  <table>
+    <thead><tr><th>Indicator</th><th>FRED id</th><th>Cadence</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Headline CPI</td><td><code>CPIAUCSL</code></td><td>Monthly</td><td>BLS via FRED</td></tr>
+      <tr><td>Food CPI</td><td><code>CPIUFDSL</code></td><td>Monthly</td><td>BLS via FRED</td></tr>
+      <tr><td>Gas price (regular)</td><td><code>GASREGW</code></td><td>Weekly</td><td>EIA via FRED</td></tr>
+      <tr><td>30-year fixed mortgage rate</td><td><code>MORTGAGE30US</code></td><td>Weekly</td><td>Freddie Mac via FRED</td></tr>
+      <tr><td>Case-Shiller US home price index</td><td><code>CSUSHPISA</code></td><td>Monthly</td><td>S&amp;P via FRED</td></tr>
+      <tr><td>Unemployment rate</td><td><code>UNRATE</code></td><td>Monthly</td><td>BLS via FRED</td></tr>
+      <tr><td>Real median weekly earnings (full-time)</td><td><code>LES1252881600Q</code></td><td>Quarterly</td><td>BLS via FRED</td></tr>
+      <tr><td>Non-farm payrolls</td><td><code>PAYEMS</code></td><td>Monthly</td><td>BLS via FRED</td></tr>
+      <tr><td>Real disposable personal income</td><td><code>DSPIC96</code></td><td>Monthly</td><td>BEA via FRED</td></tr>
+      <tr><td>Consumer sentiment</td><td><code>UMCSENT</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
+      <tr><td>Inflation expectations (1 year)</td><td><code>MICH</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Polling aggregate</h3>
+  <p>
+    Approval and generic-ballot trend series come from the archived FiveThirtyEight
+    poll-data CSVs at <code>projects.fivethirtyeight.com/polls/data/</code>. We aggregate
+    every individual poll's <em>approve / disapprove</em> (or <em>dem / rep</em>) reading
+    into a monthly unweighted mean across pollsters. Cached 6 hours.
+  </p>
+  <p class="note">
+    Pollster-weighting and recency-decay are deliberately omitted — voter-mood at
+    monthly resolution is the goal, not a horse-race forecast. Override the source
+    by setting <code>VOTER_PULSE_APPROVAL_CSV</code> / <code>VOTER_PULSE_GENERIC_BALLOT_CSV</code>.
+  </p>
+
+  <h3>Prediction markets</h3>
+  <p>
+    Polymarket Gamma API
+    (<code>https://gamma-api.polymarket.com/markets</code>),
+    scanned across tags <code>us-current-affairs</code>, <code>politics</code>,
+    <code>us-politics</code>, <code>elections</code>, <code>approval</code>,
+    <code>economy</code>. Markets are bucketed by rule (<em>approval</em>,
+    <em>right_track</em>, <em>recession</em>, <em>inflation</em>,
+    <em>unemployment</em>, <em>election</em>) and sorted by 24-hour volume.
+    Cached 5 minutes.
+  </p>
+
+  <h2>The mood index</h2>
+  <p>
+    A composite of three sub-scores, each rescaled to <code>[0, 100]</code>
+    where higher = better. Equal-weight mean of the available sub-scores.
+  </p>
+  <h3>Pocketbook</h3>
+  <div class="formula">
+    CPI YoY 0% → 100, 4% → 50, 8%+ → 0<br>
+    Food CPI YoY 0% → 100, 5% → 50, 10%+ → 0<br>
+    Gas $2.50 → 100, $4.00 → 50, $5.50+ → 0<br>
+    30-yr mortgage 3% → 100, 6% → 50, 9%+ → 0
+  </div>
+  <h3>Jobs</h3>
+  <div class="formula">
+    UNRATE 3% → 100, 6% → 50, 9%+ → 0<br>
+    Real-wage YoY −2% → 0, 0 → 50, +2%+ → 100
+  </div>
+  <h3>Sentiment</h3>
+  <div class="formula">
+    UMCSENT 50 → 0, 110 → 100 (linear rescale on long-run range)
+  </div>
+  <p>
+    The misery index (UNRATE + CPI YoY) is reported alongside the
+    composite as a backwards-looking sanity check; the
+    <strong>inflation-expectations gap</strong> (UMich 1-year MICH minus
+    realised CPI YoY) captures the difference between fear and reality.
+  </p>
+
+  <h2>The four-year delta</h2>
+  <p>
+    Every indicator card carries an explicit four-year change. We pick the
+    closest observation on-or-before <code>latest_date − 4 years</code> — this
+    avoids faking precision on weekly/quarterly series with mismatched calendars.
+  </p>
+
+  <h2>The "by administration" panel</h2>
+  <p>
+    For a fixed set of indicators (CPI, UNRATE, UMCSENT, 30-yr mortgage,
+    gas) we compute the simple mean across all observations in each
+    presidential term. Inauguration dates are hard-coded
+    (<code>analysis/eras.py</code>); we include eras from 1947 onward.
+    Eras with no overlapping observations show <em>no data</em>.
+  </p>
+
+  <h2>What this dashboard is not</h2>
+  <ul>
+    <li>It is not a forecasting model. Sub-score band cutoffs were chosen
+        from how voters tend to react, not fit to historical outcomes.</li>
+    <li>It is not partisan. Era stats are observational, not causal —
+        presidents inherit, and contribute to, the conditions of their term.</li>
+    <li>It is not a polling aggregator competing with Cook / RealClearPolitics.
+        We aggregate one freely-available archive to give the dashboard
+        a polling signal; for production polling work, use a dedicated tool.</li>
+  </ul>
+
+  <p class="note">
+    Suggestions for additional series, sources, or sub-score bands are
+    welcome. The dashboard is intentionally legible — every number on the
+    page maps to a public CSV, an open-data API, or a transparent rule.
+  </p>
+</main>
+</body>
+</html>

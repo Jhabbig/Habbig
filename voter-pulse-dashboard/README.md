@@ -25,13 +25,24 @@ Each card also surfaces a **4-year delta** badge — the comparison voters
 actually make at election time. The hero panel adds an
 **inflation-expectations gap** footnote (UMich 1y minus realised CPI YoY)
 to capture the "fear gap" that often drives sentiment.
-5. **Polymarket — the political mood** — live sentiment-relevant markets
+5. **What the polls say** — monthly aggregate of every public
+   presidential-approval poll and the generic congressional ballot, with a
+   60-month chart. Sourced from the archived FiveThirtyEight CSVs;
+   override the source via `VOTER_PULSE_APPROVAL_CSV` and
+   `VOTER_PULSE_GENERIC_BALLOT_CSV`.
+6. **By administration** — per-president averages of CPI, UNRATE,
+   UMCSENT, 30-yr mortgage, and gas prices. The comparison readers
+   actually want when they ask "is it worse now than before?".
+7. **Polymarket — the political mood** — live sentiment-relevant markets
    (right track / wrong track, presidential approval, recession odds,
    inflation/unemployment milestones, election outcomes), bucketed into
    categories and sorted by 24h volume.
 
 The misery index (UNRATE + CPI YoY) is shown as a footnote — the single
 backwards-looking number that tracks "how it feels" most reliably.
+
+A linked **methodology page** at `/methodology` documents every source,
+the mood-index formula, and the four-year-delta computation.
 
 ## Data sources
 
@@ -49,6 +60,8 @@ backwards-looking number that tracks "how it feels" most reliably.
 | Consumer sentiment (UMCSENT) | FRED | monthly |
 | Inflation expectations 1y (MICH) | FRED | monthly |
 | Sentiment markets | Polymarket Gamma API | live (5 min cache) |
+| Presidential approval polls | FiveThirtyEight archive CSV | monthly aggregate (6h cache) |
+| Generic congressional ballot | FiveThirtyEight archive CSV | monthly aggregate (6h cache) |
 
 All FRED series are pulled from the public CSV endpoint — no API key
 required. Polymarket Gamma is also unkeyed.
@@ -79,10 +92,14 @@ DEV_MODE=1 python3 server.py
 
 ## Endpoints
 
-- `GET /api/summary` — single page-load payload (mood + life + markets)
-- `GET /api/mood` — just the composite score and sub-scores
+- `GET /` — the dashboard page
+- `GET /methodology` — full sources + formulas page
+- `GET /api/summary` — single page-load payload (mood + life + markets + polls + eras)
+- `GET /api/mood` — composite mood score and sub-scores
 - `GET /api/life` — every FRED indicator (cached 12h)
 - `GET /api/markets` — Polymarket sentiment markets (cached 5 min)
+- `GET /api/polls` — aggregated approval and generic-ballot monthly series (cached 6h)
+- `GET /api/eras` — per-administration averages of selected indicators
 - `GET /healthz` — liveness
 
 Every API endpoint accepts `?force=true` to bypass the cache.
