@@ -34,6 +34,7 @@ from smart_money import fetch_smart_money_flows, race_smart_money
 from news import ingest_news, measure_reactions, lag_curve, tag_article
 from election_night import assemble_election_night
 from conditional import compute_conditional, joint_distribution_summary, apply_wave_swing
+from calibration import calibration_table, calibration_over_time
 import api_v1
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
@@ -2014,6 +2015,96 @@ async def data_forecast_conditional(given: str):
         conditioned_outcome=outcome,
     )
     return result
+
+
+@app.get("/data/calibration")
+async def data_calibration(since_days: int = 365):
+    """Per-confidence-bucket calibration table + over-time Brier trend.
+
+    Builds samples from every divergence snapshot in the window. For each
+    snapshot we compute the ensemble forecast on-the-fly (matching what the
+    user would have seen at that point) and join against
+    ``HISTORICAL_RESULTS`` to get the realized outcome. Snapshots without
+    a matching resolved race are skipped.
+
+    Returns ``{"table": {...}, "over_time": {...}, "in_sample": bool}``.
+    The in_sample flag tells the frontend whether the calibration was
+    measured against the same races the Brier weights were trained on —
+    important caveat to surface.
+    """
+    from forecast import forecast_for_race
+    from historical_results import HISTORICAL_RESULTS
+
+    # Build {(race_type, state) → outcome_d} from the curated dataset.
+    resolved: dict[tuple[str, str], int] = {}
+    for r in HISTORICAL_RESULTS:
+        key = (r["race_type"], r["state"].upper())
+        # Only keep the most recent year per (chamber, state).
+        if key not in resolved or r["year"] > resolved.get(key + ("year",), 0):
+            resolved[key] = 1 if (r.get("party") or "").upper() == "D" else 0
+
+    snapshots = state.db.get_divergence_history(since_days=since_days)
+    bt = await _backtest_summary_cached()
+    samples: list[dict] = []
+    for snap in snapshots:
+        rt = (snap.get("race_type") or "").lower()
+        st = (snap.get("state") or "").upper()
+        key = (rt, st)
+        if key not in resolved:
+            continue
+        details = snap.get("divergence_details") or {}
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except json.JSONDecodeError:
+                details = {}
+        probs: dict[str, float] = {}
+        for src, col in (
+            ("polymarket", "polymarket_prob"),
+            ("kalshi", "kalshi_prob"),
+            ("predictit", "predictit_prob"),
+            ("polling", "polling_avg"),
+        ):
+            v = snap.get(col)
+            if v is not None:
+                try:
+                    probs[src] = float(v)
+                except (TypeError, ValueError):
+                    pass
+        if isinstance(details, dict):
+            for src in ("manifold", "metaculus"):
+                v = details.get(src)
+                if v is not None:
+                    try:
+                        probs[src] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+        if not probs:
+            continue
+        f = forecast_for_race(
+            race_key=snap.get("race_key", ""),
+            source_probs=probs,
+            brier=bt.get("brier"),
+            coverage=bt.get("coverage"),
+        )
+        if f["forecast_d"] is None:
+            continue
+        samples.append({
+            "forecast_d": f["forecast_d"],
+            "outcome_d": resolved[key],
+            "snapshot_time": snap.get("snapshot_time"),
+            "race_key": snap.get("race_key"),
+        })
+
+    return {
+        "table": calibration_table(samples),
+        "over_time": calibration_over_time(samples, n_windows=6),
+        "n_samples": len(samples),
+        # Calibration is in-sample today (same races feed Brier weights and
+        # this measurement). Flip to False once we have forward-looking
+        # forecast snapshots beyond resolved 2026 races.
+        "in_sample": True,
+    }
 
 
 @app.get("/data/forecast/wave")

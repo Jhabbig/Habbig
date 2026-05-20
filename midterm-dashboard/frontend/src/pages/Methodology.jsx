@@ -57,6 +57,11 @@ export default function Methodology() {
         <p>The <Link to="/backtest" className="underline text-stone-900">backtest page</Link> shows current per-source Brier scores and a calibration scatter against the curated historical-results dataset.</p>
       </Section>
 
+      <Section title="Calibration">
+        <p>Beyond per-source Brier scores, the backtest page reports the ensemble's <em>reliability</em> by confidence bucket: of the races we called at 80-100%, what fraction actually resolved D? A perfectly-calibrated forecast has the realized rate equal to the mean forecast within every bucket.</p>
+        <p>Today's measurement is in-sample (the same resolved races feed both the Brier weights and the calibration check). It becomes forward-looking as 2026 races resolve — at that point the <Inline>in_sample</Inline> flag in <Inline>/v1/calibration</Inline> flips to <Inline>false</Inline>.</p>
+      </Section>
+
       <Section title="Smart-money signal">
         <p>The sibling <em>top-traders-dashboard</em> service scans top-quality Polymarket wallets (ranked by sustainable Bayesian edge) for their currently open positions. For each midterm race we join those flows against the Polymarket markets stored for the race by slug, classify each outcome as D or R using the same Yes/No-aware classifier the divergence engine uses, and aggregate:</p>
         <ul className="list-disc pl-5 space-y-1">

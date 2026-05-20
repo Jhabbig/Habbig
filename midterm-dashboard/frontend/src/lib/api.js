@@ -61,6 +61,7 @@ export const api = {
   polling: (key) => request(`/data/polling/${key}`),
   recentPolls: () => request('/data/polling/recent'),
   backtest: (sinceDays = 30) => request(`/data/backtest?since_days=${sinceDays}`),
+  calibration: (sinceDays = 365) => request(`/data/calibration?since_days=${sinceDays}`),
   forecast: (key) => request(`/data/forecast/${encodeURIComponent(key)}`),
   forecasts: (filters = {}) => {
     const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString()

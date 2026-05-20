@@ -130,6 +130,20 @@ def register(app, *, get_state: Callable):
         out["api_version"] = API_VERSION
         return out
 
+    @app.get("/v1/calibration", tags=["v1"])
+    async def calibration(since_days: int = Query(365, ge=1, le=730)):
+        """Per-confidence-bucket calibration + over-time Brier trend.
+
+        Tells you how reliable narve.ai's calls have been: "of races we
+        called at 80-100%, what fraction actually resolved that way."
+        Includes the in_sample flag so consumers know whether the
+        measurement is forward-looking or trained on the same races.
+        """
+        from main import data_calibration
+        out = await data_calibration(since_days=since_days)
+        out["api_version"] = API_VERSION
+        return out
+
     @app.get("/v1", tags=["v1"])
     async def root():
         """Index of available v1 endpoints."""
@@ -145,6 +159,7 @@ def register(app, *, get_state: Callable):
                 {"path": "/v1/news/race/{race_key}",     "method": "GET", "desc": "Race news + reactions"},
                 {"path": "/v1/lag-curve",                "method": "GET", "desc": "News→market median lag"},
                 {"path": "/v1/backtest",                 "method": "GET", "desc": "Per-source Brier scores"},
+                {"path": "/v1/calibration",              "method": "GET", "desc": "Confidence-bucket reliability"},
             ],
             "methodology": "/methodology",
             "license": "Data is public and free to reuse with attribution to narve.ai.",

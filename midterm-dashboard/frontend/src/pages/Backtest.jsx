@@ -24,6 +24,7 @@ export default function Backtest() {
   const [days, setDays] = useState(30)
   const [data, setData] = useState(null)
   const [lag, setLag] = useState(null)
+  const [calib, setCalib] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -33,10 +34,12 @@ export default function Backtest() {
     Promise.all([
       api.backtest(days),
       api.newsLagCurve(1.0).catch(() => null),
+      api.calibration(365).catch(() => null),
     ])
-      .then(([bt, lc]) => {
+      .then(([bt, lc, cal]) => {
         setData(bt)
         setLag(lc)
+        setCalib(cal)
       })
       .catch((e) => setError(e.message || String(e)))
       .finally(() => setLoading(false))
@@ -95,6 +98,11 @@ export default function Backtest() {
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-700">
           {error}
         </div>
+      )}
+
+      {/* Calibration — confidence-bucket reliability of past narve.ai calls. */}
+      {calib?.table && calib.n_samples > 0 && (
+        <CalibrationPanel calib={calib} />
       )}
 
       {data && (
@@ -298,6 +306,112 @@ export default function Backtest() {
             )}
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+
+function CalibrationPanel({ calib }) {
+  const table = calib.table
+  const buckets = table.buckets || []
+  // Aggregate one-line headline: "Our 80%+ confident calls have resolved 78% of the time"
+  const top = buckets[4] || {}
+  const headline = (top.n || 0) >= 5 && top.realized_d_rate != null
+    ? `Of our ${top.n} 80%+ D calls, ${(top.realized_d_rate * 100).toFixed(0)}% resolved D.`
+    : null
+  return (
+    <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-5">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold text-stone-800">Calibration</h2>
+        <span className="text-xs text-stone-400">
+          n={calib.n_samples} · Brier {table.brier_score?.toFixed(3)} · log-loss {table.log_loss?.toFixed(3)}
+          {calib.in_sample && ' · in-sample'}
+        </span>
+      </div>
+      {headline && (
+        <p className="text-stone-700 text-sm mb-3">{headline}</p>
+      )}
+      <p className="text-xs text-stone-400 mb-3">
+        For each forecast-probability bucket, what fraction of races actually resolved D.
+        A perfectly-calibrated forecast has realized rate ≈ bucket centre.
+      </p>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-stone-400">
+            <th className="font-normal pb-2">Bucket</th>
+            <th className="font-normal pb-2 text-right">N</th>
+            <th className="font-normal pb-2 text-right">Mean fcast</th>
+            <th className="font-normal pb-2 text-right">Realized D</th>
+            <th className="font-normal pb-2 text-right">Diff (pp)</th>
+            <th className="font-normal pb-2 w-32"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map((b, i) => {
+            const empty = !b.n
+            const diff = b.diff_pp ?? 0
+            const diffColor = empty ? 'text-stone-300'
+              : Math.abs(diff) >= 10 ? 'text-rose-600'
+              : Math.abs(diff) >= 5 ? 'text-amber-600'
+              : 'text-emerald-600'
+            return (
+              <tr key={i} className="border-t border-stone-100">
+                <td className="py-2 font-medium text-stone-700">{b.label}</td>
+                <td className="py-2 text-right tabular-nums text-stone-500">{b.n || 0}</td>
+                <td className="py-2 text-right tabular-nums">
+                  {b.mean_forecast != null ? (b.mean_forecast * 100).toFixed(1) + '%' : '—'}
+                </td>
+                <td className="py-2 text-right tabular-nums font-bold">
+                  {b.realized_d_rate != null ? (b.realized_d_rate * 100).toFixed(1) + '%' : '—'}
+                </td>
+                <td className={`py-2 text-right tabular-nums font-medium ${diffColor}`}>
+                  {empty ? '—' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`}
+                </td>
+                <td className="py-2 px-2">
+                  {!empty && (
+                    <div className="h-1.5 bg-stone-100 rounded relative overflow-hidden">
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${Math.min(100, (b.realized_d_rate || 0) * 100)}%`,
+                          background: '#3b82f6',
+                        }}
+                      />
+                      <div
+                        className="absolute top-0 bottom-0 w-px bg-stone-700"
+                        style={{ left: `${(b.mean_forecast || 0) * 100}%` }}
+                        title="Mean forecast"
+                      />
+                    </div>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {calib.over_time?.windows?.length > 1 && (
+        <div className="mt-4 pt-3 border-t border-stone-100">
+          <div className="text-xs text-stone-400 mb-2">Brier score over time (lower is better)</div>
+          <div className="flex items-end gap-1 h-12">
+            {calib.over_time.windows.map((w, i) => {
+              const h = Math.max(4, Math.min(48, (1 - (w.brier_score || 0)) * 48))
+              return (
+                <div key={i}
+                     className="flex-1 bg-stone-300 rounded-t"
+                     style={{ height: h }}
+                     title={`${w.start.slice(0, 10)} → ${w.end.slice(0, 10)} · Brier ${w.brier_score?.toFixed(3)} · n=${w.n}`} />
+              )
+            })}
+          </div>
+        </div>
+      )}
+      {calib.in_sample && (
+        <p className="text-[10px] text-stone-400 mt-3 italic">
+          Currently in-sample (same resolved races feed both the Brier-weighted ensemble and
+          this measurement). Forward-looking calibration arrives as 2026 races resolve.
+        </p>
       )}
     </div>
   )
