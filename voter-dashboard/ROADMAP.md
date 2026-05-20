@@ -19,31 +19,37 @@ election cycle.
 
 ## v2 features, ranked by leverage
 
-### 1. Partisan + demographic UMich splits **(highest leverage, free)**
+### 1. Partisan sentiment — needs a source decision
 
-UMich publishes the consumer-sentiment index broken out by political party
-and by demographic — these are separate FRED series, no new auth required:
+**Status: data sourcing problem.** My original write-up claimed UMich
+partisan splits are on FRED — they aren't. UMich publishes them in their
+quarterly Table 32 as PDFs/Excel files in the Surveys of Consumers data
+archive. Three viable paths, in increasing order of effort:
 
-| Series ID    | Cut |
-|---           |---  |
-| `UMCSENT`    | All consumers (current v1) |
-| `UMCSENT1`   | Republican respondents |
-| `UMCSENT2`   | Democratic respondents |
-| `UMCSENT3`   | Independent respondents |
-| `UMCSENT_BL` | Bottom-third income |
-| `UMCSENT_TM` | Top-third income |
+1. **Scrape UMich's data archive** — `data.sca.isr.umich.edu` exposes a
+   table query UI; the underlying form posts return CSV. Brittle but free.
+2. **Re-create the partisan signal from approval polls** — aggregate
+   538-style approval polls (the archived CSV is still on GitHub) with the
+   pollster's stated respondent partisanship, smooth daily. This is *not*
+   the same metric as UMich sentiment but is arguably more politically
+   relevant.
+3. **Subscribe to an aggregator** — Morning Consult, Civiqs and Pew all
+   sell partisan economic-sentiment feeds. Out of scope for the
+   "free dashboards" mandate.
 
-(IDs above use UMich's table 32; verify the actual FRED IDs at fetch time —
-some are nested under `UMCSENT*` names, others under `UMICH/SOC*`.)
+Recommend pursuing (2) — covered by Phase 2 item *Approval ingestion*
+below — and treating partisan UMich as a stretch goal.
 
-Render:
-- A single sentiment card with three small sparklines stacked (R, D, I) so
-  you can see the partisan gap at a glance.
-- A "partisan gap" pill that quantifies (R − D) sentiment in points.
-- The same gap as a 30-year time series — historically the gap inverts on
-  election day, which is the most under-appreciated chart in US politics.
+### 2. State-level mood map &middot; **SHIPPED v1.1**
 
-### 2. State-level mood map
+50 states + DC unemployment from FRED's `<STATE>UR` family, plus a
+percentile-vs-own-20y-history "stress score" per state. Surfaced as:
+- a 2024 swing-state strip (PA, MI, WI, AZ, GA, NV, NC),
+- five most-stressed and five least-stressed states ranked by stress,
+- `/api/states` endpoint serving the full panel.
+
+**Next**: actual choropleth (tile-grid or SVG paths), state-level CPI for
+the dozen FRED metro series, and state-level gas via EIA HTML scrape.
 
 National misery + sentiment hides huge variance. Surface it:
 - BLS Local Area Unemployment Statistics has state-level UNRATE

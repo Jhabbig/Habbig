@@ -200,6 +200,96 @@
   .delta.down { color: var(--bad); }
   .delta.neutral { color: var(--text-3); }
 
+  /* State stress section */
+  .state-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  @media (max-width: 720px) { .state-row { grid-template-columns: 1fr; } }
+  .state-panel {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .state-panel h4 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .state-list { display: flex; flex-direction: column; gap: 6px; }
+  .state-row-item {
+    display: grid;
+    grid-template-columns: 28px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .state-row-item:hover { background: var(--bg-2); }
+  .state-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    color: var(--text-2);
+    font-size: 11px;
+  }
+  .state-name { color: var(--text-1); }
+  .state-rate { color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .state-bar {
+    width: 70px;
+    height: 6px;
+    background: var(--bg-2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .state-bar > div { height: 100%; }
+  .state-bar > div.hot  { background: var(--bad); }
+  .state-bar > div.warm { background: var(--warn); }
+  .state-bar > div.cool { background: var(--good); }
+
+  .swing-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .swing-tile {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .swing-tile .code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--text-3);
+    font-weight: 700;
+  }
+  .swing-tile .pct {
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .swing-tile .delta {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    margin-left: 0;
+  }
+  .swing-tile .delta.up   { color: var(--bad); }   /* unemployment up = bad for voters */
+  .swing-tile .delta.down { color: var(--good); }
+  .state-meta {
+    color: var(--text-3);
+    font-size: 11px;
+    margin-top: 10px;
+  }
+
   /* Markets table */
   table {
     width: 100%;
@@ -290,6 +380,25 @@
 <div class="movers" id="movers"></div>
 
 <div class="grid" id="cards"></div>
+
+<div id="statesSection" style="display:none">
+  <div class="section-title">Where it hurts &middot; state-level unemployment</div>
+  <div class="state-panel" style="margin-bottom:14px">
+    <h4>Swing-state strip &middot; 2024 battlegrounds</h4>
+    <div class="swing-strip" id="swingStrip"></div>
+    <div class="state-meta" id="statesMeta"></div>
+  </div>
+  <div class="state-row">
+    <div class="state-panel">
+      <h4>Most stressed &middot; unemployment in the highest percentile of own 20y history</h4>
+      <div class="state-list" id="mostStressed"></div>
+    </div>
+    <div class="state-panel">
+      <h4>Least stressed &middot; lowest percentile of own 20y history</h4>
+      <div class="state-list" id="leastStressed"></div>
+    </div>
+  </div>
+</div>
 
 <div class="section-title">Politics &amp; sentiment markets — Polymarket</div>
 <div class="toolbar">
@@ -721,6 +830,62 @@ function renderMarkets(markets) {
   `;
 }
 
+function stressBarClass(score) {
+  if (score >= 0.75) return "hot";
+  if (score >= 0.40) return "warm";
+  return "cool";
+}
+
+function renderStateList(elId, rows) {
+  const el = document.getElementById(elId);
+  if (!rows || !rows.length) { el.innerHTML = '<div class="empty">no data</div>'; return; }
+  el.innerHTML = rows.map(r => {
+    const cls = stressBarClass(r.stress_score_0_1);
+    const w = Math.max(2, Math.round(100 * r.stress_score_0_1));
+    return `
+      <div class="state-row-item" title="${r.state_name} — ${(r.stress_score_0_1 * 100).toFixed(0)}th pct vs own 20y">
+        <span class="state-code">${r.state_code}</span>
+        <span class="state-name">${r.state_name}</span>
+        <span class="state-rate">${fmt(r.unemployment_rate, 1)}%</span>
+        <span class="state-bar"><div class="${cls}" style="width:${w}%"></div></span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderSwingStrip(rows) {
+  const wrap = document.getElementById("swingStrip");
+  if (!rows || !rows.length) { wrap.innerHTML = '<div class="empty">no swing-state data</div>'; return; }
+  wrap.innerHTML = rows.map(r => {
+    const d = r.change_12m_pp;
+    let deltaHtml = "";
+    if (d !== null && d !== undefined) {
+      const cls = d > 0 ? "up" : d < 0 ? "down" : "";
+      const arrow = d > 0 ? "▲" : d < 0 ? "▼" : "·";
+      deltaHtml = `<span class="delta ${cls}">${arrow} ${(d > 0 ? "+" : "")}${d.toFixed(2)}pp 12m</span>`;
+    }
+    return `
+      <div class="swing-tile">
+        <div class="code">${r.state_code} &middot; ${r.state_name}</div>
+        <div class="pct">${fmt(r.unemployment_rate, 1)}%</div>
+        <div>${deltaHtml}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadStates() {
+  const data = await getJSON("/api/states");
+  if (!data || data.error || !data.states) return;
+  document.getElementById("statesSection").style.display = "block";
+  renderSwingStrip(data.swing_states || []);
+  renderStateList("mostStressed", data.most_stressed || []);
+  renderStateList("leastStressed", data.least_stressed || []);
+  const meta = document.getElementById("statesMeta");
+  const avgPct = data.avg_stress_0_1 != null ? Math.round(data.avg_stress_0_1 * 100) : null;
+  meta.textContent = `${data.count} states &middot; avg cross-section stress ${avgPct ?? "—"}/100 &middot; as of ${dateNice(data.as_of)}`.replace(/&middot;/g, "·");
+}
+
 async function loadAll() {
   const [summary, marketsResp] = await Promise.all([
     getJSON("/api/summary"),
@@ -735,6 +900,8 @@ async function loadAll() {
   }
   allMarkets = (marketsResp && marketsResp.markets) || [];
   renderMarkets(allMarkets);
+  // States load separately — 51 series, slower, doesn't block above-the-fold.
+  loadStates();
 }
 
 document.getElementById("search").addEventListener("input", () => renderMarkets(allMarkets));

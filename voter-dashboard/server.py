@@ -100,7 +100,7 @@ def cache_get(key: str):
 def cache_set(key: str, data) -> None:
     with _cache_lock:
         _cache[key] = {"t": time.time(), "data": data}
-        while len(_cache) > 64:
+        while len(_cache) > 256:
             _cache.popitem(last=False)
 
 
@@ -178,6 +178,118 @@ FRED_SERIES = {
         "good": "low",
     },
 }
+
+
+# ─── State-level data ──────────────────────────────────────────────────────────
+
+# FRED publishes a monthly seasonally-adjusted unemployment rate for every
+# state and DC as <STATE>UR (e.g. CAUR, TXUR). Series start in Jan 1976 for
+# most states. Pulled in parallel; each gets its own cache key.
+STATE_UNRATE: dict[str, str] = {
+    "AL": "Alabama",      "AK": "Alaska",       "AZ": "Arizona",      "AR": "Arkansas",
+    "CA": "California",   "CO": "Colorado",     "CT": "Connecticut",  "DE": "Delaware",
+    "DC": "District of Columbia",
+    "FL": "Florida",      "GA": "Georgia",      "HI": "Hawaii",       "ID": "Idaho",
+    "IL": "Illinois",     "IN": "Indiana",      "IA": "Iowa",         "KS": "Kansas",
+    "KY": "Kentucky",     "LA": "Louisiana",    "ME": "Maine",        "MD": "Maryland",
+    "MA": "Massachusetts","MI": "Michigan",     "MN": "Minnesota",    "MS": "Mississippi",
+    "MO": "Missouri",     "MT": "Montana",      "NE": "Nebraska",     "NV": "Nevada",
+    "NH": "New Hampshire","NJ": "New Jersey",   "NM": "New Mexico",   "NY": "New York",
+    "NC": "North Carolina","ND": "North Dakota","OH": "Ohio",         "OK": "Oklahoma",
+    "OR": "Oregon",       "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee",    "TX": "Texas",        "UT": "Utah",
+    "VT": "Vermont",      "VA": "Virginia",     "WA": "Washington",   "WV": "West Virginia",
+    "WI": "Wisconsin",    "WY": "Wyoming",
+}
+
+# 2024 swing states — surface these in a dedicated strip on the page.
+SWING_STATES_2024 = ["PA", "MI", "WI", "AZ", "GA", "NV", "NC"]
+
+
+def _state_series_id(code: str) -> str:
+    """FRED naming convention: <2-letter state code>UR."""
+    return f"{code.upper()}UR"
+
+
+def fetch_state_unemployment() -> dict[str, dict]:
+    """Fetch every state's UNRATE series. Returns dict keyed by 2-letter state
+    code. Each value is the standard FRED-series dict from fetch_fred_series."""
+    out: dict[str, dict] = {}
+    lock = threading.Lock()
+
+    def _go(code: str) -> None:
+        data = fetch_fred_series(_state_series_id(code))
+        if data:
+            data["state_code"] = code
+            data["state_name"] = STATE_UNRATE[code]
+            with lock:
+                out[code] = data
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(_go, STATE_UNRATE.keys()))
+    return out
+
+
+def state_stress_score(series: dict, lookback_months: int = 240) -> Optional[dict]:
+    """0-1 stress score for a single state: where does today's unemployment
+    sit on the percentile distribution of its own last-20y history?
+
+    Higher score = more stressed (worse for voters). Symmetric to the
+    national mood index's 'jobs' component."""
+    obs = [o for o in series.get("observations", []) if o["value"] is not None]
+    if len(obs) < 36:
+        return None
+    latest = obs[-1]
+    history = [o["value"] for o in obs[-lookback_months:]]
+    if not history:
+        return None
+    below = sum(1 for v in history if v < latest["value"])
+    pct = below / len(history)
+    # 12-month change in pp — useful context for cards
+    pp_12m: Optional[float] = None
+    if len(obs) >= 13:
+        pp_12m = round(latest["value"] - obs[-13]["value"], 2)
+    return {
+        "state_code": series.get("state_code"),
+        "state_name": series.get("state_name"),
+        "unemployment_rate": latest["value"],
+        "as_of": latest["date"],
+        "stress_score_0_1": round(pct, 3),
+        "change_12m_pp": pp_12m,
+        # 5-year monthly spark — enough to see the COVID spike + recovery
+        "spark": [{"date": o["date"], "value": o["value"]} for o in obs[-60:]],
+    }
+
+
+def state_panel() -> dict:
+    """Aggregate every state's stress score into the three views the front
+    page needs: full list (sorted by stress), top-5 most-stressed, top-5
+    least-stressed, and the swing-state strip."""
+    raw = fetch_state_unemployment()
+    rows: list[dict] = []
+    for code in STATE_UNRATE:
+        s = raw.get(code)
+        if not s:
+            continue
+        score = state_stress_score(s)
+        if score:
+            rows.append(score)
+    rows.sort(key=lambda r: r["stress_score_0_1"], reverse=True)
+    swing = [r for code in SWING_STATES_2024 for r in rows if r["state_code"] == code]
+    # Also compute a national average of the state stress scores — a different
+    # signal from the national UNRATE because it's the cross-section, not the
+    # population-weighted aggregate. When this is high but national UNRATE is
+    # low, the country is "lopsided" — concentrated hurt.
+    avg_stress = round(sum(r["stress_score_0_1"] for r in rows) / len(rows), 3) if rows else None
+    return {
+        "states": rows,
+        "most_stressed": rows[:5],
+        "least_stressed": list(reversed(rows[-5:])),
+        "swing_states": swing,
+        "avg_stress_0_1": avg_stress,
+        "as_of": rows[0]["as_of"] if rows else None,
+        "count": len(rows),
+    }
 
 
 def fetch_fred_series(series_id: str) -> Optional[dict]:
@@ -709,6 +821,15 @@ def api_markets():
 def api_mood():
     series = fetch_all_fred_parallel()
     return jsonify(voter_mood_index(series) or {"error": "insufficient data"})
+
+
+@app.route("/api/states")
+def api_states():
+    """State-level unemployment + stress scores. 50 states + DC."""
+    panel = state_panel()
+    if not panel.get("states"):
+        return jsonify({"error": "no state data available"}), 503
+    return jsonify(panel)
 
 
 @app.route("/api/summary")

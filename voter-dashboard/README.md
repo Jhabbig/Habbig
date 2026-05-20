@@ -23,6 +23,11 @@ the indicators that drive it:
 | Initial jobless claims | `ICSA` | weekly | Leading job-loss signal. |
 | Personal saving rate | `PSAVERT` | monthly | How much slack households have. |
 
+A **state-level "Where it hurts" panel** below the national cards: a
+swing-state strip (PA, MI, WI, AZ, GA, NV, NC) plus the five most-stressed
+and five least-stressed states, each ranked by where its current
+unemployment rate sits on its own 20-year percentile distribution.
+
 Plus a Polymarket section filtered to politics / midterm / approval / "right
 track" markets.
 
@@ -71,6 +76,8 @@ python3 server.py
 - `GET /api/markets` — politics markets filtered to sentiment-relevant
   questions
 - `GET /api/mood` — composite voter-mood index with per-component breakdown
+- `GET /api/states` — state-level unemployment + own-history percentile
+  stress score (50 states + DC, plus swing-state strip)
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness
