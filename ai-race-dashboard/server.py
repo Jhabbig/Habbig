@@ -41,6 +41,7 @@ import data as ai_data
 import live_data
 import markets as ai_markets
 import news as ai_news
+import snapshot as ai_snapshot
 from ingestion import refresh_all
 
 app = FastAPI(title="AI Race Dashboard")
@@ -306,6 +307,69 @@ async def get_news_endpoint():
     return _json(payload)
 
 
+@app.get("/api/funding")
+async def get_funding():
+    rows = []
+    for r in ai_data.FUNDING_ROUNDS:
+        lab = ai_data.lab_by_key(r["lab_key"]) or {}
+        rows.append({
+            **r,
+            "lab_name": lab.get("name", r["lab_key"]),
+            "lab_color": lab.get("color", "#888"),
+        })
+    # Cumulative raised per lab, in chronological order.
+    by_lab: dict[str, dict] = {}
+    for r in sorted(rows, key=lambda x: x["date"]):
+        k = r["lab_key"]
+        bucket = by_lab.setdefault(k, {
+            "lab_key": k, "lab_name": r["lab_name"], "lab_color": r["lab_color"],
+            "rounds": 0, "raised_usd_b": 0.0, "latest_post_usd_b": None,
+            "latest_round_date": None,
+        })
+        bucket["rounds"] += 1
+        bucket["raised_usd_b"] += r.get("amount_usd_b", 0) or 0
+        if r.get("post_usd_b") is not None:
+            bucket["latest_post_usd_b"] = r["post_usd_b"]
+        bucket["latest_round_date"] = r["date"]
+    totals = sorted(by_lab.values(), key=lambda b: b["raised_usd_b"], reverse=True)
+    return _json({"rounds": rows, "totals": totals, "as_of": ai_data.DATASET_AS_OF})
+
+
+@app.get("/api/stocks")
+async def get_stocks():
+    return _json({
+        "stocks": ai_data.AI_STOCKS,
+        "as_of": ai_data.AI_STOCKS_AS_OF,
+    })
+
+
+@app.get("/api/snapshots")
+async def get_snapshots():
+    return _json({"snapshots": ai_snapshot.list_snapshots()})
+
+
+@app.get("/api/recent-changes")
+async def get_recent_changes(days: int = 7, top: int = 25):
+    snaps = ai_snapshot.list_snapshots()
+    if not snaps:
+        return _json({"changes": [], "since": None, "until": None,
+                      "note": "no snapshots yet"})
+    until = snaps[-1]
+    # Pick the snapshot whose date is at least `days` before `until`.
+    from datetime import date, timedelta
+    try:
+        target = (date.fromisoformat(until) - timedelta(days=days)).isoformat()
+    except ValueError:
+        target = snaps[0]
+    changes = ai_snapshot.compute_deltas(since=target, until=until, top_n=top)
+    return _json({"changes": changes, "since": target, "until": until})
+
+
+@app.get("/api/alerts")
+async def get_alerts():
+    return _json({"alerts": ai_snapshot.alerts()})
+
+
 @app.get("/api/frontier")
 async def get_frontier():
     """Running max-score series per benchmark, computed off merged scores."""
@@ -353,13 +417,29 @@ def _refresh_loop():
         time.sleep(_REFRESH_INTERVAL_S)
 
 
+_SNAPSHOT_INTERVAL_S = 60 * 60 * 6  # check every 6h; take_snapshot is idempotent per day
+
+
+def _snapshot_loop():
+    time.sleep(8)
+    while True:
+        try:
+            ai_snapshot.take_snapshot()
+        except Exception as e:  # noqa: BLE001
+            logging.warning("snapshot loop error: %s", e)
+        time.sleep(_SNAPSHOT_INTERVAL_S)
+
+
 @app.on_event("startup")
 def _start_refresher() -> None:
-    if os.environ.get("DISABLE_INGESTION") == "1":
+    if os.environ.get("DISABLE_INGESTION") != "1":
+        threading.Thread(target=_refresh_loop, name="ingestion-refresher", daemon=True).start()
+    else:
         logging.info("DISABLE_INGESTION=1 — skipping background refresher")
-        return
-    t = threading.Thread(target=_refresh_loop, name="ingestion-refresher", daemon=True)
-    t.start()
+    if os.environ.get("DISABLE_SNAPSHOTS") != "1":
+        threading.Thread(target=_snapshot_loop, name="snapshot-writer", daemon=True).start()
+    else:
+        logging.info("DISABLE_SNAPSHOTS=1 — skipping snapshot writer")
 
 
 if __name__ == "__main__":

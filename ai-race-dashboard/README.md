@@ -60,6 +60,12 @@ DEV_MODE=1 python3 server.py        # → http://127.0.0.1:7070
 - `GET /api/capex` — Big Tech quarterly AI capex
 - `GET /api/talent` — researcher moves + lab headcount estimates
 - `GET /api/news` — RSS fan-in across AI feeds (90s cache)
+- `GET /api/funding` — disclosed equity rounds per lab + cumulative totals
+- `GET /api/stocks` — public AI-exposed equities snapshot
+- `GET /api/snapshots` — list of available daily snapshots
+- `GET /api/recent-changes?days=7&top=25` — top moved (model × benchmark)
+  cells between snapshots
+- `GET /api/alerts` — step-ups (≥2pp / ≥20 Elo) vs the previous snapshot
 - `GET /api/frontier` — running max-score series per benchmark, computed off
   merged scores (live values bump the curve).
 - `GET /api/markets` — keyword-filtered Polymarket AI markets (legacy view)
@@ -101,6 +107,39 @@ When a public leaderboard restructures and our scrapers break:
 
 To disable live ingestion entirely (e.g. for sandboxed local dev), set
 `DISABLE_INGESTION=1`.
+
+## Money (v2.3)
+
+- **Lab funding history** — `FUNDING_ROUNDS` lists disclosed equity
+  rounds (date, round, amount, post-money valuation, lead investor).
+  `/api/funding` also returns a cumulative totals roll-up per lab,
+  visualized as a bar chart with the latest post-money tag.
+- **Public AI exposure** — `AI_STOCKS` is a curated snapshot table of
+  the equities most exposed to the AI buildout (NVDA / AVGO / AMD / TSM
+  / MSFT / GOOGL / META / AMZN / PLTR / ORCL). 52-week range bar with
+  current price marked; daily %, YTD %, P/E, market cap. `AI_STOCKS_AS_OF`
+  carries the refresh date — meant to be hand-edited weekly.
+
+## Snapshots, deltas, and alerts (v2.8)
+
+The server writes a daily JSON snapshot of the merged leaderboard to
+`.snapshots/ai-race/YYYY-MM-DD.json` (in-tree, gitignored). `snapshot.py`
+exposes:
+
+- `take_snapshot()` — idempotent per-day write; called on startup and
+  every 6h by the background snapshot thread.
+- `compute_deltas(since, until, top_n)` — sorted (model × benchmark)
+  movements between two snapshots.
+- `alerts()` — positive-delta filter (default ≥2pp / ≥20 Elo) vs the
+  previous snapshot, useful for ping-when-frontier-moves wiring.
+
+UI surfaces a "Recent score changes" panel showing the top moves over
+the last 7 days. The endpoint snaps onto the nearest available snapshot
+≤ the target date, so the panel still works on day-2 of operation when
+there's only one prior snapshot.
+
+Disable the writer with `DISABLE_SNAPSHOTS=1` (alongside the existing
+`DISABLE_INGESTION=1` knob).
 
 ## Talent & news (v2.4 + v2.7)
 

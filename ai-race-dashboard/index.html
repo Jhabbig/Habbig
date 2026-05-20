@@ -237,6 +237,72 @@
   .ftx-cell .when { color: var(--muted); font-size: 10px; }
   .ftx-cell.unreached { color: var(--muted); background: transparent; border-style: dashed; }
 
+  /* Funding */
+  .fund-totals { display: grid; grid-template-columns: 220px 1fr 100px;
+                 gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+                 align-items: center; font-size: 12px; }
+  .fund-totals:last-child { border-bottom: 0; }
+  .fund-bar { height: 14px; position: relative; background: #0e1117;
+              border: 1px solid var(--grid); border-radius: 3px; overflow: hidden; }
+  .fund-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .fund-amt { text-align: right; font-variant-numeric: tabular-nums;
+              font-weight: 700; }
+  .fund-amt .post { color: var(--muted); font-size: 10px; font-weight: 400;
+                    display: block; }
+  .fund-round-row { display: grid; grid-template-columns: 100px 180px 1fr 90px 90px;
+                    gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+                    align-items: center; font-size: 12px; }
+  .fund-round-row:last-child { border-bottom: 0; }
+  .fund-round-row .when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .fund-round-row .amt { font-variant-numeric: tabular-nums; font-weight: 700;
+                         text-align: right; }
+  .fund-round-row .post { color: var(--muted); font-variant-numeric: tabular-nums;
+                          text-align: right; }
+  .fund-round-row .post b { color: var(--fg); font-weight: 600; }
+
+  /* Stocks */
+  .stocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 10px; }
+  .stock-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 10px 12px; }
+  .stock-card .head { display: flex; align-items: baseline; justify-content: space-between;
+                      gap: 8px; }
+  .stock-card .ticker { font-weight: 700; font-size: 14px; }
+  .stock-card .theme { color: var(--muted); font-size: 10px;
+                       text-transform: uppercase; letter-spacing: 0.04em; }
+  .stock-card .name { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .stock-card .price { font-variant-numeric: tabular-nums; font-weight: 700;
+                       font-size: 18px; margin-top: 8px; }
+  .stock-card .daily { font-size: 11px; font-weight: 600;
+                       padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .stock-card .daily.up { background: #56d36422; color: var(--green); }
+  .stock-card .daily.down { background: #f8514922; color: var(--red); }
+  .stock-card .range { margin-top: 8px; }
+  .stock-card .range-bar { position: relative; height: 4px; background: #0e1117;
+                           border: 1px solid var(--grid); border-radius: 2px; margin-bottom: 4px; }
+  .stock-card .range-bar .marker { position: absolute; top: -2px; bottom: -2px; width: 2px;
+                                   background: var(--accent); }
+  .stock-card .range-lbl { display: flex; justify-content: space-between;
+                           color: var(--muted); font-size: 10px;
+                           font-variant-numeric: tabular-nums; }
+  .stock-card .meta { display: grid; grid-template-columns: 1fr 1fr;
+                      gap: 4px; margin-top: 8px; font-size: 11px; }
+  .stock-card .meta .lbl { color: var(--muted); }
+  .stock-card .meta .val { font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Recent changes */
+  .chg-row { display: grid; grid-template-columns: 1fr 160px 100px;
+             gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .chg-row:last-child { border-bottom: 0; }
+  .chg-model { font-weight: 600; }
+  .chg-bench { color: var(--muted); font-size: 11px; }
+  .chg-prev-curr { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chg-delta { text-align: right; font-variant-numeric: tabular-nums;
+               font-weight: 700; padding: 2px 8px; border-radius: 3px; }
+  .chg-delta.up { background: #56d36422; color: var(--green); }
+  .chg-delta.down { background: #f8514922; color: var(--red); }
+
   /* Talent flow */
   .move-row { display: grid; grid-template-columns: 90px 1fr;
               gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
@@ -499,6 +565,35 @@
     <div class="capex-grid" id="capex"></div>
     <div class="capex-total"><span class="lbl">Latest combined quarter</span>
       <div class="val" id="capex-total"></div></div>
+  </section>
+
+  <!-- Lab funding history -->
+  <section class="panel" id="funding-panel">
+    <h2>Lab funding history</h2>
+    <div class="sub">Disclosed equity rounds. Totals bar normalized against the
+      best-funded lab; cells show cumulative raised and the latest post-money valuation.</div>
+    <div id="funding-totals"></div>
+    <h2 style="margin-top:24px">Round history</h2>
+    <div class="sub">Newest first.</div>
+    <div id="funding-rounds"></div>
+  </section>
+
+  <!-- Public AI exposure -->
+  <section class="panel" id="stocks-panel">
+    <h2>Public AI exposure <span id="stocks-asof" style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px"></span></h2>
+    <div class="sub">Snapshot of the public equities most exposed to the AI buildout.
+      Grouped by theme; 52-week range bar with current price marked.
+      Refresh weekly from public quotes (<code>AI_STOCKS</code> in <code>data.py</code>).</div>
+    <div class="stocks" id="stocks"></div>
+  </section>
+
+  <!-- Recent score changes -->
+  <section class="panel" id="changes-panel">
+    <h2>Recent score changes <span id="changes-window" style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px"></span></h2>
+    <div class="sub">Top model × benchmark cells that moved between the most
+      recent snapshot and an earlier one (default: 7 days back). Snapshots are
+      written daily by the server to <code>.snapshots/ai-race/</code>.</div>
+    <div id="changes"></div>
   </section>
 
   <!-- Featured prediction markets -->
@@ -1145,6 +1240,101 @@ async function loadNews() {
   }
 }
 
+// ── Funding ────────────────────────────────────────────────────────────────
+async function loadFunding() {
+  const data = await fetchJSON("/api/funding");
+  const totals = data.totals || [];
+  const maxRaised = Math.max(1, ...totals.map(t => t.raised_usd_b));
+  $("#funding-totals").innerHTML = totals.map(t => {
+    const pct = (t.raised_usd_b / maxRaised) * 100;
+    const post = t.latest_post_usd_b != null
+      ? `<span class="post">post-money $${t.latest_post_usd_b}B (${escapeHTML((t.latest_round_date || '').slice(0,7))})</span>`
+      : `<span class="post">no post-money disclosed</span>`;
+    return `<div class="fund-totals">
+      <div class="cmp-lab">
+        <span class="lab-dot" style="background:${escapeHTML(t.lab_color)}"></span>
+        ${escapeHTML(t.lab_name)} <span style="color:var(--muted);font-size:11px;font-weight:400">· ${t.rounds} round${t.rounds===1?'':'s'}</span>
+      </div>
+      <div class="fund-bar"><div class="fill" style="width:${pct.toFixed(1)}%;background:${escapeHTML(t.lab_color)}99"></div></div>
+      <div class="fund-amt">$${t.raised_usd_b.toFixed(1)}B${post}</div>
+    </div>`;
+  }).join("");
+
+  const rounds = (data.rounds || []).slice().reverse();
+  $("#funding-rounds").innerHTML = rounds.map(r => {
+    const post = r.post_usd_b != null ? `$${r.post_usd_b}B` : "—";
+    return `<div class="fund-round-row">
+      <div class="when">${escapeHTML(r.date)}</div>
+      <div class="cmp-lab"><span class="lab-dot" style="background:${escapeHTML(r.lab_color)}"></span>${escapeHTML(r.lab_name)}</div>
+      <div>${escapeHTML(r.round)} <span style="color:var(--muted)">· lead: ${escapeHTML(r.lead || '—')}</span></div>
+      <div class="amt">$${(r.amount_usd_b || 0).toFixed(2)}B</div>
+      <div class="post"><b>${post}</b><br><span style="font-size:10px">post-money</span></div>
+    </div>`;
+  }).join("");
+}
+
+// ── Stocks ────────────────────────────────────────────────────────────────
+async function loadStocks() {
+  const data = await fetchJSON("/api/stocks");
+  const rows = data.stocks || [];
+  $("#stocks-asof").textContent = data.as_of ? `· as of ${data.as_of}` : "";
+  $("#stocks").innerHTML = rows.map(s => {
+    const [lo, hi] = s.range_52w || [0, 0];
+    const pos = hi > lo ? ((s.price - lo) / (hi - lo)) * 100 : 50;
+    const dailyClass = s.daily_pct >= 0 ? "up" : "down";
+    const dailyLabel = (s.daily_pct >= 0 ? "+" : "") + s.daily_pct.toFixed(1) + "%";
+    return `<div class="stock-card">
+      <div class="head">
+        <span class="ticker">${escapeHTML(s.ticker)}</span>
+        <span class="theme">${escapeHTML(s.theme)}</span>
+      </div>
+      <div class="name">${escapeHTML(s.name)}</div>
+      <div class="price">$${s.price.toFixed(2)}<span class="daily ${dailyClass}">${dailyLabel}</span></div>
+      <div class="range">
+        <div class="range-bar"><div class="marker" style="left:${pos.toFixed(1)}%"></div></div>
+        <div class="range-lbl"><span>$${lo}</span><span>$${hi}</span></div>
+      </div>
+      <div class="meta">
+        <span class="lbl">YTD</span><span class="val ${s.ytd_pct>=0?'':''}" style="color:${s.ytd_pct>=0?'var(--green)':'var(--red)'}">${s.ytd_pct>=0?'+':''}${s.ytd_pct.toFixed(1)}%</span>
+        <span class="lbl">P/E</span><span class="val">${s.pe != null ? s.pe.toFixed(0) : '—'}</span>
+        <span class="lbl">Mkt cap</span><span class="val">$${s.mkt_cap_t.toFixed(2)}T</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ── Recent changes ────────────────────────────────────────────────────────
+async function loadRecentChanges() {
+  const wrap = $("#changes");
+  try {
+    const data = await fetchJSON("/api/recent-changes?days=7&top=25");
+    const changes = data.changes || [];
+    if (data.since && data.until) {
+      $("#changes-window").textContent = `· ${data.since} → ${data.until}`;
+    }
+    if (changes.length === 0) {
+      wrap.innerHTML = `<div class="empty-state">${data.note || 'No score changes yet — server takes daily snapshots; this populates once two are recorded.'}</div>`;
+      return;
+    }
+    wrap.innerHTML = changes.map(c => {
+      const isElo = c.benchmark === "lmarena_elo";
+      const deltaLabel = (c.delta >= 0 ? "+" : "") + (isElo ? c.delta.toFixed(0) : c.delta.toFixed(1)) + (isElo ? " Elo" : "pp");
+      const cls = c.delta >= 0 ? "up" : "down";
+      const fmt = (v) => isElo ? Math.round(v) : v.toFixed(1);
+      return `<div class="chg-row">
+        <div>
+          <div class="chg-model" style="color:${escapeHTML(c.lab_color)}">${escapeHTML(c.model)}</div>
+          <div class="chg-bench">${escapeHTML(c.lab_name)}</div>
+        </div>
+        <div class="chg-prev-curr"><b>${escapeHTML(c.benchmark)}</b><br>${fmt(c.prev)} → ${fmt(c.curr)}</div>
+        <div class="chg-delta ${cls}">${deltaLabel}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load changes: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
 // ── Compute / Export controls / Capex ─────────────────────────────────────
 async function loadCompute() {
   const data = await fetchJSON("/api/compute");
@@ -1436,6 +1626,9 @@ async function boot() {
     loadTalent();
     loadExportControls();
     loadCapex();
+    loadFunding();
+    loadStocks();
+    loadRecentChanges();
     loadSources();
     loadFeatured();
     loadMovers();

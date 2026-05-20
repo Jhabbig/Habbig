@@ -649,6 +649,49 @@ NEWS_FEEDS = [
     {"name": "AI Snake Oil",      "url": "https://www.aisnakeoil.com/feed",                    "kind": "newsletter"},
 ]
 
+# ── Funding rounds ───────────────────────────────────────────────────────────
+# Notable equity rounds by lab. `amount_usd_b` is round size; `post_usd_b` is
+# post-money valuation. Both USD billions. Curated from press / Reuters /
+# Bloomberg. Add new rounds as they close.
+FUNDING_ROUNDS = [
+    # OpenAI
+    {"date": "2019-07-22", "lab_key": "openai",    "round": "Strategic", "amount_usd_b": 1.0,  "post_usd_b": None,  "lead": "Microsoft"},
+    {"date": "2023-01-23", "lab_key": "openai",    "round": "Strategic", "amount_usd_b": 10.0, "post_usd_b": 29.0,  "lead": "Microsoft (multi-year)"},
+    {"date": "2024-10-02", "lab_key": "openai",    "round": "Tender",    "amount_usd_b": 6.6,  "post_usd_b": 157.0, "lead": "Thrive Capital"},
+    {"date": "2025-04-01", "lab_key": "openai",    "round": "Strategic", "amount_usd_b": 40.0, "post_usd_b": 300.0, "lead": "SoftBank"},
+    {"date": "2025-10-15", "lab_key": "openai",    "round": "Secondary", "amount_usd_b": 6.6,  "post_usd_b": 500.0, "lead": "Thrive (employee tender)"},
+    # Anthropic
+    {"date": "2023-09-25", "lab_key": "anthropic", "round": "Strategic", "amount_usd_b": 4.0,  "post_usd_b": 18.0,  "lead": "Amazon"},
+    {"date": "2024-03-27", "lab_key": "anthropic", "round": "Strategic", "amount_usd_b": 2.75, "post_usd_b": 18.4,  "lead": "Amazon top-up"},
+    {"date": "2024-11-22", "lab_key": "anthropic", "round": "Strategic", "amount_usd_b": 4.0,  "post_usd_b": 40.0,  "lead": "Amazon"},
+    {"date": "2025-03-03", "lab_key": "anthropic", "round": "Series E",  "amount_usd_b": 3.5,  "post_usd_b": 61.5,  "lead": "Lightspeed"},
+    {"date": "2025-09-02", "lab_key": "anthropic", "round": "Series F",  "amount_usd_b": 13.0, "post_usd_b": 170.0, "lead": "ICONIQ Capital"},
+    # xAI
+    {"date": "2023-12-29", "lab_key": "xai",       "round": "Series A",  "amount_usd_b": 6.0,  "post_usd_b": 20.0,  "lead": "Sequoia / a16z"},
+    {"date": "2024-12-23", "lab_key": "xai",       "round": "Series B",  "amount_usd_b": 6.0,  "post_usd_b": 40.0,  "lead": "Andreessen Horowitz"},
+    {"date": "2025-11-04", "lab_key": "xai",       "round": "Strategic", "amount_usd_b": 10.0, "post_usd_b": 200.0, "lead": "Saudi PIF / Valor (reported)"},
+    # Mistral
+    {"date": "2024-06-11", "lab_key": "mistral",   "round": "Series B",  "amount_usd_b": 0.64, "post_usd_b": 6.2,   "lead": "General Catalyst"},
+    {"date": "2025-09-09", "lab_key": "mistral",   "round": "Series C",  "amount_usd_b": 1.94, "post_usd_b": 13.7,  "lead": "ASML"},
+]
+
+# ── Public AI-exposed equities ───────────────────────────────────────────────
+# Snapshot — refresh weekly from public quotes. `pe` is TTM; `range_52w` =
+# [low, high]; `theme` groups in the UI.
+AI_STOCKS = [
+    {"ticker": "NVDA",  "name": "Nvidia",         "theme": "Chips",       "price": 188.0, "daily_pct":  0.6, "ytd_pct":  39.8, "pe":  53.0, "mkt_cap_t": 4.60, "range_52w": [101.0, 212.0]},
+    {"ticker": "AVGO",  "name": "Broadcom",       "theme": "Chips",       "price": 365.0, "daily_pct":  0.4, "ytd_pct":  58.2, "pe":  72.0, "mkt_cap_t": 1.70, "range_52w": [190.0, 380.0]},
+    {"ticker": "AMD",   "name": "AMD",            "theme": "Chips",       "price": 142.0, "daily_pct": -0.3, "ytd_pct":  16.7, "pe":  51.0, "mkt_cap_t": 0.23, "range_52w": [ 95.0, 187.0]},
+    {"ticker": "TSM",   "name": "TSMC (ADR)",     "theme": "Foundry",     "price": 244.0, "daily_pct":  0.8, "ytd_pct":  38.0, "pe":  31.0, "mkt_cap_t": 1.30, "range_52w": [155.0, 252.0]},
+    {"ticker": "MSFT",  "name": "Microsoft",      "theme": "Hyperscaler", "price": 480.0, "daily_pct":  0.2, "ytd_pct":   8.0, "pe":  36.0, "mkt_cap_t": 3.60, "range_52w": [385.0, 510.0]},
+    {"ticker": "GOOGL", "name": "Alphabet",       "theme": "Hyperscaler", "price": 192.0, "daily_pct": -0.1, "ytd_pct":  13.0, "pe":  24.0, "mkt_cap_t": 2.40, "range_52w": [150.0, 207.0]},
+    {"ticker": "META",  "name": "Meta",           "theme": "Hyperscaler", "price": 612.0, "daily_pct":  0.0, "ytd_pct":   4.0, "pe":  28.0, "mkt_cap_t": 1.60, "range_52w": [480.0, 642.0]},
+    {"ticker": "AMZN",  "name": "Amazon",         "theme": "Hyperscaler", "price": 224.0, "daily_pct":  0.4, "ytd_pct":   2.0, "pe":  41.0, "mkt_cap_t": 2.40, "range_52w": [165.0, 242.0]},
+    {"ticker": "PLTR",  "name": "Palantir",       "theme": "Apps",        "price":  78.0, "daily_pct":  1.6, "ytd_pct":   3.0, "pe": 312.0, "mkt_cap_t": 0.19, "range_52w": [ 60.0,  98.0]},
+    {"ticker": "ORCL",  "name": "Oracle",         "theme": "Hyperscaler", "price": 215.0, "daily_pct":  0.3, "ytd_pct":  29.0, "pe":  38.0, "mkt_cap_t": 0.60, "range_52w": [125.0, 230.0]},
+]
+AI_STOCKS_AS_OF = "2025-12-15"
+
 # ── Market whitelists ────────────────────────────────────────────────────────
 # Curated lists of Polymarket events + Kalshi series to surface as "Featured
 # AI markets." Editorial, not algorithmic — each entry is a slug/ticker the
