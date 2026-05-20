@@ -44,6 +44,7 @@ docker compose up --build crypto
 | `backtest.py` | Walk-forward backtester for cycle indicators. At every historical date, recomputes each indicator with only data available then, measures 30/90/365d forward returns vs unconditional baseline. Persists to `crypto_indicator_backtests`. Re-run on every long-term refresh. |
 | `exchanges.py` | Spot exchange adapters — Coinbase Advanced Trade (JWT/ES256) and Kraken (HMAC-SHA512). Common interface: `get_balances`, `get_price`, `place_limit_buy`, `place_market_buy`, `cancel_order`. Credentials stored Fernet-encrypted per user in `crypto_exchange_credentials`. |
 | `execution.py` | Auto-execution engine. Reads `crypto_dca_schedule` and runs each due leg through a 7-step safety gauntlet (dry-run gate, per-order cap, daily cap, portfolio circuit breaker, asset whitelist, adapter check, price discovery). Places limit orders 0.5% below mid with 1h TTL + optional market fallback. Append-only log in `crypto_executions`. Dry-run is the default. |
+| `tax.py` | Tax-optimal selling. Immutable lot ledger + disposition ledger with a join table tracking which acquisition lots funded which sale. Lot methods: FIFO / LIFO / HIFO (default) / LOFO / TAX_OPTIMAL. `preview_sell()` shows the hypothetical LT/ST split without persisting. `find_harvest_opportunities()` scans open lots for losses ≥ user threshold and ≥ N days old, flagging wash-sale risk. `export_form_8949()` emits Part-I/II CSV. Realised-P&L summary computes annual ST + LT + estimated tax + loss-carryforward. |
 
 **HTML / data**
 | File | Purpose |

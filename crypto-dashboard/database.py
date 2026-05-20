@@ -348,6 +348,56 @@ CREATE TABLE IF NOT EXISTS crypto_executions (
 CREATE INDEX IF NOT EXISTS idx_exec_user ON crypto_executions(user_id);
 CREATE INDEX IF NOT EXISTS idx_exec_user_created ON crypto_executions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_exec_open ON crypto_executions(user_id, status, action);
+
+-- ── Tax: dispositions (immutable sale ledger) ───────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_dispositions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    qty             REAL NOT NULL,
+    sell_price      REAL NOT NULL,
+    sell_date       TEXT NOT NULL,         -- ISO date YYYY-MM-DD
+    method          TEXT NOT NULL,         -- FIFO | LIFO | HIFO | LOFO | TAX_OPTIMAL
+    exchange        TEXT NOT NULL DEFAULT 'manual',
+    execution_id    INTEGER,               -- FK → crypto_executions.id (nullable)
+    realized_gain   REAL NOT NULL DEFAULT 0,
+    lt_gain         REAL NOT NULL DEFAULT 0,
+    st_gain         REAL NOT NULL DEFAULT 0,
+    notes           TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_disp_user ON crypto_dispositions(user_id);
+CREATE INDEX IF NOT EXISTS idx_disp_user_date ON crypto_dispositions(user_id, sell_date);
+CREATE INDEX IF NOT EXISTS idx_disp_execution ON crypto_dispositions(execution_id);
+
+-- ── Tax: lot consumption (which acquisition lot funded which sale) ─────────
+CREATE TABLE IF NOT EXISTS crypto_tax_lot_consumption (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    disposition_id  INTEGER NOT NULL,
+    holding_id      INTEGER NOT NULL,
+    consumed_qty    REAL NOT NULL,
+    cost_basis      REAL NOT NULL,         -- per-unit cost basis at acquisition
+    realized_gain   REAL NOT NULL,
+    classification  TEXT NOT NULL,         -- LT | ST
+    days_held       INTEGER NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (disposition_id) REFERENCES crypto_dispositions(id),
+    FOREIGN KEY (holding_id) REFERENCES crypto_holdings(id)
+);
+CREATE INDEX IF NOT EXISTS idx_consump_disposition ON crypto_tax_lot_consumption(disposition_id);
+CREATE INDEX IF NOT EXISTS idx_consump_holding ON crypto_tax_lot_consumption(holding_id);
+
+-- ── Tax: per-user settings ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_tax_settings (
+    user_id              TEXT PRIMARY KEY,
+    jurisdiction         TEXT NOT NULL DEFAULT 'US',
+    default_lot_method   TEXT NOT NULL DEFAULT 'HIFO',
+    harvest_min_loss_usd REAL NOT NULL DEFAULT 100.0,
+    harvest_min_age_days INTEGER NOT NULL DEFAULT 30,
+    st_rate              REAL NOT NULL DEFAULT 0.30,
+    lt_rate              REAL NOT NULL DEFAULT 0.15,
+    updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -1527,6 +1577,141 @@ def get_due_dca_schedules() -> list[Row]:
             (now,),
         ).fetchall()
     return _rows(rows)
+
+
+# ── Tax: dispositions ───────────────────────────────────────────────────────
+
+def insert_disposition(user_id: str, ticker: str, qty: float, sell_price: float,
+                       sell_date: str, method: str, exchange: str,
+                       execution_id: int | None, realized_gain: float,
+                       lt_gain: float, st_gain: float, notes: str = "") -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_dispositions
+                 (user_id, ticker, qty, sell_price, sell_date, method, exchange,
+                  execution_id, realized_gain, lt_gain, st_gain, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, ticker, qty, sell_price, sell_date, method, exchange,
+             execution_id, realized_gain, lt_gain, st_gain, notes),
+        )
+        return int(cur.lastrowid)
+
+
+def get_dispositions(user_id: str, since: str | None = None,
+                     until: str | None = None, limit: int = 500) -> list[Row]:
+    sql = "SELECT * FROM crypto_dispositions WHERE user_id = ?"
+    params: list = [user_id]
+    if since:
+        sql += " AND sell_date >= ?"; params.append(since)
+    if until:
+        sql += " AND sell_date < ?"; params.append(until)
+    sql += " ORDER BY sell_date DESC, id DESC LIMIT ?"
+    params.append(limit)
+    with _conn() as c:
+        rows = c.execute(sql, params).fetchall()
+    return _rows(rows)
+
+
+def disposition_exists_for_execution(execution_id: int) -> bool:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM crypto_dispositions WHERE execution_id = ? LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+    return row is not None
+
+
+def get_disposition_by_execution(execution_id: int) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM crypto_dispositions WHERE execution_id = ? LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+    return _row(row)
+
+
+# ── Tax: lot consumption ────────────────────────────────────────────────────
+
+def insert_lot_consumption(rows: list[tuple]) -> None:
+    """Bulk insert. Each row: (disposition_id, holding_id, consumed_qty,
+    cost_basis, realized_gain, classification, days_held)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_tax_lot_consumption
+                 (disposition_id, holding_id, consumed_qty, cost_basis,
+                  realized_gain, classification, days_held)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+
+
+def get_lot_consumption_for_disposition(disposition_id: int) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT c.*, h.acquired_at, h.ticker
+               FROM crypto_tax_lot_consumption c
+               JOIN crypto_holdings h ON h.id = c.holding_id
+               WHERE c.disposition_id = ?
+               ORDER BY c.id""",
+            (disposition_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_consumption_by_holding(user_id: str) -> dict:
+    """Sum consumed qty grouped by holding_id, scoped to this user's lots.
+    Returns {holding_id: consumed_qty}."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT c.holding_id, COALESCE(SUM(c.consumed_qty), 0) AS consumed
+               FROM crypto_tax_lot_consumption c
+               JOIN crypto_holdings h ON h.id = c.holding_id
+               WHERE h.user_id = ?
+               GROUP BY c.holding_id""",
+            (user_id,),
+        ).fetchall()
+    return {r["holding_id"]: float(r["consumed"]) for r in rows}
+
+
+# ── Tax: settings ───────────────────────────────────────────────────────────
+
+def get_tax_settings(user_id: str) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            """SELECT jurisdiction, default_lot_method, harvest_min_loss_usd,
+                      harvest_min_age_days, st_rate, lt_rate, updated_at
+               FROM crypto_tax_settings WHERE user_id = ?""",
+            (user_id,),
+        ).fetchone()
+    return _row(row)
+
+
+def upsert_tax_settings(user_id: str, settings: dict) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_tax_settings
+                 (user_id, jurisdiction, default_lot_method,
+                  harvest_min_loss_usd, harvest_min_age_days,
+                  st_rate, lt_rate, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 jurisdiction=excluded.jurisdiction,
+                 default_lot_method=excluded.default_lot_method,
+                 harvest_min_loss_usd=excluded.harvest_min_loss_usd,
+                 harvest_min_age_days=excluded.harvest_min_age_days,
+                 st_rate=excluded.st_rate,
+                 lt_rate=excluded.lt_rate,
+                 updated_at=datetime('now')""",
+            (user_id,
+             str(settings["jurisdiction"]),
+             str(settings["default_lot_method"]),
+             float(settings["harvest_min_loss_usd"]),
+             int(settings["harvest_min_age_days"]),
+             float(settings["st_rate"]),
+             float(settings["lt_rate"])),
+        )
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

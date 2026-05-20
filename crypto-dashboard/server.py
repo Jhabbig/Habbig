@@ -40,6 +40,7 @@ import macro
 import backtest as bt
 import exchanges as xch
 import execution as exec_mod
+import tax as tax_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -5367,6 +5368,151 @@ async def run_rebalance_now(request: Request):
     return {"decisions": [d.to_dict() for d in decisions]}
 
 
+# ===================================================================
+# TAX — Phase 3 (lot selection, dispositions, harvest, Form 8949)
+# ===================================================================
+
+@app.get("/api/long-term/tax/settings")
+async def get_tax_settings_api(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return tax_mod.get_tax_settings(user["id"])
+
+
+@app.post("/api/long-term/tax/settings")
+async def set_tax_settings_api(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    return tax_mod.update_tax_settings(user["id"], payload or {})
+
+
+@app.get("/api/long-term/tax/lots")
+async def list_open_lots(request: Request, ticker: str | None = None):
+    """Open lots — qty_original, qty_consumed, qty_remaining, cost basis,
+    acquired_at. Lets the UI render the lot picker."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    lots = await asyncio.to_thread(tax_mod.open_lots, user["id"], ticker)
+    return {"lots": [l.to_dict() for l in lots]}
+
+
+@app.get("/api/long-term/tax/preview-sell")
+async def preview_sell_api(request: Request, ticker: str, qty: float,
+                           method: str = "HIFO", sell_price: float | None = None):
+    """Hypothetical sale — show which lots would be consumed and the LT/ST
+    split. Nothing is persisted. The UI calls this on every keystroke so the
+    user can compare methods side by side."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if ticker.upper() not in lt.TICKER_MAP:
+        raise HTTPException(status_code=400, detail="Unknown ticker")
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="qty must be positive")
+    try:
+        preview = await asyncio.to_thread(
+            tax_mod.preview_sell, user["id"], ticker, float(qty), method, sell_price,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return preview.to_dict()
+
+
+@app.post("/api/long-term/tax/dispositions")
+async def record_disposition_api(request: Request):
+    """Record a real sale. Use this when the user reports an off-platform
+    sell, or when the executor confirms a fill (execution_id link prevents
+    double-records)."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    ticker = str(payload.get("ticker", "")).upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=400, detail="Unknown ticker")
+    try:
+        qty = float(payload.get("qty"))
+        sell_price = float(payload.get("sell_price"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="qty + sell_price must be numeric")
+    if qty <= 0 or sell_price <= 0:
+        raise HTTPException(status_code=400, detail="qty + sell_price must be positive")
+    method = payload.get("method")
+    sell_date = payload.get("sell_date")
+    exchange = payload.get("exchange", "manual")
+    notes = str(payload.get("notes", ""))[:500]
+    try:
+        result = await asyncio.to_thread(
+            tax_mod.record_disposition, user["id"], ticker, qty, sell_price,
+            method, sell_date, exchange, None, notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@app.get("/api/long-term/tax/dispositions")
+async def list_dispositions_api(request: Request, limit: int = 100):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    dispositions = await asyncio.to_thread(
+        tax_mod.list_dispositions, user["id"], min(max(1, limit), 500),
+    )
+    return {"dispositions": dispositions}
+
+
+@app.get("/api/long-term/tax/harvest")
+async def harvest_opportunities(request: Request,
+                                 min_loss_usd: float | None = None,
+                                 min_age_days: int | None = None):
+    """Scan open lots for tax-loss harvesting candidates."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    opps = await asyncio.to_thread(
+        tax_mod.find_harvest_opportunities, user["id"], min_loss_usd, min_age_days,
+    )
+    total_loss = sum(o.unrealized_loss_usd for o in opps)
+    total_save = sum(o.estimated_tax_save_usd for o in opps)
+    return {
+        "opportunities": [o.to_dict() for o in opps],
+        "total_unrealized_loss_usd": round(total_loss, 2),
+        "estimated_total_tax_save_usd": round(total_save, 2),
+    }
+
+
+@app.get("/api/long-term/tax/summary/{year}")
+async def tax_summary(year: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if year < 2009 or year > 2100:
+        raise HTTPException(status_code=400, detail="invalid year")
+    return await asyncio.to_thread(tax_mod.realized_pnl_summary, user["id"], year)
+
+
+@app.get("/api/long-term/tax/export/{year}")
+async def tax_export(year: int, request: Request):
+    """Form 8949 CSV download. One row per lot consumption, split into Part I
+    (short-term) and Part II (long-term)."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    csv_text = await asyncio.to_thread(tax_mod.export_form_8949, user["id"], year)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="form-8949-{year}.csv"',
+        },
+    )
+
+
 # ── HTML page ───────────────────────────────────────────────────────────────
 
 @app.get("/long-term", response_class=HTMLResponse)
@@ -5444,6 +5590,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="tab" data-tab="dca">DCA Plan</div>
   <div class="tab" data-tab="alerts">Risk Alerts</div>
   <div class="tab" data-tab="execution">Execution</div>
+  <div class="tab" data-tab="tax">Taxes</div>
 </div>
 
 <section data-section="overview">
@@ -5622,6 +5769,82 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     <th>When</th><th>Ticker</th><th>Side</th><th>Action</th><th>Reason</th><th>USD</th><th>Limit</th><th>Status</th></tr></thead><tbody></tbody></table>
 </section>
 
+<section data-section="tax" hidden>
+  <h2>Tax settings</h2>
+  <div class="actionrow">
+    <div class="field"><label>Jurisdiction</label>
+      <select id="tx-jur"><option>US</option><option>UK</option><option>DE</option></select>
+    </div>
+    <div class="field"><label>Default lot method</label>
+      <select id="tx-method">
+        <option value="HIFO">HIFO (min gain)</option>
+        <option value="FIFO">FIFO (oldest first)</option>
+        <option value="LIFO">LIFO (newest first)</option>
+        <option value="LOFO">LOFO (max gain)</option>
+        <option value="TAX_OPTIMAL">Tax-optimal</option>
+      </select>
+    </div>
+    <div class="field"><label>ST rate</label><input id="tx-st" type="number" step="0.01" min="0" max="0.6"></div>
+    <div class="field"><label>LT rate</label><input id="tx-lt" type="number" step="0.01" min="0" max="0.6"></div>
+    <div class="field"><label>Harvest min loss ($)</label><input id="tx-hl" type="number" step="10" min="0"></div>
+    <div class="field"><label>Harvest min age (days)</label><input id="tx-hd" type="number" step="1" min="0"></div>
+    <button id="tx-save">Save</button>
+    <span id="tx-set-msg"></span>
+  </div>
+
+  <h2>Annual summary</h2>
+  <div class="actionrow">
+    <div class="field"><label>Year</label><input id="tx-year" type="number" step="1" value="2026" style="width:90px"></div>
+    <button id="tx-year-go" class="ghost">Compute</button>
+    <a id="tx-export" href="#" style="margin-left:8px;color:var(--blue);text-decoration:none">Download Form 8949 CSV</a>
+  </div>
+  <div id="tx-summary" style="margin-top:10px"></div>
+
+  <h2>Sell preview</h2>
+  <div class="note">Show me what a hypothetical sale would do — no records written. Compare lot methods side-by-side.</div>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="ps-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <div class="field"><label>Quantity</label><input id="ps-qty" type="number" step="any" min="0" placeholder="0.5"></div>
+    <div class="field"><label>Method</label>
+      <select id="ps-method">
+        <option value="HIFO">HIFO</option>
+        <option value="FIFO">FIFO</option>
+        <option value="LIFO">LIFO</option>
+        <option value="LOFO">LOFO</option>
+        <option value="TAX_OPTIMAL">Tax-optimal</option>
+      </select>
+    </div>
+    <div class="field"><label>Sell price (USD, blank = market)</label><input id="ps-price" type="number" step="any" min="0"></div>
+    <button id="ps-go">Preview</button>
+  </div>
+  <div id="ps-out" style="margin-top:10px"></div>
+
+  <h2>Harvest opportunities</h2>
+  <div id="hv-totals" style="margin:8px 0"></div>
+  <table id="hv-table"><thead><tr>
+    <th>Ticker</th><th>Qty</th><th>Cost</th><th>Price</th><th>Loss</th><th>Loss %</th><th>Days</th><th>LT/ST</th><th>Wash risk</th><th>Est. tax save</th></tr></thead><tbody></tbody></table>
+
+  <h2>Open lots</h2>
+  <table id="lots-table"><thead><tr>
+    <th>Acquired</th><th>Ticker</th><th>Original qty</th><th>Consumed</th><th>Remaining</th><th>Cost basis</th><th>LT eligible at</th></tr></thead><tbody></tbody></table>
+
+  <h2>Dispositions (realised P&amp;L)</h2>
+  <div class="actionrow">
+    <div class="field"><label>Ticker</label>
+      <select id="dp-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
+    </div>
+    <div class="field"><label>Qty</label><input id="dp-qty" type="number" step="any" min="0"></div>
+    <div class="field"><label>Sell price</label><input id="dp-price" type="number" step="any" min="0"></div>
+    <div class="field"><label>Sell date</label><input id="dp-date" type="date"></div>
+    <button id="dp-add">Record sale</button>
+    <span id="dp-msg"></span>
+  </div>
+  <table id="dp-table"><thead><tr>
+    <th>Date</th><th>Ticker</th><th>Qty</th><th>Price</th><th>Method</th><th>Realised</th><th>LT</th><th>ST</th><th>Lots</th></tr></thead><tbody></tbody></table>
+</section>
+
 <script>
 const TICKERS = ["BTC","ETH","SOL","DOGE","XRP"];
 const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
@@ -5652,6 +5875,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (which === 'dca') loadDCA();
   if (which === 'alerts') loadAlerts();
   if (which === 'execution') loadExecution();
+  if (which === 'tax') loadTax();
 });
 
 const SIG_CLASS = {bullish:'r-calm', bearish:'r-defensive', neutral:'r-neutral', unavailable:'r-neutral'};
@@ -6170,6 +6394,185 @@ document.getElementById('a-add').onclick = async () => {
     msg.innerHTML = '<div class="ok">Alert saved.</div>';
     loadAlerts();
   } catch(e) { msg.innerHTML = '<div class="err">'+e.message+'</div>'; }
+};
+
+// ── Taxes tab ──────────────────────────────────────────────────────────────
+
+async function loadTax(){
+  await loadTaxSettings();
+  await loadLots();
+  await loadHarvest();
+  await loadDispositions();
+  await refreshExportLink();
+}
+
+async function loadTaxSettings(){
+  try {
+    const s = await api('/api/long-term/tax/settings');
+    document.getElementById('tx-jur').value = s.jurisdiction;
+    document.getElementById('tx-method').value = s.default_lot_method;
+    document.getElementById('tx-st').value = s.st_rate;
+    document.getElementById('tx-lt').value = s.lt_rate;
+    document.getElementById('tx-hl').value = s.harvest_min_loss_usd;
+    document.getElementById('tx-hd').value = s.harvest_min_age_days;
+    document.getElementById('ps-method').value = s.default_lot_method;
+  } catch(e) { console.error(e); }
+}
+
+document.getElementById('tx-save').onclick = async () => {
+  const msg = document.getElementById('tx-set-msg'); msg.innerHTML = '';
+  try {
+    await api('/api/long-term/tax/settings', {method:'POST', body: JSON.stringify({
+      jurisdiction: document.getElementById('tx-jur').value,
+      default_lot_method: document.getElementById('tx-method').value,
+      st_rate: parseFloat(document.getElementById('tx-st').value),
+      lt_rate: parseFloat(document.getElementById('tx-lt').value),
+      harvest_min_loss_usd: parseFloat(document.getElementById('tx-hl').value),
+      harvest_min_age_days: parseInt(document.getElementById('tx-hd').value),
+    })});
+    msg.innerHTML = '<span class="ok">Saved.</span>';
+    loadHarvest();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
+
+document.getElementById('tx-year-go').onclick = async () => {
+  const year = parseInt(document.getElementById('tx-year').value);
+  const out = document.getElementById('tx-summary');
+  out.innerHTML = '<div style="color:var(--muted)">Computing…</div>';
+  try {
+    const s = await api('/api/long-term/tax/summary/'+year);
+    const totalCls = s.total_realized >= 0 ? 'gain' : 'loss';
+    out.innerHTML = `
+      <div class="card">
+        <div class="row"><span class="l">Dispositions in ${year}</span><span class="v">${s.dispositions}</span></div>
+        <div class="row"><span class="l">Total proceeds</span><span class="v">${usd(s.total_proceeds)}</span></div>
+        <div class="row"><span class="l">Short-term realised</span><span class="v ${s.short_term_realized>=0?'gain':'loss'}">${usd(s.short_term_realized)}</span></div>
+        <div class="row"><span class="l">Long-term realised</span><span class="v ${s.long_term_realized>=0?'gain':'loss'}">${usd(s.long_term_realized)}</span></div>
+        <div class="row"><span class="l"><b>Total realised P&amp;L</b></span><span class="v ${totalCls}"><b>${usd(s.total_realized)}</b></span></div>
+        <div class="row"><span class="l">Estimated tax</span><span class="v">${usd(s.estimated_tax)}</span></div>
+        ${s.loss_carryforward_to_next_year > 0 ? `<div class="row"><span class="l">Loss carryforward to ${year+1}</span><span class="v">${usd(s.loss_carryforward_to_next_year)}</span></div>` : ''}
+      </div>`;
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+  refreshExportLink();
+};
+
+function refreshExportLink(){
+  const year = parseInt(document.getElementById('tx-year').value) || new Date().getFullYear();
+  document.getElementById('tx-export').href = '/api/long-term/tax/export/' + year;
+}
+
+document.getElementById('ps-go').onclick = async () => {
+  const ticker = document.getElementById('ps-ticker').value;
+  const qty = document.getElementById('ps-qty').value;
+  const method = document.getElementById('ps-method').value;
+  const priceStr = document.getElementById('ps-price').value;
+  const out = document.getElementById('ps-out');
+  out.innerHTML = '<div style="color:var(--muted)">Computing…</div>';
+  let url = `/api/long-term/tax/preview-sell?ticker=${ticker}&qty=${qty}&method=${method}`;
+  if (priceStr) url += `&sell_price=${priceStr}`;
+  try {
+    const p = await api(url);
+    if (!p.filled_qty) { out.innerHTML = `<div class="note">${p.note || 'no fillable qty'}</div>`; return; }
+    const totalCls = p.total_realized >= 0 ? 'gain' : 'loss';
+    let html = `<div class="card">
+      <div class="row"><span class="l">Filled</span><span class="v">${fmt(p.filled_qty,8)} ${p.ticker} @ ${usd(p.sell_price)}</span></div>
+      <div class="row"><span class="l">Total proceeds</span><span class="v">${usd(p.total_proceeds)}</span></div>
+      <div class="row"><span class="l">Total cost basis</span><span class="v">${usd(p.total_cost_basis)}</span></div>
+      <div class="row"><span class="l"><b>Realised gain/loss</b></span><span class="v ${totalCls}"><b>${usd(p.total_realized)}</b></span></div>
+      <div class="row"><span class="l">  ↳ short-term</span><span class="v ${p.st_realized>=0?'gain':'loss'}">${usd(p.st_realized)}</span></div>
+      <div class="row"><span class="l">  ↳ long-term</span><span class="v ${p.lt_realized>=0?'gain':'loss'}">${usd(p.lt_realized)}</span></div>
+      ${p.shortfall > 0 ? `<div class="note">Shortfall: ${fmt(p.shortfall,8)} (not enough open lots)</div>` : ''}
+      <table style="margin-top:10px"><thead><tr><th>Acquired</th><th>Qty</th><th>Cost/u</th><th>Realised</th><th>LT/ST</th><th>Days</th></tr></thead><tbody>`;
+    for (const pk of p.picks) {
+      const cls = pk.realized_gain >= 0 ? 'gain' : 'loss';
+      html += `<tr><td>${pk.acquired_at}</td><td>${fmt(pk.consumed_qty,8)}</td><td>${usd(pk.cost_basis)}</td>
+        <td class="${cls}">${usd(pk.realized_gain)}</td><td>${pk.classification}</td><td>${pk.days_held}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+};
+
+async function loadLots(){
+  const tbody = document.querySelector('#lots-table tbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const r = await api('/api/long-term/tax/lots');
+    if (!r.lots.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No open lots.</td></tr>'; return; }
+    tbody.innerHTML = '';
+    for (const l of r.lots) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${l.acquired_at}</td><td>${l.ticker}</td>
+        <td>${fmt(l.qty_original,8)}</td><td>${fmt(l.qty_consumed,8)}</td>
+        <td><b>${fmt(l.qty_remaining,8)}</b></td>
+        <td>${usd(l.cost_basis)}</td>
+        <td style="font-size:.85em">${l.long_term_at}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="7" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadHarvest(){
+  const tbody = document.querySelector('#hv-table tbody');
+  const tot = document.getElementById('hv-totals');
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Scanning…</td></tr>';
+  tot.innerHTML = '';
+  try {
+    const r = await api('/api/long-term/tax/harvest');
+    if (!r.opportunities.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No harvest opportunities meeting your thresholds.</td></tr>';
+      return;
+    }
+    tot.innerHTML = `<b>Total unrealised loss available:</b> <span class="loss">${usd(r.total_unrealized_loss_usd)}</span> · <b>Est. tax savings:</b> <span class="gain">${usd(r.estimated_total_tax_save_usd)}</span>`;
+    tbody.innerHTML = '';
+    for (const o of r.opportunities) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${o.ticker}</td><td>${fmt(o.qty_remaining,8)}</td>
+        <td>${usd(o.cost_basis)}</td><td>${usd(o.current_price)}</td>
+        <td class="loss"><b>${usd(o.unrealized_loss_usd)}</b></td>
+        <td class="loss">${pct(o.unrealized_loss_pct)}</td>
+        <td>${o.days_held}</td><td>${o.classification}</td>
+        <td>${o.wash_sale_risk ? '<span class="r-defensive">⚠ yes</span>' : '<span class="r-calm">no</span>'}</td>
+        <td class="gain">${usd(o.estimated_tax_save_usd)}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="10" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadDispositions(){
+  const tbody = document.querySelector('#dp-table tbody');
+  tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const r = await api('/api/long-term/tax/dispositions');
+    if (!r.dispositions.length) { tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">No dispositions yet.</td></tr>'; return; }
+    tbody.innerHTML = '';
+    for (const d of r.dispositions) {
+      const realCls = d.realized_gain >= 0 ? 'gain' : 'loss';
+      const lots = d.consumption ? d.consumption.length : 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${d.sell_date}</td><td>${d.ticker}</td><td>${fmt(d.qty,8)}</td>
+        <td>${usd(d.sell_price)}</td><td>${d.method}</td>
+        <td class="${realCls}">${usd(d.realized_gain)}</td>
+        <td class="${d.lt_gain>=0?'gain':'loss'}">${usd(d.lt_gain)}</td>
+        <td class="${d.st_gain>=0?'gain':'loss'}">${usd(d.st_gain)}</td>
+        <td>${lots}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="9" class="err">${e.message}</td></tr>`; }
+}
+
+document.getElementById('dp-add').onclick = async () => {
+  const msg = document.getElementById('dp-msg'); msg.innerHTML = '';
+  try {
+    await api('/api/long-term/tax/dispositions', {method:'POST', body: JSON.stringify({
+      ticker: document.getElementById('dp-ticker').value,
+      qty: document.getElementById('dp-qty').value,
+      sell_price: document.getElementById('dp-price').value,
+      sell_date: document.getElementById('dp-date').value || undefined,
+    })});
+    msg.innerHTML = '<span class="ok">Recorded.</span>';
+    loadDispositions(); loadLots(); loadHarvest();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
 };
 
 loadOverview();
