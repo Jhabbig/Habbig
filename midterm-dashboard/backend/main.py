@@ -30,6 +30,7 @@ from aggregators import (
 )
 from cache import cache
 from alerts import dispatch_divergence_alert
+from smart_money import fetch_smart_money_flows, race_smart_money
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -1584,6 +1585,50 @@ async def _backtest_summary_cached() -> dict:
     return data
 
 
+def _polymarket_markets_for_race(race_key: str) -> list[dict]:
+    """Return the polymarket-sourced midterm_markets rows that belong to ``race_key``.
+
+    Used by the smart-money endpoint to translate a race key into the slugs
+    we'll join against the upstream flow data.
+    """
+    all_markets = state.db.get_all_markets(active_only=True)
+    out = []
+    for m in all_markets:
+        if m.get("source") != "polymarket":
+            continue
+        if market_race_key(m) == race_key:
+            out.append(m)
+    return out
+
+
+@app.get("/data/smart-money/{race_key}")
+async def data_smart_money(race_key: str):
+    """Aggregated top-trader positioning for this race.
+
+    Joins the global smart-money flow list (from ``top-traders-dashboard``)
+    against the polymarket markets stored for this race. Returns the schema
+    documented in ``smart_money.race_smart_money``.
+    """
+    flows_payload = await fetch_smart_money_flows(state.http_session)
+    if not flows_payload.get("available"):
+        return {
+            "race_key": race_key,
+            "available": False,
+            "reason": flows_payload.get("reason", "no_data"),
+            "total_smart_usd": 0.0,
+            "smart_wallet_count": 0,
+            "direction": None,
+            "lean_strength": 0.0,
+            "flows": [],
+        }
+    markets = _polymarket_markets_for_race(race_key)
+    return race_smart_money(
+        race_key=race_key,
+        race_polymarket_markets=markets,
+        flows=flows_payload.get("flows", []),
+    )
+
+
 @app.get("/data/forecast/{race_key}")
 async def data_forecast(race_key: str):
     """narve.ai house forecast for a single race.
@@ -1644,6 +1689,35 @@ async def data_forecast(race_key: str):
     f["state"] = snap.get("state")
     f["snapshot_time"] = snap.get("snapshot_time")
     f["available"] = f["forecast_d"] is not None
+
+    # Attach the smart-money signal so a single fetch powers the whole badge.
+    # If top-traders is offline we still return the forecast; the smart_money
+    # block will just be empty.
+    try:
+        sm_flows = await fetch_smart_money_flows(state.http_session)
+        if sm_flows.get("available"):
+            sm = race_smart_money(
+                race_key=race_key,
+                race_polymarket_markets=_polymarket_markets_for_race(race_key),
+                flows=sm_flows.get("flows", []),
+            )
+            # Drop the verbose flow list from the inlined version; the
+            # dedicated /data/smart-money/{race_key} endpoint exposes detail.
+            f["smart_money"] = {
+                "available": sm["available"],
+                "total_smart_usd": sm["total_smart_usd"],
+                "smart_wallet_count": sm["smart_wallet_count"],
+                "avg_quality": sm["avg_quality"],
+                "direction": sm["direction"],
+                "lean_strength": sm["lean_strength"],
+                "by_party": sm.get("by_party", {}),
+            }
+        else:
+            f["smart_money"] = {"available": False}
+    except Exception as e:
+        logger.warning(f"smart-money attach failed for {race_key}: {e}")
+        f["smart_money"] = {"available": False}
+
     return f
 
 
@@ -1657,6 +1731,9 @@ async def data_forecasts(
 
     Sorted by absolute confidence × volume of source agreement so the most
     "interesting" races bubble up. Filters by ``race_type`` if provided.
+    Smart-money signals are inlined when available — the frontend uses them
+    to highlight races where the proven-quality wallets disagree with the
+    market consensus (a "smart-money divergence").
     """
     from forecast import forecast_many
 
@@ -1672,6 +1749,42 @@ async def data_forecasts(
         rows = [r for r in rows if (r.get("race_type") or "").lower() == race_type.lower()]
     rows = [r for r in rows if r.get("forecast_d") is not None and (r.get("confidence") or 0) >= min_confidence]
 
+    # Attach smart money to every row in one pass. We fetch the global flow
+    # list once and then index it; per-race work is just a slug join.
+    try:
+        sm_flows = await fetch_smart_money_flows(state.http_session)
+    except Exception as e:
+        logger.warning(f"smart-money batch fetch failed: {e}")
+        sm_flows = {"flows": [], "available": False}
+
+    sm_available = sm_flows.get("available", False)
+    flow_list = sm_flows.get("flows", []) if sm_available else []
+    if flow_list:
+        # Pre-compute the polymarket markets index once.
+        all_pm = [m for m in state.db.get_all_markets(active_only=True) if m.get("source") == "polymarket"]
+        markets_by_race: dict[str, list[dict]] = defaultdict(list)
+        for m in all_pm:
+            markets_by_race[market_race_key(m)].append(m)
+        for r in rows:
+            rk = r.get("race_key")
+            if not rk:
+                continue
+            sm = race_smart_money(
+                race_key=rk,
+                race_polymarket_markets=markets_by_race.get(rk, []),
+                flows=flow_list,
+            )
+            r["smart_money"] = {
+                "available": sm["available"],
+                "total_smart_usd": sm["total_smart_usd"],
+                "smart_wallet_count": sm["smart_wallet_count"],
+                "direction": sm["direction"],
+                "lean_strength": sm["lean_strength"],
+            }
+    else:
+        for r in rows:
+            r["smart_money"] = {"available": False}
+
     # Sort: high confidence first, then most polarized (closest to 0 or 1).
     def sort_key(r):
         f = r.get("forecast_d") or 0.5
@@ -1682,6 +1795,7 @@ async def data_forecasts(
         "forecasts": rows[:limit],
         "total": len(rows),
         "method": rows[0].get("method") if rows else "default_weights",
+        "smart_money_available": sm_available,
     }
 
 

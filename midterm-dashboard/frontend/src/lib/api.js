@@ -66,6 +66,7 @@ export const api = {
     const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString()
     return request(`/data/forecasts${q ? '?' + q : ''}`)
   },
+  smartMoney: (key) => request(`/data/smart-money/${encodeURIComponent(key)}`),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),

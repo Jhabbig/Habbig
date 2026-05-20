@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { sourceColors, sourceLabels } from '../lib/raceTheme.jsx'
-import { Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, ChevronDown, ChevronUp, Wallet, AlertTriangle } from 'lucide-react'
+
+// Format dollar amounts compactly: $1.2M / $340k / $890
+function fmtUsd(usd) {
+  const n = Number(usd) || 0
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}k`
+  return `$${Math.round(n)}`
+}
 
 // The signature narve.ai forecast badge — a single ensemble probability with
 // a confidence chip, expandable to show source weights. Use anywhere a race
@@ -79,6 +87,45 @@ export default function ForecastBadge({ raceKey, compact = false }) {
         <span>D {(forecast.forecast_d * 100).toFixed(1)}%</span>
         <span>R {((1 - forecast.forecast_d) * 100).toFixed(1)}%</span>
       </div>
+
+      {/* Smart-money signal — proven-quality wallet positioning for this race.
+          When the forecast disagrees with the smart-money lean, the divergence
+          is highlighted in amber as a "smart money divergence". */}
+      {forecast.smart_money?.available && forecast.smart_money.direction && (() => {
+        const sm = forecast.smart_money
+        const smColor = sm.direction === 'D' ? '#3b82f6' : '#ef4444'
+        const diverges = sm.direction !== lean
+        return (
+          <div className={`mt-3 rounded-lg p-2.5 ${diverges ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-stone-700/40 border border-stone-700'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-stone-300">
+                <Wallet className="h-3 w-3" />
+                Smart money
+                {diverges && (
+                  <span className="inline-flex items-center gap-1 text-amber-300 normal-case tracking-normal text-[10px] font-semibold">
+                    <AlertTriangle className="h-3 w-3" />
+                    diverges
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-stone-400">
+                {sm.smart_wallet_count} {sm.smart_wallet_count === 1 ? 'wallet' : 'wallets'}
+              </span>
+            </div>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-base font-bold tabular-nums" style={{ color: smColor }}>
+                {sm.direction}
+              </span>
+              <span className="text-base font-bold tabular-nums">
+                {(sm.lean_strength * 100).toFixed(0)}%
+              </span>
+              <span className="text-xs text-stone-400 ml-auto tabular-nums">
+                {fmtUsd(sm.total_smart_usd)} positioned
+              </span>
+            </div>
+          </div>
+        )
+      })()}
 
       <button
         onClick={() => setExpanded((v) => !v)}

@@ -2,8 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtVolume } from '../lib/settings'
-import { AlertTriangle, ArrowRight, BarChart3, Newspaper, TrendingUp, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Newspaper, TrendingUp, Sparkles, Wallet } from 'lucide-react'
 import { useDataStream } from '../lib/useDataStream.js'
+
+function fmtUsdShort(usd) {
+  const n = Number(usd) || 0
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}k`
+  return `$${Math.round(n)}`
+}
 
 const SOURCE_COLORS = {
   polymarket: { bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500', hex: '#8b5cf6' },
@@ -229,11 +236,14 @@ function TopForecasts({ forecasts, loading }) {
           const lean = f.forecast_d >= 0.5 ? 'D' : 'R'
           const leanPct = (lean === 'D' ? f.forecast_d : 1 - f.forecast_d) * 100
           const color = lean === 'D' ? '#3b82f6' : '#ef4444'
+          const sm = f.smart_money
+          const smDiverges = sm?.available && sm.direction && sm.direction !== lean
           return (
             <Link
               key={f.race_key}
               to={`/race/${f.race_key}`}
-              className="bg-stone-800/60 hover:bg-stone-700/60 transition-colors rounded-lg p-3 border border-stone-700"
+              className={`bg-stone-800/60 hover:bg-stone-700/60 transition-colors rounded-lg p-3 border ${smDiverges ? 'border-amber-500/50 ring-1 ring-amber-500/20' : 'border-stone-700'}`}
+              title={smDiverges ? 'Smart money divergence: quality wallets disagree with the consensus forecast.' : undefined}
             >
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-stone-400 uppercase tracking-wider">
@@ -251,6 +261,13 @@ function TopForecasts({ forecasts, loading }) {
                 <div className="bg-blue-500" style={{ width: `${f.forecast_d * 100}%` }} />
                 <div className="bg-rose-500 flex-1" />
               </div>
+              {sm?.available && sm.direction && (
+                <div className={`mt-1.5 flex items-center gap-1 text-[10px] tabular-nums ${smDiverges ? 'text-amber-300' : 'text-stone-400'}`}>
+                  <Wallet className="h-3 w-3" />
+                  Smart $: {sm.direction} {fmtUsdShort(sm.total_smart_usd)}
+                  {smDiverges && <AlertTriangle className="h-3 w-3 ml-0.5" />}
+                </div>
+              )}
               <div className="text-[10px] text-stone-400 mt-1.5 truncate">
                 {f.race_key.replace(/_/g, ' · ')}
               </div>
