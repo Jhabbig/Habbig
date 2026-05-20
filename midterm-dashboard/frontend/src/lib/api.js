@@ -92,6 +92,20 @@ export const api = {
   pushUnsubscribe: (endpoint, keys) =>
     request('/premium/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint, keys }) }),
 
+  // Outbound webhooks (Slack / Discord / generic)
+  webhooks: () => request('/premium/webhooks'),
+  addWebhook: (payload) => request('/premium/webhooks', { method: 'POST', body: JSON.stringify(payload) }),
+  removeWebhook: (id) => request(`/premium/webhooks/${id}`, { method: 'DELETE' }),
+
+  // Daily digest opt-in
+  digestStatus: () => request('/premium/digest'),
+  digestSubscribe: (enabled) => request('/premium/digest', { method: 'POST', body: JSON.stringify({ enabled }) }),
+
+  // API keys
+  apiKeys: () => request('/premium/api-keys'),
+  createApiKey: (name, tier = 'free') => request('/premium/api-keys', { method: 'POST', body: JSON.stringify({ name, tier }) }),
+  revokeApiKey: (id) => request(`/premium/api-keys/${id}`, { method: 'DELETE' }),
+
   // Comments
   comments: (raceKey) => request(`/data/race/${encodeURIComponent(raceKey)}/comments`),
   postComment: (raceKey, body) =>

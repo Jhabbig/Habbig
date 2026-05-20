@@ -204,7 +204,14 @@ export default function App() {
           </ErrorBoundary>
         </main>
         <footer className="border-t border-stone-200/60 mt-16 py-8 text-center text-stone-400 text-sm">
-          <span className="text-stone-500">MidtermEdge</span> &middot; Prediction market data for informational purposes only.
+          <div><span className="text-stone-500">MidtermEdge</span> &middot; Prediction market data for informational purposes only.</div>
+          <div className="mt-2 flex items-center justify-center gap-3 text-xs">
+            <a href="/feed/movements.xml" target="_blank" rel="noopener" className="hover:text-stone-600">RSS</a>
+            <span>·</span>
+            <Link to="/accuracy" className="hover:text-stone-600">Track record</Link>
+            <span>·</span>
+            <Link to="/notifications" className="hover:text-stone-600">API &amp; alerts</Link>
+          </div>
         </footer>
       </div>
     </AuthProvider>

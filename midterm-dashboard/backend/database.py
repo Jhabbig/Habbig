@@ -295,6 +295,63 @@ CREATE TABLE IF NOT EXISTS midterm_historical_predictions (
 );
 CREATE INDEX IF NOT EXISTS idx_hist_pred_source ON midterm_historical_predictions(source);
 
+-- Outbound webhooks fire on big movements / alerts. Each row is one
+-- subscription. ``format`` decides which JSON shape we POST:
+--   "generic"  — our canonical {race_key, source, delta_pp, ...}
+--   "slack"    — Slack's incoming-webhook block format
+--   "discord"  — Discord's embed format
+CREATE TABLE IF NOT EXISTS midterm_outbound_webhooks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id   TEXT NOT NULL,
+    url             TEXT NOT NULL,
+    format          TEXT NOT NULL DEFAULT 'generic',
+    threshold_pp    REAL NOT NULL DEFAULT 5.0,
+    race_type_filter TEXT,
+    state_filter    TEXT,
+    enabled         INTEGER DEFAULT 1,
+    last_fired_at   TEXT,
+    last_status     TEXT,
+    last_error      TEXT,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(owner_user_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON midterm_outbound_webhooks(enabled);
+
+CREATE TABLE IF NOT EXISTS midterm_webhook_dedup (
+    webhook_id      INTEGER NOT NULL,
+    race_key        TEXT NOT NULL,
+    last_delta_pp   REAL,
+    last_fired_at   TEXT,
+    PRIMARY KEY (webhook_id, race_key)
+);
+
+-- Premium API keys. Stored as SHA-256 hash so a DB leak doesn't expose
+-- live keys. Tier determines rate limits at the middleware layer.
+CREATE TABLE IF NOT EXISTS midterm_api_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id   TEXT NOT NULL,
+    key_prefix      TEXT NOT NULL,
+    key_hash        TEXT NOT NULL UNIQUE,
+    name            TEXT,
+    tier            TEXT NOT NULL DEFAULT 'free',
+    rate_limit_rpm  INTEGER NOT NULL DEFAULT 60,
+    last_used_at    TEXT,
+    revoked_at      TEXT,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON midterm_api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON midterm_api_keys(owner_user_id);
+
+-- Daily digest opt-ins. The worker scans this table once a day, builds
+-- a per-user digest from their watchlist + top movers, sends via SMTP.
+CREATE TABLE IF NOT EXISTS midterm_digest_subscriptions (
+    user_id         TEXT PRIMARY KEY,
+    email           TEXT NOT NULL,
+    enabled         INTEGER DEFAULT 1,
+    last_sent_at    TEXT,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1339,6 +1396,174 @@ class Database:
                        JOIN midterm_race_resolutions r ON r.race_key = p.race_key"""
                 ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    # === Outbound webhooks =================================================
+
+    def add_webhook(
+        self, owner_user_id: str, url: str, *,
+        format: str = "generic", threshold_pp: float = 5.0,
+        race_type_filter: str | None = None, state_filter: str | None = None,
+    ) -> int:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """INSERT INTO midterm_outbound_webhooks
+                        (owner_user_id, url, format, threshold_pp, race_type_filter, state_filter)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(owner_user_id, url) DO UPDATE SET
+                         format=excluded.format,
+                         threshold_pp=excluded.threshold_pp,
+                         race_type_filter=excluded.race_type_filter,
+                         state_filter=excluded.state_filter,
+                         enabled=1""",
+                    (owner_user_id, url, format, threshold_pp, race_type_filter, state_filter),
+                )
+                return cur.lastrowid
+
+    def remove_webhook(self, webhook_id: int, owner_user_id: str) -> bool:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    "DELETE FROM midterm_outbound_webhooks WHERE id=? AND owner_user_id=?",
+                    (webhook_id, owner_user_id),
+                )
+                return cur.rowcount > 0
+
+    def get_webhooks(self, owner_user_id: str | None = None, enabled_only: bool = True) -> list[dict]:
+        clauses = []
+        params: list = []
+        if enabled_only:
+            clauses.append("enabled = 1")
+        if owner_user_id is not None:
+            clauses.append("owner_user_id = ?")
+            params.append(owner_user_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM midterm_outbound_webhooks{where} ORDER BY created_at DESC",
+                params,
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_webhook_dedup(self, webhook_id: int, race_key: str) -> dict | None:
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT last_delta_pp, last_fired_at FROM midterm_webhook_dedup
+                   WHERE webhook_id=? AND race_key=?""",
+                (webhook_id, race_key),
+            ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def record_webhook_fired(self, webhook_id: int, race_key: str, delta_pp: float) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_webhook_dedup (webhook_id, race_key, last_delta_pp, last_fired_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(webhook_id, race_key) DO UPDATE SET
+                         last_delta_pp=excluded.last_delta_pp,
+                         last_fired_at=excluded.last_fired_at""",
+                    (webhook_id, race_key, delta_pp, now),
+                )
+                conn.execute(
+                    """UPDATE midterm_outbound_webhooks
+                       SET last_fired_at=?, last_status='ok', last_error=NULL
+                       WHERE id=?""",
+                    (now, webhook_id),
+                )
+
+    def record_webhook_error(self, webhook_id: int, error: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE midterm_outbound_webhooks SET last_status='error', last_error=?, last_fired_at=? WHERE id=?",
+                    (error[:300], now, webhook_id),
+                )
+
+    # === API keys ==========================================================
+
+    def store_api_key(
+        self, owner_user_id: str, key_prefix: str, key_hash: str,
+        name: str | None = None, tier: str = "free", rate_limit_rpm: int = 60,
+    ) -> int:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """INSERT INTO midterm_api_keys
+                        (owner_user_id, key_prefix, key_hash, name, tier, rate_limit_rpm)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (owner_user_id, key_prefix, key_hash, name, tier, rate_limit_rpm),
+                )
+                return cur.lastrowid
+
+    def lookup_api_key(self, key_hash: str) -> dict | None:
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT * FROM midterm_api_keys
+                   WHERE key_hash=? AND revoked_at IS NULL""",
+                (key_hash,),
+            ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def list_api_keys(self, owner_user_id: str) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, key_prefix, name, tier, rate_limit_rpm, last_used_at, revoked_at, created_at
+                   FROM midterm_api_keys WHERE owner_user_id=? ORDER BY created_at DESC""",
+                (owner_user_id,),
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def revoke_api_key(self, key_id: int, owner_user_id: str) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """UPDATE midterm_api_keys SET revoked_at=?
+                       WHERE id=? AND owner_user_id=? AND revoked_at IS NULL""",
+                    (now, key_id, owner_user_id),
+                )
+                return cur.rowcount > 0
+
+    def touch_api_key(self, key_id: int) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE midterm_api_keys SET last_used_at=? WHERE id=?",
+                    (now, key_id),
+                )
+
+    # === Digest subscriptions ==============================================
+
+    def upsert_digest_subscription(self, user_id: str, email: str, enabled: bool = True) -> None:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_digest_subscriptions (user_id, email, enabled)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(user_id) DO UPDATE SET
+                         email=excluded.email, enabled=excluded.enabled""",
+                    (user_id, email, 1 if enabled else 0),
+                )
+
+    def get_digest_subscribers(self) -> list[dict]:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM midterm_digest_subscriptions WHERE enabled=1"
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def mark_digest_sent(self, user_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE midterm_digest_subscriptions SET last_sent_at=? WHERE user_id=?",
+                    (now, user_id),
+                )
 
     # === Movement explanation cache =========================================
 

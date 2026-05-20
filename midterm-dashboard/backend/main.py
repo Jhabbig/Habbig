@@ -153,6 +153,23 @@ class ResolutionBody(BaseModel):
     notes: Optional[str] = None
 
 
+class WebhookBody(BaseModel):
+    url: str
+    format: Optional[str] = "generic"          # generic | slack | discord
+    threshold_pp: Optional[float] = 5.0
+    race_type_filter: Optional[str] = None
+    state_filter: Optional[str] = None
+
+
+class ApiKeyBody(BaseModel):
+    name: Optional[str] = None
+    tier: Optional[str] = "free"               # free | premium | enterprise
+
+
+class DigestSubscriptionBody(BaseModel):
+    enabled: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Shared application state (populated during lifespan)
 # ---------------------------------------------------------------------------
@@ -715,9 +732,134 @@ async def alert_delivery_loop():
                         )
                 if fired:
                     logger.info(f"Alert worker fired {fired} alerts this cycle")
+
+            # Outbound webhooks run on the same cycle — they reuse the
+            # top_by_race map computed above.
+            try:
+                from webhooks import run_webhook_cycle
+                # Build a quick race_key → title lookup for nicer messages
+                titles: dict[str, str] = {}
+                for m in (state.db.get_all_markets(active_only=True) if alerts else []):
+                    rk = market_race_key(m)
+                    if rk not in titles:
+                        titles[rk] = m.get("event_title") or m.get("title") or rk
+                if not alerts:
+                    # No alerts seeded our top_by_race calculation — recompute
+                    all_markets = state.db.get_all_markets(active_only=True)
+                    top_by_race = _latest_top_prob_by_race(all_markets)
+                    for m in all_markets:
+                        rk = market_race_key(m)
+                        if rk not in titles:
+                            titles[rk] = m.get("event_title") or m.get("title") or rk
+                webhook_fires = await run_webhook_cycle(
+                    state.db, state.http_session, top_by_race, titles,
+                )
+                if webhook_fires:
+                    logger.info(f"Webhook worker fired {webhook_fires} hooks this cycle")
+            except Exception as e:
+                logger.error(f"Webhook worker error: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Alert worker error: {e}", exc_info=True)
         await asyncio.sleep(ALERT_CHECK_INTERVAL)
+
+
+async def daily_digest_loop():
+    """Send a once-daily email digest to opted-in users.
+
+    Each digest contains the top movers across all races in the last 24h
+    plus any items from the user's watchlist that moved meaningfully.
+    The worker sleeps 1 hour between scans and only sends when at least
+    23 hours have passed since the user's last digest — so subscribing
+    at noon means daily noon delivery, not a digest per worker tick.
+    """
+    DIGEST_SCAN_INTERVAL = 3600  # 1 hour between scans
+    MIN_HOURS_BETWEEN = 23
+    while True:
+        try:
+            from notifications import send_email, _smtp_configured
+            if not _smtp_configured():
+                await asyncio.sleep(DIGEST_SCAN_INTERVAL)
+                continue
+
+            subscribers = state.db.get_digest_subscribers()
+            if not subscribers:
+                await asyncio.sleep(DIGEST_SCAN_INTERVAL)
+                continue
+
+            # Build the shared "top movers" block once per scan
+            all_markets = state.db.get_all_markets(active_only=True)
+            top_by_race = _latest_top_prob_by_race(all_markets)
+            titles = {market_race_key(m): m.get("event_title") or m.get("title") or "" for m in all_markets}
+
+            movers: list[tuple[str, str, float]] = []  # (race_key, title, max_abs_delta)
+            for race_key in top_by_race:
+                hist = state.db.get_divergence_history(race_key=race_key, days=2)
+                if len(hist) < 2:
+                    continue
+                hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
+                best = 0.0
+                for src in ("polymarket", "kalshi", "predictit", "polling"):
+                    vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+                    if len(vals) >= 2:
+                        delta = abs((vals[-1] - vals[0]) * 100)
+                        if delta > best:
+                            best = delta
+                if best >= 3.0:
+                    movers.append((race_key, titles.get(race_key, race_key), best))
+            movers.sort(key=lambda x: -x[2])
+            top_movers_html = "".join(
+                f'<li><a href="https://midterm.narve.ai/race/{rk}">{t or rk}</a>: '
+                f'<b>{d:.1f}pp</b></li>'
+                for rk, t, d in movers[:10]
+            )
+
+            now = datetime.now(timezone.utc)
+            sent = 0
+            for sub in subscribers:
+                last = sub.get("last_sent_at") or ""
+                try:
+                    last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                    if (now - last_dt).total_seconds() < MIN_HOURS_BETWEEN * 3600:
+                        continue
+                except (ValueError, TypeError):
+                    pass  # never sent — proceed
+                uid = sub.get("user_id")
+                email = sub.get("email")
+                if not email:
+                    continue
+                # Watchlist filter (best-effort)
+                watchlist = {w["race_key"] for w in (state.db.get_watchlist(uid) or [])}
+                watched_movers = [m for m in movers if m[0] in watchlist]
+                watched_html = "".join(
+                    f'<li><a href="https://midterm.narve.ai/race/{rk}">{t or rk}</a>: '
+                    f'<b>{d:.1f}pp</b></li>'
+                    for rk, t, d in watched_movers[:10]
+                ) or "<li>(no moved races on your watchlist)</li>"
+                html = (
+                    "<h2>MidtermEdge daily digest</h2>"
+                    "<h3>Top movers across all races (last 24h)</h3>"
+                    f"<ul>{top_movers_html or '<li>quiet day, nothing big moved</li>'}</ul>"
+                    "<h3>Your watchlist</h3>"
+                    f"<ul>{watched_html}</ul>"
+                    "<p style=\"color:#888;font-size:11px\">"
+                    "You're receiving this because you opted into MidtermEdge digests. "
+                    "Manage in your <a href=\"https://midterm.narve.ai/notifications\">notifications</a>."
+                    "</p>"
+                )
+                ok = await send_email(
+                    email,
+                    subject=f"MidtermEdge daily digest — {len(movers)} races moved",
+                    html=html,
+                    text=f"{len(movers)} races moved >3pp in the last 24h. Open the email for details.",
+                )
+                if ok:
+                    state.db.mark_digest_sent(uid)
+                    sent += 1
+            if sent:
+                logger.info(f"Daily digest: sent {sent}")
+        except Exception as e:
+            logger.error(f"Daily digest loop error: {e}", exc_info=True)
+        await asyncio.sleep(DIGEST_SCAN_INTERVAL)
 
 
 # ---------------------------------------------------------------------------
@@ -756,6 +898,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(district_profile_updater(), name="district_profiles"),
         asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
         asyncio.create_task(alert_delivery_loop(), name="alert_worker"),
+        asyncio.create_task(daily_digest_loop(), name="daily_digest"),
     ]
 
     # Optional Polymarket WS consumer — gated on POLYMARKET_WS_ENABLED so the
@@ -2407,7 +2550,7 @@ async def sitemap_xml():
     """Sitemap listing every active race so search engines crawl detail pages."""
     from fastapi.responses import Response
     base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
-    static_routes = ["/", "/races", "/compare", "/divergence", "/world", "/historical"]
+    static_routes = ["/", "/races", "/compare", "/divergence", "/world", "/historical", "/accuracy"]
     all_markets = state.db.get_all_markets(active_only=True)
     race_keys: set[str] = set()
     for m in all_markets:
@@ -2546,6 +2689,320 @@ async def embed_race(race_key: str):
 </div>
 </body></html>"""
     return HTMLResponse(html, headers={"Content-Security-Policy": "frame-ancestors *"})
+
+
+# ===================================================================
+# RSS / Atom feed — biggest movers in the last 24h
+# ===================================================================
+
+@app.get("/feed/movements.xml")
+async def feed_movements():
+    """Atom feed of the biggest cross-source movements in the last 24h.
+
+    Anyone can subscribe in a feed reader, paste into Substack, or pipe
+    into IFTTT/Zapier — turns the site's data into a distribution channel
+    that travels even when users aren't on the dashboard.
+    """
+    from fastapi.responses import Response
+    base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
+    all_markets = state.db.get_all_markets(active_only=True)
+    titles = {market_race_key(m): m.get("event_title") or m.get("title") or "" for m in all_markets}
+
+    entries = []
+    for race_key in set(titles):
+        if race_key.startswith("unmatched_"):
+            continue
+        hist = state.db.get_divergence_history(race_key=race_key, days=2)
+        if len(hist) < 2:
+            continue
+        hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
+        best = 0.0
+        best_source = ""
+        for src in ("polymarket", "kalshi", "predictit", "polling"):
+            vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+            if len(vals) >= 2:
+                delta = (vals[-1] - vals[0]) * 100
+                if abs(delta) > abs(best):
+                    best = delta
+                    best_source = src
+        if abs(best) >= 3.0:
+            entries.append((race_key, titles[race_key], best, best_source, hist[-1].get("snapshot_time")))
+
+    entries.sort(key=lambda e: -abs(e[2]))
+    entries = entries[:50]
+
+    now = datetime.now(timezone.utc).isoformat()
+    items_xml = []
+    for race_key, title, delta_pp, source, last_ts in entries:
+        safe_title = (title or race_key).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        link = f"{base}/race/{race_key}"
+        ts = last_ts or now
+        items_xml.append(
+            f"<entry>"
+            f"<id>{link}#{ts}</id>"
+            f"<title>{safe_title}: {source} {delta_pp:+.1f}pp</title>"
+            f"<link href=\"{link}\"/>"
+            f"<updated>{ts}</updated>"
+            f"<summary>{source} moved {delta_pp:+.1f}pp on this race in the last 24h.</summary>"
+            f"</entry>"
+        )
+    feed_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom">'
+        f"<title>MidtermEdge — biggest movers</title>"
+        f"<link href=\"{base}/feed/movements.xml\" rel=\"self\"/>"
+        f"<link href=\"{base}/\"/>"
+        f"<id>{base}/feed/movements.xml</id>"
+        f"<updated>{now}</updated>"
+        + "".join(items_xml) +
+        "</feed>"
+    )
+    return Response(content=feed_xml, media_type="application/atom+xml",
+                    headers={"Cache-Control": "public, max-age=300"})
+
+
+# ===================================================================
+# Outbound webhooks — premium-tier
+# ===================================================================
+
+@app.get("/premium/webhooks")
+async def premium_webhooks_list(request: Request):
+    user = await require_tier(request, "premium")
+    return {"webhooks": state.db.get_webhooks(owner_user_id=user["id"], enabled_only=False)}
+
+
+@app.post("/premium/webhooks")
+async def premium_webhooks_add(body: WebhookBody, request: Request):
+    user = await require_tier(request, "premium")
+    if not body.url.startswith(("https://", "http://localhost")):
+        raise HTTPException(status_code=400, detail="webhook URL must be https:// (or http://localhost for dev)")
+    if body.format not in ("generic", "slack", "discord"):
+        raise HTTPException(status_code=400, detail="format must be generic | slack | discord")
+    if body.threshold_pp is not None and (body.threshold_pp < 0.5 or body.threshold_pp > 50):
+        raise HTTPException(status_code=400, detail="threshold_pp must be between 0.5 and 50")
+    wid = state.db.add_webhook(
+        owner_user_id=user["id"], url=body.url,
+        format=body.format or "generic",
+        threshold_pp=body.threshold_pp or 5.0,
+        race_type_filter=body.race_type_filter,
+        state_filter=body.state_filter,
+    )
+    return {"ok": True, "id": wid}
+
+
+@app.delete("/premium/webhooks/{webhook_id}")
+async def premium_webhooks_remove(webhook_id: int, request: Request):
+    user = await require_tier(request, "premium")
+    if not state.db.remove_webhook(webhook_id, user["id"]):
+        raise HTTPException(status_code=404, detail="webhook not found")
+    return {"ok": True}
+
+
+# ===================================================================
+# Daily digest opt-in
+# ===================================================================
+
+@app.get("/premium/digest")
+async def premium_digest_status(request: Request):
+    user = await require_auth(request)
+    subs = [s for s in state.db.get_digest_subscribers() if s.get("user_id") == user["id"]]
+    if subs:
+        return {"enabled": True, "last_sent_at": subs[0].get("last_sent_at")}
+    return {"enabled": False, "last_sent_at": None}
+
+
+@app.post("/premium/digest")
+async def premium_digest_subscribe(body: DigestSubscriptionBody, request: Request):
+    user = await require_auth(request)
+    state.db.upsert_digest_subscription(user["id"], user["email"], enabled=bool(body.enabled))
+    return {"ok": True, "enabled": bool(body.enabled)}
+
+
+# ===================================================================
+# API keys — issue, list, revoke
+# ===================================================================
+
+@app.post("/premium/api-keys")
+async def premium_api_keys_create(body: ApiKeyBody, request: Request):
+    """Issue an API key. The plaintext is returned ONCE — store it now.
+
+    Tier:
+      free       — 60 RPM, public-data endpoints only
+      premium    — 600 RPM, everything in /v1/api
+      enterprise — 6000 RPM, contact sales
+    """
+    user = await require_tier(request, "premium")
+    from api_keys import generate, rate_limit_for
+    tier = (body.tier or "free").lower()
+    if tier not in ("free", "premium", "enterprise"):
+        raise HTTPException(status_code=400, detail="tier must be free | premium | enterprise")
+    # Non-admin users can only mint free or premium keys
+    if tier == "enterprise" and user.get("tier") != "admin":
+        raise HTTPException(status_code=403, detail="enterprise keys are admin-only")
+    plaintext, key_prefix, key_hash = generate()
+    kid = state.db.store_api_key(
+        owner_user_id=user["id"], key_prefix=key_prefix, key_hash=key_hash,
+        name=body.name, tier=tier, rate_limit_rpm=rate_limit_for(tier),
+    )
+    return {
+        "id": kid,
+        "key": plaintext,              # shown once
+        "key_prefix": key_prefix,
+        "tier": tier,
+        "rate_limit_rpm": rate_limit_for(tier),
+        "note": "Save this key now. The plaintext is not retrievable later.",
+    }
+
+
+@app.get("/premium/api-keys")
+async def premium_api_keys_list(request: Request):
+    user = await require_tier(request, "premium")
+    return {"keys": state.db.list_api_keys(user["id"])}
+
+
+@app.delete("/premium/api-keys/{key_id}")
+async def premium_api_keys_revoke(key_id: int, request: Request):
+    user = await require_tier(request, "premium")
+    if not state.db.revoke_api_key(key_id, user["id"]):
+        raise HTTPException(status_code=404, detail="key not found or already revoked")
+    return {"ok": True}
+
+
+# ===================================================================
+# Versioned premium API (v1)
+#
+# All endpoints under /v1/api/* are authenticated by Authorization:
+# Bearer <api_key>. The contract is stable — if we need a breaking
+# change, it goes in /v2/api/*. Free tier sees throttled public data;
+# premium/enterprise see everything including history.
+# ===================================================================
+
+async def _require_api_key(request: Request) -> dict:
+    """Resolve and authenticate an API key from the Authorization header."""
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authorization: Bearer <api_key> required")
+    token = auth[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="empty API key")
+    from api_keys import hash_key
+    record = state.db.lookup_api_key(hash_key(token))
+    if not record:
+        raise HTTPException(status_code=401, detail="invalid or revoked API key")
+    state.db.touch_api_key(record["id"])
+    return record
+
+
+@app.get("/v1/api/races")
+async def v1_api_races(
+    request: Request,
+    race_type: Optional[str] = None, state_abbr: Optional[str] = None,
+    min_volume: Optional[float] = None,
+):
+    """List races with per-source top-outcome probabilities. Stable contract."""
+    await _require_api_key(request)
+    rows = _comparison_rows(race_type=race_type, state_abbr=state_abbr)
+    return {"version": "v1", "race_count": len(rows), "races": rows}
+
+
+@app.get("/v1/api/race/{race_key}")
+async def v1_api_race(race_key: str, request: Request):
+    """Single race with full source breakdown + verification status."""
+    await _require_api_key(request)
+    return await data_race_detail(race_key)
+
+
+@app.get("/v1/api/race/{race_key}/history")
+async def v1_api_race_history(race_key: str, request: Request, days: int = 30):
+    """Time-series divergence history for one race.
+
+    Requires premium tier — free keys return 403.
+    """
+    record = await _require_api_key(request)
+    if record.get("tier") == "free":
+        raise HTTPException(status_code=403, detail="history requires a premium API key")
+    days = max(1, min(int(days or 30), 90))
+    history = state.db.get_divergence_history(race_key=race_key, days=days)
+    return {"version": "v1", "race_key": race_key, "days": days, "points": history}
+
+
+@app.get("/v1/api/race/{race_key}/history.csv")
+async def v1_api_race_history_csv(race_key: str, request: Request, days: int = 30):
+    """Same data, CSV format. Premium tier."""
+    record = await _require_api_key(request)
+    if record.get("tier") == "free":
+        raise HTTPException(status_code=403, detail="history requires a premium API key")
+    days = max(1, min(int(days or 30), 90))
+    history = state.db.get_divergence_history(race_key=race_key, days=days)
+    import csv, io
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["snapshot_time", "polymarket_prob", "kalshi_prob",
+                     "predictit_prob", "polling_avg", "max_divergence"])
+    for h in history:
+        writer.writerow([
+            h.get("snapshot_time", ""), h.get("polymarket_prob", ""),
+            h.get("kalshi_prob", ""), h.get("predictit_prob", ""),
+            h.get("polling_avg", ""), h.get("max_divergence", ""),
+        ])
+    from fastapi.responses import Response
+    return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{race_key}-history.csv"'})
+
+
+@app.get("/v1/api/accuracy")
+async def v1_api_accuracy(request: Request):
+    """Per-source backtested accuracy stats. Free tier OK."""
+    await _require_api_key(request)
+    from accuracy import compute_summary
+    predictions = state.db.get_historical_predictions()
+    return {"version": "v1", "summary": compute_summary(predictions)}
+
+
+@app.get("/v1/api/movements")
+async def v1_api_movements(request: Request, hours: int = 24, min_delta_pp: float = 3.0):
+    """Cross-race movement scan in the last N hours, sorted by abs delta.
+
+    Premium tier — this is the same dataset that powers the RSS feed but
+    in JSON with full per-source breakdowns.
+    """
+    record = await _require_api_key(request)
+    if record.get("tier") == "free":
+        raise HTTPException(status_code=403, detail="movements feed requires a premium API key")
+    hours = max(1, min(int(hours or 24), 168))
+    min_delta_pp = max(0.0, float(min_delta_pp))
+
+    all_markets = state.db.get_all_markets(active_only=True)
+    titles = {market_race_key(m): m.get("event_title") or m.get("title") or "" for m in all_markets}
+
+    out = []
+    for race_key in set(titles):
+        if race_key.startswith("unmatched_"):
+            continue
+        hist = state.db.get_divergence_history(race_key=race_key, days=max(1, hours // 24 + 1))
+        if len(hist) < 2:
+            continue
+        hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
+        per_source = {}
+        max_abs = 0.0
+        for src in ("polymarket", "kalshi", "predictit", "polling"):
+            vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+            if len(vals) < 2:
+                continue
+            delta = (vals[-1] - vals[0]) * 100
+            per_source[src] = {"from": round(vals[0], 4), "to": round(vals[-1], 4),
+                               "delta_pp": round(delta, 2)}
+            if abs(delta) > max_abs:
+                max_abs = abs(delta)
+        if max_abs < min_delta_pp:
+            continue
+        out.append({
+            "race_key": race_key, "title": titles[race_key],
+            "max_abs_delta_pp": round(max_abs, 2),
+            "by_source": per_source,
+        })
+    out.sort(key=lambda r: -r["max_abs_delta_pp"])
+    return {"version": "v1", "hours": hours, "race_count": len(out), "movements": out}
 
 
 # ===================================================================
