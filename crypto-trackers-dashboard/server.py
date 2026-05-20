@@ -52,6 +52,7 @@ from ingestion import (
     okx,
     okx_liquidations,
     solana,
+    whales,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -330,6 +331,18 @@ async def api_liq_aggregate() -> JSONResponse:
     return JSONResponse(liquidations_agg.aggregate(binance=bin_liq, okx=okx_liq))
 
 
+# ─── Whales ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/whales/eth")
+async def api_whales_eth() -> JSONResponse:
+    return JSONResponse(whales.exchange_balances_eth())
+
+
+@app.get("/api/whales/btc")
+async def api_whales_btc(min_btc: float = 100.0) -> JSONResponse:
+    return JSONResponse(whales.large_btc_transactions(min_btc=max(1.0, min_btc)))
+
+
 # ─── Solana network ───────────────────────────────────────────────────────────
 
 @app.get("/api/network/sol")
@@ -380,7 +393,7 @@ async def api_summary() -> JSONResponse:
     (univ, glob, trend, fng, chains, dexs, stables, fut, premium,
      binance_spot, bybit_spot, okx_spot,
      news_headlines, btc_net, eth_gas, liq, okx_liq, dex_prices, treasuries,
-     sol_net) = await asyncio.gather(
+     sol_net, whales_eth, whales_btc) = await asyncio.gather(
         _to_thread(coingecko.universe, 200),
         _to_thread(coingecko.global_metrics),
         _to_thread(coingecko.trending),
@@ -401,6 +414,8 @@ async def api_summary() -> JSONResponse:
         _to_thread(defillama_prices.cross_dex_prices),
         _to_thread(btc_treasuries.holdings_table),
         _to_thread(solana.network_status),
+        _to_thread(whales.exchange_balances_eth),
+        _to_thread(whales.large_btc_transactions, 100.0),
     )
 
     # Quick aggregate: top 10 movers (gainers + losers) from the universe
@@ -458,6 +473,21 @@ async def api_summary() -> JSONResponse:
             ).get("rows", [])[:8],
         },
         "dex_prices": dex_prices,
+        "whales": {
+            "eth": {
+                "total_balance_eth": whales_eth.get("total_balance_eth"),
+                "net_flow_eth": whales_eth.get("net_flow_eth"),
+                "significant_moves": whales_eth.get("significant_moves", [])[:5],
+                "error": whales_eth.get("error"),
+            },
+            "btc": {
+                "count": whales_btc.get("count", 0),
+                "total_btc": whales_btc.get("total_btc"),
+                "biggest_btc": whales_btc.get("biggest_btc"),
+                "top": (whales_btc.get("rows") or [])[:6],
+                "error": whales_btc.get("error"),
+            },
+        },
         "btc_treasuries": {
             "total_tracked_btc": treasuries.get("total_tracked_btc"),
             "pct_of_supply_tracked": treasuries.get("pct_of_supply_tracked"),
@@ -496,6 +526,8 @@ async def _startup() -> None:
         ("okx_liq",               lambda: okx_liquidations.recent_liquidations(100),     60),
         ("solana_network",        lambda: solana.network_status(),                       60),
         ("solana_priority_fees",  lambda: solana.priority_fees(),                        60),
+        ("whales_eth",            lambda: whales.exchange_balances_eth(),                300),
+        ("whales_btc",            lambda: whales.large_btc_transactions(100),            120),
         ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
     ])
 

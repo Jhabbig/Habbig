@@ -228,6 +228,11 @@
   </section>
 
   <section>
+    <h2>Whales <small>exchange-wallet ETH balances + 100 BTC+ unconfirmed transactions</small></h2>
+    <div id="whales-card"></div>
+  </section>
+
+  <section>
     <h2>Source health <small>per-upstream freshness, latency, success rate</small></h2>
     <div id="sources-grid" class="sources-grid"></div>
   </section>
@@ -672,6 +677,48 @@
     </div>`;
   }
 
+  // ─── Whales ────────────────────────────────────────────────────────────────
+  function renderWhales(s) {
+    const w = s.whales || {};
+    const target = document.getElementById("whales-card");
+    const eth = w.eth || {};
+    const btc = w.btc || {};
+    const netFlow = eth.net_flow_eth;
+    const netCls = netFlow == null ? "muted" : netFlow >= 0 ? "down" : "up";
+    const netLabel = netFlow == null ? "no data" :
+      netFlow >= 0 ? `+${fmtBig(netFlow)} ETH INTO exchanges (bearish)` :
+      `${fmtBig(netFlow)} ETH OUT of exchanges (bullish)`;
+    const ethSection = eth.error
+      ? `<div class="muted">${escapeHtml(eth.error)}</div>`
+      : `<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px">
+          <div class="stat"><div class="label">Exchange ETH balance</div><div class="val">${fmtBig(eth.total_balance_eth)} ETH</div><div class="sub">across ${eth.significant_moves ? '14' : '0'} tracked wallets</div></div>
+          <div class="stat"><div class="label">Net flow (since last poll)</div><div class="val ${netCls}" style="font-size:14px">${escapeHtml(netLabel)}</div></div>
+         </div>
+         ${(eth.significant_moves || []).length ? `<div style="font-size:11px;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px">Recent &gt;500 ETH moves</div>
+         <table><tbody>${(eth.significant_moves || []).map(m => `<tr>
+           <td>${escapeHtml(m.label)}</td>
+           <td class="num">${fmtBig(m.balance_eth)} ETH</td>
+           <td class="num ${m.delta_eth_since_last_poll >= 0 ? 'down' : 'up'}">${m.delta_eth_since_last_poll >= 0 ? '+' : ''}${fmtBig(m.delta_eth_since_last_poll)} ETH</td>
+         </tr>`).join("")}</tbody></table>` : '<div class="muted" style="font-size:11px">no &gt;500 ETH moves since last poll</div>'}`;
+    const btcSection = btc.error
+      ? `<div class="muted">${escapeHtml(btc.error)}</div>`
+      : `<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px">
+          <div class="stat"><div class="label">100 BTC+ unconfirmed txs</div><div class="val">${fmt(btc.count)}</div><div class="sub">last seen in mempool</div></div>
+          <div class="stat"><div class="label">Biggest pending</div><div class="val">${fmtBig(btc.biggest_btc || 0)} BTC</div><div class="sub">at current rate</div></div>
+          <div class="stat"><div class="label">Total whale value</div><div class="val">${fmtBig(btc.total_btc || 0)} BTC</div></div>
+         </div>
+         ${(btc.top || []).length ? `<table><thead><tr><th>BTC</th><th>vSize</th><th>Fee (sats)</th><th>txid</th></tr></thead><tbody>${(btc.top || []).map(t => `<tr>
+           <td class="num">${fmt(t.value_btc, 2)}</td>
+           <td class="num muted">${fmt(t.vsize_vb)} vB</td>
+           <td class="num muted">${fmt(t.fee_sats)}</td>
+           <td class="muted" style="font-family:monospace;font-size:10px"><a href="https://mempool.space/tx/${escapeHtml(t.txid)}" target="_blank" rel="noopener">${escapeHtml((t.txid || '').slice(0, 16))}…</a></td>
+         </tr>`).join("")}</tbody></table>` : ''}`;
+    target.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card"><div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Exchange wallets (ETH)</div>${ethSection}</div>
+      <div class="card"><div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Mempool whales (BTC)</div>${btcSection}</div>
+    </div>`;
+  }
+
   // ─── Source health ─────────────────────────────────────────────────────────
   async function loadSources() {
     try {
@@ -705,6 +752,7 @@
       renderDexPrices(s);
       renderNews(s);
       renderTreasuries(s);
+      renderWhales(s);
       setUpdated(s.fetched_at);
     } catch (e) {
       document.getElementById("crit-strip").innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;

@@ -202,7 +202,7 @@ crypto-trackers-dashboard/
 | v0   | ✓ done | Universe + multi-exchange + cross-arb + funding + DeFi + F&G + source health |
 | v0.1 | ✓ done | News aggregator (7 RSS sources) + BTC/ETH network metrics + Binance liquidations + cross-DEX prices + BTC treasuries |
 | v0.2 | ✓ done | Per-coin detail page (candlestick + depth + cross-venue + news + funding); multi-venue liquidations (+ OKX); Solana RPC metrics + priority fees |
-| v0.3 | open | Whale-transaction tracker (exchange in/outflows + large-tx feed) |
+| v0.3 | ✓ done | Whale tracker: Etherscan exchange-wallet ETH balances + delta detection across 14 hot/cold wallets; mempool.space 100 BTC+ unconfirmed-tx feed |
 | v0.4 | open | On-chain context per coin (Etherscan / Solscan / Basescan tx + holder counts) |
 | v0.5 | open | Add Hyperliquid + Bybit to liquidation aggregator (Bybit needs websocket) |
 | v0.6 | open | Solana validator stake distribution + Jito tip stream |
