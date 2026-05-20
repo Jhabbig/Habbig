@@ -584,6 +584,71 @@ CAPEX_TICKERS = [
     {"ticker": "amzn",  "name": "Amazon",    "color": "#ff9900"},
 ]
 
+# ── Talent flow ──────────────────────────────────────────────────────────────
+# Notable researcher / leadership movements. Editorial — additions appreciated
+# when a senior person changes labs. `kind` slots:
+#   "founder"  — left to start a new lab
+#   "hire"     — joined a lab (incl. acqui-hires)
+#   "exit"     — left without immediate destination disclosed
+#   "return"   — came back to a previous employer
+TALENT_MOVES = [
+    {"date": "2024-02-13", "name": "Andrej Karpathy",   "from": "openai",     "to": "eureka_labs",        "kind": "founder", "role": "founder"},
+    {"date": "2024-03-19", "name": "Mustafa Suleyman",  "from": "inflection", "to": "microsoft",          "kind": "hire",    "role": "CEO of Microsoft AI"},
+    {"date": "2024-05-14", "name": "Ilya Sutskever",    "from": "openai",     "to": "safe_superint",      "kind": "founder", "role": "co-founder, chief scientist"},
+    {"date": "2024-05-15", "name": "Jan Leike",         "from": "openai",     "to": "anthropic",          "kind": "hire",    "role": "alignment lead"},
+    {"date": "2024-08-08", "name": "John Schulman",     "from": "openai",     "to": "anthropic",          "kind": "hire",    "role": "research"},
+    {"date": "2024-08-31", "name": "Noam Shazeer",      "from": "character_ai","to": "google_deepmind",   "kind": "return",  "role": "Gemini lead, via $2.7B licensing"},
+    {"date": "2024-09-25", "name": "Mira Murati",       "from": "openai",     "to": "thinking_machines",  "kind": "founder", "role": "CEO"},
+    {"date": "2024-09-25", "name": "Bob McGrew",        "from": "openai",     "to": "exit",               "kind": "exit",    "role": "Chief Research Officer"},
+    {"date": "2024-11-08", "name": "Lilian Weng",       "from": "openai",     "to": "thinking_machines",  "kind": "hire",    "role": "safety research"},
+    {"date": "2025-04-30", "name": "Sholto Douglas",    "from": "anthropic",  "to": "anthropic",          "kind": "return",  "role": "promoted to lead Claude training"},
+    {"date": "2025-06-10", "name": "Alexandr Wang",     "from": "scale_ai",   "to": "meta",               "kind": "hire",    "role": "Superintelligence Labs lead"},
+    {"date": "2025-09-15", "name": "Mark Chen",         "from": "openai",     "to": "openai",             "kind": "return",  "role": "promoted to Chief Research Officer"},
+]
+
+# Friendly display labels for `from`/`to` keys not in LABS.
+TALENT_ORG_LABELS = {
+    "openai":              {"name": "OpenAI", "color": "#10a37f"},
+    "anthropic":           {"name": "Anthropic", "color": "#d97757"},
+    "google_deepmind":     {"name": "Google DeepMind", "color": "#4285f4"},
+    "meta":                {"name": "Meta", "color": "#1877f2"},
+    "microsoft":           {"name": "Microsoft", "color": "#00a4ef"},
+    "inflection":          {"name": "Inflection AI", "color": "#7c3aed"},
+    "character_ai":        {"name": "Character.AI", "color": "#7c3aed"},
+    "safe_superint":       {"name": "Safe Superintelligence", "color": "#e879f9"},
+    "thinking_machines":   {"name": "Thinking Machines", "color": "#f472b6"},
+    "eureka_labs":         {"name": "Eureka Labs", "color": "#fbbf24"},
+    "scale_ai":            {"name": "Scale AI", "color": "#0ea5e9"},
+    "exit":                {"name": "—", "color": "#6b7280"},
+}
+
+# Approximate lab headcount — wide error bars, curate-and-cite.
+HEADCOUNT = [
+    {"lab_key": "openai",          "people": 3500, "as_of": "2025-10", "source": "Reuters, Information reporting"},
+    {"lab_key": "anthropic",       "people": 1500, "as_of": "2025-11", "source": "company hiring page count + press"},
+    {"lab_key": "google_deepmind", "people": 6000, "as_of": "2025-09", "source": "Alphabet 10-Q + press, includes Google AI"},
+    {"lab_key": "xai",             "people": 1200, "as_of": "2025-10", "source": "xAI press; SF + Memphis hiring waves"},
+    {"lab_key": "meta",            "people": 4500, "as_of": "2025-09", "source": "Superintelligence Labs + FAIR + GenAI consolidated"},
+    {"lab_key": "deepseek",        "people": 200,  "as_of": "2025-08", "source": "FT profile; deliberately small"},
+    {"lab_key": "alibaba",         "people": 1000, "as_of": "2025-08", "source": "Qwen team + DAMO Academy"},
+    {"lab_key": "mistral",         "people": 350,  "as_of": "2025-09", "source": "company filings; post-ASML round"},
+]
+
+# ── News feeds ───────────────────────────────────────────────────────────────
+# RSS feeds for the AI news fan-in. Mix of lab blogs, research feeds, and
+# narrative-shaping commentary. Add/remove freely.
+NEWS_FEEDS = [
+    {"name": "OpenAI",            "url": "https://openai.com/blog/rss.xml",                    "kind": "lab"},
+    {"name": "Anthropic",         "url": "https://www.anthropic.com/news/rss.xml",             "kind": "lab"},
+    {"name": "Google DeepMind",   "url": "https://deepmind.google/blog/rss.xml",               "kind": "lab"},
+    {"name": "HuggingFace blog",  "url": "https://huggingface.co/blog/feed.xml",               "kind": "community"},
+    {"name": "arXiv cs.CL",       "url": "http://export.arxiv.org/rss/cs.CL",                  "kind": "research"},
+    {"name": "Import AI",         "url": "https://importai.substack.com/feed",                 "kind": "newsletter"},
+    {"name": "Stratechery",       "url": "https://stratechery.com/feed/",                      "kind": "newsletter"},
+    {"name": "Ben's Bites",       "url": "https://bensbites.beehiiv.com/feed",                 "kind": "newsletter"},
+    {"name": "AI Snake Oil",      "url": "https://www.aisnakeoil.com/feed",                    "kind": "newsletter"},
+]
+
 # ── Market whitelists ────────────────────────────────────────────────────────
 # Curated lists of Polymarket events + Kalshi series to surface as "Featured
 # AI markets." Editorial, not algorithmic — each entry is a slug/ticker the

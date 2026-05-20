@@ -58,6 +58,8 @@ DEV_MODE=1 python3 server.py        # → http://127.0.0.1:7070
 - `GET /api/compute` — per-lab compute scoreboard
 - `GET /api/export-controls` — chip export-control timeline
 - `GET /api/capex` — Big Tech quarterly AI capex
+- `GET /api/talent` — researcher moves + lab headcount estimates
+- `GET /api/news` — RSS fan-in across AI feeds (90s cache)
 - `GET /api/frontier` — running max-score series per benchmark, computed off
   merged scores (live values bump the curve).
 - `GET /api/markets` — keyword-filtered Polymarket AI markets (legacy view)
@@ -99,6 +101,26 @@ When a public leaderboard restructures and our scrapers break:
 
 To disable live ingestion entirely (e.g. for sandboxed local dev), set
 `DISABLE_INGESTION=1`.
+
+## Talent & news (v2.4 + v2.7)
+
+- **Talent flow** — curated list of senior researcher/leadership moves
+  in `data.TALENT_MOVES`, plus `HEADCOUNT` estimates. Move kinds:
+  `founder` (left to start a new lab), `hire`, `return` (back to a
+  previous employer or promoted in place), `exit` (left without
+  immediate destination disclosed). `TALENT_ORG_LABELS` adds display
+  metadata for orgs that aren't in `LABS` (Microsoft, Safe
+  Superintelligence, Thinking Machines, etc.).
+- **News feed** — RSS fan-in (`news.py`) across lab blogs, AI
+  newsletters, and arXiv cs.CL, mirroring the proven
+  world-state-dashboard pattern (defusedxml-parsed, ≤90s cache,
+  per-feed best-effort with graceful degradation). Feed list lives in
+  `data.NEWS_FEEDS`. UI has a kind filter (all / lab / research /
+  newsletter / community).
+
+Both add zero new server-side dependencies beyond `defusedxml` (already
+used by world-state); both degrade gracefully when upstream is
+unreachable.
 
 ## Compute & infra (v2.2)
 

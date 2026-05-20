@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 import data as ai_data
 import live_data
 import markets as ai_markets
+import news as ai_news
 from ingestion import refresh_all
 
 app = FastAPI(title="AI Race Dashboard")
@@ -267,6 +268,42 @@ async def get_capex():
         "tickers": ai_data.CAPEX_TICKERS,
         "as_of": ai_data.DATASET_AS_OF,
     })
+
+
+def _org_meta(key: str) -> dict:
+    lab = ai_data.lab_by_key(key)
+    if lab:
+        return {"name": lab["name"], "color": lab["color"]}
+    return ai_data.TALENT_ORG_LABELS.get(key, {"name": key, "color": "#6b7280"})
+
+
+@app.get("/api/talent")
+async def get_talent():
+    moves = []
+    for m in ai_data.TALENT_MOVES:
+        f = _org_meta(m["from"])
+        t = _org_meta(m["to"])
+        moves.append({
+            **m,
+            "from_name": f["name"], "from_color": f["color"],
+            "to_name": t["name"],   "to_color": t["color"],
+        })
+    headcount = []
+    for h in ai_data.HEADCOUNT:
+        lab = ai_data.lab_by_key(h["lab_key"]) or {}
+        headcount.append({
+            **h,
+            "lab_name": lab.get("name", h["lab_key"]),
+            "lab_color": lab.get("color", "#888"),
+        })
+    return _json({"moves": moves, "headcount": headcount, "as_of": ai_data.DATASET_AS_OF})
+
+
+@app.get("/api/news")
+async def get_news_endpoint():
+    import asyncio
+    payload = await asyncio.to_thread(ai_news.get_news, False)
+    return _json(payload)
 
 
 @app.get("/api/frontier")

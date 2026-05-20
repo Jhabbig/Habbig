@@ -237,6 +237,62 @@
   .ftx-cell .when { color: var(--muted); font-size: 10px; }
   .ftx-cell.unreached { color: var(--muted); background: transparent; border-style: dashed; }
 
+  /* Talent flow */
+  .move-row { display: grid; grid-template-columns: 90px 1fr;
+              gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+              align-items: start; }
+  .move-row:last-child { border-bottom: 0; }
+  .move-date { color: var(--muted); font-size: 12px;
+               font-variant-numeric: tabular-nums; }
+  .move-name { font-weight: 600; font-size: 13px; }
+  .move-role { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .move-flow { display: inline-flex; align-items: center; gap: 6px;
+               flex-wrap: wrap; margin-top: 4px; font-size: 12px; }
+  .move-arrow { color: var(--muted); }
+  .move-org { display: inline-flex; align-items: center; gap: 5px;
+              padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              border: 1px solid var(--grid); background: #0e1117; }
+  .kind-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px;
+                font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                margin-left: 6px; }
+  .kind-badge.founder { background: #f472b622; color: #f472b6; border: 1px solid #f472b655; }
+  .kind-badge.hire    { background: #56d36422; color: var(--green); border: 1px solid #56d36455; }
+  .kind-badge.exit    { background: #f8514922; color: var(--red); border: 1px solid #f8514955; }
+  .kind-badge.return  { background: #58a6ff22; color: var(--accent); border: 1px solid #58a6ff55; }
+
+  .head-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+               gap: 10px; margin-top: 14px; }
+  .head-card { background: var(--panel-2); border: 1px solid var(--grid);
+               border-radius: 6px; padding: 10px 12px; }
+  .head-card .lbl { display: flex; align-items: center; gap: 6px;
+                    color: var(--muted); font-size: 11px; }
+  .head-card .val { font-variant-numeric: tabular-nums; font-weight: 700;
+                    font-size: 18px; margin-top: 4px; }
+  .head-card .asof { color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+  /* News */
+  .news-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .news-toolbar button { background: var(--panel-2); color: var(--fg);
+                         border: 1px solid var(--grid); padding: 3px 10px;
+                         border-radius: 999px; font-size: 11px; cursor: pointer; }
+  .news-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  .news-row { display: grid; grid-template-columns: 130px 1fr 110px;
+              gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--grid);
+              align-items: start; }
+  .news-row:last-child { border-bottom: 0; }
+  .news-src { font-size: 11px; color: var(--muted); display: flex;
+              flex-direction: column; gap: 2px; }
+  .news-src .name { font-weight: 600; color: var(--fg); font-size: 12px; }
+  .news-kind { font-size: 9px; padding: 1px 5px; border-radius: 3px;
+               border: 1px solid var(--grid); width: max-content;
+               text-transform: uppercase; letter-spacing: 0.04em; }
+  .news-title { font-size: 13px; }
+  .news-title a { color: var(--fg); }
+  .news-title a:hover { color: var(--accent); }
+  .news-desc { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .news-when { color: var(--muted); font-size: 11px; text-align: right;
+               font-variant-numeric: tabular-nums; }
+
   /* Compute scoreboard */
   .cmp-row { display: grid; grid-template-columns: 180px 110px 1fr 110px;
              gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
@@ -412,6 +468,21 @@
     <div id="compute"></div>
   </section>
 
+  <!-- Talent flow -->
+  <section class="panel" id="talent-panel">
+    <h2>Talent flow</h2>
+    <div class="sub">
+      Notable senior moves. <b>founder</b> = left to start a new lab,
+      <b>hire</b> = joined a lab, <b>return</b> = came back to a previous
+      employer or got promoted, <b>exit</b> = left without immediate
+      destination disclosed.
+    </div>
+    <div id="talent"></div>
+    <h2 style="margin-top:24px">Headcount estimates</h2>
+    <div class="sub">Rough public estimates — wide error bars. Hover a card for source.</div>
+    <div class="head-grid" id="headcount"></div>
+  </section>
+
   <!-- Export controls timeline -->
   <section class="panel" id="xc-panel">
     <h2>Chip export-control timeline</h2>
@@ -460,6 +531,16 @@
     <h2>More AI markets</h2>
     <div class="sub">Other Polymarket questions matching AI keywords, sorted by 24h volume.</div>
     <div id="markets"></div>
+  </section>
+
+  <!-- News feed -->
+  <section class="panel" id="news-panel">
+    <h2>News feed</h2>
+    <div class="sub">RSS fan-in across lab blogs, AI newsletters, and arXiv cs.CL.
+      Sorted by publication time. Failed feeds are silently dropped (see
+      <code>NEWS_FEEDS</code> in <code>data.py</code>).</div>
+    <div class="news-toolbar" id="news-toolbar"></div>
+    <div id="news"></div>
   </section>
 
   <!-- Ingestion sources -->
@@ -979,6 +1060,91 @@ async function loadLabs() {
   `).join("");
 }
 
+// ── Talent flow ────────────────────────────────────────────────────────────
+async function loadTalent() {
+  const data = await fetchJSON("/api/talent");
+  const moves = (data.moves || []).slice().reverse();  // newest first
+  $("#talent").innerHTML = moves.map(m => {
+    const fromChip = `<span class="move-org"><span class="lab-dot" style="background:${escapeHTML(m.from_color)}"></span>${escapeHTML(m.from_name)}</span>`;
+    const toChip   = `<span class="move-org"><span class="lab-dot" style="background:${escapeHTML(m.to_color)}"></span>${escapeHTML(m.to_name)}</span>`;
+    return `<div class="move-row">
+      <div class="move-date">${escapeHTML(m.date)}</div>
+      <div>
+        <div class="move-name">${escapeHTML(m.name)}<span class="kind-badge ${escapeHTML(m.kind)}">${escapeHTML(m.kind)}</span></div>
+        <div class="move-role">${escapeHTML(m.role || "")}</div>
+        <div class="move-flow">${fromChip}<span class="move-arrow">→</span>${toChip}</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const heads = data.headcount || [];
+  $("#headcount").innerHTML = heads.map(h => `
+    <div class="head-card" title="${escapeHTML(h.source || '')}">
+      <div class="lbl"><span class="lab-dot" style="background:${escapeHTML(h.lab_color)}"></span>${escapeHTML(h.lab_name)}</div>
+      <div class="val">${h.people.toLocaleString()}</div>
+      <div class="asof">as of ${escapeHTML(h.as_of)}</div>
+    </div>`).join("");
+}
+
+// ── News feed ──────────────────────────────────────────────────────────────
+let NEWS_FILTER = "all";
+
+function relTime(ts) {
+  if (!ts) return "";
+  const now = Date.now() / 1000;
+  const age = now - ts;
+  if (age < 0) return "future";
+  if (age < 3600) return Math.floor(age/60) + "m ago";
+  if (age < 86400) return Math.floor(age/3600) + "h ago";
+  if (age < 86400 * 30) return Math.floor(age/86400) + "d ago";
+  return new Date(ts*1000).toISOString().slice(0,10);
+}
+
+async function loadNews() {
+  const wrap = $("#news");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/news");
+    const items = data.items || [];
+
+    // Build kind filter toolbar from the items we got
+    const kinds = ["all", ...Array.from(new Set(items.map(i => i.kind))).sort()];
+    $("#news-toolbar").innerHTML = kinds.map(k =>
+      `<button data-k="${escapeHTML(k)}" class="${k === NEWS_FILTER ? 'active' : ''}">${escapeHTML(k)}</button>`
+    ).join("");
+    $("#news-toolbar").querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        NEWS_FILTER = btn.dataset.k;
+        loadNews();
+      });
+    });
+
+    const filtered = NEWS_FILTER === "all" ? items : items.filter(i => i.kind === NEWS_FILTER);
+    if (filtered.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No headlines (sandboxed environments without egress will show this).</div>';
+      return;
+    }
+    wrap.innerHTML = filtered.slice(0, 60).map(i => {
+      const titleEl = i.link
+        ? `<a href="${escapeHTML(i.link)}" target="_blank" rel="noopener">${escapeHTML(i.title)}</a>`
+        : escapeHTML(i.title);
+      return `<div class="news-row">
+        <div class="news-src">
+          <span class="name">${escapeHTML(i.source)}</span>
+          <span class="news-kind">${escapeHTML(i.kind || 'other')}</span>
+        </div>
+        <div>
+          <div class="news-title">${titleEl}</div>
+          ${i.description ? `<div class="news-desc">${escapeHTML(i.description)}</div>` : ''}
+        </div>
+        <div class="news-when">${escapeHTML(relTime(i.ts))}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load news: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
 // ── Compute / Export controls / Capex ─────────────────────────────────────
 async function loadCompute() {
   const data = await fetchJSON("/api/compute");
@@ -1267,16 +1433,19 @@ async function boot() {
     await loadTimeline();
     await loadLabs();
     loadCompute();
+    loadTalent();
     loadExportControls();
     loadCapex();
     loadSources();
     loadFeatured();
     loadMovers();
     loadMarkets();
+    loadNews();
     $("#refresh-btn").addEventListener("click", triggerRefresh);
     setInterval(loadFeatured, 90_000);
     setInterval(loadMovers, 90_000);
     setInterval(loadMarkets, 60_000);
+    setInterval(loadNews, 120_000);
     setInterval(loadSources, 5 * 60_000);
   } catch (e) {
     console.error(e);
