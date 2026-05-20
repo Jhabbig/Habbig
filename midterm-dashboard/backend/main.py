@@ -31,6 +31,7 @@ from aggregators import (
 from cache import cache
 from alerts import dispatch_divergence_alert
 from smart_money import fetch_smart_money_flows, race_smart_money
+from news import ingest_news, measure_reactions, lag_curve, tag_article
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -285,6 +286,19 @@ async def data_refresh_loop():
                 else:
                     logger.error(f"{label} fetch error: {data}")
 
+            # Snapshot the current top-outcome prices into midterm_price_history.
+            # This is what the news-reaction measurer joins against to compute
+            # market response to events. Without it, the price-history table
+            # stays empty and lag measurement is impossible.
+            all_market_payloads: list[dict] = []
+            for data in (poly_data, kalshi_data, pi_data, manifold_data, metaculus_data,
+                         poly_world, kalshi_world, manifold_world, metaculus_world):
+                if isinstance(data, list):
+                    all_market_payloads.extend(data)
+            snap_count = state.db.record_price_snapshots_for_markets(all_market_payloads)
+            if snap_count:
+                logger.info(f"Recorded {snap_count} price snapshots")
+
             # Notify connected SSE clients that fresh data has landed.
             cache.publish("data_updated", {"phase": "markets"})
 
@@ -443,6 +457,36 @@ async def district_profile_updater():
             logger.error(f"District profile updater error: {e}", exc_info=True)
 
         await asyncio.sleep(PROFILE_CHECK_INTERVAL)
+
+
+async def news_ingest_loop():
+    """Fetch + tag political news every 5 minutes; measure reactions every minute."""
+    NEWS_FETCH_INTERVAL = 300
+    while True:
+        try:
+            added = await ingest_news(state.db)
+            if added:
+                cache.publish("data_updated", {"phase": "news", "new_items": added})
+        except Exception as e:
+            logger.error(f"News ingest error: {e}", exc_info=True)
+        await asyncio.sleep(NEWS_FETCH_INTERVAL)
+
+
+async def news_reaction_loop():
+    """Compute market reactions for tagged news events.
+
+    Runs more often than the ingest loop because reactions get measurable as
+    price snapshots accumulate after each new piece of news.
+    """
+    REACTION_INTERVAL = 60
+    while True:
+        try:
+            written = await measure_reactions(state.db)
+            if written:
+                cache.publish("data_updated", {"phase": "news_reactions", "rows": written})
+        except Exception as e:
+            logger.error(f"News reaction error: {e}", exc_info=True)
+        await asyncio.sleep(REACTION_INTERVAL)
 
 
 async def alert_dispatch_loop():
@@ -676,6 +720,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
         asyncio.create_task(db_retention_loop(), name="db_retention"),
         asyncio.create_task(alert_dispatch_loop(), name="alert_dispatch"),
+        asyncio.create_task(news_ingest_loop(), name="news_ingest"),
+        asyncio.create_task(news_reaction_loop(), name="news_reactions"),
     ]
 
     logger.info("Background tasks started")
@@ -1627,6 +1673,57 @@ async def data_smart_money(race_key: str):
         race_polymarket_markets=markets,
         flows=flows_payload.get("flows", []),
     )
+
+
+@app.get("/data/news/recent")
+async def data_news_recent(limit: int = 30):
+    """Latest political news ingested from RSS feeds.
+
+    Untagged items are included so users can see the full stream — the
+    ``race_key`` field tells the frontend whether a piece is wired to a race.
+    """
+    items = state.db.get_recent_news(limit=min(max(1, limit), 200))
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/data/news/race/{race_key}")
+async def data_news_for_race(race_key: str, limit: int = 20):
+    """Recent news tagged to this race, with measured reactions joined in.
+
+    Each item carries any ``reactions`` we've recorded so far — list of
+    ``{source, market_id, baseline_price, reaction_price, delta_pp, lag_seconds}``
+    for the markets in this race.
+    """
+    items = state.db.get_recent_news(race_key=race_key, limit=min(max(1, limit), 200))
+    reactions = state.db.get_news_reactions(race_key=race_key, limit=500)
+    by_news: dict[int, list[dict]] = defaultdict(list)
+    for r in reactions:
+        by_news[r["news_id"]].append({
+            "source": r["source"],
+            "market_id": r.get("market_id"),
+            "baseline_price": r.get("baseline_price"),
+            "reaction_price": r.get("reaction_price"),
+            "delta_pp": r.get("delta_pp"),
+            "lag_seconds": r.get("lag_seconds"),
+        })
+    for item in items:
+        item["reactions"] = by_news.get(item["id"], [])
+    return {"race_key": race_key, "items": items, "total": len(items)}
+
+
+@app.get("/data/news/lag-curve")
+async def data_news_lag_curve(min_delta_pp: float = 1.0, limit: int = 1000):
+    """Per-source median time-to-reprice after a news event.
+
+    Aggregates every recorded reaction whose price move exceeded
+    ``min_delta_pp`` percentage points. Yields a per-source dictionary of
+    {median_lag_s, median_delta_pp, n}. The smaller the median lag, the
+    faster that source's market reacts to news — a genuine market-quality
+    proxy that no paid election tracker exposes.
+    """
+    reactions = state.db.get_news_reactions(limit=limit)
+    curve = lag_curve(reactions, min_delta_pp=min_delta_pp)
+    return curve
 
 
 @app.get("/data/forecast/{race_key}")

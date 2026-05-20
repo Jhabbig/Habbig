@@ -7,6 +7,7 @@ import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, 
 import { sourceColors, sourceLabels, partyColor, OutcomeBar } from '../lib/raceTheme.jsx'
 import { useDataStream } from '../lib/useDataStream.js'
 import ForecastBadge from '../components/ForecastBadge.jsx'
+import NewsTimeline from '../components/NewsTimeline.jsx'
 
 export default function RaceDetail() {
   const { raceKey } = useParams()
@@ -210,6 +211,11 @@ export default function RaceDetail() {
       {/* narve.ai house forecast — single ensemble probability */}
       <div className="mb-6">
         <ForecastBadge raceKey={race.race_key || raceKey} />
+      </div>
+
+      {/* News timeline + market-reaction chips */}
+      <div className="mb-6">
+        <NewsTimeline raceKey={race.race_key || raceKey} />
       </div>
 
       {/* Header */}

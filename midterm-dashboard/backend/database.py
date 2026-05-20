@@ -108,6 +108,43 @@ CREATE INDEX IF NOT EXISTS idx_price_history_market_ts
 CREATE INDEX IF NOT EXISTS idx_price_history_ts
     ON midterm_price_history(timestamp);
 
+-- Political news ingested from curated RSS feeds + tagged to a race key when
+-- the headline mentions a recognised state / candidate.
+CREATE TABLE IF NOT EXISTS midterm_news_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    link            TEXT,
+    description     TEXT,
+    published_at    TEXT NOT NULL,
+    race_key        TEXT,
+    state           TEXT,
+    keywords        TEXT,                    -- JSON array of matched tags
+    UNIQUE(source, link)
+);
+CREATE INDEX IF NOT EXISTS idx_news_race ON midterm_news_events(race_key, published_at);
+CREATE INDEX IF NOT EXISTS idx_news_published ON midterm_news_events(published_at);
+
+-- Observed market reaction for a tagged news event. We snapshot the price
+-- before the news timestamp and at one or more checkpoints after, then store
+-- the inferred lag (seconds until the first snapshot whose price moved more
+-- than ``REACTION_THRESHOLD``).
+CREATE TABLE IF NOT EXISTS midterm_news_reactions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    news_id             INTEGER NOT NULL,
+    source              TEXT NOT NULL,         -- market source: polymarket/kalshi/...
+    market_id           INTEGER,               -- midterm_markets.id (nullable for snapshot-level)
+    race_key            TEXT,
+    baseline_price      REAL,
+    reaction_price      REAL,
+    delta_pp            REAL,                  -- |reaction - baseline| × 100
+    lag_seconds         INTEGER,               -- time from news → first material move
+    computed_at         TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY(news_id) REFERENCES midterm_news_events(id)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_news ON midterm_news_reactions(news_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_race ON midterm_news_reactions(race_key, lag_seconds);
+
 CREATE TABLE IF NOT EXISTS midterm_polling_data (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     poll_type   TEXT NOT NULL DEFAULT '',
@@ -399,6 +436,177 @@ class Database:
                 rows,
             )
 
+    # === News + market reactions ============================================
+
+    def upsert_news_event(
+        self,
+        *,
+        source: str,
+        title: str,
+        link: Optional[str],
+        description: Optional[str],
+        published_at: str,
+        race_key: Optional[str],
+        state: Optional[str],
+        keywords: Optional[list[str]],
+    ) -> Optional[int]:
+        """Insert (or no-op on dup) a news event, return its row id.
+
+        Returns ``None`` if the (source, link) pair was already stored. We
+        rely on the natural-key dedupe instead of hashing the title because
+        sources occasionally tweak titles after publishing.
+        """
+        kw = json.dumps(keywords or [])
+        with _get_conn() as conn:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO midterm_news_events
+                        (source, title, link, description, published_at,
+                         race_key, state, keywords)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (source, title, link, description, published_at,
+                     race_key, state, kw),
+                )
+                return cur.lastrowid
+            except sqlite3.IntegrityError:
+                return None
+
+    def get_recent_news(
+        self,
+        *,
+        race_key: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        sql = "SELECT * FROM midterm_news_events"
+        params: tuple = ()
+        if race_key:
+            sql += " WHERE race_key = ?"
+            params = (race_key,)
+        sql += " ORDER BY published_at DESC LIMIT ?"
+        params = params + (limit,)
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("keywords"), str):
+                try:
+                    d["keywords"] = json.loads(d["keywords"])
+                except (json.JSONDecodeError, TypeError):
+                    d["keywords"] = []
+            out.append(d)
+        return out
+
+    def get_news_needing_reaction(self, *, max_age_hours: int = 24) -> list[dict]:
+        """News events with a race_key but no reaction computed yet.
+
+        Used by the reaction-measurement loop. Only looks at recent news so we
+        don't re-process every old item on every pass.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT n.* FROM midterm_news_events n
+                   LEFT JOIN midterm_news_reactions r ON r.news_id = n.id
+                   WHERE n.race_key IS NOT NULL
+                     AND n.published_at >= ?
+                     AND r.id IS NULL""",
+                (cutoff,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("keywords"), str):
+                try:
+                    d["keywords"] = json.loads(d["keywords"])
+                except (json.JSONDecodeError, TypeError):
+                    d["keywords"] = []
+            out.append(d)
+        return out
+
+    def record_news_reaction(
+        self,
+        *,
+        news_id: int,
+        source: str,
+        market_id: Optional[int],
+        race_key: str,
+        baseline_price: float,
+        reaction_price: float,
+        lag_seconds: Optional[int],
+    ) -> None:
+        delta_pp = abs(reaction_price - baseline_price) * 100.0
+        with _get_conn() as conn:
+            conn.execute(
+                """INSERT INTO midterm_news_reactions
+                    (news_id, source, market_id, race_key, baseline_price,
+                     reaction_price, delta_pp, lag_seconds)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (news_id, source, market_id, race_key, baseline_price,
+                 reaction_price, delta_pp, lag_seconds),
+            )
+
+    def get_news_reactions(
+        self,
+        *,
+        race_key: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        clauses = []
+        params: list = []
+        if race_key:
+            clauses.append("r.race_key = ?")
+            params.append(race_key)
+        if source:
+            clauses.append("r.source = ?")
+            params.append(source)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            "SELECT r.*, n.title, n.published_at, n.link, n.source AS news_source "
+            "FROM midterm_news_reactions r JOIN midterm_news_events n ON n.id = r.news_id"
+            f"{where} ORDER BY r.computed_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_price_snapshots_for_market(
+        self,
+        *,
+        market_id: int,
+        start: str,
+        end: str,
+    ) -> list[dict]:
+        """All price snapshots for a market between ``start`` and ``end`` (ISO timestamps)."""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT timestamp, prices FROM midterm_price_history
+                   WHERE market_id = ? AND timestamp >= ? AND timestamp <= ?
+                   ORDER BY timestamp""",
+                (market_id, start, end),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("prices"), str):
+                try:
+                    d["prices"] = json.loads(d["prices"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            out.append(d)
+        return out
+
+    def prune_news(self, retain_days: int = 60) -> int:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retain_days)).isoformat()
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM midterm_news_events WHERE published_at < ?",
+                (cutoff,),
+            )
+            return cur.rowcount or 0
+
     # === Retention ==========================================================
 
     def prune_price_history(self, retain_days: int = 30) -> int:
@@ -505,6 +713,74 @@ class Database:
                        VALUES (?,?,?,?,?)""",
                     (market_id, source, ts, prices_json, volume),
                 )
+
+    def record_price_snapshots_for_markets(self, markets: list[dict]) -> int:
+        """Persist a price snapshot per market in one transaction.
+
+        Looks up each market's integer PK by ``(source, source_id)`` from the
+        markets we just upserted, then writes one row per market into
+        ``midterm_price_history`` carrying the current outcomes as a JSON
+        ``{outcome_name: probability}`` map.
+
+        Called from the data-refresh loop after upserts. Without it the
+        price-history table stays empty and the news-reaction measurer has
+        nothing to compare against.
+        """
+        if not markets:
+            return 0
+        ts = datetime.now(timezone.utc).isoformat()
+        with _get_conn() as conn:
+            keys = list({(m["source"], m["source_id"]) for m in markets if m.get("source") and m.get("source_id")})
+            if not keys:
+                return 0
+            # Look up int PKs in batches to stay under SQLite's variable cap.
+            id_by_key: dict[tuple[str, str], int] = {}
+            batch_size = 400  # SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999
+            for i in range(0, len(keys), batch_size):
+                batch = keys[i:i + batch_size]
+                placeholders = ",".join(["(?,?)"] * len(batch))
+                flat: list = []
+                for k in batch:
+                    flat.extend(k)
+                rows = conn.execute(
+                    f"SELECT source, source_id, id FROM midterm_markets "
+                    f"WHERE (source, source_id) IN (VALUES {placeholders})",
+                    flat,
+                ).fetchall()
+                for r in rows:
+                    id_by_key[(r["source"], r["source_id"])] = r["id"]
+
+            payload = []
+            for m in markets:
+                key = (m.get("source"), m.get("source_id"))
+                mid = id_by_key.get(key)
+                if mid is None:
+                    continue
+                outcomes = m.get("outcomes") or []
+                if not outcomes:
+                    continue
+                prices = {}
+                for o in outcomes:
+                    name = o.get("name") or ""
+                    p = o.get("probability")
+                    if name and p is not None:
+                        try:
+                            prices[name] = float(p)
+                        except (TypeError, ValueError):
+                            continue
+                if not prices:
+                    continue
+                payload.append((mid, m.get("source", ""), ts,
+                                json.dumps(prices), m.get("volume")))
+
+            if payload:
+                conn.executemany(
+                    """INSERT INTO midterm_price_history
+                        (market_id, source, timestamp, prices, volume)
+                       VALUES (?,?,?,?,?)""",
+                    payload,
+                )
+            return len(payload)
 
     def get_price_history(self, market_id: int, days: int = 30) -> list[dict]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

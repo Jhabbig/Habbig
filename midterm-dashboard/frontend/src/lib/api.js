@@ -67,6 +67,9 @@ export const api = {
     return request(`/data/forecasts${q ? '?' + q : ''}`)
   },
   smartMoney: (key) => request(`/data/smart-money/${encodeURIComponent(key)}`),
+  newsForRace: (key, limit = 20) => request(`/data/news/race/${encodeURIComponent(key)}?limit=${limit}`),
+  newsRecent: (limit = 30) => request(`/data/news/recent?limit=${limit}`),
+  newsLagCurve: (minDeltaPp = 1.0) => request(`/data/news/lag-curve?min_delta_pp=${minDeltaPp}`),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),
