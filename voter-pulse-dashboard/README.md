@@ -33,7 +33,12 @@ to capture the "fear gap" that often drives sentiment.
 6. **By administration** — per-president averages of CPI, UNRATE,
    UMCSENT, 30-yr mortgage, and gas prices. The comparison readers
    actually want when they ask "is it worse now than before?".
-7. **Polymarket — the political mood** — live sentiment-relevant markets
+7. **Election backtest** — every month since 1978 we rebuild the mood
+   index using only data available at that point and score it against
+   every US presidential election at 12 / 6 / 3 / 1-month horizons.
+   Headline number plus per-election calls and a long-run mood-history
+   chart with election markers.
+8. **Polymarket — the political mood** — live sentiment-relevant markets
    (right track / wrong track, presidential approval, recession odds,
    inflation/unemployment milestones, election outcomes), bucketed into
    categories and sorted by 24h volume.
@@ -100,6 +105,7 @@ DEV_MODE=1 python3 server.py
 - `GET /api/markets` — Polymarket sentiment markets (cached 5 min)
 - `GET /api/polls` — aggregated approval and generic-ballot monthly series (cached 6h)
 - `GET /api/eras` — per-administration averages of selected indicators
+- `GET /api/backtest` — election backtest (history, per-election calls, per-horizon accuracy + correlation)
 - `GET /healthz` — liveness
 
 Every API endpoint accepts `?force=true` to bypass the cache.

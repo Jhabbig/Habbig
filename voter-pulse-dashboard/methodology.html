@@ -149,6 +149,26 @@
     Eras with no overlapping observations show <em>no data</em>.
   </p>
 
+  <h2>The election backtest</h2>
+  <p>
+    For every month since January 1978 we rebuild the mood index using only data
+    available on-or-before that month — no peeking at later revisions — and join
+    the resulting time series to every US presidential election. For each
+    election we read the mood at 12, 6, 3, and 1 months before election day and
+    score it two ways: (a) does <code>mood ≥ 50</code> correctly predict the
+    incumbent party's electoral-college outcome? (b) what is the Pearson
+    correlation between mood at that horizon and the incumbent party's popular
+    vote share?
+  </p>
+  <p class="note">
+    We deliberately reuse the production sub-score bands — no retuning against
+    election outcomes. The point is to ask whether the mood index <em>as
+    shipped</em> would have called past elections, not whether we could fit a
+    composite that does. 2000 and 2016 are flagged because the incumbent party
+    won the popular vote but lost the electoral college; we score against the EC
+    outcome and let readers downgrade the "call" themselves if they disagree.
+  </p>
+
   <h2>What this dashboard is not</h2>
   <ul>
     <li>It is not a forecasting model. Sub-score band cutoffs were chosen
