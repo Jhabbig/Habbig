@@ -591,6 +591,24 @@ def _migrate_db():
             conn.execute("ALTER TABLE sports_watchlist ADD COLUMN alert_threshold_pp REAL")
         if "last_alerted_at" not in wl_cols:
             conn.execute("ALTER TABLE sports_watchlist ADD COLUMN last_alerted_at TEXT DEFAULT ''")
+        # Bet tracker enrichment: sport, book, market_type, line,
+        # commence_time, source, closing_book_prob, clv_pp.
+        tr_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_trades)").fetchall()}
+        for col, decl in [
+            ("sport", "TEXT DEFAULT ''"),
+            ("book", "TEXT DEFAULT ''"),           # which venue: polymarket, kalshi, draftkings, ...
+            ("market_type", "TEXT DEFAULT 'h2h'"),
+            ("line", "REAL"),                       # for spreads/totals/props
+            ("commence_time", "TEXT DEFAULT ''"),
+            ("source", "TEXT DEFAULT 'manual'"),    # manual | csv | webhook
+            ("closing_book_prob", "REAL"),          # filled at resolution time
+            ("clv_pp", "REAL"),                     # filled at resolution time
+            ("notes", "TEXT DEFAULT ''"),
+            ("home_team", "TEXT DEFAULT ''"),
+            ("away_team", "TEXT DEFAULT ''"),
+        ]:
+            if col not in tr_cols:
+                conn.execute(f"ALTER TABLE sports_trades ADD COLUMN {col} {decl}")
 
 _migrate_db()
 
@@ -6744,6 +6762,42 @@ async def get_subscription(request: Request):
 # Trades (profit tracker) endpoints
 # ---------------------------------------------------------------------------
 
+def _compute_trade_clv(trade: dict) -> tuple[float | None, float | None]:
+    """Look up the closing line for this trade from sports_market_snapshots.
+
+    Returns (closing_book_prob_pct, clv_pp). The CLV is computed relative
+    to the bet direction:
+      - If entry_price represents YES (over), CLV = closing - entry
+      - If under/no, CLV = entry - closing
+    Since we store entry_price as cents (0-100) on the YES side, we treat
+    everything as YES-direction and let the user interpret negative
+    values as "line moved against me".
+    """
+    home = trade.get("home_team") or ""
+    away = trade.get("away_team") or ""
+    event_name = home + (f" vs {away}" if away else "")
+    outcome = trade.get("outcome") or ""
+    sport = trade.get("sport") or ""
+    commence = trade.get("commence_time") or trade.get("resolved_at") or ""
+    created = trade.get("created_at") or ""
+    if not event_name or not outcome or not commence:
+        return None, None
+    with _get_db() as conn:
+        row = conn.execute(
+            """SELECT poly_prob FROM sports_market_snapshots
+               WHERE sport = ? AND event_name = ? AND outcome = ?
+                     AND snapshot_at <= ? AND snapshot_at >= ?
+               ORDER BY snapshot_at DESC LIMIT 1""",
+            (sport, event_name, outcome, commence, created),
+        ).fetchone()
+    if not row or row["poly_prob"] is None:
+        return None, None
+    closing = float(row["poly_prob"])
+    entry = float(trade.get("entry_price") or 0)
+    clv = round(closing - entry, 2)
+    return closing, clv
+
+
 @app.post("/api/trades")
 async def create_trade(request: Request):
     user = get_current_user(request)
@@ -6759,10 +6813,32 @@ async def create_trade(request: Request):
         return JSONResponse({"error": "entry_price and amount must be valid numbers"}, status_code=400)
     if not market_name or entry_price <= 0 or amount <= 0:
         return JSONResponse({"error": "market_name, entry_price > 0, and amount > 0 required"}, status_code=400)
+    # Optional enriched fields
+    sport = (body.get("sport") or "")[:40]
+    book = (body.get("book") or "")[:40]
+    market_type = (body.get("market_type") or "h2h")[:20]
+    home_team = (body.get("home_team") or "")[:80]
+    away_team = (body.get("away_team") or "")[:80]
+    commence_time = body.get("commence_time") or ""
+    source = (body.get("source") or "manual")[:20]
+    notes = (body.get("notes") or "")[:500]
+    line = None
+    if body.get("line") not in (None, ""):
+        try:
+            line = float(body["line"])
+        except (TypeError, ValueError):
+            pass
+
     with _get_db() as conn:
         cur = conn.execute(
-            "INSERT INTO sports_trades (user_id, market_name, outcome, entry_price, amount) VALUES (?, ?, ?, ?, ?)",
-            (user["id"], market_name, outcome, entry_price, amount),
+            """INSERT INTO sports_trades
+               (user_id, market_name, outcome, entry_price, amount,
+                sport, book, market_type, line, commence_time, source, notes,
+                home_team, away_team)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user["id"], market_name, outcome, entry_price, amount,
+             sport, book, market_type, line, commence_time, source, notes,
+             home_team, away_team),
         )
         trade_id = cur.lastrowid
     log_activity(user["id"], "create_trade", f"Trade #{trade_id}: {market_name}")
@@ -6774,11 +6850,23 @@ async def list_trades(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport_filter = request.query_params.get("sport")
+    status_filter = request.query_params.get("status")
+    book_filter = request.query_params.get("book")
+    where = ["user_id = ?"]
+    params: list = [user["id"]]
+    if sport_filter:
+        where.append("sport = ?")
+        params.append(sport_filter)
+    if status_filter:
+        where.append("status = ?")
+        params.append(status_filter)
+    if book_filter:
+        where.append("book = ?")
+        params.append(book_filter)
+    sql = "SELECT * FROM sports_trades WHERE " + " AND ".join(where) + " ORDER BY created_at DESC"
     with _get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM sports_trades WHERE user_id = ? ORDER BY created_at DESC",
-            (user["id"],),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return JSONResponse({"trades": [dict(r) for r in rows]})
 
 
@@ -6802,18 +6890,62 @@ async def resolve_trade(trade_id: int, request: Request):
         if not row:
             return JSONResponse({"error": "Trade not found"}, status_code=404)
         trade = dict(row)
-        # Prices are stored in cents (0-100) as entered by the user via
-        # the create_trade endpoint.  Shares = amount / (entry_price/100),
-        # so PnL = (exit_cents/100 - entry_cents/100) * shares
-        #        = (exit - entry) * amount / entry   (cents cancel out).
         entry = trade["entry_price"]
         pnl = round((exit_price - entry) * trade["amount"] / entry, 2)
+        # Compute CLV from snapshot history (returns (None, None) when we
+        # don't have enough data — that's fine, it just stays unfilled).
+        closing_prob, clv_pp = _compute_trade_clv(trade)
         conn.execute(
-            "UPDATE sports_trades SET status = 'closed', exit_price = ?, pnl = ?, resolved_at = ? WHERE id = ?",
-            (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id),
+            """UPDATE sports_trades
+               SET status = 'closed', exit_price = ?, pnl = ?,
+                   resolved_at = ?, closing_book_prob = ?, clv_pp = ?
+               WHERE id = ?""",
+            (exit_price, pnl, datetime.now(timezone.utc).isoformat(),
+             closing_prob, clv_pp, trade_id),
         )
     log_activity(user["id"], "resolve_trade", f"Trade #{trade_id}: PnL={pnl}")
-    return JSONResponse({"status": "ok", "pnl": pnl})
+    return JSONResponse({"status": "ok", "pnl": pnl, "clv_pp": clv_pp,
+                          "closing_book_prob": closing_prob})
+
+
+@app.delete("/api/trades/{trade_id}")
+async def delete_trade(trade_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_trades WHERE id = ? AND user_id = ?",
+            (trade_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+def _trade_stats_summary(trades: list[dict]) -> dict:
+    """Common stats for a slice of trades. Used both at top level and per-group."""
+    closed = [t for t in trades if t.get("status") == "closed"]
+    open_trades = [t for t in trades if t.get("status") == "open"]
+    total_pnl = round(sum((t.get("pnl") or 0) for t in closed), 2)
+    wins = sum(1 for t in closed if (t.get("pnl") or 0) > 0)
+    win_rate = round(wins / len(closed), 4) if closed else 0.0
+    total_invested = sum((t.get("amount") or 0) for t in closed)
+    roi = round(total_pnl / total_invested * 100, 3) if total_invested > 0 else 0.0
+    # CLV summary: average over closed trades that have a clv_pp value
+    clv_vals = [t.get("clv_pp") for t in closed if t.get("clv_pp") is not None]
+    mean_clv = round(sum(clv_vals) / len(clv_vals), 3) if clv_vals else None
+    return {
+        "n_closed": len(closed),
+        "n_open": len(open_trades),
+        "n_total": len(trades),
+        "total_pnl": total_pnl,
+        "total_staked": round(total_invested, 2),
+        "win_rate": win_rate,
+        "roi_pct": roi,
+        "mean_clv_pp": mean_clv,
+        "n_with_clv": len(clv_vals),
+    }
 
 
 @app.get("/api/trades/stats")
@@ -6826,20 +6958,51 @@ async def trade_stats(request: Request):
             "SELECT * FROM sports_trades WHERE user_id = ?", (user["id"],)
         ).fetchall()
     trades = [dict(r) for r in rows]
-    closed = [t for t in trades if t["status"] == "closed"]
-    open_trades = [t for t in trades if t["status"] == "open"]
-    total_pnl = round(sum(t.get("pnl") or 0 for t in closed), 2)
-    wins = sum(1 for t in closed if (t.get("pnl") or 0) > 0)
-    win_rate = round(wins / len(closed) * 100, 1) if closed else 0.0
-    total_invested = sum(t["amount"] for t in closed) if closed else 0
-    roi = round(total_pnl / total_invested * 100, 2) if total_invested > 0 else 0.0
+    overall = _trade_stats_summary(trades)
+
+    # Group by sport / book / market_type
+    def _group_by(key: str) -> dict:
+        groups: dict[str, list[dict]] = {}
+        for t in trades:
+            k = t.get(key) or "(unset)"
+            groups.setdefault(k, []).append(t)
+        return {k: _trade_stats_summary(g) for k, g in groups.items()}
+
     return JSONResponse({
-        "total_pnl": total_pnl,
-        "win_rate": win_rate,
-        "open_count": len(open_trades),
-        "closed_count": len(closed),
-        "roi": roi,
+        "overall": overall,
+        "by_sport": _group_by("sport"),
+        "by_book": _group_by("book"),
+        "by_market_type": _group_by("market_type"),
     })
+
+
+@app.get("/api/trades/csv")
+async def trade_csv(request: Request):
+    """Export the user's trade history as CSV. Includes CLV columns."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_trades WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    cols = ["id", "created_at", "sport", "book", "market_type", "home_team",
+            "away_team", "market_name", "outcome", "line", "entry_price",
+            "amount", "exit_price", "pnl", "closing_book_prob", "clv_pp",
+            "status", "resolved_at", "source", "notes"]
+    writer = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({c: dict(r).get(c) for c in cols})
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trades.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -7708,6 +7871,15 @@ async def api_cross_book_arbitrage(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     sport = request.query_params.get("sport", "basketball_nba")
     return JSONResponse(await asyncio.to_thread(_build_cross_book_arbitrage, sport))
+
+
+@app.get("/trades", response_class=HTMLResponse)
+async def trades_page(request: Request):
+    """Bet tracker: log placed bets, track P&L + CLV over time."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("trades"))
 
 
 @app.get("/cross-book-arbitrage", response_class=HTMLResponse)

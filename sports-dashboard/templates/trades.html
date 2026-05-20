@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bet Tracker · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1300px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; font-weight: 600;
+       color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+             gap: 12px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 8px; padding: 14px; }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 0.05em; }
+  .card .val { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+              align-items: end; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border);
+                  border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  button { background: var(--accent); color: #fff; border: 0;
+           border-radius: 4px; padding: 7px 14px; font-size: 13px;
+           font-weight: 600; cursor: pointer; }
+  button:hover { background: #2563eb; }
+  button.ghost { background: transparent; border: 1px solid var(--border);
+                 color: var(--fg); }
+  button.danger { background: var(--red); }
+  .row-btns button { padding: 4px 10px; font-size: 11px; margin-right: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border);
+           font-size: 13px; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  tr.closed { opacity: 0.8; }
+  .pos { color: var(--green); font-weight: 600; }
+  .neg { color: var(--red); font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 12px;
+          background: #1c1e26; color: var(--muted); font-size: 11px; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  form.new-trade {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; padding: 16px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  form.new-trade label { font-size: 11px; color: var(--muted); }
+  form.new-trade input, form.new-trade select { width: 100%; }
+  form.new-trade .actions { grid-column: 1 / -1; display: flex; gap: 8px;
+                            justify-content: flex-end; }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  details { background: var(--card); border: 1px solid var(--border);
+            border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  details summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Bet Tracker</h1>
+  <p class="sub">
+    Log placed bets, track P&amp;L, and measure your closing line value over time.
+    CLV is computed from market snapshot history at resolution.
+    <a href="/">← Back to dashboard</a>
+  </p>
+
+  <div class="summary" id="overallSummary">
+    <div class="card"><div class="label">Total P&amp;L</div><div class="val" id="sumPnl">—</div></div>
+    <div class="card"><div class="label">Win rate</div><div class="val" id="sumWin">—</div></div>
+    <div class="card"><div class="label">ROI</div><div class="val" id="sumRoi">—</div></div>
+    <div class="card"><div class="label">Mean CLV</div><div class="val" id="sumClv">—</div></div>
+    <div class="card"><div class="label">Open</div><div class="val" id="sumOpen">—</div></div>
+    <div class="card"><div class="label">Closed</div><div class="val" id="sumClosed">—</div></div>
+  </div>
+
+  <details open>
+    <summary>+ Log a new bet</summary>
+    <form class="new-trade" id="newTradeForm">
+      <label>Sport
+        <select name="sport">
+          <option value="">—</option>
+          <option value="basketball_nba">NBA</option>
+          <option value="americanfootball_nfl">NFL</option>
+          <option value="icehockey_nhl">NHL</option>
+          <option value="baseball_mlb">MLB</option>
+          <option value="soccer_epl">EPL</option>
+        </select>
+      </label>
+      <label>Book
+        <select name="book">
+          <option value="">—</option>
+          <option value="polymarket">Polymarket</option>
+          <option value="kalshi">Kalshi</option>
+          <option value="draftkings">DraftKings</option>
+          <option value="fanduel">FanDuel</option>
+          <option value="betmgm">BetMGM</option>
+          <option value="pinnacle">Pinnacle</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>Market type
+        <select name="market_type">
+          <option value="h2h">H2H</option>
+          <option value="spreads">Spread</option>
+          <option value="totals">Total</option>
+          <option value="props">Prop</option>
+          <option value="futures">Future</option>
+        </select>
+      </label>
+      <label>Home team<input name="home_team" type="text"></label>
+      <label>Away team<input name="away_team" type="text"></label>
+      <label>Market name<input name="market_name" type="text" required></label>
+      <label>Outcome<input name="outcome" type="text"></label>
+      <label>Line<input name="line" type="number" step="0.5"></label>
+      <label>Entry price (cents)<input name="entry_price" type="number" step="0.01" required></label>
+      <label>Stake (USD)<input name="amount" type="number" step="1" required></label>
+      <label>Commence time<input name="commence_time" type="datetime-local"></label>
+      <label>Notes<input name="notes" type="text"></label>
+      <div class="actions">
+        <button type="submit">Save bet</button>
+      </div>
+    </form>
+  </details>
+
+  <div class="controls">
+    <label class="field">Status
+      <select id="filterStatus">
+        <option value="">All</option>
+        <option value="open">Open</option>
+        <option value="closed">Closed</option>
+      </select>
+    </label>
+    <label class="field">Sport
+      <select id="filterSport"><option value="">All</option></select>
+    </label>
+    <label class="field">Book
+      <select id="filterBook"><option value="">All</option></select>
+    </label>
+    <a href="/api/trades/csv" download><button type="button" class="ghost">Export CSV</button></a>
+  </div>
+
+  <div id="tradesList"><div class="empty">Loading…</div></div>
+
+  <h2>P&amp;L by sport</h2>
+  <div id="bySport"></div>
+
+  <h2>P&amp;L by book</h2>
+  <div id="byBook"></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmtUSD(n) { return n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Number(n).toFixed(2); }
+function fmtPct(n, d = 1) { return n == null ? "—" : (Number(n) * 100).toFixed(d) + "%"; }
+function fmtPP(n) { return n == null ? "—" : (n >= 0 ? "+" : "") + Number(n).toFixed(2) + " pp"; }
+function pnlClass(n) { return n == null ? "" : n > 0 ? "pos" : n < 0 ? "neg" : ""; }
+
+let allTrades = [];
+let lastStats = null;
+
+async function load() {
+  const [tradesResp, statsResp] = await Promise.all([
+    fetch("/api/trades"),
+    fetch("/api/trades/stats"),
+  ]);
+  if (tradesResp.status === 401) {
+    $("tradesList").innerHTML = '<div class="empty">Sign in required.</div>';
+    return;
+  }
+  const tradesData = await tradesResp.json();
+  const statsData = await statsResp.json();
+  allTrades = tradesData.trades || [];
+  lastStats = statsData;
+  renderSummary(statsData.overall || {});
+  populateFilters();
+  renderTrades();
+  renderGroup("bySport", statsData.by_sport || {});
+  renderGroup("byBook", statsData.by_book || {});
+}
+
+function renderSummary(s) {
+  const pnl = $("sumPnl");
+  pnl.textContent = fmtUSD(s.total_pnl);
+  pnl.classList.toggle("green", (s.total_pnl || 0) > 0);
+  pnl.classList.toggle("red", (s.total_pnl || 0) < 0);
+  $("sumWin").textContent = fmtPct(s.win_rate, 1);
+  $("sumRoi").textContent = (s.roi_pct == null ? "—" : Number(s.roi_pct).toFixed(2) + "%");
+  const clv = $("sumClv");
+  clv.textContent = fmtPP(s.mean_clv_pp);
+  clv.classList.toggle("green", (s.mean_clv_pp || 0) > 0);
+  clv.classList.toggle("red", (s.mean_clv_pp || 0) < 0);
+  $("sumOpen").textContent = s.n_open || 0;
+  $("sumClosed").textContent = s.n_closed || 0;
+}
+
+function populateFilters() {
+  const sports = Array.from(new Set(allTrades.map(t => t.sport).filter(Boolean))).sort();
+  const books = Array.from(new Set(allTrades.map(t => t.book).filter(Boolean))).sort();
+  $("filterSport").innerHTML = '<option value="">All</option>' +
+    sports.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  $("filterBook").innerHTML = '<option value="">All</option>' +
+    books.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join("");
+}
+
+function renderTrades() {
+  const fStatus = $("filterStatus").value;
+  const fSport = $("filterSport").value;
+  const fBook = $("filterBook").value;
+  let rows = allTrades;
+  if (fStatus) rows = rows.filter(t => t.status === fStatus);
+  if (fSport) rows = rows.filter(t => t.sport === fSport);
+  if (fBook) rows = rows.filter(t => t.book === fBook);
+
+  if (!rows.length) {
+    $("tradesList").innerHTML = '<div class="empty">No bets logged yet.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>When</th><th>Sport</th><th>Book</th><th>Market</th><th>Outcome</th>' +
+    '<th class="num">Stake</th><th class="num">Entry</th><th class="num">Exit</th>' +
+    '<th class="num">P&L</th><th class="num">CLV</th><th>Status</th><th></th>' +
+    '</tr></thead><tbody>';
+  for (const t of rows) {
+    const cls = t.status === "closed" ? "closed" : "";
+    const dateStr = (t.created_at || "").slice(0, 10);
+    html += `<tr class="${cls}">` +
+      `<td>${esc(dateStr)}</td>` +
+      `<td>${esc(t.sport || "—")}</td>` +
+      `<td>${esc(t.book || "—")}</td>` +
+      `<td>${esc(t.market_name)} <span class="pill">${esc(t.market_type || "h2h")}</span></td>` +
+      `<td>${esc(t.outcome || "")}${t.line != null ? ' (' + t.line + ')' : ''}</td>` +
+      `<td class="num">$${Number(t.amount || 0).toFixed(0)}</td>` +
+      `<td class="num">${Number(t.entry_price || 0).toFixed(2)}</td>` +
+      `<td class="num">${t.exit_price != null ? Number(t.exit_price).toFixed(2) : '—'}</td>` +
+      `<td class="num ${pnlClass(t.pnl)}">${t.pnl != null ? fmtUSD(t.pnl) : '—'}</td>` +
+      `<td class="num ${pnlClass(t.clv_pp)}">${fmtPP(t.clv_pp)}</td>` +
+      `<td><span class="pill">${esc(t.status)}</span></td>` +
+      `<td class="row-btns">` +
+        (t.status === "open" ? `<button onclick="resolveTrade(${t.id})">Resolve</button>` : "") +
+        `<button class="ghost danger" onclick="deleteTrade(${t.id})">×</button>` +
+      `</td>` +
+    `</tr>`;
+  }
+  html += '</tbody></table>';
+  $("tradesList").innerHTML = html;
+}
+
+function renderGroup(elId, groups) {
+  const keys = Object.keys(groups).sort((a, b) =>
+    (groups[b].total_pnl || 0) - (groups[a].total_pnl || 0));
+  if (!keys.length) {
+    $(elId).innerHTML = '<div class="empty" style="padding:16px">No data.</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Group</th><th class="num">Trades</th>' +
+    '<th class="num">P&L</th><th class="num">Win%</th>' +
+    '<th class="num">ROI</th><th class="num">Mean CLV</th></tr></thead><tbody>';
+  for (const k of keys) {
+    const s = groups[k];
+    html += '<tr>' +
+      `<td>${esc(k)}</td>` +
+      `<td class="num">${s.n_closed}</td>` +
+      `<td class="num ${pnlClass(s.total_pnl)}">${fmtUSD(s.total_pnl)}</td>` +
+      `<td class="num">${fmtPct(s.win_rate)}</td>` +
+      `<td class="num">${s.roi_pct.toFixed(2)}%</td>` +
+      `<td class="num ${pnlClass(s.mean_clv_pp)}">${fmtPP(s.mean_clv_pp)}</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $(elId).innerHTML = html;
+}
+
+async function resolveTrade(id) {
+  const exit = prompt("Exit price (cents 0-100, or '100' if won at YES, '0' if lost)?");
+  if (exit == null) return;
+  const v = parseFloat(exit);
+  if (!(v >= 0 && v <= 100)) { alert("Exit price must be 0-100"); return; }
+  const safe = v === 0 ? 0.01 : v;  // server requires > 0; 0.01 is effectively a total loss
+  const r = await fetch(`/api/trades/${id}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ exit_price: safe }),
+  });
+  if (r.ok) load(); else alert("Resolve failed: " + r.status);
+}
+
+async function deleteTrade(id) {
+  if (!confirm("Delete this trade?")) return;
+  const r = await fetch(`/api/trades/${id}`, { method: "DELETE" });
+  if (r.ok) load(); else alert("Delete failed: " + r.status);
+}
+
+$("newTradeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = {};
+  for (const [k, v] of fd.entries()) {
+    if (v !== "") body[k] = v;
+  }
+  for (const numKey of ["entry_price", "amount", "line"]) {
+    if (body[numKey] != null) body[numKey] = parseFloat(body[numKey]);
+  }
+  const r = await fetch("/api/trades", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    e.target.reset();
+    load();
+  } else {
+    const err = await r.json().catch(() => ({}));
+    alert("Save failed: " + (err.error || r.status));
+  }
+});
+
+["filterStatus", "filterSport", "filterBook"].forEach(id =>
+  $(id).addEventListener("change", renderTrades));
+load();
+</script>
+</body>
+</html>
