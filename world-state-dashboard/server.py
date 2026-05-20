@@ -258,6 +258,16 @@ def fetch_polymarket():
                 else:
                     top_outcome = "Yes"
 
+                # CLOB token IDs (one per outcome) — needed for the prices-history backfill.
+                clob_raw = m.get("clobTokenIds") or "[]"
+                try:
+                    clob_tokens = json.loads(clob_raw) if isinstance(clob_raw, str) else clob_raw
+                except Exception:
+                    clob_tokens = []
+                clob_token = ""
+                if isinstance(clob_tokens, list) and 0 <= top_idx < len(clob_tokens):
+                    clob_token = str(clob_tokens[top_idx] or "")
+
                 vol_24h = m.get("volume24hr") or m.get("volumeNum") or m.get("volume") or 0
                 try:
                     vol_24h = float(vol_24h)
@@ -284,6 +294,7 @@ def fetch_polymarket():
                     "volume_total": vol_total,
                     "liquidity": float(m.get("liquidityNum") or m.get("liquidity") or 0),
                     "icon": m.get("icon") or m.get("image") or "",
+                    "clob_token": clob_token,
                 }
                 if _poly_is_political(m):
                     results.append(item)
@@ -317,7 +328,62 @@ def fetch_polymarket():
             )
     except Exception as e:
         print(f"[polymarket] snapshot record failed: {e}")
+
+    # One-shot backfill of recent CLOB price history so movement badges work
+    # immediately on a fresh DB. Runs in a background thread so it doesn't
+    # block the request that triggered the fetch.
+    global _POLY_HISTORY_BACKFILLED
+    if results and not _POLY_HISTORY_BACKFILLED:
+        _POLY_HISTORY_BACKFILLED = True
+        threading.Thread(
+            target=_backfill_polymarket_history,
+            args=(list(results),),
+            name="poly-history-backfill",
+            daemon=True,
+        ).start()
+
     return results
+
+
+_POLY_HISTORY_BACKFILLED = False
+
+
+def _backfill_polymarket_history(items: list[dict]) -> None:
+    """Pull recent CLOB price history for each market and bulk-insert as snapshots.
+
+    Hourly fidelity over the past week — enough to bracket most fresh events
+    without flooding the DB. Skips markets that already have a meaningful
+    snapshot count (e.g., on warm restarts)."""
+    inserted_total = 0
+    for m in items:
+        token = (m.get("clob_token") or "").strip()
+        market_id = m.get("id") or m.get("slug")
+        if not token or not market_id:
+            continue
+        mid = str(market_id)
+        # If we already have ≥20 snapshots for this market, recording is healthy.
+        if analyst_db.market_snapshot_count(mid) >= 20:
+            continue
+        try:
+            url = (
+                "https://clob.polymarket.com/prices-history"
+                f"?market={urllib.parse.quote(token)}&interval=1w&fidelity=60"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (WorldMonitor/1.0)"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read()
+            payload = json.loads(raw)
+            hist = payload.get("history") if isinstance(payload, dict) else None
+            if not isinstance(hist, list):
+                continue
+            points = [(float(p.get("t") or 0), float(p.get("p") or 0)) for p in hist if isinstance(p, dict)]
+            n = analyst_db.bulk_insert_market_snapshots(mid, m.get("top_outcome"), points)
+            inserted_total += n
+        except Exception as e:
+            print(f"[polymarket] backfill failed for {mid}: {e}")
+        time.sleep(0.15)  # be polite to clob.polymarket.com
+    if inserted_total:
+        print(f"[polymarket] backfilled {inserted_total} historical snapshots")
 
 
 # ── X / Twitter Intelligence Feed ────────────────────────────────────────────

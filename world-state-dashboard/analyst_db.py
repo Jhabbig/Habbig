@@ -495,6 +495,36 @@ def record_market_snapshot(market_id: str, top_price: float,
         return True
 
 
+def bulk_insert_market_snapshots(market_id: str, top_outcome: str | None,
+                                  points: Iterable[tuple[float, float]]) -> int:
+    """Bulk-insert historical snapshots (skips duplicates by PK).
+
+    `points` is an iterable of (timestamp, price). Volume is unknown for
+    backfilled data so it's stored as NULL.
+    """
+    if not market_id:
+        return 0
+    rows = [(market_id, float(t), float(p), top_outcome, None) for t, p in points if t and p is not None]
+    if not rows:
+        return 0
+    with _lock, _conn() as c:
+        cur = c.executemany(
+            "INSERT OR IGNORE INTO market_snapshots "
+            "(market_id, ts, top_price, top_outcome, volume_24h) VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        return cur.rowcount
+
+
+def market_snapshot_count(market_id: str) -> int:
+    with _lock, _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM market_snapshots WHERE market_id=?",
+            (market_id,),
+        ).fetchone()
+        return int(row["n"] if row else 0)
+
+
 def prune_market_snapshots(now: float | None = None) -> int:
     now = now if now is not None else time.time()
     cutoff = now - _SNAPSHOT_RETENTION
