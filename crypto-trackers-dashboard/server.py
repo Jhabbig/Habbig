@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from analysis import arbitrage as arb_mod
 from analysis import funding as funding_mod
 from analysis import liquidations_agg
+from analysis import onchain_lookup
 from analysis import screener as screener_mod
 from ingestion import (
     _background,
@@ -45,6 +46,7 @@ from ingestion import (
     defillama,
     defillama_prices,
     etherscan_gas,
+    etherscan_token,
     fear_greed,
     kraken,
     mempool_btc,
@@ -52,6 +54,7 @@ from ingestion import (
     okx,
     okx_liquidations,
     solana,
+    solscan,
     whales,
 )
 
@@ -329,6 +332,23 @@ async def api_liq_aggregate() -> JSONResponse:
     bin_liq = binance_liquidations.recent_liquidations(100)
     okx_liq = okx_liquidations.recent_liquidations(100)
     return JSONResponse(liquidations_agg.aggregate(binance=bin_liq, okx=okx_liq))
+
+
+# ─── On-chain context per coin ────────────────────────────────────────────────
+
+@app.get("/api/onchain/{coin_id}")
+async def api_onchain(coin_id: str) -> JSONResponse:
+    return JSONResponse(onchain_lookup.per_coin_context(coin_id))
+
+
+@app.get("/api/onchain/chain/{chain}/gas")
+async def api_chain_gas(chain: str) -> JSONResponse:
+    return JSONResponse(etherscan_token.gas_oracle(chain))
+
+
+@app.get("/api/onchain/sol/holders/{token}")
+async def api_sol_holders(token: str, limit: int = 10) -> JSONResponse:
+    return JSONResponse(solscan.top_holders(token, limit=limit))
 
 
 # ─── Whales ───────────────────────────────────────────────────────────────────

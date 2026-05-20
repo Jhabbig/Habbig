@@ -119,6 +119,11 @@
   </section>
 
   <section>
+    <h2>On-chain context <small>per-chain token contract, holders, supply &middot; Etherscan + Solscan</small></h2>
+    <div id="onchain-card"></div>
+  </section>
+
+  <section>
     <h2>News mentioning this coin <small>filtered from 7-source RSS aggregator</small></h2>
     <div id="news-list"></div>
   </section>
@@ -453,6 +458,53 @@
     }
   }
 
+  // ─── On-chain context ───────────────────────────────────────────────────
+  async function loadOnchain() {
+    try {
+      const data = await fetchJson(`/api/onchain/${encodeURIComponent(coinId)}`);
+      const target = document.getElementById("onchain-card");
+      if (data.kind === "native") {
+        target.innerHTML = `<div class="card">
+          <div style="font-size:13px;color:var(--text-2)">This is a native coin (chain: <strong>${escapeHtml(data.native_chain || "?")}</strong>). See the home-page Network metrics panel for chain-level stats.</div>
+        </div>`;
+        return;
+      }
+      if (!data.tokens || !data.tokens.length) {
+        target.innerHTML = `<div class="card">No on-chain context found (no platform contract in CoinGecko metadata).</div>`;
+        return;
+      }
+      const blocks = data.tokens.map(t => {
+        const i = t.info || {};
+        if (i.error) {
+          return `<div class="card"><div style="font-size:11px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:4px">${escapeHtml(t.chain)}</div>
+            <div class="muted">${escapeHtml(i.error)}</div>
+            ${i.note ? `<div class="muted" style="font-size:11px;margin-top:4px">${escapeHtml(i.note)}</div>` : ""}
+            <div class="muted" style="font-size:10px;margin-top:6px;font-family:monospace">contract: ${escapeHtml(t.contract)}</div>
+          </div>`;
+        }
+        const holders = i.holder_count;
+        const supply = i.total_supply || i.supply;
+        const explorerLink = t.chain === "solana"
+          ? `https://solscan.io/token/${t.contract}`
+          : `https://etherscan.io/token/${t.contract}`;
+        return `<div class="card">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:4px">${escapeHtml(t.chain)}</div>
+          <div style="font-size:18px;font-weight:600;margin-bottom:6px">${escapeHtml(i.name || i.symbol || "?")}</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-variant-numeric:tabular-nums">
+            <div><div style="font-size:13px;color:var(--text-3)">Holders</div><div style="font-weight:600">${holders != null ? fmtBig(holders) : "-"}</div></div>
+            <div><div style="font-size:13px;color:var(--text-3)">Supply</div><div style="font-weight:600">${supply != null ? fmtBig(supply) : "-"}</div></div>
+            ${i.decimals != null ? `<div><div style="font-size:13px;color:var(--text-3)">Decimals</div><div style="font-weight:600">${i.decimals}</div></div>` : ""}
+          </div>
+          <div style="margin-top:6px"><a href="${escapeHtml(explorerLink)}" target="_blank" rel="noopener" style="font-size:11px">View on explorer →</a></div>
+          <div class="muted" style="font-size:10px;margin-top:4px;font-family:monospace">${escapeHtml(t.contract)}</div>
+        </div>`;
+      }).join("");
+      target.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${blocks}</div>`;
+    } catch (e) {
+      document.getElementById("onchain-card").innerHTML = `<div class="err">On-chain fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // ─── News mentioning coin ────────────────────────────────────────────────
   async function loadNews() {
     try {
@@ -496,6 +548,7 @@
     loadDepth();
     loadCrossEx();
     loadFunding();
+    loadOnchain();
     loadNews();
   });
 
@@ -504,6 +557,7 @@
   setInterval(loadDepth, 30 * 1000);
   setInterval(loadCrossEx, 60 * 1000);
   setInterval(loadFunding, 60 * 1000);
+  setInterval(loadOnchain, 10 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
 })();
 </script>
