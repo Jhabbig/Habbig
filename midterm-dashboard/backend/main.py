@@ -2310,55 +2310,65 @@ async def data_accuracy():
 
 @app.get("/data/race/{race_key}/movements")
 async def data_race_movements(race_key: str, hours: int = 24):
-    """Recent price movements + candidate explanations.
+    """Recent price movements + grounded LLM explanations.
 
-    Returns the divergence-snapshot delta over the last *hours*, plus a stub
-    set of candidate explanations. Wire NEWS_API_KEY for live headlines and
-    OPENAI_API_KEY / ANTHROPIC_API_KEY for LLM summaries.
+    Pulls news from NewsAPI (primary, needs NEWS_API_KEY) and GDELT 2.0
+    (free fallback), then asks Claude to identify which articles plausibly
+    caused the movement. Hard rules in the system prompt + response
+    validation prevent fabricated citations. Results cached 1 hour per
+    (race_key, hour_bucket) to bound LLM cost.
+
+    Disabled paths:
+      - No ANTHROPIC_API_KEY: returns movements + empty explanation
+        with a clear "configured: false" flag.
+      - Movement < 1.5pp on every source: short-circuits without an LLM
+        call (returns "insufficient_movement").
     """
     if hours <= 0 or hours > 168:
         hours = 24
-    history = state.db.get_divergence_history(race_key=race_key, days=max(1, hours // 24 + 1))
-    if not history:
-        return {"race_key": race_key, "movements": [], "candidates": []}
-    history = sorted(history, key=lambda h: h.get("snapshot_time") or "")
-    # Compute per-source delta over the window
-    by_source: dict[str, list[float]] = {"polymarket": [], "kalshi": [], "predictit": [], "polling": []}
-    for h in history[-hours:]:
-        for s in by_source:
-            v = h.get(f"{s}_prob")
-            if v is not None:
-                by_source[s].append(v)
+    from movement_analysis import analyze_movement
 
-    movements = []
-    for s, vals in by_source.items():
-        if len(vals) < 2:
-            continue
-        delta_pp = (vals[-1] - vals[0]) * 100
-        movements.append({
-            "source": s,
-            "from": round(vals[0], 4),
-            "to": round(vals[-1], 4),
-            "delta_pp": round(delta_pp, 2),
-        })
-    movements.sort(key=lambda m: abs(m["delta_pp"]), reverse=True)
+    # Pull race title + race_context for query targeting
+    race_title = race_key
+    race_context_data = None
+    try:
+        from race_context import get_context
+        if "_" in race_key:
+            rt, st = race_key.split("_", 1)
+            race_context_data = get_context(rt, st.split("-", 1)[0])
+    except Exception:
+        race_context_data = None
 
-    # Stub candidate explanations — wire real news source via NEWS_API_KEY env.
-    candidates = []
-    if os.getenv("NEWS_API_KEY") or os.getenv("ANTHROPIC_API_KEY"):
-        candidates.append({
-            "type": "news",
-            "headline": "Live news ingestion not yet wired",
-            "note": "Set NEWS_API_KEY + ANTHROPIC_API_KEY to enable LLM-summarized explanations.",
-        })
-    else:
-        candidates.append({
-            "type": "info",
-            "headline": "Movement candidates require NEWS_API_KEY",
-            "note": "Configure a news provider and an LLM key to enable AI-summarized why-it-moved explanations.",
-        })
+    # Parse race_type/state from the race_key
+    race_type = ""
+    state_abbr = ""
+    if "_" in race_key:
+        parts = race_key.split("_", 1)
+        race_type = parts[0]
+        state_abbr = parts[1].split("-", 1)[0] if len(parts) > 1 else ""
 
-    return {"race_key": race_key, "movements": movements, "candidates": candidates}
+    result = await analyze_movement(
+        db=state.db,
+        session=state.http_session,
+        race_key=race_key,
+        race_title=race_title,
+        race_type=race_type,
+        state=state_abbr,
+        hours=hours,
+        race_context=race_context_data,
+    )
+    return {"race_key": race_key, **result}
+
+
+@app.get("/data/movements/config")
+async def data_movements_config():
+    """Which providers are wired up for movement explanations."""
+    from llm import llm_configured
+    from news import channels_available as news_channels
+    return {
+        "llm": {"configured": llm_configured()},
+        "news": news_channels(),
+    }
 
 
 # ===================================================================

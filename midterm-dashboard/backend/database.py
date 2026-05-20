@@ -273,6 +273,16 @@ CREATE TABLE IF NOT EXISTS midterm_paper_positions (
 );
 CREATE INDEX IF NOT EXISTS idx_paper_user_open ON midterm_paper_positions(user_id, closed_at);
 
+CREATE TABLE IF NOT EXISTS midterm_movement_explanations (
+    race_key        TEXT NOT NULL,
+    bucket          TEXT NOT NULL,
+    content_json    TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (race_key, bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_explanations_expires ON midterm_movement_explanations(expires_at);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1268,3 +1278,53 @@ class Database:
                     (user_id,),
                 ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    # === Movement explanation cache =========================================
+
+    def get_movement_explanation(self, race_key: str, bucket: str) -> dict | None:
+        """Return a cached explanation if it exists and hasn't expired."""
+        now = datetime.now(timezone.utc).isoformat()
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT content_json FROM midterm_movement_explanations
+                   WHERE race_key=? AND bucket=? AND expires_at > ?""",
+                (race_key, bucket, now),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["content_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def store_movement_explanation(
+        self, race_key: str, bucket: str, content: dict, ttl_seconds: int = 3600,
+    ) -> None:
+        """Upsert a movement explanation with a TTL.
+
+        Also opportunistically prunes any explanation rows whose expires_at
+        is in the past — this keeps the table small without a separate
+        background job. The prune is bounded to 50 rows per call so a busy
+        endpoint doesn't pay for an unbounded delete.
+        """
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        body = json.dumps(content)
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_movement_explanations (race_key, bucket, content_json, expires_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(race_key, bucket) DO UPDATE SET
+                         content_json = excluded.content_json,
+                         expires_at = excluded.expires_at""",
+                    (race_key, bucket, body, expires_at),
+                )
+                conn.execute(
+                    """DELETE FROM midterm_movement_explanations
+                       WHERE rowid IN (
+                         SELECT rowid FROM midterm_movement_explanations
+                         WHERE expires_at < ? LIMIT 50
+                       )""",
+                    (now_iso,),
+                )
