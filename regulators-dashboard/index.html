@@ -104,6 +104,33 @@
   .badge.imminent { background: #f85149; color: #fff; }
   .badge.soon     { background: #d29922; color: #0e1117; }
   .badge.later    { background: #30363d; color: var(--muted); }
+  .stance-row { display: grid; grid-template-columns: 160px 140px 1fr;
+                gap: 16px; align-items: center; padding: 12px 0;
+                border-bottom: 1px solid var(--grid); }
+  .stance-row:last-child { border-bottom: 0; }
+  .stance-name { font-weight: 600; }
+  .stance-when { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .stance-bucket { text-align: center; padding: 4px 8px; border-radius: 3px;
+                   font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
+  .stance-bucket.POS  { background: #1f6feb; color: #fff; }
+  .stance-bucket.NEG  { background: #f0883e; color: #0e1117; }
+  .stance-bucket.NEUTRAL  { background: #30363d; color: var(--muted); }
+  .stance-bucket.NO_SPEECH { background: #21262d; color: var(--muted); }
+  .stance-axis { position: relative; height: 6px; background: linear-gradient(to right,
+                 #f0883e 0%, #f0883e 35%, #30363d 35%, #30363d 65%, #1f6feb 65%, #1f6feb 100%);
+                 border-radius: 3px; margin-top: 8px; }
+  .stance-axis .marker { position: absolute; top: -4px; width: 12px; height: 14px;
+                         background: var(--fg); border-radius: 2px; transform: translateX(-50%); }
+  .stance-axis-labels { display: flex; justify-content: space-between; font-size: 10px;
+                        color: var(--muted); margin-top: 6px; }
+  .stance-matches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .stance-matches .chip-phrase { padding: 2px 6px; border-radius: 3px; font-size: 11px;
+                                 font-family: ui-monospace, SFMono-Regular, monospace;
+                                 background: #21262d; color: var(--fg); }
+  .stance-matches .chip-phrase.pos { color: #79c0ff; }
+  .stance-matches .chip-phrase.neg { color: #ffa657; }
+  .stance-link a { color: var(--accent); text-decoration: none; }
+  .stance-link a:hover { text-decoration: underline; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -131,6 +158,10 @@
   <section class="panel" id="people-panel">
     <h2>Personnel watch — next transitions</h2>
     <div id="people-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
+  <section class="panel" id="stance-panel">
+    <h2>Speech stance — latest per regulator</h2>
+    <div id="stance-body"><div class="heatmap-empty">loading…</div></div>
   </section>
   <section class="panel">
     <h2>Action feed</h2>
@@ -391,6 +422,80 @@ async function loadPeople() {
   }
 }
 
+function renderStance(data) {
+  const body = document.getElementById("stance-body");
+  const ladder = data.ladder || [];
+  if (!ladder.length) {
+    body.innerHTML = '<div class="heatmap-empty">No stance data.</div>';
+    return;
+  }
+  body.innerHTML = ladder.map(r => {
+    let bucketCls = "NEUTRAL";
+    if (r.bucket === "NO_SPEECH") bucketCls = "NO_SPEECH";
+    else if (r.bucket === r.axis.positive_label) bucketCls = "POS";
+    else if (r.bucket === r.axis.negative_label) bucketCls = "NEG";
+
+    // Marker position on the axis: clamp norm_score into [-2, +2] then map to [0, 100]%.
+    let markerEl = "";
+    if (r.bucket !== "NO_SPEECH") {
+      const clamped = Math.max(-2, Math.min(2, r.norm_score || 0));
+      const pct = 50 + (clamped / 2) * 50;  // -2 → 0%, 0 → 50%, +2 → 100%
+      markerEl = `<div class="stance-axis"><div class="marker" style="left:${pct}%"></div></div>` +
+        `<div class="stance-axis-labels"><span>${escapeHtml(r.axis.negative_label)}</span>` +
+        `<span>${escapeHtml(r.axis.positive_label)}</span></div>`;
+    }
+
+    let speechEl = "";
+    if (r.latest_speech) {
+      const dt = (r.latest_speech.published || "").slice(0, 10);
+      const link = r.latest_speech.link
+        ? `<a href="${escapeHtml(r.latest_speech.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.latest_speech.title)}</a>`
+        : escapeHtml(r.latest_speech.title || "");
+      speechEl = `<div class="stance-link">${link}</div>` +
+                 `<div class="stance-when">${escapeHtml(dt)} · score ${r.norm_score} over ${r.sentence_count} sentences</div>`;
+    } else {
+      speechEl = `<div class="stance-when">No recent speech in feed window — bucket "${escapeHtml(r.bucket)}" shows the fallback</div>`;
+    }
+
+    let matchesEl = "";
+    if (r.matches && r.matches.length) {
+      matchesEl = '<div class="stance-matches">' + r.matches.slice(0, 8).map(m => {
+        const cls = m.side === "positive" ? "pos" : "neg";
+        const tip = `${m.phrase}  weight=${m.weight}  ×${m.count}`;
+        return `<span class="chip-phrase ${cls}" title="${escapeHtml(tip)}">${escapeHtml(m.phrase)}</span>`;
+      }).join("") + '</div>';
+    }
+
+    return `
+      <div class="stance-row">
+        <div>
+          <div class="stance-name">${escapeHtml(r.regulator)}</div>
+          <div class="stance-when" title="${escapeHtml(r.axis.positive_long + " ↔ " + r.axis.negative_long)}">${escapeHtml(r.axis.positive_label)} ↔ ${escapeHtml(r.axis.negative_label)}</div>
+        </div>
+        <div>
+          <div class="stance-bucket ${bucketCls}">${escapeHtml(r.bucket)}</div>
+        </div>
+        <div>
+          ${speechEl}
+          ${markerEl}
+          ${matchesEl}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function loadStance() {
+  try {
+    const r = await fetch("/api/stance");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderStance(data);
+  } catch (e) {
+    document.getElementById("stance-body").innerHTML =
+      `<div class="heatmap-empty err">stance load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -572,7 +677,8 @@ load();
 loadHeatmap();
 loadTopics();
 loadPeople();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); }, 5 * 60 * 1000);
+loadStance();
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadStance(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>

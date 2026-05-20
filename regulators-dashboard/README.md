@@ -19,6 +19,7 @@ Port: **7080**.
 | **v0.4** | **Topic clusters** — every item tagged with zero or more topics from `crypto / etf / aml / disclosure / marketstructure / privatefunds / cyber / climate`. Multi-topic honest (a crypto-AML enforcement fires both). Dynamic topic-filter chip row with per-topic count badges sourced from `/api/topics`; matched phrases shown on hover; topic pills inline under each headline. | rules — `analysis/topic_keywords.py` |
 | **v0.5** | **Polymarket / Kalshi overlay** — every action gets matched against the active Polymarket Gamma + Kalshi public market lists via anchor-token-weighted Jaccard; top-3 matches surface as small `Poly 14¢ yes ↗` / `Kalshi 87¢ yes ↗` deep-link buttons under the headline. Hover shows the full market question + shared anchor tokens + score. Read-only on trades — clicks open the venue in a new tab. New `Has market match` filter chip. | Polymarket Gamma API + Kalshi public `/trade-api/v2/markets` |
 | **v0.6** | **Personnel watch** — hand-curated roster of chairs / commissioners / CEOs with `term_end`, `term_type`, and a `source_url` pointing to the official roster page. `days_until` computed live, sorted imminent-first, badge-coded (`imminent` ≤ 7d / `soon` ≤ 90d / `later`). Same v0.5 market matcher attaches Polymarket / Kalshi markets per row (e.g. "Will Powell be Fed Chair on Dec 31, 2026?" against the Powell entry). | hand-curated — `data/personnel.py` |
+| **v0.7** | **Speech stance ladder** — per-regulator scoring on a body-specific axis: **SEC** `pro-enforcement ↔ light-touch`, **FCA** `pro-innovation ↔ consumer-first`, **ESMA** `prescriptive ↔ principles-based`. Picks the most-recent `speech`-tagged item per regulator from the feed, scores title + summary against the axis dictionary, renders bucketed badge + marker on a tri-color axis + matched phrase chips. Closes out v1.0. | rules — `analysis/stance_keywords.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -33,6 +34,7 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
 | `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
 | `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
+| `GET /api/stance` | 30 min (via feed cache) | Per-regulator speech-stance ladder — most-recent speech-tagged item scored on the body's axis |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -76,6 +78,7 @@ python3 -m ingestion.polymarket_client  # Live Gamma API fetch, normalized
 python3 -m ingestion.kalshi_client    # Live Kalshi /trade-api/v2/markets fetch, normalized
 python3 -m analysis.market_match      # 4-item × 4-market join fixtures (incl. Lakers false-positive guard)
 python3 -m analysis.people            # Roster dump with days_until + sort order
+python3 -m analysis.stance            # 7 stance fixtures across SEC/FCA/ESMA × pos/neg/neutral
 ```
 
 ## Files
@@ -99,7 +102,9 @@ regulators-dashboard/
 │   ├── topic_keywords.py           Eight-topic phrase dictionary (tunable)
 │   ├── topics.py                   Multi-topic extractor + 8 fixture self-test
 │   ├── market_match.py             Anchor-weighted Jaccard joiner — items × markets, 4 fixtures
-│   └── people.py                   Personnel roster loader + days-until + synthetic-item for matcher
+│   ├── people.py                   Personnel roster loader + days-until + synthetic-item for matcher
+│   ├── stance_keywords.py          Per-regulator stance axes (SEC/FCA/ESMA), tunable
+│   └── stance.py                   Per-regulator stance scorer + 7 fixture self-test
 ├── data/
 │   └── personnel.py                Hand-curated roster (EDIT HERE to add chairs/commissioners)
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
@@ -271,6 +276,49 @@ Powell, Atkins, Rathi, Ross — each with a verifiable `source_url`.
 The file is loud about the data being best-effort and refresh-by-hand
 until v1.1 (auto-scraping confirmation calendars).
 
+### v0.7 — speech stance ladder
+
+Unlike v0.1 (multi-class type) and v0.4 (multi-tag topics), stance is a
+**per-regulator single axis** — each body is contested on a different
+pole, so a generic "strict ↔ lax" scorer would muddle the signal.
+v0.7's axes:
+
+  - **SEC** `pro-enforcement ↔ light-touch`
+  - **FCA** `pro-innovation ↔ consumer-first`
+  - **ESMA** `prescriptive ↔ principles-based`
+
+`analysis/stance_keywords.py` defines a `StanceAxis` per regulator with
+two phrase dicts (positive-weighted phrases push toward the positive
+label, negative-weighted phrases push toward the negative label).
+`analysis/stance.py` picks the most-recent `speech`-tagged item per
+regulator from the feed, scores `title + summary` against that axis,
+and exposes:
+
+  - `bucket` — `<positive_label>` / `<negative_label>` / `NEUTRAL` /
+    `NO_SPEECH` (the last when no speech in the feed window)
+  - `norm_score` — raw Σ(weight × count) divided by sentence count
+  - `matches` — the phrases that fired, with side and weight, sorted by
+    absolute contribution; UI shows these as chips
+
+The UI panel renders each regulator as a row: name + axis label on
+the left, bucket badge in the middle, and on the right the latest
+speech link + a tri-color axis with a marker showing where the score
+landed (orange = negative pole, gray = neutral zone, blue = positive
+pole; marker x-position is `norm_score` clamped to [-2, +2] mapped to
+[0, 100]%).
+
+**To add a new regulator's axis**: append a `StanceAxis(...)` entry to
+`AXES` in `stance_keywords.py` keyed by the same source code the RSS
+ingestion module uses (`SEC`, `FCA`, `ESMA`, eventually `CFTC`,
+`BaFin`, etc.). The scorer iterates `AXES` so nothing else changes.
+
+**Scope note:** v0.7 scores `title + summary` only. RSS summaries are
+usually enough — speeches are punchy by design — but if signal turns
+out thin in practice, we'd add full-body HTML fetching matching the
+`centralbank-dashboard/ingestion/cb_statements._fetch_statement_body`
+pattern. Held until v0.7 has live usage telling us whether summaries
+suffice.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -282,6 +330,8 @@ until v1.1 (auto-scraping confirmation calendars).
 | **v0.4** | ✓ done | Topic clusters — multi-topic tagging (crypto/etf/aml/disclosure/marketstructure/privatefunds/cyber/climate); per-topic count chips above the feed; topic pills inline under each headline |
 | **v0.5** | ✓ done | Polymarket / Kalshi overlay — anchor-weighted Jaccard match between actions and active markets; per-item deep-link buttons (read-only on trade); `has_market` filter |
 | **v0.6** | ✓ done | Personnel watch — hand-curated roster of chairs/commissioners with term-end dates, days-until badges, source links, and per-row market overlay reusing the v0.5 matcher |
+| **v0.7** | ✓ done | Per-regulator speech stance ladder — SEC `pro-enforcement ↔ light-touch`, FCA `pro-innovation ↔ consumer-first`, ESMA `prescriptive ↔ principles-based`; matched phrases shown as chips |
+| **v1.0** | ✓ done | Closes v1.0 — all seven sub-milestones (v0 → v0.7) shipped on the SEC + FCA + ESMA seed source set |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
@@ -344,6 +394,19 @@ until v1.1 (auto-scraping confirmation calendars).
   annual verification against each official roster page; the file
   is loud about this, and every row links to its `source_url`. Auto-
   scraping confirmation calendars is roadmap v1.1.
+- **Stance is scored on title + summary, not body text.** Speeches
+  are usually punchy enough that the RSS-level signal carries the
+  axis lean. If a regulator's recent speech is dead-zero, the badge
+  reports NEUTRAL — which is honest given the matched-phrase chips
+  underneath show zero hits. Full-body HTML fetching (mirroring
+  `centralbank-dashboard/ingestion/cb_statements._fetch_statement_body`)
+  is the next polish lift if summaries prove insufficient.
+- **Stance axes are per-regulator and intentionally asymmetric.**
+  An SEC speech is scored on enforcement intensity, an FCA speech on
+  consumer-vs-growth orientation, an ESMA speech on rulebook
+  rigidity. A generic "strict ↔ lax" axis would muddle the signal.
+  Adding a new regulator requires picking its real contested axis
+  and seeding `stance_keywords.AXES` accordingly.
 - **Polymarket overlay coverage is thin** outside crypto ETFs and
   big-name settlements, so v0.5 will only annotate a small fraction of
   action cards. That's expected.

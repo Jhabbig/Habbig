@@ -8,6 +8,7 @@ Routes:
   - GET /api/topics?days=90     → per-topic counts (drives the topic-filter chip badges)
   - GET /api/markets            → raw Polymarket + Kalshi market list (debug)
   - GET /api/people             → hand-curated personnel watch with term-end days + matched markets
+  - GET /api/stance             → per-regulator speech stance ladder (SEC/FCA/ESMA axes)
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -28,6 +29,7 @@ from ingestion import kalshi_client, polymarket_client, unified_feed
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
 from analysis import people as people_roster
+from analysis import stance as stance_analysis
 from analysis.topic_keywords import TOPICS, TOPIC_LABELS
 
 logging.basicConfig(level=logging.INFO)
@@ -169,6 +171,17 @@ async def api_markets(force: bool = False) -> JSONResponse:
         "polymarket": poly,
         "kalshi": kal,
         "combined_count": poly["count"] + kal["count"],
+    })
+
+
+@app.get("/api/stance")
+async def api_stance(force: bool = False) -> JSONResponse:
+    """Per-regulator stance ladder from the most recent speech-tagged item
+    for each body. Uses the cached feed — no extra fetch cost."""
+    data = unified_feed.get_cached(force=force)
+    return JSONResponse({
+        "fetched_at": data["fetched_at"],
+        "ladder": stance_analysis.compute(data["items"]),
     })
 
 
