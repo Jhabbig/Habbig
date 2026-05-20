@@ -118,6 +118,29 @@ def main() -> None:
     t("unmatched defaults to T0",   erdo_merged["papabile_tier"] == 0)
     t("unmatched flagged",          erdo_merged["matched_curated"] is False)
 
+    print("\n— Nationality regex regression (#country-bug) —")
+    # Bug: nationality regex used to capture downstream text after tag-strip
+    # lost the <br> boundary. Confirm we now stop at "Created"/"Of the Order".
+    for c in out:
+        bad = any(stop in (c.get("country") or "")
+                  for stop in ("Created", "Order", "Cardinal", "Born", "Consistory"))
+        t(f"{c['name']} country clean", not bad, f"country={c['country']!r}")
+
+    print("\n— Realistic fixture sanity (test_fixtures/vatican_sample.html) —")
+    try:
+        with open("test_fixtures/vatican_sample.html", "r", encoding="utf-8") as f:
+            real = parse_cardinals_html(f.read(), ref=REF)
+        t("realistic fixture parses ≥50", len(real) >= 50, f"got {len(real)}")
+        # Particle handling
+        kesel = [c for c in real if "Kesel" in c["name"]]
+        t("DE KESEL → 'de Kesel'", kesel and kesel[0]["name"] == "Jozef de Kesel",
+          f"got {kesel[0]['name'] if kesel else None}")
+        # Eastern-rite single-name patriarchs
+        rai = [c for c in real if "Raï" in c["name"]]
+        t("Maronite Patriarch parsed", len(rai) == 1, "Béchara Boutros Raï should be one entry")
+    except FileNotFoundError:
+        t("fixture file present", False, "test_fixtures/vatican_sample.html missing")
+
     print("\n— Drift detection —")
     drift = detect_drift(out, curated)
     t("drift counts scraped", drift["scraped_count"] == 4)

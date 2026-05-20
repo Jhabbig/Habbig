@@ -157,7 +157,13 @@ _CARDINAL_BLOCK_RE = re.compile(
 )
 
 _BORN_RE       = re.compile(r"Born(?:\s+in)?[:.\s]+([0-9]{1,2}\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE)
-_NATIONALITY_RE= re.compile(r"Nationality[:.\s]+([^<.\n,]{2,40})", re.IGNORECASE)
+# Stop the nationality match at a follow-on keyword ("Created", "Of the Order",
+# "Born") rather than relying on punctuation — after tag stripping, the <br>
+# boundary is lost and a greedy match runs into the consistory line.
+_NATIONALITY_RE= re.compile(
+    r"Nationality[:.\s]+(.+?)\s+(?:Created|Of\s+the\s+Order|Born|Consistory|$)",
+    re.IGNORECASE,
+)
 _CONSISTORY_RE = re.compile(
     r"[Cc]reated\s+(?:and\s+proclaimed\s+)?Cardinal\s+by\s+(?:Pope\s+)?([A-Za-zóÁ\s\.IVX]+?)\s+in\s+the\s+consistory\s+of\s+([0-9]{1,2}\s+[A-Za-z]+\s+\d{4})",
 )
@@ -228,6 +234,20 @@ def parse_cardinals_html(html: str, ref: Optional[date] = None) -> list[dict]:
 # ─── Network fetch ──────────────────────────────────────────────────────────
 
 def _http_get(url: str, *, timeout: int = 20) -> Optional[str]:
+    # Offline / sandbox / dev-loop override: read HTML from a local file
+    # instead of hitting Vatican. Useful for environments without external
+    # network access. Set VATICAN_FIXTURE_PATH=/path/to/saved.html.
+    import os
+    fixture = os.environ.get("VATICAN_FIXTURE_PATH", "").strip()
+    if fixture:
+        try:
+            with open(fixture, "r", encoding="utf-8") as f:
+                log.info("Vatican: reading from fixture %s (VATICAN_FIXTURE_PATH set)", fixture)
+                return f.read()
+        except Exception as e:
+            log.warning("Vatican fixture read failed (%s): %s", fixture, e)
+            return None
+
     try:
         r = requests.get(url, timeout=timeout, headers={"User-Agent": _USER_AGENT})
         if r.status_code != 200:

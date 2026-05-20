@@ -129,6 +129,14 @@ Test the parser against a fixture (no network required):
 python3 test_vatican_scraper.py
 ```
 
+Run the dashboard against the bundled realistic fixture (58 cardinals)
+instead of the live Vatican URL — useful when developing without
+external network:
+```bash
+VATICAN_FIXTURE_PATH=$PWD/test_fixtures/vatican_sample.html python3 server.py
+# /api/conclave/live now serves source=live from the fixture
+```
+
 ## Leader actuarial model
 
 `/api/leaders` walks the SSA 2022 period life table forward in monthly
