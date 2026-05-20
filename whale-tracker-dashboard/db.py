@@ -81,6 +81,63 @@ CREATE TABLE IF NOT EXISTS ingest_state (
     last_run_at  TEXT,
     last_seen    TEXT
 );
+
+-- One row per Form 13F-HR filing (a fund's quarterly portfolio snapshot).
+CREATE TABLE IF NOT EXISTS fund_filing (
+    accession      TEXT PRIMARY KEY,
+    filed_at       TEXT NOT NULL,
+    period_of_report TEXT,             -- e.g. "2025-03-31"
+    fund_cik       TEXT NOT NULL,
+    fund_name      TEXT,
+    total_value    REAL,               -- sum of holdings (as-reported units; see README)
+    holding_count  INTEGER,
+    filing_url     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fund_filing_cik_period ON fund_filing(fund_cik, period_of_report);
+CREATE INDEX IF NOT EXISTS idx_fund_filing_filed ON fund_filing(filed_at);
+
+-- One row per holding line in a 13F filing.
+CREATE TABLE IF NOT EXISTS fund_holding (
+    accession      TEXT NOT NULL,
+    line_no        INTEGER NOT NULL,
+    fund_cik       TEXT NOT NULL,
+    period_of_report TEXT,
+    cusip          TEXT,
+    issuer_name    TEXT,
+    title_of_class TEXT,
+    issuer_ticker  TEXT,                -- resolved via cusip→ticker map when possible
+    value          REAL,                -- as-reported (see README for units caveat)
+    shares         REAL,
+    shares_type    TEXT,                -- 'SH' or 'PRN'
+    put_call       TEXT,                -- 'Put', 'Call', or NULL
+    PRIMARY KEY (accession, line_no)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_holding_cik ON fund_holding(fund_cik, period_of_report);
+CREATE INDEX IF NOT EXISTS idx_fund_holding_cusip ON fund_holding(cusip);
+CREATE INDEX IF NOT EXISTS idx_fund_holding_ticker ON fund_holding(issuer_ticker);
+
+-- Congressional periodic transaction reports (House + Senate).
+CREATE TABLE IF NOT EXISTS congress_trade (
+    transaction_id   TEXT PRIMARY KEY,
+    chamber          TEXT NOT NULL,    -- 'House' or 'Senate'
+    representative   TEXT,
+    party            TEXT,             -- 'R', 'D', 'I' (not always available)
+    state            TEXT,
+    transaction_date TEXT,
+    disclosure_date  TEXT,
+    ticker           TEXT,
+    asset_description TEXT,
+    asset_type       TEXT,             -- 'Stock', 'Option', 'Bond', ...
+    transaction_type TEXT,             -- 'Purchase', 'Sale', 'Exchange', ...
+    amount_range     TEXT,             -- the raw band as disclosed
+    amount_min       REAL,             -- midpoint min in $
+    amount_max       REAL,
+    comment          TEXT,
+    source_url       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_congress_disclosure ON congress_trade(disclosure_date DESC);
+CREATE INDEX IF NOT EXISTS idx_congress_ticker ON congress_trade(ticker, disclosure_date DESC);
+CREATE INDEX IF NOT EXISTS idx_congress_rep ON congress_trade(representative);
 """
 
 
@@ -197,4 +254,68 @@ def counts() -> dict[str, int]:
             "insider_txn":    cx.execute("SELECT COUNT(*) FROM insider_txn").fetchone()[0],
             "activist_stake": cx.execute("SELECT COUNT(*) FROM activist_stake").fetchone()[0],
             "ma_event":       cx.execute("SELECT COUNT(*) FROM ma_event").fetchone()[0],
+            "fund_filing":    cx.execute("SELECT COUNT(*) FROM fund_filing").fetchone()[0],
+            "fund_holding":   cx.execute("SELECT COUNT(*) FROM fund_holding").fetchone()[0],
+            "congress_trade": cx.execute("SELECT COUNT(*) FROM congress_trade").fetchone()[0],
         }
+
+
+def upsert_fund_filing(row: dict) -> bool:
+    with _lock, connect() as cx:
+        cur = cx.execute(
+            """
+            INSERT OR REPLACE INTO fund_filing (
+                accession, filed_at, period_of_report, fund_cik, fund_name,
+                total_value, holding_count, filing_url
+            ) VALUES (
+                :accession, :filed_at, :period_of_report, :fund_cik, :fund_name,
+                :total_value, :holding_count, :filing_url
+            )
+            """,
+            row,
+        )
+        return cur.rowcount > 0
+
+
+def upsert_fund_holdings(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO fund_holding (
+                accession, line_no, fund_cik, period_of_report, cusip,
+                issuer_name, title_of_class, issuer_ticker, value, shares,
+                shares_type, put_call
+            ) VALUES (
+                :accession, :line_no, :fund_cik, :period_of_report, :cusip,
+                :issuer_name, :title_of_class, :issuer_ticker, :value, :shares,
+                :shares_type, :put_call
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
+def upsert_congress_trades(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO congress_trade (
+                transaction_id, chamber, representative, party, state,
+                transaction_date, disclosure_date, ticker, asset_description,
+                asset_type, transaction_type, amount_range, amount_min,
+                amount_max, comment, source_url
+            ) VALUES (
+                :transaction_id, :chamber, :representative, :party, :state,
+                :transaction_date, :disclosure_date, :ticker, :asset_description,
+                :asset_type, :transaction_type, :amount_range, :amount_min,
+                :amount_max, :comment, :source_url
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount

@@ -217,6 +217,61 @@ async def api_whale_leaderboard(days: int = Query(90, ge=1, le=365)):
     return _cached(f"whales:{days}", lambda: signals_mod.whale_leaderboard(window_days=days))
 
 
+# ─── 13F fund holdings ───────────────────────────────────────────────
+
+@app.get("/api/fund-list")
+async def api_fund_list(limit: int = Query(100, ge=1, le=500)):
+    return _cached(f"funds:{limit}", lambda: signals_mod.fund_list(limit=limit))
+
+
+@app.get("/api/fund-holdings")
+async def api_fund_holdings(
+    cik: str = Query(..., min_length=1, max_length=15),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    return _cached(f"fund_holdings:{cik}:{limit}", lambda: signals_mod.fund_holdings(cik, limit=limit))
+
+
+@app.get("/api/holding-changes")
+async def api_holding_changes(
+    days: int = Query(120, ge=1, le=365),
+    type: str | None = Query(None, pattern="^(new|exit|increase|decrease)$"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    key = f"holding_changes:{days}:{type or 'all'}:{limit}"
+    return _cached(key, lambda: signals_mod.holding_changes(window_days=days, change_type=type, limit=limit))
+
+
+@app.get("/api/ticker-holders")
+async def api_ticker_holders(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    limit: int = Query(100, ge=1, le=500),
+):
+    t = ticker.upper().strip()
+    return _cached(f"ticker_holders:{t}:{limit}", lambda: signals_mod.ticker_holders(t, limit=limit))
+
+
+# ─── Congress PTRs ───────────────────────────────────────────────────
+
+@app.get("/api/congress-trades")
+async def api_congress_trades(
+    days: int = Query(30, ge=1, le=365),
+    chamber: str | None = Query(None, pattern="^(House|Senate)$"),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    key = f"congress:{days}:{chamber or 'all'}:{limit}"
+    return _cached(key, lambda: signals_mod.recent_congress_trades(window_days=days, chamber=chamber, limit=limit))
+
+
+@app.get("/api/congress-by-ticker")
+async def api_congress_by_ticker(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    t = ticker.upper().strip()
+    return _cached(f"congress_ticker:{t}:{limit}", lambda: signals_mod.congress_by_ticker(t, limit=limit))
+
+
 @app.post("/api/admin/ingest-now")
 async def api_admin_ingest_now():
     """Trigger a manual ingest pass; primarily for local dev / smoke tests."""

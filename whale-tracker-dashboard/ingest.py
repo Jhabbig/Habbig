@@ -16,22 +16,30 @@ import logging
 import os
 
 import cik_ticker
+import congress
 import db
 import edgar
 import events
 import filings8k
 import filings13d
 import form4
+import form13f
 
 log = logging.getLogger("ingest")
 
 INGEST_INTERVAL_S = int(os.environ.get("INGEST_INTERVAL_S", "300"))   # 5 min default
 PER_FEED_COUNT    = int(os.environ.get("INGEST_FEED_COUNT", "40"))
+PER_PASS_13F_LIMIT = int(os.environ.get("INGEST_13F_LIMIT", "5"))     # cap 13F per pass — big XMLs
+
+# Congress S3 buckets refresh ~daily; no need to pull every 5 minutes.
+CONGRESS_INTERVAL_S = int(os.environ.get("CONGRESS_INTERVAL_S", "3600"))
+_last_congress_run = 0.0
 
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
-    results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0}
+    global _last_congress_run
+    results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0, "13f_filings": 0, "13f_holdings": 0, "congress": 0}
 
     # Refresh CIK→ticker map (no-op if already current).
     try:
@@ -62,6 +70,23 @@ async def run_once() -> dict[str, int]:
         results["8k"] = await _ingest_8k()
     except Exception as e:
         log.exception("8-K ingest failed: %s", e)
+
+    # 13F-HR — fund quarterly holdings (capped per pass; big XMLs)
+    try:
+        nf, nh = await _ingest_13f()
+        results["13f_filings"], results["13f_holdings"] = nf, nh
+    except Exception as e:
+        log.exception("13F ingest failed: %s", e)
+
+    # Congress PTRs — pulled at a slower cadence
+    loop = asyncio.get_event_loop()
+    now = loop.time()
+    if now - _last_congress_run >= CONGRESS_INTERVAL_S:
+        try:
+            results["congress"] = await _ingest_congress()
+            _last_congress_run = now
+        except Exception as e:
+            log.exception("congress ingest failed: %s", e)
 
     if any(results.values()):
         events.broadcast("ingest", {"inserted": results, "counts": db.counts()})
@@ -251,6 +276,142 @@ async def _ingest_8k() -> int:
         }
         if db.upsert_ma_event(row):
             inserted += 1
+    return inserted
+
+
+# ───────────────────────────── 13F-HR ─────────────────────────────
+
+async def _ingest_13f() -> tuple[int, int]:
+    """Pull recent 13F-HR filings, parse the INFORMATION TABLE, persist.
+
+    Each filing's XML can be megabytes, so we cap concurrency and the
+    number processed per pass. Over multiple passes, the full Atom feed
+    gets ingested.
+    """
+    entries = await edgar.recent_atom("13F-HR", count=PER_FEED_COUNT)
+    if not entries:
+        return (0, 0)
+
+    todo = [e for e in entries
+            if e.get("accession") and not db.have_accession("fund_filing", e["accession"])]
+    todo = todo[:PER_PASS_13F_LIMIT]
+
+    filings_inserted = 0
+    holdings_inserted = 0
+    sem = asyncio.Semaphore(2)
+
+    async def handle(entry: dict):
+        nonlocal filings_inserted, holdings_inserted
+        async with sem:
+            try:
+                nf, nh = await _process_13f(entry)
+            except Exception as e:
+                log.warning("13F process failed for %s: %s", entry.get("accession"), e)
+                return
+            filings_inserted += nf
+            holdings_inserted += nh
+
+    await asyncio.gather(*(handle(e) for e in todo))
+    return (filings_inserted, holdings_inserted)
+
+
+async def _process_13f(entry: dict) -> tuple[int, int]:
+    cik = entry.get("filer_cik") or ""
+    accession = entry.get("accession") or ""
+    if not cik or not accession:
+        return (0, 0)
+
+    idx = await edgar.fetch_filing_index(cik, accession)
+    if not idx:
+        return (0, 0)
+
+    # 13F filings have two XML docs: a primary doc (metadata) and an
+    # INFORMATION TABLE. Filenames vary; we identify by suffix and content.
+    items = (idx or {}).get("directory", {}).get("item", [])
+    xml_names = [it.get("name", "") for it in items if it.get("name", "").lower().endswith(".xml")]
+    if not xml_names:
+        return (0, 0)
+
+    primary_xml = ""
+    info_xml = ""
+
+    # Heuristic: the information table file usually has "infotable" or
+    # "form13fInfoTable" in its name. The primary doc is the remaining XML.
+    info_candidates = [n for n in xml_names if "info" in n.lower()]
+    other_candidates = [n for n in xml_names if n not in info_candidates]
+
+    for name in info_candidates:
+        url = edgar.filing_primary_doc_url(cik, accession, name)
+        try:
+            body = await edgar.fetch(url)
+        except Exception as e:
+            log.info("13F info fetch %s: %s", accession, e)
+            continue
+        if "<infoTable" in body or "informationTable" in body:
+            info_xml = body
+            break
+
+    for name in other_candidates:
+        url = edgar.filing_primary_doc_url(cik, accession, name)
+        try:
+            body = await edgar.fetch(url)
+        except Exception as e:
+            log.info("13F primary fetch %s: %s", accession, e)
+            continue
+        if "periodOfReport" in body or "filingManager" in body:
+            primary_xml = body
+            break
+
+    period = form13f.extract_period_of_report(primary_xml) if primary_xml else ""
+    fund_name = form13f.extract_fund_name(primary_xml) if primary_xml else (entry.get("filer_name") or "")
+
+    holdings = form13f.parse_information_table(
+        info_xml, accession=accession, fund_cik=cik, period_of_report=period
+    ) if info_xml else []
+
+    if not holdings:
+        return (0, 0)
+
+    # Resolve issuer_ticker per holding via CIK→ticker map when the
+    # issuer name matches a known ticker — strict CUSIP→ticker mapping
+    # isn't free, so we fall back to issuer-name keying for now.
+    for h in holdings:
+        # Most holding rows don't have a CIK (only CUSIP). We leave
+        # issuer_ticker NULL; the UI surfaces issuer_name.
+        pass
+
+    total_value = sum((h["value"] or 0) for h in holdings)
+
+    filing_row = {
+        "accession":        accession,
+        "filed_at":         entry.get("filed_at", ""),
+        "period_of_report": period or None,
+        "fund_cik":         cik,
+        "fund_name":        fund_name or entry.get("filer_name", ""),
+        "total_value":      total_value,
+        "holding_count":    len(holdings),
+        "filing_url":       edgar.filing_primary_doc_url(cik, accession, info_candidates[0]) if info_candidates else "",
+    }
+
+    inserted_filing = 1 if db.upsert_fund_filing(filing_row) else 0
+    inserted_holdings = db.upsert_fund_holdings(holdings)
+    return (inserted_filing, inserted_holdings)
+
+
+# ───────────────────────────── Congress PTRs ─────────────────────────────
+
+async def _ingest_congress() -> int:
+    inserted = 0
+    try:
+        house = await congress.fetch_house()
+        inserted += db.upsert_congress_trades(house)
+    except Exception as e:
+        log.warning("congress house fetch failed: %s", e)
+    try:
+        senate = await congress.fetch_senate()
+        inserted += db.upsert_congress_trades(senate)
+    except Exception as e:
+        log.warning("congress senate fetch failed: %s", e)
     return inserted
 
 
