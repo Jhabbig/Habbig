@@ -1,21 +1,29 @@
-"""Heuristic event extractor.
+"""Event extractor — heuristic + optional LLM path.
 
 Takes a news/feed item (publisher, title, description, published_at) and emits
-zero or more typed events. Uses keyword + alias matching against the gazetteer
-in analyst_db. Pure-stdlib — no LLM dependency required.
+zero or more typed events. Two backends:
 
-When ANTHROPIC_API_KEY is set, callers can opt into LLM-based extraction via
-extract_with_claude(); the heuristic remains the default so the dashboard
-works out-of-the-box.
+1. Heuristic (default) — keyword + alias matching against the analyst_db
+   gazetteer. Pure-stdlib, no LLM dependency.
+2. LLM (opt-in) — Claude-based extraction with richer entity / event typing.
+   Enabled when ANTHROPIC_API_KEY is set and WORLD_STATE_LLM_EXTRACT=1.
+
+`extract_batch()` is the public entry point — it tries LLM first when enabled
+and falls back to the heuristic on any failure, so the dashboard always
+produces some events even if the API is down.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from email.utils import parsedate_to_datetime
 from datetime import timezone
 
 from analyst_db import baseline_aliases, get_entity
+import llm_extractor
+
+_log = logging.getLogger(__name__)
 
 # Event type → indicator keywords. Order matters: first match wins.
 # Keywords are lowercased substring matches against title + description.
@@ -164,14 +172,55 @@ def extract_event(item: dict) -> dict | None:
     }
 
 
-def extract_batch(items: list[dict]) -> list[dict]:
+def _extract_batch_heuristic(items: list[dict]) -> list[dict]:
     out = []
     for it in items:
         try:
             ev = extract_event(it)
         except Exception as e:  # noqa: BLE001
-            print(f"[extractor] failed on item: {e}")
+            _log.warning("heuristic extractor failed on item: %s", e)
             continue
         if ev:
             out.append(ev)
     return out
+
+
+# LLM batch size — keep small so a single failure doesn't lose many items, and
+# so the user message fits well within Claude's context.
+_LLM_BATCH_SIZE = 12
+
+
+def extract_batch(items: list[dict]) -> list[dict]:
+    """Extract events from a batch of items.
+
+    Prefers the LLM path when enabled; falls back to the heuristic for any
+    items the LLM couldn't process (or all items if the LLM is disabled or
+    errors out). LLM and heuristic outputs share the same shape, so the caller
+    doesn't need to know which path produced an event.
+    """
+    if not items:
+        return []
+
+    if not llm_extractor.is_enabled():
+        return _extract_batch_heuristic(items)
+
+    # Run the LLM in chunks. Items the LLM doesn't emit an event for fall
+    # through to the heuristic — better to get a weaker event than none.
+    llm_events: list[dict] = []
+    covered_titles: set[str] = set()
+    for i in range(0, len(items), _LLM_BATCH_SIZE):
+        chunk = items[i:i + _LLM_BATCH_SIZE]
+        try:
+            evs = llm_extractor.extract_with_claude(chunk)
+        except Exception as e:
+            _log.warning("LLM extract chunk failed: %s", e)
+            evs = []
+        for ev in evs:
+            llm_events.append(ev)
+            covered_titles.add(ev["source"]["title"])
+
+    # Heuristic fills in anything the LLM dropped.
+    leftover = [it for it in items if (it.get("title") or "") not in covered_titles]
+    heuristic_events = _extract_batch_heuristic(leftover)
+
+    return llm_events + heuristic_events

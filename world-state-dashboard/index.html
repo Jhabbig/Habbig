@@ -2309,6 +2309,82 @@ body.am-tl-hidden    { padding-bottom: 0; }
   font-family: var(--mono); color: var(--text-2); font-size: 10px;
 }
 
+/* Natural-language query input */
+.am-nlq {
+  display: flex; gap: 4px;
+}
+.am-nlq input {
+  flex: 1; background: var(--bg-2); color: var(--text-0);
+  border: 1px solid var(--border); padding: 6px 8px;
+  font: inherit; font-size: 12px; border-radius: var(--radius-xs);
+}
+.am-nlq input:focus { border-color: var(--green); outline: none; }
+.am-nlq button {
+  background: var(--green-dim); color: var(--green-bright);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  padding: 6px 10px; font: inherit; font-size: 11px;
+  border-radius: var(--radius-xs); cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.am-nlq button:hover { background: rgba(74, 222, 128, 0.20); }
+.am-nlq-interp {
+  display: none;
+  margin-top: 6px; padding: 6px 8px;
+  background: var(--bg-2); border-left: 2px solid var(--green);
+  font-size: 10px; line-height: 1.4; color: var(--text-1);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+.am-nlq-interp.visible { display: block; }
+.am-nlq-interp .label {
+  color: var(--text-2); text-transform: uppercase;
+  font-size: 9px; letter-spacing: 0.08em; margin-right: 4px;
+}
+.am-nlq-interp button {
+  background: transparent; border: none; color: var(--text-2);
+  cursor: pointer; padding: 0 4px; font-size: 11px; margin-left: 4px;
+}
+.am-nlq-interp button:hover { color: var(--red); }
+
+/* Timeline scrubbing — playhead + LIVE/REPLAY badge */
+.am-tl-canvas { position: relative; }
+.am-tl-canvas-wrap { position: relative; }
+.am-tl-playhead {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: var(--orange); pointer-events: none;
+  box-shadow: 0 0 6px rgba(251, 146, 60, 0.7);
+  display: none;
+}
+.am-tl-playhead.visible { display: block; }
+.am-tl-playhead::before {
+  content: ''; position: absolute; left: -5px; top: -1px;
+  width: 11px; height: 6px; background: var(--orange);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.am-tl-mode {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 1px 6px; border-radius: 999px;
+  font-family: var(--mono);
+}
+.am-tl-mode.live {
+  background: var(--green-dim); color: var(--green-bright);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
+.am-tl-mode.replay {
+  background: var(--orange-dim); color: var(--orange);
+  border: 1px solid rgba(251, 146, 60, 0.4);
+  cursor: pointer;
+}
+.am-tl-mode.live::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 6px var(--green);
+  animation: am-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes am-live-pulse {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+}
+.am-pin.dim { opacity: 0.15; pointer-events: none; }
+
 </head>
 <body>
 
@@ -2473,6 +2549,17 @@ body.am-tl-hidden    { padding-bottom: 0; }
   </div>
   <div class="am-rail-body">
     <div class="am-section">
+      <div class="am-section-title">Ask</div>
+      <div class="am-nlq">
+        <input id="am-nlq-input" placeholder="e.g. russian strikes on ukraine last 48h" autocomplete="off" />
+        <button id="am-nlq-go" type="button">Go</button>
+      </div>
+      <div class="am-nlq-interp" id="am-nlq-interp">
+        <span class="label">filters</span><span id="am-nlq-interp-text">—</span>
+        <button id="am-nlq-clear" type="button" title="Clear NLQ filter">&times;</button>
+      </div>
+    </div>
+    <div class="am-section">
       <div class="am-section-title">Event types</div>
       <div class="am-chip-row" id="am-type-chips">
         <!-- populated by JS -->
@@ -2510,6 +2597,7 @@ body.am-tl-hidden    { padding-bottom: 0; }
   <div class="am-tl-head">
     <span class="am-tl-title">Timeline</span>
     <span class="am-tl-stat" id="am-tl-counts">— events</span>
+    <span class="am-tl-mode live" id="am-tl-mode" title="Click to return to live">LIVE</span>
     <span class="am-tl-spacer"></span>
     <button class="am-tl-range-btn" data-range="3600"   type="button">1h</button>
     <button class="am-tl-range-btn" data-range="21600"  type="button">6h</button>
@@ -2520,6 +2608,7 @@ body.am-tl-hidden    { padding-bottom: 0; }
   </div>
   <div class="am-tl-canvas-wrap">
     <canvas class="am-tl-canvas" id="am-tl-canvas"></canvas>
+    <div class="am-tl-playhead" id="am-tl-playhead"></div>
   </div>
 </div>
 
@@ -7305,6 +7394,9 @@ function togglePinMap() {
     },
     markers: [],
     railOpen: true,
+    nlq: null,        // {q, interpretation} when an NLQ filter is active
+    scrubTime: null,  // epoch sec when replay mode is active, else null
+    scrubDragging: false,
   };
 
   function nowSec() { return Math.floor(Date.now() / 1000); }
@@ -7359,6 +7451,8 @@ function togglePinMap() {
         b.classList.add('active');
         state.filters.window = parseInt(b.dataset.range, 10);
         state.filters.since = nowSec() - state.filters.window;
+        // Changing the visible window invalidates the current scrub cursor.
+        if (state.scrubTime != null) setScrubTime(null);
         loadEvents();
         loadTimeline();
       });
@@ -7368,6 +7462,32 @@ function togglePinMap() {
       const tl = document.getElementById('am-timeline');
       tl.classList.toggle('collapsed');
       document.body.classList.toggle('am-tl-collapsed', tl.classList.contains('collapsed'));
+    });
+
+    // NLQ
+    const nlqGo = document.getElementById('am-nlq-go');
+    const nlqInput = document.getElementById('am-nlq-input');
+    nlqGo?.addEventListener('click', runNLQ);
+    nlqInput?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') runNLQ();
+    });
+    document.getElementById('am-nlq-clear')?.addEventListener('click', clearNLQ);
+
+    // Timeline scrubbing — click or drag the canvas to set the time cursor.
+    const canvas = document.getElementById('am-tl-canvas');
+    if (canvas) {
+      canvas.addEventListener('mousedown', e => {
+        state.scrubDragging = true;
+        scrubAt(e);
+      });
+      canvas.addEventListener('mousemove', e => {
+        if (state.scrubDragging) scrubAt(e);
+      });
+      window.addEventListener('mouseup', () => { state.scrubDragging = false; });
+      canvas.addEventListener('mouseleave', () => { state.scrubDragging = false; });
+    }
+    document.getElementById('am-tl-mode')?.addEventListener('click', () => {
+      if (state.scrubTime != null) setScrubTime(null);
     });
   }
 
@@ -7427,10 +7547,13 @@ function togglePinMap() {
     if (typeof globeMap === 'undefined' || !globeMap) return;
     state.markers.forEach(m => m.remove());
     state.markers = [];
+    const cutoff = state.scrubTime;
     state.events.forEach(ev => {
       if (ev.lat == null || ev.lon == null) return;
       const el = document.createElement('div');
       el.className = 'am-pin sev-' + (ev.severity || 1);
+      // In replay mode, dim events that happened AFTER the cursor.
+      if (cutoff != null && ev.occurred_at > cutoff) el.classList.add('dim');
       el.title = ev.type + ' · ' + ev.summary;
       el.addEventListener('click', e => {
         e.stopPropagation();
@@ -7443,6 +7566,105 @@ function togglePinMap() {
         state.markers.push(m);
       } catch (err) { /* map not ready */ }
     });
+  }
+
+  // ── NLQ ─────────────────────────────────────────────────────────────
+  async function runNLQ() {
+    const q = (document.getElementById('am-nlq-input').value || '').trim();
+    if (!q) return;
+    try {
+      const r = await fetch('/api/analyst/query', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ q }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showNLQInterp('Error: ' + (err.error || r.status));
+        return;
+      }
+      const d = await r.json();
+      state.nlq = { q, interpretation: d.interpretation };
+      // Apply the translated filters into local state, then refresh.
+      const f = d.filters || {};
+      if (Array.isArray(f.types) && f.types.length) {
+        state.filters.types = new Set(f.types);
+      }
+      state.filters.actor = f.actor_id || null;
+      if (f.since_offset_sec) {
+        state.filters.window = f.since_offset_sec;
+        state.filters.since = nowSec() - f.since_offset_sec;
+        const matching = document.querySelector(`.am-tl-range-btn[data-range="${f.since_offset_sec}"]`);
+        if (matching) {
+          document.querySelectorAll('.am-tl-range-btn').forEach(x => x.classList.remove('active'));
+          matching.classList.add('active');
+        }
+      }
+      renderTypeChips();
+      showNLQInterp(d.interpretation + ' · ' + d.count + ' result' + (d.count === 1 ? '' : 's'));
+      // The events returned by /query are already filtered server-side; render them directly.
+      state.events = d.events || [];
+      renderPins();
+      updateStats();
+      loadTimeline();
+    } catch (e) {
+      console.error('NLQ failed', e);
+      showNLQInterp('Error: ' + e.message);
+    }
+  }
+
+  function clearNLQ() {
+    state.nlq = null;
+    const inp = document.getElementById('am-nlq-input');
+    if (inp) inp.value = '';
+    document.getElementById('am-nlq-interp').classList.remove('visible');
+    // Reset to default filter shape — all types, no actor.
+    state.filters.types = new Set(TYPES);
+    state.filters.actor = null;
+    renderTypeChips();
+    loadEvents();
+  }
+
+  function showNLQInterp(text) {
+    const box = document.getElementById('am-nlq-interp');
+    document.getElementById('am-nlq-interp-text').textContent = text;
+    box.classList.add('visible');
+  }
+
+  // ── Timeline scrubbing → map-state replay ──────────────────────────
+  function setScrubTime(ts) {
+    state.scrubTime = ts;
+    drawTimeline();
+    renderPins();
+    updateMode();
+  }
+
+  function scrubAt(e) {
+    const c = document.getElementById('am-tl-canvas');
+    if (!c || !state.timeline) return;
+    const rect = c.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const frac = x / rect.width;
+    const buckets = state.timeline.buckets || [];
+    if (!buckets.length) return;
+    const span = state.filters.window;
+    const start = nowSec() - span;
+    const ts = start + frac * span;
+    setScrubTime(ts);
+  }
+
+  function updateMode() {
+    const badge = document.getElementById('am-tl-mode');
+    if (!badge) return;
+    if (state.scrubTime == null) {
+      badge.classList.add('live'); badge.classList.remove('replay');
+      badge.textContent = 'LIVE';
+      badge.title = '';
+    } else {
+      badge.classList.remove('live'); badge.classList.add('replay');
+      const d = new Date(state.scrubTime * 1000);
+      badge.textContent = 'REPLAY ' + d.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+      badge.title = 'Click to return to live';
+    }
   }
 
   // ── Timeline ────────────────────────────────────────────────────────
@@ -7523,6 +7745,20 @@ function togglePinMap() {
     ctx.fillText(midText, w/2 - 14, h - 1);
     const endText = fmt(buckets[buckets.length - 1]);
     ctx.fillText(endText, w - 36, h - 1);
+
+    // Position the playhead overlay if in replay mode.
+    const playhead = document.getElementById('am-tl-playhead');
+    if (playhead) {
+      if (state.scrubTime == null) {
+        playhead.classList.remove('visible');
+      } else {
+        const start = nowSec() - state.filters.window;
+        const span = state.filters.window;
+        const frac = Math.max(0, Math.min(1, (state.scrubTime - start) / span));
+        playhead.style.left = (frac * 100) + '%';
+        playhead.classList.add('visible');
+      }
+    }
   }
 
   // ── Dossier drawer ──────────────────────────────────────────────────

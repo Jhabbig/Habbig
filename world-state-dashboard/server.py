@@ -31,6 +31,7 @@ from infrastructure_data import (
 import cross_dashboard
 import analyst_db
 import event_extractor
+import nlq_translator
 
 analyst_db.init_db()
 
@@ -8917,6 +8918,50 @@ async def analyst_delete_pinboard(pin_id: int):
 async def analyst_stats():
     fetch_news()  # warm
     return _json(analyst_db.stats())
+
+
+@app.post("/api/analyst/query")
+async def analyst_nlq(request: Request):
+    """Natural-language query → structured filters → event list.
+
+    Body: {"q": "russian missile strikes on Ukraine, last 48h"}
+    Returns: {filters, interpretation, llm_enabled, events}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    q = (body.get("q") or "").strip()
+    if not q:
+        return JSONResponse({"error": "q is required"}, status_code=400)
+    if len(q) > 500:
+        return JSONResponse({"error": "q too long (max 500 chars)"}, status_code=400)
+
+    fetch_news()  # ensure DB has fresh events
+    try:
+        filters = nlq_translator.translate_query(q)
+    except Exception as e:
+        logging.warning("nlq translate failed: %s", e)
+        return JSONResponse({"error": "translation failed"}, status_code=500)
+
+    since = None
+    if filters.get("since_offset_sec"):
+        since = time.time() - float(filters["since_offset_sec"])
+    events = analyst_db.query_events(
+        since=since,
+        types=filters.get("types") or None,
+        actor_id=filters.get("actor_id") or None,
+        bbox=tuple(filters["bbox"]) if filters.get("bbox") else None,
+        limit=200,
+    )
+    return _json({
+        "q": q,
+        "filters": filters,
+        "interpretation": filters.get("interpretation"),
+        "llm_enabled": nlq_translator.is_enabled(),
+        "events": events,
+        "count": len(events),
+    })
 
 
 if __name__ == "__main__":
