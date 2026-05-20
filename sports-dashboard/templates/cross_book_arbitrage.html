@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-book Arbitrage · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 32px 0 12px; font-weight: 600; }
+  h2 .count { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 13px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .controls { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border);
+                  border-radius: 4px; padding: 6px 10px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; margin-bottom: 24px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  tr:hover { background: rgba(255, 255, 255, 0.02); }
+  .gap-pos { color: var(--green); font-weight: 600; }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  .leg { display: inline-block; padding: 3px 8px; margin: 2px;
+         background: #1c1e26; border-radius: 4px; font-size: 12px; }
+  .leg .book { color: var(--muted); margin-right: 6px; }
+  .leg .prob { color: var(--accent); font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 12px;
+          background: #1c1e26; color: var(--muted); font-size: 11px;
+          text-transform: uppercase; letter-spacing: 0.04em; }
+  .disclaimer { padding: 12px 16px; background: rgba(245, 158, 11, 0.08);
+                border: 1px solid rgba(245, 158, 11, 0.25);
+                border-radius: 6px; color: #fbbf24; font-size: 12px;
+                margin-bottom: 16px; }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cross-book Arbitrage</h1>
+  <p class="sub">
+    Low-hold and middling opportunities found across all configured
+    bookmakers (US + UK + EU regions). Pure book-vs-book — no
+    Polymarket / Kalshi involved.
+    <a href="/">← Back to dashboard</a>
+  </p>
+  <div class="disclaimer">
+    Sportsbooks limit or ban arbitrage bettors. These signals are
+    educational; manage your stake sizes and account exposure accordingly.
+  </div>
+  <div class="controls">
+    <label class="field">Sport
+      <select id="sport">
+        <option value="basketball_nba" selected>NBA</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="baseball_mlb">MLB</option>
+        <option value="soccer_epl">EPL</option>
+      </select>
+    </label>
+    <label class="field">Min profit (low-hold, %)
+      <input id="minProfit" type="number" min="0" max="20" step="0.1" value="0">
+    </label>
+    <label class="field">Min middle width (pts)
+      <input id="minWidth" type="number" min="0" max="30" step="0.5" value="0">
+    </label>
+  </div>
+
+  <h2>Low-hold (negative vig) <span class="count" id="lhCount"></span></h2>
+  <div id="lhContent"><div class="empty">Loading…</div></div>
+
+  <h2>Middles <span class="count" id="midCount"></span></h2>
+  <div id="midContent"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmt(n, d = 1) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPct(n, d = 2) { return n == null ? "—" : Number(n).toFixed(d) + "%"; }
+
+let allLowHolds = [];
+let allMiddles = [];
+
+function renderLowHolds(rows) {
+  const el = document.getElementById("lhContent");
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">No low-hold opportunities right now.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>Event</th><th>Market</th>' +
+    '<th class="num">Combined implied</th>' +
+    '<th class="num">Profit</th>' +
+    '<th>Legs (best price per outcome)</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const legsHtml = r.legs.map(l =>
+      '<span class="leg"><span class="book">' + esc(l.book_title || l.book) + '</span>' +
+      esc(l.outcome) +
+      (l.point != null ? ' (' + (l.point > 0 ? '+' : '') + l.point + ')' : '') +
+      ' <span class="prob">' + fmt(l.implied_prob, 1) + '%</span>' +
+      ' @ ' + fmt(l.decimal_odds, 2) +
+      '</span>'
+    ).join(' ');
+    html += '<tr>' +
+      '<td>' + esc(r.event) + '</td>' +
+      '<td><span class="pill">' + esc(r.market_type) + '</span></td>' +
+      '<td class="num">' + fmt(r.total_implied_pp, 2) + '%</td>' +
+      '<td class="num gap-pos">+' + fmt(r.profit_pct, 2) + '%</td>' +
+      '<td>' + legsHtml + '</td>' +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderMiddles(rows) {
+  const el = document.getElementById("midContent");
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty">No middle opportunities right now.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>Event</th><th>Market</th>' +
+    '<th class="num">Middle width</th>' +
+    '<th class="num">Cost (vig)</th>' +
+    '<th>OVER leg</th>' +
+    '<th>UNDER leg</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const overHtml = '<span class="leg"><span class="book">' +
+      esc(r.over_leg.title || r.over_leg.book) + '</span>' +
+      esc(r.over_leg.outcome) +
+      ' (' + r.over_leg.line + ')' +
+      ' <span class="prob">' + fmt(r.over_leg.implied_prob, 1) + '%</span></span>';
+    const underHtml = '<span class="leg"><span class="book">' +
+      esc(r.under_leg.title || r.under_leg.book) + '</span>' +
+      esc(r.under_leg.outcome) +
+      ' (' + r.under_leg.line + ')' +
+      ' <span class="prob">' + fmt(r.under_leg.implied_prob, 1) + '%</span></span>';
+    html += '<tr>' +
+      '<td>' + esc(r.event) + '</td>' +
+      '<td><span class="pill">' + esc(r.market_type) + '</span></td>' +
+      '<td class="num gap-pos">' + fmt(r.middle_width, 1) + ' pts</td>' +
+      '<td class="num">' + fmt(r.cost_pp, 2) + '%</td>' +
+      '<td>' + overHtml + '</td>' +
+      '<td>' + underHtml + '</td>' +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function applyFilters() {
+  const minProfit = parseFloat(document.getElementById("minProfit").value || "0");
+  const minWidth = parseFloat(document.getElementById("minWidth").value || "0");
+  const lh = allLowHolds.filter(r => (r.profit_pct || 0) >= minProfit);
+  const mid = allMiddles.filter(r => (r.middle_width || 0) >= minWidth);
+  document.getElementById("lhCount").textContent = lh.length + " of " + allLowHolds.length;
+  document.getElementById("midCount").textContent = mid.length + " of " + allMiddles.length;
+  renderLowHolds(lh);
+  renderMiddles(mid);
+}
+
+async function load() {
+  const sport = document.getElementById("sport").value;
+  document.getElementById("lhContent").innerHTML = '<div class="empty">Loading…</div>';
+  document.getElementById("midContent").innerHTML = '<div class="empty">Loading…</div>';
+  let r;
+  try {
+    r = await fetch("/api/cross-book-arbitrage?sport=" + encodeURIComponent(sport));
+  } catch {
+    document.getElementById("lhContent").innerHTML = '<div class="empty">Network error.</div>';
+    return;
+  }
+  if (!r.ok) {
+    const msg = r.status === 401 ? "Sign in required." : "Error " + r.status;
+    document.getElementById("lhContent").innerHTML = '<div class="empty">' + msg + '</div>';
+    document.getElementById("midContent").innerHTML = '<div class="empty">' + msg + '</div>';
+    return;
+  }
+  const d = await r.json();
+  if (d.error) {
+    document.getElementById("lhContent").innerHTML = '<div class="empty">' + esc(d.error) + '</div>';
+    document.getElementById("midContent").innerHTML = '<div class="empty">' + esc(d.error) + '</div>';
+    return;
+  }
+  allLowHolds = d.low_holds || [];
+  allMiddles = d.middles || [];
+  applyFilters();
+}
+
+document.getElementById("sport").addEventListener("change", load);
+["minProfit", "minWidth"].forEach(id =>
+  document.getElementById(id).addEventListener("change", applyFilters));
+load();
+</script>
+</body>
+</html>

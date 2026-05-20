@@ -421,6 +421,30 @@ def _init_db():
                 sports TEXT DEFAULT '[]',
                 last_alert_at TEXT DEFAULT ''
             );
+            -- Rich, per-rule alert configuration. The simple sports_alert_config
+            -- above stays as a fallback / quick-start config; users can add
+            -- multiple rules with structured filters on top of it.
+            CREATE TABLE IF NOT EXISTS sports_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                sports TEXT DEFAULT '[]',          -- JSON list of sport keys
+                market_types TEXT DEFAULT '[]',    -- JSON list: h2h/spreads/totals/futures/props
+                min_divergence_pp REAL DEFAULT 5.0,
+                min_volume REAL,                   -- Polymarket USD volume floor
+                max_time_to_event_hours REAL,      -- only fire when game is this close
+                require_sharp_consensus INTEGER DEFAULT 1,
+                require_not_stale INTEGER DEFAULT 1,
+                require_liquidity_ok INTEGER DEFAULT 1,
+                channel TEXT DEFAULT 'telegram',   -- telegram|webhook|both
+                quiet_hours_start INTEGER,         -- 0-23 UTC; null = no quiet hours
+                quiet_hours_end INTEGER,
+                cooldown_secs INTEGER DEFAULT 300,
+                last_fired_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_user ON sports_alert_rules(user_id, enabled);
             CREATE TABLE IF NOT EXISTS sports_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sport TEXT,
@@ -1394,6 +1418,206 @@ def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
             "market_type": market_type,
         })
     return events
+
+
+# ── Cross-book arbitrage scanners ───────────────────────────────────────────
+# Find +EV plays that exist *without* Polymarket — pure book-vs-book.
+#
+# Low-hold (low-vig) arb: when the best OVER price at one book and the
+# best UNDER price at a different book sum to < 100% implied probability,
+# betting both sides locks in a profit equal to the negative-hold margin.
+#
+# Middle: when book A has a spread/total at X.5 and book B has the same
+# market at (X+N).5 where N >= 1, betting OVER at the lower book and
+# UNDER at the higher book locks in a guaranteed win for the side that's
+# right + an additional payout if the final result lands inside (X, X+N).
+# These are rare but high-EV when they appear.
+
+CROSS_BOOK_MIN_GAP_PP = 0.5  # below this the "arb" is within bookmaker margin
+
+
+def _best_per_outcome(parsed_events: list[dict]) -> list[dict]:
+    """For each (event, market_type), return per-outcome best implied
+    probability and the book offering it. Used as input to both
+    low-hold and middle scanners.
+
+    Note: parsed_events here comes from parse_odds_events. Each event
+    has `bookmakers` keyed `<bookmaker>_<market_type>` (or bare for h2h)
+    with each book's outcomes inside.
+    """
+    out: list[dict] = []
+    for ev in parsed_events:
+        market_type = ev.get("market_type", "h2h")
+        # outcome_name -> {"best": {"book": str, "prob": float, "title": str}}
+        per_outcome: dict[str, dict] = {}
+        for bk_key, bk_data in (ev.get("bookmakers") or {}).items():
+            # Strip the market_type suffix that parse_odds_events appends
+            bk_name = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+            for oc_name, oc_data in (bk_data.get("outcomes") or {}).items():
+                prob = float(oc_data.get("implied_prob") or 0)
+                if prob <= 0:
+                    continue
+                rec = per_outcome.setdefault(oc_name, {"book": bk_name,
+                                                       "title": bk_data.get("title", bk_name),
+                                                       "prob": prob,
+                                                       "point": oc_data.get("point")})
+                # We want the LOWEST implied prob (= highest decimal odds = best price)
+                if prob < rec["prob"]:
+                    rec["book"] = bk_name
+                    rec["title"] = bk_data.get("title", bk_name)
+                    rec["prob"] = prob
+                    rec["point"] = oc_data.get("point")
+        out.append({
+            "event_id": ev.get("id", ""),
+            "home_team": ev.get("home_team", ""),
+            "away_team": ev.get("away_team", ""),
+            "commence_time": ev.get("commence_time", ""),
+            "market_type": market_type,
+            "best_per_outcome": per_outcome,
+        })
+    return out
+
+
+def find_low_hold_opportunities(parsed_events: list[dict]) -> list[dict]:
+    """Scan for low-hold (negative-vig) opportunities across books.
+
+    For each event+market_type, sum the best implied prob per outcome.
+    If the sum is < 100%, the gap is risk-free profit (subject to limits,
+    bonus restrictions, and exchanges' withdrawal rules — disclaimer is
+    in the UI).
+    """
+    rows: list[dict] = []
+    for entry in _best_per_outcome(parsed_events):
+        per_oc = entry["best_per_outcome"]
+        if len(per_oc) < 2:
+            continue
+        total_implied = sum(oc["prob"] for oc in per_oc.values())
+        gap_pp = round(100.0 - total_implied, 3)
+        if gap_pp < CROSS_BOOK_MIN_GAP_PP:
+            continue
+        legs = [
+            {"outcome": name, "book": rec["book"], "book_title": rec["title"],
+             "implied_prob": round(rec["prob"], 2),
+             "decimal_odds": round(100.0 / rec["prob"], 3) if rec["prob"] > 0 else None,
+             "point": rec["point"]}
+            for name, rec in per_oc.items()
+        ]
+        rows.append({
+            "event": f"{entry['home_team']} vs {entry['away_team']}",
+            "home_team": entry["home_team"],
+            "away_team": entry["away_team"],
+            "commence_time": entry["commence_time"],
+            "market_type": entry["market_type"],
+            "total_implied_pp": round(total_implied, 2),
+            "gap_pp": gap_pp,
+            # Profit % on a $100 stake split proportionally between legs
+            "profit_pct": round((100.0 / total_implied - 1.0) * 100, 3) if total_implied > 0 else 0.0,
+            "legs": legs,
+        })
+    rows.sort(key=lambda r: -r["gap_pp"])
+    return rows
+
+
+def find_middle_opportunities(parsed_events: list[dict]) -> list[dict]:
+    """Scan for middling opportunities on spreads and totals.
+
+    A middle exists when one book offers OVER at a line and another book
+    offers UNDER at a higher line. If the final result lands strictly
+    between the two lines, both legs win; otherwise the side that's right
+    pays out and the other is a loss (you lose the vig on the wrong leg).
+
+    Worth the bet when the implied probability of landing in the middle
+    exceeds the cost of vig on the wrong leg.
+    """
+    rows: list[dict] = []
+    for ev in parsed_events:
+        market_type = ev.get("market_type", "")
+        if market_type not in ("spreads", "totals"):
+            continue
+        # Collect every (book, side, line, implied_prob) quote.
+        # For spreads, labels look like "Lakers +3.5" / "Warriors -3.5"
+        # For totals, labels look like "Over 220.5" / "Under 220.5"
+        over_quotes: list[dict] = []   # higher score = win
+        under_quotes: list[dict] = []  # lower score = win
+        for bk_key, bk_data in (ev.get("bookmakers") or {}).items():
+            bk_name = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+            bk_title = bk_data.get("title", bk_name)
+            for oc_name, oc_data in (bk_data.get("outcomes") or {}).items():
+                point = oc_data.get("point")
+                prob = float(oc_data.get("implied_prob") or 0)
+                if prob <= 0 or point is None:
+                    continue
+                label = oc_name.lower()
+                if market_type == "totals":
+                    if label.startswith("over"):
+                        over_quotes.append({"book": bk_name, "title": bk_title,
+                                             "outcome": oc_name, "line": float(point),
+                                             "implied_prob": prob})
+                    elif label.startswith("under"):
+                        under_quotes.append({"book": bk_name, "title": bk_title,
+                                              "outcome": oc_name, "line": float(point),
+                                              "implied_prob": prob})
+                else:
+                    # spreads: positive point = underdog (wins if score margin > -point),
+                    # negative point = favorite (wins if margin > -point). For middling
+                    # we look at the underdog side (positive point) as "over" the line,
+                    # favorite (negative point) as "under". Equivalently, pair by team:
+                    # bet team A +X at book X, bet team A -Y at book Y — middle hits if
+                    # team A wins by between Y and X.
+                    if point > 0:
+                        over_quotes.append({"book": bk_name, "title": bk_title,
+                                             "outcome": oc_name, "line": float(point),
+                                             "implied_prob": prob, "team": oc_name})
+                    else:
+                        under_quotes.append({"book": bk_name, "title": bk_title,
+                                              "outcome": oc_name, "line": float(point),
+                                              "implied_prob": prob, "team": oc_name})
+
+        # Find pairs where OVER line < UNDER line (totals)
+        # or for spreads where (team_underdog +X) and (team_favorite -Y) have X > Y
+        # Skip same-book pairs (need cross-book to be useful)
+        for over in over_quotes:
+            for under in under_quotes:
+                if over["book"] == under["book"]:
+                    continue
+                if market_type == "totals":
+                    if over["line"] >= under["line"]:
+                        continue
+                    middle_width = round(under["line"] - over["line"], 1)
+                else:  # spreads
+                    # We want underdog +X and favorite -Y where the team names
+                    # don't match (i.e. opposite sides of the same game).
+                    if over.get("team") == under.get("team"):
+                        continue
+                    # For spreads, "over.line" is positive (underdog spread),
+                    # "under.line" is negative (favorite spread). Middle width
+                    # = over.line - abs(under.line). A real middle requires
+                    # over.line > abs(under.line).
+                    fav_line = abs(under["line"])
+                    if over["line"] <= fav_line:
+                        continue
+                    middle_width = round(over["line"] - fav_line, 1)
+
+                # Cost: sum of vig on both legs (rough estimate — accurate
+                # arithmetic depends on stake sizing). If both legs are at
+                # implied prob ~50%, vig ≈ (over.prob + under.prob - 100)
+                total_implied = over["implied_prob"] + under["implied_prob"]
+                cost_pp = round(total_implied - 100.0, 2)
+                rows.append({
+                    "event": f"{ev.get('home_team', '')} vs {ev.get('away_team', '')}",
+                    "home_team": ev.get("home_team", ""),
+                    "away_team": ev.get("away_team", ""),
+                    "commence_time": ev.get("commence_time", ""),
+                    "market_type": market_type,
+                    "middle_width": middle_width,
+                    "cost_pp": cost_pp,
+                    "over_leg": {**over, "implied_prob": round(over["implied_prob"], 2)},
+                    "under_leg": {**under, "implied_prob": round(under["implied_prob"], 2)},
+                })
+
+    # Sort by widest middle first (more room = higher chance of hitting)
+    rows.sort(key=lambda r: (-r["middle_width"], r["cost_pp"]))
+    return rows
 
 
 def parse_outright_events(raw: list[dict]) -> list[dict]:
@@ -4959,6 +5183,216 @@ def _send_watchlist_alerts(sport: str, comparisons: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Rule-based alerts — structured per-user alert rules
+# ---------------------------------------------------------------------------
+#
+# Each user can create multiple alert rules. A rule is a set of structured
+# filters (sports, market types, min divergence, min volume, time-to-event,
+# quality gates) plus a channel and a cooldown. When the poll loop produces
+# new signals, _eval_alert_rules walks each enabled rule and fires alerts
+# for any signal that passes the filters, respecting cooldown + quiet hours.
+
+
+def _rule_quiet_hours_active(rule: dict, now: datetime) -> bool:
+    """Return True iff the rule's quiet hours window contains `now` (UTC)."""
+    start = rule.get("quiet_hours_start")
+    end = rule.get("quiet_hours_end")
+    if start is None or end is None:
+        return False
+    try:
+        start_h = int(start)
+        end_h = int(end)
+    except (TypeError, ValueError):
+        return False
+    h = now.hour
+    if start_h <= end_h:
+        return start_h <= h < end_h
+    # Wraps midnight, e.g. quiet 22:00 -> 07:00
+    return h >= start_h or h < end_h
+
+
+def _signal_matches_rule(signal: dict, sport: str, rule: dict) -> bool:
+    """Check whether a comparison-shaped signal satisfies the rule filters.
+
+    Filters are conjunctive: every set field must match. JSON-encoded list
+    fields (sports, market_types) of [] mean "any".
+    """
+    # sports allowlist
+    try:
+        sports = json.loads(rule.get("sports") or "[]")
+    except (TypeError, ValueError):
+        sports = []
+    if sports and sport not in sports:
+        return False
+
+    # market_types allowlist — the comparison may carry per-outcome market_type
+    # or a comparison-level "market_type". For h2h+spreads+totals we set the
+    # comparison's market_type in the data_updater; futures and esports tag
+    # is_futures/is_esport. Map both ways.
+    try:
+        market_types = json.loads(rule.get("market_types") or "[]")
+    except (TypeError, ValueError):
+        market_types = []
+    if market_types:
+        signal_mtype = signal.get("market_type", "h2h")
+        if signal_mtype not in market_types:
+            return False
+
+    # Divergence floor
+    min_div = float(rule.get("min_divergence_pp") or 0.0)
+    if float(signal.get("max_divergence") or 0.0) < min_div:
+        return False
+
+    # Volume floor
+    min_vol = rule.get("min_volume")
+    if min_vol is not None:
+        try:
+            if float(signal.get("poly_volume") or 0.0) < float(min_vol):
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    # Time-to-event window
+    max_hours = rule.get("max_time_to_event_hours")
+    if max_hours is not None:
+        tth = signal.get("time_to_event_hours")
+        # Skip rule when we have no commence_time to compare against
+        if tth is None:
+            return False
+        try:
+            if float(tth) > float(max_hours):
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    # Quality gates — applied per-outcome since the comparison may have
+    # multiple outcomes with different gate states. Require at least one
+    # outcome that passes the required gates AND fires the signal.
+    outcomes = signal.get("outcomes") or []
+    if not outcomes:
+        return False
+    require_sharp = bool(rule.get("require_sharp_consensus", 1))
+    require_stale = bool(rule.get("require_not_stale", 1))
+    require_liq = bool(rule.get("require_liquidity_ok", 1))
+    for oc in outcomes:
+        if not oc.get("is_signal"):
+            continue
+        if require_sharp and not oc.get("sharp_consensus_ok", True):
+            continue
+        if require_stale and not oc.get("not_stale", True):
+            continue
+        if require_liq and not oc.get("liquidity_ok", True):
+            continue
+        return True
+    return False
+
+
+def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
+    """Dispatch one alert via the rule's configured channel(s)."""
+    user_id = rule.get("user_id")
+    if not user_id:
+        return
+    # Look up the user's stored credentials in sports_alert_config — we
+    # reuse the existing single-row config for Telegram/webhook secrets
+    # rather than duplicating them per rule.
+    with _get_db() as conn:
+        cfg = conn.execute(
+            "SELECT telegram_chat_id, telegram_bot_token, webhook_url "
+            "FROM sports_alert_config WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not cfg:
+        return
+    cfg = dict(cfg)
+    channel = (rule.get("channel") or "telegram").lower()
+
+    if channel in ("telegram", "both"):
+        tg_token = _decrypt_field(cfg.get("telegram_bot_token", "") or "")
+        tg_chat = cfg.get("telegram_chat_id", "") or ""
+        if tg_token and tg_chat and re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id": tg_chat, "text": msg},
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="telegram_rule", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="telegram_rule", result="error").inc()
+                log.warning("Rule alert (telegram) error: %s", e)
+
+    if channel in ("webhook", "both"):
+        webhook_url = cfg.get("webhook_url", "") or ""
+        if webhook_url and _is_safe_webhook_url(webhook_url):
+            try:
+                requests.post(
+                    webhook_url,
+                    json={"text": msg, "kind": "rule", "rule_id": rule.get("id"),
+                          **payload},
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="webhook_rule", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="webhook_rule", result="error").inc()
+                log.warning("Rule alert (webhook) error: %s", e)
+
+
+def _eval_alert_rules(sport: str, signals: list[dict]) -> None:
+    """For each enabled rule, find matching signals and fire alerts."""
+    if not signals:
+        return
+    with _get_db() as conn:
+        rules = conn.execute(
+            "SELECT * FROM sports_alert_rules WHERE enabled = 1"
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    for r in rules:
+        rule = dict(r)
+        # Quiet hours skip
+        if _rule_quiet_hours_active(rule, now):
+            continue
+        # Cooldown
+        cooldown = int(rule.get("cooldown_secs") or 300)
+        last = rule.get("last_fired_at") or ""
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if (now - last_dt).total_seconds() < cooldown:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        matching = [s for s in signals if _signal_matches_rule(s, sport, rule)]
+        if not matching:
+            continue
+
+        # Build a compact message — top 5 matches
+        sport_label = SPORTS.get(sport, sport)
+        lines = [f"[{rule.get('name') or 'rule #' + str(rule['id'])}] "
+                 f"{len(matching)} signal(s) in {sport_label}"]
+        for s in matching[:5]:
+            best = max(s.get("outcomes") or [{}],
+                       key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+            lines.append(
+                f"  {s.get('home_team','')} vs {s.get('away_team','')}: "
+                f"{best.get('outcome_name','')} {best.get('divergence_pct', 0):+.1f}pp"
+            )
+        if len(matching) > 5:
+            lines.append(f"  ...and {len(matching) - 5} more")
+        msg = "\n".join(lines)
+        _send_alert_to_channel(rule, msg, {"signals": matching[:5], "sport": sport})
+
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_alert_rules SET last_fired_at = ? WHERE id = ?",
+                (now.isoformat(), rule["id"]),
+            )
+
+
+# ---------------------------------------------------------------------------
 # Polymarket WebSocket subscriber — live price feed
 # ---------------------------------------------------------------------------
 #
@@ -5710,6 +6144,13 @@ async def data_updater():
             except Exception as wl_err:
                 M_POLL_ERRORS.labels(stage="send_watchlist_alerts").inc()
                 print(f"Watchlist alert error: {wl_err}", flush=True)
+
+            # Rule-based alerts: structured per-user rules over the signal feed.
+            try:
+                await asyncio.to_thread(_eval_alert_rules, sport, signals)
+            except Exception as rule_err:
+                M_POLL_ERRORS.labels(stage="alert_rules").inc()
+                print(f"Alert rule error: {rule_err}", flush=True)
 
             # Build complete update in a local dict, then swap atomically
             update = {
@@ -6495,6 +6936,193 @@ async def update_watchlist_threshold(item_id: int, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Rule-based alerts CRUD
+# ---------------------------------------------------------------------------
+
+_ALLOWED_MARKET_TYPES = {"h2h", "spreads", "totals", "futures", "props"}
+_ALLOWED_CHANNELS = {"telegram", "webhook", "both"}
+
+
+def _validate_rule_body(body: dict) -> tuple[dict | None, str | None]:
+    """Coerce + validate a rule POST/PATCH body. Returns (clean_dict, error_msg).
+    Only fields that are present in `body` are returned so PATCH can do
+    partial updates."""
+    out: dict = {}
+    if "name" in body:
+        out["name"] = str(body.get("name") or "")[:80]
+    if "enabled" in body:
+        out["enabled"] = 1 if body.get("enabled") else 0
+    if "sports" in body:
+        sports = body.get("sports") or []
+        if not isinstance(sports, list) or not all(isinstance(s, str) for s in sports):
+            return None, "sports must be a list of strings"
+        out["sports"] = json.dumps(sports)
+    if "market_types" in body:
+        mts = body.get("market_types") or []
+        if not isinstance(mts, list):
+            return None, "market_types must be a list"
+        if not all(m in _ALLOWED_MARKET_TYPES for m in mts):
+            return None, f"market_types must be a subset of {sorted(_ALLOWED_MARKET_TYPES)}"
+        out["market_types"] = json.dumps(mts)
+    if "min_divergence_pp" in body:
+        try:
+            v = float(body["min_divergence_pp"])
+            if not (0 <= v <= 100):
+                return None, "min_divergence_pp out of range"
+            out["min_divergence_pp"] = v
+        except (TypeError, ValueError):
+            return None, "min_divergence_pp must be a number"
+    if "min_volume" in body:
+        raw = body["min_volume"]
+        if raw is None or raw == "":
+            out["min_volume"] = None
+        else:
+            try:
+                out["min_volume"] = max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return None, "min_volume must be a number"
+    if "max_time_to_event_hours" in body:
+        raw = body["max_time_to_event_hours"]
+        if raw is None or raw == "":
+            out["max_time_to_event_hours"] = None
+        else:
+            try:
+                out["max_time_to_event_hours"] = max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return None, "max_time_to_event_hours must be a number"
+    for flag in ("require_sharp_consensus", "require_not_stale", "require_liquidity_ok"):
+        if flag in body:
+            out[flag] = 1 if body.get(flag) else 0
+    if "channel" in body:
+        ch = (body.get("channel") or "telegram").lower()
+        if ch not in _ALLOWED_CHANNELS:
+            return None, f"channel must be one of {sorted(_ALLOWED_CHANNELS)}"
+        out["channel"] = ch
+    for hr_field in ("quiet_hours_start", "quiet_hours_end"):
+        if hr_field in body:
+            raw = body[hr_field]
+            if raw is None or raw == "":
+                out[hr_field] = None
+            else:
+                try:
+                    h = int(raw)
+                    if not (0 <= h <= 23):
+                        return None, f"{hr_field} must be 0-23"
+                    out[hr_field] = h
+                except (TypeError, ValueError):
+                    return None, f"{hr_field} must be an integer 0-23"
+    if "cooldown_secs" in body:
+        try:
+            v = int(body["cooldown_secs"])
+            if not (10 <= v <= 86400):
+                return None, "cooldown_secs must be 10..86400"
+            out["cooldown_secs"] = v
+        except (TypeError, ValueError):
+            return None, "cooldown_secs must be an integer"
+    return out, None
+
+
+@app.get("/api/alert-rules")
+async def list_alert_rules(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_alert_rules WHERE user_id = ? ORDER BY id ASC",
+            (user["id"],),
+        ).fetchall()
+    rules = []
+    for r in rows:
+        d = dict(r)
+        # Parse JSON fields back so the client doesn't have to
+        try:
+            d["sports"] = json.loads(d.get("sports") or "[]")
+        except (TypeError, ValueError):
+            d["sports"] = []
+        try:
+            d["market_types"] = json.loads(d.get("market_types") or "[]")
+        except (TypeError, ValueError):
+            d["market_types"] = []
+        rules.append(d)
+    return JSONResponse({"rules": rules})
+
+
+@app.post("/api/alert-rules")
+async def create_alert_rule(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields, err = _validate_rule_body(body)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    fields.setdefault("name", "")
+    fields.setdefault("enabled", 1)
+    fields.setdefault("sports", "[]")
+    fields.setdefault("market_types", "[]")
+    fields.setdefault("min_divergence_pp", 5.0)
+    fields.setdefault("require_sharp_consensus", 1)
+    fields.setdefault("require_not_stale", 1)
+    fields.setdefault("require_liquidity_ok", 1)
+    fields.setdefault("channel", "telegram")
+    fields.setdefault("cooldown_secs", 300)
+    cols = ["user_id"] + list(fields.keys())
+    placeholders = ",".join("?" for _ in cols)
+    values = [user["id"]] + list(fields.values())
+    with _get_db() as conn:
+        cur = conn.execute(
+            f"INSERT INTO sports_alert_rules ({','.join(cols)}) VALUES ({placeholders})",
+            values,
+        )
+        rule_id = cur.lastrowid
+    return JSONResponse({"status": "ok", "id": rule_id})
+
+
+@app.patch("/api/alert-rules/{rule_id}")
+async def update_alert_rule(rule_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields, err = _validate_rule_body(body)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    if not fields:
+        return JSONResponse({"error": "no fields to update"}, status_code=400)
+    set_clause = ",".join(f"{k} = ?" for k in fields.keys())
+    with _get_db() as conn:
+        cur = conn.execute(
+            f"UPDATE sports_alert_rules SET {set_clause} WHERE id = ? AND user_id = ?",
+            list(fields.values()) + [rule_id, user["id"]],
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+@app.delete("/api/alert-rules/{rule_id}")
+async def delete_alert_rule(rule_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_alert_rules WHERE id = ? AND user_id = ?",
+            (rule_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
 # Layout customization endpoints
 # ---------------------------------------------------------------------------
 
@@ -7042,6 +7670,53 @@ def _build_cross_venue_player_props(sport: str) -> dict:
         # user has no Odds API key (props will be Kalshi-side only).
         "kalshi_only_props": _format_player_props(kalshi_parsed),
     }
+
+
+def _build_cross_book_arbitrage(sport: str) -> dict:
+    """Pull current h2h + spreads + totals odds for the sport, run both
+    arb scanners, return everything in one payload."""
+    if not ODDS_API_KEY:
+        return {"sport": sport, "low_holds": [], "middles": [],
+                "error": "ODDS_API_KEY not configured"}
+
+    h2h_raw, _ = fetch_odds(sport, markets="h2h")
+    spreads_raw, _ = fetch_odds(sport, markets="spreads")
+    totals_raw, _ = fetch_odds(sport, markets="totals")
+
+    h2h_events = parse_odds_events(h2h_raw, "h2h")
+    spreads_events = parse_odds_events(spreads_raw, "spreads")
+    totals_events = parse_odds_events(totals_raw, "totals")
+    all_events = h2h_events + spreads_events + totals_events
+
+    return {
+        "sport": sport,
+        "low_holds": find_low_hold_opportunities(all_events),
+        "middles": find_middle_opportunities(all_events),
+        "n_events": len(h2h_events),
+    }
+
+
+@app.get("/api/cross-book-arbitrage")
+async def api_cross_book_arbitrage(request: Request):
+    """Pure book-vs-book +EV: low-hold (negative vig) + middling opportunities.
+
+    No Polymarket / Kalshi involved — this is the table-stakes feature
+    that OddsJam-class tools have and ours didn't.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    return JSONResponse(await asyncio.to_thread(_build_cross_book_arbitrage, sport))
+
+
+@app.get("/cross-book-arbitrage", response_class=HTMLResponse)
+async def cross_book_arbitrage_page(request: Request):
+    """Cross-book arb table (low-hold + middles)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("cross_book_arbitrage"))
 
 
 @app.get("/api/player-props/cross-venue")
