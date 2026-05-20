@@ -56,16 +56,37 @@
   .legend .expected::before { background: var(--muted); }
   a, a:visited { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .cta {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    margin: 0 0 24px;
+  }
+  .cta-btn {
+    background: var(--accent); color: #fff !important;
+    padding: 10px 18px; border-radius: 6px; font-weight: 600;
+    text-decoration: none !important;
+  }
+  .cta-btn:hover { background: #2563eb; }
+  .cta-link { color: var(--muted) !important; font-size: 13px; }
+  .footer-cta {
+    margin-top: 32px; padding: 24px; text-align: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .footer-cta h3 { margin: 0 0 8px; font-size: 18px; }
+  .footer-cta p { margin: 0 0 16px; color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Track Record</h1>
   <p class="sub">
-    Closing line value, simulated P&amp;L, and calibration of every flagged
-    signal. Updated each scan; based on resolved and snapshot data only.
-    <a href="/">← Back to dashboard</a>
+    Every flagged signal, every closing line, every resolved bet — the math
+    we'd otherwise hide behind a paywall. Updated each scan; aggregates only,
+    no per-signal detail until you sign in.
   </p>
+  <div class="cta">
+    <a class="cta-btn" href="/signup">Get live alerts →</a>
+    <a class="cta-link" href="/">Already a user? Sign in</a>
+  </div>
 
   <div class="controls">
     <label>Sport
@@ -131,6 +152,12 @@
         <tbody></tbody>
       </table>
     </div>
+  </div>
+
+  <div class="footer-cta">
+    <h3>See the live signals behind this track record.</h3>
+    <p>Sign up free — get the next +EV signal sent to Telegram, webhook, or browser push.</p>
+    <a class="cta-btn" href="/signup">Get live alerts →</a>
   </div>
 </div>
 

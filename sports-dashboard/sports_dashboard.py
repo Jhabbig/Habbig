@@ -143,6 +143,22 @@ M_MATCH_REJECTS = _PromCounter(
     "Near-reject matches by reason",
     labelnames=("reason",),
 )
+M_POLL_INTERVAL = _PromGauge(
+    "sports_dashboard_poll_interval_seconds",
+    "Computed sleep interval for the next poll-loop iteration",
+)
+M_WS_LIVE_PRICES = _PromGauge(
+    "sports_dashboard_ws_live_prices",
+    "Number of Polymarket assets currently receiving live WS price updates",
+)
+M_WS_PRICE_EVENTS = _PromCounter(
+    "sports_dashboard_ws_price_events_total",
+    "Polymarket WS price events processed",
+)
+M_WS_RECONNECTS = _PromCounter(
+    "sports_dashboard_ws_reconnects_total",
+    "Polymarket WS reconnect attempts",
+)
 
 
 load_dotenv()
@@ -926,6 +942,74 @@ def odds_quota_remaining() -> int | None:
     return _ODDS_QUOTA.get("remaining")
 
 
+# ── Adaptive poll-interval policy ───────────────────────────────────────────
+# Map (nearest game in N hours, quota remaining) -> sleep seconds. The
+# closer kickoff is, the harder we poll. The lower the quota, the longer
+# we sleep. Constants are tuned for the free Odds API tier (500 req/mo).
+
+POLL_INTERVAL_PRE_GAME = 15      # <=30 min to kickoff anywhere on the active sport
+POLL_INTERVAL_SOON = 60          # <=4 h to kickoff
+POLL_INTERVAL_TODAY = 300        # <=24 h to kickoff
+POLL_INTERVAL_IDLE = 1800        # nothing in the next day
+
+
+def _hours_until_nearest_kickoff(comparisons: list[dict]) -> float | None:
+    """Return hours-until-soonest commence_time across the comparison set,
+    or None if no comparison has a parseable commence_time.
+
+    Negative values (game already started) are clamped to 0 so we keep
+    polling fast through live windows.
+    """
+    if not comparisons:
+        return None
+    now = datetime.now(timezone.utc)
+    best: float | None = None
+    for c in comparisons:
+        ts = c.get("commence_time") or ""
+        dt = _parse_iso_utc(ts)
+        if dt is None:
+            continue
+        hours = (dt - now).total_seconds() / 3600.0
+        hours = max(0.0, hours)
+        if best is None or hours < best:
+            best = hours
+    return best
+
+
+def _compute_poll_interval(comparisons: list[dict], remaining: int | None) -> int:
+    """Decide how long to sleep before the next poll.
+
+    Combines pre-game proximity with quota-aware throttling. The schedule
+    multiplier shrinks the interval (poll faster) when a game is close;
+    the quota multiplier expands it (poll slower) when the API budget is
+    low. Final interval is the *max* of the two so we never poll faster
+    than the quota allows.
+    """
+    hours = _hours_until_nearest_kickoff(comparisons)
+    if hours is None:
+        schedule = POLL_INTERVAL_IDLE
+    elif hours <= 0.5:
+        schedule = POLL_INTERVAL_PRE_GAME
+    elif hours <= 4:
+        schedule = POLL_INTERVAL_SOON
+    elif hours <= 24:
+        schedule = POLL_INTERVAL_TODAY
+    else:
+        schedule = POLL_INTERVAL_IDLE
+
+    # Quota floor — when remaining is low, ignore the schedule entirely.
+    floor = 0
+    if remaining is not None:
+        if remaining <= 25:
+            floor = 1800
+        elif remaining <= 100:
+            floor = 900
+        elif remaining <= 300:
+            floor = 600
+
+    return max(schedule, floor)
+
+
 def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[list[dict], str | None]:
     """Fetch match odds from The Odds API. Returns (events, requests_remaining)."""
     if not ODDS_API_KEY:
@@ -1633,6 +1717,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             # Find matching Polymarket outcome
             poly_prob = None
             poly_outcome_key = None
+            poly_token_id = None
             norm_outcome = normalize_name(outcome_name)
 
             for pk, pv in best_match["outcomes"].items():
@@ -1641,6 +1726,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 if score > 75 or (len(norm_outcome) > 3 and norm_outcome in norm_pk) or (len(norm_pk) > 3 and norm_pk in norm_outcome):
                     poly_prob = pv["implied_prob"]
                     poly_outcome_key = pk
+                    poly_token_id = pv.get("token_id") or None
                     break
 
             # Binary Yes/No: check if outcome name is in the question
@@ -1649,6 +1735,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 if yes_data and outcome_name.lower() in best_match["market_question"].lower():
                     poly_prob = yes_data["implied_prob"]
                     poly_outcome_key = "Yes"
+                    poly_token_id = yes_data.get("token_id") or None
 
             if poly_prob is None:
                 continue
@@ -1704,6 +1791,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 "outcome": outcome_name,
                 "outcome_name": outcome_name,  # alias for frontend
                 "poly_outcome": poly_outcome_key,
+                "poly_token_id": poly_token_id,
                 "sharp_prob": odds_prob,
                 "consensus_prob": consensus_prob,
                 "poly_prob": poly_prob,
@@ -4351,6 +4439,258 @@ def _send_watchlist_alerts(sport: str, comparisons: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Polymarket WebSocket subscriber — live price feed
+# ---------------------------------------------------------------------------
+#
+# Polymarket exposes a public WebSocket at
+#   wss://ws-subscriptions-clob.polymarket.com/ws/market
+# Send {"type": "MARKET", "assets_ids": [...]} to subscribe; the server pushes
+# price_change / tick_size_change / last_trade_price events for those assets.
+#
+# We use this to:
+#   1. Drop dashboard time-to-signal from one poll interval (~30s to 5 min)
+#      down to ~1-2s — whenever a subscribed asset's price moves, the
+#      in-memory comparison list is updated immediately.
+#   2. Push real-time deltas to every connected dashboard WS client so the
+#      browser updates without a refetch.
+#
+# Subscription set = union of poly_token_id across the current comparison
+# set, capped at PM_WS_MAX_SUBSCRIPTIONS to keep the feed manageable. When
+# the set changes, we close the connection — the loop reconnects and
+# resubscribes.
+
+PM_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+PM_WS_MAX_SUBSCRIPTIONS = 200
+PM_WS_PRICE_FRESH_SECONDS = 90  # ignore live prices older than this
+
+_LIVE_POLY_PRICES: dict[str, dict] = {}  # asset_id -> {"price": float, "ts": float}
+_PM_WS_DESIRED_TOKENS: set[str] = set()
+_pm_ws_reconnect_event: asyncio.Event | None = None  # set on startup
+
+
+def _collect_poly_token_ids(comparisons: list[dict]) -> set[str]:
+    """Pull the union of poly_token_id values out of a comparison list."""
+    out: set[str] = set()
+    for c in comparisons or []:
+        for oc in c.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if tid:
+                out.add(tid)
+    return out
+
+
+def _update_pm_ws_subscriptions(comparisons: list[dict]) -> None:
+    """Recompute the desired subscription set after a poll and trigger
+    reconnect if it changed. Caps to PM_WS_MAX_SUBSCRIPTIONS by frequency
+    of appearance (every subscribed token represents one poll-matched
+    market — they're all roughly equal-priority)."""
+    global _PM_WS_DESIRED_TOKENS
+    tokens = _collect_poly_token_ids(comparisons)
+    if len(tokens) > PM_WS_MAX_SUBSCRIPTIONS:
+        tokens = set(list(tokens)[:PM_WS_MAX_SUBSCRIPTIONS])
+    if tokens != _PM_WS_DESIRED_TOKENS:
+        _PM_WS_DESIRED_TOKENS = tokens
+        if _pm_ws_reconnect_event is not None:
+            _pm_ws_reconnect_event.set()
+
+
+def _apply_live_prices_to_comparisons(comparisons: list[dict]) -> int:
+    """For each outcome with a fresh live price, override poly_prob and
+    recompute the dependent fields. Returns the count of outcomes updated.
+
+    Called by /api/data so each request returns the freshest possible
+    snapshot, and by the WS handler so dashboard_data also stays current.
+    """
+    now = time.time()
+    updated = 0
+    for comp in comparisons or []:
+        comp_signal_changed = False
+        for oc in comp.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if not tid:
+                continue
+            live = _LIVE_POLY_PRICES.get(tid)
+            if not live:
+                continue
+            if (now - live["ts"]) > PM_WS_PRICE_FRESH_SECONDS:
+                continue
+            new_poly_prob = round(float(live["price"]) * 100.0, 2)
+            if new_poly_prob == oc.get("poly_prob"):
+                continue
+            # Update poly side
+            sharp_prob = oc.get("sharp_prob") or 0
+            # Use de-vigged divergence if we have it; fall back to raw
+            # subtraction otherwise. The original signal_quality call ran
+            # against the full event consensus, which we no longer have
+            # here — we keep the de-vig ratio from the original divergence
+            # vs raw divergence and apply the same ratio to the live one.
+            old_poly = oc.get("poly_prob") or 0
+            old_raw = oc.get("divergence_raw")
+            old_dev = oc.get("divergence")
+            if old_raw and old_dev and old_raw != 0:
+                ratio = old_dev / old_raw  # how much vig got stripped originally
+            else:
+                ratio = 1.0
+            new_raw = round(sharp_prob - new_poly_prob, 2)
+            new_dev = round(new_raw * ratio, 2)
+            oc["poly_prob"] = new_poly_prob
+            oc["poly_price"] = new_poly_prob / 100.0
+            oc["divergence_raw"] = new_raw
+            oc["divergence"] = new_dev
+            oc["divergence_pct"] = new_dev
+            oc["abs_divergence"] = round(abs(new_dev), 2)
+            oc["cheap_on"] = "Polymarket" if new_dev > 0 else "Bookmaker"
+            oc["live_updated_at"] = live["ts"]
+            was_signal = bool(oc.get("is_signal"))
+            # Re-evaluate the threshold; gate flags carry over from the
+            # last full poll since they depend on data not in the WS feed
+            # (sharp consensus, liquidity, staleness).
+            new_signal = (
+                abs(new_dev) >= DIVERGENCE_THRESHOLD
+                and bool(oc.get("sharp_consensus_ok"))
+                and bool(oc.get("liquidity_ok"))
+                and bool(oc.get("not_stale"))
+            )
+            oc["is_signal"] = new_signal
+            updated += 1
+            if was_signal != new_signal:
+                comp_signal_changed = True
+        if comp.get("outcomes"):
+            comp["has_signal"] = any(o.get("is_signal") for o in comp["outcomes"])
+            comp["max_divergence"] = max(
+                (abs(o.get("divergence", 0) or 0) for o in comp["outcomes"]),
+                default=0,
+            )
+        comp["_signal_changed_live"] = comp_signal_changed
+    return updated
+
+
+async def _broadcast_live_update(changed: list[dict]) -> None:
+    """Push a delta to all connected dashboard WS clients."""
+    if not changed or not connected_ws:
+        return
+    payload = json.dumps({"type": "live_update", "comparisons": changed})
+    dead = []
+    for ws in list(connected_ws):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        connected_ws.discard(ws)
+
+
+async def _handle_pm_ws_message(raw: str) -> None:
+    """Parse one WS frame, update live price map, and broadcast deltas
+    if any signal state flipped."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return
+    # Some frames are arrays (batch updates), some are single events
+    events = data if isinstance(data, list) else [data]
+    affected_ids: set[str] = set()
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        asset_id = ev.get("asset_id") or ev.get("token_id")
+        if not asset_id:
+            continue
+        # Polymarket emits price_change, tick_size_change, last_trade_price, etc.
+        # All of these carry an updated price we want.
+        price_raw = ev.get("price") or ev.get("last_trade_price") or ev.get("mid_price")
+        if price_raw is None:
+            continue
+        try:
+            price = float(price_raw)
+        except (TypeError, ValueError):
+            continue
+        if not (0.0 < price < 1.0):
+            continue
+        _LIVE_POLY_PRICES[asset_id] = {"price": price, "ts": time.time()}
+        affected_ids.add(asset_id)
+        M_WS_PRICE_EVENTS.inc()
+    M_WS_LIVE_PRICES.set(len(_LIVE_POLY_PRICES))
+
+    if not affected_ids:
+        return
+
+    # Re-apply against current dashboard_data and broadcast any changes
+    async with _data_lock:
+        comparisons = dashboard_data.get("comparisons") or []
+        affected_comps = [
+            c for c in comparisons
+            if any((oc.get("poly_token_id") in affected_ids)
+                   for oc in (c.get("outcomes") or []))
+        ]
+        if affected_comps:
+            _apply_live_prices_to_comparisons(affected_comps)
+
+    if affected_comps:
+        await _broadcast_live_update(affected_comps)
+
+
+async def _polymarket_ws_loop() -> None:
+    """Maintain a persistent WS connection. Reconnects with exponential
+    backoff on failure, and on demand whenever the desired subscription
+    set changes."""
+    global _pm_ws_reconnect_event
+    _pm_ws_reconnect_event = asyncio.Event()
+    try:
+        import websockets
+    except ImportError:
+        log.warning("websockets package missing — live PM feed disabled")
+        return
+
+    backoff = 1.0
+    while True:
+        if not _PM_WS_DESIRED_TOKENS:
+            # Nothing to subscribe to yet — wait for the first poll to populate.
+            try:
+                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
+            _pm_ws_reconnect_event.clear()
+            continue
+
+        subscribed = set(_PM_WS_DESIRED_TOKENS)  # snapshot for this connection
+        try:
+            M_WS_RECONNECTS.inc()
+            async with websockets.connect(
+                PM_WS_URL,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=5,
+                max_size=2_000_000,
+            ) as ws:
+                await ws.send(json.dumps({
+                    "type": "MARKET",
+                    "assets_ids": list(subscribed),
+                }))
+                backoff = 1.0
+                log.info("Polymarket WS connected, subscribed=%d", len(subscribed))
+
+                # Race: incoming messages vs. reconnect signal
+                while True:
+                    if _PM_WS_DESIRED_TOKENS != subscribed:
+                        log.info("PM WS subscription set changed, reconnecting")
+                        break
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                    except asyncio.TimeoutError:
+                        continue  # No traffic for 30s; loop again
+                    await _handle_pm_ws_message(msg)
+        except Exception as e:
+            log.warning("PM WS error: %s (retry in %.1fs)", e, backoff)
+            try:
+                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=backoff)
+                _pm_ws_reconnect_event.clear()
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, 60.0)
+
+
+# ---------------------------------------------------------------------------
 # Multi-sport scanning: scan all sports in background
 # ---------------------------------------------------------------------------
 
@@ -4872,6 +5212,14 @@ async def data_updater():
                 if dashboard_data["active_sport"] == sport:
                     dashboard_data.update(update)
 
+            # Update Polymarket WS subscription set so live prices follow
+            # the markets we're actually showing.
+            try:
+                _update_pm_ws_subscriptions(comparisons)
+            except Exception as ws_err:
+                M_POLL_ERRORS.labels(stage="ws_subscribe").inc()
+                log.warning("PM WS subscribe update failed: %s", ws_err)
+
             # Save signals to file (deduplicated)
             if signals:
                 save_signals(signals)
@@ -4908,18 +5256,12 @@ async def data_updater():
             _bg_scan_counter = 0
             _spawn_bg(_background_multi_sport_scan())
 
-        # Adaptive poll interval: stretch the loop when Odds API quota is low
-        # so we don't blow through the monthly free tier. Multipliers map to
-        # well-known free-tier headroom thresholds.
-        interval = POLL_INTERVAL
-        remaining = odds_quota_remaining()
-        if remaining is not None:
-            if remaining <= 25:
-                interval = max(POLL_INTERVAL * 6, 1800)   # >=30 min
-            elif remaining <= 100:
-                interval = max(POLL_INTERVAL * 3, 900)    # >=15 min
-            elif remaining <= 300:
-                interval = max(POLL_INTERVAL * 2, 600)    # >=10 min
+        # Adaptive poll interval — see _compute_poll_interval for the policy.
+        # Combines pre-game proximity with quota-aware throttling so we poll
+        # fast when a game is about to start and slow down when the Odds API
+        # quota is low.
+        interval = _compute_poll_interval(comparisons, odds_quota_remaining())
+        M_POLL_INTERVAL.set(interval)
 
         # Wait for poll interval OR immediate rescan trigger
         _scan_event.clear()
@@ -5044,6 +5386,7 @@ def save_signals(signals: list[dict]):
 @app.on_event("startup")
 async def startup():
     _spawn_bg(data_updater())
+    _spawn_bg(_polymarket_ws_loop())
     # Backfill historical markets in background thread (non-blocking)
     async def _backfill_wrapper():
         try:
@@ -5342,6 +5685,12 @@ async def api_data(request: Request):
     async with _data_lock:
         active_sport = dashboard_data.get("active_sport")
         snapshot = copy.deepcopy(dashboard_data)
+    # Apply live Polymarket prices to the snapshot so the API always
+    # returns the freshest possible state, even between poll loops.
+    try:
+        _apply_live_prices_to_comparisons(snapshot.get("comparisons") or [])
+    except Exception as live_err:
+        log.warning("apply_live_prices failed: %s", live_err)
     if requested_sport and requested_sport != active_sport:
         return JSONResponse(
             {"status": "switching", "active_sport": active_sport,
@@ -6015,10 +6364,11 @@ async def metrics():
 
 @app.get("/track-record", response_class=HTMLResponse)
 async def track_record_page(request: Request):
-    """Public-facing track-record page (CLV / P&L / calibration)."""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
+    """Public proof-of-edge page. No auth — this is the conversion surface.
+
+    Anonymous viewers see the aggregated CLV / P&L / calibration that
+    we'd otherwise hide behind login. The signal *list* is still private.
+    """
     return HTMLResponse(_load_template("track_record"))
 
 
@@ -6036,11 +6386,9 @@ async def api_track_record_clv(request: Request):
     """Closing line value across resolved signals.
 
     Query params: sport (optional), days (default 30, capped to 365).
-    Auth required — public CLV exposure is a separate decision.
+    Anonymous endpoint — this is the conversion proof. We expose
+    aggregates only (no per-signal detail).
     """
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
     sport = request.query_params.get("sport")
     try:
         days = max(1, min(365, int(request.query_params.get("days", "30"))))
@@ -6052,10 +6400,8 @@ async def api_track_record_clv(request: Request):
 @app.get("/api/track-record/pnl")
 async def api_track_record_pnl(request: Request):
     """Replay signals at a given threshold and stake. Returns total PnL,
-    win rate, ROI, Sharpe, max drawdown, and the per-bet equity curve."""
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    win rate, ROI, Sharpe, max drawdown, and the per-bet equity curve.
+    Anonymous — see /api/track-record/clv docstring."""
     sport = request.query_params.get("sport")
     try:
         days = max(1, min(365, int(request.query_params.get("days", "90"))))
@@ -6076,10 +6422,8 @@ async def api_track_record_pnl(request: Request):
 
 @app.get("/api/track-record/calibration")
 async def api_track_record_calibration(request: Request):
-    """Calibration plot data: win rate per divergence bucket vs predicted."""
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    """Calibration plot data: win rate per divergence bucket vs predicted.
+    Anonymous — see /api/track-record/clv docstring."""
     sport = request.query_params.get("sport")
     try:
         days = max(1, min(365, int(request.query_params.get("days", "180"))))
