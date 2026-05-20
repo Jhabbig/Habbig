@@ -166,6 +166,21 @@ tr:last-child td { border-bottom: none; }
 .verify-banner.bad { border-left-color: var(--error); }
 .verify-banner strong { color: var(--accent); }
 .verify-banner.bad strong { color: var(--error); }
+.chart { margin-top: 16px; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .axis-line { stroke: var(--border); stroke-width: 1; }
+.chart .axis-label { fill: var(--text-muted); font-size: 11px; }
+.chart .grid-line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.5; }
+.chart .series-pnl { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart .series-fill { fill: var(--accent); opacity: 0.12; }
+.chart .bar-good { fill: var(--accent); }
+.chart .bar-warn { fill: var(--warn); }
+.chart .bar-bad  { fill: var(--error); }
+.chart .bar-dim  { fill: var(--border); }
+.chart .baseline { stroke: var(--text-muted); stroke-dasharray: 3 5; opacity: 0.6; }
+.chart .baseline-label { fill: var(--text-muted); font-size: 10px; }
+.chart .bar-label { fill: var(--text); font-size: 11px; font-feature-settings: "tnum"; }
+.chart .bar-track-label { fill: var(--text-muted); font-size: 11px; }
 footer {
   margin-top: 60px;
   padding-top: 24px;
@@ -197,6 +212,16 @@ footer a { color: var(--accent); }
     <div class="card"><div class="label">Log loss</div><div class="value skeleton"></div></div>
   </div>
 
+  <h2>Cumulative PnL (last 90 days, $1/signal)</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      "Bet $1 per signal in the direction of edge" — the same convention the
+      backtest uses. A rising line means the edge is converting to PnL on real
+      markets; flat or sideways means the signals look noisy.
+    </p>
+    <div id="pnl-chart" class="chart"><div class="empty-state">Loading…</div></div>
+  </div>
+
   <h2>Reliability</h2>
   <div class="section">
     <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
@@ -213,6 +238,26 @@ footer a { color: var(--accent); }
       </thead>
       <tbody><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
     </table>
+  </div>
+
+  <h2>Edge-bucket win rates</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      Win rate by absolute edge size. A real edge signal should show a monotonically
+      rising bar height as |edge| grows — bigger model–market disagreement, more confidence.
+      A flat curve means the model is firing on noise.
+    </p>
+    <div id="edge-chart" class="chart"><div class="empty-state">Loading…</div></div>
+  </div>
+
+  <h2>Per-city skill</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      Win rate per city, sorted by sample size. Bars in the same green-orange-red band as the
+      reliability table. Cities with fewer than 5 resolved markets aren't statistically
+      meaningful yet — those are dimmed.
+    </p>
+    <div id="city-chart" class="chart"><div class="empty-state">Loading…</div></div>
   </div>
 
   <h2>Per-day chain</h2>
@@ -355,15 +400,202 @@ function renderVerify(data) {
   }
 }
 
+// ─── SVG charts (dependency-free) ──────────────────────────────────────────
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function renderPnLChart(series) {
+  const target = document.getElementById("pnl-chart");
+  if (!series || series.length === 0) {
+    target.innerHTML = `<div class="empty-state">No resolved signals yet — chart appears once markets close.</div>`;
+    return;
+  }
+  const W = 900, H = 220, P = { t: 12, r: 16, b: 28, l: 48 };
+  const xs = series.map((_, i) => i);
+  const ys = series.map(p => p.cumulative_pnl);
+  const yMin = Math.min(0, ...ys);
+  const yMax = Math.max(0, ...ys);
+  const yRange = yMax - yMin || 1;
+  const xPlot = i => P.l + (i / Math.max(1, series.length - 1)) * (W - P.l - P.r);
+  const yPlot = v => P.t + (1 - (v - yMin) / yRange) * (H - P.t - P.b);
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none" });
+
+  // y-axis grid + labels
+  for (let i = 0; i <= 4; i++) {
+    const yv = yMin + (yRange * i) / 4;
+    const py = yPlot(yv);
+    svg.appendChild(svgEl("line", { x1: P.l, y1: py, x2: W - P.r, y2: py, class: "grid-line" }));
+    const lab = svgEl("text", { x: P.l - 6, y: py + 4, "text-anchor": "end", class: "axis-label" });
+    lab.textContent = "$" + yv.toFixed(yRange > 50 ? 0 : 2);
+    svg.appendChild(lab);
+  }
+
+  // Zero line (slightly stronger)
+  if (yMin < 0 && yMax > 0) {
+    svg.appendChild(svgEl("line", {
+      x1: P.l, y1: yPlot(0), x2: W - P.r, y2: yPlot(0),
+      class: "baseline"
+    }));
+  }
+
+  // Area + line
+  const pathPoints = series.map((p, i) => `${xPlot(i)},${yPlot(p.cumulative_pnl)}`).join(" L ");
+  const baseY = yPlot(Math.max(0, yMin));
+  svg.appendChild(svgEl("path", {
+    d: `M ${xPlot(0)},${baseY} L ${pathPoints} L ${xPlot(series.length - 1)},${baseY} Z`,
+    class: "series-fill"
+  }));
+  svg.appendChild(svgEl("path", {
+    d: `M ${pathPoints}`, class: "series-pnl"
+  }));
+
+  // x-axis labels (first, last, ~midpoint)
+  const xLabelIdx = [0, Math.floor(series.length / 2), series.length - 1];
+  for (const i of xLabelIdx) {
+    if (i < 0 || i >= series.length) continue;
+    const lab = svgEl("text", {
+      x: xPlot(i), y: H - 8, "text-anchor": "middle", class: "axis-label"
+    });
+    lab.textContent = series[i].date.slice(5); // MM-DD
+    svg.appendChild(lab);
+  }
+  target.innerHTML = "";
+  target.appendChild(svg);
+}
+
+function _barClassFromWinRate(wr) {
+  if (wr == null) return "bar-dim";
+  if (wr >= 0.60) return "bar-good";
+  if (wr >= 0.45) return "bar-warn";
+  return "bar-bad";
+}
+
+function renderEdgeChart(buckets) {
+  const target = document.getElementById("edge-chart");
+  const nonEmpty = (buckets || []).filter(b => b.n > 0);
+  if (nonEmpty.length === 0) {
+    target.innerHTML = `<div class="empty-state">No resolved signals yet.</div>`;
+    return;
+  }
+  const W = 900, H = 220, P = { t: 24, r: 16, b: 48, l: 40 };
+  const barW = (W - P.l - P.r) / buckets.length * 0.7;
+  const slot = (W - P.l - P.r) / buckets.length;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none" });
+
+  // Baseline at 50%
+  const baselineY = P.t + (H - P.t - P.b) * (1 - 0.5);
+  svg.appendChild(svgEl("line", {
+    x1: P.l, y1: baselineY, x2: W - P.r, y2: baselineY, class: "baseline"
+  }));
+  const bl = svgEl("text", {
+    x: W - P.r, y: baselineY - 4, "text-anchor": "end", class: "baseline-label"
+  });
+  bl.textContent = "50% baseline";
+  svg.appendChild(bl);
+
+  buckets.forEach((b, i) => {
+    const x = P.l + i * slot + (slot - barW) / 2;
+    const wr = b.win_rate;
+    const barH = wr == null ? 0 : (H - P.t - P.b) * wr;
+    const y = (H - P.b) - barH;
+    svg.appendChild(svgEl("rect", {
+      x, y, width: barW, height: barH || 0,
+      class: _barClassFromWinRate(wr), rx: 2
+    }));
+    // bucket label
+    const lab = svgEl("text", {
+      x: x + barW / 2, y: H - P.b + 16,
+      "text-anchor": "middle", class: "axis-label"
+    });
+    lab.textContent = b.bucket;
+    svg.appendChild(lab);
+    // n
+    const n = svgEl("text", {
+      x: x + barW / 2, y: H - P.b + 30,
+      "text-anchor": "middle", class: "axis-label"
+    });
+    n.textContent = "n=" + b.n;
+    svg.appendChild(n);
+    // win-rate above bar
+    if (wr != null && barH > 12) {
+      const wrLabel = svgEl("text", {
+        x: x + barW / 2, y: y - 4,
+        "text-anchor": "middle", class: "bar-label"
+      });
+      wrLabel.textContent = (wr * 100).toFixed(0) + "%";
+      svg.appendChild(wrLabel);
+    }
+  });
+  target.innerHTML = "";
+  target.appendChild(svg);
+}
+
+function renderCityChart(stations) {
+  const target = document.getElementById("city-chart");
+  if (!stations || stations.length === 0) {
+    target.innerHTML = `<div class="empty-state">No per-city data yet.</div>`;
+    return;
+  }
+  const top = stations.slice(0, 15);
+  const W = 900, P = { t: 8, r: 60, b: 8, l: 130 };
+  const rowH = 22;
+  const H = P.t + P.b + top.length * rowH + 8;
+  const barMax = W - P.l - P.r;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none" });
+
+  // 50% baseline
+  const baselineX = P.l + barMax * 0.5;
+  svg.appendChild(svgEl("line", {
+    x1: baselineX, y1: P.t, x2: baselineX, y2: H - P.b,
+    class: "baseline"
+  }));
+
+  top.forEach((s, i) => {
+    const y = P.t + i * rowH + rowH / 2;
+    const cityLabel = svgEl("text", {
+      x: P.l - 8, y: y + 4, "text-anchor": "end", class: "bar-track-label"
+    });
+    cityLabel.textContent = s.city;
+    svg.appendChild(cityLabel);
+
+    const dim = (s.n || 0) < 5;
+    const wr = s.win_rate;
+    const w = wr == null ? 0 : barMax * wr;
+    svg.appendChild(svgEl("rect", {
+      x: P.l, y: y - 8, width: w, height: 14,
+      class: dim ? "bar-dim" : _barClassFromWinRate(wr), rx: 2
+    }));
+    const right = svgEl("text", {
+      x: P.l + w + 6, y: y + 4, class: "bar-label"
+    });
+    right.textContent = (wr == null ? "—" : (wr * 100).toFixed(0) + "%") +
+      "  (n=" + s.n + ")";
+    svg.appendChild(right);
+  });
+  target.innerHTML = "";
+  target.appendChild(svg);
+}
+
 (async () => {
   try {
-    const [summary, manifest, verify] = await Promise.all([
+    const [summary, manifest, verify, pnl, edges, cities] = await Promise.all([
       fetchJSON("/api/public/track-record/summary"),
       fetchJSON("/api/public/track-record/manifest?limit=90"),
       fetchJSON("/api/public/track-record/verify"),
+      fetchJSON("/api/public/track-record/daily_series?days=90"),
+      fetchJSON("/api/public/track-record/edge_buckets"),
+      fetchJSON("/api/public/track-record/per_station"),
     ]);
     renderSummary(summary);
+    renderPnLChart(pnl.series);
     renderReliability(summary.reliability);
+    renderEdgeChart(edges.buckets);
+    renderCityChart(cities.stations);
     renderChain(manifest.rollups);
     renderVerify(verify);
   } catch (e) {

@@ -335,3 +335,109 @@ def get_summary(conn_factory, user_id: str) -> dict:
         "open_orders": _paper.list_paper_orders(conn_factory, user_id, status="working", limit=50),
         "positions": _paper.list_paper_positions(conn_factory, user_id),
     }
+
+
+def _list_working_orders(conn_factory) -> list[dict]:
+    """Pull every paper order with remaining open qty across all users."""
+    with conn_factory(readonly=True) as conn:
+        rows = conn.execute(
+            """SELECT id, user_id, ticker, side, action, qty, filled_qty,
+                      limit_price_cents, type, status
+               FROM paper_orders
+               WHERE status IN ('working','partially_filled','accepted')
+                 AND filled_qty < qty"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def settle_working_orders(conn_factory, orderbook_fetcher) -> dict:
+    """Re-attempt every open paper order against a fresh orderbook.
+
+    `orderbook_fetcher(ticker) -> Orderbook | None` is injected so the
+    settlement loop can use the server's cached fetcher without this
+    module depending on Flask/server.py. Returns a small stats dict the
+    background loop can log.
+
+    Behavior:
+      * For each working order, fetch the current book and call
+        `simulate_fills` with the *remaining* qty (qty − filled_qty).
+      * Each new fill is persisted (position update + paper_fills row)
+        exactly like a fresh order.
+      * Order status moves to `partially_filled` if some new qty filled
+        but not all, `filled` if the full original qty has now been
+        reached, and stays `working` otherwise.
+      * We skip the per-user safety check on settlement — these are
+        already-accepted orders. The kill switch and per-user caps
+        applied at place time still bound exposure.
+    """
+    open_orders = _list_working_orders(conn_factory)
+    stats = {"checked": len(open_orders), "filled_orders": 0,
+             "new_fills": 0, "errors": 0}
+    if not open_orders:
+        return stats
+
+    # Group by ticker so we only fetch each orderbook once per pass
+    books: dict = {}
+    for o in open_orders:
+        if o["ticker"] not in books:
+            try:
+                books[o["ticker"]] = orderbook_fetcher(o["ticker"])
+            except Exception:
+                books[o["ticker"]] = None
+                stats["errors"] += 1
+
+    for o in open_orders:
+        book = books.get(o["ticker"])
+        if book is None:
+            continue
+        remaining = int(o["qty"]) - int(o["filled_qty"] or 0)
+        if remaining <= 0:
+            continue
+        try:
+            fills, unfilled = _paper.simulate_fills(
+                book, side=o["side"], action=o["action"], qty=remaining,
+                type_=o["type"], limit_price_cents=o["limit_price_cents"],
+            )
+        except Exception:
+            stats["errors"] += 1
+            continue
+        if not fills:
+            continue
+
+        newly_filled_qty = sum(f.qty for f in fills)
+        new_avg_price = round(sum(f.qty * f.price_cents for f in fills) / newly_filled_qty)
+        total_filled_after = int(o["filled_qty"] or 0) + newly_filled_qty
+        new_status = "filled" if total_filled_after >= int(o["qty"]) else "partially_filled"
+
+        _paper.update_paper_order_status(
+            conn_factory, o["id"], status=new_status,
+            filled_qty=newly_filled_qty, avg_fill_price_cents=new_avg_price,
+        )
+        # Apply each fill one at a time so realized PnL booking is right
+        for f in fills:
+            prior_qty, prior_avg = _paper.get_paper_position(
+                conn_factory, o["user_id"], o["ticker"], o["side"])
+            upd = _paper.update_position_after_fill(
+                prior_qty=prior_qty, prior_avg_cents=prior_avg,
+                action=o["action"], fill_qty=f.qty, fill_price_cents=f.price_cents,
+            )
+            _paper.upsert_paper_position(
+                conn_factory, user_id=o["user_id"], ticker=o["ticker"],
+                side=o["side"], qty=upd.new_qty, avg_price_cents=upd.avg_price_cents,
+            )
+            _paper.insert_paper_fill(
+                conn_factory, user_id=o["user_id"], order_id=o["id"],
+                ticker=o["ticker"], side=o["side"], action=o["action"],
+                qty=f.qty, price_cents=f.price_cents,
+                realized_pnl_cents=upd.realized_pnl_cents,
+            )
+            stats["new_fills"] += 1
+
+        if new_status == "filled":
+            stats["filled_orders"] += 1
+        _audit(conn_factory, user_id=o["user_id"], action="settled_paper",
+               detail={"order_id": o["id"], "ticker": o["ticker"],
+                       "new_fills": len(fills),
+                       "filled_qty_now": total_filled_after,
+                       "status": new_status})
+    return stats

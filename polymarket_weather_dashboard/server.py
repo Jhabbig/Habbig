@@ -4415,6 +4415,15 @@ def public_track_record_page():
     return send_from_directory(app.static_folder, "track-record.html")
 
 
+@app.route("/trade")
+def trade_page():
+    """Serve the standalone trade UI. Auth happens on the API calls,
+    not at the HTML send — the page itself is a static file. Hitting
+    any trade API endpoint without auth returns 401, which the page
+    handles by showing a login prompt."""
+    return send_from_directory(app.static_folder, "trade.html")
+
+
 @app.route("/api/public/track-record/summary")
 def api_track_summary():
     """Lifetime aggregates — counts, win rate, Brier, log-loss, reliability."""
@@ -4456,6 +4465,25 @@ def api_track_verify():
     except Exception:
         return jsonify({"error": "secret unavailable"}), 503
     return jsonify(_track.verify_chain(_get_conn, secret))
+
+
+@app.route("/api/public/track-record/daily_series")
+def api_track_daily_series():
+    """Per-day signal count + cumulative PnL — feeds the PnL-over-time chart."""
+    days = max(7, min(365, int(request.args.get("days", 90))))
+    return jsonify({"days": days, "series": _track.daily_series(_get_conn, days=days)})
+
+
+@app.route("/api/public/track-record/per_station")
+def api_track_per_station():
+    """Per-city win rate + Brier — feeds the station-skill chart."""
+    return jsonify({"stations": _track.per_station_skill(_get_conn)})
+
+
+@app.route("/api/public/track-record/edge_buckets")
+def api_track_edge_buckets():
+    """Win rate by |edge| bucket — feeds the edge-bucket chart."""
+    return jsonify({"buckets": _track.edge_bucket_win_rates(_get_conn)})
 
 
 @app.route("/api/admin/track-record/resolve", methods=["POST"])
@@ -5366,6 +5394,31 @@ def _bias_pairing_loop():
         _time.sleep(6 * 3600)  # 6 hours
 
 
+def _paper_settlement_loop():
+    """Every 60s, re-attempt every working paper order against the
+    current Kalshi orderbook.
+
+    Orders placed without a fresh book (or limit orders that weren't
+    initially marketable) stay `working` until something moves the
+    book. This loop is what makes those orders eventually fill — the
+    settlement runs server-side so users see fills appear in
+    `/api/trade/orders` without polling Kalshi themselves.
+    """
+    import time as _time
+    _register_thread("paper_settlement", interval_seconds=60)
+    _time.sleep(180)  # Wait 3 min after boot
+    while True:
+        try:
+            stats = _engine.settle_working_orders(_get_conn, fetch_kalshi_orderbook)
+            if stats["new_fills"]:
+                logger.info("paper settlement: %s", stats)
+            _record_run("paper_settlement", ok=True)
+        except Exception as e:
+            logger.warning("paper settlement error: %s", e)
+            _record_run("paper_settlement", ok=False, error=str(e))
+        _time.sleep(60)
+
+
 def _track_record_loop():
     """Hourly: resolve any newly-resolvable signals, then if yesterday
     (UTC) doesn't already have a rollup, build and commit it.
@@ -5433,4 +5486,7 @@ if __name__ == "__main__":
         tr = threading.Thread(target=_track_record_loop, daemon=True)
         tr.start()
         logger.info("Track-record resolver + rollup builder started (every 1 h)")
+        ps = threading.Thread(target=_paper_settlement_loop, daemon=True)
+        ps.start()
+        logger.info("Paper-order settlement loop started (every 60 s)")
     app.run(host=bind_host, port=5050, debug=_debug)

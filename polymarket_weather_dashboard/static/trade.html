@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>narve.ai — Trade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #0b0d10;
+  --bg-soft: #14181d;
+  --bg-card: #1a1f25;
+  --border: #2a323b;
+  --text: #e6ebf0;
+  --text-muted: #97a3b0;
+  --accent: #4dd0a8;
+  --warn: #f0a868;
+  --error: #ef6262;
+  --buy-bg: #1e3a2e;
+  --sell-bg: #3a1e1e;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;
+}
+header h1 { margin: 0; font-size: 22px; letter-spacing: -0.4px; }
+header nav a {
+  color: var(--text-muted); text-decoration: none; margin-left: 16px; font-size: 14px;
+}
+header nav a:hover { color: var(--text); }
+.mode-banner {
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px; padding: 12px 16px; margin-bottom: 24px; font-size: 13px;
+}
+.mode-banner.live { border-left-color: var(--warn); }
+.mode-banner strong { color: var(--accent); }
+.mode-banner.live strong { color: var(--warn); }
+.layout { display: grid; grid-template-columns: 1fr 360px; gap: 24px; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+.section {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 18px 20px; margin-bottom: 16px;
+}
+h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--text-muted); margin: 0 0 12px; font-weight: 500;
+}
+.market-search input {
+  width: 100%; padding: 10px 12px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font: inherit;
+}
+.market-search input:focus { outline: none; border-color: var(--accent); }
+.market-row {
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background 0.1s;
+}
+.market-row:last-child { border-bottom: none; }
+.market-row:hover { background: var(--bg-soft); margin: 0 -20px; padding: 12px 20px; border-radius: 4px; }
+.market-row.active { background: var(--bg-soft); margin: 0 -20px; padding: 12px 20px; border-radius: 4px; }
+.market-row .ticker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--text-muted); margin-bottom: 2px;
+}
+.market-row .title { font-size: 14px; }
+.market-row .quote {
+  font-size: 12px; color: var(--text-muted); margin-top: 4px;
+  font-feature-settings: "tnum";
+}
+.market-row .yes-price { color: var(--accent); font-weight: 500; }
+.market-row .no-price { color: var(--warn); font-weight: 500; }
+.placeholder { color: var(--text-muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+/* Ticket */
+.ticket .ticker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--text-muted); word-break: break-all;
+}
+.ticket .question { font-size: 15px; margin: 4px 0 12px; }
+.book {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-bottom: 16px; font-feature-settings: "tnum";
+}
+.book .lvl {
+  background: var(--bg-soft); padding: 6px 10px; border-radius: 4px;
+  font-size: 13px;
+}
+.book .lvl-yes { color: var(--accent); }
+.book .lvl-no  { color: var(--warn); }
+.book .lvl .px { font-weight: 600; }
+.book .lvl .sz { color: var(--text-muted); margin-left: 6px; font-size: 11px; }
+
+.field { margin-bottom: 12px; }
+.field label {
+  display: block; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-muted); margin-bottom: 4px;
+}
+.field input, .field select {
+  width: 100%; padding: 8px 10px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font: inherit; font-feature-settings: "tnum";
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.side-toggle, .action-toggle {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+}
+.toggle-btn {
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px 10px; color: var(--text);
+  cursor: pointer; font: inherit; font-size: 13px; text-align: center;
+  transition: background 0.1s, border-color 0.1s;
+}
+.toggle-btn:hover { background: var(--border); }
+.toggle-btn.active { border-color: var(--accent); }
+.toggle-btn.active.yes { background: var(--buy-bg); border-color: var(--accent); }
+.toggle-btn.active.no  { background: var(--sell-bg); border-color: var(--warn); }
+.toggle-btn.active.buy { background: var(--buy-bg); border-color: var(--accent); }
+.toggle-btn.active.sell { background: var(--sell-bg); border-color: var(--warn); }
+
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+
+.review-line {
+  display: flex; justify-content: space-between; font-size: 13px;
+  padding: 4px 0; color: var(--text-muted);
+}
+.review-line .v { color: var(--text); font-feature-settings: "tnum"; }
+
+.btn {
+  width: 100%; padding: 12px; border-radius: 6px; border: none;
+  font: inherit; font-weight: 500; cursor: pointer;
+  transition: opacity 0.1s;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #0b0d10; }
+.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.btn-warn { background: var(--warn); color: #0b0d10; }
+.btn-secondary { background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); }
+
+.result {
+  margin-top: 12px; padding: 12px; border-radius: 6px;
+  background: var(--bg-soft); border-left: 3px solid var(--border); font-size: 13px;
+}
+.result.ok { border-left-color: var(--accent); }
+.result.error { border-left-color: var(--error); }
+
+.summary-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card {
+  background: var(--bg-soft); padding: 10px 12px; border-radius: 6px;
+}
+.stat-card .label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-muted);
+}
+.stat-card .value { font-size: 18px; font-weight: 500; font-feature-settings: "tnum"; }
+
+.positions-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.positions-table th, .positions-table td {
+  text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  font-feature-settings: "tnum";
+}
+.positions-table th:first-child, .positions-table td:first-child { text-align: left; }
+.positions-table th {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-muted); font-weight: 500;
+}
+
+.cancel-x {
+  background: none; border: 1px solid var(--border); color: var(--text-muted);
+  border-radius: 3px; padding: 1px 6px; font: inherit; font-size: 11px;
+  cursor: pointer;
+}
+.cancel-x:hover { color: var(--error); border-color: var(--error); }
+
+/* Confirmation modal */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-backdrop.show { display: flex; }
+.modal {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 24px; max-width: 420px; width: 90%;
+}
+.modal h3 { margin: 0 0 12px; font-size: 16px; }
+.modal .summary {
+  background: var(--bg-soft); padding: 12px; border-radius: 6px;
+  margin-bottom: 12px; font-size: 13px;
+}
+.modal .summary div { margin-bottom: 4px; }
+.modal .summary div:last-child { margin-bottom: 0; }
+.modal .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.modal .warn-line {
+  background: rgba(240, 168, 104, 0.1);
+  border: 1px solid var(--warn); padding: 10px 12px;
+  border-radius: 4px; font-size: 12px; color: var(--warn);
+  margin-bottom: 12px;
+}
+
+/* Enroll panel */
+.enroll-area textarea {
+  width: 100%; min-height: 100px; padding: 8px 10px;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-family: ui-monospace, monospace;
+  font-size: 12px; resize: vertical;
+}
+.enroll-status {
+  font-size: 13px; color: var(--text-muted); margin-top: 8px;
+}
+.enroll-status.enrolled { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>narve.ai — Trade</h1>
+    <nav>
+      <a href="/">← Dashboard</a>
+      <a href="/track-record">Track record</a>
+    </nav>
+  </header>
+
+  <div id="mode-banner" class="mode-banner">
+    <strong>Paper mode.</strong> Orders simulate fills against the live Kalshi orderbook. Real money is never moved.
+    <a href="#enroll" style="color: var(--text-muted); margin-left: 8px;">Enable live trading →</a>
+  </div>
+
+  <div class="layout">
+    <!-- Left column: market browser + ticket -->
+    <div>
+      <div class="section market-search">
+        <h2>Find a market</h2>
+        <input id="search-input" type="text" placeholder="Search by ticker, city, threshold…">
+        <div id="market-list" style="margin-top: 12px;">
+          <div class="placeholder">Loading markets…</div>
+        </div>
+      </div>
+
+      <div class="section ticket" id="ticket" style="display: none;">
+        <h2>Order ticket</h2>
+        <div class="ticker" id="ticket-ticker"></div>
+        <div class="question" id="ticket-question"></div>
+
+        <div class="book" id="ticket-book"></div>
+
+        <div class="field">
+          <label>Side</label>
+          <div class="side-toggle">
+            <button class="toggle-btn yes active" data-side="yes">YES</button>
+            <button class="toggle-btn no" data-side="no">NO</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Action</label>
+          <div class="action-toggle">
+            <button class="toggle-btn buy active" data-action="buy">Buy</button>
+            <button class="toggle-btn sell" data-action="sell">Sell</button>
+          </div>
+        </div>
+
+        <div class="row-2">
+          <div class="field">
+            <label>Quantity</label>
+            <input id="qty-input" type="number" min="1" max="10000" value="1">
+          </div>
+          <div class="field">
+            <label>Limit price (¢)</label>
+            <input id="price-input" type="number" min="1" max="99" value="50">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Mode</label>
+          <select id="mode-select">
+            <option value="paper">PAPER (simulated)</option>
+            <option value="live" disabled>LIVE (enroll first)</option>
+          </select>
+        </div>
+
+        <div class="review-line">
+          <span>Total cost</span><span class="v" id="review-cost">$0.50</span>
+        </div>
+        <div class="review-line">
+          <span>Max payout</span><span class="v" id="review-payout">$1.00</span>
+        </div>
+
+        <button id="place-btn" class="btn btn-primary" style="margin-top: 12px;">Review &amp; place</button>
+
+        <div id="result" class="result" style="display: none;"></div>
+      </div>
+    </div>
+
+    <!-- Right column: account summary, positions, enroll -->
+    <div>
+      <div class="section">
+        <h2>Account</h2>
+        <div class="summary-stats" id="summary-stats">
+          <div class="stat-card"><div class="label">Today's PnL</div><div class="value" id="stat-pnl">—</div></div>
+          <div class="stat-card"><div class="label">Wagered today</div><div class="value" id="stat-wagered">—</div></div>
+          <div class="stat-card"><div class="label">Open orders</div><div class="value" id="stat-orders">—</div></div>
+          <div class="stat-card"><div class="label">Positions</div><div class="value" id="stat-positions">—</div></div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px;" id="limits-note">
+          Per-order cap: $—. Daily cap: $—. <a href="#" id="tighten-link" style="color: var(--accent);">Tighten limits</a>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Open paper orders</h2>
+        <div id="open-orders"><div class="placeholder">None.</div></div>
+      </div>
+
+      <div class="section">
+        <h2>Paper positions</h2>
+        <div id="positions-list"><div class="placeholder">None.</div></div>
+      </div>
+
+      <div class="section enroll-area" id="enroll">
+        <h2>Enable live trading</h2>
+        <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 12px;">
+          Paste your Kalshi API key id + RSA private key. Stored Fernet-encrypted at rest.
+          You can switch to demo mode (no real money) with the toggle below.
+        </p>
+        <div class="field">
+          <label>Key ID</label>
+          <input id="enroll-key-id" type="text" placeholder="UUID from Kalshi">
+        </div>
+        <div class="field">
+          <label>Private key (PEM)</label>
+          <textarea id="enroll-pem" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;..."></textarea>
+        </div>
+        <div class="field">
+          <label>
+            <input id="enroll-demo" type="checkbox" style="width: auto; margin-right: 6px;">
+            Demo mode (demo-api.kalshi.co — no real money)
+          </label>
+        </div>
+        <div class="row-2">
+          <button id="enroll-btn" class="btn btn-secondary">Save credentials</button>
+          <button id="disable-btn" class="btn btn-secondary">Remove</button>
+        </div>
+        <div class="enroll-status" id="enroll-status">Not enrolled.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmation modal -->
+<div class="modal-backdrop" id="confirm-modal">
+  <div class="modal">
+    <h3>Confirm order</h3>
+    <div class="warn-line" id="confirm-warn" style="display: none;"></div>
+    <div class="summary" id="confirm-summary"></div>
+    <p style="font-size: 12px; color: var(--text-muted); margin: 0;">
+      Paper orders never move real money. Live orders are signed with your Kalshi
+      private key and submitted immediately.
+    </p>
+    <div class="actions">
+      <button id="confirm-cancel" class="btn btn-secondary">Cancel</button>
+      <button id="confirm-place" class="btn btn-primary">Place</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  selected: null,    // {ticker, question, yes_price, ...}
+  book: null,        // current orderbook for the selected market
+  side: "yes",
+  action: "buy",
+  enrolled: false,
+};
+
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let body = null;
+    try { body = await r.json(); } catch (e) {}
+    const e = new Error(body && (body.error || body.reason) || r.status);
+    e.status = r.status;
+    e.body = body;
+    throw e;
+  }
+  return r.json();
+}
+
+function fmtMoney(n) {
+  if (n == null) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.abs(n).toFixed(2);
+}
+
+function fmtCents(c) {
+  if (c == null) return "—";
+  return c + "¢";
+}
+
+// ─── Market list ──────────────────────────────────────────────────────────
+
+async function loadMarkets() {
+  const list = document.getElementById("market-list");
+  try {
+    const data = await fetchJSON("/api/markets");
+    const markets = (data.markets || []).filter(m => m.kalshi_ticker || m.market_id);
+    if (markets.length === 0) {
+      list.innerHTML = `<div class="placeholder">No markets currently loaded.</div>`;
+      return;
+    }
+    state.allMarkets = markets;
+    renderMarketList(markets);
+  } catch (e) {
+    list.innerHTML = `<div class="placeholder">Couldn't load markets: ${e.message}</div>`;
+  }
+}
+
+function renderMarketList(markets) {
+  const list = document.getElementById("market-list");
+  list.innerHTML = markets.slice(0, 50).map(m => {
+    const ticker = m.kalshi_ticker || m.market_id;
+    const title = m.question || m.title || ticker;
+    const yp = m.yes_price != null ? Math.round(m.yes_price * 100) : null;
+    return `<div class="market-row" data-ticker="${ticker}" data-id="${m.market_id || ''}">
+      <div class="ticker">${ticker}</div>
+      <div class="title">${title}</div>
+      <div class="quote">YES <span class="yes-price">${yp != null ? yp + '¢' : '—'}</span>
+        · NO <span class="no-price">${yp != null ? (100 - yp) + '¢' : '—'}</span></div>
+    </div>`;
+  }).join("");
+  document.querySelectorAll(".market-row").forEach(row => {
+    row.addEventListener("click", () => selectMarket(row.dataset.ticker, row.dataset.id));
+  });
+}
+
+function filterMarkets(q) {
+  if (!state.allMarkets) return;
+  const ql = q.toLowerCase();
+  const filtered = state.allMarkets.filter(m => {
+    const ticker = (m.kalshi_ticker || m.market_id || "").toLowerCase();
+    const title = (m.question || m.title || "").toLowerCase();
+    return ticker.includes(ql) || title.includes(ql);
+  });
+  renderMarketList(filtered);
+}
+
+// ─── Ticket ───────────────────────────────────────────────────────────────
+
+async function selectMarket(ticker, market_id) {
+  if (!ticker) return;
+  document.querySelectorAll(".market-row").forEach(r => r.classList.remove("active"));
+  const row = document.querySelector(`.market-row[data-ticker="${ticker}"]`);
+  if (row) row.classList.add("active");
+  const m = state.allMarkets.find(x => (x.kalshi_ticker || x.market_id) === ticker);
+  if (!m) return;
+  state.selected = { ticker, market_id, ...m };
+  document.getElementById("ticket").style.display = "block";
+  document.getElementById("ticket-ticker").textContent = ticker;
+  document.getElementById("ticket-question").textContent = m.question || m.title || "";
+  // Try to fetch the orderbook through the trade endpoints. We don't have a
+  // public orderbook fetch endpoint, so the ticket displays the snapshot
+  // price from the market list and lets the user pick a limit.
+  renderBookFromSnapshot(m);
+  updateReview();
+}
+
+function renderBookFromSnapshot(m) {
+  const yp = m.yes_price != null ? Math.round(m.yes_price * 100) : null;
+  const target = document.getElementById("ticket-book");
+  if (yp == null) {
+    target.innerHTML = `<div class="lvl placeholder" style="grid-column: 1 / -1;">No quote available</div>`;
+    return;
+  }
+  target.innerHTML = `
+    <div class="lvl lvl-yes"><span class="px">YES ${yp}¢</span><span class="sz">market</span></div>
+    <div class="lvl lvl-no"><span class="px">NO ${100 - yp}¢</span><span class="sz">market</span></div>
+  `;
+  // Pre-fill the limit price to the current best
+  document.getElementById("price-input").value = yp;
+}
+
+// Toggle handlers
+document.querySelectorAll(".side-toggle .toggle-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".side-toggle .toggle-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.side = btn.dataset.side;
+    updateReview();
+  });
+});
+document.querySelectorAll(".action-toggle .toggle-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".action-toggle .toggle-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.action = btn.dataset.action;
+    updateReview();
+  });
+});
+["qty-input", "price-input"].forEach(id => {
+  document.getElementById(id).addEventListener("input", updateReview);
+});
+
+function updateReview() {
+  const qty = parseInt(document.getElementById("qty-input").value) || 0;
+  const price = parseInt(document.getElementById("price-input").value) || 0;
+  const cost = qty * price / 100;
+  const payout = qty * 1.0;
+  document.getElementById("review-cost").textContent = fmtMoney(cost);
+  document.getElementById("review-payout").textContent = fmtMoney(payout);
+}
+
+// ─── Place order ──────────────────────────────────────────────────────────
+
+document.getElementById("place-btn").addEventListener("click", () => {
+  if (!state.selected) return;
+  const qty = parseInt(document.getElementById("qty-input").value) || 0;
+  const price = parseInt(document.getElementById("price-input").value) || 0;
+  const mode = document.getElementById("mode-select").value;
+  const summary = document.getElementById("confirm-summary");
+  summary.innerHTML = `
+    <div><strong>${state.action.toUpperCase()} ${state.side.toUpperCase()}</strong> ${qty} contract${qty === 1 ? '' : 's'}</div>
+    <div>${state.selected.ticker}</div>
+    <div>Limit: ${price}¢ · Cost: ${fmtMoney(qty * price / 100)} · Mode: ${mode.toUpperCase()}</div>`;
+  const warn = document.getElementById("confirm-warn");
+  if (mode === "live") {
+    warn.style.display = "block";
+    warn.textContent = "⚠ Live order — real money. Signed with your Kalshi private key.";
+  } else {
+    warn.style.display = "none";
+  }
+  document.getElementById("confirm-modal").classList.add("show");
+});
+
+document.getElementById("confirm-cancel").addEventListener("click", () => {
+  document.getElementById("confirm-modal").classList.remove("show");
+});
+
+document.getElementById("confirm-place").addEventListener("click", async () => {
+  document.getElementById("confirm-modal").classList.remove("show");
+  const qty = parseInt(document.getElementById("qty-input").value) || 0;
+  const price = parseInt(document.getElementById("price-input").value) || 0;
+  const mode = document.getElementById("mode-select").value;
+  const resultEl = document.getElementById("result");
+  resultEl.style.display = "block";
+  resultEl.className = "result";
+  resultEl.textContent = "Placing…";
+  try {
+    const data = await fetchJSON("/api/trade/place", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticker: state.selected.ticker,
+        side: state.side,
+        action: state.action,
+        qty, type: "limit",
+        limit_price_cents: price,
+        mode,
+      }),
+    });
+    resultEl.className = "result ok";
+    const fills = data.fills || [];
+    const fillSummary = fills.length
+      ? `Filled ${fills.reduce((s, f) => s + f.qty, 0)} at avg ${Math.round(fills.reduce((s, f) => s + f.qty * f.price_cents, 0) / fills.reduce((s, f) => s + f.qty, 1))}¢`
+      : `Working — no immediate fill`;
+    resultEl.innerHTML = `<strong>✓ Order ${data.status || 'placed'}.</strong> ${fillSummary}.`;
+    loadSummary();
+  } catch (e) {
+    resultEl.className = "result error";
+    const reason = e.body && e.body.reason ? e.body.reason : e.message;
+    resultEl.innerHTML = `<strong>✗ Rejected.</strong> ${reason}`;
+  }
+});
+
+// ─── Account summary, orders, positions ──────────────────────────────────
+
+async function loadSummary() {
+  try {
+    const s = await fetchJSON("/api/trade/summary");
+    document.getElementById("stat-pnl").textContent = fmtMoney(s.daily_realized_pnl_usd);
+    document.getElementById("stat-wagered").textContent = fmtMoney(s.daily_wagered_usd);
+    document.getElementById("stat-orders").textContent = (s.open_orders || []).length;
+    document.getElementById("stat-positions").textContent = (s.positions || []).length;
+    const limits = s.limits || {};
+    document.getElementById("limits-note").innerHTML =
+      `Per-order cap: ${fmtMoney(limits.max_order_usd)}. ` +
+      `Daily cap: ${fmtMoney(limits.max_daily_usd)}. ` +
+      `<a href="#" id="tighten-link" style="color: var(--accent);">Tighten limits</a>`;
+    state.enrolled = !!s.enrolled_for_live;
+    renderOpenOrders(s.open_orders || []);
+    renderPositions(s.positions || []);
+    updateEnrollmentBadge();
+  } catch (e) {
+    if (e.status === 401) {
+      document.getElementById("stat-pnl").textContent = "—";
+      document.getElementById("limits-note").innerHTML =
+        `Sign in via the gateway to use trade features.`;
+    }
+  }
+}
+
+function renderOpenOrders(orders) {
+  const target = document.getElementById("open-orders");
+  if (orders.length === 0) {
+    target.innerHTML = `<div class="placeholder">None.</div>`;
+    return;
+  }
+  target.innerHTML = `<table class="positions-table"><thead><tr>
+    <th>Ticker</th><th>Side</th><th>Qty</th><th>@</th><th></th></tr></thead><tbody>${
+    orders.map(o => `<tr>
+      <td>${o.ticker}</td>
+      <td>${o.action.toUpperCase()} ${o.side.toUpperCase()}</td>
+      <td>${o.qty - (o.filled_qty || 0)}</td>
+      <td>${o.limit_price_cents}¢</td>
+      <td><button class="cancel-x" data-oid="${o.id}">×</button></td>
+    </tr>`).join("")
+  }</tbody></table>`;
+  target.querySelectorAll(".cancel-x").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        await fetchJSON(`/api/trade/orders/${btn.dataset.oid}`, { method: "DELETE" });
+        loadSummary();
+      } catch (e) { /* ignore */ }
+    });
+  });
+}
+
+function renderPositions(positions) {
+  const target = document.getElementById("positions-list");
+  if (positions.length === 0) {
+    target.innerHTML = `<div class="placeholder">None.</div>`;
+    return;
+  }
+  target.innerHTML = `<table class="positions-table"><thead><tr>
+    <th>Ticker</th><th>Side</th><th>Qty</th><th>Avg</th></tr></thead><tbody>${
+    positions.map(p => `<tr>
+      <td>${p.ticker}</td>
+      <td>${p.side.toUpperCase()}</td>
+      <td>${p.qty}</td>
+      <td>${p.avg_price_cents}¢</td>
+    </tr>`).join("")
+  }</tbody></table>`;
+}
+
+// ─── Enrollment ───────────────────────────────────────────────────────────
+
+document.getElementById("enroll-btn").addEventListener("click", async () => {
+  const key_id = document.getElementById("enroll-key-id").value.trim();
+  const private_pem = document.getElementById("enroll-pem").value;
+  const is_demo = document.getElementById("enroll-demo").checked;
+  const status = document.getElementById("enroll-status");
+  if (!key_id || !private_pem.includes("BEGIN")) {
+    status.textContent = "Need both key id and a PEM-formatted private key.";
+    status.className = "enroll-status";
+    return;
+  }
+  status.textContent = "Saving…";
+  try {
+    await fetchJSON("/api/trade/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key_id, private_pem, is_demo }),
+    });
+    document.getElementById("enroll-pem").value = "";
+    status.textContent = `✓ Enrolled (${is_demo ? "demo" : "production"}).`;
+    status.className = "enroll-status enrolled";
+    loadSummary();
+  } catch (e) {
+    status.textContent = `✗ ${e.body && e.body.error || e.message}`;
+    status.className = "enroll-status";
+  }
+});
+
+document.getElementById("disable-btn").addEventListener("click", async () => {
+  if (!confirm("Remove your Kalshi credentials? You'll need to re-enroll to trade live.")) return;
+  try {
+    await fetchJSON("/api/trade/enroll", { method: "DELETE" });
+    document.getElementById("enroll-status").textContent = "Credentials removed.";
+    document.getElementById("enroll-status").className = "enroll-status";
+    loadSummary();
+  } catch (e) { /* ignore */ }
+});
+
+function updateEnrollmentBadge() {
+  const liveOpt = document.querySelector("#mode-select option[value='live']");
+  const banner = document.getElementById("mode-banner");
+  const enrollStatus = document.getElementById("enroll-status");
+  if (state.enrolled) {
+    liveOpt.disabled = false;
+    liveOpt.textContent = "LIVE (real money)";
+    enrollStatus.textContent = "✓ Enrolled for live trading.";
+    enrollStatus.className = "enroll-status enrolled";
+  } else {
+    liveOpt.disabled = true;
+    liveOpt.textContent = "LIVE (enroll first)";
+  }
+  // If user switches the dropdown to live, swap the banner color
+  document.getElementById("mode-select").addEventListener("change", e => {
+    if (e.target.value === "live") {
+      banner.className = "mode-banner live";
+      banner.innerHTML = `<strong>Live mode.</strong> Orders are signed with your private key and submitted to Kalshi immediately.`;
+    } else {
+      banner.className = "mode-banner";
+      banner.innerHTML = `<strong>Paper mode.</strong> Orders simulate fills against the live Kalshi orderbook. Real money is never moved.`;
+    }
+  }, { once: true });
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────
+
+document.getElementById("search-input").addEventListener("input", e => filterMarkets(e.target.value));
+loadMarkets();
+loadSummary();
+setInterval(loadSummary, 30000);
+</script>
+</body>
+</html>

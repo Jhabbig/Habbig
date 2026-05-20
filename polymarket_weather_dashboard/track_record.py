@@ -442,3 +442,140 @@ def lifetime_summary(conn_factory) -> dict:
         "log_loss": round(_wcal.log_loss(preds, outcomes) or 0.0, 5) if preds else None,
         "reliability": _wcal.reliability_diagram(preds, outcomes, n_bins=10) if preds else [],
     }
+
+
+# ─── Chart-friendly aggregates for the public page ────────────────────────────
+
+def daily_series(conn_factory, days: int = 90) -> list[dict]:
+    """Per-UTC-day stats: n_signals, n_resolved, win rate, and the
+    cumulative PnL of "bet $1 per signal in the direction of edge".
+
+    PnL convention matches backtest.py exactly:
+        edge >= 0 → buy YES at yes_price; +1-yes_price on YES, -yes_price on NO
+        edge <  0 → buy NO at (1-yes_price); +yes_price on NO, -(1-yes_price) on YES
+    """
+    days = max(1, min(365, int(days)))
+    with conn_factory(readonly=True) as conn:
+        rows = conn.execute(
+            """SELECT substr(s.timestamp, 1, 10) AS d,
+                      s.yes_price, s.model_prob, s.edge,
+                      r.actual_outcome
+               FROM weather_signals_log s
+               LEFT JOIN weather_resolutions r ON r.market_id = s.market_id
+               WHERE s.model_prob IS NOT NULL
+                 AND s.timestamp >= datetime('now', ?)
+               ORDER BY s.timestamp ASC""",
+            (f"-{days} days",),
+        ).fetchall()
+
+    by_day: dict = {}
+    for r in rows:
+        d = r["d"]
+        bucket = by_day.setdefault(d, {"date": d, "n_signals": 0, "n_resolved": 0,
+                                       "n_correct": 0, "pnl": 0.0})
+        bucket["n_signals"] += 1
+        if r["actual_outcome"] not in ("YES", "NO"):
+            continue
+        bucket["n_resolved"] += 1
+        edge = float(r["edge"] or 0)
+        yes_p = float(r["yes_price"] or 0.5)
+        if edge >= 0:
+            bucket["pnl"] += (1.0 - yes_p) if r["actual_outcome"] == "YES" else -yes_p
+            if r["actual_outcome"] == "YES":
+                bucket["n_correct"] += 1
+        else:
+            no_p = 1.0 - yes_p
+            bucket["pnl"] += (1.0 - no_p) if r["actual_outcome"] == "NO" else -no_p
+            if r["actual_outcome"] == "NO":
+                bucket["n_correct"] += 1
+
+    out = []
+    cumulative = 0.0
+    for d in sorted(by_day):
+        b = by_day[d]
+        cumulative += b["pnl"]
+        b["pnl"] = round(b["pnl"], 4)
+        b["cumulative_pnl"] = round(cumulative, 4)
+        b["win_rate"] = round(b["n_correct"] / b["n_resolved"], 4) if b["n_resolved"] else None
+        out.append(b)
+    return out
+
+
+def per_station_skill(conn_factory) -> list[dict]:
+    """Per-city resolved-market win rate + Brier score. Surfaces which
+    stations the model has alpha at vs. which are noise."""
+    with conn_factory(readonly=True) as conn:
+        rows = conn.execute(
+            """SELECT p.city, s.model_prob, s.edge, r.actual_outcome
+               FROM weather_signals_log s
+               JOIN weather_price_snapshots p ON p.market_id = s.market_id
+               JOIN weather_resolutions r ON r.market_id = s.market_id
+               WHERE s.model_prob IS NOT NULL
+                 AND r.actual_outcome IN ('YES','NO')
+                 AND p.city IS NOT NULL
+               GROUP BY s.market_id"""
+        ).fetchall()
+
+    by_city: dict = {}
+    for r in rows:
+        c = r["city"]
+        b = by_city.setdefault(c, {"city": c, "n": 0, "n_correct": 0,
+                                    "preds": [], "outcomes": []})
+        b["n"] += 1
+        outcome = 1 if r["actual_outcome"] == "YES" else 0
+        b["preds"].append(float(r["model_prob"]))
+        b["outcomes"].append(outcome)
+        edge = float(r["edge"] or 0)
+        if (edge > 0 and r["actual_outcome"] == "YES") or (edge < 0 and r["actual_outcome"] == "NO"):
+            b["n_correct"] += 1
+
+    out = []
+    for c, b in by_city.items():
+        out.append({
+            "city": c,
+            "n": b["n"],
+            "win_rate": round(b["n_correct"] / b["n"], 4) if b["n"] else None,
+            "brier": round(_wcal.brier_score(b["preds"], b["outcomes"]) or 0.0, 5) if b["preds"] else None,
+        })
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+def edge_bucket_win_rates(conn_factory) -> list[dict]:
+    """Win rate by absolute-edge bucket. A real edge signal should show
+    monotonically rising win rate as |edge| grows. A flat curve means
+    the model is firing on noise."""
+    with conn_factory(readonly=True) as conn:
+        rows = conn.execute(
+            """SELECT s.edge, r.actual_outcome
+               FROM weather_signals_log s
+               JOIN weather_resolutions r ON r.market_id = s.market_id
+               WHERE s.model_prob IS NOT NULL
+                 AND r.actual_outcome IN ('YES','NO')"""
+        ).fetchall()
+
+    buckets = [
+        ("0–2pp",    0.00, 0.02),
+        ("2–5pp",    0.02, 0.05),
+        ("5–8pp",    0.05, 0.08),
+        ("8–12pp",   0.08, 0.12),
+        ("12–20pp",  0.12, 0.20),
+        ("≥20pp",    0.20, 1.01),
+    ]
+    out = []
+    for label, lo, hi in buckets:
+        n = 0
+        n_correct = 0
+        for r in rows:
+            e = float(r["edge"] or 0)
+            if lo <= abs(e) < hi:
+                n += 1
+                won = (e > 0 and r["actual_outcome"] == "YES") or (e < 0 and r["actual_outcome"] == "NO")
+                if won:
+                    n_correct += 1
+        out.append({
+            "bucket": label, "lo": lo, "hi": hi,
+            "n": n,
+            "win_rate": round(n_correct / n, 4) if n else None,
+        })
+    return out
