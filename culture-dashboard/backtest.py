@@ -54,6 +54,13 @@ def _slug_from_key(key: str) -> str | None:
 
 def validate(days: int = 30, limit: int = 200) -> dict:
     """Replay culture_markets surge alerts and check the next-24h price move."""
+    return {
+        "markets": _validate_market_alerts(days=days, limit=limit),
+        "topics": _validate_topic_snapshots(days=days, limit=limit),
+    }
+
+
+def _validate_market_alerts(days: int, limit: int) -> dict:
     since = time.time() - days * 86400
     alerts = cache.market_alerts(source="culture_markets", since_ts=since)
     threshold = _threshold_pct()
@@ -105,6 +112,70 @@ def validate(days: int = 30, limit: int = 200) -> dict:
         "window_hours": _window_hours(),
         "threshold_pct": threshold,
         "total_alerts": len(alerts),
+        "validatable": total,
+        "hit_rate": round(hit / total, 3) if total else None,
+        "weak_rate": round(weak / total, 3) if total else None,
+        "miss_rate": round(miss / total, 3) if total else None,
+        "insufficient_data": insufficient,
+        "examples": sorted(examples, key=lambda e: e["ts"], reverse=True)[:limit],
+    }
+
+
+def _validate_topic_snapshots(days: int, limit: int) -> dict:
+    """Did high-signal cross-source topics precede price moves in their matched markets?
+
+    For each snapshot with surge_signal >= 1.5 and ≥1 matched market, we
+    average the realised |Δ| across matched markets over the next 24h.
+    """
+    since = time.time() - days * 86400
+    snapshots = cache.topic_snapshots_since(since_ts=since, min_signal=1.5)
+    threshold = _threshold_pct()
+    weak_threshold = threshold / 2
+    window_s = _window_hours() * 3600
+
+    examples: list[dict] = []
+    hit = weak = miss = insufficient = 0
+    for s in snapshots:
+        if not s["market_slugs"]:
+            insufficient += 1
+            continue
+        realised_per_market = []
+        for slug in s["market_slugs"]:
+            at = cache.market_price_at(slug, s["ts"], tolerance_s=window_s / 4)
+            after = cache.market_price_at(slug, s["ts"] + window_s, tolerance_s=window_s / 4)
+            if not at or not after:
+                continue
+            p0 = at.get("mid_price") or at.get("favorite_price")
+            p1 = after.get("mid_price") or after.get("favorite_price")
+            if not p0 or not p1:
+                continue
+            realised_per_market.append((p1 - p0) / p0)
+        if not realised_per_market:
+            insufficient += 1
+            continue
+        # Average move across matched markets (basket).
+        avg = sum(realised_per_market) / len(realised_per_market)
+        abs_avg = abs(avg)
+        if abs_avg >= threshold:
+            kind = "hit"; hit += 1
+        elif abs_avg >= weak_threshold:
+            kind = "weak"; weak += 1
+        else:
+            kind = "miss"; miss += 1
+        examples.append({
+            "ts": s["ts"],
+            "label": s["label"],
+            "spread": s["spread"],
+            "surge_signal": s["surge_signal"],
+            "sources": s["sources"],
+            "n_markets": len(realised_per_market),
+            "realised_pct": round(avg, 4),
+            "classification": kind,
+        })
+
+    total = hit + weak + miss
+    return {
+        "total_snapshots": len(snapshots),
         "validatable": total,
         "hit_rate": round(hit / total, 3) if total else None,
         "weak_rate": round(weak / total, 3) if total else None,

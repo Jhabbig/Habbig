@@ -131,6 +131,22 @@ def init_db() -> None:
                 c.execute(f"ALTER TABLE market_prices ADD COLUMN {col} REAL")
             except sqlite3.OperationalError:
                 pass
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS topic_snapshots (
+                snapshot_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts                 REAL NOT NULL,
+                label              TEXT NOT NULL,
+                spread             INTEGER NOT NULL,
+                surge_signal       REAL,
+                sources_json       TEXT NOT NULL,
+                sections_json      TEXT NOT NULL,
+                market_slugs_json  TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_topic_snapshots_ts
+                ON topic_snapshots(ts DESC);
+            CREATE INDEX IF NOT EXISTS idx_topic_snapshots_label
+                ON topic_snapshots(label, ts DESC);
+        """)
         # Add phash column to existing DBs that predate the schema bump.
         try:
             c.execute("ALTER TABLE items ADD COLUMN phash TEXT")
@@ -436,6 +452,49 @@ def market_alerts(source: str, since_ts: float) -> list[dict]:
             (source, since_ts),
         )
         return [dict(r) for r in cur.fetchall()]
+
+
+def record_topic_snapshots(snapshots: list[dict]) -> None:
+    if not snapshots:
+        return
+    rows = [(s["ts"], s["label"], int(s["spread"]), s.get("surge_signal"),
+             json.dumps(sorted(s["sources"])),
+             json.dumps(sorted(s["sections"])),
+             json.dumps(sorted(s["market_slugs"])))
+            for s in snapshots]
+    with _txn() as c:
+        c.executemany(
+            "INSERT INTO topic_snapshots "
+            "(ts, label, spread, surge_signal, sources_json, sections_json, market_slugs_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            rows,
+        )
+
+
+def topic_snapshots_since(since_ts: float, min_signal: float = 1.5) -> list[dict]:
+    """Snapshots with a non-null surge signal at or above `min_signal`."""
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT ts, label, spread, surge_signal, sources_json, "
+            "sections_json, market_slugs_json FROM topic_snapshots "
+            "WHERE ts >= ? AND surge_signal IS NOT NULL AND surge_signal >= ? "
+            "ORDER BY ts ASC",
+            (since_ts, min_signal),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for k in ("sources", "sections", "market_slugs"):
+                d[k] = json.loads(d.pop(k + "_json") or "[]")
+            out.append(d)
+        return out
+
+
+def prune_topic_snapshots(days: int = 30) -> int:
+    cutoff = time.time() - days * 86400
+    with _txn() as c:
+        cur = c.execute("DELETE FROM topic_snapshots WHERE ts < ?", (cutoff,))
+        return cur.rowcount
 
 
 def prune_market_prices(days: int = 30) -> int:

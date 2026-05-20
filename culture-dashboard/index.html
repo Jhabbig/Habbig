@@ -127,6 +127,21 @@
   .edge-market .spread { color: var(--muted); font-size: 10px; }
   .edge-market .spread.wide { color: var(--warn); }
   .edge-spark { width: 100%; height: 24px; margin-top: 4px; }
+  .edge-position { display: inline-flex; align-items: baseline; gap: 6px;
+                    background: var(--bg); border: 1px solid var(--border);
+                    border-radius: 4px; padding: 2px 8px; font-size: 11px;
+                    font-variant-numeric: tabular-nums; }
+  .edge-position .size { font-weight: 700; }
+  .edge-position .tier { color: var(--muted); text-transform: uppercase;
+                          font-size: 9px; letter-spacing: 0.06em; }
+  .edge-position.shrug      { border-color: var(--border); }
+  .edge-position.watch      { border-color: var(--muted); }
+  .edge-position.tracker    { border-color: var(--warn); }
+  .edge-position.conviction { border-color: var(--good); }
+  .edge-position.conviction .size { color: var(--good); }
+  .edge-position.tracker .size    { color: var(--warn); }
+  .edge-disclaimer { color: var(--muted); font-size: 10px;
+                     margin-top: 8px; font-style: italic; }
 
   .backtest { background: var(--panel); border: 1px solid var(--border);
               border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
@@ -141,6 +156,11 @@
   .backtest-rate-value.hit { color: var(--good); }
   .backtest-rate-value.weak { color: var(--warn); }
   .backtest-rate-value.miss { color: var(--bad); }
+  .backtest-split { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 800px) { .backtest-split { grid-template-columns: 1fr; } }
+  .backtest-block-head { font-size: 12px; font-weight: 600;
+                         text-transform: uppercase; letter-spacing: 0.06em;
+                         color: var(--accent); margin-bottom: 4px; }
   .backtest-examples { display: grid; gap: 4px; font-size: 12px;
                        max-height: 200px; overflow-y: auto; }
   .backtest-example { display: grid;
@@ -272,9 +292,20 @@
 
   <section class="backtest" id="backtest">
     <h2>Signal validation (last 30 days)</h2>
-    <div class="sub" id="backtest-sub">Loading…</div>
-    <div class="backtest-rates" id="backtest-rates"></div>
-    <div class="backtest-examples" id="backtest-examples"></div>
+    <div class="backtest-split">
+      <div>
+        <div class="backtest-block-head">Market-source surges</div>
+        <div class="sub" id="backtest-markets-sub">Loading…</div>
+        <div class="backtest-rates" id="backtest-markets-rates"></div>
+        <div class="backtest-examples" id="backtest-markets-examples"></div>
+      </div>
+      <div>
+        <div class="backtest-block-head">Cross-source topic surges</div>
+        <div class="sub" id="backtest-topics-sub">Loading…</div>
+        <div class="backtest-rates" id="backtest-topics-rates"></div>
+        <div class="backtest-examples" id="backtest-topics-examples"></div>
+      </div>
+    </div>
   </section>
 
   <section class="topics" id="topics">
@@ -450,6 +481,14 @@ function trajectorySparkSvg(traj) {
   </svg>`;
 }
 
+function positionHtml(pos) {
+  if (!pos) return "";
+  const pct = (pos.size_pct * 100).toFixed(2);
+  return `<span class="edge-position ${pos.tier}" title="quarter-Kelly · edge ${(pos.edge_pct*100).toFixed(1)}% · haircut ${pos.haircut}">
+    <span class="size">${pct}%</span><span class="tier">${pos.tier}</span>
+  </span>`;
+}
+
 async function loadEdges() {
   const r = await fetch("/api/edges?limit=8");
   const data = await r.json();
@@ -465,12 +504,14 @@ async function loadEdges() {
     const markets = e.markets.map(m => {
       const priceHtml = m.current_price != null
         ? `<span class="px">${(m.current_price * 100).toFixed(0)}¢</span>` : "";
+      const posHtml = positionHtml(m.position);
       return `<div class="edge-market">
          <a href="${m.url || '#'}" target="_blank" rel="noopener noreferrer">${m.title}</a>
          ${priceHtml}
          ${velocityHtml(m.price_velocity_24h_pct)}
          ${spreadHtml(m.spread_bps)}
          <span class="vol">vol ${fmt(m.volume)}</span>
+         ${posHtml}
        </div>
        ${trajectorySparkSvg(m.trajectory)}`;
     }).join("");
@@ -493,29 +534,34 @@ async function loadEdges() {
       ${markets}`;
     root.appendChild(card);
   }
+  root.insertAdjacentHTML(
+    "beforeend",
+    '<div class="edge-disclaimer">Position sizes are informational only — quarter-Kelly × spread haircut, capped at ' +
+    'CULTURE_POSITION_MAX_PCT. Not advice.</div>',
+  );
 }
 
-async function loadBacktest() {
-  const r = await fetch("/api/backtest?days=30&limit=12");
-  const data = await r.json();
-  const sub = document.getElementById("backtest-sub");
-  const rates = document.getElementById("backtest-rates");
-  const ex = document.getElementById("backtest-examples");
+function renderBacktestBlock(prefix, data, kind) {
+  const sub = document.getElementById(`backtest-${prefix}-sub`);
+  const rates = document.getElementById(`backtest-${prefix}-rates`);
+  const ex = document.getElementById(`backtest-${prefix}-examples`);
+  const noun = kind === "markets" ? "alerts" : "snapshots";
+  const count = kind === "markets" ? data.total_alerts : data.total_snapshots;
   if (!data.validatable) {
-    sub.textContent = `${data.total_alerts} historical market-source surges, ${data.insufficient_data} lack ±${data.window_hours}h price snapshots. Hit-rate computes after ~${data.window_hours * 2}h of operation.`;
-    rates.innerHTML = "";
-    ex.innerHTML = "";
+    sub.textContent = `${count || 0} ${noun}, ${data.insufficient_data || 0} lack post-event price data. Hit-rate computes once enough history accumulates.`;
+    rates.innerHTML = ""; ex.innerHTML = "";
     return;
   }
-  const thrPct = (data.threshold_pct * 100).toFixed(0);
-  sub.textContent = `${data.validatable} of ${data.total_alerts} market-source surges have post-alert price data. Hit = realised |Δ| ≥ ${thrPct}% within ${data.window_hours}h.`;
+  const thrPct = ((data.threshold_pct || 0.05) * 100).toFixed(0);
+  const window = data.window_hours || 24;
+  sub.textContent = `${data.validatable} of ${count} ${noun} have post-event price data. Hit = realised |Δ| ≥ ${thrPct}% within ${window}h.`;
   rates.innerHTML = `
     <div class="backtest-rate">
       <div class="backtest-rate-label">Hit rate</div>
       <div class="backtest-rate-value hit">${(data.hit_rate * 100).toFixed(0)}%</div>
     </div>
     <div class="backtest-rate">
-      <div class="backtest-rate-label">Weak (≥${(data.threshold_pct * 50).toFixed(0)}%)</div>
+      <div class="backtest-rate-label">Weak</div>
       <div class="backtest-rate-value weak">${(data.weak_rate * 100).toFixed(0)}%</div>
     </div>
     <div class="backtest-rate">
@@ -525,13 +571,27 @@ async function loadBacktest() {
   ex.innerHTML = data.examples.map(e => {
     const when = new Date(e.ts * 1000).toLocaleString();
     const sign = e.realised_pct > 0 ? "+" : "";
+    const label = kind === "markets" ? e.slug : e.label;
+    const detail = kind === "markets"
+      ? `z ${e.z_score.toFixed(1)}`
+      : `z ${e.surge_signal.toFixed(1)} · ${e.n_markets}m`;
     return `<div class="backtest-example">
       <span class="when">${when.split(",")[0]}</span>
-      <a class="slug" href="https://polymarket.com/event/${e.slug}" target="_blank" rel="noopener noreferrer">${e.slug}</a>
-      <span class="when">z ${e.z_score.toFixed(1)}</span>
+      <span class="slug">${label}</span>
+      <span class="when">${detail}</span>
       <span class="realised ${e.classification}">${sign}${(e.realised_pct * 100).toFixed(1)}%</span>
     </div>`;
   }).join("");
+}
+
+async function loadBacktest() {
+  const r = await fetch("/api/backtest?days=30&limit=12");
+  const data = await r.json();
+  // Re-inject window/threshold into each block so they render consistently.
+  const m = Object.assign({window_hours: 24, threshold_pct: 0.05}, data.markets || {});
+  const t = Object.assign({window_hours: 24, threshold_pct: 0.05}, data.topics || {});
+  renderBacktestBlock("markets", m, "markets");
+  renderBacktestBlock("topics", t, "topics");
 }
 
 async function loadSurges() {

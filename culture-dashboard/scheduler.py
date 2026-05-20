@@ -18,8 +18,10 @@ import httpx
 import cache
 import dedup
 import digest
+import edge as edge_mod
 import index_calc
 import surge_calc
+import time as _time
 from models import Item
 
 log = logging.getLogger(__name__)
@@ -132,6 +134,33 @@ async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
             removed_prices = cache.prune_market_prices(days=30)
             if removed_prices:
                 log.info("pruned %d old market_prices rows", removed_prices)
+            removed_topics = cache.prune_topic_snapshots(days=30)
+            if removed_topics:
+                log.info("pruned %d old topic_snapshots rows", removed_topics)
+            # Snapshot active cross-source topic clusters for backtesting.
+            try:
+                snaps = []
+                for t in edge_mod.compute_topics_with_markets(limit=50):
+                    if t.get("surge_signal") is None or t["surge_signal"] < 1.0:
+                        # Only retain meaningfully-signalled topics — others would
+                        # balloon the snapshot table without informing backtests.
+                        if t["spread"] < 4:
+                            continue
+                    snaps.append({
+                        "ts": _time.time(),
+                        "label": t["label"],
+                        "spread": t["spread"],
+                        "surge_signal": t.get("surge_signal"),
+                        "sources": t["sources"],
+                        "sections": t["sections"],
+                        "market_slugs": [m["event_slug"] for m in t["markets"]
+                                         if m.get("event_slug")],
+                    })
+                if snaps:
+                    cache.record_topic_snapshots(snaps)
+                    log.info("recorded %d topic snapshots", len(snaps))
+            except Exception as e:  # noqa: BLE001
+                log.warning("topic snapshot hiccup: %s", e)
         except Exception as e:  # noqa: BLE001
             log.warning("surge worker hiccup: %s", e)
         try:

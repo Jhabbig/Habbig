@@ -69,7 +69,8 @@ dashboard still renders, that section just shows "No data".
 | `topics.py` | Cross-source topic clustering — Jaccard on title tokens + hashtags. |
 | `edge.py` | Topic ↔ Polymarket-market matcher; computes mispricing score from surge vs. price velocity. |
 | `price_velocity.py` | Trailing 24h price velocity (mid-price) + downsampled trajectory per event. |
-| `backtest.py` | Predictive validation: hit-rate of historical market-source surges vs realised 24h price moves. |
+| `backtest.py` | Predictive validation: hit-rates of historical market-source surges AND topic-snapshot surges vs realised 24h price moves. |
+| `position.py` | Quarter-Kelly position-size suggestions per matched market (informational). |
 | `digest.py` | Calls Claude (anthropic SDK) with a packed snapshot to produce the daily culture brief. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
@@ -207,10 +208,39 @@ validation" panel under the edges. This is a backwards-looking sanity check
 — it answers "when our surge alarm fired on a culture market, did the
 price actually move?".
 
-Note: topic-level surges (Reddit, TikTok, etc.) are *not* yet backtested
-because we don't persist which topic clusters existed at past timestamps.
-That requires snapshotting cluster state at each scrape, deferred to a
-later iteration.
+### Topic-snapshot backtest
+
+The surge worker also snapshots every cross-source topic with
+`surge_signal >= 1.0` (or spread ≥ 4 sources, in case the surge hasn't
+hit threshold yet) into `topic_snapshots` each cycle. The backtest
+replays each snapshot, computes the **basket-average** realised move
+across the matched markets in the `CULTURE_BACKTEST_WINDOW_HOURS`
+following the snapshot, and classifies hit / weak / miss the same way as
+the market-source path. Snapshots are pruned to 30 days.
+
+Returned as `{"markets": …, "topics": …}` from `/api/backtest`; the UI
+renders them as two side-by-side panels so you can compare the
+predictiveness of market-volume surges versus cross-platform attention
+surges.
+
+### Position-size suggestions
+
+Each matched market on an edge now carries a `position` field with a
+quarter-Kelly informational size suggestion. Maths:
+
+```
+edge       = min(0.10, mispricing_score × 0.02)
+kelly_full = edge / (price / (1 − price))
+size       = kelly_full × 0.25 × spread_haircut
+spread_haircut = max(0.5, 1 − spread_bps / 1000)
+```
+
+Hard-capped at `CULTURE_POSITION_MAX_PCT` (default 5%). Tiers in the UI:
+`shrug` < 0.5%, `watch` 0.5-1.5%, `tracker` 1.5-3%, `conviction` ≥ 3%.
+Quarter-Kelly because full Kelly is famously too aggressive; the
+spread haircut shrinks the size for thinly-traded contracts. **These
+are not advice** — they're a single arithmetic readout of the same edge
+the dashboard is already surfacing.
 
 ## API
 

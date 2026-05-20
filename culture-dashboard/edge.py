@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 
 import cache
+import position
 import price_velocity
 import surge_calc
 import topics
@@ -83,6 +84,11 @@ def compute_edges(limit: int = 20) -> list[dict]:
             mispricing = c["surge_signal"]
         if mispricing <= 0:
             continue
+        markets = c["markets"]
+        for m in markets:
+            m["position"] = position.suggest(
+                m.get("current_price"), round(mispricing, 2), m.get("spread_bps"),
+            )
         out.append({
             "label": c["label"],
             "keywords": c["keywords"][:10],
@@ -92,7 +98,7 @@ def compute_edges(limit: int = 20) -> list[dict]:
             "surge_signal": c["surge_signal"],
             "min_abs_velocity": round(min_abs_vel, 4) if min_abs_vel is not None else None,
             "mispricing_score": round(mispricing, 2),
-            "markets": c["markets"],
+            "markets": markets,
             "items": c["items"][:5],
         })
     out.sort(key=lambda e: e["mispricing_score"], reverse=True)
