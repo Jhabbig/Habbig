@@ -234,6 +234,17 @@ def test_sea_ice_min_projection_needs_history():
     assert sea_ice_model.arctic_min_projection({"arctic": series}) is None
 
 
+def test_sea_ice_annual_extremes():
+    series = sea_ice_src.parse(_load("seaice_sample.csv"))
+    out = sea_ice_model.annual_extremes(series)
+    assert len(out) == 1 and out[0]["year"] == 2024
+    # Min in our fixture is the mid-September row (4.276)
+    assert out[0]["min_mkm2"] == 4.276
+    assert out[0]["max_mkm2"] == 13.605
+    # Empty input → empty list, not a crash
+    assert sea_ice_model.annual_extremes([]) == []
+
+
 # ─── Calibration summary ───────────────────────────────────────────────────────
 
 def test_calibration_summary_known_values():

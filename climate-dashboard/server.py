@@ -139,6 +139,8 @@ def api_sea_ice():
         "fetched_at": s["fetched_at"],
         "arctic_recent": arctic[-1100:],
         "antarctic_recent": antarctic[-1100:],
+        "arctic_annual": sea_ice_model.annual_extremes(arctic),
+        "antarctic_annual": sea_ice_model.annual_extremes(antarctic),
         "record_check": sea_ice_model.daily_record_check(s),
     })
 

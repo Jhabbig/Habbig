@@ -251,6 +251,68 @@
     height: 90px;
     margin-top: 10px;
   }
+
+  .overlay-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 22px;
+  }
+  .overlay-card h3 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .overlay-card .sub {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+  .overlay-chart { width: 100%; height: 360px; }
+  .overlay-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .toggle-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+  }
+  .toggle-pill .swatch {
+    width: 9px; height: 9px; border-radius: 50%;
+    display: inline-block;
+    background: currentColor;
+    opacity: 0.35;
+  }
+  .toggle-pill.on { color: var(--text-1); background: var(--bg-1); }
+  .toggle-pill.on .swatch { opacity: 1; }
+  .toggle-pill:hover { background: var(--bg-1); }
+  .overlay-hover {
+    color: var(--text-3);
+    font-size: 11px;
+    margin-top: 6px;
+    min-height: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .overlay-hover .yr { color: var(--text-1); font-weight: 600; margin-right: 8px; }
+  .overlay-hover .val { margin-right: 12px; }
+  .overlay-hover .val b { color: var(--text-1); font-weight: 600; }
   /* uPlot dark theme tweaks */
   .u-legend { display: none; }
   .u-axis { color: var(--text-3); }
@@ -267,6 +329,15 @@
 <div id="regime" class="regime" style="display:none"></div>
 
 <div class="grid" id="cards"></div>
+
+<div class="section-title">Indicator overlay</div>
+<div class="overlay-card">
+  <h3>Standardized anomalies, annual</h3>
+  <div class="sub">All series shown as σ from each one's own mean over the displayed window. Lets you compare indicators with very different units on a single axis.</div>
+  <div class="overlay-chart" id="overlay"></div>
+  <div class="overlay-hover" id="overlay-hover">Hover the chart for values.</div>
+  <div class="overlay-toggles" id="overlay-toggles"></div>
+</div>
 
 <div class="section-title">Climate markets</div>
 <div class="toolbar">
@@ -429,6 +500,189 @@ function hexAlpha(hex, a) {
 function ymdToUnix(y, m, d = 15) {
   return Math.floor(Date.UTC(y, m - 1, d) / 1000);
 }
+
+// ─── Indicator overlay ────────────────────────────────────────────────────────
+//
+// All long-horizon climate indicators on one z-score-normalized axis.
+// Each series is collapsed to an annual aggregate (mean, except sea-ice min)
+// then standardised against its own mean and std over the displayed window.
+//
+// Default visible set picks the three most-iconic indicators; the user can
+// toggle others on via the pills below the chart.
+
+const OVERLAY_SERIES = [
+  { id: "temp",     label: "Temperature anomaly", unit: "°C",  color: "#f87171",
+    fmt: v => `+${v.toFixed(2)}°C`, defaultOn: true },
+  { id: "co2",      label: "CO₂",                 unit: "ppm", color: "#fbbf24",
+    fmt: v => `${v.toFixed(1)} ppm`, defaultOn: true },
+  { id: "ch4",      label: "CH₄",                 unit: "ppb", color: "#a78bfa",
+    fmt: v => `${v.toFixed(0)} ppb`, defaultOn: false },
+  { id: "n2o",      label: "N₂O",                 unit: "ppb", color: "#fb923c",
+    fmt: v => `${v.toFixed(1)} ppb`, defaultOn: false },
+  { id: "arctic",   label: "Arctic sea ice min",  unit: "Mkm²", color: "#60a5fa",
+    fmt: v => `${v.toFixed(2)} Mkm²`, defaultOn: true },
+  { id: "oni",      label: "ONI (annual mean)",   unit: "",    color: "#34d399",
+    fmt: v => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`, defaultOn: false },
+];
+
+function annualMean(rows, key) {
+  if (!rows || !rows.length) return {};
+  const by = {};
+  for (const r of rows) {
+    if (r[key] == null) continue;
+    (by[r.year] = by[r.year] || []).push(r[key]);
+  }
+  const out = {};
+  for (const y of Object.keys(by)) {
+    out[+y] = by[y].reduce((a, b) => a + b, 0) / by[y].length;
+  }
+  return out;
+}
+
+function stdev(values) {
+  const n = values.length;
+  if (n < 2) return 0;
+  const m = values.reduce((a, b) => a + b, 0) / n;
+  return Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+}
+
+let _overlay = null;
+let _overlayEnabled = new Set();
+
+async function loadOverlay() {
+  const [tempD, co2D, ch4D, n2oD, seaD, regimeD] = await Promise.all([
+    getJSON("/api/temperature"), getJSON("/api/co2"), getJSON("/api/methane"),
+    getJSON("/api/n2o"), getJSON("/api/sea-ice"), getJSON("/api/regime"),
+  ]);
+
+  // Build year → value for each indicator
+  const raw = {
+    temp:   Object.fromEntries((tempD?.annual || []).map(a => [a.year, a.anomaly_c])),
+    co2:    annualMean(co2D?.monthly, "ppm"),
+    ch4:    annualMean(ch4D?.monthly, "ppb"),
+    n2o:    annualMean(n2oD?.monthly, "ppb"),
+    arctic: Object.fromEntries((seaD?.arctic_annual || []).map(a => [a.year, a.min_mkm2])),
+    oni:    annualMean(regimeD?.monthly, "oni"),
+  };
+
+  // For each series, compute mean and std across its own coverage. Then we'll
+  // plot (value - mean) / std for every year that the user has selected.
+  const stats = {};
+  for (const s of OVERLAY_SERIES) {
+    const vs = Object.values(raw[s.id] || {});
+    const mean = vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : 0;
+    const std = stdev(vs);
+    stats[s.id] = { mean, std };
+  }
+
+  // Common x-axis: union of years across all series, sorted.
+  const years = new Set();
+  for (const s of OVERLAY_SERIES) {
+    for (const y of Object.keys(raw[s.id])) years.add(+y);
+  }
+  const xs = Array.from(years).sort((a, b) => a - b);
+
+  _overlay = { raw, stats, xs };
+  if (_overlayEnabled.size === 0) {
+    for (const s of OVERLAY_SERIES) if (s.defaultOn) _overlayEnabled.add(s.id);
+  }
+  renderOverlay();
+  renderOverlayToggles();
+}
+
+let _overlayChart = null;
+function renderOverlay() {
+  if (!_overlay || typeof uPlot === "undefined") return;
+  const el = document.getElementById("overlay");
+  if (!el) return;
+
+  const { raw, stats, xs } = _overlay;
+  const xData = xs.map(y => ymdToUnix(y, 6, 15));
+  // First series = x-axis (timestamps). Then one column per indicator —
+  // z-score-normalized so we can compare different units on the same axis.
+  const data = [xData];
+  for (const s of OVERLAY_SERIES) {
+    const { mean, std } = stats[s.id];
+    data.push(xs.map(y => {
+      const v = raw[s.id][y];
+      if (v == null || std === 0) return null;
+      return (v - mean) / std;
+    }));
+  }
+
+  if (_overlayChart) { try { _overlayChart.destroy(); } catch (_) {} _overlayChart = null; }
+  el.innerHTML = "";
+  const width = el.clientWidth || 800;
+
+  const seriesOpts = [{}];
+  OVERLAY_SERIES.forEach((s, i) => {
+    seriesOpts.push({
+      label: s.label,
+      stroke: s.color,
+      width: 2,
+      points: { show: false },
+      show: _overlayEnabled.has(s.id),
+      _raw: s.id,
+    });
+  });
+
+  _overlayChart = new uPlot({
+    width, height: 360,
+    legend: { show: false },
+    cursor: { drag: { x: true, y: false }, focus: { prox: 30 } },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" } },
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" },
+        label: "σ from window mean", labelSize: 28, size: 50, gap: 4 },
+    ],
+    series: seriesOpts,
+    hooks: {
+      setCursor: [u => {
+        const idx = u.cursor.idx;
+        const hover = document.getElementById("overlay-hover");
+        if (idx == null) { hover.textContent = "Hover the chart for values."; return; }
+        const year = xs[idx];
+        const parts = [`<span class="yr">${year}</span>`];
+        OVERLAY_SERIES.forEach((s) => {
+          if (!_overlayEnabled.has(s.id)) return;
+          const v = raw[s.id][year];
+          if (v == null) return;
+          parts.push(
+            `<span class="val" style="color:${s.color}">${s.label}: <b>${s.fmt(v)}</b></span>`,
+          );
+        });
+        hover.innerHTML = parts.join("");
+      }],
+    },
+  }, data, el);
+}
+
+function renderOverlayToggles() {
+  const root = document.getElementById("overlay-toggles");
+  if (!root) return;
+  root.innerHTML = "";
+  for (const s of OVERLAY_SERIES) {
+    const pill = document.createElement("button");
+    pill.className = "toggle-pill" + (_overlayEnabled.has(s.id) ? " on" : "");
+    pill.style.color = _overlayEnabled.has(s.id) ? s.color : "";
+    pill.innerHTML = `<span class="swatch" style="color:${s.color}"></span>${s.label}`;
+    pill.addEventListener("click", () => {
+      if (_overlayEnabled.has(s.id)) _overlayEnabled.delete(s.id);
+      else _overlayEnabled.add(s.id);
+      renderOverlay();
+      renderOverlayToggles();
+    });
+    root.appendChild(pill);
+  }
+}
+
+window.addEventListener("resize", () => {
+  if (_overlayChart) {
+    const el = document.getElementById("overlay");
+    if (el && el.clientWidth) _overlayChart.setSize({ width: el.clientWidth, height: 360 });
+  }
+});
 
 async function getJSON(url) {
   try {
@@ -895,6 +1149,7 @@ async function loadBacktest() {
 
 loadRegime();
 loadCards();
+loadOverlay();
 loadMarkets();
 loadBacktest();
 

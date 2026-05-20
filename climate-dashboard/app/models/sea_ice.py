@@ -100,3 +100,23 @@ def antarctic_min_projection(sea_ice: dict) -> Optional[dict]:
     if not sea_ice or not sea_ice.get("antarctic"):
         return None
     return _annual_min_projection(sea_ice["antarctic"], _is_post_antarctic_min, _ANTARCTIC_MIN_SIGMA)
+
+
+def annual_extremes(series: list[dict]) -> list[dict]:
+    """Per-year min and max extent. Used by the overlay chart so the frontend
+    doesn't need the full daily history. Returns a list sorted by year."""
+    if not series:
+        return []
+    lo: dict[int, float] = {}
+    hi: dict[int, float] = {}
+    for s in series:
+        y = s["year"]
+        e = s["extent_mkm2"]
+        if y not in lo or e < lo[y]:
+            lo[y] = e
+        if y not in hi or e > hi[y]:
+            hi[y] = e
+    return [
+        {"year": y, "min_mkm2": round(lo[y], 4), "max_mkm2": round(hi[y], 4)}
+        for y in sorted(lo)
+    ]
