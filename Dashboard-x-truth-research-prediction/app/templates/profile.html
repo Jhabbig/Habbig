@@ -134,7 +134,48 @@
         <button type="submit" class="mt-4 bg-white/5 hover:bg-white/10 text-gray-300 font-medium text-sm px-6 py-2.5 rounded-lg border border-white/5 transition-all">Change Password</button>
     </form>
 
-    <p class="text-center text-[10px] text-gray-600 mt-8">Member since {{ user.created_at.strftime('%B %Y') if user.created_at else 'unknown' }}</p>
+    {% set api_keys = api_keys|default([]) %}
+    {% set new_key = new_key|default('') %}
+    <div class="bg-white/[0.02] border border-white/5 rounded-xl p-6 mt-4">
+        <h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-4">API Keys <span class="text-gray-600 normal-case font-normal">— programmatic access</span></h2>
+        <p class="text-xs text-gray-500 mb-4">Send <code class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded">X-API-Key: &lt;your-key&gt;</code> to call <code class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded">/api/v1/signals</code>, <code class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded">/api/v1/sources</code>, <code class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded">/api/v1/backtest</code>, and <code class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded">/api/v1/arbitrage</code>.</p>
+        {% if new_key %}
+        <div class="mb-4 p-3 rounded-lg border border-green-500/30 bg-green-500/5">
+            <p class="text-xs text-green-400 font-medium mb-1.5">New key — copy now, you won't see it again:</p>
+            <code class="block text-[11px] text-gray-200 font-mono break-all">{{ new_key }}</code>
+        </div>
+        {% endif %}
+        <form method="POST" action="/api-keys/create" class="flex items-end gap-3 mb-4">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+            <div class="flex-1">
+                <label class="block text-xs text-gray-500 mb-1.5">Label</label>
+                <input name="label" placeholder="e.g. trading-bot-prod" class="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-[#2D64F3]/50">
+            </div>
+            <button type="submit" class="bg-[#2D64F3] hover:bg-[#3B73FF] text-white font-medium text-sm px-4 py-2 rounded-lg">Generate key</button>
+        </form>
+        {% if api_keys %}
+        <div class="space-y-2">
+            {% for k in api_keys %}
+            <div class="flex items-center justify-between bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2">
+                <div>
+                    <code class="text-xs text-gray-300 font-mono">{{ k.key_prefix }}…</code>
+                    <span class="text-[10px] text-gray-500 ml-2">{{ k.label or 'unlabeled' }}</span>
+                    <span class="text-[10px] text-gray-600 ml-2">created {{ k.created_at.strftime('%Y-%m-%d') }}</span>
+                    {% if k.last_used_at %}<span class="text-[10px] text-gray-600 ml-2">last used {{ k.last_used_at.strftime('%Y-%m-%d') }}</span>{% endif %}
+                </div>
+                <form method="POST" action="/api-keys/{{ k.id }}/revoke" style="display:inline;">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="text-[10px] text-red-400 hover:text-red-300">Revoke</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-xs text-gray-600">No keys yet.</p>
+        {% endif %}
+    </div>
+
+    <p class="text-center text-[10px] text-gray-600 mt-8">Member since {{ user.created_at.strftime('%B %Y') if user.created_at else 'unknown' }} · <a href="/me/calibration" class="text-[#2D64F3] hover:underline">My Calibration</a></p>
 </main>
 </body>
 </html>

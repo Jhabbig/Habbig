@@ -28,7 +28,7 @@ from sqlmodel import func, select
 from app.config import settings, yaml_config
 from app.db import AsyncSession, engine, get_session, init_db
 from app.models import (
-    CredibilitySnapshot, MarketSnapshot, MonthlyQuota, PaperTrade, Prediction, RawPost, Source, SourcePredictionRecord, User, UserSession,
+    APIKey, CredibilitySnapshot, MarketSnapshot, MonthlyQuota, PaperTrade, Prediction, RawPost, Source, SourcePredictionRecord, User, UserPrediction, UserSession,
 )
 from app.security import decrypt_field as _decrypt_field, encrypt_field as _encrypt_field
 
@@ -349,6 +349,9 @@ async def auth_middleware(request: Request, call_next):
     public_paths = {"/login", "/register", "/forgot-password", "/health", "/favicon.ico"}
     if request.url.path in public_paths:
         return await call_next(request)
+    # The /api/v1/* surface authenticates via X-API-Key header, not session cookie.
+    if request.url.path.startswith("/api/v1/"):
+        return await call_next(request)
     token = request.cookies.get("session")
     if token and token in _active_sessions:
         return await call_next(request)
@@ -472,14 +475,23 @@ async def logout(request: Request):
 # Profile
 # ---------------------------------------------------------------------------
 @app.get("/profile", response_class=HTMLResponse)
-async def profile_page(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
+async def profile_page(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth), new_key: str = ""):
     user = await _get_current_user_from_session(session, request)
     if not user:
         return RedirectResponse("/login", status_code=302)
     preferred_platform = getattr(user, "preferred_platform", None) or "polymarket"
     preferred_theme = getattr(user, "preferred_theme", None) or "dark"
     csrf_token = _get_csrf_token(request)
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "ts_password_decrypted": "••••••••" if user.truthsocial_password else "", "csrf_token": csrf_token})
+    keys_result = await session.exec(
+        select(APIKey).where(APIKey.user_id == user.id, APIKey.revoked == False).order_by(APIKey.created_at.desc())  # noqa: E712
+    )
+    api_keys = keys_result.all()
+    return templates.TemplateResponse("profile.html", {
+        "request": request, "user": user, "msg": "", "error": "",
+        "preferred_platform": preferred_platform, "preferred_theme": preferred_theme,
+        "ts_password_decrypted": "••••••••" if user.truthsocial_password else "",
+        "csrf_token": csrf_token, "api_keys": api_keys, "new_key": new_key,
+    })
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
@@ -1120,6 +1132,403 @@ async def backtest_endpoint(
 # ---------------------------------------------------------------------------
 # Refresh / Health
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Public API — key-authenticated programmatic access to /api/v1/*.
+# Quants build bots on top of our signals; user-facing UI doesn't need this.
+# ---------------------------------------------------------------------------
+_API_KEY_PREFIX = "narve_"
+
+
+def _hash_api_key(plaintext: str) -> str:
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def _generate_api_key() -> str:
+    """Generate a fresh user-facing API key. Shown once at creation, never persisted in plaintext."""
+    return _API_KEY_PREFIX + secrets.token_urlsafe(32)
+
+
+async def _require_api_user(request: Request) -> User:
+    """API-key authentication. Reads `X-API-Key`, looks up the owning user.
+
+    Distinct from the cookie-session middleware (which gates the HTML routes).
+    """
+    key = request.headers.get("X-API-Key", "").strip()
+    if not key or not key.startswith(_API_KEY_PREFIX):
+        raise HTTPException(status_code=401, detail="API key required")
+    key_hash = _hash_api_key(key)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        ak_result = await session.exec(select(APIKey).where(APIKey.key_hash == key_hash, APIKey.revoked == False))  # noqa: E712
+        ak = ak_result.first()
+        if ak is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        u_result = await session.exec(select(User).where(User.id == ak.user_id))
+        user = u_result.first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="Owning user no longer exists")
+        ak.last_used_at = datetime.now(timezone.utc)
+        session.add(ak)
+        await session.commit()
+        return user
+
+
+@app.get("/api/v1/signals")
+async def api_signals(
+    request: Request,
+    limit: int = 50,
+    min_ev: float = 0.0,
+    min_credibility: float = 0.0,
+    category: str = "",
+    _user: User = Depends(_require_api_user),
+):
+    """Recent qualifying signals as a JSON feed. Stable schema for bot consumers."""
+    limit = _clamp(limit, 1, 500)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        stmt = (
+            select(Prediction, RawPost)
+            .join(RawPost, Prediction.raw_post_id == RawPost.id)
+            .where(
+                Prediction.ev_score.isnot(None),
+                Prediction.ev_score >= min_ev,
+                Prediction.global_credibility_at_time >= min_credibility,
+                Prediction.risk_flag == False,  # noqa: E712
+            )
+            .order_by(Prediction.extracted_at.desc())
+            .limit(limit)
+        )
+        if category:
+            stmt = stmt.where(Prediction.category == category)
+        rows = (await session.exec(stmt)).all()
+    return JSONResponse({
+        "count": len(rows),
+        "filter": {"limit": limit, "min_ev": min_ev, "min_credibility": min_credibility, "category": category or None},
+        "signals": [
+            {
+                "prediction_id": pred.id,
+                "source": post.author_handle,
+                "platform": post.platform,
+                "category": pred.category,
+                "predicted_outcome": pred.predicted_outcome,
+                "bet_side": pred.bet_side,
+                "predicted_probability": pred.predicted_probability,
+                "market_implied_probability": pred.market_implied_probability,
+                "ev_score": pred.ev_score,
+                "source_credibility_at_time": pred.global_credibility_at_time,
+                "category_credibility_at_time": pred.category_credibility_at_time,
+                "market_slug": pred.market_slug,
+                "market_question": pred.market_question,
+                "market_close_time": pred.market_close_time.isoformat() if pred.market_close_time else None,
+                "extracted_at": pred.extracted_at.isoformat() if pred.extracted_at else None,
+            }
+            for pred, post in rows
+        ],
+    })
+
+
+@app.get("/api/v1/sources")
+async def api_sources(
+    limit: int = 100,
+    min_credibility: float = 0.0,
+    only_rated: bool = False,
+    _user: User = Depends(_require_api_user),
+):
+    """Source leaderboard as JSON, sorted by credibility desc."""
+    limit = _clamp(limit, 1, 1000)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        stmt = select(Source).where(Source.global_credibility >= min_credibility).order_by(Source.global_credibility.desc()).limit(limit)
+        if only_rated:
+            stmt = stmt.where(Source.accuracy_unlocked == True)  # noqa: E712
+        rows = (await session.exec(stmt)).all()
+    return JSONResponse({
+        "count": len(rows),
+        "sources": [
+            {
+                "handle": s.handle,
+                "platform": s.platform,
+                "global_credibility": s.global_credibility,
+                "category_credibility": s.category_credibility,
+                "accuracy": s.accuracy_global,
+                "decay_weighted_accuracy": s.decay_weighted_accuracy,
+                "brier_score": s.brier_score,
+                "brier_n": s.brier_n,
+                "qualifying_predictions": s.qualifying_predictions,
+                "correct_qualifying": s.correct_qualifying,
+                "accuracy_unlocked": s.accuracy_unlocked,
+                "categories": s.categories_predicted_in,
+                "trusted": s.trusted,
+                "verified": s.verified,
+                "follower_count": s.follower_count,
+            }
+            for s in rows
+        ],
+    })
+
+
+@app.get("/api/v1/sources/{handle}")
+async def api_source_detail(handle: str, _user: User = Depends(_require_api_user)):
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        s = (await session.exec(select(Source).where(Source.handle == handle))).first()
+        if s is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        # Last 30 credibility snapshots so callers can plot trend.
+        snaps = (await session.exec(
+            select(CredibilitySnapshot).where(CredibilitySnapshot.handle == handle)
+            .order_by(CredibilitySnapshot.snapshotted_at.desc()).limit(30)
+        )).all()
+    return JSONResponse({
+        "handle": s.handle,
+        "platform": s.platform,
+        "global_credibility": s.global_credibility,
+        "category_credibility": s.category_credibility,
+        "accuracy": s.accuracy_global,
+        "brier_score": s.brier_score,
+        "brier_n": s.brier_n,
+        "qualifying_predictions": s.qualifying_predictions,
+        "correct_qualifying": s.correct_qualifying,
+        "accuracy_unlocked": s.accuracy_unlocked,
+        "categories": s.categories_predicted_in,
+        "trusted": s.trusted,
+        "history": [
+            {"at": sn.snapshotted_at.isoformat(), "credibility": sn.global_credibility}
+            for sn in reversed(snaps)
+        ],
+    })
+
+
+@app.get("/api/v1/backtest")
+async def api_backtest(
+    min_ev: float = 0.10,
+    min_credibility: float = 0.55,
+    stake_usd: float = 1.0,
+    _user: User = Depends(_require_api_user),
+):
+    """Programmatic backtest. Same math as the UI button."""
+    from app.processing.paper_trade import TradeFilter, backtest as run_backtest
+    filt = TradeFilter(
+        min_ev=max(0.0, min(1.0, min_ev)),
+        min_credibility=max(0.0, min(1.0, min_credibility)),
+        stake_usd=max(0.01, min(1000.0, stake_usd)),
+    )
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        return JSONResponse(await run_backtest(session, filt))
+
+
+@app.get("/api/v1/arbitrage")
+async def api_arbitrage(min_edge: float = 3.0, _user: User = Depends(_require_api_user)):
+    from app.processing.arbitrage import find_arbs
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        arbs = await find_arbs(session, min_edge_pp=max(0.0, min(50.0, min_edge)))
+    return JSONResponse({"count": len(arbs), "opportunities": [
+        {
+            "polymarket_slug": a.polymarket_slug,
+            "kalshi_ticker": a.kalshi_ticker,
+            "category": a.category,
+            "poly_yes": a.poly_yes,
+            "kalshi_yes": a.kalshi_yes,
+            "edge_pp": a.edge_pp,
+            "cheaper_venue": a.cheaper_venue,
+            "match_score": a.match_score,
+        }
+        for a in arbs
+    ]})
+
+
+# ---------------------------------------------------------------------------
+# API key management (logged-in users mint and revoke keys from /profile).
+# ---------------------------------------------------------------------------
+@app.post("/api-keys/create")
+async def api_key_create(request: Request, label: str = Form(""), csrf_token_field: str = Form("", alias="_csrf_token")):
+    """Mint a new API key. Plaintext returned once and never stored."""
+    if not _validate_csrf(request, csrf_token_field):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    user = await _get_current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    plaintext = _generate_api_key()
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add(APIKey(
+            user_id=user.id,
+            key_hash=_hash_api_key(plaintext),
+            key_prefix=plaintext[:14],
+            label=(label or "")[:64],
+            created_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    # Show the plaintext exactly once. The user is responsible for capturing it.
+    return RedirectResponse(f"/profile?new_key={urllib.parse.quote(plaintext)}", status_code=302)
+
+
+@app.post("/api-keys/{key_id}/revoke")
+async def api_key_revoke(key_id: int, request: Request, csrf_token_field: str = Form("", alias="_csrf_token")):
+    if not _validate_csrf(request, csrf_token_field):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    user = await _get_current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.exec(select(APIKey).where(APIKey.id == key_id, APIKey.user_id == user.id))
+        ak = result.first()
+        if ak is None:
+            raise HTTPException(status_code=404, detail="Key not found")
+        ak.revoked = True
+        session.add(ak)
+        await session.commit()
+    return RedirectResponse("/profile", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# User calibration mode — let users record their own predictions and get
+# their own Brier score. Network effect: every recorded prediction is also
+# free training data for our extractor down the road.
+# ---------------------------------------------------------------------------
+@app.post("/me/predictions")
+async def me_predict(
+    request: Request,
+    market_slug: str = Form(""),
+    market_question: str = Form(""),
+    category: str = Form("other"),
+    predicted_probability: float = Form(0.5),
+    note: str = Form(""),
+    csrf_token_field: str = Form("", alias="_csrf_token"),
+):
+    if not _validate_csrf(request, csrf_token_field):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    user = await _get_current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    prob = max(0.0, min(1.0, predicted_probability))
+    side = "YES" if prob >= 0.5 else "NO"
+
+    # Snapshot the market's current implied price so we can score correctly.
+    market_implied = None
+    if market_slug:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            r = await session.exec(
+                select(MarketSnapshot).where(MarketSnapshot.market_slug == market_slug)
+                .order_by(MarketSnapshot.snapshotted_at.desc()).limit(1)
+            )
+            ms = r.first()
+            if ms is not None:
+                market_implied = ms.yes_price
+                if not market_question:
+                    market_question = ms.market_question
+                if category == "other" and ms.category:
+                    category = ms.category
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add(UserPrediction(
+            user_id=user.id,
+            market_slug=market_slug[:200],
+            market_question=market_question[:500],
+            category=category[:32],
+            predicted_probability=prob,
+            bet_side=side,
+            market_implied_probability=market_implied,
+            note=(note or "")[:1000],
+            recorded_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    return RedirectResponse("/me/calibration", status_code=302)
+
+
+@app.get("/me/calibration", response_class=HTMLResponse)
+async def me_calibration(request: Request, _user: str = Depends(require_auth)):
+    """Render the user's own Brier score + reliability curve + recent predictions."""
+    user = await _get_current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=302)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        ups = (await session.exec(
+            select(UserPrediction).where(UserPrediction.user_id == user.id)
+            .order_by(UserPrediction.recorded_at.desc()).limit(200)
+        )).all()
+
+    # Compute Brier over the user's resolved predictions.
+    from app.credibility.calibration import compute_calibration
+
+    class _Proxy:
+        def __init__(self, up):
+            self.predicted_probability = up.predicted_probability
+            self.predicted_outcome = up.bet_side  # "YES" / "NO" -> compute_calibration handles both
+            self.resolved_correct = up.resolved_correct
+
+    resolved = [_Proxy(u) for u in ups if u.resolved and u.resolved_correct is not None]
+    calib = compute_calibration(resolved)
+    csrf_token = _get_csrf_token(request)
+
+    if not ups:
+        body = (
+            '<div class="text-center py-12 text-gray-600 text-sm">No predictions recorded yet. '
+            'Make your first one above — over time you build a Brier-scored track record.</div>'
+        )
+    else:
+        rows_html = []
+        for up in ups[:50]:
+            status = "✓" if up.resolved_correct else ("✗" if up.resolved else "—")
+            sc = ("text-green-400" if up.resolved_correct else "text-red-400" if up.resolved else "text-gray-500")
+            rows_html.append(
+                f'<tr class="border-b border-white/5 hover:bg-white/[0.02]">'
+                f'<td class="px-4 py-2.5 text-xs text-gray-300 max-w-[300px]"><div class="truncate">{_esc(up.market_question or up.market_slug)}</div></td>'
+                f'<td class="px-4 py-2.5 text-xs"><span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{up.category}</span></td>'
+                f'<td class="px-4 py-2.5 font-mono text-xs text-gray-200">{up.predicted_probability:.0%}</td>'
+                f'<td class="px-4 py-2.5 font-mono text-xs text-gray-400">{up.market_implied_probability:.0%}</td>' if up.market_implied_probability is not None else f'<td class="px-4 py-2.5 text-xs text-gray-600">—</td>'
+                f'<td class="px-4 py-2.5 text-xs font-bold {sc}">{status}</td>'
+                f'<td class="px-4 py-2.5 text-xs text-gray-500">{_time_ago(up.recorded_at)}</td>'
+                f'</tr>'
+            )
+        brier_str = f"{calib.brier_score:.3f}" if calib.brier_score is not None else "—"
+        brier_color = ("text-green-400" if calib.brier_score is not None and calib.brier_score < 0.18
+                       else "text-amber-400" if calib.brier_score is not None and calib.brier_score < 0.25
+                       else "text-red-400" if calib.brier_score is not None else "text-gray-500")
+        n_resolved = len(resolved)
+        body = (
+            f'<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">'
+            f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Your Brier</div><div class="{brier_color} text-2xl font-bold">{brier_str}</div><div class="text-xs text-gray-500 mt-1">n={n_resolved}</div></div>'
+            f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Total predictions</div><div class="text-2xl font-bold text-gray-200">{len(ups)}</div></div>'
+            f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Resolved</div><div class="text-2xl font-bold text-gray-200">{n_resolved}</div></div>'
+            f'<div class="rounded-xl p-5 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Open</div><div class="text-2xl font-bold text-gray-200">{len(ups) - n_resolved}</div></div>'
+            f'</div>'
+            '<div class="rounded-xl border border-white/5 overflow-hidden">'
+            '<table class="w-full"><thead class="bg-white/[0.02] border-b border-white/5"><tr>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Market</th>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Cat</th>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Your P(YES)</th>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Mkt</th>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">Result</th>'
+            '<th class="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-500">When</th>'
+            '</tr></thead><tbody>' + "\n".join(rows_html) + '</tbody></table></div>'
+        )
+
+    form_html = (
+        f'<form method="POST" action="/me/predictions" class="rounded-xl border border-white/5 themed-card p-5 mb-6 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">'
+        f'<input type="hidden" name="_csrf_token" value="{csrf_token}">'
+        '<div class="md:col-span-2"><label class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 block">Market slug or URL</label>'
+        '<input name="market_slug" placeholder="trump-2028-election" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)" required></div>'
+        '<div><label class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 block">Category</label>'
+        '<select name="category" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">'
+        '<option value="other">other</option><option value="politics">politics</option><option value="sports">sports</option>'
+        '<option value="crypto">crypto</option><option value="geopolitics">geopolitics</option></select></div>'
+        '<div><label class="text-[10px] uppercase tracking-wider text-gray-500 mb-1 block">P(YES)</label>'
+        '<input type="number" step="0.01" min="0" max="1" name="predicted_probability" value="0.55" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)"></div>'
+        '<button type="submit" class="accent-bg text-white text-xs font-medium px-4 py-2 rounded-lg">Record</button></form>'
+    )
+
+    page = (
+        '<!DOCTYPE html><html><head><title>My Calibration · narve.ai</title>'
+        '<script src="https://cdn.tailwindcss.com"></script>'
+        '<style>:root{--bg-primary:#0d1117;--text-primary:#e6edf3;--text-secondary:#8b949e;--text-muted:#484f58;--border:#1e2a3a;--bg-secondary:#161b22;--bg-card:rgba(255,255,255,0.02);--accent:#2D64F3;}'
+        '.themed-card{background:var(--bg-card);border-color:var(--border);} .themed-border{border-color:var(--border);} .accent-bg{background:var(--accent);}'
+        'body{background:var(--bg-primary);color:var(--text-primary);font-family:Inter,system-ui,sans-serif;}</style></head>'
+        '<body class="min-h-screen p-6"><div class="max-w-6xl mx-auto">'
+        '<div class="flex items-center justify-between mb-6">'
+        '<h1 class="text-xl font-semibold">My Calibration</h1>'
+        '<a href="/" class="text-xs text-gray-500 hover:text-gray-300">← Back to dashboard</a>'
+        '</div>'
+        f'{form_html}{body}</div></body></html>'
+    )
+    return HTMLResponse(page)
+
+
 # Per-user cooldown on the manual refresh button so a user can't repeatedly
 # trigger pipeline runs (each run hits Polymarket/Kalshi/Twitter externally).
 _REFRESH_COOLDOWN_SECONDS = 60

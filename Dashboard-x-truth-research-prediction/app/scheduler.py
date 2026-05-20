@@ -331,6 +331,15 @@ async def refresh_open_trade_prices() -> dict:
     return stats
 
 
+async def _poll_telegram_safe() -> None:
+    """Wrap the Telegram poller so any failure is logged, not raised."""
+    try:
+        from app.telegram_bot import poll_telegram_commands
+        await poll_telegram_commands()
+    except Exception as exc:
+        logger.warning("Telegram poll failed: %s", exc)
+
+
 def start_scheduler() -> None:
     scheduler.add_job(run_pipeline, trigger=IntervalTrigger(minutes=5), id="main_pipeline", name="Pipeline", replace_existing=True, max_instances=1)
     scheduler.add_job(
@@ -341,8 +350,16 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        _poll_telegram_safe,
+        trigger=IntervalTrigger(seconds=15),
+        id="telegram_bot",
+        name="Telegram bot poller",
+        replace_existing=True,
+        max_instances=1,
+    )
     scheduler.start()
-    logger.info("Scheduler started — pipeline every 5 min, price stream every 60s")
+    logger.info("Scheduler started — pipeline every 5 min, price stream every 60s, telegram poll every 15s")
 
 
 def shutdown_scheduler() -> None:

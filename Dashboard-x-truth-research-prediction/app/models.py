@@ -176,6 +176,42 @@ class MonthlyQuota(SQLModel, table=True):
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class APIKey(SQLModel, table=True):
+    """A revocable API key for programmatic access to /api/v1/*."""
+    __tablename__ = "api_key"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    key_hash: str = Field(index=True, unique=True)  # sha256 of the plaintext key
+    key_prefix: str = Field(default="")  # first 8 chars for display ("narve_ab...")
+    label: str = Field(default="")  # operator-supplied description
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used_at: Optional[datetime] = None
+    revoked: bool = False
+
+
+class UserPrediction(SQLModel, table=True):
+    """A prediction the *user* recorded for themselves (calibration mode).
+
+    Distinct from `Prediction` — those are extracted from scraped posts. This
+    table lets users build their own Brier-scored track record on the dashboard
+    so the source-credibility methodology applies to them too.
+    """
+    __tablename__ = "user_prediction"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    market_slug: str = Field(index=True)
+    market_question: str = ""
+    category: str = Field(default="other")
+    predicted_probability: float = 0.5  # the user's P(YES)
+    bet_side: str = Field(default="YES")  # which side they'd take if forced (YES iff prob >= market mid)
+    market_implied_probability: Optional[float] = None  # snapshot at recording time
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved: bool = False
+    resolved_correct: Optional[bool] = None
+    resolved_at: Optional[datetime] = None
+    note: str = Field(default="", sa_column=Column(Text))
+
+
 class UserSession(SQLModel, table=True):
     __tablename__ = "user_session"
     token: str = Field(primary_key=True)

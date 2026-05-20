@@ -16,6 +16,9 @@ Subdomain when running behind the narve.ai gateway: `truth.narve.ai` (port 18789
 - **Liquidity-aware EV** — `/markets/<slug>/liquidity?side=YES` walks the Polymarket CLOB order book and returns volume-weighted execution prices + slippage in bps at $100 / $1k / $10k stake sizes. Reveals the "this edge dies past $X" reality that midpoint EV hides.
 - **Cross-venue arbitrage** — Arbitrage tab matches Polymarket vs Kalshi markets (≥0.6 Jaccard on de-templated tokens, same category, close times within 14 days) and surfaces YES-price spreads ≥3pp. Deep-link buttons take you to both venues to execute the legs.
 - **Fast price stream** — every 60s the scheduler polls Polymarket for markets with open paper trades, updates snapshots, and fires a Telegram drift alert if a market moves ≥10pp against an open bet.
+- **Public JSON API** — `/api/v1/signals`, `/api/v1/sources`, `/api/v1/backtest`, `/api/v1/arbitrage`. Authenticate with `X-API-Key: narve_...`; generate/revoke keys from `/profile`.
+- **Telegram query bot** — once you've connected a bot in Profile, `/edge @handle`, `/source @handle`, and `/stats` return live data in chat. Polled every 15s.
+- **User calibration mode** — record your own predictions at `/me/calibration`, build a Brier-scored track record over time. Same scoring methodology as the source leaderboard.
 - **Telegram alerts** on each new signal (per-user opt-in, bot token Fernet-encrypted at rest).
 - **DB-backed sessions** so a process restart no longer logs everyone out.
 
