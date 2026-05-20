@@ -546,6 +546,33 @@ function stdev(values) {
   return Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / n);
 }
 
+// Annual-mean ONI → list of consecutive ENSO segments. We treat ≥0.5 as El
+// Niño and ≤-0.5 as La Niña (the standard CPC thresholds applied to annual
+// means rather than 3-month runs, which is fine for a background overlay).
+function ensoSegments(oniByYear) {
+  const years = Object.keys(oniByYear).map(Number).sort((a, b) => a - b);
+  const segs = [];
+  let cur = null;
+  for (const y of years) {
+    const v = oniByYear[y];
+    let state = "neutral";
+    if (v >= 0.5) state = "el";
+    else if (v <= -0.5) state = "la";
+    if (state === "neutral") {
+      if (cur) { segs.push(cur); cur = null; }
+      continue;
+    }
+    if (cur && cur.state === state && cur.end === y - 1) {
+      cur.end = y;
+    } else {
+      if (cur) segs.push(cur);
+      cur = { state, start: y, end: y };
+    }
+  }
+  if (cur) segs.push(cur);
+  return segs;
+}
+
 let _overlay = null;
 let _overlayEnabled = new Set();
 
@@ -582,7 +609,7 @@ async function loadOverlay() {
   }
   const xs = Array.from(years).sort((a, b) => a - b);
 
-  _overlay = { raw, stats, xs };
+  _overlay = { raw, stats, xs, enso: ensoSegments(raw.oni) };
   if (_overlayEnabled.size === 0) {
     for (const s of OVERLAY_SERIES) if (s.defaultOn) _overlayEnabled.add(s.id);
   }
@@ -638,6 +665,25 @@ function renderOverlay() {
     ],
     series: seriesOpts,
     hooks: {
+      // Draw ENSO regime bands AFTER axes but BEFORE series so they sit
+      // behind the data. drawAxes runs at exactly that point in uPlot's
+      // draw cycle.
+      drawAxes: [u => {
+        if (!_overlay || !_overlay.enso || !_overlay.enso.length) return;
+        const ctx = u.ctx;
+        ctx.save();
+        const top = u.bbox.top;
+        const h = u.bbox.height;
+        for (const seg of _overlay.enso) {
+          const x1 = u.valToPos(ymdToUnix(seg.start, 1, 1), "x", true);
+          const x2 = u.valToPos(ymdToUnix(seg.end + 1, 1, 1), "x", true);
+          ctx.fillStyle = seg.state === "el"
+            ? "rgba(248, 113, 113, 0.08)"
+            : "rgba(96, 165, 250, 0.08)";
+          ctx.fillRect(x1, top, x2 - x1, h);
+        }
+        ctx.restore();
+      }],
       setCursor: [u => {
         const idx = u.cursor.idx;
         const hover = document.getElementById("overlay-hover");
@@ -652,6 +698,13 @@ function renderOverlay() {
             `<span class="val" style="color:${s.color}">${s.label}: <b>${s.fmt(v)}</b></span>`,
           );
         });
+        // Annotate the year's ENSO state in the hover too
+        const ensoState = (_overlay.enso || []).find(seg => year >= seg.start && year <= seg.end);
+        if (ensoState) {
+          const label = ensoState.state === "el" ? "El Niño" : "La Niña";
+          const color = ensoState.state === "el" ? "#f87171" : "#60a5fa";
+          parts.push(`<span class="val" style="color:${color}">${label}</span>`);
+        }
         hover.innerHTML = parts.join("");
       }],
     },
@@ -674,6 +727,24 @@ function renderOverlayToggles() {
       renderOverlayToggles();
     });
     root.appendChild(pill);
+  }
+  // Append a static legend explaining the ENSO shading. Read-only — clicking
+  // does nothing (regime bands are always on if the data's available).
+  if (_overlay && _overlay.enso && _overlay.enso.length) {
+    const legend = document.createElement("span");
+    legend.style.cssText = "display:inline-flex;gap:10px;align-items:center;padding:5px 10px;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;";
+    legend.innerHTML = `
+      <span style="color:var(--text-3)">ENSO bg:</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(248,113,113,0.25);border-radius:2px"></span>
+        El Niño
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(96,165,250,0.25);border-radius:2px"></span>
+        La Niña
+      </span>
+    `;
+    root.appendChild(legend);
   }
 }
 
