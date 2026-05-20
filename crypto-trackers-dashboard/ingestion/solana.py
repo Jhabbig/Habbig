@@ -119,6 +119,67 @@ def priority_fees() -> dict:
     return out
 
 
+def validator_summary() -> dict:
+    """Validator-set summary via getVoteAccounts.
+
+    Returns the full active validator list (~1500 entries) summarised:
+    total active stake, count, top-N by stake with their commission,
+    and nakamoto-coefficient-style "min validators needed to control
+    >33% / >50% / >66% of stake" indicators.
+    """
+    hit = _cache.get("sol_validators", ttl_s=3600)  # 1 h — stake moves slowly
+    if hit is not None:
+        return hit
+    res = _rpc_call("getVoteAccounts", timeout=30)
+    if not isinstance(res, dict):
+        return {"error": "Solana getVoteAccounts failed"}
+    active = res.get("current") or []
+    delinquent = res.get("delinquent") or []
+    rows = []
+    total_stake = 0
+    for v in active:
+        if not isinstance(v, dict):
+            continue
+        stake = v.get("activatedStake") or 0
+        total_stake += stake
+        rows.append({
+            "vote_pubkey": v.get("votePubkey"),
+            "identity": v.get("nodePubkey"),
+            "active_stake_lamports": stake,
+            "active_stake_sol": stake / 1e9,
+            "commission": v.get("commission"),
+            "last_vote": v.get("lastVote"),
+            "root_slot": v.get("rootSlot"),
+        })
+    rows.sort(key=lambda r: r.get("active_stake_lamports") or 0, reverse=True)
+    # Nakamoto-style takeover thresholds
+    nakamoto = {"33pct": 0, "50pct": 0, "66pct": 0}
+    cum = 0
+    for i, r in enumerate(rows, start=1):
+        cum += r["active_stake_lamports"]
+        share = cum / max(total_stake, 1)
+        if not nakamoto["33pct"] and share > 0.33:
+            nakamoto["33pct"] = i
+        if not nakamoto["50pct"] and share > 0.50:
+            nakamoto["50pct"] = i
+        if not nakamoto["66pct"] and share > 0.66:
+            nakamoto["66pct"] = i
+        if all(nakamoto.values()):
+            break
+    out = {
+        "source": "Solana getVoteAccounts",
+        "active_count": len(rows),
+        "delinquent_count": len(delinquent),
+        "total_active_stake_sol": total_stake / 1e9,
+        "nakamoto_coefficients": nakamoto,
+        "top_validators": rows[:25],
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _cache.put("sol_validators", out)
+    return out
+
+
 if __name__ == "__main__":
     print(json.dumps(network_status(), indent=2))
     print(json.dumps(priority_fees(), indent=2))
+    print(json.dumps(validator_summary(), indent=2)[:1500])

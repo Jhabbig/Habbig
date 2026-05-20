@@ -50,6 +50,7 @@ from ingestion import (
     etherscan_token,
     fear_greed,
     hyperliquid,
+    jito,
     kraken,
     mempool_btc,
     news,
@@ -389,6 +390,16 @@ async def api_sol_fees() -> JSONResponse:
     return JSONResponse(solana.priority_fees())
 
 
+@app.get("/api/network/sol/validators")
+async def api_sol_validators() -> JSONResponse:
+    return JSONResponse(solana.validator_summary())
+
+
+@app.get("/api/network/sol/jito_tips")
+async def api_jito_tips() -> JSONResponse:
+    return JSONResponse(jito.tip_floor())
+
+
 # ─── DEX prices ───────────────────────────────────────────────────────────────
 
 @app.get("/api/dex/prices")
@@ -568,6 +579,8 @@ async def _startup() -> None:
         ("okx_liq",               lambda: okx_liquidations.recent_liquidations(100),     60),
         ("solana_network",        lambda: solana.network_status(),                       60),
         ("solana_priority_fees",  lambda: solana.priority_fees(),                        60),
+        ("solana_validators",     lambda: solana.validator_summary(),                    3600),
+        ("jito_tip_floor",        lambda: jito.tip_floor(),                              60),
         ("whales_eth",            lambda: whales.exchange_balances_eth(),                300),
         ("whales_btc",            lambda: whales.large_btc_transactions(100),            120),
         ("hyperliquid",           lambda: hyperliquid.market_state(),                    60),
