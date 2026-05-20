@@ -99,13 +99,34 @@ def cache_set(key: str, data) -> None:
             _cache.popitem(last=False)
 
 
+# Per-key locks dedupe concurrent loaders: two requests that miss the cache
+# for the same key don't both fire the (often-network) loader. The owning
+# thread populates the cache; followers re-read it after the lock releases.
+_key_locks: dict[str, threading.Lock] = {}
+_key_locks_lock = threading.Lock()
+
+
+def _get_key_lock(key: str) -> threading.Lock:
+    with _key_locks_lock:
+        lk = _key_locks.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _key_locks[key] = lk
+        return lk
+
+
 def cached(key: str, loader: Callable[[], Any]) -> Any:
     hit = cache_get(key)
     if hit is not None:
         return hit
-    val = loader()
-    cache_set(key, val)
-    return val
+    with _get_key_lock(key):
+        # double-check: another thread may have populated while we waited
+        hit = cache_get(key)
+        if hit is not None:
+            return hit
+        val = loader()
+        cache_set(key, val)
+        return val
 
 
 # ---------------------------------------------------------------------------
@@ -298,10 +319,14 @@ def eurostat_divorce_rate() -> dict[str, float]:
 # ---------------------------------------------------------------------------
 # World Happiness Report (Connection subscore — Tier B)
 #
-# WHR publishes the Figure 2.1 data table annually. URLs change year over
-# year; we try a small set of recent ones and fall back to a CSV that the
-# operator can drop into `data/whr.csv`. Expected columns (case-insensitive,
-# any subset accepted): `country` and `social support` (0-1 scale).
+# WHR publishes its Figure 2.1 data table annually, but as XLS at unstable
+# URLs that change with each year's report. Rather than ship an XLS parser
+# plus speculative URLs, we read a CSV the operator drops at
+# `data/whr.csv`. Expected columns (case-insensitive): `country` and
+# `social support` (0-1 scale; auto-rescaled to 0-100 if needed).
+#
+# If the file is missing, Connection stays empty and the dashboard reports
+# it as a coverage gap — honest behaviour, no fake numbers.
 # ---------------------------------------------------------------------------
 
 import csv
@@ -309,11 +334,6 @@ import io
 import re
 from pathlib import Path
 
-WHR_URL_CANDIDATES = (
-    "https://happiness-report.s3.amazonaws.com/2024/DataForFigure2.1.xls",
-    "https://happiness-report.s3.amazonaws.com/2024/DataForFigure2.1+with+sub+bars+2024.xls",
-    "https://happiness-report.s3.amazonaws.com/2023/DataForFigure2.1WHR2023.xls",
-)
 WHR_LOCAL = Path(__file__).parent / "data" / "whr.csv"
 
 # WHR uses informal country names; map the ones that don't match the WB name
@@ -402,27 +422,15 @@ def _parse_whr_csv(text: str) -> dict[str, float]:
 
 
 def fetch_whr_social_support() -> dict[str, float]:
-    """Try a few WHR URLs, then fall back to data/whr.csv if present."""
-    if WHR_LOCAL.exists():
-        try:
-            return _parse_whr_csv(WHR_LOCAL.read_text())
-        except Exception as exc:
-            log.warning("WHR local file %s parse failed: %s", WHR_LOCAL, exc)
-    last_err: Exception | None = None
-    for url in WHR_URL_CANDIDATES:
-        try:
-            r = requests.get(url, timeout=30)
-            r.raise_for_status()
-            text = r.content.decode("utf-8", errors="replace")
-            parsed = _parse_whr_csv(text)
-            if parsed:
-                return parsed
-        except Exception as exc:
-            last_err = exc
-            continue
-    if last_err:
-        log.warning("WHR fetch failed (drop a CSV at %s): %s", WHR_LOCAL, last_err)
-    return {}
+    """Read WHR social-support data from data/whr.csv if present."""
+    if not WHR_LOCAL.exists():
+        log.info("WHR Connection fetcher: no data file at %s — Connection subscore will be empty", WHR_LOCAL)
+        return {}
+    try:
+        return _parse_whr_csv(WHR_LOCAL.read_text())
+    except Exception as exc:
+        log.warning("WHR local file %s parse failed: %s", WHR_LOCAL, exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -447,8 +455,9 @@ def percentile_rank_within_tier(
             continue  # not enough peers for a meaningful rank
         items.sort(key=lambda kv: kv[1])
         n = len(items)
+        # n is guaranteed >= 3 by the len(items) < 3 guard above.
         for rank, (iso3, _v) in enumerate(items):
-            pct = (rank / (n - 1)) * 100 if n > 1 else 50.0
+            pct = (rank / (n - 1)) * 100
             if not higher_is_better:
                 pct = 100.0 - pct
             if cap_pct is not None:
@@ -697,9 +706,13 @@ def country(iso: str):
         return jsonify({"error": f"country {iso} has no Love Index (insufficient data)"}), 404
     detail = dict(countries[iso])
     detail["peer_compare"] = _peer_compare(detail, list(countries.values()))
-    sens = cached("sensitivity", _sensitivity_payload).get("countries", {}).get(iso)
-    if sens:
-        detail["sensitivity"] = sens
+    # Sensitivity is computed against the default weights only — attaching it
+    # to a custom-weight response would put a default-weights badge next to a
+    # custom-weights index and silently mislead the reader.
+    if not weights:
+        sens = cached("sensitivity", _sensitivity_payload).get("countries", {}).get(iso)
+        if sens:
+            detail["sensitivity"] = sens
     return jsonify(detail)
 
 

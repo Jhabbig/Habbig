@@ -607,6 +607,19 @@ const ISO2_FLAG = c => c && c.length === 2
 
 const fmt = (v, d=1) => v == null ? "—" : Number(v).toFixed(d);
 
+// Defense in depth: every server field that lands in innerHTML goes through
+// esc(). World Bank country names are well-formed today; this just keeps a
+// hostile upstream from turning into DOM XSS.
+function esc(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function weightQS() {
   if (!state.weights) return "";
   const p = new URLSearchParams();
@@ -661,7 +674,7 @@ function renderMovers(top, bottom) {
       const row = document.createElement("div");
       row.className = "mover-row";
       row.innerHTML = `
-        <div class="country"><span class="flag">${ISO2_FLAG(c.iso2)}</span>${c.name}</div>
+        <div class="country"><span class="flag">${ISO2_FLAG(c.iso2)}</span>${esc(c.name)}</div>
         <span class="composite">${fmt(c.composite)}</span>`;
       row.onclick = () => openCountry(c.iso3);
       f.appendChild(row);
@@ -741,7 +754,7 @@ function renderTable() {
     tr.innerHTML = `
       <td class="rank">${ranked ? visualRank : "—"}</td>
       <td class="flag">${ISO2_FLAG(c.iso2)}</td>
-      <td>${c.name}</td>
+      <td>${esc(c.name)}</td>
       <td class="tier">${TIER_LABELS[c.income_tier] || ""}</td>
       <td class="composite ${ranked ? "" : "unranked"}">${fmt(c.composite)}</td>
       ${subCell("connection")}
@@ -839,15 +852,18 @@ async function loadInsights() {
     el.className = "insight " + i.kind;
     el.onclick = () => openCountry(i.iso3);
     el.style.cursor = "pointer";
-    const pointers = (i.pointers || []).map(p => `<span><strong>${p.label}</strong>: ${typeof p.value === "number" ? p.value.toFixed ? p.value.toFixed(1) : p.value : p.value}</span>`).join("");
+    const pointers = (i.pointers || []).map(p => {
+      const val = typeof p.value === "number" ? p.value.toFixed(1) : String(p.value);
+      return `<span><strong>${esc(p.label)}</strong>: ${esc(val)}</span>`;
+    }).join("");
     el.innerHTML = `
       <div class="meta">
-        <span>${i.kind.replace("_", " ")}</span>
-        <span class="pill ${i.severity === "warn" ? "warn" : "info"}">${i.severity}</span>
-        <span class="pill">conf: ${i.confidence}</span>
+        <span>${esc(i.kind.replace("_", " "))}</span>
+        <span class="pill ${i.severity === "warn" ? "warn" : "info"}">${esc(i.severity)}</span>
+        <span class="pill">conf: ${esc(i.confidence)}</span>
       </div>
-      <div class="title">${i.title}</div>
-      <div class="body">${i.body}</div>
+      <div class="title">${esc(i.title)}</div>
+      <div class="body">${esc(i.body)}</div>
       ${pointers ? `<div class="pointers">${pointers}</div>` : ""}`;
     feed.appendChild(el);
   });
@@ -885,7 +901,7 @@ async function loadSensitivity() {
     row.onclick = () => openCountry(c.iso3);
     row.innerHTML = `
       <span>${ISO2_FLAG(c.iso2)}</span>
-      <span>${c.name || c.iso3}</span>
+      <span>${esc(c.name || c.iso3)}</span>
       <span class="baseline">rank ${c.rank_baseline ?? "—"}</span>
       <span class="range">±${c.rank_range} (${c.rank_min}–${c.rank_max})</span>`;
     wrap.appendChild(row);
@@ -902,9 +918,9 @@ async function loadSources() {
   Object.entries(d.feeds || {}).forEach(([name, f]) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><code>${name}</code> · ${f.covers}</td>
-      <td><span class="pill tier-${(f.tier || "c").toLowerCase()}">${f.tier}</span></td>
-      <td>${f.feeds || "—"}</td>
+      <td><code>${esc(name)}</code> · ${esc(f.covers)}</td>
+      <td><span class="pill tier-${(f.tier || "c").toLowerCase()}">${esc(f.tier)}</span></td>
+      <td>${esc(f.feeds || "—")}</td>
       <td>${f.in_use ? '<span class="pill up">live</span>' : '<span class="pill">queued</span>'}</td>`;
     tbody.appendChild(tr);
   });
@@ -917,9 +933,9 @@ async function openCountry(iso3) {
   modal.classList.add("on");
   content.innerHTML = `<div style="color:var(--text-3)">loading ${iso3}…</div>`;
   let d;
-  try { d = await fetchJSON(`/api/country/${iso3}` + weightQS()); }
-  catch (err) { content.innerHTML = `<div style="color:var(--accent-2)">Failed to load ${iso3}: ${err.message}</div>`; return; }
-  if (d.error) { content.innerHTML = `<div style="color:var(--text-2)">${d.error}</div>`; return; }
+  try { d = await fetchJSON(`/api/country/${encodeURIComponent(iso3)}` + weightQS()); }
+  catch (err) { content.innerHTML = `<div style="color:var(--accent-2)">Failed to load ${esc(iso3)}: ${esc(err.message)}</div>`; return; }
+  if (d.error) { content.innerHTML = `<div style="color:var(--text-2)">${esc(d.error)}</div>`; return; }
   renderCountryDetail(d, content);
 }
 
@@ -955,13 +971,13 @@ function renderCountryDetail(c, root) {
   };
   const rawEntries = Object.entries(c.raw || {})
     .filter(([_, v]) => v != null)
-    .map(([k, v]) => `<dt>${k}</dt><dd>${typeof v === "number" ? v.toFixed(2) : v}</dd>`)
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === "number" ? v.toFixed(2) : v)}</dd>`)
     .join("");
   root.innerHTML = `
-    <h2>${ISO2_FLAG(c.iso2)} ${c.name}</h2>
+    <h2>${ISO2_FLAG(c.iso2)} ${esc(c.name)}</h2>
     <div class="country-meta">
-      ${c.region ? c.region + " · " : ""}${TIER_LABELS[c.income_tier] || c.income_tier} income · ISO ${c.iso3}
-      · ${c.used.length} of 4 subscores present (${c.used.join(", ")})
+      ${c.region ? esc(c.region) + " · " : ""}${esc(TIER_LABELS[c.income_tier] || c.income_tier)} income · ISO ${esc(c.iso3)}
+      · ${c.used.length} of 4 subscores present (${esc(c.used.join(", "))})
     </div>
     <div class="composite-big">
       <div>
@@ -1064,7 +1080,7 @@ async function drawMap() {
       tooltip.style.top = (ev.clientY - r.top) + "px";
       tooltip.classList.add("on");
       if (c) {
-        tooltip.innerHTML = `<strong>${c.name}</strong> · ${TIER_LABELS[c.income_tier] || ""}<br>Index: ${fmt(c.composite)} · ${c.used.length}/4 subscores`;
+        tooltip.innerHTML = `<strong>${esc(c.name)}</strong> · ${esc(TIER_LABELS[c.income_tier] || "")}<br>Index: ${fmt(c.composite)} · ${c.used.length}/4 subscores`;
       } else {
         tooltip.textContent = (f.properties && f.properties.name) || "no data";
       }
@@ -1079,10 +1095,25 @@ async function drawMap() {
 }
 
 // ---- orchestrator ----
+// Coalesce concurrent refresh() calls. Without this, rapid slider Apply
+// clicks would fire overlapping fetches; whichever Promise.all resolves
+// last wins and stale data can clobber the latest state. Now we run at most
+// one refresh at a time; if more arrive during a run, exactly one extra
+// pass runs at the end so the UI ends on the latest weights.
+let _refreshing = false;
+let _refreshPending = false;
 async function refresh() {
-  await Promise.all([loadSummary(), loadCountries(), loadInsights(), loadSensitivity()]);
-  // map relies on countries; redraw colors after reload
-  await drawMap();
+  if (_refreshing) { _refreshPending = true; return; }
+  _refreshing = true;
+  try {
+    do {
+      _refreshPending = false;
+      await Promise.all([loadSummary(), loadCountries(), loadInsights(), loadSensitivity()]);
+      await drawMap();
+    } while (_refreshPending);
+  } finally {
+    _refreshing = false;
+  }
 }
 
 async function init() {

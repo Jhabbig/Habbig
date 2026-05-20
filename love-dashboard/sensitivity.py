@@ -108,6 +108,8 @@ def compute_sensitivity(
 
     by_range = sorted(countries_out.values(), key=lambda s: s["rank_range"], reverse=True)
     most_unstable = [s for s in by_range if s["stability"] == "low"][:10]
+    # by_range is descending by rank_range, so the *last* high-stability entries
+    # are the ones with the smallest ranges — i.e. the most stably ranked.
     most_stable = [s for s in by_range if s["stability"] == "high" and s.get("rank_baseline") is not None][-10:]
 
     distribution = {

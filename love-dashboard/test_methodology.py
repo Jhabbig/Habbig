@@ -266,6 +266,57 @@ def test_sensitivity_engine():
     ok(f"stability distribution sums correctly: {dist}")
 
 
+def test_cache_dedupes_concurrent_loaders():
+    print("test: cached() dedupes concurrent loaders for the same key")
+    import threading
+    _clear_cache()
+    server._key_locks.clear()
+
+    calls = {"n": 0}
+    barrier = threading.Barrier(8)
+
+    def slow_loader():
+        calls["n"] += 1
+        # Sleep just long enough that all eight threads block on the same key
+        # lock instead of each one missing the cache and firing the loader.
+        import time as _t; _t.sleep(0.05)
+        return {"v": calls["n"]}
+
+    def worker():
+        barrier.wait()
+        server.cached("dedupe_test", slow_loader)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+
+    if calls["n"] != 1:
+        fail(f"cached() invoked loader {calls['n']} times; expected 1")
+    ok(f"loader ran exactly once across 8 concurrent callers")
+
+
+def test_outlier_skipped_on_zero_variance():
+    print("test: outlier rule skips a tier subscore when variance is zero")
+    countries = [
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 50, "partnership": 50, "stability": 50, "activity": None},
+         "composite": 50.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 50, "partnership": 50, "stability": 50, "activity": None},
+         "composite": 50.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",
+         "subscores": {"connection": 50, "partnership": 50, "stability": 50, "activity": None},
+         "composite": 50.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "DDD", "name": "Delta", "income_tier": "H",
+         "subscores": {"connection": 50, "partnership": 50, "stability": 50, "activity": None},
+         "composite": 50.0, "used": ["connection","partnership","stability"]},
+    ]
+    out = insights_module.rule_outlier(countries)
+    if any(i.kind == "outlier" for i in out):
+        fail("rule_outlier should emit nothing when every subscore is identical")
+    ok("rule_outlier suppressed (no false-positive z-scores) when sigma == 0")
+
+
 def main():
     test_weights_sum_to_one()
     test_percentile_rank_within_tier()
@@ -273,6 +324,8 @@ def main():
     test_custom_weights()
     test_insights_engine()
     test_sensitivity_engine()
+    test_cache_dedupes_concurrent_loaders()
+    test_outlier_skipped_on_zero_variance()
     print("\nall tests passed.")
 
 

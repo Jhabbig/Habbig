@@ -108,7 +108,12 @@ def rule_outlier(countries: list[dict]) -> list[Insight]:
             if len(vals) < 4:
                 continue
             mu = mean(vals)
-            sigma = pstdev(vals) or 1.0
+            sigma = pstdev(vals)
+            if sigma == 0:
+                # No spread within tier on this subscore — every "outlier" would
+                # be the same value as the mean; report nothing rather than emit
+                # meaningless z-scores divided by a 1.0 fallback.
+                continue
             for c in rows:
                 v = c["subscores"].get(sub)
                 if v is None:
