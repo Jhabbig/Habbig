@@ -109,6 +109,8 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "live_metric_endpoint": "/api/index",
+      "live_metric_label": "Culture index",
       "stripe_price_monthly": "TODO_CULTURE_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CULTURE_STRIPE_ANNUAL"
     }

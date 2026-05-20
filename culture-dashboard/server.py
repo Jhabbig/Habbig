@@ -32,6 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
 
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
+import edge                                                    # noqa: E402
 import index_calc                                              # noqa: E402
 import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
@@ -141,6 +142,18 @@ async def api_surges(limit: int = 20) -> JSONResponse:
         "items": surge_calc.compute(limit=limit),
         "threshold": surge_calc.webhook_threshold(),
     })
+
+
+@app.get("/api/topics")
+async def api_topics(limit: int = 20) -> JSONResponse:
+    limit = max(1, min(limit, 100))
+    return JSONResponse({"topics": edge.compute_topics_with_markets(limit=limit)})
+
+
+@app.get("/api/edges")
+async def api_edges(limit: int = 20) -> JSONResponse:
+    limit = max(1, min(limit, 100))
+    return JSONResponse({"edges": edge.compute_edges(limit=limit)})
 
 
 @app.get("/api/section/{section}")

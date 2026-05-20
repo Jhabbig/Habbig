@@ -66,6 +66,8 @@ dashboard still renders, that section just shows "No data".
 | `dedup.py` | Perceptual-hash worker + greedy clustering. |
 | `index_calc.py` | Composite culture index — log-scaled, weighted. |
 | `surge_calc.py` | Per-item z-score against trailing window — picks the rising items. |
+| `topics.py` | Cross-source topic clustering — Jaccard on title tokens + hashtags. |
+| `edge.py` | Topic ↔ Polymarket-market matcher; filters topics with markets + surge signal. |
 | `scrapers/__init__.py` | Registry. Add a new module here to add a source. |
 | `scrapers/_http.py` | Shared httpx client + UA. |
 | `scrapers/tiktok.py` | TikTok trending — Apify / RapidAPI / unofficial. |
@@ -131,6 +133,28 @@ doesn't spam.
 
 `item_history` is auto-pruned to the last 7 days every cycle.
 
+## Cross-platform topic clustering
+
+`topics.py` runs greedy centroid-based Jaccard clustering on item titles
+(plus hashtags + extra strings) across every section. A cluster is kept
+only if it spans ≥2 distinct sources — single-source clusters aren't
+really cross-platform topics.
+
+Threshold tunable via `CULTURE_TOPIC_MIN_OVERLAP` (default 0.30).
+
+`GET /api/topics` returns clusters ranked by spread, then total score,
+with each cluster carrying its matched Polymarket markets (Jaccard on
+keywords) and the strongest surge z-score across its items.
+
+## Market signal ("edges")
+
+`edge.py` filters the topic list down to clusters that (a) have at least
+one matched Polymarket market and (b) are surging beyond
+`CULTURE_EDGE_MIN_SIGNAL` (default z≥1.5). The implied edge is "attention
+is climbing faster than the contract price has caught up to" — but the
+price half of that claim isn't verified yet (next iteration: persist
+Polymarket prices over time and compare velocity directly).
+
 ## API
 
 | Endpoint | Returns |
@@ -138,6 +162,8 @@ doesn't spam.
 | `GET /api/index` | Composite + per-section scores, calibration. |
 | `GET /api/index/history?hours=72` | Time series of overall score (max 30d). |
 | `GET /api/surges?limit=20` | Items with positive z-score vs trailing 7-day baseline, with their full trajectory. |
+| `GET /api/topics?limit=20` | Cross-source topic clusters, each with matched markets + surge signal. |
+| `GET /api/edges?limit=20` | Topics that have matched markets AND a surging signal — the dashboard's "market signal" panel reads this. |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |

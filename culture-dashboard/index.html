@@ -73,6 +73,46 @@
   .rising-empty { color: var(--muted); font-size: 12px; padding: 20px 0;
                   text-align: center; font-style: italic; }
 
+  .topics, .edges { background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
+  .topics h2, .edges h2 { margin: 0 0 4px; font-size: 14px; }
+  .topics .sub, .edges .sub { color: var(--muted); font-size: 11px;
+                               margin-bottom: 12px; }
+  .topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 10px; }
+  .topic-card { background: var(--panel-2); border-radius: 6px; padding: 10px 12px;
+                font-size: 13px; line-height: 1.35; }
+  .topic-label { font-weight: 600; font-size: 15px;
+                 text-transform: capitalize; margin-bottom: 4px; }
+  .topic-meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  .topic-meta b { color: var(--good); }
+  .topic-sources { display: flex; flex-wrap: wrap; gap: 4px;
+                   font-size: 10px; margin-bottom: 6px; }
+  .topic-source-tag { background: var(--bg); color: var(--muted);
+                      padding: 1px 6px; border-radius: 8px;
+                      border: 1px solid var(--border); }
+  .topic-items { color: var(--muted); font-size: 11px; max-height: 80px;
+                 overflow: hidden; }
+  .topic-items a { color: var(--muted); text-decoration: none; }
+  .topic-items a:hover { color: var(--accent); }
+  .topic-markets { margin-top: 8px; padding-top: 8px;
+                   border-top: 1px solid var(--border); font-size: 11px; }
+  .topic-markets a { color: var(--accent); text-decoration: none; }
+  .topic-markets a:hover { text-decoration: underline; }
+
+  .edge-card { background: var(--panel-2); border-radius: 6px;
+               padding: 12px 14px; margin-bottom: 8px; font-size: 13px; }
+  .edge-head { display: flex; align-items: baseline; justify-content: space-between;
+               margin-bottom: 4px; }
+  .edge-label { font-weight: 600; font-size: 15px; text-transform: capitalize; }
+  .edge-signal { color: var(--good); font-weight: 700; font-size: 14px; }
+  .edge-meta { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+  .edge-market { display: block; padding: 6px 0;
+                 border-top: 1px solid var(--border); }
+  .edge-market a { color: var(--accent); text-decoration: none; }
+  .edge-market a:hover { text-decoration: underline; }
+  .edge-market .vol { color: var(--muted); font-size: 11px; }
+
   .breakdown { background: var(--panel); border: 1px solid var(--border);
                border-radius: 10px; padding: 18px; }
   .breakdown h2 { margin: 0 0 12px; font-size: 13px; color: var(--muted);
@@ -148,6 +188,18 @@
     <div class="rising-grid" id="rising-grid"></div>
   </section>
 
+  <section class="edges" id="edges">
+    <h2>Market signal</h2>
+    <div class="sub">Surging culture topics matched to live Polymarket contracts</div>
+    <div id="edges-list"></div>
+  </section>
+
+  <section class="topics" id="topics">
+    <h2>Cross-platform topics</h2>
+    <div class="sub">Same topic surfacing across multiple sources — the stronger the spread, the deeper the cultural moment</div>
+    <div class="topic-grid" id="topic-grid"></div>
+  </section>
+
   <div class="sections" id="sections"></div>
 
   <div class="health-strip" id="health"></div>
@@ -195,6 +247,72 @@ function drawSpark(points) {
   svg.innerHTML = `
     <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
     <circle cx="196" cy="${lastY.toFixed(1)}" r="2.5" fill="var(--accent)"/>`;
+}
+
+async function loadTopics() {
+  const r = await fetch("/api/topics?limit=12");
+  const data = await r.json();
+  const grid = document.getElementById("topic-grid");
+  if (!data.topics.length) {
+    grid.innerHTML = '<div class="rising-empty">No cross-source topics yet. Add API keys to populate more sources.</div>';
+    return;
+  }
+  grid.innerHTML = "";
+  for (const t of data.topics) {
+    const card = document.createElement("div");
+    card.className = "topic-card";
+    const sources = t.sources.map(s => `<span class="topic-source-tag">${s}</span>`).join("");
+    const items = t.items.slice(0, 4).map(it =>
+      it.url
+        ? `<a href="${it.url}" target="_blank" rel="noopener noreferrer">${it.title}</a>`
+        : it.title
+    ).join(" · ");
+    let marketsHtml = "";
+    if (t.markets && t.markets.length) {
+      marketsHtml = '<div class="topic-markets">market: ' +
+        t.markets.slice(0, 2).map(m =>
+          `<a href="${m.url || '#'}" target="_blank" rel="noopener noreferrer">${m.title}</a>`
+        ).join(" · ") + '</div>';
+    }
+    const surgeHtml = (t.surge_signal != null)
+      ? ` · <b>z ${t.surge_signal.toFixed(1)}</b>` : "";
+    card.innerHTML = `
+      <div class="topic-label">${t.label}</div>
+      <div class="topic-meta">spread <b>${t.spread}</b> · score ${fmt(t.total_score)}${surgeHtml}</div>
+      <div class="topic-sources">${sources}</div>
+      <div class="topic-items">${items}</div>
+      ${marketsHtml}`;
+    grid.appendChild(card);
+  }
+}
+
+async function loadEdges() {
+  const r = await fetch("/api/edges?limit=8");
+  const data = await r.json();
+  const root = document.getElementById("edges-list");
+  if (!data.edges.length) {
+    root.innerHTML = '<div class="rising-empty">No surging topics matched to markets yet — needs item history + culture markets to overlap.</div>';
+    return;
+  }
+  root.innerHTML = "";
+  for (const e of data.edges) {
+    const card = document.createElement("div");
+    card.className = "edge-card";
+    const markets = e.markets.map(m =>
+      `<div class="edge-market">
+         <a href="${m.url || '#'}" target="_blank" rel="noopener noreferrer">${m.title}</a>
+         <span class="vol">vol ${fmt(m.volume)} · overlap ${m.overlap}</span>
+       </div>`
+    ).join("");
+    card.innerHTML = `
+      <div class="edge-head">
+        <span class="edge-label">${e.label}</span>
+        <span class="edge-signal">z ${e.surge_signal.toFixed(1)}</span>
+      </div>
+      <div class="edge-meta">spread ${e.spread} sources · ${e.sections.join(" + ")}</div>
+      ${markets}`;
+    root.appendChild(card);
+  }
 }
 
 async function loadSurges() {
@@ -336,7 +454,10 @@ async function loadHealth() {
 
 async function refreshAll() {
   document.getElementById("updated").textContent = "refreshing…";
-  await Promise.all([loadIndex(), loadSurges(), loadSections(), loadHealth()]);
+  await Promise.all([
+    loadIndex(), loadSurges(), loadEdges(), loadTopics(),
+    loadSections(), loadHealth(),
+  ]);
   document.getElementById("updated").textContent = new Date().toLocaleTimeString();
 }
 

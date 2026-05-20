@@ -328,6 +328,50 @@ def is_upstream_healthy(dashboard_key: str) -> bool:
     return _upstream_health.get(dashboard_key, True)
 
 
+# ── Live metrics (e.g. culture index on dashboard cards) ─────────────────
+# A dashboard that wants a live number on its card sets `live_metric_endpoint`
+# in config.json. That endpoint must return JSON with an "overall" numeric
+# field. We refresh every 5 minutes into _live_metrics and read from there
+# on every dashboards-page render.
+_live_metrics: dict[str, dict] = {}
+_LIVE_METRIC_INTERVAL = 300
+
+
+async def _live_metrics_loop():
+    sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=2.0)) as c:
+        while True:
+            for key, cfg in DASHBOARDS.items():
+                ep = cfg.get("live_metric_endpoint")
+                if not ep:
+                    continue
+                url = f"http://127.0.0.1:{cfg['target']}{ep}"
+                headers = {"X-Gateway-Secret": sso_secret} if sso_secret else {}
+                try:
+                    r = await c.get(url, headers=headers)
+                    if r.status_code == 200:
+                        data = r.json() or {}
+                        if "overall" in data:
+                            _live_metrics[key] = {
+                                "value": data["overall"],
+                                "label": cfg.get("live_metric_label", "Live"),
+                                "ts": time.time(),
+                            }
+                except Exception as e:
+                    log.debug("live metric %s fetch failed: %s", key, e)
+            await asyncio.sleep(_LIVE_METRIC_INTERVAL)
+
+
+def get_live_metric(dashboard_key: str) -> dict | None:
+    m = _live_metrics.get(dashboard_key)
+    if not m:
+        return None
+    # Treat metrics older than 30 min as stale.
+    if time.time() - m["ts"] > 1800:
+        return None
+    return m
+
+
 async def _periodic_cleanup():
     """Purge expired sessions and password resets every 10 minutes."""
     while True:
@@ -354,6 +398,7 @@ async def _startup():
     )
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
     _health_task = asyncio.create_task(_health_check_loop())
+    asyncio.create_task(_live_metrics_loop())
 
     # Redis cache + background poller
     if cache.connect():
@@ -1389,6 +1434,17 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             )
             highlights_html = f'<ul class="dash-highlights">{items}</ul>'
 
+        live = get_live_metric(key)
+        live_html = ""
+        if live and live.get("value") is not None:
+            live_html = (
+                f'<div class="dash-card-live">'
+                f'<span class="dash-card-live-label">{html.escape(live["label"])}</span>'
+                f'<span class="dash-card-live-value" style="color:{cfg["accent"]}">'
+                f'{float(live["value"]):.1f}</span>'
+                f'</div>'
+            )
+
         cards_html.append(f"""
         <div class="dash-card" style="--accent: {cfg['accent']}">
           <div class="dash-card-head">
@@ -1397,6 +1453,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
           </div>
           <div class="dash-card-title">{cfg['display_name']}</div>
           <div class="dash-card-desc">{cfg['description']}</div>
+          {live_html}
           {highlights_html}
           <div class="dash-card-price">${cfg['monthly_cents']/100:.2f}/mo · ${cfg['annual_cents']/100:.2f}/yr</div>
           <div class="dash-card-foot">{cta}</div>
