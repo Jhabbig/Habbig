@@ -262,6 +262,45 @@ CREATE TABLE IF NOT EXISTS crypto_long_term_alerts (
     UNIQUE(user_id, ticker, alert_type)
 );
 CREATE INDEX IF NOT EXISTS idx_lt_alerts_user ON crypto_long_term_alerts(user_id);
+
+-- ── Derivatives series (funding, OI, basis) ─────────────────────────────────
+-- Long-narrow table so we can add new series without schema migrations.
+CREATE TABLE IF NOT EXISTS crypto_derivatives_series (
+    ticker  TEXT NOT NULL,
+    ts      TEXT NOT NULL,           -- ISO datetime
+    value   REAL NOT NULL,
+    metric  TEXT NOT NULL,           -- funding_rate | open_interest_usd | perp_basis
+    PRIMARY KEY (ticker, ts, metric)
+);
+CREATE INDEX IF NOT EXISTS idx_deriv_ticker_metric ON crypto_derivatives_series(ticker, metric);
+CREATE INDEX IF NOT EXISTS idx_deriv_ts ON crypto_derivatives_series(ts);
+
+-- ── Macro series (FRED / Stooq) ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_macro_series (
+    series_id TEXT NOT NULL,
+    date      TEXT NOT NULL,         -- ISO date (YYYY-MM-DD)
+    value     REAL NOT NULL,
+    PRIMARY KEY (series_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_series ON crypto_macro_series(series_id);
+
+-- ── Indicator backtest results ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_indicator_backtests (
+    indicator         TEXT NOT NULL,
+    ticker            TEXT NOT NULL,
+    horizon_days      INTEGER NOT NULL,
+    fired_n           INTEGER NOT NULL,
+    median_fwd_return REAL,
+    mean_fwd_return   REAL,
+    win_rate          REAL,
+    median_baseline   REAL NOT NULL,
+    median_excess     REAL,
+    hit_ratio         REAL,
+    sample_window     INTEGER NOT NULL,
+    computed_at       TEXT NOT NULL,
+    PRIMARY KEY (indicator, ticker, horizon_days, computed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_backtest_lookup ON crypto_indicator_backtests(indicator, ticker, horizon_days);
 """
 
 
@@ -1162,6 +1201,103 @@ def remove_long_term_alert(user_id: str, ticker: str, alert_type: str) -> None:
             "WHERE user_id = ? AND ticker = ? AND alert_type = ?",
             (user_id, ticker, alert_type),
         )
+
+
+# ── Derivatives series ──────────────────────────────────────────────────────
+
+def upsert_derivatives_series(rows: list[tuple]) -> None:
+    """Bulk upsert. rows: (ticker, ts, value, metric)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_derivatives_series (ticker, ts, value, metric)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(ticker, ts, metric) DO UPDATE SET value=excluded.value""",
+            rows,
+        )
+
+
+def get_derivatives_series(ticker: str, metric: str, days: int = 365) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts, value FROM crypto_derivatives_series "
+            "WHERE ticker = ? AND metric = ? AND ts >= ? ORDER BY ts ASC",
+            (ticker, metric, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Macro series ────────────────────────────────────────────────────────────
+
+def upsert_macro_series(rows: list[tuple]) -> None:
+    """Bulk upsert. rows: (series_id, date, value)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_macro_series (series_id, date, value)
+               VALUES (?, ?, ?)
+               ON CONFLICT(series_id, date) DO UPDATE SET value=excluded.value""",
+            rows,
+        )
+
+
+def get_macro_series(series_id: str, days: int = 365) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT date, value FROM crypto_macro_series "
+            "WHERE series_id = ? AND date >= ? ORDER BY date ASC",
+            (series_id, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_latest_macro_date(series_id: str) -> Optional[str]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(date) AS d FROM crypto_macro_series WHERE series_id = ?",
+            (series_id,),
+        ).fetchone()
+    return row["d"] if row and row["d"] else None
+
+
+# ── Backtest results ────────────────────────────────────────────────────────
+
+def upsert_backtest_results(rows: list[tuple]) -> None:
+    """Bulk upsert. rows tuple matches columns in crypto_indicator_backtests."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO crypto_indicator_backtests
+                 (indicator, ticker, horizon_days, fired_n, median_fwd_return,
+                  mean_fwd_return, win_rate, median_baseline, median_excess,
+                  hit_ratio, sample_window, computed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(indicator, ticker, horizon_days, computed_at)
+               DO NOTHING""",
+            rows,
+        )
+
+
+def get_latest_backtest_results() -> list[Row]:
+    """Most recent row for each (indicator, ticker, horizon_days)."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT b.*
+               FROM crypto_indicator_backtests b
+               JOIN (
+                 SELECT indicator, ticker, horizon_days, MAX(computed_at) AS m
+                 FROM crypto_indicator_backtests
+                 GROUP BY indicator, ticker, horizon_days
+               ) x ON b.indicator = x.indicator AND b.ticker = x.ticker
+                  AND b.horizon_days = x.horizon_days AND b.computed_at = x.m
+               ORDER BY b.indicator, b.ticker, b.horizon_days"""
+        ).fetchall()
+    return _rows(rows)
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

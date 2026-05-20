@@ -38,6 +38,10 @@ docker compose up --build crypto
 | `trading_bot.py` | Standalone reactive paper-trading bot. Monitors 5-minute windows for cross events, confirms with velocity/momentum/RSI/choppiness, runs entry/exit logic with daily loss limits. |
 | `email_alerts.py` | SMTP alert sender for high-confidence signals. SMTP creds come from `SMTP_HOST` / `SMTP_USER` / `SMTP_PASS` env vars. |
 | `long_term.py` | Long-horizon lens: daily bars + CoinMetrics on-chain metrics, cycle-phase classifier (Mayer / 200WMA), Sharpe/Sortino/drawdown/vol-regime, MVRV/NVT proxies, cycle-aware DCA recommender, drift-band rebalance plan, risk-off composite. Served at `/long-term`. Refreshed every 6 h by a background task in `server.py`. |
+| `indicators.py` | Cycle-indicator math: Pi Cycle Top, 200WMA distance, Stock-to-Flow, NUPL, SOPR proxy, Puell Multiple, Hash Ribbons, Exchange Net-Flow, RHODL proxy, BTC dominance, ETH/BTC. Each returns a uniform `{value, signal, threshold, description, source}` shape. |
+| `derivatives.py` | Binance USDT-M Futures fetcher — funding rate, open interest, perp basis. Persists time-series in `crypto_derivatives_series`. Computes funding composite (BTC+ETH weighted), OI trend signal. Refreshed hourly. |
+| `macro.py` | Macro overlay — DXY, US10Y, VIX, M2, gold. Pulls FRED (needs free API key) + Stooq (no key for DXY/gold). Computes BTC correlation (90d), per-series crypto-tailwind/-headwind signal, and a composite macro regime. Refreshed every 12 h. |
+| `backtest.py` | Walk-forward backtester for cycle indicators. At every historical date, recomputes each indicator with only data available then, measures 30/90/365d forward returns vs unconditional baseline. Persists to `crypto_indicator_backtests`. Re-run on every long-term refresh. |
 
 **HTML / data**
 | File | Purpose |

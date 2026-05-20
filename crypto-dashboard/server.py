@@ -34,6 +34,10 @@ import database as db
 import clob_trading as clob
 import kalshi_trading as kalshi_auth
 import long_term as lt
+import indicators as ind
+import derivatives as deriv
+import macro
+import backtest as bt
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -464,6 +468,8 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(window_refresher()))
     _bg_tasks.add(asyncio.create_task(news_trade_monitor()))
     _bg_tasks.add(asyncio.create_task(long_term_refresher()))
+    _bg_tasks.add(asyncio.create_task(derivatives_refresher()))
+    _bg_tasks.add(asyncio.create_task(macro_refresher()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
@@ -472,17 +478,45 @@ async def startup():
 async def long_term_refresher():
     """Refresh daily bars + on-chain metrics on startup, then every 6h.
     The first pass runs after a short delay so the short-term pipeline gets
-    its head start; subsequent passes are cheap (incremental upserts)."""
+    its head start; subsequent passes are cheap (incremental upserts).
+    After each refresh we also rerun the indicator backtests so the UI
+    surfaces fresh stats."""
     await asyncio.sleep(30)
     while True:
         try:
             result = await asyncio.to_thread(lt.refresh_all)
             print(f"[long-term] refresh: {result}")
-            # Fire any matching alerts (pure background — no user notification yet).
             await asyncio.to_thread(_evaluate_long_term_alerts)
+            # Recompute backtests after fresh data. Cheap (~10s).
+            bt_summary = await asyncio.to_thread(bt.run_all)
+            print(f"[long-term] backtest: {bt_summary}")
         except Exception as e:
             print(f"[long-term] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(6 * 3600)
+
+
+async def derivatives_refresher():
+    """Derivatives change fast. Refresh hourly."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            result = await asyncio.to_thread(deriv.refresh_all_derivatives)
+            print(f"[derivatives] refresh: {result}")
+        except Exception as e:
+            print(f"[derivatives] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(3600)
+
+
+async def macro_refresher():
+    """Macro series update daily at most. Refresh every 12h."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            result = await asyncio.to_thread(macro.refresh_all_macro)
+            print(f"[macro] refresh: {result}")
+        except Exception as e:
+            print(f"[macro] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(12 * 3600)
 
 
 def _evaluate_long_term_alerts():
@@ -4811,6 +4845,91 @@ async def long_term_asset(ticker: str, request: Request):
     return snap
 
 
+# ── Cycle indicators ────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/indicators")
+async def list_indicators(request: Request):
+    """Run every cycle indicator across every tracked asset.
+    Each result has {name, ticker, value, signal, description, threshold,
+    source, extras}."""
+    results = await asyncio.to_thread(ind.evaluate_all)
+    return {"indicators": results, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/long-term/indicators/composite/{ticker}")
+async def indicator_composite(ticker: str, request: Request):
+    ticker = ticker.upper()
+    if ticker not in lt.TICKER_MAP:
+        raise HTTPException(status_code=404, detail="Unknown ticker")
+    score = await asyncio.to_thread(ind.composite_score, ticker)
+    return {"ticker": ticker, **score}
+
+
+# ── Derivatives ─────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/derivatives")
+async def derivatives_overview(request: Request):
+    """Per-ticker funding + OI + basis snapshots, plus the funding composite."""
+    out = []
+    for ticker in deriv.PERP_SYMBOLS.keys():
+        funding = await asyncio.to_thread(deriv.funding_snapshot, ticker)
+        oi = await asyncio.to_thread(deriv.oi_snapshot, ticker)
+        out.append({
+            "ticker": ticker,
+            "funding": funding.to_dict() if funding else None,
+            "open_interest": oi.to_dict() if oi else None,
+        })
+    composite = await asyncio.to_thread(deriv.funding_composite)
+    return {"assets": out, "funding_composite": composite,
+            "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/long-term/derivatives/refresh")
+async def derivatives_force_refresh(request: Request):
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    if user is None and client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(deriv.refresh_all_derivatives)
+
+
+# ── Macro overlay ───────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/macro")
+async def macro_overview_endpoint(request: Request):
+    overview = await asyncio.to_thread(macro.macro_overview)
+    regime = await asyncio.to_thread(macro.macro_regime)
+    return {"series": overview, "regime": regime,
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "fred_configured": bool(os.environ.get("FRED_API_KEY"))}
+
+
+@app.post("/api/long-term/macro/refresh")
+async def macro_force_refresh(request: Request):
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    if user is None and client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(macro.refresh_all_macro)
+
+
+# ── Backtests ───────────────────────────────────────────────────────────────
+
+@app.get("/api/long-term/backtests")
+async def list_backtests(request: Request):
+    rows = await asyncio.to_thread(bt.latest_results)
+    return {"results": rows, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/long-term/backtests/run")
+async def run_backtests(request: Request):
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    if user is None and client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(bt.run_all)
+
+
 @app.post("/api/long-term/refresh")
 async def long_term_force_refresh(request: Request):
     """Force a refresh of daily bars + on-chain metrics. Localhost or admin only."""
@@ -5132,6 +5251,10 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 
 <div class="tabs">
   <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="indicators">Indicators</div>
+  <div class="tab" data-tab="derivatives">Derivatives</div>
+  <div class="tab" data-tab="macro">Macro</div>
+  <div class="tab" data-tab="backtests">Backtests</div>
   <div class="tab" data-tab="portfolio">Portfolio</div>
   <div class="tab" data-tab="targets">Targets &amp; Rebalance</div>
   <div class="tab" data-tab="dca">DCA Plan</div>
@@ -5142,6 +5265,41 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <h2>Asset overview</h2>
   <div id="overview-grid" class="grid"></div>
   <div class="note">MVRV/NVT shown only for BTC and ETH (free CoinMetrics tier). Others use price-only signals — still everything you need for cycle-aware DCA.</div>
+</section>
+
+<section data-section="indicators" hidden>
+  <h2>Cycle indicators</h2>
+  <div class="note">Every indicator returns bullish / neutral / bearish based on its calibrated thresholds. Click an indicator to see what calls it generated historically.</div>
+  <div id="ind-composites" style="margin:12px 0"></div>
+  <table id="ind-table"><thead><tr>
+    <th>Ticker</th><th>Indicator</th><th>Value</th><th>Signal</th><th>Description</th><th>Source</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section data-section="derivatives" hidden>
+  <h2>Derivatives</h2>
+  <div class="note">Funding rate is the single best risk-off signal in crypto. Sustained funding &gt; +0.05%/8h ≈ 55%/yr — that's leveraged longs paying through the nose to keep their positions open.</div>
+  <div id="deriv-composite" style="margin:12px 0"></div>
+  <table id="deriv-table"><thead><tr>
+    <th>Ticker</th><th>Funding now</th><th>Annualised</th><th>7d avg</th><th>Signal</th><th>OI (USD)</th><th>OI 7d Δ</th><th>OI signal</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section data-section="macro" hidden>
+  <h2>Macro overlay</h2>
+  <div id="macro-note" class="note"></div>
+  <div id="macro-regime" style="margin:12px 0"></div>
+  <table id="macro-table"><thead><tr>
+    <th>Series</th><th>Value</th><th>30d Δ</th><th>1y Δ</th><th>BTC corr (90d)</th><th>Signal</th><th>Note</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section data-section="backtests" hidden>
+  <h2>Indicator backtests</h2>
+  <div class="note">Walk-forward: at every historical day we recomputed the indicator using only data available up to that day, then measured the forward return at 30 / 90 / 365 days. "Excess" is median forward return on bullish signals minus the unconditional baseline median. Sample sizes are still small (one cycle of data) — treat as illustrative until the dataset grows.</div>
+  <div style="margin:8px 0">
+    <button id="bt-rerun" class="ghost">Re-run all backtests</button>
+    <span id="bt-msg"></span>
+  </div>
+  <table id="bt-table"><thead><tr>
+    <th>Indicator</th><th>Ticker</th><th>Horizon</th><th>Fires</th><th>Median fwd</th><th>Mean fwd</th><th>Win rate</th><th>Baseline</th><th>Excess</th><th>Hit ratio</th></tr></thead><tbody></tbody></table>
 </section>
 
 <section data-section="portfolio" hidden>
@@ -5238,11 +5396,151 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   const which = t.dataset.tab;
   document.querySelectorAll('section').forEach(s => s.hidden = s.dataset.section !== which);
   if (which === 'overview') loadOverview();
+  if (which === 'indicators') loadIndicators();
+  if (which === 'derivatives') loadDerivatives();
+  if (which === 'macro') loadMacro();
+  if (which === 'backtests') loadBacktests();
   if (which === 'portfolio') loadPortfolio();
   if (which === 'targets') loadTargets();
   if (which === 'dca') loadDCA();
   if (which === 'alerts') loadAlerts();
 });
+
+const SIG_CLASS = {bullish:'r-calm', bearish:'r-defensive', neutral:'r-neutral', unavailable:'r-neutral'};
+
+async function loadIndicators(){
+  const tbody = document.querySelector('#ind-table tbody');
+  const comp = document.getElementById('ind-composites');
+  tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/long-term/indicators');
+    tbody.innerHTML = '';
+    for (const r of d.indicators) {
+      const cls = SIG_CLASS[r.signal] || 'r-neutral';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.ticker}</td><td>${r.name}</td>
+        <td>${r.value == null ? '—' : fmt(r.value, 4)}</td>
+        <td class="${cls}"><b>${r.signal}</b></td>
+        <td style="font-size:.85em">${r.description}</td>
+        <td style="font-size:.75em;color:var(--muted)">${r.source}</td>`;
+      tbody.appendChild(tr);
+    }
+    // Composite scores for each ticker.
+    comp.innerHTML = '';
+    for (const tk of TICKERS) {
+      try {
+        const c = await api('/api/long-term/indicators/composite/'+tk);
+        if (c.score == null) continue;
+        const lbl = c.label;
+        const cls = lbl === 'accumulate' || lbl === 'lean-bullish' ? 'r-calm'
+                  : lbl === 'defensive' || lbl === 'lean-bearish' ? 'r-defensive' : 'r-neutral';
+        comp.insertAdjacentHTML('beforeend',
+          `<span style="margin-right:14px"><b>${tk}</b>: <span class="${cls}">${lbl}</span> (${fmt(c.score,2)})</span>`);
+      } catch(e){}
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="6" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadDerivatives(){
+  const tbody = document.querySelector('#deriv-table tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/long-term/derivatives');
+    tbody.innerHTML = '';
+    for (const row of d.assets) {
+      const f = row.funding, o = row.open_interest;
+      if (!f && !o) continue;
+      const fCls = f ? SIG_CLASS[f.signal] : '';
+      const oCls = o ? SIG_CLASS[o.signal] : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${row.ticker}</td>
+        <td>${f ? fmt(f.current_rate*100,4)+'%' : '—'}</td>
+        <td>${f ? fmt(f.annualised*100,1)+'%' : '—'}</td>
+        <td>${f ? fmt(f.avg_7d*100,4)+'%' : '—'}</td>
+        <td class="${fCls}">${f ? f.signal : '—'}</td>
+        <td>${o ? usd(o.current_usd) : '—'}</td>
+        <td>${o && o.pct_change_7d!=null ? pct(o.pct_change_7d) : '—'}</td>
+        <td class="${oCls}" style="font-size:.85em">${o ? o.description : '—'}</td>`;
+      tbody.appendChild(tr);
+    }
+    const fc = d.funding_composite;
+    if (fc && fc.score != null) {
+      const cls = fc.label === 'long-crowding' ? 'r-defensive'
+                : fc.label === 'capitulation' ? 'r-calm' : 'r-neutral';
+      document.getElementById('deriv-composite').innerHTML =
+        `<b>Funding composite:</b> <span class="${cls}">${fc.label}</span> (${fmt(fc.score,2)})`;
+    } else {
+      document.getElementById('deriv-composite').innerHTML = '<span class="note">Funding composite unavailable — needs at least one full refresh cycle.</span>';
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="8" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadMacro(){
+  const tbody = document.querySelector('#macro-table tbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/long-term/macro');
+    document.getElementById('macro-note').textContent = d.fred_configured
+      ? 'Pulling FRED + Stooq.' : 'FRED_API_KEY not set — falling back to Stooq for DXY/Gold. Other series will show "unavailable" until you set a (free) FRED key.';
+    tbody.innerHTML = '';
+    for (const s of d.series) {
+      const cls = s.signal === 'crypto-tailwind' ? 'r-calm'
+                : s.signal === 'crypto-headwind' ? 'r-defensive'
+                : s.signal === 'unavailable' ? 'r-neutral' : 'r-neutral';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${s.name} <span style="color:var(--muted);font-size:.75em">${s.series_id}</span></td>
+        <td>${s.value == null ? '—' : fmt(s.value, 2)}</td>
+        <td>${s.pct_change_30d==null ? '—' : pct(s.pct_change_30d)}</td>
+        <td>${s.pct_change_365d==null ? '—' : pct(s.pct_change_365d)}</td>
+        <td>${s.btc_corr_90d==null ? '—' : fmt(s.btc_corr_90d, 2)}</td>
+        <td class="${cls}">${s.signal}</td>
+        <td style="font-size:.85em">${s.description}</td>`;
+      tbody.appendChild(tr);
+    }
+    const r = d.regime;
+    if (r && r.score != null) {
+      const cls = r.label === 'tailwind' || r.label === 'lean-tailwind' ? 'r-calm'
+                : r.label === 'headwind' || r.label === 'lean-headwind' ? 'r-defensive' : 'r-neutral';
+      document.getElementById('macro-regime').innerHTML =
+        `<b>Macro regime:</b> <span class="${cls}">${r.label}</span> (${fmt(r.score,2)})`;
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="7" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadBacktests(){
+  const tbody = document.querySelector('#bt-table tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/long-term/backtests');
+    if (!d.results.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No backtests yet — the first refresh cycle on the box runs them automatically. Click "Re-run" to force.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    for (const r of d.results) {
+      const excessCls = r.median_excess > 0 ? 'gain' : r.median_excess < 0 ? 'loss' : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.indicator}</td><td>${r.ticker}</td><td>${r.horizon_days}d</td>
+        <td>${r.fired_n}</td>
+        <td>${r.median_fwd_return==null?'—':pct(r.median_fwd_return)}</td>
+        <td>${r.mean_fwd_return==null?'—':pct(r.mean_fwd_return)}</td>
+        <td>${r.win_rate==null?'—':pct(r.win_rate)}</td>
+        <td>${pct(r.median_baseline)}</td>
+        <td class="${excessCls}">${r.median_excess==null?'—':pct(r.median_excess)}</td>
+        <td>${r.hit_ratio==null?'—':pct(r.hit_ratio)}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="10" class="err">${e.message}</td></tr>`; }
+}
+
+document.getElementById('bt-rerun').onclick = async () => {
+  const msg = document.getElementById('bt-msg'); msg.textContent = ' running…';
+  try {
+    const r = await api('/api/long-term/backtests/run', {method:'POST'});
+    msg.textContent = ` done in ${r.elapsed_s}s (${r.computed} computed, ${r.skipped} skipped).`;
+    loadBacktests();
+  } catch(e) { msg.textContent = ' ' + e.message; }
+};
 
 async function loadOverview(){
   const grid = document.getElementById('overview-grid');
