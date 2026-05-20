@@ -256,6 +256,46 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+
+  .opps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .opp {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .opp:hover { background: var(--bg-2); border-left-color: var(--good); }
+  .opp.neg { border-left-color: var(--accent-2); }
+  .opp.neg:hover { border-left-color: var(--accent-2); }
+  .opp .q {
+    font-size: 13px;
+    color: var(--text-1);
+    font-weight: 500;
+    line-height: 1.35;
+    margin-bottom: 6px;
+    /* Clamp to 2 lines */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .opp .meta {
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .opp .edge { font-weight: 700; font-size: 14px; }
+  .opp .edge.pos { color: var(--good); }
+  .opp .edge.neg { color: var(--accent-2); }
   .thresholds {
     display: flex;
     flex-wrap: wrap;
@@ -382,6 +422,9 @@
   <div class="overlay-hover" id="overlay-hover">Hover the chart for values.</div>
   <div class="overlay-toggles" id="overlay-toggles"></div>
 </div>
+
+<div class="section-title">Top opportunities</div>
+<div id="opps" class="opps"></div>
 
 <div class="section-title">Climate markets</div>
 <div class="toolbar">
@@ -1115,6 +1158,52 @@ function fmtKelly(bet, multiplier, bankroll) {
   return `<span class="${sideCls}">${(scaled * 100).toFixed(1)}%</span><span class="kelly-side">${bet.side}</span>`;
 }
 
+// ─── Top opportunities ────────────────────────────────────────────────────────
+//
+// Surface the few markets that combine a meaningful model edge with enough
+// liquidity to actually trade against. The score is |edge_pp| × √liquidity,
+// with liquidity capped at $5k so deep markets don't drown out everything
+// else. Markets without a model probability are excluded (we can't speak to
+// their edge); markets with very thin liquidity or tiny edge are excluded too.
+function topOpportunities(markets, n = 3) {
+  const opps = markets
+    .filter(m => m._edge_pp !== null && m._edge_pp !== undefined)
+    .filter(m => Math.abs(m._edge_pp) >= 3)
+    .filter(m => Number(m.liquidity || 0) >= 500);
+  const score = m => Math.abs(m._edge_pp) * Math.sqrt(Math.min(Number(m.liquidity || 0), 5000));
+  opps.sort((a, b) => score(b) - score(a));
+  return opps.slice(0, n);
+}
+
+function renderOpps() {
+  const root = document.getElementById("opps");
+  if (!root) return;
+  const opps = topOpportunities(_allMarkets);
+  if (!opps.length) {
+    root.innerHTML = `<div class="opp" style="border-left-color:var(--border);cursor:default"><div class="q" style="color:var(--text-3);font-style:italic">No high-conviction opportunities right now — every scored market is either close to fair or thinly traded.</div></div>`;
+    return;
+  }
+  root.innerHTML = opps.map(m => {
+    const edge = m._edge_pp;
+    const cls = edge > 0 ? "pos" : "neg";
+    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : "#";
+    const liq = Number(m.liquidity || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const kelly = kellyBet(m._model_p, m._implied_p);
+    const kPct = kelly && kelly.fraction > 0 ? `${(kelly.fraction * 50).toFixed(1)}% (½K ${kelly.side})` : "—";
+    return `
+      <a class="opp ${edge < 0 ? "neg" : ""}" href="${url}" target="_blank" rel="noopener">
+        <div class="q">${(m.question || "")}</div>
+        <div class="meta">
+          <span class="edge ${cls}">${edge > 0 ? "+" : ""}${edge.toFixed(1)} pp</span>
+          · model ${pct(m._model_p)} vs implied ${pct(m._implied_p)}
+          · liq $${liq}
+          · ${kPct}
+        </div>
+      </a>
+    `;
+  }).join("");
+}
+
 function categorizeMarket(m) {
   const t = ((m._event_title || "") + " " + (m.question || "")).toLowerCase();
   if (/\bmethane\b|\bch4\b|\bppb\b/.test(t)) return "methane";
@@ -1245,6 +1334,7 @@ async function loadMarkets() {
   document.getElementById("markets").innerHTML = `<div class="empty">Loading markets…</div>`;
   const r = await getJSON("/api/markets");
   _allMarkets = (r?.markets) || [];
+  renderOpps();
   renderMarkets();
 }
 
@@ -1311,11 +1401,74 @@ async function loadBacktest() {
   `;
 }
 
+// ─── Filter state ↔ URL hash ─────────────────────────────────────────────────
+//
+// We round-trip the filter/sort UI into window.location.hash so a user can
+// bookmark / share a specific view. Bankroll and Kelly fraction stay in
+// localStorage only — they don't belong in a shareable URL.
+
+const _HASH_FIELDS = {
+  search: { type: "string", default: "" },
+  topic: { type: "string", default: "all" },
+  "min-edge": { type: "string", default: "" },
+  "min-liq": { type: "string", default: "" },
+  "scored-only": { type: "bool", default: false },
+  sort: { type: "string", default: "edge" },
+};
+
+function readHash() {
+  const h = window.location.hash.replace(/^#/, "");
+  if (!h) return {};
+  const out = {};
+  for (const pair of h.split("&")) {
+    const [k, v] = pair.split("=");
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v || "");
+  }
+  return out;
+}
+
+function writeHash() {
+  const out = [];
+  for (const id of Object.keys(_HASH_FIELDS)) {
+    const cfg = _HASH_FIELDS[id];
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const val = cfg.type === "bool" ? (el.checked ? "1" : "") : el.value;
+    if (val !== "" && val !== String(cfg.default)) {
+      out.push(`${encodeURIComponent(id)}=${encodeURIComponent(val)}`);
+    }
+  }
+  const next = out.length ? "#" + out.join("&") : "";
+  if (next !== window.location.hash) {
+    // Use replaceState so the back button isn't polluted with every keystroke
+    history.replaceState(null, "", window.location.pathname + window.location.search + next);
+  }
+}
+
+function restoreFromHash() {
+  const h = readHash();
+  for (const id of Object.keys(_HASH_FIELDS)) {
+    if (!(id in h)) continue;
+    const el = document.getElementById(id);
+    const cfg = _HASH_FIELDS[id];
+    if (!el) continue;
+    if (cfg.type === "bool") el.checked = h[id] === "1";
+    else el.value = h[id];
+  }
+}
+restoreFromHash();
+
 ["search", "min-edge", "min-liq", "bankroll"].forEach(id => {
-  document.getElementById(id).addEventListener("input", renderMarkets);
+  document.getElementById(id).addEventListener("input", () => {
+    writeHash();
+    renderMarkets();
+  });
 });
 ["topic", "sort", "scored-only", "kelly-fraction"].forEach(id => {
-  document.getElementById(id).addEventListener("change", renderMarkets);
+  document.getElementById(id).addEventListener("change", () => {
+    writeHash();
+    renderMarkets();
+  });
 });
 
 // Persist bankroll + Kelly fraction across page loads. Bankroll is sensitive
