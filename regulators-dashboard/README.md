@@ -18,6 +18,7 @@ Port: **7080**.
 | **v0.3** | **Activity heatmap** — per-regulator strip of stacked weekly bars across the last 12 weeks, segments colored by type tag. Shared Y scale so SEC vs FCA vs ESMA volumes are visually comparable. Per-bar hover shows tag breakdown + weekly total. Inline SVG, no JS deps. | aggregation — `analysis/heatmap.py` |
 | **v0.4** | **Topic clusters** — every item tagged with zero or more topics from `crypto / etf / aml / disclosure / marketstructure / privatefunds / cyber / climate`. Multi-topic honest (a crypto-AML enforcement fires both). Dynamic topic-filter chip row with per-topic count badges sourced from `/api/topics`; matched phrases shown on hover; topic pills inline under each headline. | rules — `analysis/topic_keywords.py` |
 | **v0.5** | **Polymarket / Kalshi overlay** — every action gets matched against the active Polymarket Gamma + Kalshi public market lists via anchor-token-weighted Jaccard; top-3 matches surface as small `Poly 14¢ yes ↗` / `Kalshi 87¢ yes ↗` deep-link buttons under the headline. Hover shows the full market question + shared anchor tokens + score. Read-only on trades — clicks open the venue in a new tab. New `Has market match` filter chip. | Polymarket Gamma API + Kalshi public `/trade-api/v2/markets` |
+| **v0.6** | **Personnel watch** — hand-curated roster of chairs / commissioners / CEOs with `term_end`, `term_type`, and a `source_url` pointing to the official roster page. `days_until` computed live, sorted imminent-first, badge-coded (`imminent` ≤ 7d / `soon` ≤ 90d / `later`). Same v0.5 market matcher attaches Polymarket / Kalshi markets per row (e.g. "Will Powell be Fed Chair on Dec 31, 2026?" against the Powell entry). | hand-curated — `data/personnel.py` |
 
 All views graceful-degrade when their data source is unreachable (the
 per-source status row flips to red; other sources keep working).
@@ -31,6 +32,7 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/heatmap?weeks=12` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52) |
 | `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
 | `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
+| `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -73,6 +75,7 @@ python3 -m analysis.topics            # 8 fixture headlines, multi-topic & negat
 python3 -m ingestion.polymarket_client  # Live Gamma API fetch, normalized
 python3 -m ingestion.kalshi_client    # Live Kalshi /trade-api/v2/markets fetch, normalized
 python3 -m analysis.market_match      # 4-item × 4-market join fixtures (incl. Lakers false-positive guard)
+python3 -m analysis.people            # Roster dump with days_until + sort order
 ```
 
 ## Files
@@ -95,7 +98,10 @@ regulators-dashboard/
 │   ├── heatmap.py                  ISO-week × regulator × tag aggregation
 │   ├── topic_keywords.py           Eight-topic phrase dictionary (tunable)
 │   ├── topics.py                   Multi-topic extractor + 8 fixture self-test
-│   └── market_match.py             Anchor-weighted Jaccard joiner — items × markets, 4 fixtures
+│   ├── market_match.py             Anchor-weighted Jaccard joiner — items × markets, 4 fixtures
+│   └── people.py                   Personnel roster loader + days-until + synthetic-item for matcher
+├── data/
+│   └── personnel.py                Hand-curated roster (EDIT HERE to add chairs/commissioners)
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
 ├── Dockerfile                      Python 3.12-slim, non-root, port 7080
 ├── requirements.txt                fastapi, uvicorn, defusedxml
@@ -242,6 +248,29 @@ shown on hover; users verify on the venue before acting. Lifting
 matcher precision needs richer entity extraction — deferred until
 v0.5 has live usage telling us which false-positive shapes matter.
 
+### v0.6 — personnel watch
+
+`data/personnel.py` is the editable source — a Python literal list of
+`{regulator, role, name, term_end, term_type, source_url, notes}`
+dicts. The file's docstring spells out the date semantics
+(`term_end` is the next transition anchor — for chairs that means
+the incumbent's underlying commissioner term, since the chair role
+itself has no fixed end).
+
+`analysis/people.py` loads the roster, computes `days_until` against
+UTC today, and sorts imminent (≤ 365d future) → later future → past →
+unknown. It also synthesizes a fake item per person (`title` =
+"`{name} — {role} {regulator}`", `summary` = the notes) and runs the
+v0.5 matcher to attach Polymarket / Kalshi markets — surnames I rely
+on (`powell`, `gensler`, `atkin(s)`, `uyeda`) are already in
+`market_match.ANCHOR_TOKENS`. To add a market match for a new person,
+also append their surname there.
+
+The roster is intentionally seeded with **four** well-known entries —
+Powell, Atkins, Rathi, Ross — each with a verifiable `source_url`.
+The file is loud about the data being best-effort and refresh-by-hand
+until v1.1 (auto-scraping confirmation calendars).
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -252,6 +281,7 @@ v0.5 has live usage telling us which false-positive shapes matter.
 | **v0.3** | ✓ done | Activity heatmap — per-regulator weekly stacked-bar SVG over the last 12 weeks, segments colored by type tag, shared Y scale across regulators |
 | **v0.4** | ✓ done | Topic clusters — multi-topic tagging (crypto/etf/aml/disclosure/marketstructure/privatefunds/cyber/climate); per-topic count chips above the feed; topic pills inline under each headline |
 | **v0.5** | ✓ done | Polymarket / Kalshi overlay — anchor-weighted Jaccard match between actions and active markets; per-item deep-link buttons (read-only on trade); `has_market` filter |
+| **v0.6** | ✓ done | Personnel watch — hand-curated roster of chairs/commissioners with term-end dates, days-until badges, source links, and per-row market overlay reusing the v0.5 matcher |
 | v0.2 | open  | Severity score — fine-amount regex + bucketing (<$1M, $1M–10M, $10M–100M, $100M+) for items tagged `enforcement` |
 | v0.3 | open  | Jurisdiction heatmap — per-week bar chart of action counts per regulator, stacked by type tag |
 | v0.4 | open  | Topic clusters — keyword index (`crypto`, `etf`, `aml`, `disclosure`, `marketstructure`, `privatefunds`, `cyber`, `climate`); drill-down per topic |
@@ -309,6 +339,11 @@ v0.5 has live usage telling us which false-positive shapes matter.
   has its own 5-min cache; one going down leaves the other's badges
   surfaced. The `market_sources` field in `/api/feed` exposes
   per-venue status for the UI to render.
+- **Personnel roster is hand-curated and drifts.** Four seeded
+  entries — extend `data/personnel.py` for full coverage. Dates need
+  annual verification against each official roster page; the file
+  is loud about this, and every row links to its `source_url`. Auto-
+  scraping confirmation calendars is roadmap v1.1.
 - **Polymarket overlay coverage is thin** outside crypto ETFs and
   big-name settlements, so v0.5 will only annotate a small fraction of
   action cards. That's expected.

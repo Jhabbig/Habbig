@@ -7,6 +7,7 @@ Routes:
   - GET /api/heatmap?weeks=12   → per-week, per-regulator, per-tag aggregation
   - GET /api/topics?days=90     → per-topic counts (drives the topic-filter chip badges)
   - GET /api/markets            → raw Polymarket + Kalshi market list (debug)
+  - GET /api/people             → hand-curated personnel watch with term-end days + matched markets
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -26,6 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from ingestion import kalshi_client, polymarket_client, unified_feed
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
+from analysis import people as people_roster
 from analysis.topic_keywords import TOPICS, TOPIC_LABELS
 
 logging.basicConfig(level=logging.INFO)
@@ -167,6 +169,28 @@ async def api_markets(force: bool = False) -> JSONResponse:
         "polymarket": poly,
         "kalshi": kal,
         "combined_count": poly["count"] + kal["count"],
+    })
+
+
+@app.get("/api/people")
+async def api_people() -> JSONResponse:
+    """Hand-curated personnel watch with days-until-term-end + matched markets.
+    Roster source is `data/personnel.py` — edit there to add or refresh entries.
+    """
+    rows = people_roster.roster()
+    poly = polymarket_client.get_cached()
+    kal = kalshi_client.get_cached()
+    all_markets = poly["markets"] + kal["markets"]
+    prepared = market_match.prepare_markets(all_markets)
+    for r in rows:
+        synthetic = people_roster.synthetic_item_for(r)
+        r["markets"] = market_match.match_for_item(synthetic, prepared)
+    return JSONResponse({
+        "people": rows,
+        "market_sources": [
+            {"name": "polymarket", "ok": poly["ok"], "count": poly["count"], "error": poly["error"]},
+            {"name": "kalshi",     "ok": kal["ok"],  "count": kal["count"],  "error": kal["error"]},
+        ],
     })
 
 

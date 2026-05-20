@@ -86,6 +86,24 @@
   .market.poly .price   { color: #58a6ff; }
   .market.kalshi .price { color: #56d364; }
   .market .arrow { color: var(--muted); font-size: 10px; }
+  .people-row { display: grid; grid-template-columns: 1.4fr 1fr 90px 110px 1fr;
+                gap: 12px; align-items: center; padding: 10px 0;
+                border-bottom: 1px solid var(--grid); }
+  .people-row:last-child { border-bottom: 0; }
+  .people-name { font-weight: 600; }
+  .people-role { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .people-reg  { font-size: 11px; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: 0.04em; }
+  .people-date { font-variant-numeric: tabular-nums; font-size: 12px; }
+  .people-when { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .people-link a { color: var(--accent); text-decoration: none; font-size: 11px; }
+  .people-link a:hover { text-decoration: underline; }
+  .people-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px;
+           font-weight: 700; letter-spacing: 0.04em; }
+  .badge.imminent { background: #f85149; color: #fff; }
+  .badge.soon     { background: #d29922; color: #0e1117; }
+  .badge.later    { background: #30363d; color: var(--muted); }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -109,6 +127,10 @@
     <h2>Activity heatmap — last 12 weeks</h2>
     <div class="heatmap-legend" id="heatmap-legend"></div>
     <div id="heatmap-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
+  <section class="panel" id="people-panel">
+    <h2>Personnel watch — next transitions</h2>
+    <div id="people-body"><div class="heatmap-empty">loading…</div></div>
   </section>
   <section class="panel">
     <h2>Action feed</h2>
@@ -299,6 +321,76 @@ async function loadTopics() {
   });
 }
 
+function renderPeople(data) {
+  const body = document.getElementById("people-body");
+  const rows = data.people || [];
+  if (!rows.length) {
+    body.innerHTML = '<div class="heatmap-empty">No personnel entries — edit <code>data/personnel.py</code> to seed.</div>';
+    return;
+  }
+  body.innerHTML = rows.map(p => {
+    const days = p.days_until;
+    let badgeCls = "later", badgeTxt = "—";
+    if (days === null || days === undefined) {
+      badgeCls = "later"; badgeTxt = "—";
+    } else if (p.is_past) {
+      badgeCls = "later"; badgeTxt = `${-days}d ago`;
+    } else if (days <= 7) {
+      badgeCls = "imminent"; badgeTxt = days === 0 ? "today" : `${days}d`;
+    } else if (days <= 90) {
+      badgeCls = "soon"; badgeTxt = `${days}d`;
+    } else {
+      badgeCls = "later"; badgeTxt = `${days}d`;
+    }
+    let marketsEl = "";
+    if (p.markets && p.markets.length) {
+      marketsEl = '<div class="markets">' + p.markets.map(m => {
+        const yes = m.yes_price !== null && m.yes_price !== undefined
+          ? Math.round(m.yes_price * 100) + "¢" : "—";
+        const cls = m.source === "polymarket" ? "poly" : "kalshi";
+        const label = m.source === "polymarket" ? "Poly" : "Kalshi";
+        const tip = `${m.question}\n\nYes: ${yes}\nmatch: ${m.match_tokens.join(", ")} (score ${m.match_score})`;
+        return `<a class="market ${cls}" href="${escapeHtml(m.url || "#")}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(tip)}">` +
+               `<span class="src">${label}</span>` +
+               `<span class="price">${escapeHtml(yes)} yes</span>` +
+               `<span class="arrow">↗</span>` +
+               `</a>`;
+      }).join("") + '</div>';
+    }
+    return `
+      <div class="people-row">
+        <div>
+          <div class="people-name">${escapeHtml(p.name)}</div>
+          <div class="people-role">${escapeHtml(p.role)}</div>
+        </div>
+        <div>
+          <div class="people-reg">${escapeHtml(p.regulator)}</div>
+          <div class="people-meta">${escapeHtml(p.term_type)}</div>
+        </div>
+        <div>
+          <span class="badge ${badgeCls}">${escapeHtml(badgeTxt)}</span>
+        </div>
+        <div>
+          <div class="people-date">${escapeHtml(p.term_end || "—")}</div>
+          <div class="people-link"><a href="${escapeHtml(p.source_url || "#")}" target="_blank" rel="noopener noreferrer">source ↗</a></div>
+        </div>
+        <div>${marketsEl || '<span class="people-meta">no market match</span>'}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadPeople() {
+  try {
+    const r = await fetch("/api/people");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderPeople(data);
+  } catch (e) {
+    document.getElementById("people-body").innerHTML =
+      `<div class="heatmap-empty err">people load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -479,7 +571,8 @@ document.getElementById("q").addEventListener("input", e => {
 load();
 loadHeatmap();
 loadTopics();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); }, 5 * 60 * 1000);
+loadPeople();
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>
