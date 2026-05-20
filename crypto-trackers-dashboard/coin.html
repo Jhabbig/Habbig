@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Coin detail - narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399;
+    --accent-4: #38bdf8; --magenta: #c084fc;
+    --candle-up: #34d399; --candle-down: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px;
+  }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  header h1 img { width: 28px; height: 28px; border-radius: 999px; }
+  header .sym { color: var(--text-3); font-size: 12px; text-transform: uppercase; font-weight: 500; }
+
+  main { padding: 18px 24px 80px; max-width: 1400px; margin: 0 auto; }
+
+  .row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .stat { flex: 1; min-width: 160px; }
+  .stat .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 4px; }
+  .stat .val { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat .sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+  .up { color: var(--accent-3); }
+  .down { color: var(--accent-2); }
+  .muted { color: var(--text-3); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  section { margin: 24px 0 14px; }
+  section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-2); font-weight: 600; display: flex; align-items: baseline; gap: 12px; }
+  section h2 small { font-size: 10px; color: var(--text-3); text-transform: none; letter-spacing: 0; font-style: italic; }
+
+  .chart-controls { display: flex; gap: 6px; margin-bottom: 8px; }
+  .chart-controls button {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2);
+    padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; font-family: inherit;
+  }
+  .chart-controls button.active { background: var(--accent); color: black; border-color: var(--accent); }
+  .chart-controls button:hover { color: var(--text-1); }
+  .chart-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 6px; overflow: hidden; }
+  #chart-svg { display: block; width: 100%; background: #060c1a; }
+  #chart-svg .grid { stroke: rgba(148,163,184,0.08); stroke-width: 0.5; }
+  #chart-svg .axis-label { fill: var(--text-3); font-size: 10px; font-family: monospace; }
+  #chart-svg .candle-up   .body { fill: var(--candle-up); stroke: var(--candle-up); }
+  #chart-svg .candle-down .body { fill: var(--candle-down); stroke: var(--candle-down); }
+  #chart-svg .candle-up   .wick { stroke: var(--candle-up); }
+  #chart-svg .candle-down .wick { stroke: var(--candle-down); }
+  #chart-svg .vol-up { fill: rgba(52,211,153,0.35); }
+  #chart-svg .vol-down { fill: rgba(239,68,68,0.35); }
+  #chart-svg .ma { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+  #chart-svg .cursor-line { stroke: rgba(255,255,255,0.2); stroke-width: 0.5; stroke-dasharray: 2 2; }
+
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; background: var(--bg-2); color: var(--text-2); margin: 0 4px 4px 0; }
+  .pill.info  { background: rgba(56, 189, 248, 0.15); color: var(--accent-4); }
+  .pill.up    { background: rgba(52, 211, 153, 0.15); color: var(--accent-3); }
+  .pill.down  { background: rgba(239, 68, 68, 0.15); color: var(--accent-2); }
+  .pill.warn  { background: rgba(245, 158, 11, 0.15); color: var(--accent); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← all coins</a>
+  <h1 id="coin-title">loading…</h1>
+  <span id="coin-rank" class="sym"></span>
+</header>
+
+<main>
+  <div class="row" id="stats-row"></div>
+
+  <section>
+    <h2>Price chart <small>Binance klines &middot; OHLCV candlesticks with 20-period EMA</small></h2>
+    <div class="chart-controls" id="chart-controls">
+      <button data-int="15m">15m</button>
+      <button data-int="1h" class="active">1h</button>
+      <button data-int="4h">4h</button>
+      <button data-int="1d">1d</button>
+      <button data-int="1w">1w</button>
+    </div>
+    <div class="chart-card"><svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none"></svg></div>
+  </section>
+
+  <section>
+    <h2>Order book <small>Binance spot &middot; L2 depth, top 20 levels each side</small></h2>
+    <div id="depth-table"></div>
+  </section>
+
+  <section>
+    <h2>Cross-venue spot prices <small>Binance / Coinbase / Kraken / Bybit / OKX</small></h2>
+    <div id="crossex-table"></div>
+  </section>
+
+  <section>
+    <h2>Funding rate <small>Binance USDT perp &middot; last + next funding</small></h2>
+    <div id="funding-card"></div>
+  </section>
+
+  <section>
+    <h2>News mentioning this coin <small>filtered from 7-source RSS aggregator</small></h2>
+    <div id="news-list"></div>
+  </section>
+
+  <section>
+    <h2>About <small>CoinGecko</small></h2>
+    <div id="about-card"></div>
+  </section>
+</main>
+
+<script>
+(function() {
+  // ─── Helpers ─────────────────────────────────────────────────────────────
+  const params = new URLSearchParams(window.location.search);
+  const coinId = params.get("id") || "bitcoin";
+
+  const fmt = (n, d = 0) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null || !isFinite(n)) return "-";
+    if (Math.abs(n) >= 1e12) return (n / 1e12).toFixed(2) + "T";
+    if (Math.abs(n) >= 1e9)  return (n / 1e9).toFixed(2)  + "B";
+    if (Math.abs(n) >= 1e6)  return (n / 1e6).toFixed(2)  + "M";
+    if (Math.abs(n) >= 1e3)  return (n / 1e3).toFixed(1)  + "k";
+    return fmt(n, 2);
+  };
+  const fmtPrice = (n) => {
+    if (n == null) return "-";
+    if (n >= 1)    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+    if (n >= 0.01) return "$" + n.toFixed(4);
+    if (n >= 1e-6) return "$" + n.toFixed(6);
+    return "$" + n.toExponential(2);
+  };
+  const pct = (n, d = 2) => n == null ? "-" : (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  // ─── Coin detail ─────────────────────────────────────────────────────────
+  let _coinSymbol = "BTC";
+
+  async function loadCoin() {
+    try {
+      const d = await fetchJson(`/api/coin/${encodeURIComponent(coinId)}`);
+      _coinSymbol = (d.symbol || "BTC").toUpperCase();
+      document.title = `${d.name || coinId} - narve.ai`;
+      document.getElementById("coin-title").innerHTML =
+        `${d.id ? `<img src="https://assets.coingecko.com/coins/images/1/large/bitcoin.png" alt="" onerror="this.style.display='none'"/>` : ""}${escapeHtml(d.name || coinId)}<span class="sym">${escapeHtml(_coinSymbol)}</span>`;
+
+      const cells = [
+        ["Price",         fmtPrice(d.current_price_usd), `vs USD`],
+        ["24h Δ",         pct(d.change_24h), "", d.change_24h >= 0 ? "up" : "down"],
+        ["7d Δ",          pct(d.change_7d), "", d.change_7d >= 0 ? "up" : "down"],
+        ["30d Δ",         pct(d.change_30d), "", d.change_30d >= 0 ? "up" : "down"],
+        ["1y Δ",          pct(d.change_1y), "", d.change_1y >= 0 ? "up" : "down"],
+        ["Market cap",    "$" + fmtBig(d.market_cap_usd), `vol $${fmtBig(d.total_volume_usd)}`],
+        ["ATH",           fmtPrice(d.ath_usd),
+                          `${d.ath_date ? new Date(d.ath_date).toISOString().slice(0,10) : ""}`],
+        ["ATL",           fmtPrice(d.atl_usd),
+                          `${d.atl_date ? new Date(d.atl_date).toISOString().slice(0,10) : ""}`],
+        ["Circulating",   fmtBig(d.circulating_supply) + " " + escapeHtml(_coinSymbol),
+                          d.max_supply ? `max ${fmtBig(d.max_supply)}` : ""],
+      ];
+      document.getElementById("stats-row").innerHTML = cells.map(([label, val, sub, cls]) => `
+        <div class="card stat">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="val ${cls || ''}">${val}</div>
+          <div class="sub">${sub || ''}</div>
+        </div>`).join("");
+
+      // About card
+      document.getElementById("about-card").innerHTML = `<div class="card">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">
+          ${(d.categories || []).slice(0, 6).map(c => `<span class="pill info">${escapeHtml(c)}</span>`).join("")}
+        </div>
+        <div style="color:var(--text-2);font-size:13px;line-height:1.55">${escapeHtml(d.description || "").slice(0, 800)}…</div>
+        ${d.homepage ? `<div style="margin-top:8px"><a href="${escapeHtml(d.homepage)}" target="_blank" rel="noopener">${escapeHtml(d.homepage)}</a></div>` : ""}
+        ${d.twitter ? `<div style="margin-top:4px"><a href="https://twitter.com/${escapeHtml(d.twitter)}" target="_blank" rel="noopener">@${escapeHtml(d.twitter)}</a></div>` : ""}
+      </div>`;
+    } catch (e) {
+      document.getElementById("stats-row").innerHTML = `<div class="err">Coin detail fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Candlestick chart (inline SVG) ──────────────────────────────────────
+  let _chartInterval = "1h";
+
+  function ema(values, period) {
+    if (!values.length || period <= 1) return values.slice();
+    const k = 2 / (period + 1);
+    const out = [values[0]];
+    for (let i = 1; i < values.length; i++) {
+      out.push(values[i] * k + out[i - 1] * (1 - k));
+    }
+    return out;
+  }
+
+  function renderCandles(bars) {
+    const svg = document.getElementById("chart-svg");
+    svg.innerHTML = "";
+    if (!bars || !bars.length) {
+      svg.innerHTML = `<text x="20" y="40" fill="#ef4444" font-size="14">No klines available for ${escapeHtml(_coinSymbol)}USDT.</text>`;
+      return;
+    }
+
+    const W = 1200, H = 540;
+    const CHART_H = 400, VOL_H = 100, PAD_TOP = 10, PAD_BOTTOM = 30, PAD_LEFT = 8, PAD_RIGHT = 70;
+    const chartTop = PAD_TOP, chartBottom = PAD_TOP + CHART_H;
+    const volTop = chartBottom + 10, volBottom = volTop + VOL_H;
+
+    const n = bars.length;
+    const xStep = (W - PAD_LEFT - PAD_RIGHT) / n;
+    const candleW = Math.max(1.5, xStep * 0.7);
+
+    // Price extents (excluding extreme outliers)
+    const highs = bars.map(b => b.high);
+    const lows = bars.map(b => b.low);
+    const maxP = Math.max(...highs);
+    const minP = Math.min(...lows);
+    const pad = (maxP - minP) * 0.06;
+    const yHigh = maxP + pad;
+    const yLow = Math.max(minP - pad, 0);
+    const yScale = (p) => chartBottom - ((p - yLow) / (yHigh - yLow)) * CHART_H;
+
+    // Volume extents
+    const maxVol = Math.max(...bars.map(b => b.volume || 0)) || 1;
+    const vScale = (v) => volBottom - (v / maxVol) * VOL_H;
+
+    // Build grid + axis labels (price)
+    const groups = [`<g class="grid">`];
+    const gridSteps = 5;
+    for (let i = 0; i <= gridSteps; i++) {
+      const p = yLow + ((yHigh - yLow) / gridSteps) * i;
+      const y = yScale(p);
+      groups.push(`<line x1="${PAD_LEFT}" y1="${y}" x2="${W - PAD_RIGHT}" y2="${y}"/>`);
+      groups.push(`</g><text x="${W - PAD_RIGHT + 4}" y="${y + 3}" class="axis-label">${fmtPrice(p)}</text><g class="grid">`);
+    }
+    groups.push("</g>");
+
+    // Time axis labels
+    const tickCount = 6;
+    const timeLabels = [];
+    for (let i = 0; i < tickCount; i++) {
+      const idx = Math.min(Math.floor((i / (tickCount - 1)) * (n - 1)), n - 1);
+      const b = bars[idx];
+      const dt = new Date(b.open_ms);
+      const label = _chartInterval === "1d" || _chartInterval === "1w"
+        ? `${dt.getUTCMonth() + 1}/${dt.getUTCDate()}`
+        : `${dt.getUTCMonth() + 1}/${dt.getUTCDate()} ${String(dt.getUTCHours()).padStart(2, "0")}:00`;
+      const x = PAD_LEFT + idx * xStep + candleW / 2;
+      timeLabels.push(`<text x="${x}" y="${H - 8}" class="axis-label" text-anchor="middle">${label}</text>`);
+    }
+
+    // Candles + volume
+    const candles = [];
+    const volBars = [];
+    bars.forEach((b, i) => {
+      const x = PAD_LEFT + i * xStep;
+      const cx = x + candleW / 2;
+      const up = b.close >= b.open;
+      const cls = up ? "candle-up" : "candle-down";
+      const bodyTop = yScale(Math.max(b.open, b.close));
+      const bodyBottom = yScale(Math.min(b.open, b.close));
+      const bodyH = Math.max(bodyBottom - bodyTop, 1);
+      const wickTop = yScale(b.high);
+      const wickBottom = yScale(b.low);
+      candles.push(`<g class="${cls}">
+        <line class="wick" x1="${cx}" y1="${wickTop}" x2="${cx}" y2="${wickBottom}"/>
+        <rect class="body" x="${x}" y="${bodyTop}" width="${candleW}" height="${bodyH}"/>
+      </g>`);
+      const vy = vScale(b.volume || 0);
+      volBars.push(`<rect class="${up ? 'vol-up' : 'vol-down'}" x="${x}" y="${vy}" width="${candleW}" height="${volBottom - vy}"/>`);
+    });
+
+    // EMA-20 overlay
+    const closes = bars.map(b => b.close);
+    const ema20 = ema(closes, 20);
+    const emaPath = ema20.map((v, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${yScale(v)}`).join(" ");
+
+    // Latest price marker on right
+    const last = bars[n - 1];
+    const lastY = yScale(last.close);
+    const lastCls = last.close >= last.open ? "candle-up" : "candle-down";
+    const lastColor = last.close >= last.open ? "#34d399" : "#ef4444";
+
+    svg.innerHTML = `
+      ${groups.join("")}
+      ${timeLabels.join("")}
+      ${candles.join("")}
+      ${volBars.join("")}
+      <path class="ma" d="${emaPath}"/>
+      <line x1="${PAD_LEFT}" y1="${lastY}" x2="${W - PAD_RIGHT}" y2="${lastY}" stroke="${lastColor}" stroke-width="0.6" stroke-dasharray="3 2"/>
+      <rect x="${W - PAD_RIGHT + 2}" y="${lastY - 9}" width="65" height="18" fill="${lastColor}" rx="2"/>
+      <text x="${W - PAD_RIGHT + 4}" y="${lastY + 4}" fill="black" font-size="11" font-weight="600" font-family="monospace">${fmtPrice(last.close)}</text>
+      <text x="${PAD_LEFT + 4}" y="${PAD_TOP + 12}" fill="${lastColor}" font-size="13" font-weight="600">${escapeHtml(_coinSymbol)}USDT &middot; ${_chartInterval}</text>
+      <text x="${PAD_LEFT + 4}" y="${volTop + 12}" fill="var(--text-3)" font-size="10" font-family="monospace">Volume (24h base units)</text>
+    `;
+  }
+
+  async function loadChart(interval) {
+    _chartInterval = interval;
+    // Update button states
+    document.querySelectorAll("#chart-controls button").forEach(b => {
+      b.classList.toggle("active", b.dataset.int === interval);
+    });
+    try {
+      const symbol = _coinSymbol + "USDT";
+      const limit = interval === "15m" ? 96 : interval === "1h" ? 168 : interval === "4h" ? 180 : interval === "1d" ? 200 : 100;
+      const data = await fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`);
+      renderCandles(data.bars || []);
+    } catch (e) {
+      document.getElementById("chart-svg").innerHTML =
+        `<text x="20" y="40" fill="#ef4444" font-size="14">Chart fetch failed: ${escapeHtml(e.message)}</text>`;
+    }
+  }
+
+  // ─── Order book ──────────────────────────────────────────────────────────
+  async function loadDepth() {
+    try {
+      const symbol = _coinSymbol + "USDT";
+      const d = await fetchJson(`/api/binance/depth?symbol=${encodeURIComponent(symbol)}&limit=20`);
+      const target = document.getElementById("depth-table");
+      if (!d.bids || !d.bids.length) { target.innerHTML = '<div class="card">No depth data.</div>'; return; }
+      const maxQty = Math.max(...d.bids.map(b => b[1]), ...d.asks.map(a => a[1]));
+      const renderSide = (rows, side) => {
+        const total = rows.slice(0, 12).map((r, i) => {
+          const cum = rows.slice(0, i + 1).reduce((s, x) => s + x[1], 0);
+          const pctOfMax = (r[1] / maxQty) * 100;
+          const bg = side === "bid" ? `rgba(52,211,153,${(pctOfMax / 100) * 0.25})` : `rgba(239,68,68,${(pctOfMax / 100) * 0.25})`;
+          return `<tr style="background:${bg}">
+            <td class="num">${fmtPrice(r[0])}</td>
+            <td class="num">${fmt(r[1], 4)}</td>
+            <td class="num muted">${fmt(cum, 2)}</td>
+          </tr>`;
+        }).join("");
+        return total;
+      };
+      target.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div><div style="font-size:10px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:6px">Bids (buy)</div>
+        <table><thead><tr><th>Price</th><th>Size</th><th>Cumulative</th></tr></thead><tbody>${renderSide(d.bids, "bid")}</tbody></table></div>
+        <div><div style="font-size:10px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:6px">Asks (sell)</div>
+        <table><thead><tr><th>Price</th><th>Size</th><th>Cumulative</th></tr></thead><tbody>${renderSide(d.asks, "ask")}</tbody></table></div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("depth-table").innerHTML = `<div class="err">Depth fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Cross-venue prices ─────────────────────────────────────────────────
+  async function loadCrossEx() {
+    try {
+      // Fetch per-venue ticker for this coin only
+      const sym = _coinSymbol;
+      const binanceSpot = sym + "USDT";
+      const coinbasePair = sym + "-USD";
+      const krakenPair = (sym === "BTC" ? "XBT" : sym) + "USD";
+      const reqs = await Promise.allSettled([
+        fetchJson(`/api/coinbase/${encodeURIComponent(coinbasePair)}/ticker`),
+        fetchJson(`/api/kraken/ticker?pair=${encodeURIComponent(krakenPair)}`),
+        fetchJson(`/api/bybit/tickers?category=spot`),
+        fetchJson(`/api/okx/tickers?inst_type=SPOT`),
+        fetchJson(`/api/binance/spot`),
+      ]);
+      const [cbR, krR, byR, okxR, binR] = reqs;
+      const rows = [];
+      if (binR.status === "fulfilled" && binR.value && !binR.value.error) {
+        const t = (binR.value.tickers || []).find(x => x.symbol === binanceSpot);
+        if (t && t.price) rows.push({ venue: "binance", price: t.price, change_24h: t.change_pct_24h, volume_usd: t.quote_volume });
+      }
+      if (cbR.status === "fulfilled" && cbR.value && !cbR.value.error) {
+        const v = cbR.value;
+        if (v.price) rows.push({ venue: "coinbase", price: v.price, change_24h: null, volume_usd: (v.volume_24h || 0) * (v.price || 0) });
+      }
+      if (krR.status === "fulfilled" && krR.value && !krR.value.error) {
+        const v = krR.value;
+        if (v.price) rows.push({ venue: "kraken", price: v.price, change_24h: null, volume_usd: (v.volume_24h || 0) * (v.price || 0) });
+      }
+      if (byR.status === "fulfilled" && byR.value && !byR.value.error) {
+        const wantSym = sym + "USDT";
+        const t = (byR.value.tickers || []).find(x => x.symbol === wantSym);
+        if (t && t.price) rows.push({ venue: "bybit", price: t.price, change_24h: t.change_pct_24h, volume_usd: t.turnover_24h });
+      }
+      if (okxR.status === "fulfilled" && okxR.value && !okxR.value.error) {
+        const wantSym = sym + "-USDT";
+        const t = (okxR.value.tickers || []).find(x => x.symbol === wantSym);
+        if (t && t.price) rows.push({ venue: "okx", price: t.price, change_24h: t.change_pct_24h, volume_usd: t.turnover_24h });
+      }
+      const target = document.getElementById("crossex-table");
+      if (!rows.length) { target.innerHTML = `<div class="card">No cross-venue data for ${escapeHtml(_coinSymbol)}.</div>`; return; }
+      const lo = Math.min(...rows.map(r => r.price));
+      const hi = Math.max(...rows.map(r => r.price));
+      const spread = ((hi - lo) / ((hi + lo) / 2)) * 100;
+      const tbody = rows.map(r => `<tr>
+        <td><strong>${escapeHtml(r.venue)}</strong></td>
+        <td class="num">${fmtPrice(r.price)}</td>
+        <td class="num ${r.change_24h == null ? 'muted' : r.change_24h >= 0 ? 'up' : 'down'}">${r.change_24h == null ? '-' : pct(r.change_24h, 2)}</td>
+        <td class="num muted">$${fmtBig(r.volume_usd || 0)}</td>
+        <td class="num ${r.price === lo ? 'up' : r.price === hi ? 'down' : 'muted'}">${r.price === lo ? 'CHEAP' : r.price === hi ? 'RICH' : ''}</td>
+      </tr>`).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Venue</th><th>Spot price</th><th>24h Δ</th><th>24h volume</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div style="margin-top:8px;color:var(--text-3);font-size:11px">Cross-venue spread: <strong>${spread.toFixed(3)}%</strong> across ${rows.length} venues.</div>`;
+    } catch (e) {
+      document.getElementById("crossex-table").innerHTML = `<div class="err">Cross-venue fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Funding ────────────────────────────────────────────────────────────
+  async function loadFunding() {
+    try {
+      const sym = _coinSymbol + "USDT";
+      const data = await fetchJson(`/api/funding/rates`);
+      const row = (data.rows_top || []).find(r => r.base === _coinSymbol);
+      const target = document.getElementById("funding-card");
+      if (!row) { target.innerHTML = `<div class="card">No funding data for ${escapeHtml(_coinSymbol)} perp.</div>`; return; }
+      const m = row.median_rate;
+      const cls = m > 0.0005 ? "down" : m < -0.0005 ? "up" : "muted";
+      target.innerHTML = `<div class="card">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div class="stat"><div class="label">Median 8h rate</div><div class="val ${cls}">${(m * 100).toFixed(4)}%</div><div class="sub">across ${row.venues.length} venues</div></div>
+          <div class="stat"><div class="label">Annualised</div><div class="val">${row.annualised_at_median_pct.toFixed(1)}%</div><div class="sub">3 fundings/day × 365</div></div>
+          <div class="stat"><div class="label">Venue spread</div><div class="val">${row.spread_bps.toFixed(2)} bp</div><div class="sub">arb opportunity if &gt; 5 bp</div></div>
+          <div class="stat"><div class="label">Venues</div><div class="val" style="font-size:14px">${escapeHtml((row.venues || []).join(", "))}</div></div>
+        </div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("funding-card").innerHTML = `<div class="err">Funding fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── News mentioning coin ────────────────────────────────────────────────
+  async function loadNews() {
+    try {
+      const all = await fetchJson(`/api/news?limit=80`);
+      const sym = _coinSymbol.toLowerCase();
+      const name = (document.getElementById("coin-title").textContent || "").toLowerCase().trim();
+      const filtered = (all.headlines || []).filter(h => {
+        const t = (h.title + " " + h.summary).toLowerCase();
+        return t.includes(sym) || (name && t.includes(name));
+      });
+      const target = document.getElementById("news-list");
+      if (!filtered.length) { target.innerHTML = `<div class="card">No recent headlines mentioning ${escapeHtml(_coinSymbol)}.</div>`; return; }
+      target.innerHTML = `<div class="card">${filtered.slice(0, 20).map(h => {
+        const ago = h._epoch ? (() => {
+          const dt = Math.round((Date.now()/1000) - h._epoch);
+          if (dt < 3600) return `${Math.round(dt/60)}m`;
+          if (dt < 86400) return `${Math.round(dt/3600)}h`;
+          return `${Math.round(dt/86400)}d`;
+        })() : "-";
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span class="pill info">${escapeHtml(h.source)}</span>
+            <span style="font-size:11px;color:var(--text-3)">${ago} ago</span>
+          </div>
+          <div style="margin-top:3px"><a href="${escapeHtml(h.url || '#')}" target="_blank" rel="noopener" style="color:var(--text-1);font-weight:500">${escapeHtml(h.title)}</a></div>
+          ${h.summary ? `<div style="font-size:12px;color:var(--text-2);margin-top:3px">${escapeHtml(h.summary)}</div>` : ''}
+        </div>`;
+      }).join("")}</div>`;
+    } catch (e) {
+      document.getElementById("news-list").innerHTML = `<div class="err">News fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Init ────────────────────────────────────────────────────────────────
+  document.querySelectorAll("#chart-controls button").forEach(b => {
+    b.addEventListener("click", () => loadChart(b.dataset.int));
+  });
+
+  loadCoin().then(() => {
+    loadChart("1h");
+    loadDepth();
+    loadCrossEx();
+    loadFunding();
+    loadNews();
+  });
+
+  // Refresh chart + depth every 60s; other sections every 5 min
+  setInterval(() => loadChart(_chartInterval), 60 * 1000);
+  setInterval(loadDepth, 30 * 1000);
+  setInterval(loadCrossEx, 60 * 1000);
+  setInterval(loadFunding, 60 * 1000);
+  setInterval(loadNews, 5 * 60 * 1000);
+})();
+</script>
+</body>
+</html>

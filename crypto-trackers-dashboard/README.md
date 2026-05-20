@@ -11,29 +11,68 @@ matters most to traders in the long run.
 
 Port: **7054**. Lives behind the gateway at `trackers.narve.ai` in production.
 
-## What's built (v0.1)
+## What's built (v0.2)
 
-**14 upstream feeds**, all free / no API key required (Etherscan optional).
+**17 upstream feeds**, all free / no API key required (Etherscan optional).
 
 | Panel | Source | Refresh |
 |---|---|---|
 | **Critical strip** (11 tiles) | Aggregated from CoinGecko + DefiLlama + F&G | 60 s |
 | **Fear & Greed gauge** with 7-day strip | Alternative.me | 1 h |
-| **Universe screener** with filters + sort | CoinGecko top 500 by market cap | 60 s |
-| **Top gainers/losers (24h)** | CoinGecko universe slice | 60 s |
-| **Cross-exchange arbitrage** Binance/Coinbase/Kraken/Bybit/OKX | Per-exchange tickers joined on normalised base symbol; net of round-trip taker fees | 60 s |
-| **Funding rates** (USDT perps, Binance+Bybit) | Binance premiumIndex + Bybit V5 tickers | 30 s |
-| **DeFi TVL** chains + stablecoins + DEXs | DefiLlama `/v2/chains`, `/protocols`, `/stablecoins`, `/overview/dexs` | 15 min |
+| **Universe screener** (clickable rows → per-coin page) with filters + sort | CoinGecko top 500 | 60 s |
+| **Top gainers/losers (24h)** (clickable → per-coin page) | CoinGecko universe slice | 60 s |
+| **Cross-exchange arbitrage** 5-venue | Per-exchange tickers, normalised, net of round-trip fees | 60 s |
+| **Funding rates** (USDT perps) | Binance premiumIndex + Bybit V5 tickers | 30 s |
+| **DeFi TVL** chains + stablecoins + DEXs | DefiLlama suite | 15 min |
 | **Trending coins** | CoinGecko `/search/trending` | 5 min |
-| **News aggregator** (7 outlets, deduped) | RSS multi-feed: CoinDesk, Decrypt, The Block, Bitcoin Magazine, Bankless, Cointelegraph, crypto.news | 10 min |
+| **News aggregator** (7 outlets, deduped) | RSS multi-feed | 10 min |
 | **BTC network metrics** (fees, mempool, tip, difficulty adj.) | mempool.space | 60 s |
-| **BTC hashrate** | mempool.space `/api/v1/mining/hashrate/3d` | 1 h |
-| **ETH gas oracle** | Etherscan gas oracle (optional `ETHERSCAN_API_KEY`) | 60 s |
-| **Binance liquidations** | `/fapi/v1/allForceOrders` (last 100, aggregated by symbol+side) | 60 s |
-| **Cross-DEX spot prices** for 17 tracked tokens across 6 chains | DefiLlama `/coins/prices/current` | 60 s |
-| **BTC treasuries** (ETFs + public co's + govts) | Curated 2025-Q3 snapshot (no flaky scrape dependency) | n/a |
+| **BTC hashrate** (3-day series) | mempool.space mining endpoint | 1 h |
+| **ETH gas oracle** | Etherscan | 60 s |
+| **SOL network** (TPS avg/peak, epoch progress, slot) | Solana mainnet-beta RPC | 30 s |
+| **SOL priority-fee market** (median / p90 / p99 / max lamports) | `getRecentPrioritizationFees` | 30 s |
+| **Multi-venue liquidations** | Binance `allForceOrders` + OKX `/public/liquidation-orders`, joined on normalised base | 60 s |
+| **Cross-DEX spot prices** (17 tokens, 6 chains) | DefiLlama `/coins/prices/current` | 60 s |
+| **BTC treasuries** (ETFs + public co's + govts) | Curated 2025-Q3 snapshot | n/a |
 | **Per-source health** | In-process latency EMA + success rate | 30 s |
-| **Disk-persisted cache** | YTD-grade survival across process restarts | n/a |
+| **Disk-persisted cache** | Survives restarts | n/a |
+
+## Per-coin detail page (`/coin?id=`)
+
+Click any row in the universe (or movers) tables to drill into a full
+per-coin page with **everything a serious trader needs in one view**:
+
+  - **Header stats**: price + 24h/7d/30d/1y change + market cap + ATH/ATL +
+    circulating supply, formatted CMC/CoinGecko-style.
+  - **Inline-SVG candlestick chart**: OHLCV candles with 20-period EMA
+    overlay, volume bars beneath, live price marker on the right axis,
+    selectable interval (15m / 1h / 4h / 1d / 1w). No external charting
+    library; pure SVG renders in milliseconds.
+  - **L2 order book**: Binance spot bids + asks with cumulative size and
+    side-shaded background (green for bids, red for asks).
+  - **Cross-venue spot prices**: this coin's price on Binance + Coinbase +
+    Kraken + Bybit + OKX with CHEAP / RICH flags + spread %.
+  - **Funding rate card**: median 8h rate + annualised + venue spread for
+    this coin's perp.
+  - **News mentioning this coin**: filtered from the 7-source RSS feed by
+    symbol + name substring match.
+  - **About card**: CoinGecko categories + description + homepage + Twitter.
+
+Every section auto-refreshes (chart every 60s, depth every 30s).
+
+## What's new in v0.2
+
+- **Per-coin detail page** with candlestick chart, depth ladder, cross-venue
+  prices, funding, news, about. Universe and movers tables now click
+  through to it.
+- **Multi-venue liquidations** — added OKX `/public/liquidation-orders`
+  and aggregated with Binance into a single coin-keyed table (long-liq /
+  short-liq / total / count, sorted by total notional).
+- **Solana network metrics** — TPS recent average + peak, epoch progress,
+  slot height, slots-remaining-in-epoch. Plus `getRecentPrioritizationFees`
+  with median / p90 / p99 / max lamports.
+- **Network grid** in the home page now shows BTC + ETH + SOL side by
+  side (was BTC + ETH only).
 
 ## Why this dashboard (the strategy)
 
@@ -112,10 +151,15 @@ python3 -m ingestion.fear_greed
 | `GET /api/network/btc` | 60 s | BTC fees + mempool + tip + difficulty adjustment |
 | `GET /api/network/btc/hashrate` | 1 h | 3-day BTC hashrate series |
 | `GET /api/network/eth/gas` | 60 s | ETH gas oracle (gwei: safe / propose / fast / base) |
-| `GET /api/liquidations/binance` | 60 s | Recent Binance USDT-perp liquidations, by symbol |
-| `GET /api/dex/prices` | 60 s | Cross-DEX spot prices for 17 curated tokens |
-| `GET /api/btc/treasuries` | n/a | BTC holdings by ETF / public co / govt / private (2025-Q3) |
-| `GET /api/sources` | live | Per-upstream health + persisted-cache view |
+| `GET /coin?id=` | — | Per-coin detail page UI (HTML) |
+| `GET /api/liquidations/binance` | 60 s | Binance USDT-perp liquidations |
+| `GET /api/liquidations/okx` | 60 s | OKX swap liquidations |
+| `GET /api/liquidations/aggregate` | 60 s | Joined Binance + OKX per-coin liquidations |
+| `GET /api/network/btc` | 60 s | BTC fees + mempool + tip + difficulty adjustment |
+| `GET /api/network/btc/hashrate` | 1 h | 3-day BTC hashrate series |
+| `GET /api/network/eth/gas` | 60 s | ETH gas oracle (gwei: safe / propose / fast / base) |
+| `GET /api/network/sol` | 30 s | Solana slot + epoch + TPS recent avg/peak |
+| `GET /api/network/sol/fees` | 30 s | Solana priority-fee market (median/p90/p99/max lamports) |
 
 ## Files
 
@@ -157,11 +201,11 @@ crypto-trackers-dashboard/
 |---|---|---|
 | v0   | ✓ done | Universe + multi-exchange + cross-arb + funding + DeFi + F&G + source health |
 | v0.1 | ✓ done | News aggregator (7 RSS sources) + BTC/ETH network metrics + Binance liquidations + cross-DEX prices + BTC treasuries |
-| v0.2 | open | Whale-transaction tracker (Whale Alert mirror + exchange in/outflows) |
-| v0.3 | open | On-chain context (Etherscan / Solscan / Basescan tx counts + holder counts per coin) |
-| v0.4 | open | Coinglass-style multi-venue liquidation heatmap (Bybit + OKX + Hyperliquid websockets) |
-| v0.5 | open | Solana priority-fee tracker + Solana validator stake + Jito tip stream |
-| v0.6 | open | Per-coin detail page with TradingView-style candlestick chart |
+| v0.2 | ✓ done | Per-coin detail page (candlestick + depth + cross-venue + news + funding); multi-venue liquidations (+ OKX); Solana RPC metrics + priority fees |
+| v0.3 | open | Whale-transaction tracker (exchange in/outflows + large-tx feed) |
+| v0.4 | open | On-chain context per coin (Etherscan / Solscan / Basescan tx + holder counts) |
+| v0.5 | open | Add Hyperliquid + Bybit to liquidation aggregator (Bybit needs websocket) |
+| v0.6 | open | Solana validator stake distribution + Jito tip stream |
 | v0.7 | open | Token unlocks calendar + IDO / new listings calendar |
 | v0.8 | open | Smart-money wallet tracker (top wallet PnL leaderboard) |
 | v0.9 | open | MEV scanner (sandwich + frontrun detection) |

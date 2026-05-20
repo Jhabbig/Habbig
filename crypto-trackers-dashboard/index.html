@@ -389,7 +389,7 @@
   function renderUniverse(coins) {
     const target = document.getElementById("universe-table");
     if (!coins.length) { target.innerHTML = '<div class="card">No coins match filters.</div>'; return; }
-    const rows = coins.map(c => `<tr>
+    const rows = coins.map(c => `<tr style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id || '')}'">
       <td class="num muted">${c.market_cap_rank ?? "-"}</td>
       <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name || "")}</div><div class="sym">${escapeHtml(c.symbol || "")}</div></div></div></td>
       <td class="num">${fmtPrice(c.current_price)}</td>
@@ -413,7 +413,7 @@
     const renderList = (id, items, dir) => {
       const target = document.getElementById(id);
       if (!items || !items.length) { target.innerHTML = '<div class="card">no data</div>'; return; }
-      target.innerHTML = `<table><tbody>${items.slice(0, 8).map(c => `<tr>
+      target.innerHTML = `<table><tbody>${items.slice(0, 8).map(c => `<tr style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id || '')}'">
         <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name)}</div><div class="sym">${escapeHtml(c.symbol)}</div></div></div></td>
         <td class="num">${fmtPrice(c.current_price)}</td>
         ${upDown(c.change_24h, 1)}
@@ -568,6 +568,18 @@
       </div>` : `<div style="font-size:14px;color:var(--accent-2)">${escapeHtml(gas.error || 'unavailable')}</div>
                  <div style="font-size:11px;color:var(--text-3);margin-top:4px">Set ETHERSCAN_API_KEY for ETH gas.</div>`}
     </div>`);
+    const sol = net.sol || {};
+    if (!sol.error) {
+      cards.push(`<div class="card">
+        <h3 style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin:0 0 8px">Solana network</h3>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-variant-numeric:tabular-nums">
+          <div><div style="font-size:22px;font-weight:700">${fmt(sol.tps_recent_avg, 0)}</div><div style="font-size:11px;color:var(--text-3)">tps avg</div></div>
+          <div><div style="font-size:22px;font-weight:700">${fmt(sol.tps_recent_peak, 0)}</div><div style="font-size:11px;color:var(--text-3)">peak</div></div>
+          <div><div style="font-size:22px;font-weight:700">${fmt(sol.epoch_progress_pct, 1)}%</div><div style="font-size:11px;color:var(--text-3)">epoch ${fmt(sol.epoch)}</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">slot ${fmt(sol.slot)} · ${fmt(sol.slots_remaining)} slots until epoch end</div>
+      </div>`);
+    }
     target.innerHTML = cards.join("");
   }
 

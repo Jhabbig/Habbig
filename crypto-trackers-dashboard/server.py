@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from analysis import arbitrage as arb_mod
 from analysis import funding as funding_mod
+from analysis import liquidations_agg
 from analysis import screener as screener_mod
 from ingestion import (
     _background,
@@ -49,6 +50,8 @@ from ingestion import (
     mempool_btc,
     news,
     okx,
+    okx_liquidations,
+    solana,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -57,6 +60,7 @@ log = logging.getLogger("ct")
 app = FastAPI(title="Crypto Trackers Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
+COIN_HTML_PATH = Path(__file__).parent / "coin.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -100,6 +104,11 @@ async def security_and_auth(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/coin", response_class=HTMLResponse)
+async def coin_page() -> HTMLResponse:
+    return HTMLResponse(COIN_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/healthz")
@@ -309,6 +318,30 @@ async def api_liq_binance(limit: int = 100) -> JSONResponse:
     return JSONResponse(binance_liquidations.recent_liquidations(limit=limit))
 
 
+@app.get("/api/liquidations/okx")
+async def api_liq_okx(limit: int = 100) -> JSONResponse:
+    return JSONResponse(okx_liquidations.recent_liquidations(limit=limit))
+
+
+@app.get("/api/liquidations/aggregate")
+async def api_liq_aggregate() -> JSONResponse:
+    bin_liq = binance_liquidations.recent_liquidations(100)
+    okx_liq = okx_liquidations.recent_liquidations(100)
+    return JSONResponse(liquidations_agg.aggregate(binance=bin_liq, okx=okx_liq))
+
+
+# ─── Solana network ───────────────────────────────────────────────────────────
+
+@app.get("/api/network/sol")
+async def api_network_sol() -> JSONResponse:
+    return JSONResponse(solana.network_status())
+
+
+@app.get("/api/network/sol/fees")
+async def api_sol_fees() -> JSONResponse:
+    return JSONResponse(solana.priority_fees())
+
+
 # ─── DEX prices ───────────────────────────────────────────────────────────────
 
 @app.get("/api/dex/prices")
@@ -346,7 +379,8 @@ async def api_summary() -> JSONResponse:
     parallel so a slow venue doesn't dominate page-load latency."""
     (univ, glob, trend, fng, chains, dexs, stables, fut, premium,
      binance_spot, bybit_spot, okx_spot,
-     news_headlines, btc_net, eth_gas, liq, dex_prices, treasuries) = await asyncio.gather(
+     news_headlines, btc_net, eth_gas, liq, okx_liq, dex_prices, treasuries,
+     sol_net) = await asyncio.gather(
         _to_thread(coingecko.universe, 200),
         _to_thread(coingecko.global_metrics),
         _to_thread(coingecko.trending),
@@ -363,8 +397,10 @@ async def api_summary() -> JSONResponse:
         _to_thread(mempool_btc.network_status),
         _to_thread(etherscan_gas.eth_gas_oracle),
         _to_thread(binance_liquidations.recent_liquidations, 100),
+        _to_thread(okx_liquidations.recent_liquidations, 100),
         _to_thread(defillama_prices.cross_dex_prices),
         _to_thread(btc_treasuries.holdings_table),
+        _to_thread(solana.network_status),
     )
 
     # Quick aggregate: top 10 movers (gainers + losers) from the universe
@@ -410,12 +446,16 @@ async def api_summary() -> JSONResponse:
         "network": {
             "btc": btc_net,
             "eth_gas": eth_gas,
+            "sol": sol_net,
         },
         "liquidations": {
             "count": liq.get("count", 0),
-            "total_notional_usd": liq.get("total_notional_usd", 0),
-            "biggest": liq.get("biggest"),
-            "by_symbol_top": (liq.get("by_symbol_top") or [])[:8],
+            "total_notional_usd": (liq.get("total_notional_usd", 0) or 0)
+                                  + (okx_liq.get("total_notional_usd", 0) or 0),
+            "biggest": liq.get("biggest") or okx_liq.get("biggest"),
+            "by_symbol_top": liquidations_agg.aggregate(
+                binance=liq, okx=okx_liq
+            ).get("rows", [])[:8],
         },
         "dex_prices": dex_prices,
         "btc_treasuries": {
@@ -453,6 +493,9 @@ async def _startup() -> None:
         ("mempool_hashrate",      lambda: mempool_btc.recent_hashrate(),  3600),
         ("eth_gas",               lambda: etherscan_gas.eth_gas_oracle(), 60),
         ("binance_liq",           lambda: binance_liquidations.recent_liquidations(100), 60),
+        ("okx_liq",               lambda: okx_liquidations.recent_liquidations(100),     60),
+        ("solana_network",        lambda: solana.network_status(),                       60),
+        ("solana_priority_fees",  lambda: solana.priority_fees(),                        60),
         ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
     ])
 
