@@ -283,6 +283,18 @@ CREATE TABLE IF NOT EXISTS midterm_movement_explanations (
 );
 CREATE INDEX IF NOT EXISTS idx_explanations_expires ON midterm_movement_explanations(expires_at);
 
+-- Historical predictions for the accuracy backtest. ``closing_prob`` is the
+-- probability the source assigned to the *winning* outcome at race close.
+-- We only insert rows for sources that actually had a market on the race —
+-- absence means the source didn't cover it (not "predicted 0%").
+CREATE TABLE IF NOT EXISTS midterm_historical_predictions (
+    race_key        TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    closing_prob    REAL NOT NULL,
+    PRIMARY KEY (race_key, source)
+);
+CREATE INDEX IF NOT EXISTS idx_hist_pred_source ON midterm_historical_predictions(source);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1276,6 +1288,55 @@ class Database:
                 rows = conn.execute(
                     "SELECT * FROM midterm_paper_positions WHERE user_id=? ORDER BY opened_at DESC",
                     (user_id,),
+                ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    # === Historical predictions (accuracy backtest) =========================
+
+    def upsert_historical_prediction(self, race_key: str, source: str, closing_prob: float) -> None:
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_historical_predictions (race_key, source, closing_prob)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(race_key, source) DO UPDATE SET
+                         closing_prob = excluded.closing_prob""",
+                    (race_key, source, closing_prob),
+                )
+
+    def upsert_historical_predictions_batch(self, rows: list[tuple[str, str, float]]) -> None:
+        if not rows:
+            return
+        with _lock:
+            with _get_conn() as conn:
+                conn.executemany(
+                    """INSERT INTO midterm_historical_predictions (race_key, source, closing_prob)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(race_key, source) DO UPDATE SET
+                         closing_prob = excluded.closing_prob""",
+                    rows,
+                )
+
+    def get_historical_predictions(self, source: str | None = None) -> list[dict]:
+        """Join predictions with resolutions so the caller gets both the
+        prediction (closing_prob assigned to winner) and the truth (1.0)
+        in a single row. Skips predictions whose race has no resolution."""
+        with _get_conn() as conn:
+            if source:
+                rows = conn.execute(
+                    """SELECT p.race_key, p.source, p.closing_prob,
+                              r.race_type, r.state, r.winner
+                       FROM midterm_historical_predictions p
+                       JOIN midterm_race_resolutions r ON r.race_key = p.race_key
+                       WHERE p.source = ?""",
+                    (source,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT p.race_key, p.source, p.closing_prob,
+                              r.race_type, r.state, r.winner
+                       FROM midterm_historical_predictions p
+                       JOIN midterm_race_resolutions r ON r.race_key = p.race_key"""
                 ).fetchall()
         return [_row_to_dict(r) for r in rows]
 

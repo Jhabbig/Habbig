@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtCount } from '../lib/settings'
 import { Search, ArrowRight, MapPin, X, History, Scale, Vote, MessageCircle, GitCompare, Layers, Download } from 'lucide-react'
+import AccuracyBadge from '../lib/AccuracyBadge'
 
 const SOURCE_STYLES = {
   polymarket: { bg: 'bg-purple-100', text: 'text-purple-700', bar: '#a855f7', label: 'Polymarket' },
@@ -22,15 +23,18 @@ function topProb(market) {
   return [...outcomes].sort((a, b) => (b.probability || 0) - (a.probability || 0))[0]
 }
 
-function SourceColumn({ source, market, raceTitle, allSources }) {
+function SourceColumn({ source, market, raceTitle, allSources, raceType }) {
   const style = SOURCE_STYLES[source] || { bg: 'bg-stone-100', text: 'text-stone-700', bar: '#78716c', label: source }
   const top = market ? topProb(market) : null
   const tradeable = source === 'polymarket' || source === 'kalshi'
   return (
     <div className="flex-1 min-w-0 border border-stone-100 rounded-lg p-3 bg-stone-50/50">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-1.5">
         <span className={`${style.bg} ${style.text} text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide`}>{style.label}</span>
-        {market?.volume > 0 && <span className="text-[10px] text-stone-400">${(market.volume / 1000).toFixed(0)}k</span>}
+        <div className="flex items-center gap-1">
+          <AccuracyBadge source={source} raceType={raceType} compact />
+          {market?.volume > 0 && <span className="text-[10px] text-stone-400">${(market.volume / 1000).toFixed(0)}k</span>}
+        </div>
       </div>
       {top ? (
         <>
@@ -159,7 +163,7 @@ function RaceCard({ g, hist, ctx }) {
       {/* Source columns — stack on small screens */}
       <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-2 mb-3">
         {sourceKeys.map(src => (
-          <SourceColumn key={src} source={src} market={g.sources[src]} raceTitle={g.title} allSources={g.sources} />
+          <SourceColumn key={src} source={src} market={g.sources[src]} raceTitle={g.title} allSources={g.sources} raceType={g.race_type} />
         ))}
         {sourceKeys.length >= 2 && <DeltaBadge sources={g.sources} />}
       </div>

@@ -105,6 +105,10 @@ export const api = {
 
   // Accuracy + movements
   accuracy: () => request('/data/accuracy'),
+  accuracyBadge: (source, raceType) => {
+    const q = raceType ? `?race_type=${encodeURIComponent(raceType)}` : ''
+    return request(`/data/accuracy/badge/${encodeURIComponent(source)}${q}`)
+  },
   movements: (raceKey, hours = 24) => request(`/data/race/${encodeURIComponent(raceKey)}/movements?hours=${hours}`),
 
   // Admin

@@ -741,6 +741,14 @@ async def lifespan(app: FastAPI):
     # Seed district profiles from static data on startup
     _seed_district_profiles()
 
+    # Seed the accuracy backtest dataset (idempotent upserts).
+    try:
+        from accuracy import seed_from_curated_dataset
+        n_res, n_pred = seed_from_curated_dataset(state.db)
+        logger.info(f"Accuracy backtest seeded: {n_res} resolutions, {n_pred} predictions")
+    except Exception as e:
+        logger.warning(f"Accuracy backtest seeding failed: {e}")
+
     # Start background tasks
     state.background_tasks = [
         asyncio.create_task(data_refresh_loop(), name="data_refresh"),
@@ -2276,31 +2284,50 @@ async def admin_resolve_race(body: ResolutionBody, request: Request):
 async def data_accuracy():
     """Calibration / accuracy stats per source over resolved races.
 
-    For each source we compute:
-      - n: how many resolved races we have a price for
-      - brier: mean Brier score (lower = better)
-      - calibration_50: fraction of 50%-ish predictions that won
-      - hit_rate: top-outcome accuracy (did the higher-priced outcome win)
+    Pulls from the curated historical predictions table (see
+    ``accuracy_backfill.py``) and computes Brier scores, hit rates, and
+    calibration on the toss-up bucket for every source × race-type slice.
     """
-    from historical_results import HISTORICAL_RESULTS
-    # Seed resolutions from the curated historical dataset on first call.
-    existing = {r["race_key"] for r in state.db.get_resolutions()}
-    for h in HISTORICAL_RESULTS:
-        rk = f"{h['race_type']}_{h['state']}_{h['year']}"
-        if rk in existing:
-            continue
-        state.db.upsert_resolution(
-            race_key=rk, race_type=h["race_type"], state=h["state"],
-            winner=h["winner"], winning_party=h["party"],
-            notes=f"Seeded from historical_results.py ({h['year']})",
-        )
-    resolutions = state.db.get_resolutions()
+    from accuracy import compute_summary
+    predictions = state.db.get_historical_predictions()
     return {
-        "resolutions": resolutions,
-        "summary": {
-            "total_resolved": len(resolutions),
-            "note": "Historical Brier/calibration computation requires per-source closing prices, which aren't stored for pre-deploy races. New resolutions added after deploy will compute calibration from the price history table.",
+        "summary": compute_summary(predictions),
+        "methodology": {
+            "metrics": {
+                "hit_rate": "Fraction of races where the source assigned ≥50% to the eventual winner.",
+                "brier": "Mean (1 - prob_of_winner)^2. 0 = perfect, 0.25 = coinflip, 1 = maximally wrong.",
+                "calibration_50": "Among predictions in the 40–60% bucket, fraction where the predicted winner actually won. A well-calibrated forecaster lands near 0.5 here.",
+            },
+            "data_provenance": "Closing prices curated from Polymarket on-chain history, PredictIt historical pages, Kalshi (2024 only), and 538 polling averages. See backend/accuracy_backfill.py for the full dataset.",
         },
+    }
+
+
+@app.get("/data/accuracy/badge/{source}")
+async def data_accuracy_badge(source: str, race_type: Optional[str] = None):
+    """Single-source slice for inline badges on race cards.
+
+    Returned shape is intentionally narrow so a badge component doesn't
+    have to crawl the full ``/data/accuracy`` payload on every render.
+    """
+    from accuracy import compute_source_stats
+    predictions = state.db.get_historical_predictions(source=source)
+    stats = compute_source_stats(predictions, race_type=race_type)
+    bucket = stats.get(source)
+    if not bucket:
+        return {
+            "source": source, "race_type": race_type, "available": False,
+            "n": 0, "hit_rate": None, "brier": None,
+        }
+    return {
+        "source": source,
+        "race_type": race_type,
+        "available": True,
+        "n": bucket["n"],
+        "hit_rate": bucket["hit_rate"],
+        "brier": bucket["brier"],
+        "calibration_50": bucket["calibration_50"],
+        "n_toss_ups": bucket["n_toss_ups"],
     }
 
 

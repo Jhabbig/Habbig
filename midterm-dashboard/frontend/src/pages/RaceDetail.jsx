@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Ca
 import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X, Share2, Code2 } from 'lucide-react'
 import Comments from '../lib/Comments'
 import Movements from '../lib/Movements'
+import AccuracyBadge from '../lib/AccuracyBadge'
 
 const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
 const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
@@ -302,6 +303,7 @@ export default function RaceDetail() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
+                    <AccuracyBadge source={source} raceType={race?.race_type} compact />
                     {data.volume > 0 && (
                       <span className="text-[10px] text-stone-400">${(data.volume / 1000).toFixed(0)}k vol</span>
                     )}

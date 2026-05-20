@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-r
 import { api } from './lib/api'
 import { SettingsProvider } from './lib/settings'
 import { useT } from './lib/i18n'
-import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History, Bell, Briefcase } from 'lucide-react'
+import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History, Bell, Briefcase, Target } from 'lucide-react'
 
 import ErrorBoundary from './lib/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
@@ -20,6 +20,7 @@ import Historical from './pages/Historical'
 import Settings from './pages/Settings'
 import Notifications from './pages/Notifications'
 import Portfolio from './pages/Portfolio'
+import Accuracy from './pages/Accuracy'
 
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -82,6 +83,7 @@ function Nav() {
     { to: '/divergence', label: t('nav.divergence'), icon: GitCompare },
     { to: '/world', label: t('nav.world'), icon: Globe },
     { to: '/historical', label: t('nav.historical'), icon: History },
+    { to: '/accuracy', label: 'Accuracy', icon: Target },
   ]
 
   if (user) {
@@ -190,6 +192,7 @@ export default function App() {
               <Route path="/divergence" element={<Divergence />} />
               <Route path="/world" element={<WorldElections />} />
               <Route path="/historical" element={<Historical />} />
+              <Route path="/accuracy" element={<Accuracy />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
