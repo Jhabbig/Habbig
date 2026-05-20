@@ -97,8 +97,29 @@ class KalshiClient:
             title = m.get("title", m.get("yes_sub_title", ""))
             category = self.categorize_market(title, m.get("no_sub_title", ""))
 
-            # Price: Kalshi returns dollars as strings like "0.6500"
-            yes_price = float(m.get("yes_bid_dollars") or m.get("last_price_dollars") or 0)
+            # Price: Kalshi returns dollars as strings like "0.6500".
+            # Prefer last-trade > mid(bid,ask) > bid as the canonical price.
+            # The previous code used bid alone, which systematically
+            # under-quoted YES — bid is below the spread mid, so every
+            # EV/arb calculation against Kalshi was biased downward.
+            try:
+                last = float(m.get("last_price_dollars") or 0) or None
+            except (TypeError, ValueError):
+                last = None
+            try:
+                bid = float(m.get("yes_bid_dollars") or 0) or None
+            except (TypeError, ValueError):
+                bid = None
+            try:
+                ask = float(m.get("yes_ask_dollars") or 0) or None
+            except (TypeError, ValueError):
+                ask = None
+            if last is not None:
+                yes_price = last
+            elif bid is not None and ask is not None:
+                yes_price = (bid + ask) / 2.0
+            else:
+                yes_price = bid or ask or 0.0
 
             volume = float(m.get("volume_fp") or m.get("notional_value_dollars") or 0)
 

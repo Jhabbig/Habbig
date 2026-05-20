@@ -111,22 +111,57 @@ async def maybe_open_trade(
     return trade
 
 
-async def settle_trades_for_market(session: AsyncSession, market_slug: str, won_yes: Optional[bool]) -> int:
+async def settle_trades_for_market(
+    session: AsyncSession,
+    market_slug: str,
+    won_yes: Optional[bool],
+    outcome: Optional[str] = None,
+) -> int:
     """Settle every open trade on this market.
 
     won_yes:
-      True  -> YES side was the winning outcome
-      False -> NO side won
-      None  -> non-binary outcome; we leave trades open (resolver will fall back to text-match logic).
+      True  -> YES side was the winning outcome (binary market)
+      False -> NO side won (binary market)
+      None  -> non-binary / named outcome — settle by matching ``outcome``
+               against each trade's originating ``predicted_outcome`` on the
+               linked ``Prediction`` row. Without this fallback, trades on
+               multi-outcome markets ("Trump", "Harris", ...) would never
+               resolve and would accumulate as open trades forever.
     """
-    if won_yes is None:
-        return 0
     open_trades = await session.exec(
         select(PaperTrade).where(PaperTrade.market_slug == market_slug, PaperTrade.resolved == False)  # noqa: E712
     )
+    open_trades_list = open_trades.all()
+    if not open_trades_list:
+        return 0
+
+    # For the named-outcome path we need each trade's original
+    # predicted_outcome — that's stored on the Prediction row, not on PaperTrade.
+    pred_outcomes: dict[int, str] = {}
+    if won_yes is None and outcome:
+        ids = [t.prediction_id for t in open_trades_list]
+        pres = await session.exec(select(Prediction).where(Prediction.id.in_(ids)))
+        pred_outcomes = {p.id: (p.predicted_outcome or "") for p in pres.all()}
+
     settled = 0
-    for trade in open_trades.all():
-        won = (trade.bet_side.upper() == "YES" and won_yes) or (trade.bet_side.upper() == "NO" and not won_yes)
+    outcome_lower = (outcome or "").strip().lower()
+    for trade in open_trades_list:
+        if won_yes is True:
+            won = trade.bet_side.upper() == "YES"
+        elif won_yes is False:
+            won = trade.bet_side.upper() == "NO"
+        elif outcome_lower:
+            # Multi-outcome: did the source's named outcome equal the resolved one?
+            # Note: bet_side is always "YES" for these (the source bet the named
+            # candidate wins). A "NO" prediction on a named-outcome market is rare
+            # and resolves correct iff the named outcome did NOT win.
+            named = (pred_outcomes.get(trade.prediction_id, "") or "").strip().lower()
+            if not named:
+                continue  # can't decide — leave open for now
+            named_won = named == outcome_lower
+            won = named_won if trade.bet_side.upper() == "YES" else (not named_won)
+        else:
+            continue  # no way to settle
         trade.resolved = True
         trade.resolved_correct = won
         trade.pnl_usd = settle_pnl(trade.stake_usd, trade.entry_price, won)

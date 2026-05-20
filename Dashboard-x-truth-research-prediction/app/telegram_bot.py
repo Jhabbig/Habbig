@@ -140,27 +140,35 @@ async def _poll_one_user(client: httpx.AsyncClient, user: User) -> int:
     replied = 0
     for update in updates:
         upd_id = update.get("update_id", 0)
-        if upd_id > _LAST_UPDATE.get(token, 0):
-            _LAST_UPDATE[token] = upd_id
         msg = update.get("message") or update.get("channel_post") or {}
         chat_id = (msg.get("chat") or {}).get("id")
         text = msg.get("text") or ""
-        if not chat_id or not text:
-            continue
-        # Authorisation: only reply to messages from the chat_id stored on the user.
-        # This stops anyone who finds the bot from running our commands against it.
-        if str(chat_id) != (user.telegram_chat_id or "").strip():
+        # Skip updates that aren't commands we'd reply to, but still advance the
+        # cursor so we don't reprocess them next poll.
+        if not chat_id or not text or str(chat_id) != (user.telegram_chat_id or "").strip():
+            if upd_id > _LAST_UPDATE.get(token, 0):
+                _LAST_UPDATE[token] = upd_id
             continue
         reply = await _handle_command(text)
         if reply is None:
+            if upd_id > _LAST_UPDATE.get(token, 0):
+                _LAST_UPDATE[token] = upd_id
             continue
+        # Only advance the cursor AFTER a successful sendMessage — if the
+        # request fails (network, Telegram outage, malformed Markdown), the
+        # next poll re-attempts the reply rather than dropping the command.
         try:
-            await client.post(
+            resp_send = await client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 data={"chat_id": chat_id, "text": reply, "parse_mode": "Markdown"},
                 timeout=10,
             )
-            replied += 1
+            if resp_send.status_code < 400:
+                replied += 1
+                if upd_id > _LAST_UPDATE.get(token, 0):
+                    _LAST_UPDATE[token] = upd_id
+            else:
+                logger.debug("Telegram sendMessage HTTP %s: %s", resp_send.status_code, resp_send.text[:200])
         except Exception as exc:
             logger.debug("Telegram sendMessage failed: %s", exc)
     return replied

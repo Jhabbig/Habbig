@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Column, Field, SQLModel, Text
 
 
@@ -258,6 +259,9 @@ class ExtractionCache(SQLModel, table=True):
     lets us skip the LLM call on every duplicate for free.
     """
     __tablename__ = "extraction_cache"
+    __table_args__ = (
+        UniqueConstraint("content_hash", "model", name="uq_extraction_cache_hash_model"),
+    )
     id: Optional[int] = Field(default=None, primary_key=True)
     content_hash: str = Field(index=True)  # sha256 of the post content
     model: str = Field(default="")  # e.g. "claude-opus-4-7"

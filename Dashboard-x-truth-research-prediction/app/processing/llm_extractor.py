@@ -199,7 +199,15 @@ async def _write_cache(content_hash: str, model: str, results: List[ExtractionRe
                 predictions_json=json.dumps(payload),
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            # Two concurrent extracts of the same content can race past the
+            # read-miss check and both try to insert. The unique constraint
+            # on (content_hash, model) means the loser gets an IntegrityError.
+            # That's the desired outcome — the cache has one valid row.
+            await session.rollback()
+            logger.debug("LLM cache insert race (expected on concurrent extracts): %s", exc)
 
 
 async def extract(content: str) -> List[ExtractionResult]:

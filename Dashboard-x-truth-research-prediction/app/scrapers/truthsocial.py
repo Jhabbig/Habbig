@@ -36,14 +36,19 @@ class TruthSocialScraper(BaseScraper):
         if not self.is_available():
             logger.warning("TruthSocial scraper unavailable — no credentials")
             return []
+        # Try truthbrush first; if it returns *any* posts, use them. If it
+        # raised (returned None) OR returned an empty list, try the Mastodon
+        # fallback — empty was previously treated as "succeeded with no
+        # results", which prevented the fallback from ever firing.
         posts = await self._fetch_via_truthbrush(keywords, limit)
-        if posts is not None:
+        if posts:
             return posts
-        posts = await self._fetch_via_mastodon(keywords, limit)
-        if posts is not None:
-            return posts
-        logger.warning("TruthSocial: both methods failed")
-        return []
+        masto_posts = await self._fetch_via_mastodon(keywords, limit)
+        if masto_posts:
+            return masto_posts
+        # Both produced no usable results — return whichever surfaced (possibly
+        # empty) so the caller gets a list, not None.
+        return masto_posts if masto_posts is not None else (posts or [])
 
     async def _fetch_via_truthbrush(self, keywords, limit) -> list[RawPost] | None:
         try:

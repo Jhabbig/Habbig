@@ -114,7 +114,11 @@ class RedditScraper(BaseScraper):
             platform="reddit",
             author_handle=author,
             author_display_name=author,
-            follower_count=int(item.get("subreddit_subscribers") or 0),  # rough proxy
+            # Don't proxy subreddit_subscribers — every poster from r/politics
+            # would otherwise read as having ~8M "followers" and inflate the
+            # source's volume_component in the credibility engine. Reddit's
+            # public listing JSON doesn't expose author karma, so leave it 0.
+            follower_count=0,
             verified=bool(item.get("author_premium")),
             content=content[:4000],
             posted_at=posted_at,

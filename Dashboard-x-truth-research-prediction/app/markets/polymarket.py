@@ -138,7 +138,15 @@ class PolymarketClient:
                 except ValueError:
                     pass
             event_slug, event_title, outcome_name = self.parse_event_info(m)
-            stmt = select(MarketSnapshot).where(MarketSnapshot.market_slug == slug).order_by(MarketSnapshot.snapshotted_at.desc())
+            # Always scope by platform — Kalshi's sync also uses MarketSnapshot,
+            # and slug strings can theoretically collide across venues. Without
+            # the filter, a Polymarket sync would silently overwrite the
+            # most-recent Kalshi row.
+            stmt = (
+                select(MarketSnapshot)
+                .where(MarketSnapshot.market_slug == slug, MarketSnapshot.platform == "polymarket")
+                .order_by(MarketSnapshot.snapshotted_at.desc())
+            )
             result = await session.exec(stmt)
             existing = result.first()
             if existing:
@@ -157,6 +165,7 @@ class PolymarketClient:
                 session.add(MarketSnapshot(
                     market_slug=slug, market_question=question, category=category,
                     yes_price=yes_price, volume_usd=volume, close_time=close_time,
+                    platform="polymarket",  # explicit to defend against the model default ever shifting
                     event_slug=event_slug, event_title=event_title, outcome_name=outcome_name,
                     snapshotted_at=datetime.now(timezone.utc),
                 ))

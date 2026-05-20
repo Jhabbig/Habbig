@@ -59,7 +59,10 @@ def compute_risk_flags(prediction: Prediction, source: Source | None) -> tuple[b
         lo, hi = cfg.get("extreme_market_bounds", [0.05, 0.95])
         if prediction.market_implied_probability < lo or prediction.market_implied_probability > hi:
             reasons.append("Extreme market — low signal")
-    if prediction.ev_score is not None and prediction.ev_score < 0:
+    # `best_side_ev` is always ≥ 0, so the legacy "< 0" check was unreachable.
+    # Flag tiny edges instead — anything below ~2% won't survive fees and slippage.
+    min_signal_ev = cfg.get("min_signal_ev", 0.02)
+    if prediction.ev_score is not None and prediction.ev_score < min_signal_ev:
         reasons.append("Negative expected value")
     if prediction.hours_remaining_at_prediction is not None and prediction.hours_remaining_at_prediction < 12:
         reasons.append("Prediction too close to market close")

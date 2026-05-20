@@ -185,7 +185,15 @@ async def run_pipeline() -> dict:
             from app.processing.paper_trade import TradeFilter, maybe_open_trade
             from app.processing.ranker import rank_prediction
             stats["sources_recomputed"] = await CredibilityEngine().recompute_all(session)
-            unscore_result = await session.exec(select(Prediction).where(Prediction.ev_score.is_(None)))
+            # Only re-rank predictions that have a matched market — otherwise
+            # we re-process the entire backlog of unmatched predictions every
+            # cycle forever (their ev_score stays NULL by design).
+            unscore_result = await session.exec(
+                select(Prediction).where(
+                    Prediction.ev_score.is_(None),
+                    Prediction.market_implied_probability.isnot(None),
+                )
+            )
             trade_filter = TradeFilter()
             opened_trades = []
             for pred in unscore_result.all():
@@ -204,8 +212,8 @@ async def run_pipeline() -> dict:
                         opened = await maybe_open_trade(session, pred, source, spr.handle, trade_filter)
                         if opened is not None:
                             opened_trades.append(opened)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Rank/open failed for prediction %s: %s", pred.id, exc)
             stats["paper_trades_opened"] = len(opened_trades)
             await session.commit()
             # Fan-out alerts after commit so we never notify about a trade that

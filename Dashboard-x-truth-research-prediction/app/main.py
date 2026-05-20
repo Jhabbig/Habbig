@@ -37,8 +37,33 @@ logging.basicConfig(level=getattr(logging, settings.get("LOG_LEVEL", "INFO")), f
 
 ONE_YEAR_FROM_NOW = lambda: datetime.now(timezone.utc) + timedelta(days=365)
 _last_run_stats: dict = {}
-_SESSION_SECRET = secrets.token_hex(32)
-_CSRF_SECRET = secrets.token_hex(16)
+
+
+def _persistent_secret(env_var: str, filename: str, nbytes: int) -> str:
+    """Load a long-lived secret from env, file, or generate-and-persist.
+
+    Both the session-token signer and the CSRF token derivation must survive
+    process restarts. Generating fresh secrets per boot invalidates every
+    live cookie — users get kicked off and CSRF validation rejects every
+    pending form. We mirror ``app.security._get_or_create_encryption_key``.
+    """
+    val = os.environ.get(env_var)
+    if val:
+        return val
+    path = Path(__file__).parent.parent / filename
+    if path.exists():
+        return path.read_text().strip()
+    val = secrets.token_hex(nbytes)
+    try:
+        path.write_text(val)
+        path.chmod(0o600)
+    except OSError:
+        logger.warning("Could not persist %s to %s — secret will reset on next process restart", env_var, filename)
+    return val
+
+
+_SESSION_SECRET = _persistent_secret("SESSION_SECRET", ".session_secret", 32)
+_CSRF_SECRET = _persistent_secret("CSRF_SECRET", ".csrf_secret", 16)
 
 # Rate limiting: track login attempts per IP
 _login_attempts: dict[str, list[float]] = collections.defaultdict(list)
@@ -1589,12 +1614,21 @@ async def me_calibration(request: Request, _user: str = Depends(require_auth)):
         for up in ups[:50]:
             status = "✓" if up.resolved_correct else ("✗" if up.resolved else "—")
             sc = ("text-green-400" if up.resolved_correct else "text-red-400" if up.resolved else "text-gray-500")
+            # Build the market-implied td separately — putting the conditional
+            # inline in implicit string concatenation broke the <tr>/<td>
+            # structure for rows where the field is None (Python parsed the
+            # whole block as one expression and dropped the wrong half).
+            if up.market_implied_probability is not None:
+                mip_td = f'<td class="px-4 py-2.5 font-mono text-xs text-gray-400">{up.market_implied_probability:.0%}</td>'
+            else:
+                mip_td = '<td class="px-4 py-2.5 text-xs text-gray-600">—</td>'
+            safe_cat = _esc(up.category)
             rows_html.append(
                 f'<tr class="border-b border-white/5 hover:bg-white/[0.02]">'
                 f'<td class="px-4 py-2.5 text-xs text-gray-300 max-w-[300px]"><div class="truncate">{_esc(up.market_question or up.market_slug)}</div></td>'
-                f'<td class="px-4 py-2.5 text-xs"><span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{up.category}</span></td>'
+                f'<td class="px-4 py-2.5 text-xs"><span class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{safe_cat}</span></td>'
                 f'<td class="px-4 py-2.5 font-mono text-xs text-gray-200">{up.predicted_probability:.0%}</td>'
-                f'<td class="px-4 py-2.5 font-mono text-xs text-gray-400">{up.market_implied_probability:.0%}</td>' if up.market_implied_probability is not None else f'<td class="px-4 py-2.5 text-xs text-gray-600">—</td>'
+                f'{mip_td}'
                 f'<td class="px-4 py-2.5 text-xs font-bold {sc}">{status}</td>'
                 f'<td class="px-4 py-2.5 text-xs text-gray-500">{_time_ago(up.recorded_at)}</td>'
                 f'</tr>'

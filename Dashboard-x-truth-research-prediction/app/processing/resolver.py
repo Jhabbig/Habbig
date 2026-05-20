@@ -66,9 +66,13 @@ class MarketResolver:
                         affected_handles.add(spr.handle)
 
                 # Settle every open paper trade on this market in one shot.
+                # Pass both the binary tri-state (won_yes) AND the raw outcome
+                # string so the settlement logic can handle multi-outcome
+                # markets (where won_yes is None but the named outcome is
+                # required to settle each candidate's trade correctly).
                 from app.processing.paper_trade import settle_trades_for_market
                 won_yes = self._won_yes(outcome)
-                stats["paper_trades_settled"] = stats.get("paper_trades_settled", 0) + await settle_trades_for_market(session, slug, won_yes)
+                stats["paper_trades_settled"] = stats.get("paper_trades_settled", 0) + await settle_trades_for_market(session, slug, won_yes, outcome=outcome)
 
         await session.commit()
 

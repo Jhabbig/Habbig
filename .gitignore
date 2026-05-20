@@ -23,6 +23,10 @@ auth.db
 **/.secret_key
 .encryption_key
 **/.encryption_key
+.csrf_secret
+**/.csrf_secret
+.session_secret
+**/.session_secret
 *.pem
 *.p12
 *.pfx

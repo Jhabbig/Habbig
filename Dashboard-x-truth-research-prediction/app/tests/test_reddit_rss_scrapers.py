@@ -54,7 +54,10 @@ async def test_reddit_filters_short_posts_and_keywordless_posts():
     assert posts[0].id == "reddit:c"
     assert posts[0].author_handle == "carol"
     assert posts[0].engagement["score"] == 200
-    assert posts[0].follower_count == 5_000_000
+    # Reddit public JSON doesn't expose author karma; we deliberately don't
+    # use subreddit_subscribers as a follower proxy (would inflate every
+    # r/politics poster to ~8M followers in the credibility engine).
+    assert posts[0].follower_count == 0
 
 
 @pytest.mark.asyncio
