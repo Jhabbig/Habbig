@@ -273,8 +273,21 @@
   </section>
 
   <section>
+    <h2>Cross-venue arbitrage <small>Polymarket vs Kalshi &middot; sorted by absolute spread</small></h2>
+    <div id="crossvenue-table"></div>
+  </section>
+
+  <section>
     <h2>Polymarket disaster markets <small>scored markets first &middot; edge + 1/4-Kelly sizer + trade-out deep-link</small></h2>
+    <div style="margin-bottom:8px">
+      <input id="market-filter" type="search" placeholder="Filter by keyword or model name (e.g. tornado, atlantic_hurricanes)" style="width:100%;padding:8px 10px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;color:var(--text-1);font-size:13px"/>
+    </div>
     <div id="markets-table"></div>
+  </section>
+
+  <section>
+    <h2>Model calibration <small>leave-one-out vs 2014-2024 actuals &middot; RMSE / coverage / Brier / log loss</small></h2>
+    <div id="calibration-table"></div>
   </section>
 
   <section>
@@ -815,12 +828,25 @@
     }
   }
 
-  async function loadMarkets() {
-    try {
-      const m = await fetchJson("/api/markets");
+  let _marketsCache = null;
+
+  function applyMarketFilter() {
+    const target = document.getElementById("markets-table");
+    if (!_marketsCache) return;
+    const q = (document.getElementById("market-filter").value || "").toLowerCase().trim();
+    const markets = _marketsCache.markets || [];
+    const filtered = q
+      ? markets.filter(mk => {
+          const hay = (mk._event_title + " " + (mk.question || "") + " " + (mk._model_used || "") + " " + (mk._rationale || "")).toLowerCase();
+          return hay.includes(q);
+        })
+      : markets;
+    if (!filtered.length) { target.innerHTML = '<div class="card">No matches.</div>'; return; }
+    renderMarketsTable(filtered, _marketsCache);
+  }
+
+  function renderMarketsTable(markets, meta) {
       const target = document.getElementById("markets-table");
-      const markets = m.markets || [];
-      if (!markets.length) { target.innerHTML = '<div class="card">No live disaster markets found right now.</div>'; return; }
       const rows = markets.slice(0, 80).map(mk => {
         const title = mk._event_title || mk.question || "?";
         const q = mk.question || "";
@@ -853,13 +879,96 @@
           `${tradeCell}` +
           `</tr>`;
       }).join("");
-      const tally = Object.entries(m.by_model || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
+      const tally = Object.entries(meta.by_model || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
       target.innerHTML = `<table><thead><tr>` +
         `<th>Market</th><th>Implied</th><th>Model</th><th>Edge</th><th>1/4-Kelly @ $10k</th><th>Model + rationale</th><th></th>` +
         `</tr></thead><tbody>${rows}</tbody></table>` +
-        `<div class="footer" style="margin-top:8px">${m.scored_count}/${m.count} scored · ${escapeHtml(tally)}</div>`;
+        `<div class="footer" style="margin-top:8px">${meta.scored_count}/${meta.count} scored · showing ${markets.length} · ${escapeHtml(tally)}</div>`;
+  }
+
+  async function loadMarkets() {
+    try {
+      _marketsCache = await fetchJson("/api/markets");
+      const markets = _marketsCache.markets || [];
+      if (!markets.length) {
+        document.getElementById("markets-table").innerHTML = '<div class="card">No live disaster markets found right now.</div>';
+        return;
+      }
+      applyMarketFilter();
     } catch (e) {
       document.getElementById("markets-table").innerHTML = `<div class="err">Market fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadCrossVenue() {
+    try {
+      const cv = await fetchJson("/api/markets/crossvenue");
+      const target = document.getElementById("crossvenue-table");
+      const matched = cv.matched || [];
+      if (!matched.length) {
+        target.innerHTML = `<div class="card">No matched cross-venue markets right now. ` +
+          `(Polymarket: ${fmt(cv.poly_count)} disaster markets · Kalshi: ${fmt(cv.kalshi_count)} disaster markets · ` +
+          `poly-only ${fmt(cv.poly_only_count)} · kalshi-only ${fmt(cv.kalshi_only_count)})</div>`;
+        return;
+      }
+      const rows = matched.slice(0, 40).map(r => {
+        const arb = r.arb_spread_pp;
+        let arbCell = '<td class="muted">-</td>';
+        if (arb != null) {
+          const cls = Math.abs(arb) > 6 ? (arb > 0 ? "edge-sell" : "edge-buy")
+                    : Math.abs(arb) > 3 ? (arb > 0 ? "edge-sell" : "edge-buy") : "";
+          arbCell = `<td class="num ${cls}">${arb > 0 ? '+' : ''}${arb.toFixed(1)} pp</td>`;
+        }
+        return `<tr>` +
+          `<td>${pill(r.topic, "info")} ${pill('≥' + r.threshold, "accent")}</td>` +
+          `<td>${escapeHtml(r.poly_question || "?")}</td>` +
+          `<td class="num">${pct(r.poly_yes)}</td>` +
+          `<td class="num">${pct(r.kalshi_yes)}</td>` +
+          `${arbCell}` +
+          `<td class="num muted">$${fmt(r.kalshi_volume_24h || 0, 0)}</td>` +
+          `<td>${r.poly_url ? `<a href="${escapeHtml(r.poly_url)}" target="_blank" rel="noopener">Poly →</a>` : "-"} &middot; ` +
+                `${r.kalshi_url ? `<a href="${escapeHtml(r.kalshi_url)}" target="_blank" rel="noopener">Kalshi →</a>` : "-"}</td>` +
+          `</tr>`;
+      }).join("");
+      const tally = Object.entries(cv.by_topic || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Topic</th><th>Poly question</th><th>Poly YES</th><th>Kalshi YES</th><th>Arb (P - K)</th><th>Kalshi 24h vol</th><th>Trade</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="footer" style="margin-top:8px">${cv.matched_count} matched · ${escapeHtml(tally)} · ` +
+        `poly-only ${cv.poly_only_count} · kalshi-only ${cv.kalshi_only_count}</div>`;
+    } catch (e) {
+      document.getElementById("crossvenue-table").innerHTML = `<div class="err">Cross-venue fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadCalibration() {
+    try {
+      const cal = await fetchJson("/api/signals/calibration");
+      const target = document.getElementById("calibration-table");
+      const models = cal.models || [];
+      if (!models.length) { target.innerHTML = '<div class="card">No calibration data available.</div>'; return; }
+      const rows = models.map(m => {
+        if (!m.rows) return "";
+        const cov80 = m.coverage_80_pct;
+        const cov95 = m.coverage_95_pct;
+        const cov80Cls = (cov80 == null) ? "" : (Math.abs(cov80 - 80) <= 5 ? "edge-buy" : Math.abs(cov80 - 80) <= 15 ? "" : "edge-sell");
+        const cov95Cls = (cov95 == null) ? "" : (Math.abs(cov95 - 95) <= 5 ? "edge-buy" : Math.abs(cov95 - 95) <= 15 ? "" : "edge-sell");
+        return `<tr>` +
+          `<td><strong>${escapeHtml(m.name)}</strong><div class="muted" style="font-size:11px">α=${m.alpha} &middot; n=${m.rows} years &middot; climo μ=${fmtBig(m.climo_mean)}</div></td>` +
+          `<td class="num">${fmtBig(m.rmse)}</td>` +
+          `<td class="num">${fmtBig(m.mae)}</td>` +
+          `<td class="num ${cov80Cls}">${cov80 != null ? cov80.toFixed(1) + '%' : '-'}</td>` +
+          `<td class="num ${cov95Cls}">${cov95 != null ? cov95.toFixed(1) + '%' : '-'}</td>` +
+          `<td class="num">${m.brier_score != null ? m.brier_score.toFixed(3) : '-'}</td>` +
+          `<td class="num">${m.log_loss != null ? m.log_loss.toFixed(3) : '-'}</td>` +
+          `</tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>` +
+        `<th>Model</th><th>RMSE</th><th>MAE</th><th>80% CI cov.</th><th>95% CI cov.</th><th>Brier</th><th>Log loss</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="footer" style="margin-top:8px">${escapeHtml(cal.method || '')}</div>`;
+    } catch (e) {
+      document.getElementById("calibration-table").innerHTML = `<div class="err">Calibration fetch failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -936,6 +1045,10 @@
     }
   }
 
+  // Wire up the market-filter input
+  const filterInput = document.getElementById("market-filter");
+  if (filterInput) filterInput.addEventListener("input", applyMarketFilter);
+
   loadMap();
   loadAll();
   loadSignificant();
@@ -943,6 +1056,8 @@
   loadFires();
   loadVolcanoes();
   loadMarkets();
+  loadCrossVenue();
+  loadCalibration();
   loadBacktest();
   loadSources();
 
@@ -954,6 +1069,8 @@
   setInterval(loadFires,       15 * 60 * 1000);
   setInterval(loadVolcanoes,   6 * 60 * 60 * 1000);
   setInterval(loadMarkets,     5 * 60 * 1000);
+  setInterval(loadCrossVenue,  5 * 60 * 1000);
+  setInterval(loadCalibration, 60 * 60 * 1000);
   setInterval(loadBacktest,    60 * 60 * 1000);
   setInterval(loadSources,     30 * 1000);
 })();

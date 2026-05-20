@@ -12,9 +12,9 @@ declarations, tsunami warnings, humanitarian impact.
 
 Port: **7053**. Lives behind the gateway at `disasters.narve.ai` in production.
 
-## What's built (v0.3)
+## What's built (v0.4)
 
-**18 upstream feeds**, all free / no API key required (except optional AirNow).
+**19 upstream feeds** (Polymarket + Kalshi as venues; 17 disaster feeds), all free / no API key required (except optional AirNow).
 
 | Panel | Source | Refresh |
 |---|---|---|
@@ -36,10 +36,35 @@ Port: **7053**. Lives behind the gateway at `disasters.narve.ai` in production.
 | **ReliefWeb humanitarian disasters** | ReliefWeb v1 disasters API | 1 h |
 | **AirNow metro AQI** (key-gated) | AirNow zipCode/current observation | 10 min |
 | **US Drought Monitor** | UNL CategoricalPercent service | 12 h |
-| **Year-end projections** (Atlantic storms/hurricanes/major hurricanes · M5/M6/M7+ quakes · NIFC wildfire acres · EONET wildfire counts · US tornadoes · FEMA DR declarations) | YTD + **NB(mu, alpha)** overdispersion model + Normal(mu,sigma) for acres + 80% credible intervals | 15-60 min |
-| **Polymarket disaster markets** | Polymarket Gamma joined with model edges + 1/4-Kelly sizing + trade-out deep-link | 5 min |
+| **Year-end projections** (Atlantic storms/hurricanes/major hurricanes · M5/M6/M7+ quakes · NIFC wildfire acres · EONET wildfire counts · US tornadoes · FEMA DR declarations) | YTD + **NB(μ, α)** overdispersion + Normal(μ,σ) for acres + 80% credible intervals | 15-60 min |
+| **Polymarket disaster markets** | Polymarket Gamma joined with model edges + 1/4-Kelly + trade-out deep-link + filter | 5 min |
+| **Kalshi disaster markets** | Kalshi `/trade-api/v2/events` (public, no auth) across 14 disaster series tickers | 5 min |
+| **Cross-venue arbitrage** (Polymarket vs Kalshi) | join on `(topic, threshold)` → `Arb (P − K)` spread column with trade-out links to both venues | 5 min |
+| **Model calibration scorecard** | RMSE / MAE / 80%-95% CI coverage / Brier / log-loss across 2014-2024 truth tables | 1 h |
 | **Backtest** (10 yrs of projection-vs-actual for Atlantic storms + NIFC acres) | Hand-curated annual truth tables, leave-one-out climo | 1 h |
 | **Per-source health monitor** | In-process freshness/latency/success-rate scoring | 30 s |
+
+## What's new in v0.4
+
+- **Kalshi cross-venue arbitrage panel** — `ingestion/kalshi_disasters.py`
+  pulls 14 disaster series tickers (HURRICANE / ATLHURR / WILDFIRE /
+  EARTHQUAKE / TORNADO / VOLCANO / TSUNAMI / FLOOD / FEMA + their
+  variants) from Kalshi's public events endpoint, extracts threshold
+  integers, normalises YES prices, and emits trade-out URLs. The new
+  `analysis/cross_venue.py` joins Polymarket + Kalshi disaster markets
+  on `(topic, threshold)` and surfaces the `Arb (P − K)` spread. Spreads
+  > 3 pp are coloured; > 6 pp highlighted. Trade-out columns deep-link
+  to both venues.
+- **Model calibration scorecard** — `analysis/calibration.py` computes
+  leave-one-out RMSE / MAE, 80% / 95% credible-interval coverage
+  rates, Brier score, and log loss for every count-based projection
+  against hand-curated 2014-2024 truth tables. Current 80% CI coverage
+  on Atlantic storms is 81.8%, tornadoes 81.8%, NIFC acres 81.8%, FEMA
+  DR 72.7% — all within calibration tolerance, confirming the NB α
+  values are well-tuned.
+- **Markets-table keyword filter** — instant search/filter input above
+  the markets table for "show me only tornado markets" or "show only
+  scored markets with edge > 5 pp" workflows.
 
 ## What's new in v0.3
 
@@ -58,7 +83,7 @@ Port: **7053**. Lives behind the gateway at `disasters.narve.ai` in production.
   (BUY YES / BUY NO), suggested bankroll percentage, and dollar size at a
   $10k bankroll.
 - **Polymarket trade-out deep-links** per matched market.
-- **Background pre-fetch loop** (opt-in via `DISASTERS_PREFETCH=1`) walks 23
+- **Background pre-fetch loop** (opt-in via `DISASTERS_PREFETCH=1`) walks 24
   upstreams on staggered schedules so the dashboard returns from cache on
   every page load.
 - **Disk-persisted cache** under `./cache/` (configurable via
@@ -166,6 +191,9 @@ python3 -m analysis.backtest            # Multi-year backtest dump
 | `GET /api/fema/recent?days=30` | 1 h | OpenFEMA recent declarations |
 | `GET /api/fema/projection` | 1 h | OpenFEMA YTD + NB year-end DR projection + CI |
 | `GET /api/markets` | 5 min | Polymarket disaster markets joined with model edges + Kelly + trade-out URL |
+| `GET /api/markets/crossvenue` | 5 min | Polymarket + Kalshi joined on `(topic, threshold)` with `Arb (P − K)` spread |
+| `GET /api/kalshi` | 5 min | Kalshi disaster markets (read-only, public API) |
+| `GET /api/signals/calibration` | 1 h | RMSE / MAE / CI-coverage / Brier / log-loss per model vs 2014-2024 truth |
 | `GET /api/map_features` | 5 min | GeoJSON FeatureCollection of every geocoded active threat |
 | `GET /api/sources` | live | Per-upstream health monitor + persisted-cache view |
 | `GET /api/backtest?n_years=10` | 1 h | Atlantic-storm + wildfire-acres projection vs realised |
@@ -296,11 +324,12 @@ opening logs.
 | v0.1 | ✓ done | NIFC acres-burned model + GDACS severity feed + USGS PAGER |
 | v0.2 | ✓ done | FEMA + GVP + SPC tornadoes + USDM + backtest panel |
 | v0.3 | ✓ done | SVG world map + 6 new feeds (NRL/tsunami/floods/SPC outlooks/ReliefWeb/AirNow) + NB overdispersion + Kelly + background pre-fetch + disk persistence + per-source health |
-| v0.4 | open | NHC season-archive parser → tight Atlantic YTD (replaces lower-bound) |
-| v0.5 | open | SPC annual archive scraper → live YTD tornado count |
-| v0.6 | open | Geographic earthquake filtering for "California M8+ in 2026"-type markets |
-| v0.7 | open | Per-volcano probability model for "Will Mount X erupt?" markets |
-| v0.8 | open | Storm-track corridor overlay (re-use weather dashboard's corridor data) |
+| v0.4 | ✓ done | Kalshi cross-venue arbitrage + calibration scorecard (RMSE / CI-coverage / Brier / log-loss) + markets-table filter |
+| v0.5 | open | NHC season-archive parser → tight Atlantic YTD (replaces lower-bound) |
+| v0.6 | open | SPC annual archive scraper → live YTD tornado count |
+| v0.7 | open | Geographic earthquake filtering for "California M8+ in 2026"-type markets |
+| v0.8 | open | Per-volcano probability model for "Will Mount X erupt?" markets |
+| v0.9 | open | Storm-track corridor overlay (re-use weather dashboard's corridor data) |
 | v1.0 | open | Vendored Leaflet map view with OSM tiles (sandbox-permitting) |
 | v1.1 | open | WebSocket push for sub-minute updates on critical events |
 

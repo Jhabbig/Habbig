@@ -49,6 +49,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from analysis import backtest as backtest_mod
+from analysis import calibration as calibration_mod
+from analysis import cross_venue as cross_venue_mod
 from analysis import map_features as map_features_mod
 from analysis import market_matcher
 from analysis.negbin import nb_quantile_band
@@ -61,6 +63,7 @@ from ingestion import (
     fema_declarations,
     gdacs_alerts,
     jtwc_pacific,
+    kalshi_disasters,
     nhc_storms,
     nifc_fires,
     nws_alerts,
@@ -315,6 +318,13 @@ async def api_fema_projection() -> JSONResponse:
     return JSONResponse(_attach_band(proj, alpha_key="fema_dr"))
 
 
+# ─── Kalshi disaster markets ──────────────────────────────────────────────────
+
+@app.get("/api/kalshi")
+async def api_kalshi() -> JSONResponse:
+    return JSONResponse(kalshi_disasters.fetch_disaster_markets())
+
+
 # ─── Polymarket markets ───────────────────────────────────────────────────────
 
 def _fetch_all_projections() -> dict:
@@ -346,12 +356,38 @@ async def api_markets() -> JSONResponse:
     })
 
 
+@app.get("/api/markets/crossvenue")
+async def api_markets_crossvenue() -> JSONResponse:
+    """Polymarket + Kalshi joined on (topic, threshold). Sorted by absolute
+    arb spread descending; rows where one venue is missing surface too so
+    the table can show one-venue markets."""
+    poly = polymarket_client.fetch_disaster_markets()
+    kalshi = kalshi_disasters.fetch_disaster_markets()
+    joined = cross_venue_mod.join_markets(poly, kalshi.get("markets") or [])
+    return JSONResponse({
+        **joined,
+        "poly_count": len(poly),
+        "kalshi_count": kalshi.get("count", 0),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 def _count_by_model(markets: list[dict]) -> dict:
     out: dict[str, int] = {}
     for m in markets:
         key = m.get("_model_used") or "unscored"
         out[key] = out.get(key, 0) + 1
     return out
+
+
+# ─── Calibration scorecard ────────────────────────────────────────────────────
+
+@app.get("/api/signals/calibration")
+async def api_calibration() -> JSONResponse:
+    return JSONResponse({
+        **calibration_mod.report(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # ─── Map / GeoJSON ────────────────────────────────────────────────────────────
@@ -526,6 +562,7 @@ async def _startup() -> None:
         ("fema_recent",          lambda: fema_declarations.recent_declarations(30),           3600),
         ("fema_proj",            lambda: fema_declarations.ytd_count_projection(),            3600),
         ("polymarket_disasters", lambda: polymarket_client.fetch_disaster_markets(),          300),
+        ("kalshi_disasters",     lambda: kalshi_disasters.fetch_disaster_markets(),           300),
     ])
 
 
