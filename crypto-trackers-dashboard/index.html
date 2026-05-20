@@ -233,6 +233,11 @@
   </section>
 
   <section>
+    <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
+    <div id="alerts-card"></div>
+  </section>
+
+  <section>
     <h2>Source health <small>per-upstream freshness, latency, success rate</small></h2>
     <div id="sources-grid" class="sources-grid"></div>
   </section>
@@ -719,6 +724,88 @@
     </div>`;
   }
 
+  // ─── Custom alerts ─────────────────────────────────────────────────────────
+  async function loadAlerts() {
+    try {
+      const data = await fetchJson("/api/alerts");
+      const target = document.getElementById("alerts-card");
+      const alerts = data.alerts || [];
+      const rows = alerts.length ? alerts.map(a => `<tr>
+        <td><span class="pill ${a.enabled ? 'up' : 'down'}">${a.enabled ? "ON" : "OFF"}</span></td>
+        <td>${pill(a.type, 'info')}</td>
+        <td><strong>${escapeHtml(a.target)}</strong></td>
+        <td class="num">${fmt(a.threshold, 6)}</td>
+        <td class="muted">${a.label ? escapeHtml(a.label) : '-'}</td>
+        <td class="num muted">${fmt(a.fire_count)}</td>
+        <td class="muted" style="font-family:monospace;font-size:10px">${escapeHtml((a.webhook_url || "").slice(0, 40))}${(a.webhook_url || "").length > 40 ? "…" : ""}</td>
+        <td><button onclick="window._toggleAlert('${a.id}', ${!a.enabled})" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer">${a.enabled ? "disable" : "enable"}</button>
+            <button onclick="window._deleteAlert('${a.id}')" style="background:var(--bg-2);border:1px solid rgba(239,68,68,0.4);color:var(--accent-2);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;margin-left:4px">delete</button></td>
+      </tr>`).join("") : `<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">No alerts yet. Create one below.</td></tr>`;
+      target.innerHTML = `<div class="card">
+        <table><thead><tr>
+          <th>State</th><th>Type</th><th>Target</th><th>Threshold</th><th>Label</th><th>Fires</th><th>Webhook</th><th></th>
+        </tr></thead><tbody>${rows}</tbody></table>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:11px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Create alert</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="al-type" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;font-family:inherit">
+              <option value="price_above">Price above</option>
+              <option value="price_below">Price below</option>
+              <option value="funding_above">Funding rate above</option>
+              <option value="funding_below">Funding rate below</option>
+              <option value="fng_above">F&G above</option>
+              <option value="fng_below">F&G below</option>
+              <option value="btc_fee_above">BTC fee &gt; sat/vB</option>
+              <option value="eth_gas_above">ETH gas &gt; gwei</option>
+            </select>
+            <input id="al-target" placeholder="target (e.g. bitcoin / BTC)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;width:180px"/>
+            <input id="al-threshold" type="number" step="any" placeholder="threshold" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;width:120px"/>
+            <input id="al-webhook" placeholder="webhook URL (optional)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;width:260px"/>
+            <input id="al-label" placeholder="label (optional)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;width:140px"/>
+            <button onclick="window._createAlert()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">+ Add</button>
+            <button onclick="window._checkAlerts()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:6px 12px;border-radius:6px;font-size:11px;cursor:pointer">Check now</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:8px">Targets: <strong>price</strong> takes a coin id (bitcoin) or symbol (BTC). <strong>funding</strong> takes a symbol (BTC). <strong>fng / btc_fee / eth_gas</strong> targets are ignored. Webhooks receive JSON POST with alert + observed_value + threshold + message.</div>
+        </div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("alerts-card").innerHTML = `<div class="err">Alerts fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  window._createAlert = async () => {
+    try {
+      const body = {
+        type: document.getElementById("al-type").value,
+        target: document.getElementById("al-target").value.trim(),
+        threshold: parseFloat(document.getElementById("al-threshold").value || "0"),
+        webhook_url: document.getElementById("al-webhook").value.trim() || null,
+        label: document.getElementById("al-label").value.trim() || null,
+      };
+      const r = await fetch("/api/alerts", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) { alert("Failed: " + r.status + " " + await r.text()); return; }
+      ["al-target", "al-threshold", "al-webhook", "al-label"].forEach(id => document.getElementById(id).value = "");
+      loadAlerts();
+    } catch (e) { alert("Create failed: " + e.message); }
+  };
+  window._deleteAlert = async (id) => {
+    if (!confirm("Delete alert " + id + "?")) return;
+    await fetch("/api/alerts/" + id, { method: "DELETE" });
+    loadAlerts();
+  };
+  window._toggleAlert = async (id, enabled) => {
+    await fetch("/api/alerts/" + id + "/toggle", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+    loadAlerts();
+  };
+  window._checkAlerts = async () => {
+    const r = await fetch("/api/alerts/check", { method: "POST" });
+    const d = await r.json();
+    alert(`Checked. Fired ${d.fired_count} alert(s).`);
+    loadAlerts();
+  };
+
   // ─── Source health ─────────────────────────────────────────────────────────
   async function loadSources() {
     try {
@@ -769,6 +856,7 @@
   loadCrossEx();
   loadFunding();
   loadTrending();
+  loadAlerts();
   loadSources();
 
   setInterval(() => setUpdated(window._lastFetch), 5000);
@@ -777,6 +865,7 @@
   setInterval(loadCrossEx,  60 * 1000);
   setInterval(loadFunding,  90 * 1000);
   setInterval(loadTrending, 5 * 60 * 1000);
+  setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();
 </script>

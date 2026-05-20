@@ -37,6 +37,7 @@ from ingestion import (
     _background,
     _health,
     _persistence,
+    alerts as alerts_mod,
     binance,
     binance_liquidations,
     btc_treasuries,
@@ -414,6 +415,64 @@ async def api_btc_treasuries() -> JSONResponse:
     return JSONResponse(btc_treasuries.holdings_table())
 
 
+# ─── Alerts ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+async def api_alerts_list() -> JSONResponse:
+    return JSONResponse(alerts_mod.summary())
+
+
+@app.post("/api/alerts")
+async def api_alerts_create(req: Request) -> JSONResponse:
+    try:
+        body = await req.json()
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    result = alerts_mod.create_alert(
+        alert_type=body.get("type", ""),
+        target=str(body.get("target", "")),
+        threshold=float(body.get("threshold", 0)),
+        webhook_url=body.get("webhook_url"),
+        cooldown_s=int(body.get("cooldown_s", 600)),
+        label=body.get("label"),
+    )
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.delete("/api/alerts/{alert_id}")
+async def api_alerts_delete(alert_id: str) -> JSONResponse:
+    ok = alerts_mod.delete_alert(alert_id)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True, "id": alert_id})
+
+
+@app.post("/api/alerts/{alert_id}/toggle")
+async def api_alerts_toggle(alert_id: str, req: Request) -> JSONResponse:
+    try:
+        body = await req.json()
+    except (ValueError, TypeError):
+        body = {}
+    enabled = bool(body.get("enabled", True))
+    ok = alerts_mod.toggle_alert(alert_id, enabled)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True, "id": alert_id, "enabled": enabled})
+
+
+@app.post("/api/alerts/check")
+async def api_alerts_check() -> JSONResponse:
+    """Manually trigger an alert-check cycle. Useful for testing without
+    waiting for the background loop."""
+    fired = alerts_mod.check_all()
+    return JSONResponse({"fired_count": len(fired), "fired": fired,
+                         "fetched_at": datetime.now(timezone.utc).isoformat()})
+
+
 # ─── Per-source health + persisted cache ──────────────────────────────────────
 
 @app.get("/api/sources")
@@ -586,6 +645,7 @@ async def _startup() -> None:
         ("hyperliquid",           lambda: hyperliquid.market_state(),                    60),
         ("bybit_proxy_liq",       lambda: bybit_liquidations.probable_liquidations(),    120),
         ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
+        ("alerts_check",          lambda: alerts_mod.check_all(),                       30),
     ])
 
 
