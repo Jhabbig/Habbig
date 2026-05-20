@@ -26,8 +26,13 @@ from typing import Any
 
 OUTLIER_THRESHOLD = 20.0       # pct points above tier mean
 DIVERGENCE_THRESHOLD = 25.0    # pct point gap between Partnership and Stability
+TRIPLE_THRESHOLD = 90.0        # all 3 Tier-A/B subscores >= 90 -> "triple threat"
+WEAKNESS_COMPOSITE = 75.0      # composite >= 75 (top quartile)
+WEAKNESS_SUBSCORE = 20.0       # any subscore <= 20 (bottom quintile)
+CAP_IMPACT_DELTA = 2.0         # partnership cap reduced score by >= 2 pct points
+CLOSEST_PEER_DIST = 12.0       # max Euclidean distance to count as "lookalike"
 MAX_INSIGHTS_PER_RULE = 4
-MAX_TOTAL_INSIGHTS = 12
+MAX_TOTAL_INSIGHTS = 16
 
 
 @dataclass
@@ -222,12 +227,187 @@ def rule_coverage_gap(countries: list[dict], meta: dict[str, dict]) -> list[Insi
     return out[:MAX_INSIGHTS_PER_RULE]
 
 
-def generate_insights(countries: list[dict], meta: dict[str, dict]) -> list[dict]:
+def rule_triple_threat(countries: list[dict]) -> list[Insight]:
+    """Top decile on all three Tier-A/B subscores within the country's tier."""
+    qualifiers: list[tuple[dict, dict, float]] = []
+    for c in countries:
+        subs = c.get("subscores") or {}
+        vals = {k: subs.get(k) for k in ("connection", "partnership", "stability")}
+        if any(v is None or v < TRIPLE_THRESHOLD for v in vals.values()):
+            continue
+        qualifiers.append((c, vals, min(vals.values())))
+    qualifiers.sort(key=lambda t: t[2], reverse=True)
+    out: list[Insight] = []
+    for c, vals, floor in qualifiers[:MAX_INSIGHTS_PER_RULE]:
+        out.append(Insight(
+            kind="triple_threat",
+            severity="info",
+            iso3=c["iso3"],
+            country=c["name"],
+            title=f"{c['name']} hits the top decile across the board",
+            body=(
+                f"Connection {vals['connection']:.0f}, Partnership "
+                f"{vals['partnership']:.0f}, Stability {vals['stability']:.0f} — all in "
+                f"the top 10% of their income tier. Floor of {floor:.0f} on the "
+                f"weakest subscore."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "connection",  "value": round(vals["connection"], 1)},
+                {"label": "partnership", "value": round(vals["partnership"], 1)},
+                {"label": "stability",   "value": round(vals["stability"], 1)},
+            ],
+        ))
+    return out
+
+
+def rule_weakness_flag(countries: list[dict]) -> list[Insight]:
+    """Strong composite hiding one bottom-quintile subscore — the 'one big
+    asterisk' story."""
+    candidates: list[tuple[dict, list[tuple[str, float]]]] = []
+    for c in countries:
+        comp = c.get("composite")
+        if comp is None or comp < WEAKNESS_COMPOSITE:
+            continue
+        weak: list[tuple[str, float]] = []
+        for k in ("connection", "partnership", "stability"):
+            v = (c.get("subscores") or {}).get(k)
+            if v is not None and v <= WEAKNESS_SUBSCORE:
+                weak.append((k, v))
+        if weak:
+            candidates.append((c, weak))
+    candidates.sort(key=lambda t: -t[0]["composite"])
+    out: list[Insight] = []
+    for c, weak in candidates[:MAX_INSIGHTS_PER_RULE]:
+        weak.sort(key=lambda kv: kv[1])  # weakest first
+        worst_k, worst_v = weak[0]
+        out.append(Insight(
+            kind="weakness_flag",
+            severity="warn",
+            iso3=c["iso3"],
+            country=c["name"],
+            title=f"{c['name']}: strong overall, weak on {worst_k.title()}",
+            body=(
+                f"Composite {c['composite']:.1f} sits in the top quartile, but the "
+                f"{worst_k} subscore is {worst_v:.0f} — bottom quintile within the "
+                f"income tier. Read the headline with that asterisk."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "composite", "value": round(c["composite"], 1)},
+                {"label": worst_k,     "value": round(worst_v, 1)},
+            ],
+        ))
+    return out
+
+
+def rule_cap_impact(countries: list[dict], partnership_uncapped: dict[str, float]) -> list[Insight]:
+    """Countries whose Partnership was meaningfully reduced by the 80th-pctile
+    cap. Makes the methodology audible: 'this score is held back on purpose'."""
+    candidates: list[tuple[dict, float, float, float]] = []
+    for c in countries:
+        p_capped = (c.get("subscores") or {}).get("partnership")
+        p_unc = partnership_uncapped.get(c["iso3"])
+        if p_capped is None or p_unc is None:
+            continue
+        delta = p_unc - p_capped
+        if delta < CAP_IMPACT_DELTA:
+            continue
+        candidates.append((c, p_capped, p_unc, delta))
+    candidates.sort(key=lambda t: -t[3])
+    out: list[Insight] = []
+    for c, p_capped, p_unc, delta in candidates[:MAX_INSIGHTS_PER_RULE]:
+        out.append(Insight(
+            kind="cap_impact",
+            severity="info",
+            iso3=c["iso3"],
+            country=c["name"],
+            title=f"{c['name']}: Partnership held back by the 80% cap",
+            body=(
+                f"Marriage rate sits in the very top of the {c.get('income_tier','?')}-income "
+                f"tier. The methodology caps Partnership at the 80th percentile (so "
+                f"coercion-driven highs aren't rewarded), trimming it from "
+                f"{p_unc:.0f} to {p_capped:.0f} — a {delta:.0f}-point haircut visible "
+                f"on the index but invisible on the front cards."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "uncapped", "value": round(p_unc, 1)},
+                {"label": "capped",   "value": round(p_capped, 1)},
+                {"label": "haircut",  "value": round(delta, 1)},
+            ],
+        ))
+    return out
+
+
+def rule_closest_peer(countries: list[dict]) -> list[Insight]:
+    """Surprising twins: pairs of countries with near-identical subscore
+    profiles despite different income tiers or regions."""
+    triples: list[tuple[dict, tuple[float, float, float]]] = []
+    for c in countries:
+        if c.get("composite") is None:
+            continue
+        s = c.get("subscores") or {}
+        if all(s.get(k) is not None for k in ("connection", "partnership", "stability")):
+            triples.append((c, (s["connection"], s["partnership"], s["stability"])))
+
+    pairs: list[tuple[float, dict, dict]] = []
+    for i, (a, va) in enumerate(triples):
+        for b, vb in triples[i + 1:]:
+            # Only surprising pairs: different income tier OR different region.
+            if a.get("income_tier") == b.get("income_tier") and a.get("region") == b.get("region"):
+                continue
+            d = sum((va[k] - vb[k]) ** 2 for k in range(3)) ** 0.5
+            if d <= CLOSEST_PEER_DIST:
+                pairs.append((d, a, b))
+    pairs.sort(key=lambda t: t[0])
+
+    out: list[Insight] = []
+    used_isos: set[str] = set()
+    for d, a, b in pairs:
+        if a["iso3"] in used_isos or b["iso3"] in used_isos:
+            continue  # don't burn one country across multiple lookalike cards
+        used_isos.update((a["iso3"], b["iso3"]))
+        out.append(Insight(
+            kind="closest_peer",
+            severity="info",
+            iso3=a["iso3"],
+            country=a["name"],
+            title=f"{a['name']} looks like {b['name']}",
+            body=(
+                f"Across Connection, Partnership and Stability, {a['name']} "
+                f"({a.get('income_tier','?')} income) and {b['name']} "
+                f"({b.get('income_tier','?')} income) sit within {d:.1f} subscore-points "
+                f"of each other. Different tier or region; similar relational outcomes."
+            ),
+            confidence=_confidence_for(a.get("used") or []),
+            pointers=[
+                {"label": a["name"],  "value": f"({va[0]:.0f}, {va[1]:.0f}, {va[2]:.0f})"},
+                {"label": b["name"],  "value": f"({vb[0]:.0f}, {vb[1]:.0f}, {vb[2]:.0f})"},
+                {"label": "distance", "value": round(d, 1)},
+            ],
+        ))
+        if len(out) >= MAX_INSIGHTS_PER_RULE:
+            break
+    return out
+
+
+def generate_insights(
+    countries: list[dict],
+    meta: dict[str, dict],
+    *,
+    partnership_uncapped: dict[str, float] | None = None,
+) -> list[dict]:
     pool: list[Insight] = []
     pool.extend(rule_peer_leader(countries))
     pool.extend(rule_outlier(countries))
     pool.extend(rule_divergence(countries))
+    pool.extend(rule_triple_threat(countries))
+    pool.extend(rule_weakness_flag(countries))
+    pool.extend(rule_closest_peer(countries))
     pool.extend(rule_coverage_gap(countries, meta))
+    if partnership_uncapped is not None:
+        pool.extend(rule_cap_impact(countries, partnership_uncapped))
 
     severity_rank = {"alert": 0, "warn": 1, "info": 2}
     confidence_rank = {"high": 0, "medium": 1, "low": 2}

@@ -501,8 +501,13 @@ def _build_subscore_layers() -> dict[str, Any]:
     connection_pct = percentile_rank_within_tier(social_support, higher_is_better=True)
 
     # Partnership: marriage rate (v1 proxy for partnership rate); cap at 80th pct.
+    # We also keep the uncapped version on the side so rule_cap_impact can
+    # surface countries the cap reduced.
     partnership_pct = percentile_rank_within_tier(
         marriage_rate, higher_is_better=True, cap_pct=PARTNERSHIP_CAP_PCT,
+    )
+    partnership_pct_uncapped = percentile_rank_within_tier(
+        marriage_rate, higher_is_better=True,
     )
 
     # Stability: divorce rate (lower=better) + adolescent fertility (lower=better
@@ -525,6 +530,11 @@ def _build_subscore_layers() -> dict[str, Any]:
             "partnership": partnership_pct,
             "stability":   stability_pct,
             "activity":    activity_pct,
+        },
+        # Side channel for the cap_impact insight rule; not exposed via the
+        # composite, but available to inspect via /api/insights.
+        "extras": {
+            "partnership_uncapped": partnership_pct_uncapped,
         },
         "raw": {
             "marriage_rate_per_1000":         marriage_rate,
@@ -757,7 +767,12 @@ def insights_route():
     weights = _parse_weight_params(request.args)
     countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
     layers = cached("subscore_layers", _build_subscore_layers)
-    return jsonify(insights_module.generate_insights(list(countries.values()), layers["meta"]))
+    partnership_uncapped = (layers.get("extras") or {}).get("partnership_uncapped") or {}
+    return jsonify(insights_module.generate_insights(
+        list(countries.values()),
+        layers["meta"],
+        partnership_uncapped=partnership_uncapped,
+    ))
 
 
 @app.get("/api/sources")

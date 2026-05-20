@@ -295,6 +295,95 @@ def test_cache_dedupes_concurrent_loaders():
     ok(f"loader ran exactly once across 8 concurrent callers")
 
 
+def test_triple_threat_rule():
+    print("test: triple_threat fires only when all 3 Tier-A/B subscores >= 90")
+    countries = [
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 95, "partnership": 92, "stability": 91, "activity": None},
+         "composite": 93.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 95, "partnership": 92, "stability": 80, "activity": None},
+         "composite": 90.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "UM",
+         "subscores": {"connection": 95, "partnership": 95, "stability": None, "activity": None},
+         "composite": 95.0, "used": ["connection","partnership"]},
+    ]
+    out = insights_module.rule_triple_threat(countries)
+    isos = [i.iso3 for i in out]
+    if isos != ["AAA"]:
+        fail(f"triple_threat should pick only AAA (only one with all 3 >= 90), got {isos}")
+    ok("Alpha qualifies (95/92/91); Beta fails (stab=80); Gamma fails (no stab)")
+
+
+def test_weakness_flag_rule():
+    print("test: weakness_flag fires when composite >= 75 but a subscore <= 20")
+    countries = [
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 90, "partnership": 90, "stability": 15, "activity": None},
+         "composite": 80.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 90, "partnership": 90, "stability": 90, "activity": None},
+         "composite": 90.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",
+         "subscores": {"connection": 50, "partnership": 15, "stability": 50, "activity": None},
+         "composite": 50.0, "used": ["connection","partnership","stability"]},
+    ]
+    out = insights_module.rule_weakness_flag(countries)
+    isos = [i.iso3 for i in out]
+    if isos != ["AAA"]:
+        fail(f"weakness_flag should pick only AAA (top quartile + stab=15), got {isos}")
+    if "stability" not in out[0].title.lower():
+        fail(f"weakness_flag title should call out stability, got: {out[0].title}")
+    ok("Alpha flagged on Stability; Beta (no weakness) and Gamma (not top quartile) skipped")
+
+
+def test_cap_impact_rule():
+    print("test: cap_impact fires when partnership cap meaningfully reduced score")
+    countries = [
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 80, "stability": 70, "activity": None},
+         "composite": 73.0, "used": ["connection","partnership","stability"]},
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 70, "partnership": 80, "stability": 70, "activity": None},
+         "composite": 73.0, "used": ["connection","partnership","stability"]},
+    ]
+    # AAA was capped from 100 -> 80 (haircut 20). BBB was capped from 81 -> 80 (haircut 1, below 2.0).
+    uncapped = {"AAA": 100.0, "BBB": 81.0}
+    out = insights_module.rule_cap_impact(countries, uncapped)
+    isos = [i.iso3 for i in out]
+    if isos != ["AAA"]:
+        fail(f"cap_impact should pick only AAA (haircut >= 2pp), got {isos}")
+    ok("Alpha (20pp haircut) flagged; Beta (1pp) skipped")
+
+
+def test_closest_peer_rule():
+    print("test: closest_peer pairs cross-tier countries with near-identical profiles")
+    countries = [
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",  "region": "Europe",
+         "subscores": {"connection": 80, "partnership": 70, "stability": 75, "activity": None},
+         "composite": 75.0, "used": ["connection","partnership","stability"]},
+        # Beta is very close to Alpha but a different income tier -> qualifies
+        {"iso3": "BBB", "name": "Beta",  "income_tier": "UM", "region": "Americas",
+         "subscores": {"connection": 82, "partnership": 71, "stability": 76, "activity": None},
+         "composite": 76.0, "used": ["connection","partnership","stability"]},
+        # Gamma is in the same tier+region as Alpha (excluded as "not surprising"),
+        # and far from Beta so it doesn't accidentally pair across tiers either.
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",  "region": "Europe",
+         "subscores": {"connection": 40, "partnership": 30, "stability": 35, "activity": None},
+         "composite": 35.0, "used": ["connection","partnership","stability"]},
+    ]
+    out = insights_module.rule_closest_peer(countries)
+    if not out:
+        fail("closest_peer should pair Alpha with Beta (cross-tier lookalikes)")
+    pair_isos = {out[0].iso3}
+    if "Beta" not in out[0].title:
+        fail(f"first closest_peer should name Beta in the title; got: {out[0].title}")
+    # No insight should be Alpha<->Gamma (same tier + region)
+    if any("Gamma" in i.title or i.iso3 == "CCC" for i in out):
+        fail("Gamma is same tier+region as Alpha and should be filtered out")
+    ok("Alpha paired with Beta (cross-tier); same-tier same-region Gamma excluded")
+
+
 def test_outlier_skipped_on_zero_variance():
     print("test: outlier rule skips a tier subscore when variance is zero")
     countries = [
@@ -326,6 +415,10 @@ def main():
     test_sensitivity_engine()
     test_cache_dedupes_concurrent_loaders()
     test_outlier_skipped_on_zero_variance()
+    test_triple_threat_rule()
+    test_weakness_flag_rule()
+    test_cap_impact_rule()
+    test_closest_peer_rule()
     print("\nall tests passed.")
 
 
