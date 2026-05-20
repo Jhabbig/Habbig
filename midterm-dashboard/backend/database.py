@@ -352,6 +352,21 @@ CREATE TABLE IF NOT EXISTS midterm_digest_subscriptions (
     created_at      TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+-- Race calls — the truth side of election night. One row per (race_key,
+-- provider). Markets are compared against these calls in the live UI.
+CREATE TABLE IF NOT EXISTS midterm_race_calls (
+    race_key            TEXT NOT NULL,
+    provider            TEXT NOT NULL,    -- 'ap' | 'ddhq' | 'manual' | 'wikipedia'
+    called_party        TEXT,             -- 'D' | 'R' | 'I'
+    called_candidate    TEXT,
+    leader_pct          REAL,             -- vote share of the leader as called
+    reporting_pct       REAL,             -- % of expected vote counted
+    called_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    notes               TEXT,
+    PRIMARY KEY (race_key, provider)
+);
+CREATE INDEX IF NOT EXISTS idx_race_calls_called_at ON midterm_race_calls(called_at);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1564,6 +1579,70 @@ class Database:
                     "UPDATE midterm_digest_subscriptions SET last_sent_at=? WHERE user_id=?",
                     (now, user_id),
                 )
+
+    # === Race calls (election night) =======================================
+
+    def upsert_race_call(
+        self, race_key: str, provider: str, *,
+        called_party: str | None = None,
+        called_candidate: str | None = None,
+        leader_pct: float | None = None,
+        reporting_pct: float | None = None,
+        notes: str | None = None,
+    ) -> None:
+        """Upsert a race call. Overwrites within the same (race_key, provider)
+        pair — providers update their own row as more data arrives, but
+        multiple providers can hold different calls for the same race
+        (which is exactly the disagreement signal the UI surfaces)."""
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_race_calls
+                        (race_key, provider, called_party, called_candidate,
+                         leader_pct, reporting_pct, called_at, notes)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(race_key, provider) DO UPDATE SET
+                         called_party    = excluded.called_party,
+                         called_candidate= excluded.called_candidate,
+                         leader_pct      = excluded.leader_pct,
+                         reporting_pct   = excluded.reporting_pct,
+                         called_at       = excluded.called_at,
+                         notes           = excluded.notes""",
+                    (race_key, provider, called_party, called_candidate,
+                     leader_pct, reporting_pct, now, notes),
+                )
+
+    def remove_race_call(self, race_key: str, provider: str) -> bool:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    "DELETE FROM midterm_race_calls WHERE race_key=? AND provider=?",
+                    (race_key, provider),
+                )
+                return cur.rowcount > 0
+
+    def get_race_calls(self, race_key: str | None = None) -> list[dict]:
+        """All calls, or all calls for one race. Newest call first."""
+        with _get_conn() as conn:
+            if race_key:
+                rows = conn.execute(
+                    "SELECT * FROM midterm_race_calls WHERE race_key=? ORDER BY called_at DESC",
+                    (race_key,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM midterm_race_calls ORDER BY called_at DESC"
+                ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_race_calls_grouped(self) -> dict[str, list[dict]]:
+        """race_key → list of calls. Used by the live dashboard endpoint to
+        compute disagreements in a single pass without N+1 queries."""
+        out: dict[str, list[dict]] = {}
+        for c in self.get_race_calls():
+            out.setdefault(c["race_key"], []).append(c)
+        return out
 
     # === Movement explanation cache =========================================
 

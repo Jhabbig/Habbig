@@ -170,6 +170,16 @@ class DigestSubscriptionBody(BaseModel):
     enabled: bool = True
 
 
+class RaceCallBody(BaseModel):
+    race_key: str
+    provider: Optional[str] = "manual"
+    called_party: Optional[str] = None       # "D" | "R" | "I"
+    called_candidate: Optional[str] = None
+    leader_pct: Optional[float] = None
+    reporting_pct: Optional[float] = None
+    notes: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Shared application state (populated during lifespan)
 # ---------------------------------------------------------------------------
@@ -763,6 +773,59 @@ async def alert_delivery_loop():
         await asyncio.sleep(ALERT_CHECK_INTERVAL)
 
 
+async def race_calls_poller():
+    """Poll configured race-call providers (AP, DDHQ) for new calls.
+
+    Disabled by default — only runs when LIVE_NIGHT_MODE=1 is set. Most
+    nights of the year there are no calls to fetch, so we don't hammer
+    paid APIs for nothing. Election-night the operator flips the flag
+    and the worker starts polling every ``LIVE_POLL_INTERVAL_SEC`` seconds
+    (default 30s).
+
+    Idempotent: ``upsert_race_call`` overwrites by (race_key, provider),
+    so re-polling never duplicates rows — providers can refine their
+    own previous call as more vote comes in.
+    """
+    while True:
+        try:
+            enabled = (os.getenv("LIVE_NIGHT_MODE", "").strip() not in ("", "0", "false", "False"))
+            if not enabled:
+                await asyncio.sleep(300)  # check the flag every 5 min
+                continue
+            interval = int(os.getenv("LIVE_POLL_INTERVAL_SEC", "30"))
+            election_date = os.getenv("LIVE_ELECTION_DATE", "2026-11-03")
+
+            from race_calls import _fetch_ap_calls, _fetch_ddhq_calls
+
+            tasks = [
+                _fetch_ap_calls(state.http_session, election_date),
+                _fetch_ddhq_calls(state.http_session),
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            inserted = 0
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning(f"Race-call provider error: {r}")
+                    continue
+                for call in (r or []):
+                    state.db.upsert_race_call(
+                        race_key=call["race_key"],
+                        provider=call["provider"],
+                        called_party=call.get("called_party"),
+                        called_candidate=call.get("called_candidate"),
+                        leader_pct=call.get("leader_pct"),
+                        reporting_pct=call.get("reporting_pct"),
+                        notes=call.get("notes"),
+                    )
+                    inserted += 1
+            if inserted:
+                logger.info(f"Race-call poller: {inserted} calls upserted")
+            await asyncio.sleep(max(10, interval))
+        except Exception as e:
+            logger.error(f"Race-call poller error: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+
 async def daily_digest_loop():
     """Send a once-daily email digest to opted-in users.
 
@@ -899,6 +962,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(jurisdiction_profile_updater(), name="jurisdiction_profiles"),
         asyncio.create_task(alert_delivery_loop(), name="alert_worker"),
         asyncio.create_task(daily_digest_loop(), name="daily_digest"),
+        asyncio.create_task(race_calls_poller(), name="race_calls_poller"),
     ]
 
     # Optional Polymarket WS consumer — gated on POLYMARKET_WS_ENABLED so the
@@ -3003,6 +3067,156 @@ async def v1_api_movements(request: Request, hours: int = 24, min_delta_pp: floa
         })
     out.sort(key=lambda r: -r["max_abs_delta_pp"])
     return {"version": "v1", "hours": hours, "race_count": len(out), "movements": out}
+
+
+# ===================================================================
+# Election-night live mode
+# ===================================================================
+
+def _market_top_outcome(market: dict) -> dict | None:
+    """Pull the highest-probability outcome from a market and stamp the
+    inferred party so the disagreement detector can compare directly."""
+    from race_calls import market_implied_winner_party
+    outcomes = market.get("outcomes") or []
+    if not outcomes:
+        return None
+    top = max(outcomes, key=lambda o: o.get("probability") or 0)
+    return {
+        "name": top.get("name"),
+        "probability": top.get("probability"),
+        "inferred_party": market_implied_winner_party(outcomes),
+    }
+
+
+def _build_live_dashboard() -> dict:
+    """Compute the full live-mode payload in one pass.
+
+    Joins active markets, current calls, and movement deltas into rows the
+    /live page consumes directly. Disagreements are pre-flagged so the
+    frontend doesn't need to reason about market vs. call provenance.
+    """
+    from race_calls import detect_disagreement, providers_configured
+
+    all_markets = state.db.get_all_markets(active_only=True)
+    calls_by_race = state.db.get_race_calls_grouped()
+
+    # Group markets by race_key (skip the unmatched sentinel buckets)
+    by_race: dict[str, dict] = {}
+    for m in all_markets:
+        rk = market_race_key(m)
+        if rk.startswith("unmatched_"):
+            continue
+        bucket = by_race.setdefault(rk, {
+            "race_key": rk,
+            "title": m.get("event_title") or m.get("title") or rk,
+            "race_type": m.get("race_type"),
+            "state": m.get("state"),
+            "by_source": {},
+            "total_volume": 0.0,
+        })
+        src = m.get("source", "unknown")
+        if src not in bucket["by_source"] or (m.get("volume") or 0) > (bucket["by_source"][src].get("volume") or 0):
+            bucket["by_source"][src] = {
+                "top": _market_top_outcome(m),
+                "volume": m.get("volume") or 0,
+            }
+        bucket["total_volume"] += m.get("volume") or 0
+
+    rows = []
+    for rk, b in by_race.items():
+        calls = calls_by_race.get(rk) or []
+        # Most recent call wins for the "called" status, but expose all of them
+        primary_call = calls[0] if calls else None
+
+        # Per-source disagreement assessment (each source vs the primary call)
+        disagreements = []
+        max_severity = 0
+        severity_rank = {"low": 1, "medium": 2, "high": 3}
+        for src, data in b["by_source"].items():
+            dis = detect_disagreement(primary_call, data.get("top"))
+            if dis:
+                dis["source"] = src
+                disagreements.append(dis)
+                max_severity = max(max_severity, severity_rank.get(dis["severity"], 0))
+
+        rows.append({
+            "race_key": rk,
+            "title": b["title"],
+            "race_type": b["race_type"],
+            "state": b["state"],
+            "by_source": b["by_source"],
+            "total_volume": round(b["total_volume"], 2),
+            "called": primary_call,
+            "all_calls": calls,
+            "disagreements": disagreements,
+            "max_severity": max_severity,
+        })
+
+    # Sort: biggest disagreements first, then uncalled-but-high-volume races
+    rows.sort(key=lambda r: (-r["max_severity"], -(r["total_volume"] or 0)))
+
+    return {
+        "rows": rows,
+        "providers": providers_configured(),
+        "totals": {
+            "races": len(rows),
+            "called": sum(1 for r in rows if r["called"]),
+            "disagreements": sum(1 for r in rows if r["disagreements"]),
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/data/live/dashboard")
+async def data_live_dashboard():
+    """Single-payload live-mode dashboard. Designed for 15-30s polling on
+    election night — heavy work is one DB scan, no LLM calls, no external
+    fetches in the hot path."""
+    return _build_live_dashboard()
+
+
+@app.get("/data/live/calls")
+async def data_live_calls(race_key: Optional[str] = None):
+    """All race calls (or just one race's calls). Public — calls are
+    factual events from public sources, no auth needed to read them."""
+    return {"calls": state.db.get_race_calls(race_key=race_key)}
+
+
+@app.get("/data/live/providers")
+async def data_live_providers():
+    """Which call providers are wired up. Lets the live UI show a
+    'markets only' banner when no real data source is configured."""
+    from race_calls import providers_configured
+    return {"providers": providers_configured()}
+
+
+@app.post("/admin/race-call")
+async def admin_race_call(body: RaceCallBody, request: Request):
+    """Manually call a race. Useful for testing, election-night human
+    overrides, or recording a call from a provider we don't yet support."""
+    await require_tier(request, "admin")
+    if body.called_party and body.called_party.upper() not in ("D", "R", "I"):
+        raise HTTPException(status_code=400, detail="called_party must be D, R, or I")
+    state.db.upsert_race_call(
+        race_key=body.race_key,
+        provider=(body.provider or "manual"),
+        called_party=(body.called_party or "").upper() or None,
+        called_candidate=body.called_candidate,
+        leader_pct=body.leader_pct,
+        reporting_pct=body.reporting_pct,
+        notes=body.notes,
+    )
+    return {"ok": True}
+
+
+@app.delete("/admin/race-call/{race_key}/{provider}")
+async def admin_race_call_remove(race_key: str, provider: str, request: Request):
+    """Retract a race call (provider got it wrong, or admin wants to clear
+    a manual override)."""
+    await require_tier(request, "admin")
+    if not state.db.remove_race_call(race_key, provider):
+        raise HTTPException(status_code=404, detail="call not found")
+    return {"ok": True}
 
 
 # ===================================================================

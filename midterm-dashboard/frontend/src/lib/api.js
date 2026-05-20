@@ -117,6 +117,14 @@ export const api = {
   openPosition: (p) => request('/premium/portfolio', { method: 'POST', body: JSON.stringify(p) }),
   closePosition: (id, exit_price) => request(`/premium/portfolio/${id}?exit_price=${exit_price}`, { method: 'DELETE' }),
 
+  // Live mode (election night)
+  liveDashboard: () => request('/data/live/dashboard'),
+  liveCalls: (raceKey) => request(`/data/live/calls${raceKey ? `?race_key=${encodeURIComponent(raceKey)}` : ''}`),
+  liveProviders: () => request('/data/live/providers'),
+  adminCallRace: (payload) => request('/admin/race-call', { method: 'POST', body: JSON.stringify(payload) }),
+  adminClearCall: (raceKey, provider) =>
+    request(`/admin/race-call/${encodeURIComponent(raceKey)}/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
+
   // Accuracy + movements
   accuracy: () => request('/data/accuracy'),
   accuracyBadge: (source, raceType) => {

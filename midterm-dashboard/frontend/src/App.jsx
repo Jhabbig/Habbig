@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-r
 import { api } from './lib/api'
 import { SettingsProvider } from './lib/settings'
 import { useT } from './lib/i18n'
-import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History, Bell, Briefcase, Target } from 'lucide-react'
+import { BarChart3, GitCompare, Shield, LogOut, Menu, X, Crown, Home, Activity, User, Globe, History, Bell, Briefcase, Target, Tv } from 'lucide-react'
 
 import ErrorBoundary from './lib/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
@@ -21,6 +21,7 @@ import Settings from './pages/Settings'
 import Notifications from './pages/Notifications'
 import Portfolio from './pages/Portfolio'
 import Accuracy from './pages/Accuracy'
+import Live from './pages/Live'
 
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -84,6 +85,7 @@ function Nav() {
     { to: '/world', label: t('nav.world'), icon: Globe },
     { to: '/historical', label: t('nav.historical'), icon: History },
     { to: '/accuracy', label: 'Accuracy', icon: Target },
+    { to: '/live', label: 'Live', icon: Tv },
   ]
 
   if (user) {
@@ -193,6 +195,7 @@ export default function App() {
               <Route path="/world" element={<WorldElections />} />
               <Route path="/historical" element={<Historical />} />
               <Route path="/accuracy" element={<Accuracy />} />
+              <Route path="/live" element={<Live />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
