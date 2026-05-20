@@ -675,14 +675,18 @@ function renderLeaders(d) {
 
 function renderConclave(d) {
   const ag = d.college_aggregates;
+  const sampleElectors = d.cardinals.filter(c => c.elector).length;
+  const verifiedCount = d.cardinals.filter(c => c.verified !== false).length;
   const hero = document.getElementById("conclave-hero");
   hero.innerHTML = [
-    {l: "Total cardinals",    v: ag.total_cardinals},
-    {l: "Electors (<80)",     v: ag.total_electors},
-    {l: "2/3 majority",       v: ag.two_thirds_threshold},
-    {l: "Created by Francis", v: ag.by_appointer.Francis + " electors"},
-    {l: "Papabile priors",    v: (100 - d.rules.field_residual_pct) + "%"},
-    {l: "Field residual",     v: d.rules.field_residual_pct + "%"},
+    {l: "Total cardinals (college)", v: ag.total_cardinals},
+    {l: "Total electors (<80)",      v: ag.total_electors},
+    {l: "Enumerated here",           v: d.cardinals.length + " (" + verifiedCount + " verified)"},
+    {l: "Electors in sample",        v: sampleElectors},
+    {l: "2/3 majority",              v: ag.two_thirds_threshold + " votes"},
+    {l: "Created by Francis",        v: ag.by_appointer.Francis + " electors"},
+    {l: "Papabile priors sum",       v: (100 - d.rules.field_residual_pct) + "%"},
+    {l: "Field residual",            v: d.rules.field_residual_pct + "%"},
   ].map(s => `<div class="stat"><div class="label">${escapeHtml(s.l)}</div><div class="value">${escapeHtml(String(s.v))}</div></div>`).join("");
 
   // Papabile cards
@@ -696,17 +700,18 @@ function renderConclave(d) {
       </div>
     </div>`).join("");
 
-  // Cardinal-electors table — show top ~25 (papabile_tier desc)
-  const cards = d.cardinals.slice(0, 30);
+  // Cardinal table — full enumerated list, sorted by tier then age asc
+  const cards = d.cardinals.slice();
   const header = `<div class="cardinal-row" style="font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
     <div>Cardinal / Role</div><div class="num">Age</div><div>Region</div><div>Appointed by</div><div>Wing · Tier</div>
   </div>`;
   document.getElementById("cardinals").innerHTML = header + cards.map(c => {
     const wing = `<span class="wing-pill wing-${c.wing}">${escapeHtml(c.wing)}</span>`;
     const tier = `<span class="tier-pill tier-${c.papabile_tier}">T${c.papabile_tier}</span>`;
+    const verifyMark = c.verified === false ? ' <span title="approximated" style="color:#d29922">~</span>' : "";
     return `<div class="cardinal-row">
       <div>
-        <div class="who">${escapeHtml(c.name)}${c.elector ? "" : " <span style=\"color:var(--muted);font-size:10px\">(non-elector)</span>"}</div>
+        <div class="who">${escapeHtml(c.name)}${verifyMark}${c.elector ? "" : " <span style=\"color:var(--muted);font-size:10px\">(non-elector)</span>"}</div>
         <div class="role">${escapeHtml(c.role)} · ${escapeHtml(c.country)}</div>
       </div>
       <div class="num">${c.age}</div>
