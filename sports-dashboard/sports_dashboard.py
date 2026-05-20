@@ -160,6 +160,11 @@ M_WS_RECONNECTS = _PromCounter(
     "sports_dashboard_ws_reconnects_total",
     "Polymarket WS reconnect attempts",
 )
+M_EXPLAIN_REQUESTS = _PromCounter(
+    "sports_dashboard_explain_requests_total",
+    "AI-explanation requests by outcome",
+    labelnames=("result",),  # cache_hit | api_call | error | disabled
+)
 
 
 load_dotenv()
@@ -459,6 +464,18 @@ def _init_db():
                 UNIQUE(user_id, endpoint)
             );
             CREATE INDEX IF NOT EXISTS idx_push_user ON sports_push_subscriptions(user_id);
+            -- LLM-generated explanations for signals. Keyed by a stable hash
+            -- of (event, outcome, divergence-rounded, sport) so repeated
+            -- views of the same signal hit the cache instead of the API.
+            CREATE TABLE IF NOT EXISTS sports_signal_explanations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cache_key TEXT NOT NULL UNIQUE,
+                signal_summary TEXT,
+                explanation TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_signal_expl_key ON sports_signal_explanations(cache_key, created_at);
             CREATE TABLE IF NOT EXISTS sports_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sport TEXT,
@@ -7479,6 +7496,225 @@ async def push_test(request: Request):
     })
     return JSONResponse({"status": "ok", "delivered": delivered,
                           "push_available": _PUSH_AVAILABLE})
+
+
+# ---------------------------------------------------------------------------
+# AI-explained signals (Claude)
+# ---------------------------------------------------------------------------
+#
+# For every flagged signal, generate a plain-English "why this is mispriced"
+# explanation via Claude. Two layers of caching keep cost down:
+#   1. Prompt caching: the system prompt is identical across all calls, so
+#      we mark it with cache_control and Anthropic serves repeated requests
+#      at ~10% the normal input price.
+#   2. DB cache: we hash the signal's identity (event + outcome + divergence
+#      rounded to 0.1pp + sport) and cache the explanation for 30 min, so
+#      multiple users viewing the same signal cost one API call total.
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+EXPLAIN_MODEL = os.getenv("EXPLAIN_MODEL", "claude-opus-4-7")
+EXPLAIN_CACHE_TTL_SECONDS = int(os.getenv("EXPLAIN_CACHE_TTL_SECONDS", "1800"))
+
+_anthropic_client = None
+
+_EXPLAIN_SYSTEM_PROMPT = """You are a sharp sports-betting analyst writing concise plain-English explanations of why a specific market divergence exists between a bookmaker consensus and a prediction-market venue (Polymarket or Kalshi).
+
+Each user message is a single JSON object describing ONE comparison: event, outcome, sharp bookmaker probability, prediction-market price, divergence in percentage points, plus context (vig, liquidity, time-to-event, books present).
+
+Write a clear explanation for experienced bettors. Cover, in order:
+1. WHICH side is mispricing (book consensus vs prediction market) and by how much.
+2. WHY this gap likely exists — slow-to-react market, retail vs sharp money mix, low liquidity, recent news catalyst, vig differences.
+3. WHAT would close it — a steam move on the slow venue, a liquidity event, or resolution.
+
+Constraints:
+- Maximum 3 sentences total.
+- No financial-advice disclaimers, no emoji, no markdown formatting.
+- If |divergence| < 3pp, note that fees likely eat the edge.
+- Don't recommend specific stake sizes or guarantee outcomes.
+- Use specific numbers from the input — vague generalities fail this task.
+"""
+
+
+def _get_anthropic_client():
+    """Lazy-init the Anthropic client. Returns None if SDK or API key is missing."""
+    global _anthropic_client
+    if _anthropic_client is not None:
+        return _anthropic_client
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        log.warning("anthropic SDK not installed — /api/signals/explain disabled")
+        return None
+    _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def _signal_cache_key(signal: dict) -> str:
+    """Stable hash for the signal's identity.
+
+    Rounded to 0.1pp on divergence so tiny line wobbles don't cause cache
+    misses on what's effectively the same signal. SHA-256 truncated to 32
+    hex chars — collision probability is negligible at our volumes.
+    """
+    parts = (
+        (signal.get("home_team") or "").strip().lower(),
+        (signal.get("away_team") or "").strip().lower(),
+        (signal.get("outcome") or signal.get("outcome_name") or "").strip().lower(),
+        round(float(signal.get("divergence") or signal.get("divergence_pct") or 0), 1),
+        (signal.get("sport") or "").strip().lower(),
+    )
+    raw = "|".join(str(p) for p in parts)
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _get_cached_explanation(cache_key: str) -> str | None:
+    """Return cached explanation if within TTL; None otherwise.
+
+    SQLite's `datetime('now')` writes `YYYY-MM-DD HH:MM:SS` (no timezone,
+    space separator) — we format the cutoff to match so lexicographic
+    comparison in the WHERE clause works correctly. Don't use
+    `datetime.isoformat()` here: its 'T' separator sorts ABOVE space and
+    causes every cached row to look stale.
+    """
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(seconds=EXPLAIN_CACHE_TTL_SECONDS))
+    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT explanation FROM sports_signal_explanations "
+            "WHERE cache_key = ? AND created_at >= ? LIMIT 1",
+            (cache_key, cutoff_str),
+        ).fetchone()
+    return row["explanation"] if row else None
+
+
+def _store_explanation(cache_key: str, signal: dict, explanation: str, model: str) -> None:
+    summary = json.dumps({
+        "event": f"{signal.get('home_team', '')} vs {signal.get('away_team', '')}",
+        "outcome": signal.get("outcome") or signal.get("outcome_name"),
+        "divergence": signal.get("divergence"),
+        "sport": signal.get("sport"),
+    }, separators=(",", ":"))
+    with _get_db() as conn:
+        conn.execute(
+            "INSERT INTO sports_signal_explanations "
+            "(cache_key, signal_summary, explanation, model) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(cache_key) DO UPDATE SET "
+            "  explanation = excluded.explanation, "
+            "  model = excluded.model, "
+            "  created_at = datetime('now')",
+            (cache_key, summary, explanation, model),
+        )
+
+
+def _build_explain_payload(signal: dict) -> dict:
+    """Project a comparison/signal dict into the fields the prompt cares about."""
+    return {
+        "sport": signal.get("sport") or "unknown",
+        "event": f"{signal.get('home_team', '')} vs {signal.get('away_team', '')}".strip(" vs"),
+        "outcome": signal.get("outcome") or signal.get("outcome_name") or "",
+        "sharp_book_prob_pct": signal.get("sharp_prob"),
+        "consensus_devigged_pct": (signal.get("consensus_over_devigged")
+                                    or signal.get("true_prob_no_vig")
+                                    or signal.get("consensus_prob")),
+        "polymarket_price_pct": signal.get("poly_prob"),
+        "kalshi_price_pct": signal.get("kalshi_prob"),
+        "divergence_pp": signal.get("divergence") or signal.get("divergence_pct"),
+        "vig_pct": signal.get("vig_pct") or signal.get("implied_vig"),
+        "books_present": signal.get("sharp_books_present") or [],
+        "poly_volume_usd": signal.get("poly_volume"),
+        "poly_spread_pct": signal.get("spread_pct") or signal.get("poly_spread"),
+        "time_to_event_hours": signal.get("time_to_event_hours"),
+        "kelly_pct": signal.get("kelly_pct"),
+    }
+
+
+def _explain_signal_via_claude(signal: dict) -> str:
+    """Generate a plain-English explanation via Claude. Returns empty string
+    if the SDK or API key isn't configured.
+
+    Uses prompt caching on the system prompt so repeated calls in the same
+    5-min window share a cached prefix (~10% cost on the system tokens).
+    No streaming — outputs are short (≤300 tokens) and we want the full
+    string in one go for the API response.
+    """
+    client = _get_anthropic_client()
+    if client is None:
+        return ""
+
+    response = client.messages.create(
+        model=EXPLAIN_MODEL,
+        max_tokens=300,
+        thinking={"type": "disabled"},  # 2-3 sentence task, no reasoning needed
+        system=[{
+            "type": "text",
+            "text": _EXPLAIN_SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": json.dumps(_build_explain_payload(signal),
+                                    separators=(",", ":"), sort_keys=True),
+        }],
+    )
+    for block in response.content:
+        if block.type == "text":
+            return block.text.strip()
+    return ""
+
+
+@app.post("/api/signals/explain")
+async def api_explain_signal(request: Request):
+    """Return a plain-English explanation of why a signal is mispriced.
+
+    POST body: a comparison/signal dict (home_team, away_team, outcome,
+    sharp_prob, poly_prob, divergence, sport, ...). Returns
+    {"explanation": str, "cached": bool}. Cached for EXPLAIN_CACHE_TTL_SECONDS
+    by signal identity (event + outcome + divergence rounded to 0.1pp + sport).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        signal = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(signal, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    # Require at least an outcome OR home_team so we have something identifying
+    if not (signal.get("outcome") or signal.get("outcome_name") or signal.get("home_team")):
+        return JSONResponse({"error": "signal missing event/outcome"}, status_code=400)
+
+    cache_key = _signal_cache_key(signal)
+    cached = await asyncio.to_thread(_get_cached_explanation, cache_key)
+    if cached:
+        M_EXPLAIN_REQUESTS.labels(result="cache_hit").inc()
+        return JSONResponse({"explanation": cached, "cached": True})
+
+    if not ANTHROPIC_API_KEY:
+        M_EXPLAIN_REQUESTS.labels(result="disabled").inc()
+        return JSONResponse(
+            {"error": "AI explanations not configured (ANTHROPIC_API_KEY unset)",
+             "explanation": None, "cached": False},
+            status_code=503,
+        )
+
+    try:
+        explanation = await asyncio.to_thread(_explain_signal_via_claude, signal)
+    except Exception as e:
+        M_EXPLAIN_REQUESTS.labels(result="error").inc()
+        log.warning("Claude explanation error: %s", e)
+        return JSONResponse({"error": f"explanation failed: {e}"}, status_code=502)
+
+    if not explanation:
+        M_EXPLAIN_REQUESTS.labels(result="error").inc()
+        return JSONResponse({"error": "empty explanation from model"}, status_code=502)
+
+    await asyncio.to_thread(_store_explanation, cache_key, signal, explanation, EXPLAIN_MODEL)
+    M_EXPLAIN_REQUESTS.labels(result="api_call").inc()
+    return JSONResponse({"explanation": explanation, "cached": False})
 
 
 # ---------------------------------------------------------------------------
