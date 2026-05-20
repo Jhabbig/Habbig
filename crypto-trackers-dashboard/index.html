@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Crypto Trackers - narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220;
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --bg-3: #28354c;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --accent: #f59e0b;          /* amber - crypto theme */
+    --accent-2: #ef4444;        /* red - losers */
+    --accent-3: #34d399;        /* green - gainers */
+    --accent-4: #38bdf8;        /* sky - info */
+    --magenta: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  }
+  header .row { display: flex; align-items: baseline; gap: 24px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { margin-top: 3px; color: var(--text-2); font-size: 12px; }
+  header .updated { font-size: 11px; color: var(--text-3); margin-left: auto; font-variant-numeric: tabular-nums; }
+  header .updated .dot { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: var(--accent-3); vertical-align: middle; margin-right: 6px; }
+  header .updated.stale .dot { background: var(--accent); }
+  main { padding: 18px 24px 80px; max-width: 1400px; margin: 0 auto; }
+
+  .crit-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 0 0 22px; }
+  .crit { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .crit .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+  .crit .num   { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .crit .sub   { font-size: 11px; color: var(--text-2); }
+  .crit.green  { border-color: rgba(52,211,153,0.4); }
+  .crit.amber  { border-color: rgba(245,158,11,0.4); }
+  .crit.red    { border-color: rgba(239,68,68,0.4); }
+  .crit.green .num { color: var(--accent-3); }
+  .crit.amber .num { color: var(--accent); }
+  .crit.red   .num { color: var(--accent-2); }
+
+  section { margin: 28px 0 18px; }
+  section h2 {
+    margin: 0 0 12px;
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-2); font-weight: 600;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  section h2 small { font-size: 10px; color: var(--text-3); text-transform: none; letter-spacing: 0; font-style: italic; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { background: var(--bg-2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; cursor: pointer; user-select: none; }
+  th:hover { color: var(--text-1); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: rgba(255,255,255,0.025); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  td.up { color: var(--accent-3); }
+  td.down { color: var(--accent-2); }
+  td.muted { color: var(--text-3); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .coin-cell { display: flex; align-items: center; gap: 8px; }
+  .coin-cell img { width: 22px; height: 22px; border-radius: 999px; }
+  .coin-cell .sym { color: var(--text-3); text-transform: uppercase; font-size: 11px; }
+
+  .filters {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 10px;
+  }
+  .filters input, .filters select {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+    border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+  .filters label { font-size: 11px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; background: var(--bg-2); color: var(--text-2); margin: 0 4px 4px 0; }
+  .pill.up    { background: rgba(52, 211, 153, 0.15); color: var(--accent-3); }
+  .pill.down  { background: rgba(239, 68, 68, 0.15); color: var(--accent-2); }
+  .pill.warn  { background: rgba(245, 158, 11, 0.15); color: var(--accent); }
+  .pill.info  { background: rgba(56, 189, 248, 0.15); color: var(--accent-4); }
+
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 12px; }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+
+  /* Fear & Greed gauge */
+  .fng-wrap { display: flex; gap: 16px; align-items: center; }
+  .fng-gauge { position: relative; width: 200px; height: 110px; flex-shrink: 0; }
+  .fng-gauge svg { display: block; }
+  .fng-gauge .needle { transform-origin: 100px 100px; transition: transform 1s ease-out; }
+  .fng-gauge .value { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 28px; font-weight: 700; }
+  .fng-gauge .label { position: absolute; bottom: -10px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--text-3); }
+
+  /* Sources */
+  .sources-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 6px; }
+  .src { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+  .src-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+  .src-dot.GREEN  { background: var(--accent-3); }
+  .src-dot.YELLOW { background: var(--accent); }
+  .src-dot.RED    { background: var(--accent-2); }
+  .src-dot.UNKNOWN{ background: var(--text-3); }
+  .src .name { font-family: monospace; font-size: 11px; color: var(--text-2); flex: 1; word-break: break-all; }
+  .src .meta { color: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+  .footer { color: var(--text-3); font-size: 11px; margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .footer h4 { margin: 0 0 6px; font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.08em; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div>
+      <h1>Crypto Trackers</h1>
+      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; data-fidelity-first</div>
+    </div>
+    <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
+  </div>
+</header>
+
+<main>
+  <div class="crit-strip" id="crit-strip"></div>
+
+  <section>
+    <h2>Market mood <small>Fear &amp; Greed Index (Alternative.me)</small></h2>
+    <div id="fng-card"></div>
+  </section>
+
+  <section>
+    <h2>Universe screener <small>top 500 coins by market cap &middot; CoinGecko</small></h2>
+    <div class="filters">
+      <label>Search <input id="f-search" type="search" placeholder="BTC, eth, solana..." style="width:160px"/></label>
+      <label>Min mcap <input id="f-mcap" type="number" placeholder="0" style="width:120px"/></label>
+      <label>Min vol <input id="f-vol" type="number" placeholder="0" style="width:120px"/></label>
+      <label>24h ≥ <input id="f-chmin" type="number" placeholder="-100" style="width:80px"/> %</label>
+      <label>24h ≤ <input id="f-chmax" type="number" placeholder="1000" style="width:80px"/> %</label>
+      <label>Sort
+        <select id="f-sort">
+          <option value="rank">Rank</option>
+          <option value="market_cap">Market cap</option>
+          <option value="volume">Volume</option>
+          <option value="change_1h">1h %</option>
+          <option value="change_24h">24h %</option>
+          <option value="change_7d">7d %</option>
+          <option value="change_30d">30d %</option>
+          <option value="ath_pct">From ATH</option>
+        </select>
+      </label>
+      <label>Order
+        <select id="f-order">
+          <option value="asc">↑ asc</option>
+          <option value="desc" selected>↓ desc</option>
+        </select>
+      </label>
+      <label>Show
+        <select id="f-limit">
+          <option>50</option><option selected>100</option><option>200</option><option>500</option>
+        </select>
+      </label>
+    </div>
+    <div id="universe-table"></div>
+  </section>
+
+  <section>
+    <h2>Top movers <small>last 24h, market-cap-weighted, USD</small></h2>
+    <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Gainers</div><div id="gainers"></div></div>
+      <div><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Losers</div><div id="losers"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Cross-exchange arbitrage <small>spot prices joined across Binance / Coinbase / Kraken / Bybit / OKX &middot; net of round-trip taker fees</small></h2>
+    <div id="crossex-table"></div>
+  </section>
+
+  <section>
+    <h2>Funding rates <small>USDT perps &middot; Binance + Bybit &middot; sorted by |rate|</small></h2>
+    <div id="funding-table"></div>
+  </section>
+
+  <section>
+    <h2>DeFi TVL <small>DefiLlama &middot; chains + stablecoins + DEX volume</small></h2>
+    <div id="defi-card"></div>
+  </section>
+
+  <section>
+    <h2>Trending coins <small>CoinGecko search volume, 24h</small></h2>
+    <div id="trending-list"></div>
+  </section>
+
+  <section>
+    <h2>Source health <small>per-upstream freshness, latency, success rate</small></h2>
+    <div id="sources-grid" class="sources-grid"></div>
+  </section>
+
+  <div class="footer">
+    <h4>Sources</h4>
+    CoinGecko (universe + global + trending + per-coin detail) &middot;
+    Binance spot+futures (24h tickers + funding + depth + klines) &middot;
+    Coinbase Exchange (ticker + 24h stats) &middot;
+    Kraken (ticker) &middot;
+    Bybit V5 (spot + linear perps) &middot;
+    OKX V5 (spot + swap) &middot;
+    DefiLlama (chains + protocols + stablecoins + DEX overview) &middot;
+    Alternative.me (Crypto Fear &amp; Greed Index).<br/>
+    Data fidelity first - every datapoint is mirrored from canonical exchange / on-chain source-of-truth with verifiable timestamps. No predictions; no neural nets.
+  </div>
+</main>
+
+<script>
+(function() {
+  const fmt = (n, d = 0) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null || !isFinite(n)) return "-";
+    if (Math.abs(n) >= 1e12) return (n / 1e12).toFixed(2) + "T";
+    if (Math.abs(n) >= 1e9)  return (n / 1e9).toFixed(2)  + "B";
+    if (Math.abs(n) >= 1e6)  return (n / 1e6).toFixed(2)  + "M";
+    if (Math.abs(n) >= 1e3)  return (n / 1e3).toFixed(1)  + "k";
+    return fmt(n, 2);
+  };
+  const pct = (n, d = 2) => n == null ? "-" : (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
+  const fmtPrice = (n) => {
+    if (n == null) return "-";
+    if (n >= 1)    return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+    if (n >= 0.01) return "$" + n.toFixed(4);
+    if (n >= 1e-6) return "$" + n.toFixed(6);
+    return "$" + n.toExponential(2);
+  };
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const upDown = (n, d = 2) => n == null ? '<td class="num muted">-</td>' :
+    `<td class="num ${n >= 0 ? 'up' : 'down'}">${pct(n, d)}</td>`;
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+  function pill(label, kind = "") { return `<span class="pill ${kind}">${escapeHtml(label)}</span>`; }
+
+  function critTile(label, val, sub = "", kind = "") {
+    return `<div class="crit ${kind}"><div class="label">${escapeHtml(label)}</div><div class="num">${val}</div><div class="sub">${sub}</div></div>`;
+  }
+
+  function setUpdated(iso) {
+    const d = iso ? new Date(iso) : new Date();
+    const ago = Math.round((Date.now() - d.getTime()) / 1000);
+    document.getElementById("updated-text").textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago/60)}m ago`;
+    document.getElementById("updated").classList.toggle("stale", ago > 300);
+  }
+
+  // ─── Crit strip ─────────────────────────────────────────────────────────────
+  function renderCritStrip(s) {
+    const g = s.global || {};
+    const fng = s.fear_greed_latest || {};
+    const defi = s.defi || {};
+    const ex = s.exchange_health || {};
+    const movers = (s.top_gainers_24h || [])[0];
+    const losers = (s.top_losers_24h || [])[0];
+    const tiles = [
+      critTile("Total market cap", "$" + fmtBig(g.total_market_cap_usd), `BTC dom ${fmt(g.btc_dominance_pct, 1)}% &middot; ETH dom ${fmt(g.eth_dominance_pct, 1)}%`, "amber"),
+      critTile("24h volume", "$" + fmtBig(g.total_volume_24h_usd), `${fmt(g.active_cryptocurrencies)} active coins`, "amber"),
+      critTile("Mcap Δ24h", pct(g.market_cap_change_24h_pct, 2), "across all markets",
+               g.market_cap_change_24h_pct >= 0 ? "green" : "red"),
+      critTile("Fear &amp; Greed", fmt(fng.value), escapeHtml(fng.classification || ""),
+               fng.value >= 75 ? "green" : fng.value >= 50 ? "amber" : fng.value >= 25 ? "amber" : "red"),
+      critTile("DeFi TVL", "$" + fmtBig(defi.total_tvl_usd), `${defi.chains_count || 0} chains`, "amber"),
+      critTile("DEX 24h volume", "$" + fmtBig(defi.dex_24h_usd), "on-chain swaps", "amber"),
+      critTile("Stablecoin supply", "$" + fmtBig(defi.stablecoin_total_usd), "circulating", "amber"),
+      critTile("Top gainer 24h", movers ? movers.symbol : "-",
+               movers ? `${escapeHtml(movers.name)} &middot; ${pct(movers.change_24h, 1)}` : "", "green"),
+      critTile("Top loser 24h", losers ? losers.symbol : "-",
+               losers ? `${escapeHtml(losers.name)} &middot; ${pct(losers.change_24h, 1)}` : "", "red"),
+      critTile("Tracked symbols", fmt((ex.binance_spot_symbols || 0) + (ex.bybit_spot_symbols || 0) + (ex.okx_spot_symbols || 0)),
+               `binance ${fmt(ex.binance_spot_symbols)} &middot; bybit ${fmt(ex.bybit_spot_symbols)} &middot; okx ${fmt(ex.okx_spot_symbols)}`, "amber"),
+      critTile("Universe size", fmt(s.universe_count), "top by market cap", "amber"),
+    ];
+    document.getElementById("crit-strip").innerHTML = tiles.join("");
+  }
+
+  // ─── Fear & Greed gauge ────────────────────────────────────────────────────
+  function renderFng(s) {
+    const fng = s.fear_greed_latest || {};
+    const target = document.getElementById("fng-card");
+    if (!fng.value && fng.value !== 0) { target.innerHTML = '<div class="card">Fear &amp; Greed unavailable.</div>'; return; }
+    const v = fng.value;
+    // Map 0-100 to -90..90 degrees
+    const angle = (v / 100) * 180 - 90;
+    target.innerHTML = `<div class="card"><div class="fng-wrap">
+      <div class="fng-gauge">
+        <svg width="200" height="120" viewBox="0 0 200 120">
+          <defs>
+            <linearGradient id="fng-grad" x1="0%" x2="100%">
+              <stop offset="0%" stop-color="#ef4444"/>
+              <stop offset="25%" stop-color="#f97316"/>
+              <stop offset="50%" stop-color="#fbbf24"/>
+              <stop offset="75%" stop-color="#a3e635"/>
+              <stop offset="100%" stop-color="#34d399"/>
+            </linearGradient>
+          </defs>
+          <path d="M 10 100 A 90 90 0 0 1 190 100" stroke="url(#fng-grad)" stroke-width="14" fill="none" stroke-linecap="round"/>
+          <g class="needle" style="transform: rotate(${angle}deg)">
+            <line x1="100" y1="100" x2="100" y2="22" stroke="white" stroke-width="2"/>
+            <circle cx="100" cy="100" r="5" fill="white"/>
+          </g>
+        </svg>
+        <div class="value">${v}</div>
+        <div class="label">${escapeHtml(fng.classification || "")}</div>
+      </div>
+      <div style="flex:1">
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:8px">Sentiment vector across 24h price/volume/dominance/social. Updated daily by Alternative.me.</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-3)">
+          ${(s.fear_greed_recent || []).slice(0, 7).map(r => `<div style="text-align:center"><div style="font-weight:600;font-size:13px;color:var(--text-1)">${r.value}</div><div>${r.date.slice(5)}</div></div>`).join("")}
+        </div>
+      </div>
+    </div></div>`;
+  }
+
+  // ─── Universe screener ────────────────────────────────────────────────────
+  let _universeCache = null;
+  let _filterDebounce = null;
+
+  function getFilters() {
+    return {
+      search:        document.getElementById("f-search").value.trim() || undefined,
+      min_market_cap: parseFloat(document.getElementById("f-mcap").value) || undefined,
+      min_volume:     parseFloat(document.getElementById("f-vol").value) || undefined,
+      min_change_24h: document.getElementById("f-chmin").value !== "" ? parseFloat(document.getElementById("f-chmin").value) : undefined,
+      max_change_24h: document.getElementById("f-chmax").value !== "" ? parseFloat(document.getElementById("f-chmax").value) : undefined,
+      sort:           document.getElementById("f-sort").value,
+      order:          document.getElementById("f-order").value,
+      limit:          parseInt(document.getElementById("f-limit").value, 10) || 100,
+    };
+  }
+
+  function applyUniverseFilter() {
+    clearTimeout(_filterDebounce);
+    _filterDebounce = setTimeout(async () => {
+      try {
+        const f = getFilters();
+        const params = new URLSearchParams();
+        Object.entries(f).forEach(([k, v]) => { if (v !== undefined && v !== "" && v !== null) params.set(k, v); });
+        const data = await fetchJson("/api/screener?" + params.toString());
+        renderUniverse(data.coins || []);
+      } catch (e) {
+        document.getElementById("universe-table").innerHTML = `<div class="err">Screener failed: ${escapeHtml(e.message)}</div>`;
+      }
+    }, 250);
+  }
+
+  function renderUniverse(coins) {
+    const target = document.getElementById("universe-table");
+    if (!coins.length) { target.innerHTML = '<div class="card">No coins match filters.</div>'; return; }
+    const rows = coins.map(c => `<tr>
+      <td class="num muted">${c.market_cap_rank ?? "-"}</td>
+      <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name || "")}</div><div class="sym">${escapeHtml(c.symbol || "")}</div></div></div></td>
+      <td class="num">${fmtPrice(c.current_price)}</td>
+      ${upDown(c.change_1h)}
+      ${upDown(c.change_24h)}
+      ${upDown(c.change_7d)}
+      ${upDown(c.change_30d)}
+      <td class="num">$${fmtBig(c.market_cap)}</td>
+      <td class="num">$${fmtBig(c.total_volume)}</td>
+      <td class="num muted">${c.ath_change_pct != null ? pct(c.ath_change_pct, 1) : "-"}</td>
+    </tr>`).join("");
+    target.innerHTML = `<table><thead><tr>
+      <th>#</th><th>Coin</th><th>Price</th><th>1h</th><th>24h</th><th>7d</th><th>30d</th><th>Mcap</th><th>Vol 24h</th><th>From ATH</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  async function loadUniverse() { applyUniverseFilter(); }
+
+  // ─── Movers ────────────────────────────────────────────────────────────────
+  function renderMovers(s) {
+    const renderList = (id, items, dir) => {
+      const target = document.getElementById(id);
+      if (!items || !items.length) { target.innerHTML = '<div class="card">no data</div>'; return; }
+      target.innerHTML = `<table><tbody>${items.slice(0, 8).map(c => `<tr>
+        <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name)}</div><div class="sym">${escapeHtml(c.symbol)}</div></div></div></td>
+        <td class="num">${fmtPrice(c.current_price)}</td>
+        ${upDown(c.change_24h, 1)}
+        <td class="num muted">$${fmtBig(c.total_volume)}</td>
+      </tr>`).join("")}</tbody></table>`;
+    };
+    renderList("gainers", s.top_gainers_24h, "up");
+    renderList("losers", s.top_losers_24h, "down");
+  }
+
+  // ─── Cross-exchange ───────────────────────────────────────────────────────
+  async function loadCrossEx() {
+    try {
+      const data = await fetchJson("/api/cross_exchange/spreads?min_volume_usd=500000&top_n=40");
+      const target = document.getElementById("crossex-table");
+      const rows = data.spreads_top || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No cross-exchange spreads found.</div>'; return; }
+      const tbody = rows.map(r => {
+        const netCls = r.net_arb_pct > 0.05 ? "up" : r.net_arb_pct < 0 ? "down" : "muted";
+        return `<tr>
+          <td><strong>${escapeHtml(r.base)}</strong></td>
+          <td><div class="sym">${escapeHtml(r.low_venue)} ${fmtPrice(r.low_price)}</div></td>
+          <td><div class="sym">${escapeHtml(r.high_venue)} ${fmtPrice(r.high_price)}</div></td>
+          <td class="num">${r.spread_pct.toFixed(3)}%</td>
+          <td class="num muted">${r.round_trip_fees_pct.toFixed(2)}%</td>
+          <td class="num ${netCls}">${r.net_arb_pct > 0 ? "+" : ""}${r.net_arb_pct.toFixed(3)}%</td>
+          <td class="num muted">${(r.venues || []).join(", ")}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Coin</th><th>Cheapest venue</th><th>Richest venue</th><th>Spread</th><th>Fees (round-trip)</th><th>Net arb</th><th>Venues</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${rows.length} spreads &middot; ${data.actionable_count} above the +0.05% net-arb threshold &middot; exchanges: ${(data.exchanges_used || []).join(", ")}</div>`;
+    } catch (e) {
+      document.getElementById("crossex-table").innerHTML = `<div class="err">Cross-exchange fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Funding rates ─────────────────────────────────────────────────────────
+  async function loadFunding() {
+    try {
+      const data = await fetchJson("/api/funding/rates");
+      const target = document.getElementById("funding-table");
+      const rows = data.rows_top || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No funding-rate data.</div>'; return; }
+      const tbody = rows.map(r => {
+        const m = r.median_rate;
+        const cls = m > 0.0005 ? "down" : m < -0.0005 ? "up" : "muted";
+        const venues = (r.venues || []).join(", ");
+        return `<tr>
+          <td><strong>${escapeHtml(r.base)}</strong></td>
+          <td class="num ${cls}">${(m * 100).toFixed(4)}%</td>
+          <td class="num muted">${(r.min_rate * 100).toFixed(4)}% → ${(r.max_rate * 100).toFixed(4)}%</td>
+          <td class="num">${(r.annualised_at_median_pct).toFixed(1)}%</td>
+          <td class="num muted">${r.spread_bps.toFixed(2)} bp</td>
+          <td class="sym">${escapeHtml(venues)}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Coin</th><th>Median rate (8h)</th><th>Range</th><th>Annualised</th><th>Venue spread</th><th>Venues</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.total_symbols} symbols &middot; longs paying-up: ${data.high_funding_long_count} &middot; shorts paying-up: ${data.high_funding_short_count}</div>`;
+    } catch (e) {
+      document.getElementById("funding-table").innerHTML = `<div class="err">Funding fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── DeFi ──────────────────────────────────────────────────────────────────
+  function renderDefi(s) {
+    const d = s.defi || {};
+    const chains = d.top_chains || [];
+    const stables = d.top_stablecoins || [];
+    document.getElementById("defi-card").innerHTML = `<div class="card">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Top chains by TVL</div>
+          <table><tbody>${chains.map(c => `<tr>
+            <td><strong>${escapeHtml(c.name)}</strong></td>
+            <td class="num">$${fmtBig(c.tvl_usd)}</td>
+          </tr>`).join("")}</tbody></table>
+        </div>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Top stablecoins</div>
+          <table><tbody>${stables.map(s => `<tr>
+            <td><strong>${escapeHtml(s.symbol)}</strong> <span class="sym">${escapeHtml(s.name)}</span></td>
+            <td class="num muted">${escapeHtml(s.peg_mechanism || "?")}</td>
+            <td class="num">$${fmtBig(s.circulating_usd)}</td>
+          </tr>`).join("")}</tbody></table>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ─── Trending ──────────────────────────────────────────────────────────────
+  async function loadTrending() {
+    try {
+      const t = await fetchJson("/api/trending");
+      const target = document.getElementById("trending-list");
+      const coins = t.coins || [];
+      if (!coins.length) { target.innerHTML = '<div class="card">no trending data</div>'; return; }
+      target.innerHTML = `<div class="card" style="display:flex;flex-wrap:wrap;gap:14px">${coins.map((c, i) => `
+        <div style="display:flex;align-items:center;gap:8px;background:var(--bg-2);padding:6px 10px;border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:11px;color:var(--text-3)">#${i + 1}</div>
+          ${c.thumb ? `<img src="${escapeHtml(c.thumb)}" alt="" style="width:22px;height:22px;border-radius:999px"/>` : ""}
+          <div>
+            <div>${escapeHtml(c.name)} <span class="sym">${escapeHtml(c.symbol)}</span></div>
+            <div style="font-size:11px;color:var(--text-3)">rank ${c.market_cap_rank ?? "?"} &middot; score ${c.score ?? "?"}</div>
+          </div>
+        </div>`).join("")}</div>`;
+    } catch (e) {
+      document.getElementById("trending-list").innerHTML = `<div class="err">Trending fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Source health ─────────────────────────────────────────────────────────
+  async function loadSources() {
+    try {
+      const s = await fetchJson("/api/sources");
+      const sources = s.sources || [];
+      const target = document.getElementById("sources-grid");
+      if (!sources.length) { target.innerHTML = '<div class="card">No upstream calls recorded yet.</div>'; return; }
+      target.innerHTML = sources.map(src => {
+        const ageOk = src.last_ok_age_s != null ? `${src.last_ok_age_s}s` : "never";
+        const lat = src.latency_ema_ms != null ? `${src.latency_ema_ms}ms` : "?";
+        const okPct = src.calls_total ? Math.round((src.calls_ok / src.calls_total) * 100) : 0;
+        return `<div class="src"><div class="src-dot ${escapeHtml(src.status)}"></div>
+          <div class="name">${escapeHtml(src.source)}</div>
+          <div class="meta">${escapeHtml(ageOk)} · ${escapeHtml(lat)} · ${okPct}% (${src.calls_total})</div></div>`;
+      }).join("");
+    } catch (e) {
+      document.getElementById("sources-grid").innerHTML = `<div class="err">Sources feed failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Orchestration ─────────────────────────────────────────────────────────
+  async function loadSummary() {
+    try {
+      const s = await fetchJson("/api/summary");
+      renderCritStrip(s);
+      renderFng(s);
+      renderMovers(s);
+      renderDefi(s);
+      setUpdated(s.fetched_at);
+    } catch (e) {
+      document.getElementById("crit-strip").innerHTML = `<div class="err">Summary fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  ["f-search", "f-mcap", "f-vol", "f-chmin", "f-chmax", "f-sort", "f-order", "f-limit"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", applyUniverseFilter);
+  });
+
+  loadSummary();
+  loadUniverse();
+  loadCrossEx();
+  loadFunding();
+  loadTrending();
+  loadSources();
+
+  setInterval(() => setUpdated(window._lastFetch), 5000);
+  setInterval(loadSummary,  60 * 1000);
+  setInterval(loadUniverse, 90 * 1000);
+  setInterval(loadCrossEx,  60 * 1000);
+  setInterval(loadFunding,  90 * 1000);
+  setInterval(loadTrending, 5 * 60 * 1000);
+  setInterval(loadSources,  30 * 1000);
+})();
+</script>
+</body>
+</html>
