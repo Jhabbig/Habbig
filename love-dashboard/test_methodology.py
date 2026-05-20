@@ -10,6 +10,7 @@ import sys
 from unittest.mock import patch
 
 import insights as insights_module
+import sensitivity as sensitivity_module
 import server
 
 
@@ -208,12 +209,70 @@ def test_weights_sum_to_one():
     ok(f"weights sum to 1.0: {server.WEIGHTS}")
 
 
+def test_sensitivity_engine():
+    print("test: sensitivity engine (per-country rank ranges across perturbations)")
+
+    # Three countries whose ordering depends heavily on weight choice:
+    # - USA wins on Connection (95), terrible elsewhere
+    # - DEU wins on Partnership (95), terrible elsewhere
+    # - FRA is balanced (70 across the board) -> always rank 2 -> stable
+    scores = {
+        "USA": {"connection": 95, "partnership": 30, "stability": 30, "activity": 30},
+        "DEU": {"connection": 30, "partnership": 95, "stability": 30, "activity": 30},
+        "FRA": {"connection": 70, "partnership": 70, "stability": 70, "activity": 70},
+    }
+
+    def fake_compute(weights):
+        denom = sum(weights.values()) or 1.0
+        out = {}
+        for iso, s in scores.items():
+            num = sum(weights[k] * s[k] for k in weights)
+            out[iso] = {
+                "iso3": iso,
+                "iso2": iso[:2],
+                "name": iso,
+                "income_tier": "H",
+                "composite": num / denom,
+                "subscores": s,
+            }
+        return out
+
+    result = sensitivity_module.compute_sensitivity(fake_compute, dict(server.WEIGHTS))
+
+    if "countries" not in result or "perturbations" not in result:
+        fail("sensitivity payload missing top-level keys")
+    ok(f"ran {len(result['perturbations'])} perturbations")
+
+    fra = result["countries"]["FRA"]
+    if fra["stability"] != "high":
+        fail(f"FRA should be stably ranked, got {fra['stability']} (range={fra['rank_range']})")
+    ok(f"FRA flagged 'high' stability (range={fra['rank_range']})")
+
+    usa = result["countries"]["USA"]
+    deu = result["countries"]["DEU"]
+    if usa["rank_range"] == 0 or deu["rank_range"] == 0:
+        fail(f"USA/DEU should shuffle under perturbations; ranges USA={usa['rank_range']}, DEU={deu['rank_range']}")
+    ok(f"USA range={usa['rank_range']}, DEU range={deu['rank_range']} (both > 0)")
+
+    # Baseline rank must be present and within 1..N
+    for iso, c in result["countries"].items():
+        if c["rank_baseline"] is None or c["rank_baseline"] < 1:
+            fail(f"{iso}: bad baseline rank {c['rank_baseline']}")
+    ok("every country has a baseline rank")
+
+    dist = result["stability_distribution"]
+    if dist["high"] + dist["medium"] + dist["low"] != 3:
+        fail(f"stability_distribution does not sum to N: {dist}")
+    ok(f"stability distribution sums correctly: {dist}")
+
+
 def main():
     test_weights_sum_to_one()
     test_percentile_rank_within_tier()
     test_compute_subscores_missing_data_policy()
     test_custom_weights()
     test_insights_engine()
+    test_sensitivity_engine()
     print("\nall tests passed.")
 
 

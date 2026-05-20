@@ -33,6 +33,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 import insights as insights_module
+import sensitivity as sensitivity_module
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("love")
@@ -69,8 +70,12 @@ _TTL = {
     "eurostat_marriage": 24 * 3600,
     "eurostat_divorce":  24 * 3600,
     "wb_adolescent":     24 * 3600,
+    "whr_social_support": 7 * 24 * 3600,  # WHR is annual
     "summary":           60 * 60,
     "index":             60 * 60,
+    "index_map":         60 * 60,
+    "subscore_layers":   60 * 60,
+    "sensitivity":       60 * 60,
 }
 
 
@@ -677,6 +682,12 @@ def _peer_compare(c: dict, all_countries: list[dict]) -> dict:
     return out
 
 
+def _sensitivity_payload() -> dict:
+    return sensitivity_module.compute_sensitivity(
+        lambda w: compute_subscores(w), dict(WEIGHTS),
+    )
+
+
 @app.get("/api/country/<iso>")
 def country(iso: str):
     iso = iso.upper()
@@ -686,7 +697,15 @@ def country(iso: str):
         return jsonify({"error": f"country {iso} has no Love Index (insufficient data)"}), 404
     detail = dict(countries[iso])
     detail["peer_compare"] = _peer_compare(detail, list(countries.values()))
+    sens = cached("sensitivity", _sensitivity_payload).get("countries", {}).get(iso)
+    if sens:
+        detail["sensitivity"] = sens
     return jsonify(detail)
+
+
+@app.get("/api/sensitivity")
+def sensitivity_route():
+    return jsonify(cached("sensitivity", _sensitivity_payload))
 
 
 @app.get("/api/countries")

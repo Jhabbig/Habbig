@@ -270,6 +270,41 @@
   .insight .pointers { margin-top: 8px; font-size: 11px; color: var(--text-3); display: flex; gap: 12px; flex-wrap: wrap; }
   .insight .pointers strong { color: var(--text-1); font-weight: 600; }
 
+  /* Sensitivity / stress test */
+  .stress-card .summary {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin: 6px 0 14px;
+  }
+  .stress-card .pill-stat {
+    background: var(--bg-2); border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .stress-card .pill-stat .num { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; }
+  .stress-card .pill-stat .label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+  .stress-card .pill-stat.high .num { color: var(--good); }
+  .stress-card .pill-stat.medium .num { color: var(--warn); }
+  .stress-card .pill-stat.low .num { color: var(--accent-2); }
+  .stress-card .unstable-row {
+    display: grid; grid-template-columns: 18px 1fr auto auto; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--border-soft); align-items: center;
+    cursor: pointer; font-size: 13px;
+  }
+  .stress-card .unstable-row:last-child { border-bottom: none; }
+  .stress-card .unstable-row:hover { color: var(--accent); }
+  .stress-card .unstable-row .range {
+    font-variant-numeric: tabular-nums; color: var(--accent-2); font-size: 12px;
+  }
+  .stress-card .unstable-row .baseline { color: var(--text-3); font-size: 11px; }
+
+  .stability-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11px;
+    font-weight: 600; letter-spacing: 0.04em;
+  }
+  .stability-badge.high { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .stability-badge.medium { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .stability-badge.low { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
+
   /* Drill-down modal */
   .modal-backdrop {
     position: fixed; inset: 0;
@@ -441,6 +476,30 @@
         <h3>Bottom 5</h3>
         <div id="bottom-list"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Methodology stress test -->
+  <div class="section-title">Methodology stress test
+    <span class="right" id="stress-status"></span>
+  </div>
+  <div class="card stress-card">
+    <div style="font-size: 12px; color: var(--text-2); margin-bottom: 4px;">
+      Every country is re-ranked under <strong id="stress-n">—</strong> perturbations
+      (each subscore weight ±10pp, plus leave-one-out). Countries whose rank shifts
+      more than 10 positions are flagged <em>unstable</em> — read their headline number
+      with that in mind.
+    </div>
+    <div class="summary" id="stress-summary">
+      <div class="pill-stat high"><div class="num" id="stress-high">—</div><div class="label">Stable rank (≤3)</div></div>
+      <div class="pill-stat medium"><div class="num" id="stress-medium">—</div><div class="label">Moderate (≤10)</div></div>
+      <div class="pill-stat low"><div class="num" id="stress-low">—</div><div class="label">Unstable (&gt;10)</div></div>
+    </div>
+    <div style="font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin: 12px 0 4px;">
+      Most unstable rankings
+    </div>
+    <div id="stress-unstable">
+      <div style="color: var(--text-3); font-size: 12px; padding: 8px 0;">loading…</div>
     </div>
   </div>
 
@@ -794,6 +853,45 @@ async function loadInsights() {
   });
 }
 
+// ---- sensitivity / stress test ----
+async function loadSensitivity() {
+  let d;
+  try { d = await fetchJSON("/api/sensitivity"); }
+  catch (err) {
+    document.getElementById("stress-status").textContent = "unavailable";
+    document.getElementById("stress-unstable").innerHTML =
+      `<div style="color: var(--text-3); font-size: 12px;">Sensitivity will compute once countries are ranked.</div>`;
+    return;
+  }
+  state.sensitivity = d;
+  const dist = d.stability_distribution || {high:0, medium:0, low:0};
+  document.getElementById("stress-high").textContent = dist.high;
+  document.getElementById("stress-medium").textContent = dist.medium;
+  document.getElementById("stress-low").textContent = dist.low;
+  document.getElementById("stress-n").textContent = (d.perturbations || []).length;
+  const total = dist.high + dist.medium + dist.low;
+  document.getElementById("stress-status").textContent =
+    total ? `${total} countries tested under ${(d.perturbations||[]).length} perturbations` : "awaiting data";
+
+  const wrap = document.getElementById("stress-unstable");
+  wrap.innerHTML = "";
+  if (!d.most_unstable || !d.most_unstable.length) {
+    wrap.innerHTML = `<div style="color: var(--text-3); font-size: 12px; padding: 8px 0;">No unstable rankings — every ranked country sits within 10 positions across all weight perturbations.</div>`;
+    return;
+  }
+  d.most_unstable.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "unstable-row";
+    row.onclick = () => openCountry(c.iso3);
+    row.innerHTML = `
+      <span>${ISO2_FLAG(c.iso2)}</span>
+      <span>${c.name || c.iso3}</span>
+      <span class="baseline">rank ${c.rank_baseline ?? "—"}</span>
+      <span class="range">±${c.rank_range} (${c.rank_min}–${c.rank_max})</span>`;
+    wrap.appendChild(row);
+  });
+}
+
 // ---- sources table ----
 async function loadSources() {
   let d;
@@ -825,6 +923,22 @@ async function openCountry(iso3) {
   renderCountryDetail(d, content);
 }
 
+function renderStability(s) {
+  if (!s) return "";
+  const labelText = {
+    high:   "Rank stable under stress",
+    medium: "Rank moderately stable",
+    low:    "Rank unstable — read with caution",
+  }[s.stability] || "stability unknown";
+  return `
+    <div style="text-align: right; min-width: 160px;">
+      <div class="stability-badge ${s.stability}">${labelText}</div>
+      <div style="font-size: 11px; color: var(--text-3); margin-top: 4px;">
+        rank ${s.rank_min}–${s.rank_max} across ${Object.keys(s.ranks || {}).length} perturbations
+      </div>
+    </div>`;
+}
+
 function renderCountryDetail(c, root) {
   const subRow = (k) => {
     const v = c.subscores?.[k];
@@ -854,10 +968,11 @@ function renderCountryDetail(c, root) {
         <div class="label">Love Index</div>
         <div class="num">${fmt(c.composite)}</div>
       </div>
-      <div style="font-size: 11px; color: var(--text-3);">
+      <div style="font-size: 11px; color: var(--text-3); flex: 1;">
         Composite of present subscores using ${state.weights ? "your custom weights" : "default weights"}.
         Each subscore is the country's percentile rank within its income tier.
       </div>
+      ${renderStability(c.sensitivity)}
     </div>
     <div class="subscore-rows">
       ${SUBSCORES.map(subRow).join("")}
@@ -965,7 +1080,7 @@ async function drawMap() {
 
 // ---- orchestrator ----
 async function refresh() {
-  await Promise.all([loadSummary(), loadCountries(), loadInsights()]);
+  await Promise.all([loadSummary(), loadCountries(), loadInsights(), loadSensitivity()]);
   // map relies on countries; redraw colors after reload
   await drawMap();
 }
