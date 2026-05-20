@@ -37,6 +37,8 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/stance` | 30 min (via feed cache) | Per-regulator speech-stance ladder — most-recent speech-tagged item scored on the body's axis |
 | `GET /api/diff` | 30 min (via feed cache) | Per-regulator latest-vs-prior speech diff (token-level ops + stats) |
 | `GET /api/sdn` | 12 h | OFAC SDN today's snapshot meta + delta vs prior snapshot (top-20 added/removed previews + program deltas) |
+| `GET /api/hearings` | 1 h | Senate Banking + House FS confirmation hearings (filtered to nomination/confirmation items) |
+| `GET /feed.xml?…` | 30 min (via feed cache) | RSS 2.0 alert feed — same filters as `/api/feed`, gated by `RSS_SHARED_TOKEN` |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -83,6 +85,8 @@ python3 -m analysis.people            # Roster dump with days_until + sort order
 python3 -m analysis.stance            # 7 stance fixtures across SEC/FCA/ESMA × pos/neg/neutral
 python3 -m analysis.diff              # latest-vs-prior diff sanity over 4 synthetic items
 python3 -m ingestion.ofac_sdn         # SDN parser + persist + delta fixtures (synthetic 2-day XML)
+python3 -m ingestion.confirmation_hearings  # Hearing-filter + regulator-hint fixtures (7 cases)
+python3 -m analysis.rss_feed          # RSS 2.0 renderer round-trip via defusedxml parse-back
 ```
 
 ## Files
@@ -98,6 +102,7 @@ regulators-dashboard/
 │   ├── polymarket_client.py        Polymarket Gamma API → normalized binary markets (5-min cache)
 │   ├── kalshi_client.py            Kalshi /trade-api/v2/markets → normalized markets (5-min cache)
 │   ├── ofac_sdn.py                 OFAC SDN XML fetch + parse + per-day snapshot + day-over-day delta
+│   ├── confirmation_hearings.py    Senate Banking + House FS hearing-RSS filter (1h cache)
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
@@ -110,7 +115,8 @@ regulators-dashboard/
 │   ├── people.py                   Personnel roster loader + days-until + synthetic-item for matcher
 │   ├── stance_keywords.py          Per-regulator stance axes (SEC/FCA/ESMA), tunable
 │   ├── stance.py                   Per-regulator stance scorer + 7 fixture self-test
-│   └── diff.py                     Token-level speech diff (latest vs prior per regulator)
+│   ├── diff.py                     Token-level speech diff (latest vs prior per regulator)
+│   └── rss_feed.py                 RSS 2.0 renderer for /feed.xml (zero-dep hand-rolled XML)
 ├── data/
 │   └── personnel.py                Hand-curated roster (EDIT HERE to add chairs/commissioners)
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
@@ -377,6 +383,51 @@ survive container restart. Last 14 days kept; older snapshots pruned.
 **Cache:** 12 h on the fetch path. OFAC publishes weekly on average,
 sometimes ad-hoc same-day for breaking sanctions packages.
 
+### v1.1 — confirmation-hearing tracker
+
+`ingestion/confirmation_hearings.py` pulls the Senate Banking Committee
+and House Financial Services Committee hearing feeds, reuses the v0
+`_rss.py` parser (defusedxml + graceful degradation), filters items
+whose title or summary matches `nomination|confirmation|nominee|to be
+(chair|commissioner|governor|director|secretary)`, and attaches a
+`regulator_hint` when SEC / Fed / CFTC / FDIC / OCC / FinCEN / OFAC /
+CFPB / HUD / Treasury are referenced.
+
+This complements `data/personnel.py` rather than replacing it:
+personnel covers *confirmed* officials with their term-end anchors;
+this module covers the *pending* pipeline.
+
+**Feed URL caveat:** the seeded URLs are best-guess against common
+Senate / House RSS conventions. Both chambers reorganize their feed
+paths roughly annually. If a source goes red in `/api/hearings`, drop
+the current URL (from the committee homepage) into `SOURCES` and
+deploy — no other code change required.
+
+### v1.5 — RSS alert feed
+
+`analysis/rss_feed.py` hand-renders a valid RSS 2.0 XML document from
+filtered items, with the same filter semantics as `/api/feed`. Each
+`<item>` carries the title, link, GUID, pubDate, categories (source +
+type tag + topics), and a description that embeds the classifier
+metadata (type, severity bucket, topics) so the feed reader shows the
+same context the dashboard surface does.
+
+**Auth shape:** RSS readers can't send custom headers, so `/feed.xml`
+**bypasses** the gateway-SSO middleware (`x-gateway-secret`) and is
+instead gated on `?token=<RSS_SHARED_TOKEN>`. When `RSS_SHARED_TOKEN`
+is unset in non-DEV environments the route 503s with a clear "feed
+disabled" message so no operator accidentally exposes data publicly.
+
+**Why RSS and not email** in v1.5: email digest needs subscriber
+management, unsubscribe tokens, bounce handling, and SMTP plumbing —
+a multi-day build. RSS delivers ~80% of the alert value for ~5% of
+the build cost, mirroring the "Trade Poly / Trade Kalshi deep-link"
+call in v0.5. Managed-email digest stays open as a future milestone.
+
+UI surface: a small `Subscribe via RSS ↗` link in the action-feed
+filter row that mirrors the current filter chips into the URL — pick
+your filter on the dashboard, copy the link, paste into your reader.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -390,11 +441,11 @@ sometimes ad-hoc same-day for breaking sanctions packages.
 | **v0.6** | ✓ done | Personnel watch — hand-curated roster of chairs/commissioners with term-end dates, days-until badges, source links, and per-row market overlay reusing the v0.5 matcher |
 | **v0.7** | ✓ done | Per-regulator speech stance ladder — SEC `pro-enforcement ↔ light-touch`, FCA `pro-innovation ↔ consumer-first`, ESMA `prescriptive ↔ principles-based`; matched phrases shown as chips |
 | **v1.0** | ✓ done | Closes v1.0 — all seven sub-milestones (v0 → v0.7) shipped on the SEC + FCA + ESMA seed source set |
-| v1.1 | open  | Auto-scrape Senate Banking / House FS confirmation calendars to refresh `data/personnel.py` |
+| **v1.1** | ✓ done | Confirmation-hearing tracker — Senate Banking + House FS feeds, filtered to nomination/confirmation items, with regulator-hint tag |
 | **v1.2** | ✓ done | Statement diff viewer — latest-vs-prior speech per regulator with token-level inline diff and similarity score |
 | v1.3 | open  | Court-filing tracker (PACER scraper for SEC litigation releases) — paid feed, deferred |
 | **v1.4** | ✓ done | OFAC SDN delta-per-day — fetch + parse Treasury `sdn.xml`, persist daily digest, compute additions/removals + per-program counts |
-| v1.5 | open  | Email/RSS alert digest — daily summary keyed on the user's filter set |
+| **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN`. Email digest deferred as v1.6 |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars
@@ -405,6 +456,7 @@ sometimes ad-hoc same-day for breaking sanctions packages.
 | `DEV_MODE` | unset | Set `1` to bypass gateway auth locally. |
 | `PORT` | `7080` | Override listen port. |
 | `SDN_SNAPSHOT_DIR` | tempfile path | Where v1.4 persists per-day OFAC SDN digests. Set to a mounted volume in production. |
+| `RSS_SHARED_TOKEN` | unset | Token gating `/feed.xml` (v1.5). Required outside `DEV_MODE`; subscribers append `?token=<value>` to the URL. |
 
 ## Caveats / known limits
 

@@ -170,6 +170,21 @@
   .sdn-entry .name { font-weight: 600; }
   .sdn-entry .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
   .sdn-remainder { color: var(--muted); font-size: 11px; padding-top: 8px; }
+  .hearing-row { display: grid; grid-template-columns: 110px 70px 1fr;
+                 gap: 12px; align-items: baseline; padding: 8px 0;
+                 border-bottom: 1px solid var(--grid); font-size: 13px; }
+  .hearing-row:last-child { border-bottom: 0; }
+  .hearing-date { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hearing-cmte { font-size: 11px; color: var(--muted); text-transform: uppercase;
+                  letter-spacing: 0.04em; }
+  .hearing-title a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .hearing-title a:hover { text-decoration: underline; }
+  .hearing-hint { display: inline-block; margin-left: 6px; padding: 1px 6px;
+                  border-radius: 10px; background: #1f6feb; color: #fff;
+                  font-size: 10px; font-weight: 600; }
+  .rss-link { font-size: 11px; color: var(--muted); }
+  .rss-link a { color: var(--accent); text-decoration: none; }
+  .rss-link a:hover { text-decoration: underline; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -197,6 +212,10 @@
   <section class="panel" id="people-panel">
     <h2>Personnel watch — next transitions</h2>
     <div id="people-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
+  <section class="panel" id="hearings-panel">
+    <h2>Confirmation hearings — Senate Banking + House FS</h2>
+    <div id="hearings-body"><div class="heatmap-empty">loading…</div></div>
   </section>
   <section class="panel" id="stance-panel">
     <h2>Speech stance — latest per regulator</h2>
@@ -244,6 +263,7 @@
       <span class="hint">Markets:</span>
       <span class="chip active" data-mkt="">All items</span>
       <span class="chip" data-mkt="true">Has Polymarket / Kalshi match</span>
+      <span class="rss-link" id="rss-link"></span>
     </div>
     <table>
       <thead>
@@ -695,6 +715,63 @@ async function loadSdn() {
   }
 }
 
+function renderHearings(data) {
+  const body = document.getElementById("hearings-body");
+  const items = data.items || [];
+  const okSources = (data.sources || []).filter(s => s.ok).length;
+  if (!items.length) {
+    if (okSources === 0) {
+      body.innerHTML = '<div class="heatmap-empty">Both committee feeds unavailable — check feed URLs in <code>ingestion/confirmation_hearings.py</code>.</div>';
+    } else {
+      body.innerHTML = '<div class="heatmap-empty">No confirmation hearings matched in the feed window.</div>';
+    }
+    return;
+  }
+  body.innerHTML = items.slice(0, 20).map(h => {
+    const dt = (h.published || "").slice(0, 10);
+    const link = h.link
+      ? `<a href="${escapeHtml(h.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(h.title)}</a>`
+      : escapeHtml(h.title);
+    const hint = h.regulator_hint
+      ? `<span class="hearing-hint">${escapeHtml(h.regulator_hint)}</span>`
+      : "";
+    return `
+      <div class="hearing-row">
+        <div class="hearing-date">${escapeHtml(dt)}</div>
+        <div class="hearing-cmte">${escapeHtml(h.committee)}</div>
+        <div class="hearing-title">${link}${hint}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadHearings() {
+  try {
+    const r = await fetch("/api/hearings");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderHearings(data);
+  } catch (e) {
+    document.getElementById("hearings-body").innerHTML =
+      `<div class="heatmap-empty err">hearings load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function updateRssLink() {
+  // Mirror the current filter state into a /feed.xml URL so subscribers
+  // can right-click → copy. Token is left empty here — operators behind
+  // a gateway substitute RSS_SHARED_TOKEN before sharing the link.
+  const params = new URLSearchParams();
+  if (state.jurisdiction) params.set("jurisdiction", state.jurisdiction);
+  if (state.tag) params.set("tag", state.tag);
+  if (state.sev) params.set("severity", state.sev);
+  if (state.topic) params.set("topic", state.topic);
+  if (state.q) params.set("q", state.q);
+  const qs = params.toString();
+  const url = "/feed.xml" + (qs ? "?" + qs : "");
+  const el = document.getElementById("rss-link");
+  if (el) el.innerHTML = `· <a href="${escapeHtml(url)}" target="_blank">Subscribe via RSS ↗</a>`;
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -866,6 +943,10 @@ document.querySelectorAll(".chip[data-mkt]").forEach(el => {
   });
 });
 
+// Keep the RSS subscribe link in sync with the filter state.
+const _origLoad = load;
+load = async function() { await _origLoad(); updateRssLink(); };
+
 let qTimer;
 document.getElementById("q").addEventListener("input", e => {
   clearTimeout(qTimer);
@@ -876,12 +957,12 @@ load();
 loadHeatmap();
 loadTopics();
 loadPeople();
+loadHearings();
 loadStance();
 loadDiff();
 loadSdn();
-// SDN refreshes 12h server-side; the UI re-asks every 30 min so a manual
-// `force=true` from elsewhere would reflect quickly.
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
+updateRssLink();
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
 setInterval(loadSdn, 30 * 60 * 1000);
 </script>
 </body>

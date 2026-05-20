@@ -11,6 +11,8 @@ Routes:
   - GET /api/stance             → per-regulator speech stance ladder (SEC/FCA/ESMA axes)
   - GET /api/diff               → latest-vs-prior speech diff per regulator
   - GET /api/sdn                → OFAC SDN delta — today vs prior snapshot (12h cache)
+  - GET /api/hearings           → Senate Banking + House FS confirmation hearings (1h cache)
+  - GET /feed.xml?…             → RSS 2.0 alert feed with the same filter params as /api/feed
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -25,13 +27,20 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ingestion import kalshi_client, ofac_sdn, polymarket_client, unified_feed
+from ingestion import (
+    confirmation_hearings,
+    kalshi_client,
+    ofac_sdn,
+    polymarket_client,
+    unified_feed,
+)
 from analysis import diff as diff_module
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
 from analysis import people as people_roster
+from analysis import rss_feed
 from analysis import stance as stance_analysis
 from analysis.topic_keywords import TOPICS, TOPIC_LABELS
 
@@ -44,13 +53,21 @@ HTML_PATH = Path(__file__).parent / "index.html"
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+_rss_token = os.environ.get("RSS_SHARED_TOKEN", "")
 if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
+if not _rss_token and not _DEV_MODE:
+    log.warning("RSS_SHARED_TOKEN unset — /feed.xml will refuse requests in non-DEV_MODE")
+
+# Routes that bypass the gateway-SSO middleware. /feed.xml is gated by
+# its own RSS_SHARED_TOKEN check inside the handler so RSS readers
+# (which can't send custom headers) can subscribe.
+_SSO_BYPASS = ("/healthz", "/feed.xml")
 
 
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
-    if request.url.path != "/healthz":
+    if request.url.path not in _SSO_BYPASS:
         if _sso_secret:
             client_secret = request.headers.get("x-gateway-secret", "")
             if not hmac.compare_digest(client_secret, _sso_secret):
@@ -81,22 +98,9 @@ async def index() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
 
 
-@app.get("/api/feed")
-async def api_feed(
-    days: int = 90,
-    jurisdiction: str = "",
-    source: str = "",
-    tag: str = "",
-    severity: str = "",
-    topic: str = "",
-    has_market: bool = False,
-    q: str = "",
-    force: bool = False,
-) -> JSONResponse:
-    days = max(1, min(days, 365))
-    data = unified_feed.get_cached(force=force, since_days=days)
-
-    items = data["items"]
+def _apply_item_filters(items: list, *, jurisdiction: str, source: str,
+                        tag: str, severity: str, topic: str, q: str) -> list:
+    """Shared filter logic for /api/feed and /feed.xml. Pure — no I/O."""
     if jurisdiction:
         wanted = {j.strip().upper() for j in jurisdiction.split(",") if j.strip()}
         items = [it for it in items if it.get("jurisdiction") in wanted]
@@ -105,8 +109,6 @@ async def api_feed(
         items = [it for it in items if it.get("source") in wanted]
     if tag:
         wanted = {t.strip().lower() for t in tag.split(",") if t.strip()}
-        # Match if primary_tag is wanted, or any element of tags is wanted.
-        # 'other' matches items with no positive tags.
         def tag_hit(it: dict) -> bool:
             if "other" in wanted and not it.get("tags"):
                 return True
@@ -132,6 +134,29 @@ async def api_feed(
                 if needle in it.get("title", "").lower()
                 or needle in it.get("summary", "").lower()
             ]
+    return items
+
+
+@app.get("/api/feed")
+async def api_feed(
+    days: int = 90,
+    jurisdiction: str = "",
+    source: str = "",
+    tag: str = "",
+    severity: str = "",
+    topic: str = "",
+    has_market: bool = False,
+    q: str = "",
+    force: bool = False,
+) -> JSONResponse:
+    days = max(1, min(days, 365))
+    data = unified_feed.get_cached(force=force, since_days=days)
+
+    items = _apply_item_filters(
+        data["items"],
+        jurisdiction=jurisdiction, source=source, tag=tag,
+        severity=severity, topic=topic, q=q,
+    )
 
     # v0.5: attach market matches per item (5-min market cache, in-memory
     # join). Use a fresh shallow-copy list so the cached unified_feed items
@@ -186,6 +211,70 @@ async def api_diff(force: bool = False) -> JSONResponse:
         "fetched_at": data["fetched_at"],
         "diffs": diff_module.compute_all(data["items"]),
     })
+
+
+@app.get("/api/hearings")
+async def api_hearings(force: bool = False) -> JSONResponse:
+    """v1.1 — Senate Banking + House FS confirmation-hearing tracker.
+    Per-source try/except + 1h cache; URL drift falls into the
+    `ok=false` graceful-degradation lane."""
+    return JSONResponse(confirmation_hearings.get_cached(force=force))
+
+
+@app.get("/feed.xml")
+async def feed_rss(
+    request: Request,
+    days: int = 90,
+    jurisdiction: str = "",
+    source: str = "",
+    tag: str = "",
+    severity: str = "",
+    topic: str = "",
+    q: str = "",
+    token: str = "",
+) -> Response:
+    """v1.5 — RSS 2.0 alert feed. Same filter semantics as /api/feed.
+    Subscribe by URL — no per-user subscription state.
+
+    Bypasses the gateway-SSO header check (RSS readers can't supply
+    custom headers) and instead gates on `?token=<RSS_SHARED_TOKEN>`
+    when that env var is set. In DEV_MODE with no token configured,
+    the feed is open."""
+    if _rss_token:
+        if not hmac.compare_digest(token, _rss_token):
+            return Response(content="Unauthorized", status_code=401, media_type="text/plain")
+    elif not _DEV_MODE:
+        return Response(content="Feed disabled — set RSS_SHARED_TOKEN", status_code=503, media_type="text/plain")
+
+    days = max(1, min(days, 365))
+    data = unified_feed.get_cached(since_days=days)
+    items = _apply_item_filters(
+        data["items"],
+        jurisdiction=jurisdiction, source=source, tag=tag,
+        severity=severity, topic=topic, q=q,
+    )
+    # Build a self URL that mirrors what the subscriber requested.
+    self_url = str(request.url)
+    base_url = f"{request.url.scheme}://{request.url.netloc}/"
+
+    parts: list[str] = ["Filtered regulator action feed"]
+    if jurisdiction: parts.append(f"jurisdiction={jurisdiction}")
+    if source: parts.append(f"source={source}")
+    if tag: parts.append(f"tag={tag}")
+    if severity: parts.append(f"severity={severity}")
+    if topic: parts.append(f"topic={topic}")
+    if q: parts.append(f"q={q}")
+    description = " · ".join(parts)
+
+    xml = rss_feed.render(
+        items,
+        channel_title="Regulators Dashboard — filtered feed",
+        channel_description=description,
+        channel_link=base_url,
+        self_url=self_url,
+        limit=50,
+    )
+    return Response(content=xml, media_type="application/rss+xml; charset=utf-8")
 
 
 @app.get("/api/sdn")
