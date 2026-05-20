@@ -150,7 +150,13 @@ Thumbs.db
 *.ipynb_checkpoints
 
 # ─── Claude Code / AI tooling scratch ────────────────────────────────────────
-.claude/
+# Ignore .claude/ by default, but track the shared bits (slash commands, hooks,
+# project settings). Personal overrides land in settings.local.json and stay out.
+.claude/*
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
+.claude/settings.local.json
 CLAUDE.md.local
 .anthropic/
 
