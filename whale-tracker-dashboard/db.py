@@ -138,6 +138,38 @@ CREATE TABLE IF NOT EXISTS congress_trade (
 CREATE INDEX IF NOT EXISTS idx_congress_disclosure ON congress_trade(disclosure_date DESC);
 CREATE INDEX IF NOT EXISTS idx_congress_ticker ON congress_trade(ticker, disclosure_date DESC);
 CREATE INDEX IF NOT EXISTS idx_congress_rep ON congress_trade(representative);
+
+-- Daily price closes (cached from Stooq). Tiny rows, big upside.
+CREATE TABLE IF NOT EXISTS price_daily (
+    ticker  TEXT NOT NULL,
+    date    TEXT NOT NULL,
+    close   REAL NOT NULL,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_price_ticker_date ON price_daily(ticker, date DESC);
+
+-- One row per labeled filing outcome (used to compute Bayesian skill).
+-- filer_type ∈ {insider, activist, congress}; filer_id is the natural key per type
+-- (reporter_cik, filer_cik, representative respectively). source_id is the
+-- filing/transaction id for traceability.
+CREATE TABLE IF NOT EXISTS filer_outcome (
+    filer_type       TEXT NOT NULL,
+    filer_id         TEXT NOT NULL,
+    source_id        TEXT NOT NULL,
+    direction        TEXT NOT NULL,   -- 'buy' or 'sell'
+    ticker           TEXT NOT NULL,
+    filing_date      TEXT NOT NULL,
+    horizon_days     INTEGER NOT NULL,
+    return_pct       REAL,            -- ticker return over the horizon
+    benchmark_pct    REAL,            -- SPY return over the same horizon
+    alpha_pct        REAL,            -- return_pct - benchmark_pct
+    win              INTEGER NOT NULL,-- 1 if directional alpha > 0
+    computed_at      TEXT NOT NULL,
+    PRIMARY KEY (filer_type, filer_id, source_id, horizon_days)
+);
+CREATE INDEX IF NOT EXISTS idx_filer_outcome_filer ON filer_outcome(filer_type, filer_id);
+CREATE INDEX IF NOT EXISTS idx_filer_outcome_ticker ON filer_outcome(ticker);
+CREATE INDEX IF NOT EXISTS idx_filer_outcome_computed ON filer_outcome(computed_at);
 """
 
 
@@ -257,6 +289,8 @@ def counts() -> dict[str, int]:
             "fund_filing":    cx.execute("SELECT COUNT(*) FROM fund_filing").fetchone()[0],
             "fund_holding":   cx.execute("SELECT COUNT(*) FROM fund_holding").fetchone()[0],
             "congress_trade": cx.execute("SELECT COUNT(*) FROM congress_trade").fetchone()[0],
+            "price_daily":    cx.execute("SELECT COUNT(*) FROM price_daily").fetchone()[0],
+            "filer_outcome":  cx.execute("SELECT COUNT(*) FROM filer_outcome").fetchone()[0],
         }
 
 
@@ -319,3 +353,73 @@ def upsert_congress_trades(rows: list[dict]) -> int:
             rows,
         )
         return cur.rowcount
+
+
+def upsert_prices(ticker: str, rows: list[tuple[str, float]]) -> int:
+    """rows = [(date, close), ...]"""
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            "INSERT OR REPLACE INTO price_daily (ticker, date, close) VALUES (?, ?, ?)",
+            [(ticker, d, c) for (d, c) in rows],
+        )
+        return cur.rowcount
+
+
+def get_close_on_or_after(ticker: str, date: str) -> tuple[str, float] | None:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT date, close FROM price_daily WHERE ticker = ? AND date >= ? "
+            "ORDER BY date ASC LIMIT 1",
+            (ticker, date),
+        ).fetchone()
+    return (row["date"], row["close"]) if row else None
+
+
+def get_close_on_or_before(ticker: str, date: str) -> tuple[str, float] | None:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT date, close FROM price_daily WHERE ticker = ? AND date <= ? "
+            "ORDER BY date DESC LIMIT 1",
+            (ticker, date),
+        ).fetchone()
+    return (row["date"], row["close"]) if row else None
+
+
+def have_price(ticker: str, date: str) -> bool:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT 1 FROM price_daily WHERE ticker = ? AND date = ? LIMIT 1",
+            (ticker, date),
+        ).fetchone()
+    return row is not None
+
+
+def upsert_filer_outcome(row: dict) -> bool:
+    with _lock, connect() as cx:
+        cur = cx.execute(
+            """
+            INSERT OR REPLACE INTO filer_outcome (
+                filer_type, filer_id, source_id, direction, ticker,
+                filing_date, horizon_days, return_pct, benchmark_pct,
+                alpha_pct, win, computed_at
+            ) VALUES (
+                :filer_type, :filer_id, :source_id, :direction, :ticker,
+                :filing_date, :horizon_days, :return_pct, :benchmark_pct,
+                :alpha_pct, :win, :computed_at
+            )
+            """,
+            row,
+        )
+        return cur.rowcount > 0
+
+
+def have_outcome(filer_type: str, filer_id: str, source_id: str, horizon_days: int) -> bool:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT 1 FROM filer_outcome WHERE filer_type = ? AND filer_id = ? "
+            "AND source_id = ? AND horizon_days = ? LIMIT 1",
+            (filer_type, filer_id, source_id, horizon_days),
+        ).fetchone()
+    return row is not None

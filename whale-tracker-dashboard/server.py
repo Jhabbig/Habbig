@@ -31,6 +31,7 @@ import db
 import events
 import ingest
 import signals as signals_mod
+import skill as skill_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("whale")
@@ -270,6 +271,54 @@ async def api_congress_by_ticker(
 ):
     t = ticker.upper().strip()
     return _cached(f"congress_ticker:{t}:{limit}", lambda: signals_mod.congress_by_ticker(t, limit=limit))
+
+
+# ─── Bayesian skill ─────────────────────────────────────────────────
+
+@app.get("/api/skill-leaderboard")
+async def api_skill_leaderboard(
+    filer_type: str | None = Query(None, pattern="^(insider|activist|congress)$"),
+    min_n: int = Query(5, ge=1, le=100),
+    horizon_days: int = Query(30, ge=1, le=180),
+    limit: int = Query(50, ge=1, le=500),
+):
+    key = f"skill:{filer_type or 'all'}:{min_n}:{horizon_days}:{limit}"
+    return _cached(
+        key,
+        lambda: skill_mod.leaderboard(
+            filer_type=filer_type, min_n=min_n, horizon_days=horizon_days, limit=limit
+        ),
+    )
+
+
+@app.get("/api/skill-detail")
+async def api_skill_detail(
+    filer_type: str = Query(..., pattern="^(insider|activist|congress)$"),
+    filer_id: str = Query(..., min_length=1, max_length=200),
+    horizon_days: int = Query(30, ge=1, le=180),
+    recent_limit: int = Query(50, ge=1, le=500),
+):
+    key = f"skill_detail:{filer_type}:{filer_id}:{horizon_days}:{recent_limit}"
+    return _cached(
+        key,
+        lambda: skill_mod.filer_detail(
+            filer_type=filer_type, filer_id=filer_id,
+            horizon_days=horizon_days, recent_limit=recent_limit,
+        ),
+    )
+
+
+@app.post("/api/admin/skill-recompute")
+async def api_admin_skill_recompute(
+    horizon_days: int = Query(30, ge=1, le=180),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """Manually trigger a skill-labeling pass. DEV_MODE only."""
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    res = await skill_mod.run_pass(horizon_days=horizon_days, limit=limit)
+    _cache.clear()
+    return {"result": res, "counts": db.counts()}
 
 
 @app.post("/api/admin/ingest-now")

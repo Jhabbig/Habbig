@@ -146,6 +146,7 @@
   <button data-tab="funds">Fund Holdings</button>
   <button data-tab="changes">Position Changes</button>
   <button data-tab="congress">Congress</button>
+  <button data-tab="skill">Skill</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
 </nav>
@@ -311,6 +312,34 @@
     </table>
   </section>
 
+  <!-- ── Skill (Bayesian filer leaderboard) ───────────────────── -->
+  <section id="tab-skill" hidden>
+    <div class="controls">
+      <label>Filer type
+        <select id="sk-type">
+          <option value="">All</option>
+          <option value="insider">Insider</option>
+          <option value="activist">Activist</option>
+          <option value="congress">Congress</option>
+        </select>
+      </label>
+      <label>Min N <input type="number" id="sk-min" value="5" min="1" max="100"></label>
+      <label>Horizon (days) <input type="number" id="sk-horizon" value="30" min="1" max="180"></label>
+      <label>Limit <input type="number" id="sk-limit" value="50" min="1" max="500"></label>
+      <button id="sk-go">Refresh</button>
+      <span class="live" id="sk-meta">Beta(α,β) posterior · 95% Wilson CI · alpha = ticker return − SPY over horizon</span>
+    </div>
+    <table id="sk-table">
+      <thead><tr>
+        <th>Filer</th><th>Type</th>
+        <th class="num">N</th><th class="num">W/L</th>
+        <th class="num">Posterior</th><th class="num">95% CI</th>
+        <th class="num">Avg α</th><th>Status</th>
+      </tr></thead>
+      <tbody><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
   <!-- ── Ticker Synthesis ─────────────────────────────────────── -->
   <section id="tab-synthesis" hidden>
     <div class="controls">
@@ -432,7 +461,7 @@ async function loadClusters() {
         <td class="num pos">${fmtUSD(r.total_value_usd)}</td>
         <td class="num">${r.weighted_score}</td>
         <td class="num">${esc(r.latest_txn||"")}</td>
-        <td>${(r.buyers||[]).slice(0,5).map(b => `<span class="pill buy">${esc(b.name||"")}${b.relation?` · ${esc(b.relation)}`:""}</span>`).join(" ")}${r.buyers.length>5?` <span class="pill">+${r.buyers.length-5}</span>`:""}</td>
+        <td>${(r.buyers||[]).slice(0,5).map(b => `<span class="pill buy">${esc(b.name||"")}${b.relation?` · ${esc(b.relation)}`:""}</span>${skillBadge(b.skill)}`).join(" ")}${r.buyers.length>5?` <span class="pill">+${r.buyers.length-5}</span>`:""}</td>
       </tr>`).join("");
     $("#cl-meta").textContent = `${rows.length} ticker${rows.length===1?"":"s"} · ${days}d window`;
   } catch(e) {
@@ -646,6 +675,45 @@ async function loadCongress() {
   }
 }
 
+// ── Skill (Bayesian filer leaderboard) ──
+const skillBadge = (s) => {
+  if (!s || !s.n) return "";
+  const pct = (s.posterior_mean*100).toFixed(0);
+  const cls = s.high_confidence_skilled ? "buy" : "";
+  return `<span class="pill ${cls}" title="n=${s.n}  ${(s.ci_lower*100).toFixed(0)}-${(s.ci_upper*100).toFixed(0)}%">${pct}%·n${s.n}</span>`;
+};
+
+async function loadSkill() {
+  const t = $("#sk-type").value;
+  const min = +$("#sk-min").value || 5;
+  const horizon = +$("#sk-horizon").value || 30;
+  const limit = +$("#sk-limit").value || 50;
+  const tb = $("#sk-table tbody");
+  tb.innerHTML = `<tr><td colspan="8" class="empty">Loading…</td></tr>`;
+  try {
+    const q = new URLSearchParams({min_n: min, horizon_days: horizon, limit});
+    if (t) q.set("filer_type", t);
+    const rows = await fetchJSON(`/api/skill-leaderboard?${q.toString()}`);
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="8" class="empty">Skill model warming up — needs filings older than ${horizon}d with resolved prices.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(r.filer_name||r.filer_id)}<div class="live" style="font-size:11px">${esc(r.filer_id)}</div></td>
+        <td><span class="pill">${esc(r.filer_type)}</span></td>
+        <td class="num">${r.n}</td>
+        <td class="num"><span class="pos">${r.wins}</span>/<span class="neg">${r.losses}</span></td>
+        <td class="num">${(r.posterior_mean*100).toFixed(1)}%</td>
+        <td class="num">${(r.ci_lower*100).toFixed(0)}–${(r.ci_upper*100).toFixed(0)}%</td>
+        <td class="num ${(r.avg_alpha_pct||0)>=0?"pos":"neg"}">${(r.avg_alpha_pct>=0?"+":"")}${(r.avg_alpha_pct||0).toFixed(2)}%</td>
+        <td>${r.high_confidence_skilled?`<span class="pill buy">skilled</span>`:`<span class="pill">building</span>`}</td>
+      </tr>`).join("");
+  } catch(e) {
+    tb.innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
 // ── Ticker Synthesis ──
 async function loadSynthesis() {
   const t = $("#sy-ticker").value.trim().toUpperCase();
@@ -768,6 +836,7 @@ const loaders = {
   funds:       loadFunds,
   changes:     loadChanges,
   congress:    loadCongress,
+  skill:       loadSkill,
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
 };
@@ -780,6 +849,7 @@ $("#ma-go").addEventListener("click", loadMA);
 $("#fl-go").addEventListener("click", loadFunds);
 $("#ch-go").addEventListener("click", loadChanges);
 $("#cg-go").addEventListener("click", loadCongress);
+$("#sk-go").addEventListener("click", loadSkill);
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
 $("#sy-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") loadSynthesis(); });

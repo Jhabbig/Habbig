@@ -8,6 +8,7 @@ markets:
 - **M&A announcements** — SEC 8-K Items 1.01 / 2.01 with keyword scoring
 - **Fund quarterly holdings** — SEC Form 13F-HR (institutional managers >$100M AUM)
 - **Congressional trades** — House + Senate periodic transaction reports (STOCK Act)
+- **Bayesian filer skill** — Beta(α,β) posterior per filer, labeled by ticker-vs-SPY forward returns over a configurable horizon
 
 Free public data only — paid options-flow and dark-pool feeds are out of scope.
 
@@ -50,8 +51,11 @@ docker compose up --build whales
 | `filings13d.py` | SC 13D / 13G regex extractor: percent of class, shares owned, issuer name. |
 | `filings8k.py` | 8-K filter — scores filings by reported items (1.01, 2.01, 8.01) and M&A keywords ("definitive agreement", "merger", etc.). |
 | `congress.py` | Congressional PTR fetcher — pulls house-stock-watcher and senate-stock-watcher S3 datasets (used by every consumer Congress tracker), normalises field names, dedupes by transaction id. |
-| `signals.py` | Computes ranked feeds over the persisted DB: insider clusters, recent buys, activist stakes, M&A events, fund list / fund holdings / position changes, ticker holders, congress trades, ticker synthesis (now incorporates fund + congress signals), hot leaderboard. |
-| `db.py` | SQLite schema + helpers. Tables: `insider_txn`, `activist_stake`, `ma_event`, `fund_filing`, `fund_holding`, `congress_trade`, `ingest_state`. WAL mode. |
+| `prices.py` | Stooq daily-close fetcher with local SQLite cache. Concurrency-capped, normalises tickers to `<ticker>.us`. Co-fetches SPY as the benchmark. |
+| `bayesian.py` | Beta(α,β) posterior + Wilson-score 95% confidence interval. Hand-rolled to avoid pulling scipy. |
+| `skill.py` | Outcome labeler + skill leaderboards. For each insider buy/sell, activist filing, and congressional trade older than `SKILL_HORIZON_DAYS`, compares ticker forward return to SPY → win/loss. Aggregates per filer into a posterior. |
+| `signals.py` | Computes ranked feeds over the persisted DB: insider clusters (now annotated with each buyer's skill posterior), recent buys, activist stakes, M&A events, fund list / fund holdings / position changes, ticker holders, congress trades, ticker synthesis (now incorporates fund + congress signals), hot leaderboard. |
+| `db.py` | SQLite schema + helpers. Tables: `insider_txn`, `activist_stake`, `ma_event`, `fund_filing`, `fund_holding`, `congress_trade`, `price_daily`, `filer_outcome`, `ingest_state`. WAL mode. |
 
 **Frontend / data**
 | File | Purpose |
@@ -83,6 +87,9 @@ docker compose up --build whales
 | `GET /api/ticker-holders?ticker=<X>&limit=100` | Funds holding a given ticker (latest filing per fund). |
 | `GET /api/congress-trades?days=30&chamber=<House\|Senate>&limit=200` | Recent congressional periodic transaction reports. |
 | `GET /api/congress-by-ticker?ticker=<X>` | Congress trades for one ticker. |
+| `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |
+| `GET /api/skill-detail?filer_type=<...>&filer_id=<X>&horizon_days=30` | Per-filer skill posterior + last N labeled outcomes. |
+| `POST /api/admin/skill-recompute` | Trigger a skill-labeling pass. DEV_MODE only. |
 | `GET /api/synthesis?ticker=XYZ&days=90` | Composite per-ticker view: insider, activist, M&A, fund holders, congress trades + single ranked synthesis score. |
 | `GET /api/whale-leaderboard?days=90` | Most active filers (insiders + activists). |
 | `GET /api/stream` | Server-Sent Events — emits `hello` on connect and `ingest` after each pass that finds new filings. 20s keepalive comments. |
@@ -104,6 +111,7 @@ docker compose up --build whales
 | `https://www.sec.gov/files/company_tickers.json` | Official CIK → ticker map (cached daily) |
 | `https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json` | Community-maintained House PTR dataset |
 | `https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json` | Community-maintained Senate PTR dataset |
+| `https://stooq.com/q/d/l/?s=<ticker>.us&i=d` | Daily-close OHLCV for US tickers (free, no key). Used to label forward returns for the skill model. |
 
 EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
 (see `EDGAR_USER_AGENT` env var).
@@ -119,6 +127,10 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
 | `INGEST_FEED_COUNT` | `40` | Entries pulled per Atom feed per pass. |
 | `INGEST_13F_LIMIT` | `5` | Max 13F filings processed per pass (XMLs can be megabytes; over multiple passes the full Atom feed is ingested). |
 | `CONGRESS_INTERVAL_S` | `3600` | Seconds between Congress dataset pulls. The S3 buckets refresh roughly daily, so this can be coarse. |
+| `SKILL_INTERVAL_S` | `1800` | Seconds between Bayesian skill labeling passes. |
+| `SKILL_PER_PASS` | `200` | Max outcomes labeled per skill pass. |
+| `SKILL_HORIZON_DAYS` | `30` | Forward-return horizon for win/loss labeling. |
+| `PRICES_USER_AGENT` | (default UA) | User-Agent header when fetching price data from Stooq. |
 | `DISABLE_INGEST` | unset | Set to `1` to disable the ingest loop (e.g. for read-only replicas). |
 
 ## Notes
@@ -145,12 +157,15 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
   empty.
 - Phase 2 shipped: CIK→ticker enrichment, SSE live stream,
   cross-signal "Hot Now" leaderboard.
-- Phase 3a shipped (this version): 13F fund holdings + quarter-over-quarter
-  position changes + per-ticker fund holders; Congressional periodic
-  transaction reports (House + Senate); synthesis scoring now incorporates
-  fund-holder presence and Congress buy/sell net.
-- Phase 3b candidates: Bayesian fund-skill scoring with forward-return
-  calibration (requires daily-price data via Stooq/Yahoo/Polygon),
-  unusual options activity (paid: Polygon, CBOE, unusual_whales), dark
-  pool prints, foreign-equivalent filings (UK Companies House substantial-
-  shareholder notices), CUSIP→ticker enrichment for 13F holdings.
+- Phase 3a shipped: 13F fund holdings + quarter-over-quarter position
+  changes + per-ticker fund holders; Congressional periodic transaction
+  reports (House + Senate).
+- Phase 3b shipped (this version): Bayesian filer-skill posterior over
+  insider / activist / congress filings, labeled by ticker-vs-SPY forward
+  returns from Stooq. New `Skill` tab + per-buyer skill badges on the
+  Insider Clusters tab.
+- Phase 4 candidates: 13F fund-skill scoring (needs CUSIP→ticker enrichment
+  to label outcomes), unusual options activity (paid: Polygon, CBOE,
+  unusual_whales), dark pool prints, foreign-equivalent filings (UK
+  Companies House substantial-shareholder notices), historical EDGAR
+  backfill so the skill model has more observations on day one.

@@ -24,6 +24,7 @@ import filings8k
 import filings13d
 import form4
 import form13f
+import skill as skill_mod
 
 log = logging.getLogger("ingest")
 
@@ -35,11 +36,18 @@ PER_PASS_13F_LIMIT = int(os.environ.get("INGEST_13F_LIMIT", "5"))     # cap 13F 
 CONGRESS_INTERVAL_S = int(os.environ.get("CONGRESS_INTERVAL_S", "3600"))
 _last_congress_run = 0.0
 
+# Skill labeling runs on a slower beat than the filing ingest; price data is
+# stable and each pass touches dozens of HTTP requests.
+SKILL_INTERVAL_S    = int(os.environ.get("SKILL_INTERVAL_S", "1800"))   # 30 min default
+SKILL_PER_PASS      = int(os.environ.get("SKILL_PER_PASS", "200"))
+SKILL_HORIZON_DAYS  = int(os.environ.get("SKILL_HORIZON_DAYS", "30"))
+_last_skill_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
     global _last_congress_run
-    results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0, "13f_filings": 0, "13f_holdings": 0, "congress": 0}
+    results = {"form4": 0, "13d": 0, "13g": 0, "8k": 0, "13f_filings": 0, "13f_holdings": 0, "congress": 0, "skill_labeled": 0}
 
     # Refresh CIK→ticker map (no-op if already current).
     try:
@@ -87,6 +95,16 @@ async def run_once() -> dict[str, int]:
             _last_congress_run = now
         except Exception as e:
             log.exception("congress ingest failed: %s", e)
+
+    # Bayesian skill labeling — also slow cadence
+    global _last_skill_run
+    if now - _last_skill_run >= SKILL_INTERVAL_S:
+        try:
+            res = await skill_mod.run_pass(horizon_days=SKILL_HORIZON_DAYS, limit=SKILL_PER_PASS)
+            results["skill_labeled"] = res.get("labeled", 0)
+            _last_skill_run = now
+        except Exception as e:
+            log.exception("skill labeling failed: %s", e)
 
     if any(results.values()):
         events.broadcast("ingest", {"inserted": results, "counts": db.counts()})

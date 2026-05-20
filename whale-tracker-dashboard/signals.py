@@ -41,6 +41,8 @@ def _seniority_score(relation: str) -> float:
 
 def insider_clusters(window_days: int = 30, min_buyers: int = 3) -> list[dict]:
     """Tickers with N+ distinct insider buyers in the window."""
+    import skill as skill_mod  # lazy import to avoid circular at startup
+
     with connect() as cx:
         rows = cx.execute(
             """
@@ -57,6 +59,7 @@ def insider_clusters(window_days: int = 30, min_buyers: int = 3) -> list[dict]:
         ).fetchall()
 
     by_ticker: dict[str, dict[str, Any]] = {}
+    all_filer_ids: set[str] = set()
     for r in rows:
         t = r["issuer_ticker"]
         if not t:
@@ -72,7 +75,10 @@ def insider_clusters(window_days: int = 30, min_buyers: int = 3) -> list[dict]:
             "latest_txn": "",
             "sample_filing_url": r["filing_url"],
         })
-        bucket["buyers"][r["reporter_cik"] or r["reporter_name"]] = {
+        bid = r["reporter_cik"] or r["reporter_name"]
+        if r["reporter_cik"]:
+            all_filer_ids.add(r["reporter_cik"])
+        bucket["buyers"][bid] = {
             "cik": r["reporter_cik"],
             "name": r["reporter_name"],
             "relation": r["reporter_relation"],
@@ -83,16 +89,21 @@ def insider_clusters(window_days: int = 30, min_buyers: int = 3) -> list[dict]:
         if (r["txn_date"] or "") > bucket["latest_txn"]:
             bucket["latest_txn"] = r["txn_date"] or ""
 
+    skill_map = skill_mod.skill_for_filers("insider", all_filer_ids)
+
     out: list[dict] = []
     for t, b in by_ticker.items():
         if len(b["buyers"]) < min_buyers:
             continue
+        buyers = list(b["buyers"].values())
+        for buyer in buyers:
+            buyer["skill"] = skill_map.get(buyer["cik"] or "")
         out.append({
             "ticker":          t,
             "issuer_name":     b["issuer_name"],
             "issuer_cik":      b["issuer_cik"],
-            "n_buyers":        len(b["buyers"]),
-            "buyers":          list(b["buyers"].values()),
+            "n_buyers":        len(buyers),
+            "buyers":          buyers,
             "total_value_usd": round(b["total_value_usd"], 2),
             "total_shares":    round(b["total_shares"], 2),
             "weighted_score":  round(b["weighted_score"], 2),
