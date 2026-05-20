@@ -28,6 +28,7 @@ from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app.models import co2 as co2_model
+from app.models import calibration
 from app.models import markets as markets_model
 from app.models import methane as methane_model
 from app.models import sea_ice as sea_ice_model
@@ -67,6 +68,11 @@ _COMMIT = _git_sha()
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+@app.route("/methodology")
+def methodology_page():
+    return send_from_directory("static", "methodology.html")
 
 
 @app.route("/api/health")
@@ -188,16 +194,22 @@ def api_summary():
             "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
             "projection": gp,
             "thresholds": temperature_model.threshold_probs(gp),
+            "calibration": calibration.summary(
+                temperature_model.backtest(g) if g else [], "error_c", "°C"),
         },
         "co2": {
             "latest": c["latest"] if c else None,
             "projection": cp,
             "thresholds": co2_model.threshold_probs(cp),
+            "calibration": calibration.summary(
+                co2_model.backtest(c) if c else [], "error_ppm", "ppm"),
         },
         "methane": {
             "latest": ch4["latest"] if ch4 else None,
             "projection": mp,
             "thresholds": methane_model.threshold_probs(mp),
+            "calibration": calibration.summary(
+                methane_model.backtest(ch4) if ch4 else [], "error_ppb", "ppb"),
         },
         "sea_ice": {
             "record_check": sea_ice_model.daily_record_check(s) if s else None,
@@ -217,10 +229,18 @@ def api_backtest():
     g = gistemp_src.fetch()
     c = co2_src.fetch()
     ch4 = methane_src.fetch()
+    gist_rows = temperature_model.backtest(g) if g else []
+    co2_rows = co2_model.backtest(c) if c else []
+    ch4_rows = methane_model.backtest(ch4) if ch4 else []
     return jsonify({
-        "gistemp": temperature_model.backtest(g) if g else [],
-        "co2": co2_model.backtest(c) if c else [],
-        "methane": methane_model.backtest(ch4) if ch4 else [],
+        "gistemp": gist_rows,
+        "co2": co2_rows,
+        "methane": ch4_rows,
+        "calibration": {
+            "gistemp": calibration.summary(gist_rows, "error_c", "°C"),
+            "co2": calibration.summary(co2_rows, "error_ppm", "ppm"),
+            "methane": calibration.summary(ch4_rows, "error_ppb", "ppb"),
+        },
         "method": {
             "gistemp": "Replays the YTD-anomaly + historical-drift model 'as of June' for each year, scored vs the actual J-D mean.",
             "co2": "Refits the 24-month linear regression at June of each year, scored vs the actual December reading.",

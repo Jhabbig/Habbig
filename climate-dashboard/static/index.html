@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Climate Change — narve.ai</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
 <style>
   :root {
     --bg-0: #0b1220;
@@ -232,12 +233,34 @@
   .err-zero { color: var(--good); }
   .err-pos { color: var(--accent-2); }
   .err-neg { color: var(--warn); }
+
+  .calib-badge {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+  }
+  .calib-badge b { color: var(--text-2); font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .calib-badge a { color: var(--text-3); }
+  .calib-badge a:hover { color: var(--accent); }
+
+  .fanchart {
+    width: 100%;
+    height: 90px;
+    margin-top: 10px;
+  }
+  /* uPlot dark theme tweaks */
+  .u-legend { display: none; }
+  .u-axis { color: var(--text-3); }
+  .uplot { font-family: inherit; color: var(--text-2); }
 </style>
 </head>
 <body>
 <header>
   <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
-  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ · NSIDC sea ice · OISST · ENSO · backtest</div>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ · NSIDC sea ice · OISST · ENSO · backtest · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a></div>
 </header>
 <main>
 
@@ -288,8 +311,10 @@
 
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
 const MONTH = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const Z90 = 1.2815515655;  // z-score for the 10/90 fan edges (90% central band)
 
 function fmt(x, dp = 2) {
   if (x === null || x === undefined || Number.isNaN(x)) return "—";
@@ -313,6 +338,96 @@ function sparkline(values, w = 260, h = 56, color = "#34d399") {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
     <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}" />
   </svg>`;
+}
+
+// Calibration badge HTML — sourced from /api/backtest's calibration block.
+// Shows mean abs error so users can weight the projection appropriately.
+function calibBadge(c) {
+  if (!c || !c.unit) return "";
+  return `<div class="calib-badge">
+    <a href="/methodology" title="See /methodology for backtest details">Model error</a>
+    <b>±${Number(c.mae).toFixed(c.unit === "ppb" ? 1 : 2)} ${c.unit}</b>
+    avg over last ${c.n} yrs
+  </div>`;
+}
+
+// Fan chart: historical line + forecast cone widening linearly to year-end.
+// mu/sigma are the projection's mean and residual std. The cone fans from the
+// last observed point to (mu ± Z90·sigma) at horizonX.
+function fanChart(containerSelector, history, forecast, color) {
+  // history: [{x: unixSec, y: value}, …] historical observations
+  // forecast: {x: unixSec, mu: number, sigma: number}
+  // Returns the uPlot instance (or null if uPlot missing / no data).
+  if (typeof uPlot === "undefined" || !history.length || !forecast) return null;
+  const el = document.querySelector(containerSelector);
+  if (!el) return null;
+
+  const lastX = history[history.length - 1].x;
+  const lastY = history[history.length - 1].y;
+  const horizonX = forecast.x;
+  // Build forecast cone in 8 steps so uncertainty grows visibly with horizon.
+  const STEPS = 8;
+  const forecastPts = [];
+  for (let i = 1; i <= STEPS; i++) {
+    const t = i / STEPS;
+    forecastPts.push({
+      x: lastX + (horizonX - lastX) * t,
+      mu: lastY + (forecast.mu - lastY) * t,
+      sig: forecast.sigma * t,  // linearly widening
+    });
+  }
+  const allX = history.map(p => p.x).concat([lastX]).concat(forecastPts.map(p => p.x));
+  // Observed series — historical values, then nulls so the line stops at "now"
+  const observed = history.map(p => p.y).concat([lastY]).concat(forecastPts.map(() => null));
+  const median = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu));
+  const lower = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu - Z90 * p.sig));
+  const upper = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu + Z90 * p.sig));
+
+  // uPlot wants column-oriented data: [xs, series1, series2, …]
+  const data = [allX, observed, median, lower, upper];
+
+  // Wipe and (re)render
+  el.innerHTML = "";
+
+  const opts = {
+    width: el.clientWidth || 260,
+    height: 90,
+    cursor: { show: false },
+    legend: { show: false },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" } },
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" },
+        size: 36, gap: 4 },
+    ],
+    series: [
+      {},
+      { stroke: color, width: 1.75, points: { show: false } },
+      { stroke: color, width: 1.5, dash: [4, 3], points: { show: false } },
+      { stroke: "transparent", points: { show: false }, paths: () => null },
+      { stroke: "transparent", points: { show: false }, paths: () => null,
+        fill: hexAlpha(color, 0.18),
+        band: true,
+      },
+    ],
+    bands: [{ series: [4, 3], fill: hexAlpha(color, 0.18) }],
+  };
+  return new uPlot(opts, data, el);
+}
+
+function hexAlpha(hex, a) {
+  // Accept #rgb or #rrggbb; return rgba()
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map(c => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16),
+        g = parseInt(h.slice(2, 4), 16),
+        b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// Convert (year, month, day?) → seconds since epoch (UTC).
+function ymdToUnix(y, m, d = 15) {
+  return Math.floor(Date.UTC(y, m - 1, d) / 1000);
 }
 
 async function getJSON(url) {
@@ -347,12 +462,14 @@ async function loadCards() {
   const ch4Data = await getJSON("/api/methane");
 
   const cards = [];
+  // Each entry: {id, history, forecast, color} — wired to fan-chart containers
+  // after the cards HTML is inserted into the DOM.
+  const fans = [];
 
   // Temperature anomaly card
   if (s?.gistemp?.projection) {
     const p = s.gistemp.projection;
     const rec = p.current_record;
-    const sparkVals = (tempData?.annual || []).slice(-50).map(a => a.anomaly_c);
     const cls = p.p_breaks_record > 0.7 ? "hot" : p.p_breaks_record > 0.4 ? "warn" : "good";
     const thr = s.gistemp.thresholds;
     const threshHtml = thr ? `
@@ -362,6 +479,15 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_c.toFixed(1)}°C <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    const monthly = (tempData?.monthly || []).slice(-60);
+    fans.push({
+      id: "temp-fan",
+      history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.anomaly_c })),
+      forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                  mu: p.projected_annual_anomaly_c,
+                  sigma: p.drift_std_c || 0.05 },
+      color: "#f87171",
+    });
     cards.push(`
       <div class="card">
         <h3>Global temperature anomaly</h3>
@@ -370,7 +496,8 @@ async function loadCards() {
         <div class="sub" style="margin-top:6px">Record: +${fmt(rec.anomaly_c, 2)}°C (${rec.year})
           &nbsp; <span class="pill ${cls}">P(new record) ${pct(p.p_breaks_record)}</span></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#f87171")}
+        <div class="fanchart" id="temp-fan"></div>
+        ${calibBadge(s.gistemp.calibration)}
       </div>
     `);
   }
@@ -379,9 +506,7 @@ async function loadCards() {
   if (s?.co2?.latest) {
     const l = s.co2.latest;
     const p = s.co2.projection;
-    const sparkVals = (co2Data?.monthly || []).slice(-120).map(m => m.ppm);
     const thr = s.co2.thresholds;
-    // Show only the most "live" thresholds — those between 5-95% prob
     const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
     const threshHtml = liveThr.length ? `
       <div class="thresholds">
@@ -390,6 +515,17 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppm} <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    if (p) {
+      const monthly = (co2Data?.monthly || []).slice(-60);
+      fans.push({
+        id: "co2-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppm })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppm,
+                    sigma: p.residual_std_ppm || 0.5 },
+        color: "#fbbf24",
+      });
+    }
     cards.push(`
       <div class="card">
         <h3>Atmospheric CO₂ (Mauna Loa)</h3>
@@ -397,7 +533,8 @@ async function loadCards() {
         <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppm_per_year ?? 0, 2)} ppm/yr · σ=${fmt(p?.residual_std_ppm ?? 0, 2)}</div>
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppm ?? 0, 2)} ppm</b></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#fbbf24")}
+        <div class="fanchart" id="co2-fan"></div>
+        ${calibBadge(s.co2.calibration)}
       </div>
     `);
   }
@@ -406,7 +543,6 @@ async function loadCards() {
   if (s?.methane?.latest) {
     const l = s.methane.latest;
     const p = s.methane.projection;
-    const sparkVals = (ch4Data?.monthly || []).slice(-120).map(m => m.ppb);
     const thr = s.methane.thresholds;
     const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
     const threshHtml = liveThr.length ? `
@@ -416,6 +552,17 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    if (p) {
+      const monthly = (ch4Data?.monthly || []).slice(-60);
+      fans.push({
+        id: "ch4-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppb })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppb,
+                    sigma: p.residual_std_ppb || 5.0 },
+        color: "#a78bfa",
+      });
+    }
     cards.push(`
       <div class="card">
         <h3>Atmospheric methane (CH₄)</h3>
@@ -423,7 +570,8 @@ async function loadCards() {
         <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 1)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 1)}</div>
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#a78bfa")}
+        <div class="fanchart" id="ch4-fan"></div>
+        ${calibBadge(s.methane.calibration)}
       </div>
     `);
   }
@@ -490,7 +638,23 @@ async function loadCards() {
   }
 
   document.getElementById("cards").innerHTML = cards.join("");
+
+  // Build fan charts now that the containers exist in the DOM.
+  _fanInstances.forEach(u => { try { u.destroy(); } catch (_) {} });
+  _fanInstances = [];
+  for (const f of fans) {
+    const u = fanChart("#" + f.id, f.history, f.forecast, f.color);
+    if (u) _fanInstances.push(u);
+  }
 }
+
+let _fanInstances = [];
+window.addEventListener("resize", () => {
+  for (const u of _fanInstances) {
+    const root = u.root;
+    if (root && root.clientWidth) u.setSize({ width: root.clientWidth, height: 90 });
+  }
+});
 
 let _allMarkets = [];
 

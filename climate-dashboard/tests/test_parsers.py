@@ -17,6 +17,7 @@ from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
 from app.fetchers import oni as oni_src
 from app.fetchers import sea_ice as sea_ice_src
+from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
 from app.models import markets
 from app.models import methane as methane_model
@@ -213,3 +214,24 @@ def test_sea_ice_min_projection_needs_history():
     # Fewer than 10 distinct years of history → returns None
     series = sea_ice_src.parse(_load("seaice_sample.csv"))
     assert sea_ice_model.arctic_min_projection({"arctic": series}) is None
+
+
+# ─── Calibration summary ───────────────────────────────────────────────────────
+
+def test_calibration_summary_known_values():
+    rows = [
+        {"error_ppm": 0.5},
+        {"error_ppm": -0.3},
+        {"error_ppm": 0.1},
+        {"error_ppm": -0.1},
+    ]
+    s = calibration_model.summary(rows, "error_ppm", "ppm")
+    assert s["n"] == 4
+    assert s["mae"] == round((0.5 + 0.3 + 0.1 + 0.1) / 4, 3)
+    assert s["bias"] == round((0.5 - 0.3 + 0.1 - 0.1) / 4, 3)
+    assert s["unit"] == "ppm"
+
+
+def test_calibration_summary_returns_none_when_empty():
+    assert calibration_model.summary([], "error_c", "°C") is None
+    assert calibration_model.summary([{"foo": 1}], "error_c", "°C") is None
