@@ -32,6 +32,7 @@ from cache import cache
 from alerts import dispatch_divergence_alert
 from smart_money import fetch_smart_money_flows, race_smart_money
 from news import ingest_news, measure_reactions, lag_curve, tag_article
+from election_night import assemble_election_night
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
 
@@ -1894,6 +1895,72 @@ async def data_forecasts(
         "method": rows[0].get("method") if rows else "default_weights",
         "smart_money_available": sm_available,
     }
+
+
+def _polling_avg_d_by_race() -> dict[str, float]:
+    """Compute a Dem-share polling average per race.
+
+    Dem share = D% / (D% + R%) from recent polls in the race's state. We
+    intentionally do this in Python (rather than SQL) because party labels
+    in the poll table are free-form strings ("Democrat", "DEM", "D", etc.).
+    """
+    polls = state.db.get_polls()
+    by_race: dict[str, dict[str, float]] = defaultdict(lambda: {"d_sum": 0.0, "r_sum": 0.0, "n": 0})
+    for p in polls:
+        st = (p.get("state") or "").strip().upper()
+        ptype = (p.get("poll_type") or "").strip().lower()
+        pct = p.get("percentage")
+        party_raw = (p.get("party") or "").strip().lower()
+        if not st or not ptype or pct is None:
+            continue
+        if ptype == "generic_ballot":
+            # Generic ballot rolls into the national race buckets; skip per-race
+            # joining for now since we don't have a national-only race key.
+            continue
+        try:
+            pct = float(pct)
+        except (TypeError, ValueError):
+            continue
+        if party_raw.startswith("d"):
+            key = f"{ptype}_{st}"
+            by_race[key]["d_sum"] += pct
+            by_race[key]["n"] += 1
+        elif party_raw.startswith("r"):
+            key = f"{ptype}_{st}"
+            by_race[key]["r_sum"] += pct
+            by_race[key]["n"] += 1
+
+    out: dict[str, float] = {}
+    for race_key, agg in by_race.items():
+        total = agg["d_sum"] + agg["r_sum"]
+        if total <= 0:
+            continue
+        out[race_key] = round(agg["d_sum"] / total, 4)
+    return out
+
+
+@app.get("/data/election-night")
+async def data_election_night():
+    """Race-night master view: synthetic narve.ai calls + chamber totals + polling gap.
+
+    Combines:
+      * ``/data/forecasts`` output (forecast_d, confidence, smart_money) for
+        every active race
+      * A polling Dem-share map per ``{race_type}_{state}`` key
+      * The ``election_night`` module's call-state machine + aggregation
+
+    This single endpoint powers the dedicated election-night page. The SSE
+    push-bus already broadcasts ``data_updated`` events after each refresh
+    cycle, so the frontend re-fetches this whole snapshot sub-minute.
+    """
+    payload = await data_forecasts(min_confidence=0.0, limit=10_000)
+    forecasts = payload.get("forecasts", []) or []
+    polling = _polling_avg_d_by_race()
+
+    en = assemble_election_night(forecasts=forecasts, polling_by_race=polling)
+    en["smart_money_available"] = payload.get("smart_money_available", False)
+    en["method"] = payload.get("method")
+    return en
 
 
 @app.get("/data/backtest")

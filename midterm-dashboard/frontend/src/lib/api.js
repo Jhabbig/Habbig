@@ -70,6 +70,7 @@ export const api = {
   newsForRace: (key, limit = 20) => request(`/data/news/race/${encodeURIComponent(key)}?limit=${limit}`),
   newsRecent: (limit = 30) => request(`/data/news/recent?limit=${limit}`),
   newsLagCurve: (minDeltaPp = 1.0) => request(`/data/news/lag-curve?min_delta_pp=${minDeltaPp}`),
+  electionNight: () => request('/data/election-night'),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),
