@@ -71,6 +71,7 @@ Smoke-test individual modules:
 
 ```bash
 python3 -m ingestion.sec_rss          # SEC press releases
+python3 -m ingestion.sec_litigation_rss  # SEC litigation releases (v1.3)
 python3 -m ingestion.fca_rss          # FCA news
 python3 -m ingestion.esma_rss         # ESMA news
 python3 -m ingestion.unified_feed     # merged feed + per-source status + classifier tags + severity
@@ -97,6 +98,7 @@ regulators-dashboard/
 ├── ingestion/
 │   ├── _rss.py                     Shared RSS/Atom fetcher + parser (defusedxml)
 │   ├── sec_rss.py                  SEC press-release feed (US)
+│   ├── sec_litigation_rss.py       SEC litigation-release feed (US) — v1.3
 │   ├── fca_rss.py                  FCA news feed (UK)
 │   ├── esma_rss.py                 ESMA news feed (EU)
 │   ├── polymarket_client.py        Polymarket Gamma API → normalized binary markets (5-min cache)
@@ -428,6 +430,29 @@ UI surface: a small `Subscribe via RSS ↗` link in the action-feed
 filter row that mirrors the current filter chips into the URL — pick
 your filter on the dashboard, copy the link, paste into your reader.
 
+### v1.3 — SEC litigation releases
+
+`ingestion/sec_litigation_rss.py` adds a new `RssSource` (code
+`SEC-LIT`, name "SEC Litigation Releases") and registers it in
+`unified_feed._SOURCES`. From there it flows through the v0.1 → v0.5
+pipeline automatically: items get type-classified (LR titles like
+"SEC Charges X with Fraud" reliably score `enforcement`), severity
+extracted, topics tagged, and market-matched against Polymarket /
+Kalshi. The new code shows up as its own row in the heatmap and its
+own entry in the per-source status row at the bottom of the action
+feed.
+
+No new endpoint, no new UI panel — the existing surfaces just gain
+a new source. That's the architectural payoff of the v0 → v0.5
+modular pipeline: adding a regulator stream is a single file +
+two-line `_SOURCES` edit.
+
+**PACER scope note:** the original v1.3 spec called for "PACER
+scraper for SEC litigation releases — paid feed, deferred." v1.3
+delivers the FREE half (SEC's own LR feed); deep PACER per-case
+access (complaints, motions, exhibits, court dockets) stays
+deferred until there's budget plus a clear cost-justified use case.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -443,7 +468,7 @@ your filter on the dashboard, copy the link, paste into your reader.
 | **v1.0** | ✓ done | Closes v1.0 — all seven sub-milestones (v0 → v0.7) shipped on the SEC + FCA + ESMA seed source set |
 | **v1.1** | ✓ done | Confirmation-hearing tracker — Senate Banking + House FS feeds, filtered to nomination/confirmation items, with regulator-hint tag |
 | **v1.2** | ✓ done | Statement diff viewer — latest-vs-prior speech per regulator with token-level inline diff and similarity score |
-| v1.3 | open  | Court-filing tracker (PACER scraper for SEC litigation releases) — paid feed, deferred |
+| **v1.3** | ✓ done (LR only) | SEC Litigation Releases pulled as a new source code `SEC-LIT`; flows through the v0.1 → v0.5 pipeline (classifier, severity, topics, market match, heatmap) automatically. Deep PACER per-case scraping (complaints, motions, exhibits) remains deferred — paid feed, ROI unproven. |
 | **v1.4** | ✓ done | OFAC SDN delta-per-day — fetch + parse Treasury `sdn.xml`, persist daily digest, compute additions/removals + per-program counts |
 | **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN`. Email digest deferred as v1.6 |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |

@@ -14,7 +14,7 @@ from threading import Lock
 
 from analysis.classifier import classify_item
 
-from . import esma_rss, fca_rss, sec_rss
+from . import esma_rss, fca_rss, sec_litigation_rss, sec_rss
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 # scraper) module that exposes a `fetch()` returning the same dict shape.
 _SOURCES = (
     sec_rss,
+    sec_litigation_rss,
     fca_rss,
     esma_rss,
 )
