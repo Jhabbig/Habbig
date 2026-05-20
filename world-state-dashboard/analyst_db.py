@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS pinboards (
     filters     TEXT NOT NULL,
     created_at  REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS market_snapshots (
+    market_id    TEXT NOT NULL,
+    ts           REAL NOT NULL,
+    top_price    REAL NOT NULL,
+    top_outcome  TEXT,
+    volume_24h   REAL,
+    PRIMARY KEY (market_id, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_msnap_ts ON market_snapshots(ts);
+CREATE INDEX IF NOT EXISTS idx_msnap_market ON market_snapshots(market_id, ts);
 """
 
 _lock = threading.RLock()
@@ -450,6 +461,111 @@ def delete_pinboard(pin_id: int) -> bool:
     with _lock, _conn() as c:
         cur = c.execute("DELETE FROM pinboards WHERE id=?", (pin_id,))
         return cur.rowcount > 0
+
+
+# ── Market snapshots (Polymarket price history) ─────────────────────────────
+# Recorded by the server's polymarket fetch hook (debounced to ~5 minutes per
+# market). Used to surface "this market moved Npt while the event was
+# breaking" badges on event cards.
+
+_SNAPSHOT_MIN_INTERVAL = 5 * 60  # seconds between snapshots per market
+_SNAPSHOT_RETENTION = 14 * 24 * 3600  # 14 days
+
+
+def record_market_snapshot(market_id: str, top_price: float,
+                           top_outcome: str | None, volume_24h: float | None,
+                           now: float | None = None) -> bool:
+    """Insert a snapshot if the last one for this market is older than the
+    debounce interval. Returns True if a row was written."""
+    if not market_id:
+        return False
+    now = now if now is not None else time.time()
+    with _lock, _conn() as c:
+        row = c.execute(
+            "SELECT ts FROM market_snapshots WHERE market_id=? ORDER BY ts DESC LIMIT 1",
+            (market_id,),
+        ).fetchone()
+        if row and (now - row["ts"]) < _SNAPSHOT_MIN_INTERVAL:
+            return False
+        c.execute(
+            "INSERT OR IGNORE INTO market_snapshots (market_id, ts, top_price, top_outcome, volume_24h) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (market_id, now, float(top_price), top_outcome, volume_24h),
+        )
+        return True
+
+
+def prune_market_snapshots(now: float | None = None) -> int:
+    now = now if now is not None else time.time()
+    cutoff = now - _SNAPSHOT_RETENTION
+    with _lock, _conn() as c:
+        cur = c.execute("DELETE FROM market_snapshots WHERE ts < ?", (cutoff,))
+        return cur.rowcount
+
+
+def _price_at(c: sqlite3.Connection, market_id: str, target_ts: float,
+              max_gap: float) -> float | None:
+    """Return the snapshot price closest to `target_ts`, within `max_gap` seconds.
+    Prefers a snapshot at or before the target; falls back to the nearest after."""
+    before = c.execute(
+        "SELECT ts, top_price FROM market_snapshots "
+        "WHERE market_id=? AND ts<=? ORDER BY ts DESC LIMIT 1",
+        (market_id, target_ts),
+    ).fetchone()
+    after = c.execute(
+        "SELECT ts, top_price FROM market_snapshots "
+        "WHERE market_id=? AND ts>? ORDER BY ts ASC LIMIT 1",
+        (market_id, target_ts),
+    ).fetchone()
+    candidates: list[tuple[float, float]] = []
+    if before and (target_ts - before["ts"]) <= max_gap:
+        candidates.append((target_ts - before["ts"], float(before["top_price"])))
+    if after and (after["ts"] - target_ts) <= max_gap:
+        candidates.append((after["ts"] - target_ts, float(after["top_price"])))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
+
+
+def market_movement(market_id: str, around_ts: float,
+                    half_window: float = 6 * 3600,
+                    max_gap: float = 3 * 3600) -> dict | None:
+    """Δprice (in points) for `market_id` measured T−h vs T+h around `around_ts`.
+
+    Returns {"delta_pts": float, "before": float, "after": float, "window_s": h}
+    or None if there's no usable history bracketing the timestamp.
+    """
+    with _lock, _conn() as c:
+        before = _price_at(c, market_id, around_ts - half_window, max_gap)
+        after = _price_at(c, market_id, around_ts + half_window, max_gap)
+        if before is None or after is None:
+            # Fall back to "movement since closest pre-event snapshot vs now"
+            # only when after-side is missing AND the event is recent enough
+            # that there *is* a "now" snapshot.
+            return None
+        return {
+            "delta_pts": round((after - before) * 100, 1),
+            "before": round(before, 4),
+            "after": round(after, 4),
+            "window_s": half_window,
+        }
+
+
+def market_movement_24h(market_id: str, now: float | None = None,
+                        max_gap: float = 3 * 3600) -> float | None:
+    """Δprice in points over the last 24h. Returns None if no usable history."""
+    now = now if now is not None else time.time()
+    with _lock, _conn() as c:
+        before = _price_at(c, market_id, now - 24 * 3600, max_gap)
+        latest = c.execute(
+            "SELECT top_price FROM market_snapshots "
+            "WHERE market_id=? ORDER BY ts DESC LIMIT 1",
+            (market_id,),
+        ).fetchone()
+        if before is None or not latest:
+            return None
+        return round((float(latest["top_price"]) - before) * 100, 1)
 
 
 # ── Stats ───────────────────────────────────────────────────────────────────

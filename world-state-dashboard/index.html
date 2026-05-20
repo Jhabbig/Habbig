@@ -2335,6 +2335,23 @@ body.am-tl-hidden    { padding-bottom: 0; }
 .am-forecast-bar.cold span { background: #c45a4a; }
 .am-forecast-price { color: var(--text-0); }
 .am-forecast-vol { color: var(--text-2); }
+.am-forecast-delta { font-family: var(--mono); font-size: 10px; }
+.am-forecast-delta.up { color: var(--green-bright); }
+.am-forecast-delta.down { color: #e08070; }
+
+/* Per-event "market moved" pills inside event cards */
+.am-ec-moves {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+}
+.am-move-pill {
+  font-family: var(--mono); font-size: 10px;
+  padding: 2px 6px; border-radius: 8px;
+  border: 1px solid var(--border-light); background: var(--bg-3);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-move-pill.up { color: var(--green-bright); border-color: rgba(74, 222, 128, 0.35); }
+.am-move-pill.down { color: #e08070; border-color: rgba(224, 128, 112, 0.35); }
 
 /* Natural-language query input */
 .am-nlq {
@@ -7832,6 +7849,8 @@ function togglePinMap() {
     const actors = (ev.actors || []).map(a =>
       `<span class="am-actor-pill" data-id="${escHtml(a.id)}">${escHtml(a.name)}<span class="role">${escHtml(a.role)}</span></span>`
     ).join('');
+    const moves = ev.market_moves || [];
+    const moveHtml = moves.length ? `<div class="am-ec-moves">${moves.map(marketMovePillHtml).join('')}</div>` : '';
     return `
       <div class="am-event-card sev-${sev}" data-event-id="${ev.id}">
         <div class="am-ec-meta">
@@ -7841,6 +7860,7 @@ function togglePinMap() {
         </div>
         <div class="am-ec-summary">${escHtml(ev.summary)}</div>
         ${actors ? `<div class="am-ec-actors">${actors}</div>` : ''}
+        ${moveHtml}
         ${sources}
       </div>
     `;
@@ -7854,16 +7874,32 @@ function togglePinMap() {
     const volLabel = vol >= 1e6 ? `$${(vol/1e6).toFixed(1)}M` : vol >= 1e3 ? `$${(vol/1e3).toFixed(0)}K` : `$${vol.toFixed(0)}`;
     const url = m.slug ? `https://polymarket.com/event/${encodeURIComponent(m.slug)}` : '';
     const barClass = price >= 0.6 ? 'hot' : price <= 0.3 ? 'cold' : '';
+    const delta = (m.delta_24h_pts === null || m.delta_24h_pts === undefined) ? null : Number(m.delta_24h_pts);
+    let deltaHtml = '';
+    if (delta !== null && Math.abs(delta) >= 0.5) {
+      const cls = delta > 0 ? 'up' : 'down';
+      const arrow = delta > 0 ? '▲' : '▼';
+      deltaHtml = `<span class="am-forecast-delta ${cls}">${arrow}${Math.abs(delta).toFixed(1)}pt</span>`;
+    }
     return `
       <a class="am-forecast-row" href="${escHtml(url)}" target="_blank" rel="noopener">
         <div class="am-forecast-q">${escHtml(m.question || m.slug || '')}</div>
         <div class="am-forecast-meta">
           <span class="am-forecast-bar ${barClass}"><span style="width:${pct}%"></span></span>
           <span class="am-forecast-price">${pct}% ${escHtml(outcome)}</span>
+          ${deltaHtml}
           <span class="am-forecast-vol">${volLabel} 24h</span>
         </div>
       </a>
     `;
+  }
+
+  function marketMovePillHtml(mv) {
+    const delta = Number(mv.delta_pts || 0);
+    const cls = delta > 0 ? 'up' : 'down';
+    const arrow = delta > 0 ? '▲' : '▼';
+    const label = mv.question || mv.slug || 'market';
+    return `<span class="am-move-pill ${cls}" title="${escHtml(label)}">${arrow}${Math.abs(delta).toFixed(1)}pt · ${escHtml(label)}</span>`;
   }
 
   function bindDossierClicks(root) {

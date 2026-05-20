@@ -300,6 +300,23 @@ def fetch_polymarket():
     with _cache_lock:
         POLYMARKET_CACHE["data"] = results
         POLYMARKET_CACHE["fetched_at"] = now
+
+    # Record price snapshots so we can compute "market moved while this story
+    # was breaking" badges later. Debounced inside analyst_db to ~5min/market.
+    try:
+        for m in results:
+            mid = m.get("id") or m.get("slug")
+            if not mid:
+                continue
+            analyst_db.record_market_snapshot(
+                market_id=str(mid),
+                top_price=float(m.get("top_price") or 0),
+                top_outcome=m.get("top_outcome") or None,
+                volume_24h=float(m.get("volume_24h") or 0),
+                now=now,
+            )
+    except Exception as e:
+        print(f"[polymarket] snapshot record failed: {e}")
     return results
 
 
@@ -8863,6 +8880,29 @@ async def analyst_entity(entity_id: str, request: Request):
     try:
         markets = await asyncio.to_thread(fetch_polymarket)
         forecasts = forecast_matcher.markets_for_entity(ent, markets, limit=5)
+        # Annotate each forecast with last-24h movement (None if no history yet).
+        for f in forecasts:
+            mid = f.get("id") or f.get("slug")
+            if mid:
+                f["delta_24h_pts"] = analyst_db.market_movement_24h(str(mid))
+        # Annotate each recent event with notable market moves around it.
+        market_index = {(m.get("id") or m.get("slug")): m for m in forecasts}
+        for ev in recent:
+            moves = []
+            for mid, m in market_index.items():
+                if not mid:
+                    continue
+                mv = analyst_db.market_movement(str(mid), ev.get("occurred_at") or 0)
+                if mv and abs(mv["delta_pts"]) >= 3.0:
+                    moves.append({
+                        "market_id": mid,
+                        "question": m.get("question"),
+                        "slug": m.get("slug"),
+                        "delta_pts": mv["delta_pts"],
+                    })
+            if moves:
+                moves.sort(key=lambda x: abs(x["delta_pts"]), reverse=True)
+                ev["market_moves"] = moves[:2]
     except Exception as e:
         print(f"[analyst_entity] forecast match failed: {e}")
     return _json({"entity": ent, "events": recent, "graph": graph, "forecasts": forecasts})
