@@ -110,6 +110,14 @@ class KalshiClient:
                 except ValueError:
                     pass
 
+            # Kalshi groups markets into events via `event_ticker`. Each market
+            # in an event is one candidate / outcome. yes_sub_title is the
+            # candidate name when the event is multi-outcome (and absent for
+            # standalone binaries).
+            event_ticker = (m.get("event_ticker") or "").strip() or None
+            outcome_name = (m.get("yes_sub_title") or "").strip() or None
+            event_title = title if event_ticker else None  # best available
+
             # Check existing
             stmt = select(MarketSnapshot).where(
                 MarketSnapshot.market_slug == ticker,
@@ -122,6 +130,9 @@ class KalshiClient:
                 existing.yes_price = yes_price
                 existing.volume_usd = volume
                 existing.close_time = close_time
+                existing.event_slug = event_ticker
+                existing.event_title = event_title
+                existing.outcome_name = outcome_name
                 existing.snapshotted_at = datetime.now(timezone.utc)
                 session.add(existing)
                 updated_count += 1
@@ -134,6 +145,9 @@ class KalshiClient:
                     volume_usd=volume,
                     close_time=close_time,
                     platform="kalshi",
+                    event_slug=event_ticker,
+                    event_title=event_title,
+                    outcome_name=outcome_name,
                     snapshotted_at=datetime.now(timezone.utc),
                 ))
                 new_count += 1

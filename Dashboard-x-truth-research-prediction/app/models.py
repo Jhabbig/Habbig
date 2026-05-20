@@ -157,6 +157,14 @@ class MarketSnapshot(SQLModel, table=True):
     volume_usd: float = 0.0
     close_time: Optional[datetime] = None
     platform: str = Field(default="polymarket", index=True)  # "polymarket" or "kalshi"
+    # Multi-outcome event grouping. When a market is one option inside a
+    # multi-candidate event ("Will Trump win 2028?" inside the "2028 Election
+    # Winner" event), these fields link it to the parent. For binary markets
+    # ("Will the Fed cut in March?") they're null and the market matches as a
+    # standalone binary.
+    event_slug: Optional[str] = Field(default=None, index=True)  # parent event id
+    event_title: Optional[str] = None  # parent event title (e.g. "2028 Presidential Election Winner")
+    outcome_name: Optional[str] = None  # this market's outcome (e.g. "Trump", "Harris")
     snapshotted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

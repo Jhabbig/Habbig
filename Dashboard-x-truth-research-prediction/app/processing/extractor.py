@@ -87,6 +87,20 @@ def fuzzy_match_score(text_a: str, text_b: str) -> float:
     return _jaccard(_tokenize(text_a), _tokenize(text_b))
 
 
+def _outcome_appears_in(prediction_tokens: set[str], outcome_name: str) -> bool:
+    """True if every word of ``outcome_name`` appears in the prediction tokens.
+
+    Used to gate multi-outcome markets so a prediction about Trump can't get
+    matched to the Harris market just because the question stems are 90%
+    identical. Multi-word outcomes ("RFK Jr.") require ALL tokens to appear
+    so we don't match "Jr." standalone.
+    """
+    name_tokens = _tokenize(outcome_name)
+    if not name_tokens:
+        return True  # No outcome to gate on → don't filter
+    return name_tokens.issubset(prediction_tokens)
+
+
 def match_to_market(
     prediction_text: str,
     markets: list[dict],
@@ -98,6 +112,12 @@ def match_to_market(
     Strictly filters by category when one is given: a politics prediction
     will never match a sports market, even if no politics markets exist
     (in which case `(None, 0.0)` is returned).
+
+    For multi-outcome markets (those with a non-null ``outcome_name``), the
+    outcome name must appear as a whole-word match in the prediction text —
+    otherwise the candidate is skipped. This fixes the failure mode where a
+    "Trump will win" prediction matched the Harris market because the
+    question stems share ~90% of their tokens in an N-candidate event.
     """
     if threshold is None:
         threshold = MARKET_MATCH_THRESHOLD
@@ -108,6 +128,11 @@ def match_to_market(
     pred_tokens = _tokenize(prediction_text)
     best: tuple[dict | None, float] = (None, 0.0)
     for m in markets:
+        # Multi-outcome gating — skip candidates whose outcome name isn't named
+        # in the prediction. Binary markets (outcome_name = None or empty) pass.
+        outcome_name = (m.get("outcome_name") or "").strip()
+        if outcome_name and not _outcome_appears_in(pred_tokens, outcome_name):
+            continue
         mkt_tokens = m.get("_tokens")
         if mkt_tokens is None:
             mkt_tokens = _tokenize(m.get("market_question", "") or m.get("question", ""))

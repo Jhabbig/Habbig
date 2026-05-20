@@ -121,6 +121,11 @@ async def run_pipeline() -> dict:
                     "category": ms.category,
                     "yes_price": ms.yes_price,
                     "close_time": ms.close_time,
+                    # Multi-outcome metadata — fed into match_to_market so it can
+                    # gate on the candidate name appearing in the prediction.
+                    "event_slug": ms.event_slug,
+                    "event_title": ms.event_title,
+                    "outcome_name": ms.outcome_name,
                     "_tokens": _tokenize(question),
                 }
                 markets_by_category[ms.category or "other"].append(entry)

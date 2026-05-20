@@ -716,6 +716,17 @@ async def best_bets(request: Request, session: AsyncSession = Depends(get_sessio
     rows = result.all()
     if not rows:
         return HTMLResponse('<div class="flex flex-col items-center justify-center py-20 text-gray-600"><p class="text-lg">No qualifying bets found yet</p></div>')
+
+    # Batch-load event metadata for every matched market in one query so we
+    # don't N+1 the snapshot table.
+    slugs = [p.market_slug for p, _ in rows if p.market_slug]
+    event_meta: dict[str, tuple[str | None, str | None]] = {}
+    if slugs:
+        ms_result = await session.exec(select(MarketSnapshot).where(MarketSnapshot.market_slug.in_(slugs)))
+        for ms in ms_result.all():
+            # Latest write wins; per-slug we only care about the most recent.
+            event_meta[ms.market_slug] = (ms.event_title, ms.outcome_name)
+
     cards = []
     for i, (pred, post) in enumerate(rows):
         src_result = await session.exec(select(Source).where(Source.handle == post.author_handle))
@@ -732,7 +743,19 @@ async def best_bets(request: Request, session: AsyncSession = Depends(get_sessio
         side = (pred.bet_side or "YES").upper()
         side_color = "bg-green-500/20 text-green-400 border-green-500/30" if side == "YES" else "bg-red-500/20 text-red-400 border-red-500/30"
         side_badge = f'<span class="text-[10px] px-2 py-0.5 rounded-full border {side_color}">BUY {side}</span>'
-        cards.append(f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500">{side_badge}<span>&middot;</span><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>')
+        # Event grouping \u2014 when this market is one option inside a multi-outcome
+        # event ("Trump" inside "2028 Presidential Election Winner"), show the
+        # parent event title above the question + the outcome chip in the meta row.
+        event_title, outcome_name = event_meta.get(pred.market_slug or "", (None, None))
+        event_caption = (
+            f'<div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1">in: {_esc(event_title[:60])}</div>'
+            if event_title else ""
+        )
+        outcome_chip = (
+            f'<span class="text-[10px] px-2 py-0.5 rounded-full bg-[#2D64F3]/20 text-[#5B8DF5] border border-[#2D64F3]/30 ml-1">{_esc(outcome_name[:30])}</span>'
+            if outcome_name else ""
+        )
+        cards.append(f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}{event_caption}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500">{side_badge}{outcome_chip}<span>&middot;</span><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>')
     return HTMLResponse(f'<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">{chr(10).join(cards)}</div>')
 
 
