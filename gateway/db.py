@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS superuser_keys (
     key             TEXT UNIQUE NOT NULL,
     name            TEXT NOT NULL,
     dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
     created_at      INTEGER NOT NULL,
     expires_at      INTEGER,
     last_used_at    INTEGER,
@@ -1190,7 +1191,7 @@ def generate_superuser_key() -> str:
     return secrets.token_urlsafe(24)
 
 
-def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None, custom_key: str | None = None) -> str:
+def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None, custom_key: str | None = None, aspects: list[str] | None = None) -> str:
     """Create a new superuser key.
 
     Args:
@@ -1198,6 +1199,7 @@ def create_superuser_key(name: str, dashboards: list[str] | None = None, expires
         dashboards: List of dashboard keys this superuser can access (empty = all)
         expires_in_days: Number of days until key expires (None = never expires)
         custom_key: Optional custom key string (e.g., "Julian-habbig"). If not provided, generates random.
+        aspects: List of aspect strings (e.g., ["read-only", "no-trading", "demo-mode"])
 
     Returns:
         The generated superuser key
@@ -1220,12 +1222,13 @@ def create_superuser_key(name: str, dashboards: list[str] | None = None, expires
         expires_at = now + (expires_in_days * 86400)
 
     dashboards_str = ",".join(dashboards) if dashboards else ""
+    aspects_str = ",".join(aspects) if aspects else ""
 
     with conn() as c:
         c.execute(
-            """INSERT INTO superuser_keys (key, name, dashboards, created_at, expires_at, active)
-               VALUES (?, ?, ?, ?, ?, 1)""",
-            (key, name, dashboards_str, now, expires_at),
+            """INSERT INTO superuser_keys (key, name, dashboards, aspects, created_at, expires_at, active)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (key, name, dashboards_str, aspects_str, now, expires_at),
         )
     return key
 
@@ -1239,7 +1242,7 @@ def validate_superuser_key(key: str) -> dict | None:
     now = int(time.time())
     with conn() as c:
         row = c.execute(
-            """SELECT id, name, dashboards, created_at, expires_at, last_used_at
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at
                FROM superuser_keys
                WHERE key = ? AND active = 1
                AND (expires_at IS NULL OR expires_at > ?)""",
@@ -1257,6 +1260,7 @@ def validate_superuser_key(key: str) -> dict | None:
         "id": row["id"],
         "name": row["name"],
         "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+        "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
         "created_at": row["created_at"],
         "expires_at": row["expires_at"],
         "last_used_at": row["last_used_at"],
@@ -1276,11 +1280,27 @@ def has_superuser_key_access(key: str, dashboard_key: str) -> bool:
     return dashboard_key in key_info["dashboards"]
 
 
+def key_has_aspect(key: str, aspect: str) -> bool:
+    """Check if a superuser key has a specific aspect."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return False
+    return aspect.lower().strip() in [a.lower() for a in key_info["aspects"]]
+
+
+def get_key_aspects(key: str) -> list[str]:
+    """Get all aspects for a superuser key."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return []
+    return key_info["aspects"]
+
+
 def list_superuser_keys() -> list[dict]:
     """List all superuser keys (excluding the actual key values)."""
     with conn() as c:
         rows = c.execute(
-            """SELECT id, name, dashboards, created_at, expires_at, last_used_at, active
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at, active
                FROM superuser_keys
                ORDER BY created_at DESC"""
         ).fetchall()
@@ -1290,6 +1310,7 @@ def list_superuser_keys() -> list[dict]:
             "id": row["id"],
             "name": row["name"],
             "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+            "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
             "last_used_at": row["last_used_at"],
@@ -1327,7 +1348,7 @@ def toggle_superuser_key(key_id: int) -> dict | None:
 
         # Return updated info
         updated = c.execute(
-            """SELECT id, name, dashboards, created_at, expires_at, last_used_at, active
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at, active
                FROM superuser_keys WHERE id = ?""",
             (key_id,),
         ).fetchone()
@@ -1336,6 +1357,7 @@ def toggle_superuser_key(key_id: int) -> dict | None:
             "id": updated["id"],
             "name": updated["name"],
             "dashboards": [d.strip() for d in updated["dashboards"].split(",") if d.strip()],
+            "aspects": [a.strip() for a in updated["aspects"].split(",") if a.strip()],
             "created_at": updated["created_at"],
             "expires_at": updated["expires_at"],
             "last_used_at": updated["last_used_at"],

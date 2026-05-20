@@ -2944,6 +2944,7 @@ async def admin_generate_superuser_key(
     dashboards: str = Form(""),
     expires_in_days: str = Form(""),
     custom_key: str = Form(""),
+    aspects: str = Form(""),
 ):
     user = _require_admin_user(request)
     form_data = await request.form()
@@ -2952,6 +2953,7 @@ async def admin_generate_superuser_key(
         return _csrf_error()
 
     dashboards_list = [d.strip() for d in dashboards.split(",") if d.strip()]
+    aspects_list = [a.strip() for a in aspects.split(",") if a.strip()]
     expires_days = int(expires_in_days) if expires_in_days else None
     custom_key_str = custom_key.strip() if custom_key else None
 
@@ -2961,12 +2963,13 @@ async def admin_generate_superuser_key(
             dashboards=dashboards_list or None,
             expires_in_days=expires_days,
             custom_key=custom_key_str,
+            aspects=aspects_list or None,
         )
     except ValueError as e:
         log.warning("Admin %s failed to create superuser key: %s", user["email"], str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
-    log.info("Admin %s generated superuser key: %s (name=%s)", user["email"], key, name)
+    log.info("Admin %s generated superuser key: %s (name=%s, aspects=%s)", user["email"], key, name, ",".join(aspects_list) if aspects_list else "none")
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_superuser_key=key, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
@@ -4248,9 +4251,12 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         fwd_headers["X-Gateway-User-Id"] = "superuser"
         fwd_headers["X-Gateway-User-Email"] = "investor@dashboard"
 
-    # Mark investor/superuser access
+    # Mark investor/superuser access and include aspects
     if has_superuser_access:
         fwd_headers["X-Gateway-Investor-Mode"] = "true"
+        key_info = db.validate_superuser_key(superuser_key)
+        if key_info and key_info.get("aspects"):
+            fwd_headers["X-Gateway-Key-Aspects"] = ",".join(key_info["aspects"])
 
     # Shared secret lets downstream dashboards trust the identity headers
     # without relying on peer-IP checks (uvicorn's default proxy_headers=True
