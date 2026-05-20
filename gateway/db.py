@@ -1304,3 +1304,54 @@ def revoke_superuser_key(key_id: int) -> bool:
     with conn() as c:
         c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
         return c.total_changes > 0
+
+
+def toggle_superuser_key(key_id: int) -> dict | None:
+    """Toggle a superuser key's active status. Returns updated key info or None if not found."""
+    with conn() as c:
+        # Get current status
+        row = c.execute(
+            "SELECT id, active FROM superuser_keys WHERE id = ?",
+            (key_id,),
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        # Toggle status
+        new_active = 1 if not row["active"] else 0
+        c.execute(
+            "UPDATE superuser_keys SET active = ? WHERE id = ?",
+            (new_active, key_id),
+        )
+
+        # Return updated info
+        updated = c.execute(
+            """SELECT id, name, dashboards, created_at, expires_at, last_used_at, active
+               FROM superuser_keys WHERE id = ?""",
+            (key_id,),
+        ).fetchone()
+
+        return {
+            "id": updated["id"],
+            "name": updated["name"],
+            "dashboards": [d.strip() for d in updated["dashboards"].split(",") if d.strip()],
+            "created_at": updated["created_at"],
+            "expires_at": updated["expires_at"],
+            "last_used_at": updated["last_used_at"],
+            "active": bool(updated["active"]),
+        }
+
+
+def enable_superuser_key(key_id: int) -> bool:
+    """Enable a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 1 WHERE id = ?", (key_id,))
+        return c.total_changes > 0
+
+
+def disable_superuser_key(key_id: int) -> bool:
+    """Disable a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
+        return c.total_changes > 0

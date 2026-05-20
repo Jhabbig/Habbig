@@ -2993,6 +2993,52 @@ async def admin_revoke_superuser_key(request: Request, key_id: int):
     return RedirectResponse("/admin", status_code=302)
 
 
+@app.post("/admin/superuser-keys/{key_id}/toggle")
+async def admin_toggle_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    key_info = db.toggle_superuser_key(key_id)
+    if key_info:
+        action = "enabled" if key_info["active"] else "disabled"
+        log.info("Admin %s %s superuser key id=%d (%s)", user["email"], action, key_id, key_info["name"])
+        return JSONResponse({"success": True, "key": key_info})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
+@app.post("/admin/superuser-keys/{key_id}/enable")
+async def admin_enable_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    success = db.enable_superuser_key(key_id)
+    if success:
+        log.info("Admin %s enabled superuser key id=%d", user["email"], key_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
+@app.post("/admin/superuser-keys/{key_id}/disable")
+async def admin_disable_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    success = db.disable_superuser_key(key_id)
+    if success:
+        log.info("Admin %s disabled superuser key id=%d", user["email"], key_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
 def _verify_admin_password(request: Request, admin: dict, password: str) -> bool:
     """Verify the admin's password for destructive actions. Returns True if valid."""
     return db.verify_user_password(admin["email"], password)
