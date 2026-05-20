@@ -181,6 +181,29 @@ tr:last-child td { border-bottom: none; }
 .chart .baseline-label { fill: var(--text-muted); font-size: 10px; }
 .chart .bar-label { fill: var(--text); font-size: 11px; font-feature-settings: "tnum"; }
 .chart .bar-track-label { fill: var(--text-muted); font-size: 11px; }
+.insight-rec-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+}
+.insight-rec-pill.BUY_YES { background: rgba(77, 208, 168, 0.15); color: var(--accent); }
+.insight-rec-pill.BUY_NO  { background: rgba(240, 168, 104, 0.15); color: var(--warn); }
+.insight-rec-pill.PASS    { background: var(--bg-soft); color: var(--text-muted); }
+.insight-rec-pill.WAIT_AND_SEE { background: var(--bg-soft); color: var(--accent); }
+.insight-row {
+  padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.insight-row:last-child { border-bottom: none; }
+.insight-row .ir-headline { margin: 4px 0; }
+.insight-row .ir-meta {
+  font-size: 11px; color: var(--text-muted); font-feature-settings: "tnum";
+}
+.insight-row .ir-outcome {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+  font-weight: 600; margin-left: 6px;
+}
+.insight-row .ir-outcome.win  { background: rgba(77, 208, 168, 0.15); color: var(--accent); }
+.insight-row .ir-outcome.lose { background: rgba(239, 98, 98, 0.15); color: var(--error); }
+.insight-row .ir-outcome.unresolved { background: var(--bg-soft); color: var(--text-muted); }
 footer {
   margin-top: 60px;
   padding-top: 24px;
@@ -260,15 +283,40 @@ footer a { color: var(--accent); }
     <div id="city-chart" class="chart"><div class="empty-state">Loading…</div></div>
   </div>
 
+  <h2>LLM insight calibration</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      Every insight the LLM generates gets paired against the eventual outcome.
+      Brier treats BUY_YES as predicting probability 1, BUY_NO as predicting 0;
+      PASS / WAIT_AND_SEE rows are skipped (no bet placed). PnL is per $1 staked
+      at the LLM's suggested limit.
+    </p>
+    <div class="grid" id="insight-cards" style="margin-top: 12px;">
+      <div class="card"><div class="label">Calls resolved</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">Win rate</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">Brier score</div><div class="value skeleton"></div></div>
+      <div class="card"><div class="label">PnL / $1</div><div class="value skeleton"></div></div>
+    </div>
+    <div id="insight-rec-table" style="margin-top: 16px;"></div>
+    <div id="insight-conf-table" style="margin-top: 12px;"></div>
+  </div>
+
   <h2>Per-day chain</h2>
   <div class="section">
     <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
       Each daily rollup gets a SHA-256 content hash and an HMAC signature.
       The <code>prev_hash</code> field chains each day to the one before, so editing
-      a past day would invalidate every later signature. Click a date for that day's full
-      signed JSON.
+      a past day would invalidate every later signature. Click a date to expand
+      the day's insights and outcomes.
     </p>
     <div id="chain"><div class="empty-state">Loading manifest…</div></div>
+    <div id="day-detail" class="section" style="margin-top: 16px; display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px;">
+        <h3 style="margin: 0;" id="day-detail-date">—</h3>
+        <button id="day-detail-close" style="background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 3px; padding: 2px 8px; cursor: pointer;">close</button>
+      </div>
+      <div id="day-detail-list"></div>
+    </div>
   </div>
 
   <h2 id="methodology">Methodology</h2>
@@ -378,12 +426,115 @@ function renderChain(rollups) {
     return;
   }
   target.innerHTML = rollups.map(r => `
-    <div class="chain-row">
-      <div class="date"><a href="/api/public/track-record/daily/${r.date}">${r.date}</a></div>
+    <div class="chain-row" data-date="${r.date}" style="cursor: pointer;">
+      <div class="date">${r.date}</div>
       <div class="hash-cell"><span class="hash">${r.content_hash.slice(0, 20)}…</span></div>
       <div class="stat">prev: <span class="hash">${(r.prev_hash || "—").slice(0, 12)}…</span></div>
     </div>
   `).join("");
+  target.querySelectorAll(".chain-row").forEach(row => {
+    row.addEventListener("click", () => loadDayDetail(row.dataset.date));
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+async function loadDayDetail(date) {
+  const detail = document.getElementById("day-detail");
+  const dateEl = document.getElementById("day-detail-date");
+  const list = document.getElementById("day-detail-list");
+  detail.style.display = "block";
+  dateEl.textContent = `Insights generated on ${date}`;
+  list.innerHTML = `<div class="empty-state">Loading…</div>`;
+  try {
+    const data = await fetchJSON(`/api/public/track-record/insights?date=${date}&limit=50`);
+    const insights = data.insights || [];
+    if (insights.length === 0) {
+      list.innerHTML = `<div class="empty-state">No insights generated on ${date}.</div>`;
+      return;
+    }
+    list.innerHTML = insights.map(i => {
+      const rec = i.recommendation || "—";
+      let outcome = "";
+      if (i.actual_outcome) {
+        const cls = i.was_correct === 1 ? "win" : (i.was_correct === 0 ? "lose" : "unresolved");
+        const label = i.was_correct == null ? `resolved ${i.actual_outcome}` :
+                      (i.was_correct ? `WIN (${i.actual_outcome})` : `LOSS (${i.actual_outcome})`);
+        outcome = `<span class="ir-outcome ${cls}">${label}</span>`;
+      } else {
+        outcome = `<span class="ir-outcome unresolved">unresolved</span>`;
+      }
+      const edgePct = i.edge != null ? (i.edge * 100).toFixed(1) + "pp" : "—";
+      const sign = (i.edge || 0) >= 0 ? "+" : "";
+      const pnl = i.pnl_per_dollar != null ? `${i.pnl_per_dollar >= 0 ? "+" : ""}${i.pnl_per_dollar.toFixed(2)}` : "—";
+      const auto = i.triggered_by === "auto" ? '<span style="font-size: 9px; color: var(--text-muted); margin-left: 4px;">[auto]</span>' : '';
+      return `<div class="insight-row">
+        <div>
+          <span class="insight-rec-pill ${rec}">${rec.replaceAll('_', ' ')}</span>
+          ${outcome}${auto}
+        </div>
+        <div class="ir-headline">${escapeHtml(i.headline || '')}</div>
+        <div class="ir-meta">
+          edge ${sign}${edgePct} · model ${(i.model_prob * 100).toFixed(0)}% vs market ${(i.yes_price * 100).toFixed(0)}¢
+          · ${i.confidence || '—'} confidence · PnL/$ ${pnl}
+        </div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state">Couldn't load: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById("day-detail-close").addEventListener("click", () => {
+  document.getElementById("day-detail").style.display = "none";
+});
+
+async function loadInsightCalibration() {
+  try {
+    // Note: /api/insight/calibration requires auth — this card may
+    // come back as "—" for non-logged-in viewers, which is fine.
+    const cal = await fetchJSON("/api/insight/calibration?days=180");
+    document.getElementById("insight-cards").innerHTML = `
+      <div class="card"><div class="label">Calls resolved</div>
+        <div class="value">${fmtNum(cal.n_betted || 0)}</div>
+        <div class="sub">${fmtNum(cal.n_total || 0)} total</div></div>
+      <div class="card"><div class="label">Win rate</div>
+        <div class="value">${fmtPct(cal.win_rate)}</div></div>
+      <div class="card"><div class="label">Brier score</div>
+        <div class="value">${cal.brier_score != null ? cal.brier_score.toFixed(3) : "—"}</div>
+        <div class="sub">n=${cal.n_brier_samples || 0}</div></div>
+      <div class="card"><div class="label">PnL / $1</div>
+        <div class="value">${cal.total_pnl_per_dollar != null ? (cal.total_pnl_per_dollar >= 0 ? "+" : "") + cal.total_pnl_per_dollar.toFixed(2) : "—"}</div>
+        <div class="sub">avg ${cal.avg_pnl_per_bet != null ? cal.avg_pnl_per_bet.toFixed(3) : "—"}</div></div>
+    `;
+    const byRec = cal.by_recommendation || {};
+    const recRows = Object.entries(byRec).map(([rec, s]) => `
+      <tr><td><span class="insight-rec-pill ${rec}">${rec.replaceAll('_', ' ')}</span></td>
+          <td>${s.n}</td><td>${fmtPct(s.win_rate)}</td>
+          <td>${s.total_pnl_per_dollar != null ? (s.total_pnl_per_dollar >= 0 ? "+" : "") + s.total_pnl_per_dollar.toFixed(2) : "—"}</td>
+          <td>${s.avg_pnl_per_bet != null ? s.avg_pnl_per_bet.toFixed(3) : "—"}</td></tr>
+    `).join("");
+    document.getElementById("insight-rec-table").innerHTML = recRows ? `
+      <h3 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 6px;">By recommendation</h3>
+      <table><thead><tr><th>Type</th><th>n</th><th>Win%</th><th>Total PnL/$</th><th>Avg PnL/$</th></tr></thead>
+      <tbody>${recRows}</tbody></table>` : "";
+    const byConf = cal.by_confidence || {};
+    const order = ["high", "medium", "low"];
+    const confRows = order.filter(k => byConf[k]).map(k => {
+      const s = byConf[k];
+      return `<tr><td>${k}</td><td>${s.n}</td><td>${s.n_betted}</td><td>${fmtPct(s.win_rate)}</td></tr>`;
+    }).join("");
+    document.getElementById("insight-conf-table").innerHTML = confRows ? `
+      <h3 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 6px;">By confidence</h3>
+      <table><thead><tr><th>Confidence</th><th>n total</th><th>n betted</th><th>Win%</th></tr></thead>
+      <tbody>${confRows}</tbody></table>` : "";
+  } catch (e) {
+    document.getElementById("insight-cards").innerHTML = `<div class="empty-state">${e.status === 401 ? "Sign in to view LLM calibration." : "Calibration unavailable."}</div>`;
+  }
 }
 
 function renderVerify(data) {
@@ -598,6 +749,7 @@ function renderCityChart(stations) {
     renderCityChart(cities.stations);
     renderChain(manifest.rollups);
     renderVerify(verify);
+    loadInsightCalibration();
   } catch (e) {
     document.getElementById("verify-banner").innerHTML =
       `<strong>Couldn't load track-record data:</strong> ${e.message}`;

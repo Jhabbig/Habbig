@@ -40,6 +40,7 @@ import track_record as _track
 
 # Phase 4 — LLM actionable insight
 import insight as _insight
+import insight_storage as _istore
 
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
@@ -348,6 +349,55 @@ CREATE TABLE IF NOT EXISTS track_record_rollups (
     hmac_sig      TEXT NOT NULL,           -- HMAC-SHA256 over envelope
     committed_at  TEXT NOT NULL
 );
+
+-- ─── Phase 4: LLM insight ledger ──────────────────────────────────────────
+-- Every insight generated (user-triggered or auto-mode) writes one row.
+-- Append-only — never UPDATE; later corrections live as new rows. The
+-- input context + output JSON are both stored so replay is faithful and
+-- so we can re-run calibration if the recommendation enum evolves.
+CREATE TABLE IF NOT EXISTS insight_log (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    market_id             TEXT NOT NULL,
+    generated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    model                 TEXT NOT NULL,         -- claude-haiku-4-5 | claude-sonnet-4-6
+    mode                  TEXT NOT NULL,         -- fast | deep
+    yes_price             REAL,                  -- snapshot at gen time
+    model_prob            REAL,
+    edge                  REAL,
+    recommendation        TEXT,                  -- BUY_YES | BUY_NO | PASS | WAIT_AND_SEE
+    confidence            TEXT,                  -- high | medium | low
+    suggested_limit_cents INTEGER,
+    tail_warning          INTEGER DEFAULT 0,
+    headline              TEXT,
+    context_json          TEXT NOT NULL,         -- full input dict
+    insight_json          TEXT NOT NULL,         -- full output dict
+    usage_input_tokens    INTEGER DEFAULT 0,
+    usage_output_tokens   INTEGER DEFAULT 0,
+    usage_cache_creation  INTEGER DEFAULT 0,
+    usage_cache_read      INTEGER DEFAULT 0,
+    stop_reason           TEXT,
+    latency_ms            INTEGER,
+    triggered_by          TEXT NOT NULL DEFAULT 'user'   -- user | auto
+);
+CREATE INDEX IF NOT EXISTS idx_insight_log_market ON insight_log(market_id, generated_at);
+CREATE INDEX IF NOT EXISTS idx_insight_log_recent ON insight_log(generated_at);
+CREATE INDEX IF NOT EXISTS idx_insight_log_rec    ON insight_log(recommendation, generated_at);
+
+-- Pairs an insight with the actual outcome once the market resolves.
+-- `was_correct` is 1/0 for BUY_*; NULL for PASS / WAIT_AND_SEE (no bet
+-- placed, so the recommendation has no win/loss). `pnl_per_dollar`
+-- uses the suggested limit price; falls back to the market price if
+-- the LLM didn't supply one.
+CREATE TABLE IF NOT EXISTS insight_resolutions (
+    insight_id      INTEGER PRIMARY KEY,
+    market_id       TEXT NOT NULL,
+    actual_outcome  TEXT NOT NULL,                 -- YES | NO
+    was_correct     INTEGER,                       -- 1, 0, or NULL
+    pnl_per_dollar  REAL,
+    resolved_at     TEXT NOT NULL,
+    FOREIGN KEY (insight_id) REFERENCES insight_log(id)
+);
+CREATE INDEX IF NOT EXISTS idx_insight_res_market ON insight_resolutions(market_id);
 """
 
 
@@ -4071,8 +4121,22 @@ def api_insight(market_id):
         # Tell the frontend the model up front so it can show "running on
         # Sonnet..." in the loading state.
         yield _sse_frame("start", {"model": model, "market_id": market_id})
+        start_mono = time.monotonic()
         try:
             for chunk in _insight.stream_insight(context, model=model):
+                if chunk.type == "complete":
+                    # Persist before yielding so the row is visible to /api/insight/feed
+                    # by the time the user sees the rendered card.
+                    latency_ms = int((time.monotonic() - start_mono) * 1000)
+                    try:
+                        _istore.log_insight(
+                            _get_conn, market_id=market_id,
+                            context=context, complete_data=chunk.data,
+                            model=model, mode=mode, latency_ms=latency_ms,
+                            triggered_by="user",
+                        )
+                    except Exception as log_e:
+                        logger.warning("insight log write failed: %s", log_e)
                 yield _sse_frame(chunk.type, chunk.data)
         except Exception as e:
             logger.exception("insight stream crashed for %s: %s", market_id, e)
@@ -4085,6 +4149,84 @@ def api_insight(market_id):
     }
     return Response(stream_with_context(generate()),
                     mimetype="text/event-stream", headers=headers)
+
+
+@app.route("/api/insight/feed")
+@require_auth
+def api_insight_feed():
+    """Newest-first feed of recent insights. Powers the live-feed
+    widget on the trade page. Excludes the heavy context_json blob —
+    callers that need the full payload hit /api/insight/log/<id>."""
+    limit = max(1, min(100, int(request.args.get("limit", 20))))
+    rec = request.args.get("recommendation")
+    min_edge = request.args.get("min_abs_edge")
+    return jsonify({
+        "limit": limit,
+        "insights": _istore.recent_insights(
+            _get_conn,
+            limit=limit,
+            recommendation=rec,
+            min_abs_edge=float(min_edge) if min_edge else None,
+        ),
+    })
+
+
+@app.route("/api/insight/log/<int:insight_id>")
+@require_auth
+def api_insight_log(insight_id):
+    """Full payload (input context + output JSON + usage + resolution)
+    for one row. Used by the feed drill-down."""
+    row = _istore.get_insight(_get_conn, insight_id)
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(row)
+
+
+@app.route("/api/insight/market/<market_id>")
+@require_auth
+def api_insight_market(market_id):
+    """All insights generated for one market, newest first. Used by
+    both the trade page (history under a market) and the public
+    track-record replay drill-down."""
+    limit = max(1, min(100, int(request.args.get("limit", 20))))
+    return jsonify({
+        "market_id": market_id,
+        "insights": _istore.insights_for_market(_get_conn, market_id, limit=limit),
+    })
+
+
+@app.route("/api/insight/calibration")
+@require_auth
+def api_insight_calibration():
+    """Lifetime performance of the LLM recommendation:
+        * Brier on BUY_YES = pred 1, BUY_NO = pred 0 vs actual outcome
+        * Win rate broken down by recommendation and by confidence
+        * PnL per $1 staked at the suggested limit
+        * Tail-warning win rate (did flagging tail risk help?)
+    """
+    days = max(7, min(365, int(request.args.get("days", 90))))
+    return jsonify(_istore.calibration_stats(_get_conn, days=days))
+
+
+# Public no-auth replay: anyone can verify the model's pre-resolution
+# calls against the eventual outcomes. The full context_json is omitted
+# so prompt-engineering work isn't leaked.
+@app.route("/api/public/track-record/insights")
+def api_public_track_insights():
+    """Insights generated on one UTC date with their resolutions
+    when known. Used by the track-record HTML's daily-rollup drill-down."""
+    date_iso = request.args.get("date")
+    limit = max(1, min(200, int(request.args.get("limit", 100))))
+    if not date_iso:
+        return jsonify({"error": "date param required (YYYY-MM-DD)"}), 400
+    try:
+        datetime.strptime(date_iso, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "bad date format"}), 400
+    return jsonify({
+        "date": date_iso,
+        "insights": _istore.insights_for_date(_get_conn, date_iso, limit=limit),
+    })
 
 
 @app.route("/api/calibration")
@@ -5594,7 +5736,14 @@ def _track_record_loop():
         try:
             # 1. Resolve outstanding signals (capped, polite to Open-Meteo)
             _track.resolve_signals(_get_conn, _station_latlon(), max_per_pass=200)
-            # 2. Build yesterday's rollup if missing
+            # 2. Pair any newly-resolved insights against weather_resolutions
+            try:
+                ires_stats = _istore.resolve_insights(_get_conn, max_per_pass=500)
+                if ires_stats.get("resolved"):
+                    logger.info("insight resolution pass: %s", ires_stats)
+            except Exception as e:
+                logger.warning("insight resolution failed: %s", e)
+            # 3. Build yesterday's rollup if missing
             yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
             existing = _track.get_rollup(_get_conn, yesterday)
             if not existing:
@@ -5610,6 +5759,93 @@ def _track_record_loop():
             logger.warning("track-record loop error: %s", e)
             _record_run("track_record", ok=False, error=str(e))
         _time.sleep(3600)  # 1 hour
+
+
+# Per-pass cap on auto-mode insight generation. Tuned conservatively —
+# at 10 calls/pass × 12 passes/hour × Haiku ~$0.003/call cached, this
+# tops out around $0.36/hr of LLM spend even if every signal is novel.
+_INSIGHT_AUTO_PER_PASS = 10
+_INSIGHT_AUTO_INTERVAL_SECONDS = 300  # 5 minutes
+_INSIGHT_AUTO_DEDUP_HOURS = 6.0
+_INSIGHT_AUTO_MIN_EDGE = 0.05
+
+
+def _insight_auto_loop():
+    """Every 5 minutes: scan cached markets, pick the biggest-edge ones
+    that haven't had an insight in the last 6 hours, and generate one
+    each. Skips entirely when ANTHROPIC_API_KEY is unset — auto-mode is
+    a paid feature, not a silent default that runs up bills.
+    """
+    import time as _time
+    _register_thread("insight_auto", interval_seconds=_INSIGHT_AUTO_INTERVAL_SECONDS)
+    _time.sleep(600)  # 10 min after boot — let the market cache populate
+    while True:
+        try:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                # No key → no calls. Loop continues so /api/healthz still
+                # shows a fresh heartbeat; nothing to do this pass.
+                _record_run("insight_auto", ok=True)
+                _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
+                continue
+
+            cached = cache_get("parsed_markets")
+            if not cached or not cached.get("markets"):
+                _record_run("insight_auto", ok=True)
+                _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
+                continue
+
+            candidates = _istore.auto_candidates(
+                _get_conn,
+                cached["markets"],
+                min_abs_edge=_INSIGHT_AUTO_MIN_EDGE,
+                dedup_hours=_INSIGHT_AUTO_DEDUP_HOURS,
+                limit=_INSIGHT_AUTO_PER_PASS,
+            )
+            if not candidates:
+                _record_run("insight_auto", ok=True)
+                _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
+                continue
+
+            generated = 0
+            for m in candidates:
+                market_id = m.get("market_id")
+                if not market_id:
+                    continue
+                context = _gather_insight_context(market_id)
+                if context is None:
+                    continue
+                start_mono = time.monotonic()
+                complete_data = None
+                try:
+                    for chunk in _insight.stream_insight(
+                        context, model=_insight.MODEL_FAST
+                    ):
+                        if chunk.type == "complete":
+                            complete_data = chunk.data
+                        elif chunk.type == "error":
+                            logger.warning("auto-insight stream error for %s: %s",
+                                           market_id, chunk.data)
+                            break
+                except Exception as e:
+                    logger.warning("auto-insight crashed for %s: %s", market_id, e)
+                    continue
+                if complete_data is None:
+                    continue
+                latency_ms = int((time.monotonic() - start_mono) * 1000)
+                _istore.log_insight(
+                    _get_conn, market_id=market_id,
+                    context=context, complete_data=complete_data,
+                    model=_insight.MODEL_FAST, mode="fast",
+                    latency_ms=latency_ms, triggered_by="auto",
+                )
+                generated += 1
+            if generated:
+                logger.info("auto-insight pass: generated %d", generated)
+            _record_run("insight_auto", ok=True)
+        except Exception as e:
+            logger.warning("insight auto loop error: %s", e)
+            _record_run("insight_auto", ok=False, error=str(e))
+        _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
 
 
 @app.after_request
@@ -5649,4 +5885,8 @@ if __name__ == "__main__":
         ps = threading.Thread(target=_paper_settlement_loop, daemon=True)
         ps.start()
         logger.info("Paper-order settlement loop started (every 60 s)")
+        ia = threading.Thread(target=_insight_auto_loop, daemon=True)
+        ia.start()
+        logger.info("Insight auto-mode loop started (every 5 min, capped %d/pass)",
+                    _INSIGHT_AUTO_PER_PASS)
     app.run(host=bind_host, port=5050, debug=_debug)

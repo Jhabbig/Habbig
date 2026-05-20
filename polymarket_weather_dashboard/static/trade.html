@@ -178,6 +178,38 @@ h2 {
 }
 .cancel-x:hover { color: var(--error); border-color: var(--error); }
 
+/* Feed */
+.feed-row {
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer; font-size: 12px;
+}
+.feed-row:last-child { border-bottom: none; }
+.feed-row:hover { background: var(--bg-soft); margin: 0 -20px; padding: 8px 20px; border-radius: 4px; }
+.feed-row .feed-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 2px;
+}
+.feed-row .feed-rec {
+  font-weight: 600; font-size: 10px; letter-spacing: 1px;
+  padding: 1px 6px; border-radius: 3px;
+}
+.feed-row .feed-rec.BUY_YES { background: var(--buy-bg); color: var(--accent); }
+.feed-row .feed-rec.BUY_NO  { background: var(--sell-bg); color: var(--warn); }
+.feed-row .feed-rec.PASS    { background: var(--bg-card); color: var(--text-muted); }
+.feed-row .feed-rec.WAIT_AND_SEE { background: var(--bg-card); color: var(--accent); }
+.feed-row .feed-meta {
+  color: var(--text-muted); font-size: 10px; font-feature-settings: "tnum";
+}
+.feed-row .feed-headline {
+  color: var(--text); line-height: 1.4; margin-top: 2px;
+}
+.feed-row .feed-edge { font-family: ui-monospace, monospace; font-size: 11px; }
+.feed-row .feed-auto-badge {
+  display: inline-block; background: var(--bg-soft); color: var(--text-muted);
+  padding: 0 4px; border-radius: 2px; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-left: 4px;
+}
+
 /* Confirmation modal */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -415,6 +447,15 @@ h2 {
       <div class="section">
         <h2>Paper positions</h2>
         <div id="positions-list"><div class="placeholder">None.</div></div>
+      </div>
+
+      <div class="section">
+        <h2>Live insights feed</h2>
+        <p style="font-size: 11px; color: var(--text-muted); margin: 0 0 10px;">
+          Auto-mode fires on markets with |edge| ≥ 5pp every 5 minutes.
+          Click any row to load that market's full history.
+        </p>
+        <div id="feed-list"><div class="placeholder">Loading…</div></div>
       </div>
 
       <div class="section enroll-area" id="enroll">
@@ -966,12 +1007,61 @@ async function streamInsight() {
 
 insightBtn.addEventListener("click", streamInsight);
 
+// ─── Live insights feed ───────────────────────────────────────────────────
+
+async function loadFeed() {
+  const target = document.getElementById("feed-list");
+  try {
+    const data = await fetchJSON("/api/insight/feed?limit=15");
+    const insights = data.insights || [];
+    if (insights.length === 0) {
+      target.innerHTML = `<div class="placeholder">No insights yet. Auto-mode fires on the next pass.</div>`;
+      return;
+    }
+    target.innerHTML = insights.map(i => {
+      const edgePct = i.edge != null ? (i.edge * 100).toFixed(1) + "pp" : "—";
+      const edgeSign = i.edge >= 0 ? "+" : "";
+      const auto = i.triggered_by === "auto" ? '<span class="feed-auto-badge">auto</span>' : '';
+      const when = i.generated_at ? new Date(i.generated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      return `<div class="feed-row" data-mid="${escapeHtml(i.market_id)}">
+        <div class="feed-header">
+          <span class="feed-rec ${i.recommendation || 'PASS'}">${(i.recommendation || '—').replaceAll('_', ' ')}</span>
+          <span class="feed-meta">${when} ${auto}</span>
+        </div>
+        <div class="feed-headline">${escapeHtml(i.headline || '')}</div>
+        <div class="feed-meta">
+          <span class="feed-edge">edge ${edgeSign}${edgePct}</span>
+          · ${escapeHtml(i.market_id)}
+        </div>
+      </div>`;
+    }).join("");
+    target.querySelectorAll(".feed-row").forEach(row => {
+      row.addEventListener("click", () => {
+        const mid = row.dataset.mid;
+        const market = (state.allMarkets || []).find(m => (m.kalshi_ticker || m.market_id) === mid);
+        if (market) {
+          selectMarket(mid, market.market_id || '');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      });
+    });
+  } catch (e) {
+    if (e.status === 401) {
+      target.innerHTML = `<div class="placeholder">Sign in to view the feed.</div>`;
+    } else {
+      target.innerHTML = `<div class="placeholder">Feed unavailable: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────
 
 document.getElementById("search-input").addEventListener("input", e => filterMarkets(e.target.value));
 loadMarkets();
 loadSummary();
+loadFeed();
 setInterval(loadSummary, 30000);
+setInterval(loadFeed, 60000);  // refresh feed every minute
 </script>
 </body>
 </html>
