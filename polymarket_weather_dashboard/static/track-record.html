@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>narve.ai — Weather Dashboard Track Record</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Verifiable, signed daily record of every prediction our weather model has made. No backdating, no cherry-picking — every call is hashed into a chain.">
+<style>
+:root {
+  --bg: #0b0d10;
+  --bg-soft: #14181d;
+  --bg-card: #1a1f25;
+  --border: #2a323b;
+  --text: #e6ebf0;
+  --text-muted: #97a3b0;
+  --accent: #4dd0a8;
+  --warn: #f0a868;
+  --error: #ef6262;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 80px; }
+header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
+h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.5px; }
+.subtitle { color: var(--text-muted); margin: 0; }
+.subtitle a { color: var(--accent); }
+.lede {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 24px 0 32px;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.lede strong { color: var(--text); }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+}
+.card .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.card .value {
+  font-size: 26px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}
+.card .sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+h2 {
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  margin: 36px 0 12px;
+  font-weight: 500;
+}
+.section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-feature-settings: "tnum";
+  font-size: 14px;
+}
+th, td {
+  text-align: right;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+th:first-child, td:first-child { text-align: left; }
+th {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+tr:last-child td { border-bottom: none; }
+.bar {
+  display: inline-block;
+  height: 10px;
+  background: var(--accent);
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.bar-track {
+  display: inline-block;
+  width: 100px;
+  height: 10px;
+  background: var(--bg-soft);
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.calibrated { color: var(--accent); }
+.miscalibrated { color: var(--warn); }
+.miscalibrated-bad { color: var(--error); }
+.hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+.chain-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 16px;
+  font-size: 13px;
+}
+.chain-row:last-child { border-bottom: none; }
+.chain-row .date { font-weight: 500; min-width: 95px; }
+.chain-row .stat { color: var(--text-muted); min-width: 70px; }
+.chain-row .hash-cell { flex: 1; }
+.skeleton {
+  height: 20px;
+  background: linear-gradient(90deg, var(--bg-soft) 0%, var(--border) 50%, var(--bg-soft) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+.empty-state code {
+  background: var(--bg-soft);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.verify-banner {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 24px 0;
+  font-size: 13px;
+}
+.verify-banner.bad { border-left-color: var(--error); }
+.verify-banner strong { color: var(--accent); }
+.verify-banner.bad strong { color: var(--error); }
+footer {
+  margin-top: 60px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Weather Dashboard — Public Track Record</h1>
+    <p class="subtitle">
+      Every signal our model fires gets logged. Every market that resolves gets paired against the actual observed temperature.
+      Every UTC day is hashed into a tamper-evident chain. <a href="#methodology">How it works ↓</a>
+    </p>
+  </header>
+
+  <div id="verify-banner" class="verify-banner">Loading chain verification…</div>
+
+  <h2>Lifetime</h2>
+  <div class="grid" id="summary-cards">
+    <div class="card"><div class="label">Signals fired</div><div class="value skeleton"></div></div>
+    <div class="card"><div class="label">Markets resolved</div><div class="value skeleton"></div></div>
+    <div class="card"><div class="label">Win rate</div><div class="value skeleton"></div></div>
+    <div class="card"><div class="label">Brier score</div><div class="value skeleton"></div></div>
+    <div class="card"><div class="label">Log loss</div><div class="value skeleton"></div></div>
+  </div>
+
+  <h2>Reliability</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      For each probability bucket: the average probability we predicted vs. the actual hit rate.
+      A well-calibrated model has the two equal. A green tick means within 10 percentage points;
+      orange is 10–20pp off; red is &gt;20pp off.
+    </p>
+    <table id="reliability">
+      <thead>
+        <tr>
+          <th>Bucket</th><th>n</th><th>Predicted</th><th>Actual</th>
+          <th>Miscal</th><th></th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <h2>Per-day chain</h2>
+  <div class="section">
+    <p style="margin-top: 0; color: var(--text-muted); font-size: 13px;">
+      Each daily rollup gets a SHA-256 content hash and an HMAC signature.
+      The <code>prev_hash</code> field chains each day to the one before, so editing
+      a past day would invalidate every later signature. Click a date for that day's full
+      signed JSON.
+    </p>
+    <div id="chain"><div class="empty-state">Loading manifest…</div></div>
+  </div>
+
+  <h2 id="methodology">Methodology</h2>
+  <div class="section">
+    <p>
+      <strong>What is a signal?</strong> Whenever the model's probability differs from the market price by
+      more than the user's edge threshold (default 8pp), we record a signal in <code>weather_signals_log</code>.
+      Each signal has a market id, a question, a model probability, the yes-price at signal time, and a UTC timestamp.
+    </p>
+    <p>
+      <strong>How is a signal resolved?</strong> After the market's target date passes, we fetch the
+      observed daily-max temperature from
+      <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo's archive API</a>
+      and parse the market question's threshold (above X°F, below X°F, between X and Y, …). The
+      resolution writes to <code>weather_resolutions</code>. This pairing runs hourly so today's
+      markets are usually scored by 03:00 UTC the next day.
+    </p>
+    <p>
+      <strong>What does the daily rollup include?</strong> Aggregate counts, win rate against the sign of the edge,
+      Brier score, log loss, and a 10-bucket reliability diagram for that day. The
+      <a href="/api/public/track-record/daily/2026-05-06">per-day JSON</a> is canonical
+      (sorted keys, deterministic separators) so the SHA-256 hash is reproducible.
+    </p>
+    <p>
+      <strong>How is the chain signed?</strong> Each row's HMAC-SHA256 is over
+      <code>{date, payload, content_hash, prev_hash}</code> using a key derived from the
+      server's secret (domain-separated from the credential vault). The chain links via
+      <code>prev_hash</code>; editing a past day breaks every subsequent signature.
+    </p>
+    <p>
+      <strong>How can I verify?</strong>
+      <a href="/api/public/track-record/verify">/api/public/track-record/verify</a> walks the chain top-to-bottom and reports
+      the first inconsistency. The latest content hash is also visible above — operators can publish that single hash to a
+      timestamping service (e.g. Twitter, a Git commit, OpenTimestamps) to commit to the entire history.
+    </p>
+    <p style="color: var(--text-muted); font-size: 13px;">
+      Source: <a href="https://github.com/Jhabbig/Habbig/blob/main/polymarket_weather_dashboard/track_record.py">track_record.py</a>
+    </p>
+  </div>
+
+  <footer>
+    narve.ai weather dashboard ·
+    <a href="/api/public/track-record/summary">summary JSON</a> ·
+    <a href="/api/public/track-record/manifest">manifest JSON</a> ·
+    <a href="/api/public/track-record/verify">verify chain</a>
+  </footer>
+</div>
+
+<script>
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " " + r.status);
+  return r.json();
+}
+
+function fmtPct(v) {
+  if (v == null) return "—";
+  return (v * 100).toFixed(1) + "%";
+}
+
+function fmtNum(v, digits = 0) {
+  if (v == null) return "—";
+  return Number(v).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function renderSummary(d) {
+  const cards = [
+    { label: "Signals fired", value: fmtNum(d.n_total), sub: "lifetime" },
+    { label: "Markets resolved", value: fmtNum(d.n_resolved), sub: d.n_total ? `${fmtPct(d.n_resolved / d.n_total)} of fired` : "" },
+    { label: "Win rate", value: fmtPct(d.win_rate), sub: "bet sign of edge" },
+    { label: "Brier score", value: d.brier_score != null ? d.brier_score.toFixed(4) : "—", sub: "lower is better" },
+    { label: "Log loss", value: d.log_loss != null ? d.log_loss.toFixed(4) : "—", sub: "" },
+  ];
+  document.getElementById("summary-cards").innerHTML = cards.map(c =>
+    `<div class="card"><div class="label">${c.label}</div>` +
+    `<div class="value">${c.value}</div>` +
+    (c.sub ? `<div class="sub">${c.sub}</div>` : "") +
+    `</div>`).join("");
+}
+
+function renderReliability(bins) {
+  const tbody = document.querySelector("#reliability tbody");
+  if (!bins || bins.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No resolved signals yet — the bias-pairing loop fills this in once markets close.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = bins.map(b => {
+    const cls = Math.abs(b.miscalibration) < 0.10 ? "calibrated"
+              : Math.abs(b.miscalibration) < 0.20 ? "miscalibrated" : "miscalibrated-bad";
+    const mark = Math.abs(b.miscalibration) < 0.10 ? "✓" : "✗";
+    const width = Math.round(b.actual_rate * 100);
+    return `<tr>
+      <td>${(b.bin_lo * 100).toFixed(0)}%–${(b.bin_hi * 100).toFixed(0)}%</td>
+      <td>${b.n}</td>
+      <td>${fmtPct(b.avg_predicted)}</td>
+      <td>${fmtPct(b.actual_rate)}</td>
+      <td class="${cls}">${b.miscalibration >= 0 ? "+" : ""}${(b.miscalibration * 100).toFixed(1)}pp ${mark}</td>
+      <td><span class="bar-track"><span class="bar" style="width: ${width}%"></span></span></td>
+    </tr>`;
+  }).join("");
+}
+
+function renderChain(rollups) {
+  const target = document.getElementById("chain");
+  if (!rollups || rollups.length === 0) {
+    target.innerHTML = `<div class="empty-state">No daily rollups yet — the first one commits the day after the snapshot loop has been running. Operators can also force-build via <code>POST /api/admin/track-record/build/YYYY-MM-DD</code>.</div>`;
+    return;
+  }
+  target.innerHTML = rollups.map(r => `
+    <div class="chain-row">
+      <div class="date"><a href="/api/public/track-record/daily/${r.date}">${r.date}</a></div>
+      <div class="hash-cell"><span class="hash">${r.content_hash.slice(0, 20)}…</span></div>
+      <div class="stat">prev: <span class="hash">${(r.prev_hash || "—").slice(0, 12)}…</span></div>
+    </div>
+  `).join("");
+}
+
+function renderVerify(data) {
+  const el = document.getElementById("verify-banner");
+  if (data.ok) {
+    el.className = "verify-banner";
+    el.innerHTML = `<strong>✓ Chain verified.</strong> ${data.n_rows} daily rollups checked end-to-end. ` +
+      `Latest content hash: <span class="hash">${data.latest_hash || "—"}</span>.`;
+  } else {
+    el.className = "verify-banner bad";
+    const err = data.errors && data.errors[0];
+    el.innerHTML = `<strong>✗ Chain broken at ${data.first_bad_date || "(start)"}.</strong> ` +
+      (err ? `Reason: ${err.error}.` : "");
+  }
+}
+
+(async () => {
+  try {
+    const [summary, manifest, verify] = await Promise.all([
+      fetchJSON("/api/public/track-record/summary"),
+      fetchJSON("/api/public/track-record/manifest?limit=90"),
+      fetchJSON("/api/public/track-record/verify"),
+    ]);
+    renderSummary(summary);
+    renderReliability(summary.reliability);
+    renderChain(manifest.rollups);
+    renderVerify(verify);
+  } catch (e) {
+    document.getElementById("verify-banner").innerHTML =
+      `<strong>Couldn't load track-record data:</strong> ${e.message}`;
+  }
+})();
+</script>
+</body>
+</html>

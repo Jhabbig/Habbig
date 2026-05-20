@@ -35,6 +35,9 @@ import paper_trading as _paper
 import trade_engine as _engine
 import trade_safety as _safety
 
+# Phase 3 — public track record
+import track_record as _track
+
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
 if not _flask_secret:
@@ -328,6 +331,20 @@ CREATE TABLE IF NOT EXISTS trade_audit (
     ts        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_trade_audit_user ON trade_audit(user_id, ts);
+
+-- ─── Phase 3: public track-record ledger ──────────────────────────────────
+-- One committed rollup per UTC date. `prev_hash` chains to the previous
+-- row's `content_hash`, so editing a past day invalidates every
+-- subsequent HMAC. The HMAC key is derived from the server's .secret_key
+-- (domain-separated) — see track_record._hmac_key.
+CREATE TABLE IF NOT EXISTS track_record_rollups (
+    date          TEXT PRIMARY KEY,        -- YYYY-MM-DD (UTC)
+    payload       TEXT NOT NULL,           -- canonical JSON
+    content_hash  TEXT NOT NULL,           -- SHA-256 of payload
+    prev_hash     TEXT NOT NULL,           -- previous row's content_hash (or 'genesis')
+    hmac_sig      TEXT NOT NULL,           -- HMAC-SHA256 over envelope
+    committed_at  TEXT NOT NULL
+);
 """
 
 
@@ -4359,6 +4376,125 @@ def api_trade_audit():
     return jsonify({"user_id": user_id, "audit": out})
 
 
+# ─── Phase 3: public track record (no auth) ─────────────────────────────────
+#
+# These endpoints are intentionally unauthenticated. The whole point of
+# the track-record ledger is that anyone — not just paying users — can
+# verify our model's calls were not backdated. The HMAC chain in
+# `track_record_rollups` is what makes that verifiable.
+
+# Cache of the STATION_MAP trimmed to (lat, lon) for the resolver, built
+# once on first call so we don't pass the whole 4-tuple shape around.
+_STATION_LATLON_CACHE: dict[str, tuple[float, float]] = {}
+
+
+def _station_latlon() -> dict[str, tuple[float, float]]:
+    if not _STATION_LATLON_CACHE:
+        for k, v in STATION_MAP.items():
+            if isinstance(v, (list, tuple)) and len(v) >= 2:
+                _STATION_LATLON_CACHE[k] = (float(v[0]), float(v[1]))
+    return _STATION_LATLON_CACHE
+
+
+def _track_secret_bytes() -> bytes:
+    """Read the same .secret_key used by the credential vault. The
+    HMAC derivation in track_record.py domain-separates from the
+    Fernet key so the two can't be confused."""
+    path = _vault._resolve_secret_path()
+    if not path.exists():
+        _vault._ensure_secret_key()
+    return path.read_bytes().strip()
+
+
+@app.route("/track-record")
+def public_track_record_page():
+    """Serve the static HTML page. No auth — it's the trust moat.
+
+    The page loads its data from the /api/public/track-record/* JSON
+    endpoints, so this route is a plain file send."""
+    return send_from_directory(app.static_folder, "track-record.html")
+
+
+@app.route("/api/public/track-record/summary")
+def api_track_summary():
+    """Lifetime aggregates — counts, win rate, Brier, log-loss, reliability."""
+    return jsonify(_track.lifetime_summary(_get_conn))
+
+
+@app.route("/api/public/track-record/manifest")
+def api_track_manifest():
+    """Index of every committed daily rollup with its content hash + HMAC.
+
+    Anyone with the server's HMAC key (operators) can verify the chain
+    end-to-end. For external auditors who don't have the key, the
+    `content_hash` field still acts as a tamper-evident snapshot: the
+    operator can publish today's hash on Twitter / Git / a public
+    timestamping service, and that single commitment binds the entire
+    history.
+    """
+    limit = max(1, min(1000, int(request.args.get("limit", 365))))
+    return jsonify({
+        "n_rollups": None,
+        "rollups": _track.list_rollups(_get_conn, limit=limit),
+    })
+
+
+@app.route("/api/public/track-record/daily/<date>")
+def api_track_daily(date):
+    """Return one day's full signed rollup."""
+    rollup = _track.get_rollup(_get_conn, date)
+    if not rollup:
+        return jsonify({"error": "no rollup for that date"}), 404
+    return jsonify(rollup)
+
+
+@app.route("/api/public/track-record/verify")
+def api_track_verify():
+    """Walk the chain top-to-bottom and report the first inconsistency."""
+    try:
+        secret = _track_secret_bytes()
+    except Exception:
+        return jsonify({"error": "secret unavailable"}), 503
+    return jsonify(_track.verify_chain(_get_conn, secret))
+
+
+@app.route("/api/admin/track-record/resolve", methods=["POST"])
+@require_admin
+def api_admin_track_resolve():
+    """Run one resolution pass. Idempotent: re-running fills in any
+    rows that have since become resolvable."""
+    max_per = max(10, min(1000, int(request.args.get("limit", 200))))
+    stats = _track.resolve_signals(_get_conn, _station_latlon(),
+                                    max_per_pass=max_per)
+    return jsonify(stats)
+
+
+@app.route("/api/admin/track-record/build/<date>", methods=["POST"])
+@require_admin
+def api_admin_track_build(date):
+    """Build + commit the rollup for one UTC date.
+
+    Refuses to commit if a row for `date` already exists — call the
+    `force` query param ``?force=1`` to delete the existing row first
+    (this still appends a new audited link to the chain, so 'editing'
+    history leaves a footprint)."""
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "bad date format, want YYYY-MM-DD"}), 400
+    rollup = _track.build_daily_rollup(_get_conn, date)
+    force = request.args.get("force") in ("1", "true", "yes")
+    if force:
+        with _get_conn() as conn:
+            conn.execute("DELETE FROM track_record_rollups WHERE date = ?", (date,))
+    try:
+        secret = _track_secret_bytes()
+        committed = _track.commit_rollup(_get_conn, rollup, secret)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    return jsonify({"committed": committed, "payload": rollup.payload})
+
+
 @app.route("/api/leadtime_fit/<city>")
 @require_auth
 def api_leadtime_fit(city):
@@ -5230,6 +5366,39 @@ def _bias_pairing_loop():
         _time.sleep(6 * 3600)  # 6 hours
 
 
+def _track_record_loop():
+    """Hourly: resolve any newly-resolvable signals, then if yesterday
+    (UTC) doesn't already have a rollup, build and commit it.
+
+    Idempotent — never re-commits a date that already exists. Designed
+    to run once per hour so a brief outage doesn't lose more than a
+    one-hour delay on the public ledger.
+    """
+    import time as _time
+    _register_thread("track_record", interval_seconds=3600)
+    _time.sleep(900)  # Wait 15 min after boot
+    while True:
+        try:
+            # 1. Resolve outstanding signals (capped, polite to Open-Meteo)
+            _track.resolve_signals(_get_conn, _station_latlon(), max_per_pass=200)
+            # 2. Build yesterday's rollup if missing
+            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+            existing = _track.get_rollup(_get_conn, yesterday)
+            if not existing:
+                rollup = _track.build_daily_rollup(_get_conn, yesterday)
+                secret = _track_secret_bytes()
+                try:
+                    _track.commit_rollup(_get_conn, rollup, secret)
+                    logger.info("track-record: committed rollup for %s", yesterday)
+                except ValueError:
+                    pass  # Lost a race with another worker, no big deal
+            _record_run("track_record", ok=True)
+        except Exception as e:
+            logger.warning("track-record loop error: %s", e)
+            _record_run("track_record", ok=False, error=str(e))
+        _time.sleep(3600)  # 1 hour
+
+
 @app.after_request
 def _add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -5261,4 +5430,7 @@ if __name__ == "__main__":
         ip = threading.Thread(target=_intraday_poll_loop, daemon=True)
         ip.start()
         logger.info("Intraday running-max poller started (every 5 min)")
+        tr = threading.Thread(target=_track_record_loop, daemon=True)
+        tr.start()
+        logger.info("Track-record resolver + rollup builder started (every 1 h)")
     app.run(host=bind_host, port=5050, debug=_debug)
