@@ -10,6 +10,7 @@ Routes:
   - GET /api/people             → hand-curated personnel watch with term-end days + matched markets
   - GET /api/stance             → per-regulator speech stance ladder (SEC/FCA/ESMA axes)
   - GET /api/diff               → latest-vs-prior speech diff per regulator
+  - GET /api/sdn                → OFAC SDN delta — today vs prior snapshot (12h cache)
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -26,7 +27,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ingestion import kalshi_client, polymarket_client, unified_feed
+from ingestion import kalshi_client, ofac_sdn, polymarket_client, unified_feed
 from analysis import diff as diff_module
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
@@ -184,6 +185,45 @@ async def api_diff(force: bool = False) -> JSONResponse:
     return JSONResponse({
         "fetched_at": data["fetched_at"],
         "diffs": diff_module.compute_all(data["items"]),
+    })
+
+
+@app.get("/api/sdn")
+async def api_sdn(force: bool = False) -> JSONResponse:
+    """OFAC SDN delta — today's snapshot vs the most-recent prior snapshot.
+    Heavy fetch (50MB+ XML) cached 12h. First-snapshot path is honest:
+    `delta.first_snapshot=true` rather than implying zero changes."""
+    data = ofac_sdn.get_cached(force=force)
+    if not data["ok"]:
+        return JSONResponse({
+            "ok": False,
+            "error": data.get("error"),
+            "fetched_at": data.get("fetched_at"),
+        }, status_code=200)
+    today = data["today"]
+    delta = data["delta"] or {}
+    # Don't ship the full 14k-entry list. Top 20 per side + remainder count
+    # is sufficient for the panel; if a power user wants the full list,
+    # that's a future endpoint.
+    top_n = 20
+    added = delta.get("added", []) or []
+    removed = delta.get("removed", []) or []
+    return JSONResponse({
+        "ok": True,
+        "fetched_at": data.get("fetched_at"),
+        "publish_date": today.get("publish_date"),
+        "record_count": today.get("record_count"),
+        "delta": {
+            "first_snapshot": delta.get("first_snapshot", False),
+            "yesterday_publish_date": delta.get("yesterday_publish_date"),
+            "added_count": delta.get("added_count", 0),
+            "removed_count": delta.get("removed_count", 0),
+            "added_preview": added[:top_n],
+            "removed_preview": removed[:top_n],
+            "added_remainder": max(0, len(added) - top_n),
+            "removed_remainder": max(0, len(removed) - top_n),
+            "program_deltas": delta.get("program_deltas", []),
+        },
     })
 
 

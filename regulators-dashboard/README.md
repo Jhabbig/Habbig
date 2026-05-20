@@ -36,6 +36,7 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
 | `GET /api/stance` | 30 min (via feed cache) | Per-regulator speech-stance ladder — most-recent speech-tagged item scored on the body's axis |
 | `GET /api/diff` | 30 min (via feed cache) | Per-regulator latest-vs-prior speech diff (token-level ops + stats) |
+| `GET /api/sdn` | 12 h | OFAC SDN today's snapshot meta + delta vs prior snapshot (top-20 added/removed previews + program deltas) |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -81,6 +82,7 @@ python3 -m analysis.market_match      # 4-item × 4-market join fixtures (incl. 
 python3 -m analysis.people            # Roster dump with days_until + sort order
 python3 -m analysis.stance            # 7 stance fixtures across SEC/FCA/ESMA × pos/neg/neutral
 python3 -m analysis.diff              # latest-vs-prior diff sanity over 4 synthetic items
+python3 -m ingestion.ofac_sdn         # SDN parser + persist + delta fixtures (synthetic 2-day XML)
 ```
 
 ## Files
@@ -95,6 +97,7 @@ regulators-dashboard/
 │   ├── esma_rss.py                 ESMA news feed (EU)
 │   ├── polymarket_client.py        Polymarket Gamma API → normalized binary markets (5-min cache)
 │   ├── kalshi_client.py            Kalshi /trade-api/v2/markets → normalized markets (5-min cache)
+│   ├── ofac_sdn.py                 OFAC SDN XML fetch + parse + per-day snapshot + day-over-day delta
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
@@ -347,6 +350,33 @@ speech text. The signal in summaries-only is "what changed in the
 headline + lede" — useful for spotting tone shifts ("from 'enforcement'
 to 'robust enforcement'"), less useful for tracking deep prose changes.
 
+### v1.4 — OFAC SDN delta
+
+`ingestion/ofac_sdn.py` fetches the Treasury SDN list daily (`sdn.xml`,
+~50MB+ with ~14k entries), streams the XML through `defusedxml.iterparse`
+to keep peak memory bounded, and digests each entry to
+`{uid, name, type, programs, country}`. Today's digest persists to
+`SNAPSHOT_DIR/<YYYY-MM-DD>.json` keyed by OFAC's own `Publish_Date`.
+
+The delta computes `today_uids - yesterday_uids` (additions) and
+`yesterday_uids - today_uids` (removals), aggregates added/removed
+counts per sanctions program, and exposes everything via `/api/sdn`.
+The endpoint returns the top-20 added + top-20 removed entries with
+remainder counts — the full 14k-entry list isn't shipped to the client.
+
+**First-snapshot semantics:** if no prior snapshot exists on disk, the
+delta returns `first_snapshot=true` with empty arrays. The UI renders
+"First snapshot collected — delta available from next publication"
+rather than implying zero changes today. Deltas work from day 2 onward.
+
+**Persistence path:** `SDN_SNAPSHOT_DIR` env var (defaults to
+`tempfile.gettempdir()/regulators-sdn-snapshots`). For production
+Docker, mount a persistent volume there so day-over-day deltas
+survive container restart. Last 14 days kept; older snapshots pruned.
+
+**Cache:** 12 h on the fetch path. OFAC publishes weekly on average,
+sometimes ad-hoc same-day for breaking sanctions packages.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -363,7 +393,7 @@ to 'robust enforcement'"), less useful for tracking deep prose changes.
 | v1.1 | open  | Auto-scrape Senate Banking / House FS confirmation calendars to refresh `data/personnel.py` |
 | **v1.2** | ✓ done | Statement diff viewer — latest-vs-prior speech per regulator with token-level inline diff and similarity score |
 | v1.3 | open  | Court-filing tracker (PACER scraper for SEC litigation releases) — paid feed, deferred |
-| v1.4 | open  | OFAC SDN delta-per-day UI — Treasury `sdn.xml` daily diff |
+| **v1.4** | ✓ done | OFAC SDN delta-per-day — fetch + parse Treasury `sdn.xml`, persist daily digest, compute additions/removals + per-program counts |
 | v1.5 | open  | Email/RSS alert digest — daily summary keyed on the user's filter set |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
@@ -374,6 +404,7 @@ to 'robust enforcement'"), less useful for tracking deep prose changes.
 | `GATEWAY_SSO_SECRET` | unset | Required behind the gateway. |
 | `DEV_MODE` | unset | Set `1` to bypass gateway auth locally. |
 | `PORT` | `7080` | Override listen port. |
+| `SDN_SNAPSHOT_DIR` | tempfile path | Where v1.4 persists per-day OFAC SDN digests. Set to a mounted volume in production. |
 
 ## Caveats / known limits
 

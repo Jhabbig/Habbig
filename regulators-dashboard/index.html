@@ -151,6 +151,25 @@
                    padding: 0 2px; border-radius: 2px; }
   .diff-text del { background: #3a1f1f; color: #f85149; text-decoration: line-through;
                    padding: 0 2px; border-radius: 2px; }
+  .sdn-summary { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline;
+                 font-size: 12px; margin-bottom: 12px; }
+  .sdn-summary .meta { color: var(--muted); }
+  .sdn-summary .added   { color: #56d364; font-weight: 700; }
+  .sdn-summary .removed { color: #f85149; font-weight: 700; }
+  .sdn-progs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .sdn-prog { padding: 2px 8px; border-radius: 12px; background: #21262d;
+              font-size: 11px; font-family: ui-monospace, SFMono-Regular, monospace; }
+  .sdn-prog .added   { color: #56d364; }
+  .sdn-prog .removed { color: #f85149; }
+  .sdn-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .sdn-cols { grid-template-columns: 1fr; } }
+  .sdn-col h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px;
+                text-transform: uppercase; letter-spacing: 0.04em; }
+  .sdn-entry { padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .sdn-entry:last-child { border-bottom: 0; }
+  .sdn-entry .name { font-weight: 600; }
+  .sdn-entry .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .sdn-remainder { color: var(--muted); font-size: 11px; padding-top: 8px; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -239,6 +258,10 @@
       <tbody id="rows"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
     </table>
     <div class="source-status" id="status"></div>
+  </section>
+  <section class="panel" id="sdn-panel">
+    <h2>OFAC SDN — sanctions delta</h2>
+    <div id="sdn-body"><div class="heatmap-empty">loading…</div></div>
   </section>
 </main>
 
@@ -595,6 +618,83 @@ async function loadDiff() {
   }
 }
 
+function renderSdnEntry(e) {
+  const progs = (e.programs || []).join(", ");
+  const meta = [e.type, e.country, progs].filter(Boolean).join(" · ");
+  return `<div class="sdn-entry">
+    <div class="name">${escapeHtml(e.name || "(unknown)")}</div>
+    <div class="meta">uid ${escapeHtml(e.uid)}${meta ? " · " + escapeHtml(meta) : ""}</div>
+  </div>`;
+}
+
+function renderSdn(data) {
+  const body = document.getElementById("sdn-body");
+  if (!data.ok) {
+    body.innerHTML = `<div class="heatmap-empty err">OFAC fetch failed: ${escapeHtml(data.error || "unknown")}</div>`;
+    return;
+  }
+  const d = data.delta || {};
+  let summary;
+  if (d.first_snapshot) {
+    summary = `<div class="sdn-summary">
+      <span><strong>${escapeHtml(data.publish_date || "—")}</strong></span>
+      <span class="meta">${data.record_count || 0} entries</span>
+      <span class="meta">First snapshot collected — delta available from next publication.</span>
+    </div>`;
+    body.innerHTML = summary;
+    return;
+  }
+  summary = `<div class="sdn-summary">
+    <span><strong>${escapeHtml(data.publish_date || "—")}</strong></span>
+    <span class="meta">${data.record_count || 0} entries</span>
+    <span class="meta">vs ${escapeHtml(d.yesterday_publish_date || "—")}:</span>
+    <span class="added">+${d.added_count}</span>
+    <span class="removed">−${d.removed_count}</span>
+  </div>`;
+
+  let progs = "";
+  if (d.program_deltas && d.program_deltas.length) {
+    progs = '<div class="sdn-progs">' + d.program_deltas.slice(0, 12).map(p => {
+      const parts = [];
+      if (p.added) parts.push(`<span class="added">+${p.added}</span>`);
+      if (p.removed) parts.push(`<span class="removed">−${p.removed}</span>`);
+      return `<span class="sdn-prog">${escapeHtml(p.program)} ${parts.join(" ")}</span>`;
+    }).join("") + '</div>';
+  }
+
+  let cols = '<div class="sdn-cols">';
+  cols += '<div class="sdn-col"><h3>Added today</h3>';
+  if (!d.added_preview.length) {
+    cols += '<div class="sdn-remainder">No additions in this delta.</div>';
+  } else {
+    cols += d.added_preview.map(renderSdnEntry).join("");
+    if (d.added_remainder > 0) cols += `<div class="sdn-remainder">+${d.added_remainder} more not shown</div>`;
+  }
+  cols += '</div>';
+  cols += '<div class="sdn-col"><h3>Removed today</h3>';
+  if (!d.removed_preview.length) {
+    cols += '<div class="sdn-remainder">No removals in this delta.</div>';
+  } else {
+    cols += d.removed_preview.map(renderSdnEntry).join("");
+    if (d.removed_remainder > 0) cols += `<div class="sdn-remainder">+${d.removed_remainder} more not shown</div>`;
+  }
+  cols += '</div></div>';
+
+  body.innerHTML = summary + progs + cols;
+}
+
+async function loadSdn() {
+  try {
+    const r = await fetch("/api/sdn");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderSdn(data);
+  } catch (e) {
+    document.getElementById("sdn-body").innerHTML =
+      `<div class="heatmap-empty err">SDN load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function loadHeatmap() {
   try {
     const r = await fetch("/api/heatmap?weeks=12");
@@ -778,7 +878,11 @@ loadTopics();
 loadPeople();
 loadStance();
 loadDiff();
+loadSdn();
+// SDN refreshes 12h server-side; the UI re-asks every 30 min so a manual
+// `force=true` from elsewhere would reflect quickly.
 setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
+setInterval(loadSdn, 30 * 60 * 1000);
 </script>
 </body>
 </html>
