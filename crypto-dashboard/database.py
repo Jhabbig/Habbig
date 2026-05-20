@@ -1589,6 +1589,19 @@ def get_open_executions_before(user_id: str, cutoff_iso: str) -> list[Row]:
     return _rows(rows)
 
 
+def get_all_open_executions(user_id: str) -> list[Row]:
+    """All currently-open placed orders for this user. Used by the fill poller."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM crypto_executions
+               WHERE user_id = ? AND status = 'open' AND action = 'placed'
+                 AND order_id IS NOT NULL
+               ORDER BY created_at ASC""",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
 def get_due_dca_schedules() -> list[Row]:
     """Schedules where next_run_at <= now (or is unset) AND active = 1.
     Returns user_id alongside ticker for the cross-user cron loop."""

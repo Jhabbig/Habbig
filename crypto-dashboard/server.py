@@ -475,6 +475,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(derivatives_refresher()))
     _bg_tasks.add(asyncio.create_task(macro_refresher()))
     _bg_tasks.add(asyncio.create_task(execution_ticker()))
+    _bg_tasks.add(asyncio.create_task(fill_poller_task()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
@@ -522,6 +523,37 @@ async def macro_refresher():
         except Exception as e:
             print(f"[macro] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(12 * 3600)
+
+
+async def fill_poller_task():
+    """Poll open orders every 60s. Updates execution rows from placed → filled
+    and (for sells) creates a tax disposition automatically. Idempotent."""
+    await asyncio.sleep(180)  # let the executor place at least one order first
+    while True:
+        try:
+            with db._conn() as c:
+                user_ids = [r["user_id"] for r in c.execute(
+                    "SELECT DISTINCT user_id FROM crypto_executions "
+                    "WHERE status='open' AND order_id IS NOT NULL"
+                ).fetchall()]
+            for uid in user_ids:
+                summary = await asyncio.to_thread(exec_mod.poll_fills, uid)
+                if summary["filled"] or summary["dispositions"]:
+                    print(f"[fill-poller] {uid}: {summary}")
+                    # Notify the user of every newly-filled order.
+                    if summary["filled"]:
+                        try:
+                            push_mod.notify_user(
+                                uid, "Order filled",
+                                f"{summary['filled']} order(s) filled, "
+                                f"{summary['dispositions']} disposition(s) recorded.",
+                                "/long-term#execution", tag="fill",
+                            )
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"[fill-poller] error: {type(e).__name__}: {e}")
+        await asyncio.sleep(60)
 
 
 async def execution_ticker():
@@ -5500,6 +5532,32 @@ async def harvest_opportunities(request: Request,
     }
 
 
+@app.post("/api/long-term/tax/harvest/execute")
+async def execute_harvest_api(request: Request):
+    """One-click TLH: place sells for the selected lots through the same
+    safety gauntlet the executor uses. Fill poller picks up the fills and
+    creates tax dispositions automatically.
+
+    Body: {holding_ids: [1, 5, 12]}. Use the IDs returned by
+    /api/long-term/tax/harvest. If omitted, harvests every opportunity.
+    """
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    holding_ids = payload.get("holding_ids")
+    if not holding_ids:
+        # Default to "all current opportunities".
+        opps = await asyncio.to_thread(tax_mod.find_harvest_opportunities, user["id"])
+        holding_ids = [o.holding_id for o in opps]
+    if not holding_ids:
+        return {"decisions": [], "message": "no harvest opportunities"}
+    decisions = await asyncio.to_thread(
+        exec_mod.execute_harvest_now, user["id"], holding_ids,
+    )
+    return {"decisions": [d.to_dict() for d in decisions]}
+
+
 @app.get("/api/long-term/tax/summary/{year}")
 async def tax_summary(year: int, request: Request):
     user = _get_session_user(request)
@@ -6073,6 +6131,10 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 
   <h2>Harvest opportunities</h2>
   <div id="hv-totals" style="margin:8px 0"></div>
+  <div class="actionrow">
+    <button id="hv-execute">Harvest all (sells go through safety gauntlet)</button>
+    <span id="hv-msg"></span>
+  </div>
   <table id="hv-table"><thead><tr>
     <th>Ticker</th><th>Qty</th><th>Cost</th><th>Price</th><th>Loss</th><th>Loss %</th><th>Days</th><th>LT/ST</th><th>Wash risk</th><th>Est. tax save</th></tr></thead><tbody></tbody></table>
 
@@ -6788,6 +6850,19 @@ async function loadHarvest(){
     }
   } catch(e) { tbody.innerHTML = `<tr><td colspan="10" class="err">${e.message}</td></tr>`; }
 }
+
+document.getElementById('hv-execute').onclick = async () => {
+  const msg = document.getElementById('hv-msg'); msg.innerHTML = '';
+  if (!confirm('Place sell orders for ALL current harvest opportunities? They will be evaluated through the safety gauntlet (dry-run mode applies). Tax dispositions are created automatically on fill.')) return;
+  try {
+    const r = await api('/api/long-term/tax/harvest/execute', {method:'POST', body: JSON.stringify({})});
+    const placed = r.decisions.filter(d => d.action === 'placed').length;
+    const dry = r.decisions.filter(d => d.action === 'dry_run').length;
+    const blocked = r.decisions.filter(d => d.action === 'blocked' || d.action === 'skipped').length;
+    msg.innerHTML = `<span class="ok">${placed} placed, ${dry} dry-run, ${blocked} blocked/skipped.</span>`;
+    loadHarvest(); loadExecLog && loadExecLog();
+  } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+};
 
 async function loadDispositions(){
   const tbody = document.querySelector('#dp-table tbody');

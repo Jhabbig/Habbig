@@ -76,6 +76,12 @@ class ExchangeAdapter(Protocol):
     def place_market_buy(
         self, ticker: str, usd_amount: float, client_order_id: str,
     ) -> OrderResponse: ...
+    def place_limit_sell(
+        self, ticker: str, base_qty: float, limit_price: float, client_order_id: str,
+    ) -> OrderResponse: ...
+    def place_market_sell(
+        self, ticker: str, base_qty: float, client_order_id: str,
+    ) -> OrderResponse: ...
     def cancel_order(self, order_id: str) -> OrderResponse: ...
     def get_order_status(self, order_id: str) -> dict: ...
 
@@ -298,6 +304,54 @@ class CoinbaseAdapter:
             return OrderResponse(False, None, r, err)
         return OrderResponse(True, r.get("order_id") or r.get("success_response", {}).get("order_id"), r)
 
+    def place_limit_sell(self, ticker: str, base_qty: float, limit_price: float,
+                         client_order_id: str) -> OrderResponse:
+        product = COINBASE_PRODUCTS.get(ticker.upper())
+        if not product:
+            return OrderResponse(False, None, {}, "unsupported product")
+        if limit_price <= 0 or base_qty <= 0:
+            return OrderResponse(False, None, {}, "invalid qty/price")
+        body = {
+            "client_order_id": client_order_id,
+            "product_id": product,
+            "side": "SELL",
+            "order_configuration": {
+                "limit_limit_gtc": {
+                    "base_size": f"{base_qty:.8f}",
+                    "limit_price": f"{limit_price:.2f}",
+                    "post_only": False,
+                },
+            },
+        }
+        r = self._request("POST", "/orders", body=body)
+        if "_error" in r:
+            return OrderResponse(False, None, r, f"Coinbase rejected: {r.get('_error')}")
+        if not r.get("success", False):
+            err = r.get("error_response", {}).get("message", "unknown")
+            return OrderResponse(False, None, r, err)
+        return OrderResponse(True, r.get("order_id") or r.get("success_response", {}).get("order_id"), r)
+
+    def place_market_sell(self, ticker: str, base_qty: float,
+                          client_order_id: str) -> OrderResponse:
+        product = COINBASE_PRODUCTS.get(ticker.upper())
+        if not product:
+            return OrderResponse(False, None, {}, "unsupported product")
+        body = {
+            "client_order_id": client_order_id,
+            "product_id": product,
+            "side": "SELL",
+            "order_configuration": {
+                "market_market_ioc": {"base_size": f"{base_qty:.8f}"},
+            },
+        }
+        r = self._request("POST", "/orders", body=body)
+        if "_error" in r:
+            return OrderResponse(False, None, r, f"Coinbase rejected: {r.get('_error')}")
+        if not r.get("success", False):
+            err = r.get("error_response", {}).get("message", "unknown")
+            return OrderResponse(False, None, r, err)
+        return OrderResponse(True, r.get("order_id") or r.get("success_response", {}).get("order_id"), r)
+
     def cancel_order(self, order_id: str) -> OrderResponse:
         r = self._request("POST", "/orders/batch_cancel", body={"order_ids": [order_id]})
         if "_error" in r:
@@ -463,6 +517,40 @@ class KrakenAdapter:
         body = {
             "pair": pair, "type": "buy", "ordertype": "market",
             "volume": f"{volume:.8f}",
+            "userref": _clip_userref(client_order_id),
+        }
+        r = self._private("AddOrder", body)
+        if "_error" in r:
+            return OrderResponse(False, None, r, str(r["_error"]))
+        txid = (r.get("txid") or [None])[0]
+        return OrderResponse(True, txid, r)
+
+    def place_limit_sell(self, ticker: str, base_qty: float, limit_price: float,
+                         client_order_id: str) -> OrderResponse:
+        pair = KRAKEN_PAIRS.get(ticker.upper())
+        if not pair:
+            return OrderResponse(False, None, {}, "unsupported pair")
+        if base_qty <= 0 or limit_price <= 0:
+            return OrderResponse(False, None, {}, "invalid qty/price")
+        body = {
+            "pair": pair, "type": "sell", "ordertype": "limit",
+            "price": f"{limit_price:.5f}", "volume": f"{base_qty:.8f}",
+            "userref": _clip_userref(client_order_id),
+        }
+        r = self._private("AddOrder", body)
+        if "_error" in r:
+            return OrderResponse(False, None, r, str(r["_error"]))
+        txid = (r.get("txid") or [None])[0]
+        return OrderResponse(True, txid, r)
+
+    def place_market_sell(self, ticker: str, base_qty: float,
+                          client_order_id: str) -> OrderResponse:
+        pair = KRAKEN_PAIRS.get(ticker.upper())
+        if not pair:
+            return OrderResponse(False, None, {}, "unsupported pair")
+        body = {
+            "pair": pair, "type": "sell", "ordertype": "market",
+            "volume": f"{base_qty:.8f}",
             "userref": _clip_userref(client_order_id),
         }
         r = self._private("AddOrder", body)

@@ -36,6 +36,7 @@ from typing import Optional
 import database as db
 import exchanges as ex
 import long_term as lt
+import tax as tax_mod
 
 log = logging.getLogger("crypto.execution")
 
@@ -167,9 +168,15 @@ def _check_circuit_breaker(user_id: str, safety: dict) -> tuple[bool, str]:
 # ─── Core: evaluate one leg ─────────────────────────────────────────────────
 
 def _evaluate_leg(user_id: str, ticker: str, side: str, usd_amount: float,
-                  safety: dict, client_order_id: Optional[str] = None) -> ExecutionDecision:
+                  safety: dict, client_order_id: Optional[str] = None,
+                  base_qty: Optional[float] = None) -> ExecutionDecision:
     """Run a single buy/sell leg through the safety gauntlet and (if armed)
-    place it on the preferred exchange. Returns the decision either way."""
+    place it on the preferred exchange. Returns the decision either way.
+
+    Buys are sized in USD (`usd_amount`); sells take an explicit `base_qty`
+    so we can sell exactly the lot the harvester picked, not "USD-worth at
+    moving market price". For sells, `usd_amount` is computed at price-
+    discovery time and used for cap-checking only."""
     client_order_id = client_order_id or f"narve-{uuid.uuid4().hex[:16]}"
     exchange_name = safety.get("preferred_exchange", "coinbase")
 
@@ -177,25 +184,58 @@ def _evaluate_leg(user_id: str, ticker: str, side: str, usd_amount: float,
     if ticker not in lt.TICKER_MAP:
         return ExecutionDecision(
             "skipped", "unsupported asset", ticker, exchange_name, side,
-            usd_amount, None, None, client_order_id,
+            usd_amount or 0.0, None, None, client_order_id,
         )
 
     # 2. Sanity bounds on amount
-    if usd_amount <= 0:
+    if side == "buy" and (usd_amount is None or usd_amount <= 0):
         return ExecutionDecision(
-            "skipped", "zero/negative amount", ticker, exchange_name, side,
-            usd_amount, None, None, client_order_id,
+            "skipped", "zero/negative buy amount", ticker, exchange_name, side,
+            usd_amount or 0.0, None, None, client_order_id,
+        )
+    if side == "sell" and (base_qty is None or base_qty <= 0):
+        return ExecutionDecision(
+            "skipped", "zero/negative sell qty", ticker, exchange_name, side,
+            0.0, None, None, client_order_id,
         )
 
-    # 3. Per-order cap
+    # 3. Circuit breaker
+    tripped, why = _check_circuit_breaker(user_id, safety)
+    if tripped:
+        return ExecutionDecision(
+            "blocked", why, ticker, exchange_name, side, usd_amount or 0.0,
+            None, None, client_order_id,
+        )
+
+    # 4. Adapter check
+    adapter = ex.get_adapter(user_id, exchange_name)
+    if adapter is None:
+        return ExecutionDecision(
+            "skipped", f"{exchange_name} not configured for this user",
+            ticker, exchange_name, side, usd_amount or 0.0, None, None, client_order_id,
+        )
+
+    # 5. Price discovery + limit calc + sell-side USD computation
+    price = adapter.get_price(ticker)
+    if not price or price <= 0:
+        return ExecutionDecision(
+            "skipped", f"no price from {exchange_name}",
+            ticker, exchange_name, side, usd_amount or 0.0, None, None, client_order_id,
+        )
+    offset = safety["limit_offset_bps"] / 10_000
+    limit_price = price * (1 - offset) if side == "buy" else price * (1 + offset)
+    if side == "sell":
+        usd_amount = float(base_qty) * limit_price  # for cap-checking + logging
+
+    # 6. Per-order cap (now that we have a USD estimate for sells too)
     if usd_amount > safety["max_order_usd"]:
         return ExecutionDecision(
-            "blocked", f"order ${usd_amount:.0f} exceeds max-order cap "
-                       f"${safety['max_order_usd']:.0f}",
+            "blocked",
+            f"order ${usd_amount:.0f} exceeds max-order cap ${safety['max_order_usd']:.0f}",
             ticker, exchange_name, side, usd_amount, None, None, client_order_id,
         )
 
-    # 4. Daily cap (only for buys — sells are exit liquidity, not spend)
+    # 7. Daily cap (only for buys — sells are exit liquidity, not spend)
     if side == "buy":
         spent = _spent_today_usd(user_id)
         if spent + usd_amount > safety["max_daily_usd"]:
@@ -205,51 +245,21 @@ def _evaluate_leg(user_id: str, ticker: str, side: str, usd_amount: float,
                 ticker, exchange_name, side, usd_amount, None, None, client_order_id,
             )
 
-    # 5. Circuit breaker
-    tripped, why = _check_circuit_breaker(user_id, safety)
-    if tripped:
-        return ExecutionDecision(
-            "blocked", why, ticker, exchange_name, side, usd_amount,
-            None, None, client_order_id,
-        )
-
-    # 6. Adapter check
-    adapter = ex.get_adapter(user_id, exchange_name)
-    if adapter is None:
-        return ExecutionDecision(
-            "skipped", f"{exchange_name} not configured for this user",
-            ticker, exchange_name, side, usd_amount, None, None, client_order_id,
-        )
-
-    # 7. Price discovery + limit calc
-    price = adapter.get_price(ticker)
-    if not price or price <= 0:
-        return ExecutionDecision(
-            "skipped", f"no price from {exchange_name}",
-            ticker, exchange_name, side, usd_amount, None, None, client_order_id,
-        )
-    offset = safety["limit_offset_bps"] / 10_000
-    # Buy 0.5% below; sell 0.5% above.
-    limit_price = price * (1 - offset) if side == "buy" else price * (1 + offset)
-
     # 8. Dry-run gate
     if safety["dry_run"]:
         decision = ExecutionDecision(
-            "dry_run", "dry-run mode enabled — order NOT sent",
+            "dry_run", f"dry-run mode enabled — {side} NOT sent",
             ticker, exchange_name, side, usd_amount, round(limit_price, 6),
             None, client_order_id,
         )
         db.log_execution(user_id, decision.to_dict())
         return decision
 
-    # 9. Place real order — only buy supported for now (DCA-first).
-    if side != "buy":
-        return ExecutionDecision(
-            "skipped", "sell-side auto-exec not enabled in Phase 2 first cut",
-            ticker, exchange_name, side, usd_amount, round(limit_price, 6),
-            None, client_order_id,
-        )
-    resp = adapter.place_limit_buy(ticker, usd_amount, limit_price, client_order_id)
+    # 9. Place real order
+    if side == "buy":
+        resp = adapter.place_limit_buy(ticker, usd_amount, limit_price, client_order_id)
+    else:
+        resp = adapter.place_limit_sell(ticker, float(base_qty), limit_price, client_order_id)
     if not resp.ok:
         decision = ExecutionDecision(
             "skipped", f"exchange rejected: {resp.error}",
@@ -258,8 +268,9 @@ def _evaluate_leg(user_id: str, ticker: str, side: str, usd_amount: float,
         )
         db.log_execution(user_id, decision.to_dict(), raw=resp.raw)
         return decision
+    verb = "buy" if side == "buy" else "sell"
     decision = ExecutionDecision(
-        "placed", f"limit buy placed at {limit_price:.4f}",
+        "placed", f"limit {verb} placed at {limit_price:.4f}",
         ticker, exchange_name, side, usd_amount, round(limit_price, 6),
         resp.order_id, client_order_id,
     )
@@ -298,7 +309,8 @@ def execute_dca_now(user_id: str, ticker: str) -> ExecutionDecision:
 
 def execute_rebalance_now(user_id: str) -> list[ExecutionDecision]:
     """Compute the rebalance plan and execute each leg through the gauntlet.
-    Sells are blocked in the first cut — we log them as skipped."""
+    Sells go through `_evaluate_leg(side='sell', base_qty=...)`; we convert
+    the plan's USD notional into base qty at the current price."""
     rollup = db.get_holdings_rollup(user_id)
     targets_raw = db.get_target_weights(user_id)
     if not targets_raw:
@@ -314,9 +326,145 @@ def execute_rebalance_now(user_id: str) -> list[ExecutionDecision]:
     for leg in plan.get("legs", []):
         if leg["action"] == "hold" or leg["notional_usd"] <= 0:
             continue
-        d = _evaluate_leg(user_id, leg["ticker"], leg["action"], leg["notional_usd"], safety)
+        if leg["action"] == "buy":
+            d = _evaluate_leg(user_id, leg["ticker"], "buy", leg["notional_usd"], safety)
+        else:
+            # Convert USD notional → base qty at last close (executor will
+            # re-price at exchange level).
+            _, closes = lt.get_daily_closes(leg["ticker"], days=2)
+            if len(closes) == 0:
+                continue
+            base_qty = leg["notional_usd"] / float(closes[-1])
+            d = _evaluate_leg(user_id, leg["ticker"], "sell", 0.0, safety, base_qty=base_qty)
         decisions.append(d)
     return decisions
+
+
+def execute_harvest_now(user_id: str, holding_ids: list[int]) -> list[ExecutionDecision]:
+    """Phase 3 → Phase 2 chain. For each holding in the provided list,
+    place a sell for the remaining qty through the safety gauntlet.
+    The fill poller picks up the fill and creates a tax disposition with
+    the original lot pre-selected (via execution_id linkage).
+
+    Caller is expected to have already shown the user a harvest preview
+    and gotten their confirmation."""
+    safety = get_safety_for(user_id)
+    consumed_by_holding = db.get_consumption_by_holding(user_id)
+    holdings_by_id = {h["id"]: h for h in db.get_holdings(user_id)}
+    decisions: list[ExecutionDecision] = []
+    for hid in holding_ids:
+        lot = holdings_by_id.get(int(hid))
+        if not lot:
+            decisions.append(ExecutionDecision(
+                "skipped", f"unknown holding id {hid}",
+                "", safety["preferred_exchange"], "sell", 0.0, None, None, "",
+            ))
+            continue
+        consumed = float(consumed_by_holding.get(int(hid), 0.0))
+        remaining = float(lot["qty"]) - consumed
+        if remaining <= 1e-9:
+            decisions.append(ExecutionDecision(
+                "skipped", f"holding {hid} already fully consumed",
+                lot["ticker"], safety["preferred_exchange"], "sell",
+                0.0, None, None, "",
+            ))
+            continue
+        d = _evaluate_leg(
+            user_id, lot["ticker"], "sell", 0.0, safety,
+            client_order_id=f"narve-harv-{uuid.uuid4().hex[:12]}",
+            base_qty=remaining,
+        )
+        decisions.append(d)
+    return decisions
+
+
+# ─── Fill-status polling ────────────────────────────────────────────────────
+
+def _normalise_status(adapter_name: str, raw: dict) -> tuple[str, Optional[float], Optional[float]]:
+    """Map an adapter's order-status payload to a uniform shape.
+    Returns (status, fill_price, fill_qty). Status ∈ {open, filled,
+    partially_filled, cancelled, unknown}."""
+    if adapter_name == "coinbase":
+        order = (raw.get("order") or {}) if isinstance(raw, dict) else {}
+        s = (order.get("status") or "").upper()
+        filled_qty = float(order.get("filled_size") or 0)
+        avg_price = float(order.get("average_filled_price") or 0)
+        if s == "FILLED":
+            return "filled", avg_price or None, filled_qty or None
+        if s == "CANCELLED":
+            return "cancelled", None, None
+        if s == "OPEN" or s == "PENDING":
+            if filled_qty > 0:
+                return "partially_filled", avg_price or None, filled_qty
+            return "open", None, None
+        return "unknown", None, None
+    if adapter_name == "kraken":
+        # Kraken returns a dict keyed by txid → {status, vol, vol_exec, price, ...}
+        for _, info in (raw.items() if isinstance(raw, dict) else []):
+            if not isinstance(info, dict):
+                continue
+            s = (info.get("status") or "").lower()
+            vol_exec = float(info.get("vol_exec") or 0)
+            price = float(info.get("price") or 0)
+            if s == "closed":
+                return "filled", price or None, vol_exec or None
+            if s == "canceled":
+                return "cancelled", None, None
+            if s == "open":
+                if vol_exec > 0:
+                    return "partially_filled", price or None, vol_exec
+                return "open", None, None
+        return "unknown", None, None
+    return "unknown", None, None
+
+
+def poll_fills(user_id: str) -> dict:
+    """Poll every open order for this user, update statuses, and create
+    tax dispositions for any newly-filled sells. Idempotent on execution_id.
+    Returns a summary."""
+    open_rows = db.get_all_open_executions(user_id)
+    summary = {"checked": 0, "filled": 0, "cancelled": 0, "dispositions": 0}
+    for row in open_rows:
+        if not row["order_id"]:
+            continue
+        summary["checked"] += 1
+        adapter = ex.get_adapter(user_id, row["exchange"])
+        if not adapter:
+            continue
+        try:
+            raw = adapter.get_order_status(row["order_id"])
+        except Exception:
+            continue
+        status, fill_price, fill_qty = _normalise_status(adapter.name, raw)
+        if status == "filled":
+            db.update_execution_status(row["id"], "filled",
+                                       fill_price=fill_price, fill_qty=fill_qty)
+            summary["filled"] += 1
+            # Sell-side ⇒ create a disposition with the actual fill price
+            # and qty. Idempotent on execution_id.
+            if row["side"] == "sell" and fill_price and fill_qty:
+                try:
+                    settings = tax_mod.get_tax_settings(user_id)
+                    tax_mod.record_disposition(
+                        user_id=user_id, ticker=row["ticker"],
+                        qty=fill_qty, sell_price=fill_price,
+                        method=settings.get("default_lot_method"),
+                        exchange=row["exchange"],
+                        execution_id=row["id"],
+                        notes=f"auto: order {row['order_id']}",
+                    )
+                    summary["dispositions"] += 1
+                except Exception as e:
+                    log.warning("disposition record failed for exec %s: %s", row["id"], e)
+        elif status == "cancelled":
+            db.update_execution_status(row["id"], "cancelled")
+            summary["cancelled"] += 1
+        elif status == "partially_filled":
+            # Keep the row open but stash the partial qty so the dashboard
+            # shows progress.
+            db.update_execution_status(row["id"], "open",
+                                       fill_price=fill_price, fill_qty=fill_qty)
+    return summary
 
 
 def tick_due_schedules() -> dict:

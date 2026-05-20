@@ -53,9 +53,20 @@ log = logging.getLogger("crypto.tax")
 
 # ─── Lot-selection methods ──────────────────────────────────────────────────
 
-LOT_METHODS = ("FIFO", "LIFO", "HIFO", "LOFO", "TAX_OPTIMAL")
+LOT_METHODS = ("FIFO", "LIFO", "HIFO", "LOFO", "TAX_OPTIMAL", "POOL")
 DEFAULT_LOT_METHOD = "HIFO"
 LT_THRESHOLD_DAYS = 365
+
+# Per-jurisdiction default lot method when the user hasn't picked one.
+# UK uses the Section 104 share-pooling rules: same-asset purchases are
+# aggregated at weighted-average cost. Same-day and 30-day matching is
+# not yet implemented — most users don't trade in/out within 30 days, so
+# pool-only covers ~80% of real cases.
+JURISDICTION_DEFAULT_METHOD = {
+    "US": "HIFO",
+    "UK": "POOL",
+    "DE": "FIFO",   # Germany has 1y tax-free hold; FIFO is the simplest match
+}
 
 # Default safety thresholds for the harvest scanner.
 DEFAULT_HARVEST_MIN_LOSS_USD = 100.0
@@ -186,17 +197,36 @@ def _sort_for_method(lots: list[LotState], method: str, sell_price: float) -> li
             secondary = -unrealised_per_unit if is_loss else lot.cost_basis
             return (tier, -secondary)
         return sorted(lots, key=key)
+    if method == "POOL":
+        # UK Section 104 pool: same-asset lots are conceptually one. We still
+        # return them in oldest-first order for the per-row breakdown, but
+        # allocate_lots overrides the cost basis to the pool weighted-avg.
+        return sorted(lots, key=lambda l: l.acquired_at)
     raise ValueError(f"Unknown lot method: {method}")
 
 
 def allocate_lots(lots: list[LotState], sell_qty: float, method: str,
                   sell_price: float, sell_date: str) -> tuple[list[LotPick], float]:
     """Pick lots to fulfill `sell_qty`. Returns (picks, shortfall).
-    Allocation is greedy: take whole lots first, then partial on the last lot."""
+    Allocation is greedy: take whole lots first, then partial on the last lot.
+
+    For UK POOL: the per-lot cost basis is replaced with the pool's
+    weighted-average. We still attribute consumption to individual holding
+    rows (oldest-first) so the audit trail stays clean — but every pick
+    uses the same average basis."""
     ordered = _sort_for_method(lots, method, sell_price)
     remaining = float(sell_qty)
     picks: list[LotPick] = []
     sell_date_d = datetime.fromisoformat(sell_date).date()
+
+    # POOL pre-computation — single weighted-average basis across all lots
+    # of this ticker (we're already filtered by ticker upstream).
+    pool_basis: Optional[float] = None
+    if method == "POOL" and lots:
+        total_qty = sum(l.qty_remaining for l in lots)
+        total_cost = sum(l.qty_remaining * l.cost_basis for l in lots)
+        if total_qty > 0:
+            pool_basis = total_cost / total_qty
 
     for lot in ordered:
         if remaining <= 1e-12:
@@ -204,7 +234,9 @@ def allocate_lots(lots: list[LotState], sell_qty: float, method: str,
         take = min(lot.qty_remaining, remaining)
         if take <= 1e-12:
             continue
-        cost = take * lot.cost_basis
+        # Pool uses weighted-avg; everything else uses the lot's own basis.
+        basis = pool_basis if pool_basis is not None else lot.cost_basis
+        cost = take * basis
         proceeds = take * sell_price
         gain = proceeds - cost
         try:
@@ -212,10 +244,12 @@ def allocate_lots(lots: list[LotState], sell_qty: float, method: str,
             days_held = (sell_date_d - acquired_d).days
         except ValueError:
             days_held = 0
+        # In the UK pool, ST/LT distinction doesn't drive the rate (UK has
+        # one CGT rate band), but we keep the field for symmetry.
         classification = "LT" if days_held >= LT_THRESHOLD_DAYS else "ST"
         picks.append(LotPick(
             holding_id=lot.holding_id, consumed_qty=take,
-            cost_basis=lot.cost_basis, acquired_at=lot.acquired_at,
+            cost_basis=basis, acquired_at=lot.acquired_at,
             sell_price=sell_price, proceeds=proceeds, realized_gain=gain,
             classification=classification, days_held=days_held,
         ))
@@ -498,6 +532,11 @@ def get_tax_settings(user_id: str) -> dict:
         v = row.get(k)
         if v is not None:
             out[k] = v
+    # Auto-correct the lot method when it's incompatible with the jurisdiction
+    # (e.g. user switched from US to UK without picking POOL).
+    j = out.get("jurisdiction", "US")
+    if j == "UK" and out["default_lot_method"] != "POOL":
+        out["default_lot_method"] = "POOL"
     return out
 
 
