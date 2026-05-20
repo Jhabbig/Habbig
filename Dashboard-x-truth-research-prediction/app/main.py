@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import func, select
@@ -351,6 +351,10 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     # The /api/v1/* surface authenticates via X-API-Key header, not session cookie.
     if request.url.path.startswith("/api/v1/"):
+        return await call_next(request)
+    # /share/<handle>.svg are public source-card images — meant to be embedded
+    # in tweets, posts, blog comments. No auth required by design.
+    if request.url.path.startswith("/share/"):
         return await call_next(request)
     token = request.cookies.get("session")
     if token and token in _active_sessions:
@@ -1354,6 +1358,102 @@ async def api_arbitrage(min_edge: float = 3.0, _user: User = Depends(_require_ap
         }
         for a in arbs
     ]})
+
+
+# ---------------------------------------------------------------------------
+# Shareable source cards — public SVG images for embedding in social media.
+# No auth: that's the whole point (the card is the marketing surface).
+# ---------------------------------------------------------------------------
+@app.get("/share/{handle}.svg")
+async def share_source_card(handle: str):
+    """Generate an SVG card with a source's credibility stats.
+
+    Returned with a short cache-control so social media unfurlers see a fresh
+    image but don't hammer the DB on every preview. Always returns a valid SVG
+    (even for unknown handles) so embedding code doesn't break on 404s.
+    """
+    # Defensive cap on handle length — we render it verbatim into the SVG.
+    handle = (handle or "").strip()[:64]
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        s = (await session.exec(select(Source).where(Source.handle == handle))).first()
+
+    if s is None:
+        svg = _svg_unknown_card(handle)
+    else:
+        svg = _svg_source_card(s)
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+def _svg_text_escape(value: str) -> str:
+    """Escape `&<>"'` for safe inclusion in an SVG <text> body or attribute."""
+    return (
+        (value or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _svg_unknown_card(handle: str) -> str:
+    safe = _svg_text_escape(handle)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="200" viewBox="0 0 640 200">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#1a1f29"/></linearGradient></defs>
+  <rect width="640" height="200" fill="url(#g)" rx="16"/>
+  <text x="320" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="18" fill="#8b949e">@{safe} is not tracked yet</text>
+  <text x="320" y="130" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#484f58">narve.ai · truth research</text>
+</svg>"""
+
+
+def _svg_source_card(s: Source) -> str:
+    """The headline credibility card. Designed to fit social-media link previews
+    at 1.2:1 aspect (640×200) and read well at thumbnail size."""
+    handle = _svg_text_escape(s.handle)[:24]
+    cred_pct = max(0, min(100, int((s.global_credibility or 0) * 100)))
+    cred_color = "#22c55e" if (s.global_credibility or 0) >= 0.7 else "#f59e0b" if (s.global_credibility or 0) >= 0.4 else "#ef4444"
+    accuracy_str = f"{s.accuracy_global:.0%}" if s.accuracy_global is not None else "—"
+    record_str = f"{s.correct_qualifying}/{s.qualifying_predictions}" if s.qualifying_predictions > 0 else "0/0"
+    brier_str = f"{s.brier_score:.3f}" if s.brier_score is not None else "—"
+    rated_badge = (
+        '<rect x="476" y="20" width="68" height="22" rx="11" fill="#22c55e" fill-opacity="0.15" stroke="#22c55e" stroke-opacity="0.4"/>'
+        '<text x="510" y="35" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#22c55e">RATED</text>'
+        if s.accuracy_unlocked else
+        '<rect x="476" y="20" width="68" height="22" rx="11" fill="#484f58" fill-opacity="0.15" stroke="#484f58" stroke-opacity="0.4"/>'
+        '<text x="510" y="35" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#8b949e">UNRATED</text>'
+    )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="200" viewBox="0 0 640 200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#1a1f29"/></linearGradient>
+    <linearGradient id="credbar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{cred_color}" stop-opacity="0.3"/><stop offset="1" stop-color="{cred_color}"/></linearGradient>
+  </defs>
+  <rect width="640" height="200" fill="url(#bg)" rx="16"/>
+  <text x="32" y="42" font-family="Inter, system-ui, sans-serif" font-size="22" font-weight="700" fill="#e6edf3">@{handle}</text>
+  <text x="32" y="62" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#8b949e">via narve.ai · truth research</text>
+  {rated_badge}
+
+  <text x="32" y="98" font-family="Inter, system-ui, sans-serif" font-size="10" letter-spacing="1.5" fill="#484f58">CREDIBILITY</text>
+  <rect x="32" y="106" width="280" height="6" rx="3" fill="#1e2a3a"/>
+  <rect x="32" y="106" width="{int(280 * cred_pct / 100)}" height="6" rx="3" fill="url(#credbar)"/>
+  <text x="320" y="113" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="13" fill="{cred_color}">{s.global_credibility:.2f}</text>
+
+  <line x1="340" y1="90" x2="340" y2="160" stroke="#1e2a3a" stroke-width="1"/>
+
+  <text x="360" y="98" font-family="Inter, system-ui, sans-serif" font-size="10" letter-spacing="1.5" fill="#484f58">ACCURACY</text>
+  <text x="360" y="124" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700" fill="#e6edf3">{accuracy_str}</text>
+  <text x="360" y="142" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#8b949e">{record_str} record</text>
+
+  <text x="492" y="98" font-family="Inter, system-ui, sans-serif" font-size="10" letter-spacing="1.5" fill="#484f58">BRIER</text>
+  <text x="492" y="124" font-family="JetBrains Mono, monospace" font-size="20" font-weight="700" fill="#e6edf3">{brier_str}</text>
+  <text x="492" y="142" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#8b949e">lower=better</text>
+
+  <text x="32" y="180" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#484f58">{len(s.categories_predicted_in or [])} categories · follow @narve_ai</text>
+</svg>"""
 
 
 # ---------------------------------------------------------------------------
