@@ -77,17 +77,21 @@ This is the single biggest "claim, not display" win — being able to say
 "real wages are up for the top quintile and down for the bottom" instead
 of "real wages are up 0.4%".
 
-### 4. Approval ingestion &middot; **SHIPPED v1.3 (historical)**
+### 4. Approval ingestion &middot; **SHIPPED v1.3-1.4**
 
-Pulls 538's archived `president_approval_polls.csv` from the GitHub
-mirror, auto-detects the most-recent incumbent, computes a 4-week
-sample-size-weighted rolling net, and surfaces a 52-week sparkline. When
-the latest poll is > 60 days old the card flags itself as "historical".
+v1.3 — Pulls 538's archived `president_approval_polls.csv` from the
+GitHub mirror, auto-detects the most-recent incumbent, computes a 4-week
+sample-size-weighted rolling net, surfaces a 52-week sparkline. When the
+latest poll is > 60 days old the card flags itself as "historical".
+
+v1.4 — **Live splice via Polymarket.** For each end-year with ≥2
+"approval ≥ X%" markets, we treat the implied prices as a discrete CDF
+and interpolate to find the threshold where P(approval ≥ X) = 0.5 — the
+implied median approval. Surfaced as forward dots on the approval
+sparkline + an annotation in the context line ("Polymarket-implied EOY
+2026: ~44% approve").
 
 **Still to do**:
-- Splice a live source past the 538 freeze date — Polymarket
-  end-of-year approval markets (which we already fetch) can give an
-  implied current approval; RCP scrape or Silver Bulletin API otherwise.
 - "Right track / wrong track" parallel ingestion.
 - Pollster-by-pollster scorecard (rolling Brier vs the eventual result).
 

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Voter Mood — embed</title>
+<style>
+  :root {
+    --bg-1: #0f172a;
+    --bg-2: #1e293b;
+    --border: #243042;
+    --text-1: #f1f5f9;
+    --text-2: #94a3b8;
+    --text-3: #64748b;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad:  #f87171;
+    --accent: #818cf8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg-1);
+    color: var(--text-1);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .embed {
+    padding: 14px 16px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid var(--border);
+    border-radius: 0;
+  }
+  .label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+  }
+  .big {
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .big.up   { color: var(--good); }
+  .big.down { color: var(--bad);  }
+  .big.warn { color: var(--warn); }
+  .flavor { color: var(--text-1); font-size: 12px; margin-top: 4px; }
+  .meta { color: var(--text-3); font-size: 10px; margin-top: 6px; }
+  svg.spark { width: 100%; height: 48px; display: block; margin-top: 8px; }
+  .attribution {
+    margin-top: 6px;
+    text-align: right;
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .attribution a { color: var(--accent); text-decoration: none; }
+  .err { color: var(--bad); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="embed">
+  <div>
+    <div class="label" id="label">Loading…</div>
+    <div class="big" id="big">—</div>
+    <div class="flavor" id="flavor"></div>
+    <svg class="spark" id="spark" viewBox="0 0 320 48" preserveAspectRatio="none"></svg>
+    <div class="meta" id="meta"></div>
+  </div>
+  <div class="attribution">
+    via <a href="/" target="_top">mood.narve.ai</a>
+  </div>
+</div>
+<script>
+const card = (location.pathname.split("/embed/")[1] || "mood").replace(/\/$/, "");
+
+function pl(values, color) {
+  if (!values || values.length < 2) return "";
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const range = (hi - lo) || 1;
+  const w = 320, h = 48;
+  const pts = values.map((v, i) => `${(i / (values.length - 1) * w).toFixed(1)},${(h - ((v - lo) / range) * h).toFixed(1)}`).join(" ");
+  return `<polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}"/>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/summary");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const s = await r.json();
+    if (card === "mood") {
+      const m = s.mood || {};
+      document.getElementById("label").textContent = "Voter mood index";
+      const score = m.score_0_100;
+      document.getElementById("big").textContent = score != null ? Math.round(score) + " / 100" : "—";
+      document.getElementById("big").className = "big " + (score == null ? "" : score >= 60 ? "up" : score >= 45 ? "warn" : "down");
+      const comps = m.components || {};
+      const order = ["sentiment", "jobs", "inflation", "real_wages", "gas"];
+      const present = order.filter(k => comps[k]).map(k => `${k} ${Math.round(comps[k].score_0_1 * 100)}`);
+      document.getElementById("flavor").textContent = present.join(" · ");
+      document.getElementById("meta").textContent = "5-component composite vs prior 20y";
+    } else if (card === "forecast") {
+      const f = s.election_cycle || {};
+      document.getElementById("label").textContent = (f.next_midterm || "—") + " · House midterm forecast";
+      const seats = f.implied_seat_change;
+      if (seats != null) {
+        document.getElementById("big").textContent = (seats >= 0 ? "+" : "") + Math.round(seats) + " seats";
+        document.getElementById("big").className = "big " + (seats >= 0 ? "up" : "down");
+        document.getElementById("flavor").textContent = `for ${f.incumbent_party} (${f.incumbent_president}) · 90% CI [${f.ci_90_low}, ${f.ci_90_high}]`;
+        document.getElementById("meta").textContent = `from UMich sentiment ${f.current_sentiment} · R²=${f.r_squared}`;
+      } else {
+        document.getElementById("big").textContent = "—";
+      }
+    } else if (card === "vibecession") {
+      const v = s.vibecession || {};
+      document.getElementById("label").textContent = "Vibecession index";
+      const gap = v.gap;
+      if (gap != null) {
+        const pts = gap * 100;
+        document.getElementById("big").textContent = (pts >= 0 ? "+" : "") + pts.toFixed(1) + " pts";
+        document.getElementById("big").className = "big " + (gap < -0.10 ? "down" : gap > 0.10 ? "up" : "warn");
+        document.getElementById("flavor").textContent = v.flavor;
+        const spark = (v.history || []).map(r => r.gap);
+        document.getElementById("spark").innerHTML = pl(spark, "#818cf8");
+        document.getElementById("meta").textContent = `sentiment ${Math.round(v.sentiment_pct*100)} vs fundamentals ${Math.round(v.fundamentals_pct*100)}`;
+      } else {
+        document.getElementById("big").textContent = "—";
+      }
+    } else if (card === "approval") {
+      const a = s.approval || {};
+      document.getElementById("label").textContent = "Approval · " + (a.incumbent || "—");
+      const net = a.net_pct;
+      if (net != null) {
+        document.getElementById("big").textContent = (net >= 0 ? "+" : "") + net.toFixed(1) + " net";
+        document.getElementById("big").className = "big " + (net >= 0 ? "up" : "down");
+        document.getElementById("flavor").textContent = `${a.approve_pct?.toFixed(1)}% approve · ${a.disapprove_pct?.toFixed(1)}% disapprove`;
+        const spark = (a.spark || []).map(o => o.value);
+        document.getElementById("spark").innerHTML = pl(spark, "#fbbf24");
+        document.getElementById("meta").textContent = `as of ${a.as_of} · ${a.n_polls_4w} polls last 4w`;
+      } else {
+        document.getElementById("big").textContent = "—";
+      }
+    } else {
+      document.getElementById("big").textContent = "unknown";
+      document.getElementById("flavor").textContent = "supported: mood, forecast, vibecession, approval";
+    }
+  } catch (e) {
+    document.getElementById("big").innerHTML = '<span class="err">load failed</span>';
+    document.getElementById("flavor").textContent = e.message;
+  }
+}
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

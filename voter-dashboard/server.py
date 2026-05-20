@@ -39,6 +39,7 @@ import io
 import logging
 import math
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -1275,6 +1276,206 @@ def shape_markets_for_ui(markets: list[dict]) -> list[dict]:
     return out
 
 
+# ─── Live-approval splice via Polymarket markets ───────────────────────────────
+
+_RE_APPROVAL_GE = re.compile(r"approval.{0,40}?(?:>=|≥|at\s*least|over|above|exceed[a-z]*)\s*([0-9]{2})\s*%?", re.I)
+_RE_APPROVAL_LE = re.compile(r"approval.{0,40}?(?:<=|≤|under|below|less\s*than)\s*([0-9]{2})\s*%?", re.I)
+
+
+def polymarket_approval_implied(markets: list[dict]) -> Optional[dict]:
+    """Back out an implied current approval from Polymarket's approval
+    threshold markets. For a set of 'approval ≥ X%' markets that share an
+    end date, the implied prices form a (declining) CDF — we interpolate
+    to find the threshold where the implied probability crosses 0.5,
+    which is the implied median approval.
+
+    Returns the per-end-year implied median plus the raw market dots.
+    Skips years where we don't have at least two distinct thresholds."""
+    if not markets:
+        return None
+    # Bucket approval markets by end-date year + threshold
+    by_year: dict[int, list[dict]] = {}
+    for m in markets:
+        title = ((m.get("_event_title") or "") + " " + (m.get("question") or ""))
+        tl = title.lower()
+        if "approval" not in tl:
+            continue
+        try:
+            implied = float(m.get("lastTradePrice") or m.get("bestBid") or 0)
+        except (ValueError, TypeError):
+            continue
+        if implied <= 0 or implied >= 1:
+            continue
+        # Parse threshold
+        thr: Optional[float] = None
+        direction: str = ""
+        mm = _RE_APPROVAL_GE.search(tl)
+        if mm:
+            thr = float(mm.group(1)); direction = "ge"
+        else:
+            mm = _RE_APPROVAL_LE.search(tl)
+            if mm:
+                thr = float(mm.group(1)); direction = "le"
+        if thr is None or thr < 20 or thr > 70:
+            continue
+        # End date
+        ed = m.get("endDate") or m.get("end_date_iso") or ""
+        if len(ed) < 4:
+            continue
+        try:
+            year = int(ed[:4])
+        except ValueError:
+            continue
+        by_year.setdefault(year, []).append({
+            "threshold": thr,
+            "direction": direction,
+            "implied": implied,
+            "question": m.get("question"),
+        })
+
+    if not by_year:
+        return None
+
+    implied_by_year: list[dict] = []
+    for year, rows in sorted(by_year.items()):
+        # Convert ≤ entries to the equivalent ≥ probability
+        norm = []
+        for r in rows:
+            if r["direction"] == "le":
+                norm.append({"threshold": r["threshold"], "p_ge": 1.0 - r["implied"]})
+            else:
+                norm.append({"threshold": r["threshold"], "p_ge": r["implied"]})
+        # Average duplicate thresholds
+        agg: dict[float, list[float]] = {}
+        for n in norm:
+            agg.setdefault(n["threshold"], []).append(n["p_ge"])
+        pts = sorted([(t, sum(ps) / len(ps)) for t, ps in agg.items()])
+        if len(pts) < 2:
+            # Single-threshold year: still surface it as a soft cross-check
+            t, p = pts[0]
+            implied_by_year.append({
+                "year": year,
+                "thresholds_used": 1,
+                "single_market": {"threshold": t, "p_ge": round(p, 3)},
+                "implied_median_approval": None,
+            })
+            continue
+        # Linear interpolation to find threshold where p_ge crosses 0.5.
+        # Sort by threshold; CDF should be decreasing in threshold (higher
+        # threshold = lower P(approval ≥ that)). Walk pairs.
+        median: Optional[float] = None
+        for i in range(len(pts) - 1):
+            t1, p1 = pts[i]
+            t2, p2 = pts[i + 1]
+            if (p1 >= 0.5 and p2 <= 0.5) or (p1 <= 0.5 and p2 >= 0.5):
+                if p1 == p2:
+                    median = (t1 + t2) / 2
+                else:
+                    median = t1 + (0.5 - p1) * (t2 - t1) / (p2 - p1)
+                break
+        # If CDF never crosses 0.5 (e.g. all > 0.5 or all < 0.5), pick the
+        # nearest threshold as a coarse fallback.
+        if median is None:
+            nearest = min(pts, key=lambda x: abs(x[1] - 0.5))
+            median = nearest[0]
+        implied_by_year.append({
+            "year": year,
+            "thresholds_used": len(pts),
+            "implied_median_approval": round(median, 1),
+            "cdf_points": [{"threshold": t, "p_ge": round(p, 3)} for t, p in pts],
+        })
+
+    return {"implied_by_year": implied_by_year, "source": "Polymarket gamma — approval threshold markets"}
+
+
+# ─── Election-cycle leave-one-out backtest ─────────────────────────────────────
+
+def election_cycle_backtest(sentiment_series: Optional[dict],
+                             ref_month: int = 4) -> Optional[dict]:
+    """Honest out-of-sample test for the election-cycle regression: for
+    each historical midterm, refit the regression on every other midterm
+    and use that to predict the held-out one. Reports per-year predicted
+    vs actual, plus aggregate MAE / RMSE / R²_oos."""
+    if not sentiment_series or not sentiment_series.get("observations"):
+        return None
+    by_ym: dict[tuple[int, int], float] = {}
+    for o in sentiment_series["observations"]:
+        if o["value"] is None:
+            continue
+        try:
+            y, m = int(o["date"][:4]), int(o["date"][5:7])
+        except (ValueError, IndexError):
+            continue
+        by_ym[(y, m)] = o["value"]
+
+    data: list[dict] = []
+    for m in HISTORICAL_MIDTERMS:
+        s = _sentiment_at(by_ym, m["year"], ref_month)
+        if s is None:
+            continue
+        data.append({**m, "sentiment": round(s, 1)})
+    if len(data) < 4:
+        return None
+
+    def _fit(rows: list[dict]) -> Optional[tuple[float, float]]:
+        n = len(rows)
+        if n < 3:
+            return None
+        xs = [r["sentiment"] for r in rows]
+        ys = [r["seat_change"] for r in rows]
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        den = sum((xs[i] - mx) ** 2 for i in range(n))
+        if den == 0:
+            return None
+        slope = num / den
+        intercept = my - slope * mx
+        return slope, intercept
+
+    rows: list[dict] = []
+    for idx, hold in enumerate(data):
+        train = [d for i, d in enumerate(data) if i != idx]
+        fit = _fit(train)
+        if not fit:
+            continue
+        slope, intercept = fit
+        pred = intercept + slope * hold["sentiment"]
+        err = hold["seat_change"] - pred
+        rows.append({
+            "year": hold["year"],
+            "incumbent_president": hold["incumbent_president"],
+            "incumbent_party": hold["incumbent_party"],
+            "sentiment": hold["sentiment"],
+            "actual": hold["seat_change"],
+            "loo_predicted": round(pred, 1),
+            "loo_error": round(err, 1),
+            "loo_slope": round(slope, 3),
+            "loo_intercept": round(intercept, 1),
+        })
+    if not rows:
+        return None
+
+    errs = [r["loo_error"] for r in rows]
+    mae = sum(abs(e) for e in errs) / len(errs)
+    rmse = math.sqrt(sum(e * e for e in errs) / len(errs))
+    actuals = [r["actual"] for r in rows]
+    mean_actual = sum(actuals) / len(actuals)
+    ss_res = sum(e * e for e in errs)
+    ss_tot = sum((a - mean_actual) ** 2 for a in actuals)
+    r2_oos = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else None
+
+    return {
+        "method": "Leave-one-out cross-validation of the election-cycle regression.",
+        "ref_month": ref_month,
+        "n": len(rows),
+        "mae_seats": round(mae, 1),
+        "rmse_seats": round(rmse, 1),
+        "r_squared_oos": round(r2_oos, 3) if r2_oos is not None else None,
+        "rows": rows,
+    }
+
+
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1359,6 +1560,58 @@ def api_vibecession():
     return jsonify(payload)
 
 
+@app.route("/api/election-cycle/backtest")
+def api_election_cycle_backtest():
+    """Leave-one-out cross-validation of the election-cycle regression."""
+    sent = fetch_fred_series("UMCSENT")
+    if not sent:
+        return jsonify({"error": "sentiment fetch failed"}), 503
+    payload = election_cycle_backtest(sent)
+    if not payload:
+        return jsonify({"error": "backtest unavailable"}), 503
+    return jsonify(payload)
+
+
+@app.route("/methodology")
+def methodology_page():
+    return send_from_directory("static", "methodology.html")
+
+
+@app.route("/embed/<card>")
+def embed_card(card: str):
+    """Iframe-friendly single-card widget. Supported: mood, forecast,
+    vibecession, approval."""
+    allowed = {"mood", "forecast", "vibecession", "approval"}
+    if card not in allowed:
+        return jsonify({"error": "unknown embed card"}), 404
+    # Single template; the card name flows through as a URL arg the JS reads.
+    resp = send_from_directory("static", "embed.html")
+    resp.headers["X-Frame-Options"] = "ALLOWALL"
+    resp.headers["Content-Security-Policy"] = "frame-ancestors *"
+    return resp
+
+
+@app.route("/api/csv/<series_id>")
+def api_csv(series_id: str):
+    """Pass-through CSV download of any tracked FRED series. Renames the
+    second column to 'value' so consumers don't have to guess."""
+    sid = series_id.upper()
+    if sid not in FRED_SERIES and sid not in {f"{c}UR" for c in STATE_UNRATE}:
+        return jsonify({"error": f"unknown series {sid}"}), 404
+    data = fetch_fred_series(sid)
+    if not data:
+        return jsonify({"error": "fetch failed"}), 503
+    out = ["date,value"]
+    for o in data["observations"]:
+        v = "" if o["value"] is None else str(o["value"])
+        out.append(f'{o["date"]},{v}')
+    return ("\n".join(out) + "\n",
+            200,
+            {"Content-Type": "text/csv; charset=utf-8",
+             "Content-Disposition": f'attachment; filename="{sid}.csv"',
+             "Cache-Control": "max-age=3600"})
+
+
 @app.route("/api/summary")
 def api_summary():
     """Front-page payload — all the cards on one page."""
@@ -1399,6 +1652,7 @@ def api_summary():
         "election_cycle": election_cycle_regression(series.get("UMCSENT")),
         "vibecession": vibecession_gap(series),
         "approval": approval_aggregate(fetch_approval_polls()),
+        "approval_market_implied": polymarket_approval_implied(fetch_politics_markets()),
         "real_wages": {
             "hourly_yoy_pct": real_wage_yoy(earn_h, cpi),
             "weekly_yoy_pct": real_wage_yoy(earn_w, cpi),

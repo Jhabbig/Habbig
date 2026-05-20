@@ -505,7 +505,7 @@
 </head>
 <body>
 <header>
-  <h1>Voter Mood &amp; Lived Experience</h1>
+  <h1>Voter Mood &amp; Lived Experience <a href="/methodology" style="font-size:12px;color:var(--accent);text-decoration:none;font-weight:500;letter-spacing:.03em;margin-left:10px">Methodology &amp; backtests →</a></h1>
   <div class="sub">How American voters feel and how their day-to-day lives are going · UMich sentiment · BLS &amp; FRED · Polymarket politics</div>
 </header>
 <main>
@@ -755,7 +755,7 @@ function renderVibecession(vc) {
   document.getElementById("vibeCtx").textContent = meta;
 }
 
-function renderApproval(ap) {
+function renderApproval(ap, marketImplied) {
   if (!ap) return;
   document.getElementById("vibeRow").style.display = "grid";
   const net = ap.net_pct;
@@ -782,6 +782,26 @@ function renderApproval(ap) {
       zeroLine = `<line x1="0" y1="${y0}" x2="${W}" y2="${y0}" stroke="#374151" stroke-dasharray="3 3" stroke-width="1"/>`;
     }
     svg.innerHTML = `${zeroLine}<polyline fill="none" stroke="#fbbf24" stroke-width="1.5" points="${pts}"/>`;
+    // Append Polymarket-implied dots to the right of the historical line
+    if (marketImplied && marketImplied.implied_by_year) {
+      // Convert each year's implied median approval to a "net" estimate
+      // (approve − disapprove) by assuming the ~7 pp undecided share that
+      // 538 polls average. This is a coarse but honest visual cross-check.
+      const dots = marketImplied.implied_by_year
+        .filter(y => y.implied_median_approval != null)
+        .map(y => ({ year: y.year, net: y.implied_median_approval * 2 - 100 + 7 }));
+      // Place dots after the historical span at evenly-stretched x positions
+      const extraDots = dots.map((d, i) => {
+        const x = W * (1.0 - 0.06 * (dots.length - i));
+        const lo = Math.min(...vals); const hi = Math.max(...vals);
+        const range = (hi - lo) || 1;
+        const y = padT + (1 - (d.net - lo) / range) * h;
+        return `<circle cx="${x.toFixed(1)}" cy="${Math.max(2, Math.min(H-2, y)).toFixed(1)}" r="4" fill="#34d399" stroke="#0f172a" stroke-width="1.5">`
+          + `<title>Polymarket-implied EOY ${d.year}: ~${d.net.toFixed(0)} net (${(d.net + 100 - 7)/2 * 2 ? '' : ''}${((d.net + 100 - 7)/2).toFixed(0)}% approve)</title>`
+          + `</circle>`;
+      }).join("");
+      svg.innerHTML += extraDots;
+    }
   } else { svg.innerHTML = ""; }
   // Staleness pill — show if last poll is > 60 days old
   const lastDate = new Date(ap.as_of);
@@ -791,8 +811,16 @@ function renderApproval(ap) {
     pill.style.display = "inline-block";
     pill.textContent = `archive · ${Math.round(ageDays)}d old`;
   }
-  document.getElementById("approvalCtx").textContent =
-    `${ap.incumbent} · as of ${dateNice(ap.as_of)} · ${ap.n_polls_4w} polls in last 4 weeks · ${ap.source}`;
+  // Context line — annotate the market splice if present
+  let ctx = `${ap.incumbent} · as of ${dateNice(ap.as_of)} · ${ap.n_polls_4w} polls in last 4 weeks · ${ap.source}`;
+  if (marketImplied && marketImplied.implied_by_year && marketImplied.implied_by_year.length) {
+    const present = marketImplied.implied_by_year
+      .filter(y => y.implied_median_approval != null)
+      .map(y => `EOY ${y.year}: ~${y.implied_median_approval.toFixed(0)}% approve`)
+      .join(" · ");
+    if (present) ctx += ` &nbsp;&middot;&nbsp; Polymarket-implied: ${present}`;
+  }
+  document.getElementById("approvalCtx").innerHTML = ctx;
 }
 
 function renderForecast(fc) {
@@ -1258,7 +1286,7 @@ async function loadAll() {
     renderMood(summary.mood);
     renderForecast(summary.election_cycle);
     renderVibecession(summary.vibecession);
-    renderApproval(summary.approval);
+    renderApproval(summary.approval, summary.approval_market_implied);
     renderMovers(summary.biggest_movers);
     renderCards(summary);
   } else {

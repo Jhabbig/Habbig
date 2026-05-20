@@ -109,6 +109,15 @@ python3 server.py
   president), 52-week sparkline + 4-week rolling smoothed net
 - `GET /api/vibecession` — the vibecession index: sentiment percentile
   minus fundamentals percentile, monthly history + verbal flavor
+- `GET /api/election-cycle/backtest` — leave-one-out cross-validation of
+  the election-cycle regression: per-cycle predicted vs actual seats,
+  plus aggregate MAE / RMSE / out-of-sample R²
+- `GET /api/csv/<series_id>` — passthrough CSV download for any tracked
+  FRED series (national or state-level)
+- `GET /methodology` — long-form methodology page with formulas, sources,
+  and the live LOO backtest table
+- `GET /embed/<card>` — iframe-friendly single-card widget; supported
+  cards: `mood`, `forecast`, `vibecession`, `approval`
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness
