@@ -6,9 +6,11 @@ import { GreeksHeatmap } from './components/GreeksHeatmap';
 import { AlertCircle, Wifi, WifiOff } from 'lucide-react';
 
 const TICKERS = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'SPY'];
+const TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 
 export function App() {
   const [selectedTicker, setSelectedTicker] = useState('AAPL');
+  const [selectedTimeframe, setSelectedTimeframe] = useState('1m');
   const { bars, indicators, connected, error } = useWebSocket(selectedTicker);
 
   // Current price for Greeks calculation
@@ -39,22 +41,43 @@ export function App() {
             </div>
           </div>
 
-          {/* Ticker Selector */}
-          <div className="flex gap-2">
-            <label className="text-sm font-medium text-gray-400 flex items-center">
-              Ticker:
-            </label>
-            <select
-              value={selectedTicker}
-              onChange={(e) => setSelectedTicker(e.target.value)}
-              className="bg-gray-700 text-white px-4 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-            >
-              {TICKERS.map((ticker) => (
-                <option key={ticker} value={ticker}>
-                  {ticker}
-                </option>
-              ))}
-            </select>
+          {/* Controls */}
+          <div className="flex gap-4 items-center">
+            {/* Ticker */}
+            <div className="flex gap-2 items-center">
+              <label className="text-sm font-medium text-gray-400">Ticker:</label>
+              <select
+                value={selectedTicker}
+                onChange={(e) => setSelectedTicker(e.target.value)}
+                className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+              >
+                {TICKERS.map((ticker) => (
+                  <option key={ticker} value={ticker}>
+                    {ticker}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Timeframe */}
+            <div className="flex gap-2 items-center">
+              <label className="text-sm font-medium text-gray-400">Timeframe:</label>
+              <div className="flex gap-1 bg-gray-700 rounded p-1 border border-gray-600">
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setSelectedTimeframe(tf)}
+                    className={`px-3 py-1 text-xs font-medium rounded transition ${
+                      selectedTimeframe === tf
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {currentPrice > 0 && (
               <div className="ml-auto text-right">

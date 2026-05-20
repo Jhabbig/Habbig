@@ -35,6 +35,11 @@ class IndicatorValues:
     obv: float = 0.0
     roc_5: float = 0.0  # Rate of Change
     roc_10: float = 0.0
+    sma_20: float = 0.0  # Simple Moving Average
+    sma_50: float = 0.0
+    sma_200: float = 0.0
+    ema_12: float = 0.0  # Exponential Moving Average
+    ema_26: float = 0.0
 
 
 class StreamingIndicator:
@@ -278,6 +283,41 @@ class RateOfChangeCalculator:
         return roc
 
 
+class SMACalculator:
+    """Compute Simple Moving Average on streaming closes."""
+
+    def __init__(self, period: int = 20):
+        self.period = period
+        self.closes = deque(maxlen=period)
+
+    def add_close(self, close: float) -> Optional[float]:
+        """Add close and return SMA, or None if not ready."""
+        self.closes.append(close)
+
+        if len(self.closes) < self.period:
+            return None
+
+        return sum(self.closes) / len(self.closes)
+
+
+class EMACalculator:
+    """Compute Exponential Moving Average on streaming closes."""
+
+    def __init__(self, period: int = 12):
+        self.period = period
+        self.alpha = 2 / (period + 1)
+        self.ema = None
+
+    def add_close(self, close: float) -> Optional[float]:
+        """Add close and return EMA, or None if not ready."""
+        if self.ema is None:
+            self.ema = close
+            return None
+
+        self.ema = self.alpha * close + (1 - self.alpha) * self.ema
+        return self.ema
+
+
 class StreamingIndicators:
     """
     All indicators for a single ticker.
@@ -299,6 +339,13 @@ class StreamingIndicators:
 
         self.roc_5 = RateOfChangeCalculator(5)
         self.roc_10 = RateOfChangeCalculator(10)
+
+        self.sma_20 = SMACalculator(20)
+        self.sma_50 = SMACalculator(50)
+        self.sma_200 = SMACalculator(200)
+
+        self.ema_12 = EMACalculator(12)
+        self.ema_26 = EMACalculator(26)
 
         self.latest = None
 
@@ -337,6 +384,15 @@ class StreamingIndicators:
         roc_5_val = self.roc_5.add_close(close) or 0.0
         roc_10_val = self.roc_10.add_close(close) or 0.0
 
+        # SMA
+        sma_20_val = self.sma_20.add_close(close) or 0.0
+        sma_50_val = self.sma_50.add_close(close) or 0.0
+        sma_200_val = self.sma_200.add_close(close) or 0.0
+
+        # EMA
+        ema_12_val = self.ema_12.add_close(close) or 0.0
+        ema_26_val = self.ema_26.add_close(close) or 0.0
+
         self.latest = IndicatorValues(
             timestamp=timestamp,
             rsi_14=rsi_14_val,
@@ -354,6 +410,11 @@ class StreamingIndicators:
             obv=obv_val,
             roc_5=roc_5_val,
             roc_10=roc_10_val,
+            sma_20=sma_20_val,
+            sma_50=sma_50_val,
+            sma_200=sma_200_val,
+            ema_12=ema_12_val,
+            ema_26=ema_26_val,
         )
 
         return self.latest

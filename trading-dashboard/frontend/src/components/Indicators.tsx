@@ -78,6 +78,22 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
             {(indicators.obv / 1e6).toFixed(1)}M
           </p>
         </div>
+
+        {/* SMA(20) */}
+        <div className="bg-gray-800 p-3 rounded border border-gray-700">
+          <p className="text-gray-400 text-xs mb-1">SMA(20)</p>
+          <p className="text-lg font-bold text-amber-400">
+            {indicators.sma_20.toFixed(2)}
+          </p>
+        </div>
+
+        {/* EMA(12) */}
+        <div className="bg-gray-800 p-3 rounded border border-gray-700">
+          <p className="text-gray-400 text-xs mb-1">EMA(12)</p>
+          <p className="text-lg font-bold text-pink-400">
+            {indicators.ema_12.toFixed(2)}
+          </p>
+        </div>
       </div>
 
       {/* Detailed Info */}

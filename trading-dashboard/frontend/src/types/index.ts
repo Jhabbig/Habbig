@@ -32,6 +32,11 @@ export interface IndicatorValues {
   obv: number;
   roc_5: number;
   roc_10: number;
+  sma_20: number;
+  sma_50: number;
+  sma_200: number;
+  ema_12: number;
+  ema_26: number;
 }
 
 export interface GreeksValue {
