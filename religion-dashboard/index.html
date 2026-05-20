@@ -261,6 +261,7 @@
 
   <section class="panel">
     <h2>Conclave model — College of Cardinals + papabile</h2>
+    <div id="conclave-source" style="margin-bottom:12px;font-size:12px;color:var(--muted)">checking Vatican feed…</div>
     <div id="conclave-hero" class="conclave-hero"></div>
     <h3>Papabile — Vaticanist consensus priors</h3>
     <div id="papabile" class="papabile-list">loading…</div>
@@ -374,7 +375,7 @@ async function load() {
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
     fetchJson("/api/leaders"),
-    fetchJson("/api/conclave"),
+    fetchJson("/api/conclave/live"),
     fetchJson("/api/countries"),
     fetchJson("/api/calendar?upcoming=1&days=365"),
     fetchJson("/api/cults"),
@@ -677,6 +678,36 @@ function renderConclave(d) {
   const ag = d.college_aggregates;
   const sampleElectors = d.cardinals.filter(c => c.elector).length;
   const verifiedCount = d.cardinals.filter(c => c.verified !== false).length;
+
+  // Source / freshness badge
+  const srcBox = document.getElementById("conclave-source");
+  if (srcBox && d.source) {
+    const ageMin = d.age_seconds !== null && d.age_seconds !== undefined ? Math.round(d.age_seconds / 60) : null;
+    const ageStr = ageMin === null ? "—"
+                 : ageMin < 1 ? "just now"
+                 : ageMin < 60 ? ageMin + " min ago"
+                 : ageMin < 1440 ? Math.round(ageMin / 60) + "h ago"
+                 : Math.round(ageMin / 1440) + "d ago";
+    const colour = d.source === "live" ? "#56d364"
+                 : d.source === "stale-cache" ? "#d29922"
+                 : "#8b949e";
+    let badge = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:6px;vertical-align:middle"></span>`;
+    let label;
+    if (d.source === "live") {
+      label = `<strong style="color:${colour}">live</strong> · ${d.scraped_count} cardinals from Vatican Press Office · fetched ${ageStr}`;
+    } else if (d.source === "stale-cache") {
+      label = `<strong style="color:${colour}">stale cache</strong> · last successful fetch ${ageStr} · ${d.error ? escapeHtml(d.error) : "scrape failed"}`;
+    } else {
+      label = `<strong style="color:${colour}">curated fallback</strong> · Vatican scrape unavailable${d.error ? " (" + escapeHtml(d.error) + ")" : ""}`;
+    }
+    let drift = "";
+    if (d.drift && (d.drift.added_since_curated.length || d.drift.missing_from_scraped.length)) {
+      drift = ` · drift: <strong>+${d.drift.added_since_curated.length}</strong> new, <strong>−${d.drift.missing_from_scraped.length}</strong> missing from Vatican`;
+    }
+    srcBox.innerHTML = badge + label + drift +
+      ` · <a href="${escapeHtml(d.vatican_url || "#")}" target="_blank" rel="noopener" style="color:var(--accent)">source</a>`;
+  }
+
   const hero = document.getElementById("conclave-hero");
   hero.innerHTML = [
     {l: "Total cardinals (college)", v: ag.total_cardinals},

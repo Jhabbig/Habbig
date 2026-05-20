@@ -40,6 +40,7 @@ import actuarial
 import cardinals as cd
 import historical_leaders as hl
 import religion_data as rd
+import vatican_scraper
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("religion")
@@ -497,6 +498,47 @@ def api_conclave():
         "rules": cd.CONCLAVE_RULES,
         "college_aggregates": cd.COLLEGE_AGGREGATES,
         "sample_breakdown": sample_breakdown,
+    })
+
+
+@app.route("/api/conclave/live")
+def api_conclave_live():
+    """Live College of Cardinals from press.vatican.va, merged with curated metadata.
+
+    Falls back to curated CARDINALS when the scrape fails. The response
+    distinguishes 'live' (fresh scrape) from 'stale-cache' (last good
+    scrape, still serving) from 'fallback-curated' (never reached Vatican).
+    """
+    force = request.args.get("force") in ("1", "true", "yes")
+    result = vatican_scraper.fetch_full_college(force=force)
+
+    scraped = result.get("cardinals") or []
+    if scraped:
+        merged = vatican_scraper.merge_with_curated(scraped, cd.CARDINALS)
+        # Sort: papabile_tier desc, then age asc
+        merged.sort(key=lambda c: (-(c.get("papabile_tier") or 0), c.get("age") or 999))
+        drift = vatican_scraper.detect_drift(scraped, cd.CARDINALS)
+        source = "live" if result["ok"] else "stale-cache"
+    else:
+        # Fallback: serve curated data with scrape metadata indicating failure
+        merged = list(cd.CARDINALS)
+        drift = {"added_since_curated": [], "missing_from_scraped": [], "scraped_count": 0, "curated_count": len(merged)}
+        source = "fallback-curated"
+
+    age_seconds = int(time.time() - result["fetched_at"]) if result.get("fetched_at") else None
+    return jsonify({
+        "source": source,
+        "fetched_at": result.get("fetched_at"),
+        "age_seconds": age_seconds,
+        "error": result.get("error", ""),
+        "vatican_url": vatican_scraper.CARDINALS_LIST_URL,
+        "scraped_count": len(scraped),
+        "curated_count": len(cd.CARDINALS),
+        "drift": drift,
+        "cardinals": merged,
+        "papabile_priors": cd.PAPABILE_PRIORS,
+        "rules": cd.CONCLAVE_RULES,
+        "college_aggregates": cd.COLLEGE_AGGREGATES,
     })
 
 

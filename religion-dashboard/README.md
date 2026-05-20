@@ -53,7 +53,8 @@ python3 server.py
 - `GET /api/religions-full` — 100-tradition registry (filterable: `?family=`, `?q=`)
 - `GET /api/leaders` — religious leaders with life-table actuarial (`?ref=YYYY-MM-DD` overrides today). Returns both raw-SSA and religious-office-adjusted probabilities.
 - `GET /api/historical-leaders` — 32-leader cohort used to calibrate the religious-office hazard ratio (0.85)
-- `GET /api/conclave` — College of Cardinals sample, papabile priors, conclave rules + college aggregates (filters: `?region=`, `?wing=`, `?electors=1`, `?papabile=1`)
+- `GET /api/conclave` — curated College of Cardinals sample, papabile priors, conclave rules + college aggregates (filters: `?region=`, `?wing=`, `?electors=1`, `?papabile=1`)
+- `GET /api/conclave/live` — same data, but with factual fields refreshed from press.vatican.va's canonical alphabetical list of cardinals (24h cache). Falls back to curated data on scrape failure. Includes `source` (`live` / `stale-cache` / `fallback-curated`), `age_seconds`, and a `drift` block showing newly-created and missing cardinals.
 - `GET /api/countries` — country religion composition + cross-country rollup (`?religion=` filter)
 - `GET /api/calendar` — 2026 religious calendar (`?upcoming=1&days=N` for forward window)
 - `GET /api/cults` — curated NRM / cult watchlist with 4-axis risk score (filterable: `?status=`, `?risk=`)
@@ -101,6 +102,32 @@ Sources: Vatican Press Office bollettino, the College of Cardinals
 Report (cardinalsreport.com), Vaticanist English-language press
 (Allen/Crux, Magister, La Croix, The Pillar). Wing assignments are
 journalistic shorthand and contested. Bump at each consistory.
+
+## Vatican Press Office scraper
+
+`vatican_scraper.py` fetches the canonical alphabetical list of
+cardinals from `press.vatican.va/.../cardinali_elenco_anagrafico.html`
+and parses it into structured records. The college changes only at
+consistories and obit days, so cache TTL is 24h.
+
+What it scrapes (factual fields only): name, born, age, country, role,
+consistory date, appointer, elector status. Journalistic-judgment
+fields (wing, papabile_tier, summary) are NOT scraped — those live in
+`cardinals.py` and are merged on top via surname match.
+
+Failure handling: any HTTP, parse, or sanity-check failure (fewer than
+50 cardinals extracted) returns `ok=False` and the endpoint serves the
+curated dataset. We never serve fabricated data.
+
+Drift detection: `/api/conclave/live` returns a `drift` block surfacing
+(a) cardinals on the Vatican page but not in our curated list — newly
+created or missed by us, and (b) cardinals in our list but not on the
+Vatican page — likely deceased or lost rights since last curated bump.
+
+Test the parser against a fixture (no network required):
+```bash
+python3 test_vatican_scraper.py
+```
 
 ## Leader actuarial model
 
