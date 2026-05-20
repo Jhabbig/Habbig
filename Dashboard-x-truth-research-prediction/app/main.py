@@ -915,6 +915,116 @@ async def api_fx_rates(_user: str = Depends(require_auth)):
 
 
 # ---------------------------------------------------------------------------
+# Cross-venue arbitrage — match Polymarket vs Kalshi, surface YES-price spreads.
+# ---------------------------------------------------------------------------
+@app.get("/arbitrage", response_class=HTMLResponse)
+async def arbitrage(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth), min_edge: float = 3.0):
+    """Render the cross-venue arbitrage table.
+
+    A match is a Polymarket market and a Kalshi market that are the same
+    underlying event (Jaccard ≥0.6 on de-templated question tokens, same
+    category, close times within 14 days). The "edge" is the absolute
+    percentage-point difference in YES prices — that's roughly the gross
+    profit per share you'd capture by buying YES on the cheaper venue and
+    NO (or equivalent) on the expensive one.
+    """
+    from app.processing.arbitrage import find_arbs
+    arbs = await find_arbs(session, min_edge_pp=max(0.0, min(50.0, min_edge)))
+    if not arbs:
+        return HTMLResponse(
+            f'<div class="text-center py-16 text-gray-600 text-sm">No arbitrage opportunities found ≥{min_edge:.1f}pp.<br>'
+            'Re-sync markets to refresh, or lower the threshold.</div>'
+        )
+    rows = []
+    for a in arbs[:50]:
+        # Buy cheap → Sell expensive direction.
+        buy_link = (
+            f'https://polymarket.com/event/{a.polymarket_slug}'
+            if a.cheaper_venue == "polymarket"
+            else f'https://kalshi.com/markets/{a.kalshi_ticker}'
+        )
+        sell_link = (
+            f'https://kalshi.com/markets/{a.kalshi_ticker}'
+            if a.cheaper_venue == "polymarket"
+            else f'https://polymarket.com/event/{a.polymarket_slug}'
+        )
+        buy_name = "Poly" if a.cheaper_venue == "polymarket" else "Kalshi"
+        sell_name = "Kalshi" if a.cheaper_venue == "polymarket" else "Poly"
+        rows.append(
+            f'<tr class="border-b border-white/5 hover:bg-white/[0.02]">'
+            f'<td class="px-4 py-3 max-w-[320px]"><div class="truncate text-gray-300">{_esc(a.question[:80])}</div>'
+            f'<div class="text-[10px] text-gray-600 truncate">vs Kalshi: {_esc(a.kalshi_title[:80])}</div></td>'
+            f'<td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{a.category}</span></td>'
+            f'<td class="px-4 py-3 font-mono text-sm text-gray-300">{a.poly_yes:.2f}</td>'
+            f'<td class="px-4 py-3 font-mono text-sm text-gray-300">{a.kalshi_yes:.2f}</td>'
+            f'<td class="px-4 py-3 font-mono text-sm text-green-400">+{a.edge_pp:.1f}pp</td>'
+            f'<td class="px-4 py-3 text-xs">'
+            f'<a href="{buy_link}" target="_blank" class="text-green-400 hover:text-green-300">Buy {buy_name} &nearr;</a>'
+            f' / <a href="{sell_link}" target="_blank" class="text-red-400 hover:text-red-300">Sell {sell_name} &nearr;</a>'
+            f'</td>'
+            f'<td class="px-4 py-3 text-xs text-gray-500" title="match score">{a.match_score:.2f}</td>'
+            f'</tr>'
+        )
+    return HTMLResponse(
+        '<div class="text-xs text-gray-500 mb-3">'
+        f'{len(arbs)} opportunities ≥{min_edge:.1f}pp — buy YES on the cheaper venue, '
+        'NO (or "sell YES") on the expensive one.</div>'
+        '<div class="overflow-x-auto rounded-xl border themed-border"><table class="w-full text-sm">'
+        '<thead><tr class="themed-card text-[10px] uppercase tracking-wider themed-muted">'
+        '<th class="px-4 py-2.5 text-left font-medium">Event</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Category</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Poly YES</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Kalshi YES</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Edge</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Trade</th>'
+        '<th class="px-4 py-2.5 text-left font-medium">Match</th>'
+        '</tr></thead><tbody>' + "\n".join(rows) + '</tbody></table></div>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Liquidity-aware EV — size-adjusted execution prices from the Polymarket CLOB.
+# ---------------------------------------------------------------------------
+@app.get("/markets/{slug:path}/liquidity")
+async def market_liquidity(slug: str, side: str = "YES", _user: str = Depends(require_auth)):
+    """Return execution prices at standard stake sizes for a Polymarket market.
+
+    Walks the order book to compute the volume-weighted average price you'd
+    actually pay to fill a $stake order, plus slippage in basis points vs the
+    book mid. Surfaces the "this edge dies past $X stake" reality that the
+    midpoint EV hides.
+    """
+    from app.markets.polymarket_clob import (
+        PolymarketCLOBClient,
+        avg_fill_price,
+        slippage_bps,
+    )
+    client = PolymarketCLOBClient()
+    book = await client.book_for_side(slug, side)
+    if book is None:
+        return JSONResponse({"error": "Order book unavailable"}, status_code=404)
+    mid = book.mid
+    sizes = [100, 1000, 10000]
+    breakdown = []
+    for size in sizes:
+        fill = avg_fill_price(book.asks, size)
+        breakdown.append({
+            "stake_usd": size,
+            "avg_fill_price": round(fill, 4) if fill is not None else None,
+            "slippage_bps": slippage_bps(mid, fill),
+            "fillable": fill is not None,
+        })
+    return JSONResponse({
+        "market_slug": slug,
+        "side": side.upper(),
+        "best_bid": book.best_bid,
+        "best_ask": book.best_ask,
+        "mid": mid,
+        "stake_breakdown": breakdown,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Performance (paper-trade ledger) + Backtest
 # ---------------------------------------------------------------------------
 @app.get("/performance", response_class=HTMLResponse)

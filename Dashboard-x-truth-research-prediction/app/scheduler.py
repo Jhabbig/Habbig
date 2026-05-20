@@ -219,10 +219,130 @@ async def run_pipeline() -> dict:
     return stats
 
 
+async def refresh_open_trade_prices() -> dict:
+    """Fast-cadence price refresh for markets with open paper trades.
+
+    Closes the gap between "main pipeline runs every 5 min" and "the price you
+    saw 4 minutes ago might already be wrong" without the operational cost of
+    a full WebSocket subscription. Runs every 60s — light on the Polymarket
+    gamma API, since we only fetch the slugs that have *open* trades, never
+    the full universe.
+
+    Side effects:
+      - Updates ``MarketSnapshot.yes_price`` for tracked markets.
+      - Sends a Telegram drift alert when a market moves ≥10pp against the
+        bet's side (signal degraded — operator may want to close manually).
+    """
+    stats = {"markets_polled": 0, "prices_changed": 0, "drift_alerts_sent": 0, "errors": []}
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        from app.models import PaperTrade
+
+        # Distinct (slug, side) for every open paper trade.
+        result = await session.exec(
+            select(PaperTrade).where(PaperTrade.resolved == False)  # noqa: E712
+        )
+        open_trades = result.all()
+        if not open_trades:
+            return stats
+
+        slugs = list({t.market_slug for t in open_trades if t.market_slug})
+        if not slugs:
+            return stats
+
+        import httpx
+        drift_targets: list[tuple[PaperTrade, float, float]] = []  # (trade, old_price, new_yes)
+
+        # Polymarket gamma-api supports filtering by slug. One GET per slug
+        # keeps each request small and parallelisable.
+        async with httpx.AsyncClient(timeout=10) as client:
+            for slug in slugs:
+                try:
+                    resp = await client.get(
+                        "https://gamma-api.polymarket.com/markets",
+                        params={"slug": slug, "limit": 1},
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    payload = resp.json()
+                except Exception as exc:
+                    stats["errors"].append(f"{slug}: {exc}")
+                    continue
+                if not payload:
+                    continue
+                m = payload[0] if isinstance(payload, list) else payload
+                # Parse YES price from the outcomePrices field
+                from app.markets.polymarket import PolymarketClient
+                prices = PolymarketClient.parse_prices(m)
+                yes_price = float(prices[0]) if prices else None
+                if yes_price is None:
+                    continue
+                stats["markets_polled"] += 1
+
+                # Update MarketSnapshot.
+                ms_result = await session.exec(
+                    select(MarketSnapshot).where(MarketSnapshot.market_slug == slug, MarketSnapshot.platform == "polymarket").order_by(MarketSnapshot.snapshotted_at.desc()).limit(1)
+                )
+                snap = ms_result.first()
+                if snap is not None and abs((snap.yes_price or 0) - yes_price) > 0.001:
+                    old = snap.yes_price
+                    snap.yes_price = yes_price
+                    snap.snapshotted_at = datetime.now(timezone.utc)
+                    session.add(snap)
+                    stats["prices_changed"] += 1
+                    # Check every open trade on this market for 10pp adverse drift.
+                    for t in open_trades:
+                        if t.market_slug != slug:
+                            continue
+                        is_yes = (t.bet_side or "YES").upper() == "YES"
+                        # Adverse drift = market moves against the bet.
+                        moved = (yes_price - t.entry_price) if is_yes else (t.entry_price - yes_price)
+                        # Negative = adverse (market moving away from our entry).
+                        if moved <= -0.10:
+                            drift_targets.append((t, t.entry_price, yes_price))
+        await session.commit()
+
+        # Telegram alert for any drifting trades — best-effort.
+        if drift_targets:
+            try:
+                import httpx as _httpx
+                from app.notifications import _telegram_subscribers, _post_telegram
+                subscribers = await _telegram_subscribers()
+                if subscribers:
+                    async with _httpx.AsyncClient() as client:
+                        for trade, old_price, new_yes in drift_targets:
+                            ref_old = old_price
+                            ref_new = new_yes if (trade.bet_side or "YES").upper() == "YES" else (1.0 - new_yes)
+                            text = (
+                                "⚠️ *narve.ai drift alert*\n"
+                                f"`{trade.market_slug[:120]}`\n"
+                                f"Your *{trade.bet_side}* entry: `{ref_old:.2f}` -> market now `{ref_new:.2f}` "
+                                f"(adverse move ≥10pp)\n"
+                                f"Source: @{trade.handle}"
+                            )
+                            for token, chat_id in subscribers:
+                                await _post_telegram(client, token, chat_id, text)
+                                stats["drift_alerts_sent"] += 1
+            except Exception as exc:
+                logger.warning("Drift alert send failed: %s", exc)
+    logger.info(
+        "Price stream: polled=%d, changed=%d, drift alerts=%d",
+        stats["markets_polled"], stats["prices_changed"], stats["drift_alerts_sent"],
+    )
+    return stats
+
+
 def start_scheduler() -> None:
     scheduler.add_job(run_pipeline, trigger=IntervalTrigger(minutes=5), id="main_pipeline", name="Pipeline", replace_existing=True, max_instances=1)
+    scheduler.add_job(
+        refresh_open_trade_prices,
+        trigger=IntervalTrigger(seconds=60),
+        id="price_stream",
+        name="Price stream",
+        replace_existing=True,
+        max_instances=1,
+    )
     scheduler.start()
-    logger.info("Scheduler started — pipeline every 5 min")
+    logger.info("Scheduler started — pipeline every 5 min, price stream every 60s")
 
 
 def shutdown_scheduler() -> None:

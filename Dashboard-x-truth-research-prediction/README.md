@@ -13,6 +13,9 @@ Subdomain when running behind the narve.ai gateway: `truth.narve.ai` (port 18789
 - **Picks the better side**: for every prediction with a matched market, computes the EV of buying YES vs buying NO at the live price, surfaces the higher-EV side as a `BUY YES` / `BUY NO` signal.
 - **Opens a paper-trade** ($1 stake) every time the system fires a signal that clears the EV + credibility filter. Settles when the market resolves. Running P&L visible in the Performance tab.
 - **Backtest harness** with tunable thresholds (min EV / min credibility / stake) — replays every resolved prediction, returns total P&L, ROI, **annualised Sharpe**, **max drawdown**, per-category breakdown, and a **cumulative daily P&L curve** chart. The "would I trust this with real money?" interface.
+- **Liquidity-aware EV** — `/markets/<slug>/liquidity?side=YES` walks the Polymarket CLOB order book and returns volume-weighted execution prices + slippage in bps at $100 / $1k / $10k stake sizes. Reveals the "this edge dies past $X" reality that midpoint EV hides.
+- **Cross-venue arbitrage** — Arbitrage tab matches Polymarket vs Kalshi markets (≥0.6 Jaccard on de-templated tokens, same category, close times within 14 days) and surfaces YES-price spreads ≥3pp. Deep-link buttons take you to both venues to execute the legs.
+- **Fast price stream** — every 60s the scheduler polls Polymarket for markets with open paper trades, updates snapshots, and fires a Telegram drift alert if a market moves ≥10pp against an open bet.
 - **Telegram alerts** on each new signal (per-user opt-in, bot token Fernet-encrypted at rest).
 - **DB-backed sessions** so a process restart no longer logs everyone out.
 
