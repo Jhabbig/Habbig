@@ -129,7 +129,28 @@
     position: sticky;
     top: 0;
   }
-  tr:hover td { background: var(--bg-2); }
+  tr.market-row { cursor: pointer; }
+  tr.market-row:hover td { background: var(--bg-2); }
+  tr.expand-row td { background: var(--bg-0); padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  tr.expand-row .expand-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  tr.expand-row .expand-block h4 {
+    margin: 0 0 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  tr.expand-row .expand-block { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+  tr.expand-row .expand-block b { color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+  tr.expand-row table.bankroll { width: 100%; margin-top: 4px; font-size: 12px; }
+  tr.expand-row table.bankroll td { padding: 4px 8px; border-bottom: 0; }
+  tr.expand-row table.bankroll td:first-child { color: var(--text-3); }
+  tr:not(.market-row):not(.expand-row):hover td { background: var(--bg-2); }
 
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .edge-pos { color: var(--good); font-weight: 600; }
@@ -1250,6 +1271,62 @@ window.addEventListener("resize", () => {
 });
 
 let _allMarkets = [];
+const _expandedMarketIds = new Set();
+
+function _marketId(m) {
+  return m.conditionId || m.id || m.slug || "";
+}
+
+function _renderExpandRow(m, kFrac) {
+  const id = _marketId(m);
+  const kelly = kellyBet(m._model_p, m._implied_p);
+  let bankrollTable = "—";
+  if (kelly && kelly.fraction > 0) {
+    const sized = kelly.fraction * kFrac;
+    bankrollTable = `
+      <table class="bankroll">
+        <tr><td>$1,000 bankroll</td><td><b>$${Math.round(1000 * sized).toLocaleString()}</b> ${kelly.side}</td></tr>
+        <tr><td>$10,000 bankroll</td><td><b>$${Math.round(10000 * sized).toLocaleString()}</b> ${kelly.side}</td></tr>
+        <tr><td>$100,000 bankroll</td><td><b>$${Math.round(100000 * sized).toLocaleString()}</b> ${kelly.side}</td></tr>
+      </table>
+    `;
+  } else {
+    bankrollTable = `<div style="margin-top:4px;color:var(--text-3);font-style:italic">No positive-EV side at the implied price.</div>`;
+  }
+  const polymarketLink = m.slug
+    ? `<a href="https://polymarket.com/market/${m.slug}" target="_blank" rel="noopener">View on Polymarket →</a>`
+    : "(no Polymarket slug)";
+  return `
+    <tr class="expand-row" data-expand="${id}">
+      <td colspan="7">
+        <div class="expand-grid">
+          <div class="expand-block">
+            <h4>Question</h4>
+            <div>${m.question || ""}</div>
+            ${m._event_title ? `<div style="margin-top:6px;color:var(--text-3);font-size:11px">${m._event_title}</div>` : ""}
+          </div>
+          <div class="expand-block">
+            <h4>Model</h4>
+            <div>Model probability: <b>${pct(m._model_p)}</b></div>
+            <div>Implied probability: <b>${pct(m._implied_p)}</b></div>
+            <div>Edge: <b>${m._edge_pp != null ? (m._edge_pp >= 0 ? "+" : "") + m._edge_pp.toFixed(1) + " pp" : "—"}</b></div>
+            ${m._rationale ? `<div style="margin-top:6px;color:var(--text-3);font-size:11px">${m._rationale}</div>` : ""}
+          </div>
+          <div class="expand-block">
+            <h4>${_kellyMultiplierLabel(kFrac)} sizing</h4>
+            ${bankrollTable}
+          </div>
+          <div class="expand-block">
+            <h4>Market</h4>
+            <div>Liquidity: <b>$${Number(m.liquidity || 0).toLocaleString()}</b></div>
+            <div>End date: <b>${m.endDate ? new Date(m.endDate).toISOString().slice(0,10) : "—"}</b></div>
+            <div style="margin-top:6px">${polymarketLink}</div>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
 
 // ─── Kelly position sizing ────────────────────────────────────────────────────
 //
@@ -1442,7 +1519,7 @@ function renderMarkets() {
         </thead>
         <tbody>
           ${rows.map(m => {
-            const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
+            const id = _marketId(m);
             const impl = m._implied_p !== null && m._implied_p !== undefined ? pct(m._implied_p) : "—";
             const mp = m._model_p !== null && m._model_p !== undefined ? pct(m._model_p) : "—";
             const edge = m._edge_pp;
@@ -1455,11 +1532,12 @@ function renderMarkets() {
             const end = m.endDate ? new Date(m.endDate).toISOString().slice(0, 10) : "—";
             const q = m.question || "";
             const ev = m._event_title || "";
-            const title = url ? `<a href="${url}" target="_blank">${q}</a>` : q;
             const rationale = m._rationale ? `<div class="market-event">${m._rationale}</div>` : "";
-            return `<tr>
+            const expanded = _expandedMarketIds.has(id);
+            const chev = expanded ? "▾" : "▸";
+            const row = `<tr class="market-row" data-market-id="${id}" tabindex="0" aria-expanded="${expanded}">
               <td>
-                <div class="market-q">${title}</div>
+                <div class="market-q"><span style="color:var(--text-3);margin-right:6px">${chev}</span>${q}</div>
                 <div class="market-event">${ev}</div>
                 ${rationale}
               </td>
@@ -1470,12 +1548,32 @@ function renderMarkets() {
               <td class="num">${liq}</td>
               <td>${end}</td>
             </tr>`;
+            return row + (expanded ? _renderExpandRow(m, kFrac) : "");
           }).join("")}
         </tbody>
       </table>
     </div>
   `;
   document.getElementById("markets").innerHTML = html;
+  // Wire row expanders. We use delegated handling so we don't re-bind on
+  // every renderMarkets() call.
+  document.querySelectorAll("#markets tr.market-row").forEach(tr => {
+    const toggle = () => {
+      const id = tr.getAttribute("data-market-id");
+      if (!id) return;
+      if (_expandedMarketIds.has(id)) _expandedMarketIds.delete(id);
+      else _expandedMarketIds.add(id);
+      renderMarkets();
+    };
+    tr.addEventListener("click", (e) => {
+      // Don't fire on link clicks inside the row
+      if (e.target.closest("a")) return;
+      toggle();
+    });
+    tr.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
 }
 
 async function loadMarkets() {
