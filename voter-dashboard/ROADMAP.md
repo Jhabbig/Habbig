@@ -62,7 +62,18 @@ Render: choropleth of a state mood index using the same equal-weighted
 formula. Hover for the per-state mood card. Add a "swing-state mood" strip
 at the top for the seven 2024 swing states.
 
-### 3. Demographic cuts (age × income × education)
+### 3. Demographic cuts &middot; **PARTIALLY SHIPPED v1.6**
+
+v1.6 ships **real wages by income decile/quartile** — `LEU0252881*`
+series from BLS via FRED for the bottom decile, P25, median, P75, and
+top decile. Surfaced as a 5-tile panel below the cards with a plain-English
+claim ("Wage growth is uneven — top decile +4.0% YoY vs bottom +0.5%,
+spread 3.5 pp").
+
+**Still to do**: age-band cuts, education cuts, and a real-vs-nominal
+toggle on each tile.
+
+### 3a. (original heading) Age × income × education
 
 Most pollsters publish sentiment cuts; the BLS publishes earnings cuts.
 For v2 the right move is:
@@ -178,7 +189,25 @@ overstate how predictable midterms are from mood alone.
 multi-variable model (mood + real wages YoY + incumbent-tenure
 dummies), publish a backtest accuracy report.
 
-### 6. "What changed" feed
+### 6. "What changed" feed &middot; **SHIPPED v1.6**
+
+SQLite-backed persistent feed of notable indicator moves. `biggest_movers`
+auto-logs any 3-month change with |z| ≥ 1, dedup'd by series + value so a
+refresh in the same hour doesn't spam the log. Revisions detected by the
+snapshot DB are mirrored to the feed too. Surfaced as:
+
+- A "what changed" panel on the main page with the last 30 events,
+  good/bad-for-voter color dots, and human-readable timestamps.
+- `/api/changes` — JSON feed
+- `/api/changes.rss` — RSS 2.0 feed, pasteable into any reader, suitable
+  for the daily-digest pipeline below.
+
+**v2 still to do**: email digest. Requires SMTP config + opt-in list +
+unsubscribe machinery — out of scope for the keyless-static-deploy
+mandate. Recommend layering on top of the RSS feed via a separate
+worker that polls /api/changes daily and emails subscribers.
+
+### 6b. Original "what changed" item
 
 A reverse-chronological feed of every notable indicator move:
 "CPI YoY printed 2.7% (down from 3.1% prior month)", "Initial jobless
@@ -252,3 +281,22 @@ A weekend each:
 5. Polymarket model-edge (item 8) — wraps it up.
 
 Items 6, 7, 9, 10 are quality-of-life and can land any time.
+
+## Deliberately deprioritized
+
+These came up as candidates during the v1.5–v1.6 push and got
+deprioritized for honest reasons:
+
+- **UMich data-archive scraper / RCP HTML scraper.** Form posts and HTML
+  scraping are fragile; the partisan and right-track data is already
+  surfaced via hand-curated quarterly snapshots that take 5 minutes to
+  refresh. The auto-refresh would gain a couple of weeks of latency and
+  trade it for a class of silent breakages. Revisit if a maintainer
+  can't keep the snapshots fresh manually.
+
+- **Email digest / Twitter/X bot.** Both require credentials we don't
+  manage from the dashboard (SMTP / Twitter API). The `/api/changes.rss`
+  feed is the right primitive — a small external worker can poll it and
+  fan out to email or social. Keeping the credential-bearing layer
+  outside the dashboard keeps the dashboard itself fully keyless and
+  free.

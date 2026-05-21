@@ -130,6 +130,13 @@ python3 server.py
   aggregate across major pollsters
 - `GET /api/revisions` — persistent-snapshot DB feed of FRED
   revisions we've detected, plus stats on observations tracked
+- `GET /api/changes` — persisted "what changed" feed: notable 3-month
+  movers (|z| ≥ 1) and detected FRED revisions, dedup'd
+- `GET /api/changes.rss` — same feed as RSS 2.0
+- `GET /api/wages-by-quintile` — real median weekly earnings by income
+  decile/quartile (BLS via FRED), YoY per cut + spread metric
+- `GET /api/election-cycle/snapshot-backtest` — LOO regression using
+  snapshot-DB as-known-then sentiment values where available
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness

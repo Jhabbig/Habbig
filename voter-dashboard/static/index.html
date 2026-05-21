@@ -448,6 +448,85 @@
   }
   .pollster-list .ppm { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11px; }
 
+  /* What-changed feed */
+  .feed-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .feed-card h4 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .feed-card h4 a { color: var(--accent); font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0.03em; text-decoration: none; }
+  .feed-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+  .feed-item {
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-item .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
+  .feed-item .dot.good { background: var(--good); }
+  .feed-item .dot.bad  { background: var(--bad); }
+  .feed-item .dot.neutral { background: var(--text-3); }
+  .feed-item .summary { color: var(--text-1); }
+  .feed-item .summary b { color: var(--text-1); }
+  .feed-item .summary .label { color: var(--text-2); font-weight: 500; margin-right: 4px; }
+  .feed-item .when { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  /* Wages by quintile */
+  .quintile-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .quintile-card h4 {
+    margin: 0 0 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .quintile-card .claim {
+    color: var(--text-1);
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .quintile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .quintile-tile {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .quintile-tile .rank { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .quintile-tile .val { font-size: 18px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .quintile-tile .yoy { font-size: 12px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .quintile-tile .yoy.up { color: var(--good); }
+  .quintile-tile .yoy.down { color: var(--bad); }
+  .quintile-tile .yoy.neutral { color: var(--warn); }
+
   /* State stress section */
   .state-row {
     display: grid;
@@ -685,6 +764,23 @@
 <div class="movers" id="movers"></div>
 
 <div class="grid" id="cards"></div>
+
+<div class="quintile-card" id="quintileCard" style="display:none">
+  <h4>Real wages by income quintile</h4>
+  <div class="claim" id="quintileClaim">—</div>
+  <div class="quintile-grid" id="quintileGrid"></div>
+  <div class="ctx" style="font-size:11px;color:var(--text-3);margin-top:10px" id="quintileMeta"></div>
+</div>
+
+<div class="feed-card" id="feedCard" style="display:none">
+  <h4>What changed
+    <a href="/api/changes.rss" target="_blank" title="Subscribe via RSS">RSS feed →</a>
+  </h4>
+  <div class="feed-list" id="feedList"></div>
+  <div class="ctx" style="font-size:11px;color:var(--text-3);margin-top:8px">
+    Persisted across reloads. Auto-logs significant 3-month movers (|z| ≥ 1) and detected FRED revisions.
+  </div>
+</div>
 
 <div id="statesSection" style="display:none">
   <div class="section-title">Where it hurts &middot; state-level unemployment</div>
@@ -1534,6 +1630,62 @@ function renderPollsterScorecard(ps) {
     `${ps.n_ranked} pollsters ranked · ${ps.method} · ${ps.source}`;
 }
 
+function renderQuintile(wq) {
+  if (!wq || !wq.rows || !wq.rows.length) return;
+  document.getElementById("quintileCard").style.display = "block";
+  const top = wq.rows[wq.rows.length - 1];
+  const bot = wq.rows[0];
+  const spread = wq.top_minus_bottom_pp;
+  let claim;
+  if (spread != null && Math.abs(spread) >= 1.0) {
+    claim = `Wage growth is uneven — top decile up ${top.yoy_pct.toFixed(1)}% YoY vs bottom ${bot.yoy_pct.toFixed(1)}% (spread ${spread.toFixed(1)} pp).`;
+  } else {
+    claim = `Wage growth is broadly shared across quintiles (${spread != null ? spread.toFixed(1) : "—"} pp spread top vs bottom).`;
+  }
+  document.getElementById("quintileClaim").textContent = claim;
+  document.getElementById("quintileGrid").innerHTML = wq.rows.map(r => {
+    const yoyCls = r.yoy_pct >= 1.5 ? "up" : r.yoy_pct >= 0 ? "neutral" : "down";
+    const sign = r.yoy_pct >= 0 ? "+" : "";
+    return `
+      <div class="quintile-tile" title="${r.series_id} · as of ${r.as_of}">
+        <div class="rank">${r.label}</div>
+        <div class="val">$${r.latest_value.toFixed(0)}<span style="font-size:11px;color:var(--text-2)">/wk</span></div>
+        <div class="yoy ${yoyCls}">${sign}${r.yoy_pct.toFixed(1)}% YoY</div>
+      </div>
+    `;
+  }).join("");
+  document.getElementById("quintileMeta").textContent =
+    `${wq.method} · ${wq.source}`;
+}
+
+function _agoFromIso(iso) {
+  const t = new Date(iso).getTime();
+  if (!t || Number.isNaN(t)) return "";
+  const sec = (Date.now() - t) / 1000;
+  if (sec < 60) return "just now";
+  if (sec < 3600) return Math.round(sec / 60) + "m ago";
+  if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+  return Math.round(sec / 86400) + "d ago";
+}
+
+function renderChanges(data) {
+  if (!data || !data.events || !data.events.length) return;
+  document.getElementById("feedCard").style.display = "block";
+  document.getElementById("feedList").innerHTML = data.events.map(e => {
+    const dotCls = e.is_good_for_voter === true ? "good"
+                 : e.is_good_for_voter === false ? "bad"
+                 : "neutral";
+    const labelTag = e.kind === "revision" ? "REVISION" : e.kind === "mover" ? "MOVE" : "EVENT";
+    return `
+      <div class="feed-item">
+        <span class="dot ${dotCls}"></span>
+        <span class="summary"><span class="label">[${labelTag}]</span><b>${e.label}</b> — ${e.summary}</span>
+        <span class="when" title="${e.logged_at}">${_agoFromIso(e.logged_at)}</span>
+      </div>
+    `;
+  }).join("");
+}
+
 async function loadAll() {
   const [summary, marketsResp] = await Promise.all([
     getJSON("/api/summary"),
@@ -1553,10 +1705,12 @@ async function loadAll() {
   }
   allMarkets = (marketsResp && marketsResp.markets) || [];
   renderMarkets(allMarkets);
-  // These three load separately — slower fetches, don't block above-the-fold.
+  // These load separately — slower fetches, don't block above-the-fold.
   loadStates();
   getJSON("/api/global-mood").then(renderGlobalMood);
   getJSON("/api/pollster-scorecard").then(renderPollsterScorecard);
+  getJSON("/api/wages-by-quintile").then(renderQuintile);
+  getJSON("/api/changes?limit=30").then(renderChanges);
 }
 
 document.getElementById("search").addEventListener("input", () => renderMarkets(allMarkets));

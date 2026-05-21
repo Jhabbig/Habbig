@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("voter")
@@ -148,6 +148,18 @@ def _db_init() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_revisions_detected
                 ON revisions(detected_at DESC);
+            CREATE TABLE IF NOT EXISTS change_events (
+                kind TEXT NOT NULL,           -- 'mover' or 'revision' or 'reading'
+                series_id TEXT,
+                label TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                magnitude REAL,               -- abs-z-score for movers, |Δ| for revisions
+                is_good_for_voter INTEGER,    -- 1/0/NULL
+                logged_at TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL UNIQUE  -- collapses repeat-on-refresh
+            );
+            CREATE INDEX IF NOT EXISTS idx_changes_logged
+                ON change_events(logged_at DESC);
         """)
 
 
@@ -203,6 +215,15 @@ def persist_series_snapshot(series_id: str, observations: list[dict]) -> int:
         conn.commit()
     if revisions:
         logger.info("Snapshot DB: %d revisions detected for %s", revisions, series_id)
+        # Mirror revisions to the change-events feed so 'what changed' shows them.
+        log_change_event(
+            kind="revision",
+            series_id=series_id,
+            label=f"FRED revised {series_id}",
+            summary=f"{revisions} historical observation(s) revised on this fetch",
+            magnitude=float(revisions),
+            dedupe_key=f"revision:{series_id}:{datetime.now(timezone.utc).date()}",
+        )
     return revisions
 
 
@@ -232,6 +253,7 @@ def snapshot_stats() -> dict:
         ).fetchone()[0]
         n_obs = conn.execute("SELECT COUNT(*) FROM series_snapshots").fetchone()[0]
         n_rev = conn.execute("SELECT COUNT(*) FROM revisions").fetchone()[0]
+        n_changes = conn.execute("SELECT COUNT(*) FROM change_events").fetchone()[0]
         latest = conn.execute(
             "SELECT MAX(last_seen) FROM series_snapshots"
         ).fetchone()[0]
@@ -239,9 +261,65 @@ def snapshot_stats() -> dict:
         "n_series": n_series,
         "n_observations": n_obs,
         "n_revisions": n_rev,
+        "n_change_events": n_changes,
         "last_snapshot_at": latest,
         "db_path": SNAPSHOT_DB,
     }
+
+
+def log_change_event(*, kind: str, series_id: Optional[str], label: str,
+                     summary: str, magnitude: Optional[float] = None,
+                     is_good_for_voter: Optional[bool] = None,
+                     dedupe_key: str) -> None:
+    """Persist a notable change so the 'what changed' feed has memory.
+
+    `dedupe_key` should encode (kind, series, value) so refreshing the
+    page in the same hour doesn't spam the feed."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        with _db_lock, _db_connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO change_events"
+                " (kind, series_id, label, summary, magnitude, is_good_for_voter, logged_at, dedupe_key)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (kind, series_id, label, summary, magnitude,
+                 None if is_good_for_voter is None else int(is_good_for_voter),
+                 now_iso, dedupe_key),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning("change_event log failed: %s", e)
+
+
+def recent_changes(limit: int = 50) -> list[dict]:
+    """Most-recent persisted change events for the 'what changed' feed."""
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, series_id, label, summary, magnitude, is_good_for_voter, logged_at"
+            " FROM change_events ORDER BY logged_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [{
+        "kind": r[0],
+        "series_id": r[1],
+        "label": r[2],
+        "summary": r[3],
+        "magnitude": r[4],
+        "is_good_for_voter": None if r[5] is None else bool(r[5]),
+        "logged_at": r[6],
+    } for r in rows]
+
+
+def snapshot_first_seen(series_id: str, observation_date: str) -> Optional[float]:
+    """Read the first-seen value for a (series, date) — the 'as known then'
+    value used by the snapshot-based backtest."""
+    with _db_connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM series_snapshots"
+            " WHERE series_id = ? AND observation_date = ?",
+            (series_id, observation_date),
+        ).fetchone()
+    return row[0] if row else None
 
 
 # ─── HTTP helper ───────────────────────────────────────────────────────────────
@@ -707,7 +785,22 @@ def biggest_movers(series: dict[str, dict], lookback_months: int = 3) -> list[di
             "is_good_for_voter": bool(is_good),
         })
     moves.sort(key=lambda m: m["abs_z"], reverse=True)
-    return [{k: v for k, v in m.items() if k != "abs_z"} for m in moves[:3]]
+    top3 = [{k: v for k, v in m.items() if k != "abs_z"} for m in moves[:3]]
+    # Persist movers with z >= 1.0 to the change-events feed. Dedupe by
+    # (series, change_str) so a refresh in the same hour doesn't double-log.
+    for mv in moves[:5]:
+        if mv["abs_z"] >= 1.0:
+            log_change_event(
+                kind="mover",
+                series_id=mv["series_id"],
+                label=mv["label"],
+                summary=f"{mv['change_str']} over {lookback_months}mo (z={mv['z_score']:+.2f}) — "
+                        + ("tailwind for voters" if mv["is_good_for_voter"] else "headwind for voters"),
+                magnitude=mv["abs_z"],
+                is_good_for_voter=mv["is_good_for_voter"],
+                dedupe_key=f"mover:{mv['series_id']}:{mv['change_str']}",
+            )
+    return top3
 
 
 def _percentile_from_history(observations: list[dict], target: float, lookback: int = 240) -> Optional[float]:
@@ -1619,6 +1712,177 @@ def election_cycle_backtest(sentiment_series: Optional[dict],
     }
 
 
+def election_cycle_snapshot_backtest(sentiment_series: Optional[dict],
+                                      ref_month: int = 4) -> Optional[dict]:
+    """As-known-then variant of the LOO backtest. Uses snapshot-first-seen
+    values instead of current FRED values for each historical reference
+    month. Lets us see how revisions to UMCSENT history would have changed
+    the prediction at each cycle — the canonical 'is the backtest honest?'
+    sanity check.
+
+    Falls back to current values when no snapshot exists (which is most
+    cases at first deploy — we only have what we've seen since the DB
+    started running). Each row indicates which source was used."""
+    if not sentiment_series or not sentiment_series.get("observations"):
+        return None
+    by_ym_current: dict[tuple[int, int], float] = {}
+    for o in sentiment_series["observations"]:
+        if o["value"] is None:
+            continue
+        try:
+            y, m = int(o["date"][:4]), int(o["date"][5:7])
+        except (ValueError, IndexError):
+            continue
+        by_ym_current[(y, m)] = o["value"]
+
+    rows: list[dict] = []
+    used_snapshot = 0
+    used_current = 0
+    for entry in HISTORICAL_MIDTERMS:
+        year, party = entry["year"], entry["incumbent_party"]
+        # Try snapshot first; the observation_date is always the 1st of month
+        # for monthly series like UMCSENT.
+        as_known: Optional[float] = None
+        snap_v = snapshot_first_seen("UMCSENT", f"{year:04d}-{ref_month:02d}-01")
+        if snap_v is not None:
+            as_known = snap_v
+            used_snapshot += 1
+            source = "snapshot"
+        else:
+            cur_v = _sentiment_at(by_ym_current, year, ref_month)
+            if cur_v is None:
+                continue
+            as_known = cur_v
+            used_current += 1
+            source = "current (no snapshot)"
+        rows.append({
+            **entry,
+            "sentiment_as_known": round(as_known, 1),
+            "sentiment_source": source,
+        })
+
+    if len(rows) < 4:
+        return None
+
+    def _fit(rs: list[dict]) -> Optional[tuple[float, float]]:
+        n = len(rs)
+        xs = [r["sentiment_as_known"] for r in rs]
+        ys = [r["seat_change"] for r in rs]
+        mx = sum(xs) / n; my = sum(ys) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        den = sum((xs[i] - mx) ** 2 for i in range(n))
+        if den == 0:
+            return None
+        slope = num / den
+        return slope, my - slope * mx
+
+    out_rows: list[dict] = []
+    for idx, hold in enumerate(rows):
+        train = [d for i, d in enumerate(rows) if i != idx]
+        fit = _fit(train)
+        if not fit:
+            continue
+        slope, intercept = fit
+        pred = intercept + slope * hold["sentiment_as_known"]
+        out_rows.append({
+            "year": hold["year"],
+            "incumbent_president": hold["incumbent_president"],
+            "incumbent_party": hold["incumbent_party"],
+            "sentiment_as_known": hold["sentiment_as_known"],
+            "source": hold["sentiment_source"],
+            "actual": hold["seat_change"],
+            "predicted": round(pred, 1),
+            "error": round(hold["seat_change"] - pred, 1),
+        })
+    if not out_rows:
+        return None
+    errs = [r["error"] for r in out_rows]
+    mae = sum(abs(e) for e in errs) / len(errs)
+    rmse = math.sqrt(sum(e * e for e in errs) / len(errs))
+    return {
+        "method": (
+            "Leave-one-out backtest using snapshot-DB first-seen values for "
+            "UMCSENT where available, falling back to current FRED values "
+            "otherwise. Compare to /api/election-cycle/backtest to see what "
+            "FRED revisions to history would do to the model's predictions."
+        ),
+        "ref_month": ref_month,
+        "n": len(out_rows),
+        "used_snapshot": used_snapshot,
+        "used_current": used_current,
+        "mae_seats": round(mae, 1),
+        "rmse_seats": round(rmse, 1),
+        "rows": out_rows,
+    }
+
+
+# ─── Real wages by income quintile (BLS via FRED) ─────────────────────────────
+
+# BLS publishes median weekly real earnings by income decile/quintile —
+# the cleanest way to see "real wages are up for the top, down for the
+# bottom" instead of just "real wages are up 0.4%". Series are quarterly,
+# seasonally adjusted, 1982 $.
+WAGE_QUINTILE_SERIES = [
+    {"id": "LEU0252881600", "label": "Bottom decile",        "rank": 1, "tone": "bad"},
+    {"id": "LEU0252881700", "label": "First quartile (P25)", "rank": 2, "tone": "warn"},
+    {"id": "LEU0252881500", "label": "Median (P50)",         "rank": 3, "tone": "neutral"},
+    {"id": "LEU0252881800", "label": "Third quartile (P75)", "rank": 4, "tone": "warn"},
+    {"id": "LEU0252881900", "label": "Top decile",           "rank": 5, "tone": "good"},
+]
+
+
+def wages_by_quintile() -> Optional[dict]:
+    """Real-earnings YoY for each income quintile/decile cut. Returns a
+    list of {rank, label, latest, yoy_pct, spark}. Shows whether wage
+    growth is broadly shared or concentrated at the top/bottom."""
+    rows: list[dict] = []
+    lock = threading.Lock()
+
+    def _go(cfg):
+        data = fetch_fred_series(cfg["id"])
+        if not data or not data.get("observations"):
+            return
+        # Quarterly series — YoY is the latest minus 4 quarters ago, then %.
+        non_null = [o for o in data["observations"] if o["value"] is not None]
+        if len(non_null) < 5:
+            return
+        latest = non_null[-1]
+        prev = non_null[-5]
+        if prev["value"] in (None, 0):
+            return
+        yoy = (latest["value"] / prev["value"] - 1.0) * 100
+        with lock:
+            rows.append({
+                "series_id": cfg["id"],
+                "rank": cfg["rank"],
+                "label": cfg["label"],
+                "tone": cfg["tone"],
+                "latest_value": round(latest["value"], 2),
+                "as_of": latest["date"],
+                "yoy_pct": round(yoy, 2),
+                "spark": [{"date": o["date"], "value": o["value"]} for o in non_null[-20:]],
+            })
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(_go, WAGE_QUINTILE_SERIES))
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r["rank"])
+    # The interesting claim: is wage growth broad or concentrated?
+    yoys = [r["yoy_pct"] for r in rows]
+    spread = max(yoys) - min(yoys)
+    top_minus_bottom = yoys[-1] - yoys[0] if len(yoys) >= 2 else None
+    return {
+        "rows": rows,
+        "spread_pp": round(spread, 2),
+        "top_minus_bottom_pp": round(top_minus_bottom, 2) if top_minus_bottom is not None else None,
+        "method": ("Real median weekly earnings by income decile/quartile "
+                   "from BLS via FRED. YoY = latest quarter vs same quarter a "
+                   "year ago. Positive spread = uneven; the top YoY > bottom YoY."),
+        "source": "BLS Current Population Survey via FRED (LEU0252881* series)",
+    }
+
+
 # ─── Pollster scorecard (538 archived ratings) ────────────────────────────────
 
 POLLSTER_RATINGS_URLS = [
@@ -2083,6 +2347,65 @@ def api_revisions():
         "stats": snapshot_stats(),
         "recent": recent_revisions(50),
     })
+
+
+@app.route("/api/changes")
+def api_changes():
+    """Persisted 'what changed' feed — biggest movers and FRED revisions
+    logged over time. JSON form."""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 50))))
+    except (TypeError, ValueError):
+        limit = 50
+    return jsonify({"events": recent_changes(limit)})
+
+
+@app.route("/api/changes.rss")
+def api_changes_rss():
+    """RSS 2.0 feed of recent changes — pasteable into any feed reader."""
+    events = recent_changes(50)
+    items = []
+    for e in events:
+        title = f"{e['label']}: {e['summary']}"
+        guid = f"{e['kind']}:{e['series_id'] or ''}:{e['logged_at']}"
+        items.append(
+            f"<item><title><![CDATA[{title}]]></title>"
+            f"<guid isPermaLink=\"false\">{guid}</guid>"
+            f"<pubDate>{e['logged_at']}</pubDate>"
+            f"<description><![CDATA[{e['summary']}]]></description></item>"
+        )
+    rss = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0"><channel>'
+        '<title>Voter Mood — what changed</title>'
+        '<link>https://mood.narve.ai/</link>'
+        '<description>Biggest movers + FRED revisions, auto-logged.</description>'
+        + "".join(items) +
+        '</channel></rss>'
+    )
+    return (rss, 200, {"Content-Type": "application/rss+xml; charset=utf-8",
+                       "Cache-Control": "max-age=300"})
+
+
+@app.route("/api/wages-by-quintile")
+def api_wages_by_quintile():
+    """Real median weekly earnings by income decile/quintile."""
+    payload = wages_by_quintile()
+    if not payload:
+        return jsonify({"error": "wages data unavailable"}), 503
+    return jsonify(payload)
+
+
+@app.route("/api/election-cycle/snapshot-backtest")
+def api_election_cycle_snapshot_backtest():
+    """LOO backtest using snapshot-DB 'as-known-then' values where available."""
+    sent = fetch_fred_series("UMCSENT")
+    if not sent:
+        return jsonify({"error": "sentiment fetch failed"}), 503
+    payload = election_cycle_snapshot_backtest(sent)
+    if not payload:
+        return jsonify({"error": "backtest unavailable"}), 503
+    return jsonify(payload)
 
 
 @app.route("/methodology")

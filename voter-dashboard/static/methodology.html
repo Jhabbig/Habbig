@@ -231,6 +231,33 @@ state-level retail gas.</p>
 pulled via the public <code>fredgraph.csv?id=...</code> endpoint.</p>
 
 <!-- ─────────────────────────────────────────────────── -->
+<h2>As-known-then backtest</h2>
+<p>The standard backtest above uses current FRED values for sentiment at
+each historical reference month. If FRED has revised history since the
+underlying poll, the model could look better (or worse) than it would
+have at the time. The snapshot DB lets us run the same LOO regression
+using the value we <i>first saw</i> for each observation — the as-known-then
+number.</p>
+
+<div class="stat-row" id="snapEcStats"><div class="stat"><div class="k">Loading…</div></div></div>
+
+<table id="snapEcTable"><thead><tr>
+  <th>Year</th><th>President</th><th>P</th>
+  <th class="num">Sentiment (as known)</th><th>Source</th>
+  <th class="num">Actual</th>
+  <th class="num">Predicted</th>
+  <th class="num">Error</th>
+</tr></thead><tbody><tr><td colspan="8" class="muted">Loading…</td></tr></tbody></table>
+
+<p class="small">
+At first deploy the snapshot DB will be mostly empty (we've only seen
+data since the dashboard started); the "source" column will read
+"current (no snapshot)" for older cycles. As we accumulate snapshots
+over time, the as-known-then column becomes increasingly meaningful and
+the methodology gets more honest by the month.
+</p>
+
+<!-- ─────────────────────────────────────────────────── -->
 <h2>Persistent snapshot DB &amp; revision tracking</h2>
 <p>FRED revises historical data when methodologies change. A backtest
 using today's revised history would silently look better than what the
@@ -334,6 +361,41 @@ async function loadRevisions() {
   }).join("");
 }
 loadRevisions();
+
+async function loadSnapshotBacktest() {
+  let r;
+  try {
+    r = await fetch("/api/election-cycle/snapshot-backtest");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+  } catch (e) {
+    document.querySelector("#snapEcTable tbody").innerHTML =
+      `<tr><td colspan="8" class="muted">As-known-then backtest unavailable: ${e.message}</td></tr>`;
+    return;
+  }
+  const data = await r.json();
+  document.getElementById("snapEcStats").innerHTML = `
+    <div class="stat"><div class="k">n cycles</div><div class="v">${data.n}</div></div>
+    <div class="stat"><div class="k">From snapshot DB</div><div class="v">${data.used_snapshot}</div></div>
+    <div class="stat"><div class="k">Fell back to current</div><div class="v">${data.used_current}</div></div>
+    <div class="stat"><div class="k">MAE (seats)</div><div class="v">${data.mae_seats}</div></div>
+    <div class="stat"><div class="k">RMSE</div><div class="v">${data.rmse_seats}</div></div>
+  `;
+  document.querySelector("#snapEcTable tbody").innerHTML = data.rows.map(r => {
+    const errCls = Math.abs(r.error) <= 8 ? "good" : Math.abs(r.error) <= 18 ? "warn" : "bad";
+    const srcCls = r.source.startsWith("snapshot") ? "good" : "warn";
+    return `<tr>
+      <td>${r.year}</td>
+      <td>${r.incumbent_president}</td>
+      <td><span class="pill ${r.incumbent_party === "R" ? "bad" : "good"}">${r.incumbent_party}</span></td>
+      <td class="num">${r.sentiment_as_known}</td>
+      <td><span class="pill ${srcCls}">${r.source}</span></td>
+      <td class="num">${r.actual >= 0 ? "+" : ""}${r.actual}</td>
+      <td class="num">${r.predicted >= 0 ? "+" : ""}${r.predicted}</td>
+      <td class="num"><span class="pill ${errCls}">${r.error >= 0 ? "+" : ""}${r.error}</span></td>
+    </tr>`;
+  }).join("");
+}
+loadSnapshotBacktest();
 </script>
 </body>
 </html>
