@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "repomix": {
+      "command": "npx",
+      "args": ["-y", "repomix", "--mcp"]
+    },
+    "obsidian": {
+      "command": "npx",
+      "args": ["-y", "mcp-obsidian"],
+      "env": {
+        "OBSIDIAN_API_KEY": "${OBSIDIAN_API_KEY}",
+        "OBSIDIAN_HOST": "${OBSIDIAN_HOST:-127.0.0.1}",
+        "OBSIDIAN_PORT": "${OBSIDIAN_PORT:-27124}"
+      }
+    }
+  }
+}
