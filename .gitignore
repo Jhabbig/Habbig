@@ -157,7 +157,15 @@ Thumbs.db
 *.ipynb_checkpoints
 
 # ─── Claude Code / AI tooling scratch ────────────────────────────────────────
-.claude/
+# Commit skills/agents/plugins/config; ignore per-session scratch only.
+.claude/sessions/
+.claude/projects/
+.claude/backups/
+.claude/shell-snapshots/
+.claude/session-env/
+.claude/.credentials.json
+.claude/.last-cleanup
+.claude/mcp-needs-auth-cache.json
 CLAUDE.md.local
 .anthropic/
 

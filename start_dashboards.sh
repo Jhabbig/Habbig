@@ -15,6 +15,7 @@
 #   7051 — Voters Atlas Dashboard    (voters-dashboard/server.py)
 #   7052 — Climate Change Dashboard  (climate-dashboard/server.py)
 #   7053 — World Health Dashboard    (world-health-dashboard/server.py)
+#   7054 — Crypto Trackers Dashboard (crypto-trackers-dashboard/server.py)
 #   7060 — Eco Disasters Dashboard   (ecological-disasters-dashboard/server.py)
 #   7061 — Central Bank Dashboard    (centralbank-dashboard/server.py)
 #
@@ -32,7 +33,7 @@ NC='\033[0m'
 # Gateway port — honour env override (macOS AirPlay Receiver holds 7000).
 # Falls back to 7000 to match production / config.json.
 GATEWAY_PORT="${GATEWAY_PORT:-7000}"
-ALL_PORTS="$GATEWAY_PORT 8000 8050 8051 8052 5050 8888 7050 7051 7052 7053 7060 7061"
+ALL_PORTS="$GATEWAY_PORT 8000 8050 8051 8052 5050 8888 7050 7051 7052 7053 7054 7060 7061"
 
 # Kill dashboard processes — prefer PID files, fall back to port scan
 cleanup() {
@@ -121,7 +122,7 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 8. Voters Atlas Dashboard (port 7051)
-    echo -e "${GREEN}[8/12]${NC} Starting Voters Atlas on port 7051..."
+    echo -e "${GREEN}[8/14]${NC} Starting Voters Atlas on port 7051..."
     cd "$SCRIPT_DIR/voters-dashboard"
     python3 -m uvicorn server:app --host 127.0.0.1 --port 7051 > /tmp/dashboard_voters.log 2>&1 &
     echo $! > /tmp/dashboard_voters.pid
@@ -129,42 +130,54 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 9. Climate Change Dashboard (port 7052)
-    echo -e "${GREEN}[9/12]${NC} Starting Climate Dashboard on port 7052..."
+    echo -e "${GREEN}[9/14]${NC} Starting Climate Dashboard on port 7052..."
     PORT=7052 python3 "$SCRIPT_DIR/climate-dashboard/server.py" > /tmp/dashboard_climate.log 2>&1 &
     echo $! > /tmp/dashboard_climate.pid
     echo "       PID: $(cat /tmp/dashboard_climate.pid)"
 
     # 10. World Health Dashboard (port 7053)
-    echo -e "${GREEN}[10/12]${NC} Starting World Health Dashboard on port 7053..."
+    echo -e "${GREEN}[10/14]${NC} Starting World Health Dashboard on port 7053..."
     cd "$SCRIPT_DIR/world-health-dashboard"
     PORT=7053 python3 -m uvicorn server:app --host 127.0.0.1 --port 7053 > /tmp/dashboard_world_health.log 2>&1 &
     echo $! > /tmp/dashboard_world_health.pid
     echo "       PID: $(cat /tmp/dashboard_world_health.pid)"
     cd "$SCRIPT_DIR"
 
-    # 11. Eco Disasters Dashboard (port 7060)
+    # 11. Crypto Trackers Dashboard (port 7054)
+    if [ -d "$SCRIPT_DIR/crypto-trackers-dashboard" ]; then
+        echo -e "${GREEN}[11/14]${NC} Starting Crypto Trackers Dashboard on port 7054..."
+        cd "$SCRIPT_DIR/crypto-trackers-dashboard"
+        PORT=7054 python3 -m uvicorn server:app --host 127.0.0.1 --port 7054 > /tmp/dashboard_crypto_trackers.log 2>&1 &
+        echo $! > /tmp/dashboard_crypto_trackers.pid
+        echo "       PID: $(cat /tmp/dashboard_crypto_trackers.pid)"
+        cd "$SCRIPT_DIR"
+    else
+        echo -e "${YELLOW}[11/14]${NC} Skipping crypto-trackers (crypto-trackers-dashboard/ not present on this host)"
+    fi
+
+    # 12. Eco Disasters Dashboard (port 7060)
     if [ -d "$SCRIPT_DIR/ecological-disasters-dashboard" ]; then
-        echo -e "${GREEN}[11/13]${NC} Starting Eco Disasters Dashboard on port 7060..."
+        echo -e "${GREEN}[12/14]${NC} Starting Eco Disasters Dashboard on port 7060..."
         cd "$SCRIPT_DIR/ecological-disasters-dashboard"
         PORT=7060 python3 -m uvicorn server:app --host 127.0.0.1 --port 7060 > /tmp/dashboard_disasters.log 2>&1 &
         echo $! > /tmp/dashboard_disasters.pid
         echo "       PID: $(cat /tmp/dashboard_disasters.pid)"
         cd "$SCRIPT_DIR"
     else
-        echo -e "${YELLOW}[11/13]${NC} Skipping disasters (ecological-disasters-dashboard/ not present on this host)"
+        echo -e "${YELLOW}[12/14]${NC} Skipping disasters (ecological-disasters-dashboard/ not present on this host)"
     fi
 
-    # 12. Central Bank Dashboard (port 7061)
-    echo -e "${GREEN}[12/13]${NC} Starting Central Bank Dashboard on port 7061..."
+    # 13. Central Bank Dashboard (port 7061)
+    echo -e "${GREEN}[13/14]${NC} Starting Central Bank Dashboard on port 7061..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
     PORT=7061 python3 -m uvicorn server:app --host 127.0.0.1 --port 7061 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid
     echo "       PID: $(cat /tmp/dashboard_centralbank.pid)"
     cd "$SCRIPT_DIR"
 
-    # 13. Gateway — starts last so upstreams are up first.
+    # 14. Gateway — starts last so upstreams are up first.
     # GATEWAY_PORT env var overrides config.json (avoids macOS AirPlay on 7000).
-    echo -e "${GREEN}[13/13]${NC} Starting Gateway on port $GATEWAY_PORT..."
+    echo -e "${GREEN}[14/14]${NC} Starting Gateway on port $GATEWAY_PORT..."
     cd "$SCRIPT_DIR/gateway"
     GATEWAY_PORT="$GATEWAY_PORT" python3 server.py > /tmp/dashboard_gateway.log 2>&1 &
     echo $! > /tmp/dashboard_gateway.pid
@@ -188,6 +201,7 @@ start_all() {
     echo -e "  ${GREEN}Voters Atlas:${NC}          http://localhost:7051"
     echo -e "  ${GREEN}Climate Dashboard:${NC}     http://localhost:7052"
     echo -e "  ${GREEN}World Health Dashboard:${NC} http://localhost:7053"
+    echo -e "  ${GREEN}Crypto Trackers:${NC}       http://localhost:7054"
     echo -e "  ${GREEN}Eco Disasters Dashboard:${NC} http://localhost:7060"
     echo -e "  ${GREEN}Central Bank Dashboard:${NC} http://localhost:7061"
     echo ""
@@ -211,6 +225,7 @@ status() {
     echo -e "  Port 7051 (Voters):   $(lsof -ti :7051 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7052 (Climate):  $(lsof -ti :7052 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7053 (Health):   $(lsof -ti :7053 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
+    echo -e "  Port 7054 (Trackers): $(lsof -ti :7054 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7060 (Disasters):$(lsof -ti :7060 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7061 (CB):       $(lsof -ti :7061 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo ""

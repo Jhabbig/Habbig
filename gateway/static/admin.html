@@ -35,6 +35,14 @@
     .generate-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .new-token-banner { background: var(--green-bg); border: 1px solid var(--green); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
     .new-token-banner .token-mono { font-size: 15px; color: var(--green); user-select: all; }
+    .new-key-banner { background: var(--accent-light); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
+    .new-key-banner .token-mono { font-size: 15px; color: var(--accent); user-select: all; }
+    .key-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+    .key-status-dot.active { background: var(--green); }
+    .key-status-dot.disabled { background: var(--text-muted); }
+    .key-status-dot.expired { background: var(--red); }
+    .generate-form select { padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary); }
+    .generate-form select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .quota-bar { width: 100%; height: 6px; background: var(--border-light); border-radius: 3px; margin-top: 8px; overflow: hidden; }
     .quota-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
   </style>
@@ -62,6 +70,7 @@
 
     <div class="admin-tabs">
       <button class="admin-tab active" onclick="switchTab('tokens')">Tokens</button>
+      <button class="admin-tab" onclick="switchTab('keys')">Investor Keys</button>
       <button class="admin-tab" onclick="switchTab('users')">Users</button>
       <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
       <button class="admin-tab" onclick="switchTab('revenue')">Revenue</button>
@@ -91,6 +100,38 @@
 
       <div class="admin-list">
         {{ raw_token_rows }}
+      </div>
+    </div>
+
+    <!-- ======== INVESTOR KEYS ======== -->
+    <div id="panel-keys" class="admin-panel">
+      {{ raw_new_key_banner }}
+
+      <form class="generate-form" method="post" action="/admin/superuser-keys/generate" style="flex-wrap: wrap;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <input type="text" name="custom_key" placeholder="Custom key (e.g., Julian-habbig)" style="flex: 0 1 200px;">
+        <input type="text" name="name" placeholder="Key name (e.g., Q2 2024 Investors)" style="flex: 1 1 250px;">
+        <input type="text" name="dashboards" placeholder="Dashboards (optional, comma-separated)" style="flex: 1 1 250px;">
+        <input type="text" name="aspects" placeholder="Aspects (e.g., read-only,demo-mode)" style="flex: 1 1 250px;">
+        <select name="expires_in_days" style="flex: 0 1 130px;">
+          <option value="">No expiration</option>
+          <option value="7">Expires in 7 days</option>
+          <option value="30">Expires in 30 days</option>
+          <option value="90">Expires in 90 days</option>
+          <option value="180">Expires in 180 days</option>
+        </select>
+        <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Create Key</button>
+      </form>
+
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterKeys('all',this)">All</button>
+        <button class="filter-btn" onclick="filterKeys('active',this)">Active</button>
+        <button class="filter-btn" onclick="filterKeys('disabled',this)">Disabled</button>
+        <button class="filter-btn" onclick="filterKeys('expired',this)">Expired</button>
+      </div>
+
+      <div class="admin-list" id="keys-list">
+        {{ raw_key_rows }}
       </div>
     </div>
 
@@ -172,6 +213,57 @@ function filterTokens(status, btn) {
 function copyToken(el) {
   const text = el.closest('.new-token-banner').querySelector('.token-mono').textContent;
   navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
+}
+
+function copyKey(el) {
+  const text = el.closest('.new-key-banner').querySelector('.token-mono').textContent;
+  navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
+}
+
+function filterKeys(status, btn) {
+  document.querySelectorAll('#panel-keys .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.key-row').forEach(row => {
+    const rowStatus = row.dataset.status || 'active';
+    row.style.display = (status === 'all' || rowStatus === status) ? '' : 'none';
+  });
+}
+
+function toggleKeyStatus(keyId, btn) {
+  const csrf = document.querySelector('input[name="_csrf_token"]').value;
+  const newState = btn.textContent.includes('Disable') ? 'disable' : 'enable';
+  const action = newState === 'disable' ? 'disable' : 'enable';
+
+  fetch(`/admin/superuser-keys/${keyId}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `_csrf_token=${encodeURIComponent(csrf)}`
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      const row = btn.closest('.key-row');
+      const newStatus = action === 'disable' ? 'disabled' : 'active';
+      row.dataset.status = newStatus;
+      const dot = row.querySelector('.key-status-dot');
+      dot.className = `key-status-dot ${newStatus}`;
+      btn.textContent = newStatus === 'disabled' ? 'Enable' : 'Disable';
+    }
+  });
+}
+
+function deleteKey(keyId) {
+  if (!confirm('Are you sure? This action cannot be undone.')) return;
+  const csrf = document.querySelector('input[name="_csrf_token"]').value;
+  const row = document.querySelector(`.key-row[data-key-id="${keyId}"]`);
+
+  fetch(`/admin/superuser-keys/${keyId}/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `_csrf_token=${encodeURIComponent(csrf)}`
+  })
+  .then(r => r.ok ? location.reload() : alert('Failed to delete key'))
+  .catch(e => alert('Error: ' + e));
 }
 
 // Enquiry filter
