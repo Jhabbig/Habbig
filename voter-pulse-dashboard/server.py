@@ -21,12 +21,14 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from analysis import clark_fisher as world_analysis
 from analysis import elections as election_analysis
 from analysis import eras as era_analysis
 from analysis import mood_index
+from analysis import narrative as narrative_analysis
+from analysis import shareable
 from analysis import state_mood as state_mood_analysis
 from ingestion import fred_client, polls_client, polymarket_client, states_client, worldbank_client
 
@@ -51,9 +53,18 @@ if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
 
 
+# Paths that bypass the gateway-SSO middleware. /share/* is intentionally
+# public so anyone can unfurl a card on Twitter / Slack / etc; /healthz
+# stays public so the container healthcheck can hit it.
+PUBLIC_PATHS = {"/healthz"}
+PUBLIC_PREFIXES = ("/share/",)
+
+
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
-    if request.url.path != "/healthz":
+    path = request.url.path
+    is_public = path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+    if not is_public:
         if _sso_secret:
             client_secret = request.headers.get("x-gateway-secret", "")
             if not hmac.compare_digest(client_secret, _sso_secret):
@@ -154,6 +165,20 @@ async def api_country(iso3: str, force: bool = False) -> JSONResponse:
     return JSONResponse(profile)
 
 
+def _narrative_payload(force: bool = False) -> dict:
+    life = fred_client.get_cached(force=False)
+    polls = polls_client.get_cached(force=False)
+    composed = mood_index.compose(life["series"])
+    composed["label"] = mood_index.label_for(composed["overall"])
+    backtest = _backtest_payload(force=False)
+    return narrative_analysis.generate(composed, life, polls, backtest, force=force)
+
+
+@app.get("/api/narrative")
+async def api_narrative(force: bool = False) -> JSONResponse:
+    return JSONResponse(_narrative_payload(force=force))
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
@@ -175,6 +200,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
     states = {**state_mood_analysis.compose(raw_states), "fetched_at": raw_states.get("fetched_at")}
     raw_world = worldbank_client.get_cached(force=force)
     world = {**world_analysis.summarise(raw_world["countries"]), "fetched_at": raw_world.get("fetched_at")}
+    narrative = narrative_analysis.generate(composed, life, polls, backtest, force=False)
     return JSONResponse({
         "mood": composed,
         "life": life,
@@ -184,7 +210,122 @@ async def api_summary(force: bool = False) -> JSONResponse:
         "backtest": backtest,
         "states": states,
         "world": world,
+        "narrative": narrative,
     })
+
+
+# ── Shareable cards (public; bypass gateway-SSO) ─────────────────────────────
+
+
+def _public_base_url(request: Request) -> str:
+    """Best-effort canonical base URL for an outbound share link.
+
+    Behind the gateway, `Host` may be `pulse.narve.ai`; we honour the
+    proxy-forwarded values when present."""
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "pulse.narve.ai"
+    fwd_proto = request.headers.get("x-forwarded-proto") or "https"
+    return f"{fwd_proto}://{fwd_host}"
+
+
+def _build_share_payload(kind: str) -> dict:
+    """Compute the minimal payload each card needs, without recomputing
+    the whole /api/summary."""
+    if kind == "mood":
+        life = fred_client.get_cached(force=False)
+        composed = mood_index.compose(life["series"])
+        composed["label"] = mood_index.label_for(composed["overall"])
+        return {"mood": composed}
+    if kind == "backtest":
+        return {"backtest": _backtest_payload(force=False)}
+    raise KeyError(kind)
+
+
+@app.get("/share/mood.png")
+async def share_mood_png() -> Response:
+    payload = _build_share_payload("mood")
+    body, ctype = shareable.render_mood_card(payload["mood"])
+    return Response(content=body, media_type=ctype,
+                    headers={"Cache-Control": "public, max-age=900"})
+
+
+@app.get("/share/mood", response_class=HTMLResponse)
+async def share_mood(request: Request) -> HTMLResponse:
+    base = _public_base_url(request)
+    payload = _build_share_payload("mood")
+    overall = (payload["mood"] or {}).get("overall")
+    label = (payload["mood"] or {}).get("label") or "—"
+    big = f"{round(overall)}" if overall is not None else "—"
+    desc = f"National mood index: {big} ({label})."
+    return HTMLResponse(shareable.html_preview(
+        kind="mood",
+        og_image_url=f"{base}/share/mood.png",
+        title=f"Voter Pulse — mood {big} ({label})",
+        description=desc,
+        canonical_url=f"{base}/share/mood",
+    ))
+
+
+@app.get("/share/backtest.png")
+async def share_backtest_png() -> Response:
+    payload = _build_share_payload("backtest")
+    body, ctype = shareable.render_backtest_card(payload["backtest"])
+    return Response(content=body, media_type=ctype,
+                    headers={"Cache-Control": "public, max-age=900"})
+
+
+@app.get("/share/backtest", response_class=HTMLResponse)
+async def share_backtest(request: Request) -> HTMLResponse:
+    base = _public_base_url(request)
+    payload = _build_share_payload("backtest")
+    headline = (payload["backtest"] or {}).get("headline") or {}
+    if headline.get("accuracy_pct") is not None:
+        desc = (f"The Voter Pulse mood index has called {headline['correct']} of "
+                f"{headline['n']} presidential elections ({headline['accuracy_pct']:.0f}%) "
+                f"at the {headline['horizon_months']}-month horizon.")
+    else:
+        desc = "Voter Pulse election backtest."
+    return HTMLResponse(shareable.html_preview(
+        kind="backtest",
+        og_image_url=f"{base}/share/backtest.png",
+        title="Voter Pulse — election backtest",
+        description=desc,
+        canonical_url=f"{base}/share/backtest",
+    ))
+
+
+@app.get("/share/country/{iso3}.png")
+async def share_country_png(iso3: str) -> Response:
+    iso3 = iso3.upper()
+    if not (len(iso3) == 3 and iso3.isalpha()):
+        return Response(content=b"bad iso3", status_code=400)
+    profile = worldbank_client.get_country_detail_cached(iso3)
+    profile["trajectory"] = world_analysis.annotate_trajectory(profile.get("trajectory") or [])
+    if profile["trajectory"]:
+        profile["latest_stage"] = profile["trajectory"][-1]
+    body, ctype = shareable.render_country_card(profile)
+    return Response(content=body, media_type=ctype,
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/share/country/{iso3}", response_class=HTMLResponse)
+async def share_country(iso3: str, request: Request) -> HTMLResponse:
+    iso3 = iso3.upper()
+    if not (len(iso3) == 3 and iso3.isalpha()):
+        return HTMLResponse("<h1>bad iso3</h1>", status_code=400)
+    base = _public_base_url(request)
+    profile = worldbank_client.get_country_detail_cached(iso3)
+    profile["trajectory"] = world_analysis.annotate_trajectory(profile.get("trajectory") or [])
+    name = profile.get("name") or iso3
+    latest_stage = (profile["trajectory"][-1] if profile["trajectory"] else {})
+    label = latest_stage.get("label") or "—"
+    desc = f"{name} on the Clark–Fisher arc: {label}."
+    return HTMLResponse(shareable.html_preview(
+        kind=f"country/{iso3}",
+        og_image_url=f"{base}/share/country/{iso3}.png",
+        title=f"{name} — Voter Pulse",
+        description=desc,
+        canonical_url=f"{base}/share/country/{iso3}",
+    ))
 
 
 @app.get("/healthz")

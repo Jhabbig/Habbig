@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <title>Voter Pulse — narve.ai</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="Voter Pulse — narve.ai">
+<meta property="og:description" content="How voters feel and how their lives are going.">
+<meta property="og:image" content="/share/mood.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Voter Pulse · narve.ai">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Voter Pulse — narve.ai">
+<meta name="twitter:description" content="How voters feel and how their lives are going.">
+<meta name="twitter:image" content="/share/mood.png">
 <style>
   :root {
     --bg: #0e1117;
@@ -147,6 +156,34 @@
   table.era .party-R { color: #ff8a80; font-size: 10px; margin-left: 6px; letter-spacing: 0.05em; }
   table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
   table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
+
+  /* ── Narrative ───────────────────────────────────────────────────────── */
+  .narrative-panel {
+    background: linear-gradient(135deg, #1a1320 0%, #161b22 60%);
+    border: 1px solid var(--grid); border-radius: 10px;
+    padding: 18px 22px; display: flex; align-items: flex-start; gap: 14px;
+  }
+  .narrative-panel .badge {
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; padding: 4px 8px; border-radius: 3px;
+    flex-shrink: 0; margin-top: 2px;
+  }
+  .narrative-panel .body {
+    flex: 1; min-width: 0; font-size: 14px; line-height: 1.55; color: var(--fg);
+  }
+  .narrative-panel .body.skeleton { color: var(--muted); font-style: italic; }
+  .narrative-panel .meta {
+    color: var(--muted); font-size: 10px; margin-top: 6px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Panel share link ─────────────────────────────────────────────────── */
+  .panel .share-link {
+    float: right; color: var(--muted); font-size: 11px;
+    text-decoration: none; padding: 2px 6px; border: 1px solid var(--grid);
+    border-radius: 3px; margin-top: -2px;
+  }
+  .panel .share-link:hover { color: var(--accent); border-color: var(--accent); }
 
   /* ── State tile map ──────────────────────────────────────────────────── */
   .map-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 24px; }
@@ -314,8 +351,18 @@
 </header>
 
 <main>
+  <!-- AI NARRATIVE -->
+  <section class="narrative-panel" id="narrativePanel">
+    <span class="badge">TODAY</span>
+    <div>
+      <div class="body skeleton" id="narrativeBody">Generating today's read…</div>
+      <div class="meta" id="narrativeMeta"></div>
+    </div>
+  </section>
+
   <!-- HERO: composite mood -->
   <section class="panel">
+    <a class="share-link" href="/share/mood" target="_blank" rel="noopener">share ↗</a>
     <h2>National mood</h2>
     <p class="desc">Composite of pocketbook, jobs, and consumer-sentiment signals. 0 = bleak, 100 = good.</p>
     <div class="hero">
@@ -468,6 +515,7 @@
 
   <!-- BACKTEST -->
   <section class="panel">
+    <a class="share-link" href="/share/backtest" target="_blank" rel="noopener">share ↗</a>
     <h2>Does this work? — election backtest</h2>
     <p class="desc">We rebuild the mood index every month since 1978 and ask whether it would have called every presidential election. No retuning — the same bands the live gauge uses.</p>
     <div class="bt-hero">
@@ -1131,7 +1179,10 @@ function renderCountryDetail(data) {
   card.innerHTML = `
     <div class="hdr">
       <span class="nm">${flag} ${escapeHtml(data.name)} <span style="color:var(--muted);font-size:11px;">${escapeHtml(data.iso3)}</span></span>
-      <button class="closeBtn" onclick="document.getElementById('countryDetail').style.display='none';clearTrail();">✕</button>
+      <span>
+        <a class="share-link" href="/share/country/${escapeAttr(data.iso3)}" target="_blank" rel="noopener" style="float:none;">share ↗</a>
+        <button class="closeBtn" onclick="document.getElementById('countryDetail').style.display='none';clearTrail();">✕</button>
+      </span>
     </div>
     <div class="stage">${escapeHtml(stageLabel)}${latestStage ? ` · stage ${latestStage.stage}` : ""}</div>
     <div class="grid">
@@ -1198,6 +1249,23 @@ function drawTrail(traj) {
   g.id = TRAIL_SVG_ID;
   g.innerHTML = `<path class="trail-path" d="${path}"/>${dots}`;
   document.getElementById("ternarySvg").appendChild(g);
+}
+
+function renderNarrative(payload) {
+  const body = document.getElementById("narrativeBody");
+  const meta = document.getElementById("narrativeMeta");
+  if (!payload || !payload.narrative) {
+    body.classList.add("skeleton");
+    body.textContent = payload && payload.error
+      ? `Narrative unavailable — ${payload.error}.`
+      : "Today's read is being generated. Check back in a moment.";
+    meta.textContent = "";
+    return;
+  }
+  body.classList.remove("skeleton");
+  body.textContent = payload.narrative;
+  const when = payload.generated_at ? new Date(payload.generated_at * 1000).toISOString().slice(0, 16).replace("T", " ") : "";
+  meta.textContent = `Generated by ${payload.model || "Claude"} · ${when} UTC${payload.cached ? " · cached" : ""}`;
 }
 
 function renderBacktest(payload) {
@@ -1316,6 +1384,7 @@ async function load() {
     renderStates(data.states);
     renderWorld(data.world);
     renderBacktest(data.backtest);
+    renderNarrative(data.narrative);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;
     document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
