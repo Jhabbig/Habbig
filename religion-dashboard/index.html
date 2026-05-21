@@ -692,6 +692,13 @@ function renderLeaders(d) {
         <div class="actu"><div class="lbl">P(alive 5y)</div><div class="val">${(a.p_alive_5y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_5y_adj*100).toFixed(0)}%</span></div></div>
         <div class="actu"><div class="lbl">P(alive 10y)</div><div class="val">${(a.p_alive_10y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_10y_adj*100).toFixed(0)}%</span></div></div>
       </div>` : "";
+    const newsHtml = (L.news && L.news.length) ? `
+      <div style="margin-top:8px;border-top:1px solid var(--grid);padding-top:6px">
+        <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">Recent news (${L.news_count})</div>
+        ${L.news.slice(0,3).map(n =>
+          `<div style="font-size:11px;margin-top:2px"><a href="${escapeHtml(n.link)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(n.title.substring(0, 80))}${n.title.length > 80 ? "…" : ""}</a> <span style="color:var(--muted)">· ${escapeHtml(n.source)}</span></div>`
+        ).join("")}
+      </div>` : "";
     return `<div class="leader-card">
       <div class="head">
         <span class="name">${escapeHtml(L.name)}</span>
@@ -701,6 +708,7 @@ function renderLeaders(d) {
       ${actuHtml}
       <div class="summary">${escapeHtml(L.summary || "")}</div>
       ${succession}
+      ${newsHtml}
     </div>`;
   }).join("") + '</div>';
 }

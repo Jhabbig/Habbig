@@ -451,6 +451,15 @@ def api_leaders():
 
     # Sort: highest 1-year death probability first (most market-relevant).
     out.sort(key=lambda x: (x["actuarial"]["p_dies_1y"] if x.get("actuarial") else -1), reverse=True)
+
+    # Attach per-leader news (matched by surname in title/summary)
+    if request.args.get("news", "1") != "0":
+        try:
+            news = fetch_news()
+            out = _attach_leader_news(out, news)
+        except Exception as e:
+            log.warning("leader news attach failed: %s", e)
+
     return jsonify({
         "fetched_at": int(time.time()),
         "ref_date": ref.isoformat(),
@@ -626,6 +635,41 @@ def api_markets():
         "count": len(markets),
         "markets": markets,
     })
+
+
+def _attach_leader_news(leaders: list[dict], news: list[dict]) -> list[dict]:
+    """For each leader, attach news items whose title or summary mentions them.
+
+    Matching: case-insensitive substring of either the full name or any
+    surname-token of length >= 4. Caps at 5 most-recent items per leader.
+    """
+    out = []
+    for L in leaders:
+        keys = [L["name"].lower()]
+        # Surname tokens > 3 chars (e.g. "Khamenei", "Sistani", "Dalai", "Lama")
+        for tok in L["name"].split():
+            t = tok.lower().strip(".,()")
+            if len(t) >= 4 and t not in ("pope", "the", "saint", "card"):
+                keys.append(t)
+        matched = []
+        seen_links = set()
+        for n in news:
+            blob = ((n.get("title") or "") + " " + (n.get("summary") or "")).lower()
+            if any(k in blob for k in keys):
+                link = n.get("link", "")
+                if link in seen_links:
+                    continue
+                seen_links.add(link)
+                matched.append({
+                    "title": n.get("title", ""),
+                    "link":  link,
+                    "source": n.get("source", ""),
+                    "published": n.get("published", ""),
+                })
+                if len(matched) >= 5:
+                    break
+        out.append({**L, "news": matched, "news_count": len(matched)})
+    return out
 
 
 @app.route("/api/pope-health")
