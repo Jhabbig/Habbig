@@ -45,6 +45,7 @@ import push as push_mod
 import strategy as strat_mod
 import billing as billing_mod
 import digest as digest_mod
+import referrals as ref_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -6284,6 +6285,185 @@ document.getElementById('portal-btn').onclick = async (e) => {
 """.replace("__BADGE__", badge_html).replace("__PRO_BTN__", pro_btn).replace("__WEALTH_BTN__", wealth_btn)
 
 
+# ── Referrals ───────────────────────────────────────────────────────────────
+
+@app.get("/api/referrals/mine")
+async def my_referrals(request: Request):
+    """Return the user's referral code + stats. Generates a code if first call."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(ref_mod.my_stats, user["id"])
+
+
+@app.post("/api/referrals/track")
+async def track_referral(request: Request):
+    """Called by the frontend on page load when `?ref=CODE` is in the URL.
+    Body: {code, anon_id, source?}. anon_id comes from a long-lived client
+    cookie. Returns the referrer user_id on success so the UI can show
+    'Invited by <name>' (we don't expose the name yet — privacy)."""
+    payload = await request.json()
+    code = str(payload.get("code", "")).strip()
+    anon_id = str(payload.get("anon_id", "")).strip()
+    source = str(payload.get("source", "link"))[:40]
+    if not code or not anon_id or len(anon_id) < 10:
+        raise HTTPException(status_code=400, detail="code + anon_id required")
+    result = await asyncio.to_thread(ref_mod.track_visit, code, anon_id, source)
+    if not result["ok"]:
+        # Don't leak whether the code exists — return 200 with same shape.
+        return {"tracked": False}
+    return {"tracked": True}
+
+
+@app.post("/api/referrals/bind")
+async def bind_referral(request: Request):
+    """Called once after a referred user authenticates. Binds the prior
+    anonymous visit (if any) to their real user_id, dropping self-referrals."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    anon_id = str(payload.get("anon_id", "")).strip()
+    if not anon_id or len(anon_id) < 10:
+        return {"bound": False}
+    aid = await asyncio.to_thread(ref_mod.bind_visit_to_user, anon_id, user["id"])
+    return {"bound": bool(aid)}
+
+
+# ── Public strategy share page ──────────────────────────────────────────────
+
+@app.get("/s/{strategy_id}", response_class=HTMLResponse)
+async def public_strategy_page(strategy_id: int, request: Request,
+                                ref: str | None = None):
+    """Shareable strategy page. Auth not required — only public strategies
+    are visible. The `?ref=CODE` param attributes the share to a referrer
+    (the frontend posts to /api/referrals/track on load).
+
+    No private data is exposed — we re-use `get_strategy(uid=None)` which
+    enforces the privacy gate. Returns 404 for private strategies even if
+    the URL is guessed."""
+    s = await asyncio.to_thread(strat_mod.get_strategy, strategy_id, None)
+    if not s or s["visibility"] != "public":
+        raise HTTPException(status_code=404, detail="Not found")
+    return HTMLResponse(_public_strategy_html(s, ref or ""))
+
+
+def _public_strategy_html(strategy: dict, ref_code: str) -> str:
+    bt = strategy.get("latest_backtest") or {}
+    name_esc = html_mod.escape(strategy["name"])
+    desc_esc = html_mod.escape(strategy.get("description") or "")
+    ticker_esc = html_mod.escape(strategy["base_ticker"])
+
+    def _fmt_pct(v):
+        return f"{(v or 0)*100:+.1f}%"
+
+    bt_stats = ""
+    if bt:
+        ret = bt.get("total_return_pct") or 0
+        ret_color = "#22c55e" if ret >= 0 else "#ef4444"
+        bt_stats = f"""
+        <div style="background:#131820;border:1px solid #222a36;border-radius:10px;padding:18px;margin:18px 0">
+          <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#7d8a99">Total return</span><span style="color:{ret_color};font-weight:600">{_fmt_pct(ret)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#7d8a99">Sharpe</span><span>{bt.get('sharpe') or '—'}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#7d8a99">Max drawdown</span><span style="color:#ef4444">{_fmt_pct(bt.get('max_drawdown_pct'))}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#7d8a99">Window</span><span style="font-size:13px;color:#7d8a99">{html_mod.escape(str(bt.get('start_date') or ''))} → {html_mod.escape(str(bt.get('end_date') or ''))}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#7d8a99">Trades</span><span>{bt.get('trade_count') or 0}</span></div>
+        </div>
+        """
+
+    # Social meta tags — controls how the link previews on Twitter/Slack/iMessage.
+    og_title = f"{strategy['name']} — CryptoEdge"
+    og_desc = (strategy.get("description") or
+               f"{strategy['base_ticker']} strategy")[:200]
+    return f"""<!doctype html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name_esc} — CryptoEdge</title>
+<meta property="og:title" content="{html_mod.escape(og_title)}">
+<meta property="og:description" content="{html_mod.escape(og_desc)}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<style>
+body{{margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0d12;color:#e6edf5;line-height:1.5}}
+.wrap{{max-width:720px;margin:0 auto;padding:40px 20px}}
+h1{{margin:0 0 8px;font-size:1.8em}}
+.sub{{color:#7d8a99;margin-bottom:14px}}
+.tag{{display:inline-block;background:#1a2029;color:#e6edf5;padding:3px 10px;border-radius:12px;font-size:.8em;margin-right:6px}}
+button{{background:#3b82f6;color:#fff;border:0;padding:12px 24px;border-radius:6px;cursor:pointer;font-size:1em;width:100%;margin-top:12px}}
+button:hover{{opacity:.85}}
+a{{color:#3b82f6;text-decoration:none}}
+.cta{{background:#131820;border:1px solid #3b82f6;border-radius:10px;padding:20px;margin-top:24px}}
+.note{{color:#7d8a99;font-size:.85em;margin-top:8px}}
+</style></head><body><div class="wrap">
+<div class="sub"><a href="/long-term">← CryptoEdge</a></div>
+<h1>{name_esc}</h1>
+<div class="sub">
+  <span class="tag">{ticker_esc}</span>
+  <span class="tag">${strategy.get('starting_capital_usd', 0):,.0f} starting capital</span>
+</div>
+{f'<div style="color:#e6edf5;font-size:1em;margin:18px 0">{desc_esc}</div>' if desc_esc else ''}
+{bt_stats}
+
+<div class="cta">
+  <h2 style="margin:0 0 6px;font-size:1.1em">Run this strategy live</h2>
+  <div class="note">Sign in with CryptoEdge and subscribe. Runs every 5 min through your safety gauntlet — dry-run mode applies until you flip it off.</div>
+  <button id="run-it">Sign in &amp; subscribe</button>
+</div>
+
+<div class="note" style="margin-top:24px;text-align:center">
+  Want to build your own? <a href="/long-term">Open CryptoEdge →</a>
+</div>
+
+<script>
+// Persist anon_id in a cookie so the same browser session is tracked
+// consistently across the signup hop.
+function getAnonId() {{
+  let id = document.cookie.split('; ').find(c => c.startsWith('narve_aid='));
+  if (id) return id.split('=')[1];
+  const newId = crypto.randomUUID();
+  // 90-day max-age covers a normal signup-evaluation window.
+  document.cookie = `narve_aid=${{newId}}; max-age=7776000; path=/; samesite=lax`;
+  return newId;
+}}
+
+const ref = {repr(ref_code)};
+const anonId = getAnonId();
+if (ref) {{
+  fetch('/api/referrals/track', {{
+    method: 'POST',
+    credentials: 'include',
+    headers: {{'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}},
+    body: JSON.stringify({{code: ref, anon_id: anonId, source: 'strategy_page'}}),
+  }}).catch(() => {{}});
+}}
+
+document.getElementById('run-it').onclick = async () => {{
+  // First try to subscribe (we might already be signed in).
+  try {{
+    const r = await fetch('/api/long-term/strategies/{strategy['id']}/subscribe', {{
+      method: 'POST',
+      credentials: 'include',
+      headers: {{'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}},
+    }});
+    if (r.ok) {{
+      window.location.href = '/long-term#strategies';
+      return;
+    }}
+    if (r.status === 401) {{
+      // Redirect to gateway login, then back here.
+      window.location.href = `/login?next=/s/{strategy['id']}{f"?ref={ref_code}" if ref_code else ''}`;
+      return;
+    }}
+    if (r.status === 402) {{
+      window.location.href = '/pricing';
+      return;
+    }}
+    alert((await r.json()).detail || 'Failed to subscribe');
+  }} catch(e) {{ alert(e.message); }}
+}};
+</script>
+</div></body></html>"""
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -6514,9 +6694,45 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 @supports (padding-bottom: env(safe-area-inset-bottom)){
   body{padding-bottom: env(safe-area-inset-bottom)}
 }
+.locked{position:relative}
+.locked button, .locked input, .locked select, .locked textarea{
+  pointer-events:none;opacity:.55;filter:grayscale(.5);
+}
+.lock-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  background:rgba(59,130,246,.18);color:#3b82f6;
+  padding:2px 8px;border-radius:10px;font-size:.7em;
+  font-weight:600;letter-spacing:.3px;text-transform:uppercase;
+  margin-left:8px;cursor:pointer;border:1px solid rgba(59,130,246,.3);
+}
+.lock-badge:hover{background:rgba(59,130,246,.28)}
+.lock-badge svg{width:10px;height:10px}
+.tier-pill{display:inline-block;padding:2px 8px;border-radius:10px;
+  font-size:.7em;font-weight:600;text-transform:uppercase;letter-spacing:.3px;
+  margin-left:6px}
+.tier-pill.free{background:rgba(125,138,153,.18);color:#7d8a99}
+.tier-pill.pro{background:rgba(59,130,246,.18);color:#3b82f6}
+.tier-pill.wealth{background:rgba(168,85,247,.18);color:#a855f7}
+#upgrade-modal{position:fixed;inset:0;background:rgba(10,13,18,.85);
+  z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+#upgrade-modal.open{display:flex}
+#upgrade-modal .box{background:#131820;border:1px solid #222a36;
+  border-radius:12px;padding:24px;max-width:440px;width:100%}
+#upgrade-modal h3{margin:0 0 8px;font-size:1.1em}
+#upgrade-modal .note{color:#7d8a99;font-size:.85em;margin:8px 0 14px}
 </style>
 </head><body><div class="wrap">
-<h1>Long-term Holding</h1>
+<div id="upgrade-modal"><div class="box">
+  <h3>Upgrade to <span id="up-tier">Pro</span></h3>
+  <div class="note" id="up-feature-desc"></div>
+  <div class="note"><b>Pro</b> $25/mo · live execution, tax harvest, Form 8949, marketplace publishing, 3 strategy subs.<br><b>Wealth</b> $75/mo · everything + multi-exchange + unlimited subscriptions.</div>
+  <div class="actionrow" style="justify-content:flex-end;margin-top:14px">
+    <button class="ghost" id="up-cancel">Not now</button>
+    <button id="up-go">View pricing →</button>
+  </div>
+</div></div>
+
+<h1 id="page-title">Long-term Holding <span id="tier-badge"></span></h1>
 <div class="sub">Cycle phase, fundamentals, drawdown — the lens for months/years, not minutes.</div>
 
 <div id="onboarding-overlay" hidden style="position:fixed;inset:0;background:rgba(10,13,18,.95);z-index:100;overflow-y:auto;padding:24px">
@@ -6663,8 +6879,8 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <h2>Auto-execution</h2>
   <div class="note" style="color:var(--yellow);font-weight:600">⚠ Dry-run mode is ON by default. Real orders are <b>never</b> placed unless you explicitly flip dry-run off and supply working exchange credentials.</div>
 
-  <h2 style="margin-top:18px">Exchange connections</h2>
-  <div class="grid">
+  <h2 style="margin-top:18px">Exchange connections <span class="tier-pill pro">Pro</span></h2>
+  <div class="grid" data-feature="exchange_connect">
     <div class="card">
       <h3>Coinbase Advanced Trade</h3>
       <div class="note">Create an Advanced Trade API key at <span class="kbd">coinbase.com/settings/api</span> with <b>view + trade</b> scopes only — never withdraw.</div>
@@ -6714,6 +6930,21 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     <button id="exec-dca">Run DCA now</button>
     <button id="exec-rebal" class="ghost">Run rebalance</button>
     <span id="exec-msg"></span>
+  </div>
+
+  <h2>Referrals</h2>
+  <div class="card">
+    <div class="note">Share your link. Friends who upgrade earn you 20% of their subscription for 12 months. Your code is stable — bookmark it.</div>
+    <div class="actionrow" style="margin-top:8px">
+      <input id="ref-link" type="text" readonly style="flex:1;min-width:0;font-family:monospace;font-size:.9em">
+      <button id="ref-copy" class="ghost">Copy</button>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <div><div class="label" style="font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Visits</div><div id="ref-visits" style="font-size:1.4em;font-weight:600">—</div></div>
+      <div><div class="label" style="font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Signups</div><div id="ref-signups" style="font-size:1.4em;font-weight:600">—</div></div>
+      <div><div class="label" style="font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Conversions</div><div id="ref-conv" style="font-size:1.4em;font-weight:600">—</div></div>
+      <div><div class="label" style="font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Earned (lifetime)</div><div id="ref-earned" style="font-size:1.4em;font-weight:600;color:var(--green)">—</div></div>
+    </div>
   </div>
 
   <h2>Push notifications</h2>
@@ -6772,7 +7003,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
           <select id="st-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
         </div>
         <div class="field"><label>Starting capital (USD)</label><input id="st-cap" type="number" step="100" value="10000"></div>
-        <div class="field"><label>Visibility</label>
+        <div class="field" data-feature="strategy_publish"><label>Visibility <span class="tier-pill pro">Pro for public</span></label>
           <select id="st-vis"><option value="private">Private</option><option value="public">Public (on leaderboard)</option></select>
         </div>
       </div>
@@ -6836,7 +7067,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="actionrow">
     <div class="field"><label>Year</label><input id="tx-year" type="number" step="1" value="2026" style="width:90px"></div>
     <button id="tx-year-go" class="ghost">Compute</button>
-    <a id="tx-export" href="#" style="margin-left:8px;color:var(--blue);text-decoration:none">Download Form 8949 CSV</a>
+    <span data-feature="tax_form_8949"><a id="tx-export" href="#" style="margin-left:8px;color:var(--blue);text-decoration:none">Download Form 8949 CSV</a> <span class="tier-pill pro">Pro</span></span>
   </div>
   <div id="tx-summary" style="margin-top:10px"></div>
 
@@ -6863,8 +7094,8 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 
   <h2>Harvest opportunities</h2>
   <div id="hv-totals" style="margin:8px 0"></div>
-  <div class="actionrow">
-    <button id="hv-execute">Harvest all (sells go through safety gauntlet)</button>
+  <div class="actionrow" data-feature="tax_harvest_execute">
+    <button id="hv-execute">Harvest all (sells go through safety gauntlet) <span class="tier-pill pro">Pro</span></button>
     <span id="hv-msg"></span>
   </div>
   <table id="hv-table"><thead><tr>
@@ -8035,6 +8266,151 @@ loadExecution = async function(){
 // Register SW eagerly so the cache primes while the user browses.
 registerServiceWorker();
 
+// ── Tier-aware lock decoration ─────────────────────────────────────────────
+
+let USER_TIER = null;
+let TIER_FEATURES = {};
+
+async function loadTier(){
+  try {
+    const t = await api('/api/billing/tier');
+    USER_TIER = t.tier;
+    TIER_FEATURES = t.features || {};
+    decorateLocks();
+    renderTierBadge();
+  } catch(e) { /* not authed yet — show everything as locked */ }
+}
+
+function renderTierBadge(){
+  const el = document.getElementById('tier-badge');
+  if (!el || !USER_TIER) return;
+  if (USER_TIER === 'admin') {
+    el.innerHTML = '<span class="tier-pill wealth">ADMIN</span>';
+  } else {
+    el.innerHTML = `<span class="tier-pill ${USER_TIER}">${USER_TIER.toUpperCase()}</span>`;
+  }
+}
+
+function decorateLocks(){
+  document.querySelectorAll('[data-feature]').forEach(el => {
+    const feat = el.dataset.feature;
+    const allowed = TIER_FEATURES[feat];
+    if (allowed) {
+      el.classList.remove('locked');
+      // Hide tier pills inside this element since user already has access.
+      el.querySelectorAll('.tier-pill').forEach(p => p.style.display = 'none');
+      return;
+    }
+    if (!el.classList.contains('locked')) {
+      el.classList.add('locked');
+      // Intercept clicks on the locked region to show the upgrade modal.
+      el.addEventListener('click', (ev) => {
+        if (el.classList.contains('locked')) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          showUpgradeModal(feat);
+        }
+      }, true);  // capture phase: runs before bubbling
+    }
+  });
+}
+
+const FEATURE_NAMES = {
+  exchange_connect: 'Connect Coinbase or Kraken to enable live execution',
+  live_execution: 'Turn dry-run mode off and place real orders',
+  tax_harvest_execute: 'One-click tax-loss harvest',
+  tax_form_8949: 'Download Form 8949 CSV',
+  strategy_publish: 'Publish strategies to the marketplace',
+  extra_strategy_subs: 'Subscribe to more than 3 strategies',
+  multi_exchange: 'Link both Coinbase and Kraken at once',
+};
+
+const FEATURE_TIER = {
+  exchange_connect: 'Pro', live_execution: 'Pro', tax_harvest_execute: 'Pro',
+  tax_form_8949: 'Pro', strategy_publish: 'Pro',
+  extra_strategy_subs: 'Wealth', multi_exchange: 'Wealth',
+};
+
+function showUpgradeModal(feature){
+  const tier = FEATURE_TIER[feature] || 'Pro';
+  document.getElementById('up-tier').textContent = tier;
+  document.getElementById('up-feature-desc').textContent =
+    FEATURE_NAMES[feature] || 'Unlock this feature with a higher tier.';
+  document.getElementById('upgrade-modal').classList.add('open');
+}
+
+document.getElementById('up-cancel').onclick = () => {
+  document.getElementById('upgrade-modal').classList.remove('open');
+};
+document.getElementById('up-go').onclick = () => {
+  window.location.href = '/pricing';
+};
+
+// ── Referrals ──────────────────────────────────────────────────────────────
+
+function getAnonId() {
+  let id = document.cookie.split('; ').find(c => c.startsWith('narve_aid='));
+  if (id) return id.split('=')[1];
+  const newId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+              : Math.random().toString(36).substring(2) + Date.now();
+  document.cookie = `narve_aid=${newId}; max-age=7776000; path=/; samesite=lax`;
+  return newId;
+}
+
+async function captureReferralOnLoad(){
+  const params = new URLSearchParams(window.location.search);
+  const ref = params.get('ref');
+  if (!ref) return;
+  try {
+    await fetch('/api/referrals/track', {
+      method:'POST', credentials:'include',
+      headers: {'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({code: ref, anon_id: getAnonId(), source: 'long_term'}),
+    });
+  } catch(e) {}
+  // Bind to user_id if we're already authenticated.
+  try {
+    await fetch('/api/referrals/bind', {
+      method:'POST', credentials:'include',
+      headers: {'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({anon_id: getAnonId()}),
+    });
+  } catch(e) {}
+}
+
+async function loadReferrals(){
+  const linkEl = document.getElementById('ref-link');
+  if (!linkEl) return;
+  try {
+    const r = await api('/api/referrals/mine');
+    linkEl.value = r.share_url || '';
+    document.getElementById('ref-visits').textContent = r.visit_count ?? 0;
+    document.getElementById('ref-signups').textContent = r.signup_count ?? 0;
+    document.getElementById('ref-conv').textContent = r.conversion_count ?? 0;
+    const earnedDollars = (r.lifetime_payout_cents || 0) / 100;
+    document.getElementById('ref-earned').textContent = '$' + earnedDollars.toFixed(2);
+  } catch(e) { /* free user with no code yet — silent */ }
+}
+
+document.getElementById('ref-copy').addEventListener('click', async () => {
+  const link = document.getElementById('ref-link');
+  link.select();
+  try {
+    await navigator.clipboard.writeText(link.value);
+    document.getElementById('ref-copy').textContent = 'Copied!';
+    setTimeout(() => { document.getElementById('ref-copy').textContent = 'Copy'; }, 1500);
+  } catch(e) {
+    document.execCommand('copy');
+  }
+});
+
+// Extend loadExecution to also load referrals (they live in that tab).
+const _origLoadExec = loadExecution;
+loadExecution = async function(){
+  await _origLoadExec();
+  await loadReferrals();
+};
+
 // ── Onboarding wizard ──────────────────────────────────────────────────────
 
 const ONB_TITLES = {
@@ -8218,6 +8594,8 @@ document.getElementById('onb-skip').onclick = async () => {
   document.getElementById('onboarding-overlay').hidden = true;
 };
 
+loadTier();
+captureReferralOnLoad();
 loadOnboarding();
 loadOverview();
 </script>

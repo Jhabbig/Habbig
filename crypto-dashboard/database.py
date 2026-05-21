@@ -512,6 +512,45 @@ CREATE TABLE IF NOT EXISTS crypto_billing (
 );
 CREATE INDEX IF NOT EXISTS idx_billing_customer ON crypto_billing(stripe_customer_id);
 
+-- ── Referrals ───────────────────────────────────────────────────────────────
+-- One stable code per user (the code is the PK so lookups are O(1)).
+CREATE TABLE IF NOT EXISTS crypto_referral_codes (
+    code        TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Anonymous visits — recorded when someone hits `?ref=CODE` before signup.
+-- The `anon_id` is a session cookie value we set client-side.
+CREATE TABLE IF NOT EXISTS crypto_referral_visits (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    referrer_user_id    TEXT NOT NULL,
+    referral_code       TEXT NOT NULL,
+    anon_id             TEXT NOT NULL,
+    source              TEXT DEFAULT 'link',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ref_visits_anon ON crypto_referral_visits(anon_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ref_visits_referrer ON crypto_referral_visits(referrer_user_id);
+
+-- Bound attributions — one row per referred user after signup. Immutable
+-- linkage; only the conversion fields get updated later.
+CREATE TABLE IF NOT EXISTS crypto_referral_attributions (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    referred_user_id       TEXT NOT NULL UNIQUE,
+    referrer_user_id       TEXT NOT NULL,
+    referral_code          TEXT NOT NULL,
+    source                 TEXT DEFAULT 'link',
+    recorded_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    converted_at           TEXT,
+    conversion_tier        TEXT,
+    conversion_value_cents INTEGER DEFAULT 0,
+    payout_owed_cents      INTEGER DEFAULT 0,
+    payout_status          TEXT DEFAULT 'pending'  -- pending | paid | clawed_back
+);
+CREATE INDEX IF NOT EXISTS idx_ref_attr_referrer ON crypto_referral_attributions(referrer_user_id);
+CREATE INDEX IF NOT EXISTS idx_ref_attr_converted ON crypto_referral_attributions(converted_at);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2292,6 +2331,142 @@ def get_users_due_for_digest(today_dow: int, debounce_days: int = 6) -> list[dic
             (today_dow, cutoff),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Referrals ───────────────────────────────────────────────────────────────
+
+def get_referral_code(user_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT code, created_at FROM crypto_referral_codes WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_referral_by_code(code: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT user_id, created_at FROM crypto_referral_codes WHERE code = ?",
+            (code,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def try_insert_referral_code(user_id: str, code: str) -> bool:
+    """Insert IGNORE on (code, user_id). Returns True if the row was new
+    (i.e. no collision on either column). Caller retries on False."""
+    try:
+        with _conn() as c:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO crypto_referral_codes (code, user_id) VALUES (?, ?)",
+                (code, user_id),
+            )
+            return cur.rowcount > 0
+    except Exception:
+        return False
+
+
+def insert_referral_visit(referrer_user_id: str, anon_id: str,
+                          referral_code: str, source: str) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_referral_visits
+                 (referrer_user_id, anon_id, referral_code, source)
+               VALUES (?, ?, ?, ?)""",
+            (referrer_user_id, anon_id, referral_code, source),
+        )
+        return int(cur.lastrowid)
+
+
+def get_latest_unbound_visit(anon_id: str) -> Optional[dict]:
+    """Return the most recent visit for an anon_id that hasn't already been
+    promoted to an attribution. Used at signup-time."""
+    with _conn() as c:
+        row = c.execute(
+            """SELECT id, referrer_user_id, referral_code, source
+               FROM crypto_referral_visits
+               WHERE anon_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (anon_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_referral_visit(visit_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM crypto_referral_visits WHERE id = ?", (visit_id,))
+
+
+def count_referral_visits(referrer_user_id: str) -> int:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM crypto_referral_visits WHERE referrer_user_id = ?",
+            (referrer_user_id,),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def insert_referral_attribution(referred_user_id: str, referrer_user_id: str,
+                                 referral_code: str, source: str) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_referral_attributions
+                 (referred_user_id, referrer_user_id, referral_code, source)
+               VALUES (?, ?, ?, ?)""",
+            (referred_user_id, referrer_user_id, referral_code, source),
+        )
+        return int(cur.lastrowid)
+
+
+def get_attribution_by_referred(referred_user_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            """SELECT * FROM crypto_referral_attributions
+               WHERE referred_user_id = ?""",
+            (referred_user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_attributions_by_referrer(referrer_user_id: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT id, referred_user_id, referral_code, source, recorded_at,
+                      converted_at, conversion_tier, conversion_value_cents,
+                      payout_owed_cents, payout_status
+               FROM crypto_referral_attributions
+               WHERE referrer_user_id = ?
+               ORDER BY recorded_at DESC""",
+            (referrer_user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_attribution_converted(attribution_id: int, conversion_tier: str,
+                                conversion_value_cents: int,
+                                payout_owed_cents: int) -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE crypto_referral_attributions
+               SET converted_at = datetime('now'),
+                   conversion_tier = ?,
+                   conversion_value_cents = ?,
+                   payout_owed_cents = ?
+               WHERE id = ?""",
+            (conversion_tier, conversion_value_cents, payout_owed_cents,
+             attribution_id),
+        )
+
+
+def update_attribution_tier(attribution_id: int, tier: str) -> None:
+    """User upgraded tier post-conversion; bump the recorded tier but don't
+    accrue another payout (payout cron handles ongoing months)."""
+    with _conn() as c:
+        c.execute(
+            "UPDATE crypto_referral_attributions SET conversion_tier = ? WHERE id = ?",
+            (tier, attribution_id),
+        )
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

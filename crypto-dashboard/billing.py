@@ -262,6 +262,13 @@ def _apply_checkout_completed(session: dict) -> dict:
         stripe_customer_id=customer, stripe_subscription_id=subscription_id,
         status="active", current_period_end=None,
     )
+    # Record referral conversion if there's a pending attribution. Lazy
+    # import avoids a circular dep — referrals only needs db.
+    try:
+        import referrals
+        referrals.record_conversion(user_id, tier)
+    except Exception as e:
+        log.warning("referral conversion record failed: %s", e)
     return {"ok": True, "user_id": user_id, "tier": tier}
 
 
