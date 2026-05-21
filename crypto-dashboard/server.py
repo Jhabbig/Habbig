@@ -477,6 +477,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(macro_refresher()))
     _bg_tasks.add(asyncio.create_task(execution_ticker()))
     _bg_tasks.add(asyncio.create_task(fill_poller_task()))
+    _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
     print("Server started. Loading data in background...")
@@ -524,6 +525,34 @@ async def macro_refresher():
         except Exception as e:
             print(f"[macro] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(12 * 3600)
+
+
+async def strategy_subscription_ticker():
+    """Drive live strategy subscriptions. Runs every 5 minutes; each due
+    subscription's `evaluate_today` output flows through the same safety
+    gauntlet the manual DCA executor uses."""
+    await asyncio.sleep(240)  # let everything else warm up first
+    while True:
+        try:
+            summary = await asyncio.to_thread(exec_mod.tick_subscriptions)
+            if summary["checked"]:
+                print(f"[strat-sub] {summary}")
+            # Push notification for each placed/blocked outcome.
+            for a in summary.get("actions", []):
+                if a.get("action") in ("placed", "blocked", "dry_run"):
+                    try:
+                        push_mod.notify_user(
+                            a["user_id"],
+                            title=f"Strategy run · {a.get('ticker', '')}",
+                            body=f"{a['action']}: {a.get('reason', '')}",
+                            url="/long-term#strategies",
+                            tag=f"strat-{a['strategy_id']}",
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[strat-sub] tick error: {type(e).__name__}: {e}")
+        await asyncio.sleep(300)
 
 
 async def fill_poller_task():
@@ -5918,6 +5947,169 @@ async def unfollow_strategy_api(strategy_id: int, request: Request):
     return {"ok": True}
 
 
+# ── Live subscriptions ──────────────────────────────────────────────────────
+
+@app.post("/api/long-term/strategies/{strategy_id}/subscribe")
+async def subscribe_strategy(strategy_id: int, request: Request):
+    """Subscribe to a public strategy. The subscription ticker evaluates the
+    rules every 5 min and routes the resulting buys through `_evaluate_leg`
+    (so dry-run / caps / circuit-breaker still apply)."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    s = await asyncio.to_thread(strat_mod.get_strategy, strategy_id, user["id"])
+    if not s:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    # Restrict subscription to public strategies OR the user's own.
+    if s["visibility"] != "public" and s["owner_user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Cannot subscribe to private strategy")
+    # First run = now (so the user sees an immediate dry-run result).
+    sub_id = await asyncio.to_thread(
+        db.upsert_strategy_subscription, user["id"], strategy_id,
+        datetime.now(timezone.utc).isoformat(),
+    )
+    return {"id": sub_id, "ok": True}
+
+
+@app.get("/api/long-term/subscriptions")
+async def list_subscriptions(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_strategy_subscriptions(user["id"])
+    return {"subscriptions": [dict(r) for r in rows]}
+
+
+@app.post("/api/long-term/subscriptions/{subscription_id}/pause")
+async def pause_subscription(subscription_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    paused = bool(payload.get("paused", True))
+    ok = db.set_strategy_subscription_paused(user["id"], subscription_id, paused)
+    if not ok:
+        raise HTTPException(status_code=404, detail="subscription not found")
+    return {"ok": True, "paused": paused}
+
+
+@app.delete("/api/long-term/subscriptions/{subscription_id}")
+async def delete_subscription(subscription_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = db.delete_strategy_subscription(user["id"], subscription_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="subscription not found")
+    return {"ok": True}
+
+
+@app.post("/api/long-term/subscriptions/{subscription_id}/run-now")
+async def run_subscription_now(subscription_id: int, request: Request):
+    """Manual trigger — useful for testing a fresh subscription."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    decisions = await asyncio.to_thread(
+        exec_mod.execute_subscription_now, user["id"], subscription_id,
+    )
+    return {"decisions": [d.to_dict() for d in decisions]}
+
+
+# ── Onboarding ──────────────────────────────────────────────────────────────
+
+ONBOARDING_STEPS = ["welcome", "jurisdiction", "exchange", "targets",
+                    "strategy", "push", "done"]
+
+
+@app.get("/api/onboarding/state")
+async def onboarding_state(request: Request):
+    """Returns the user's current onboarding step. The UI uses this to
+    decide whether to show the wizard or skip straight to the dashboard."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    row = db.get_onboarding(user["id"])
+    if not row:
+        return {"step": "welcome", "completed": False, "steps": ONBOARDING_STEPS}
+    return {
+        "step": row["step"],
+        "completed": bool(row["completed_at"]),
+        "settings": json.loads(row.get("settings_json") or "{}"),
+        "steps": ONBOARDING_STEPS,
+    }
+
+
+@app.post("/api/onboarding/advance")
+async def onboarding_advance(request: Request):
+    """Save the response for the current step and move to the next.
+    Body: {step: "...", payload: {...}}. The server validates the step name
+    and applies any side-effects (e.g. step=jurisdiction → upserts tax settings)."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    step = str(payload.get("step", ""))
+    if step not in ONBOARDING_STEPS:
+        raise HTTPException(status_code=400, detail=f"unknown step: {step}")
+    data = payload.get("payload") or {}
+
+    # Persist per-step settings + apply side-effects.
+    existing = db.get_onboarding(user["id"])
+    settings = json.loads(existing["settings_json"]) if existing else {}
+    settings[step] = data
+
+    if step == "jurisdiction":
+        # Pipe into the tax settings.
+        try:
+            tax_mod.update_tax_settings(user["id"], {
+                "jurisdiction": data.get("jurisdiction", "US"),
+                "default_lot_method": data.get("default_lot_method", "HIFO"),
+            })
+        except Exception as e:
+            log.warning("onboarding jurisdiction side-effect failed: %s", e)
+    elif step == "targets":
+        # Save target weights into the existing tax/portfolio path.
+        targets = data.get("targets") or []
+        for t in targets:
+            tk = str(t.get("ticker", "")).upper()
+            if tk not in lt.TICKER_MAP:
+                continue
+            w = max(0.0, min(1.0, float(t.get("weight", 0))))
+            if w > 0:
+                db.set_target_weight(user["id"], tk, w, 0.05)
+            else:
+                db.remove_target_weight(user["id"], tk)
+    elif step == "strategy":
+        # Optional: subscribe to a leaderboard strategy.
+        sid = data.get("strategy_id")
+        if sid:
+            try:
+                db.upsert_strategy_subscription(
+                    user["id"], int(sid),
+                    datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception as e:
+                log.warning("onboarding subscribe failed: %s", e)
+
+    # Compute next step.
+    idx = ONBOARDING_STEPS.index(step)
+    next_step = ONBOARDING_STEPS[idx + 1] if idx + 1 < len(ONBOARDING_STEPS) else "done"
+    completed = next_step == "done"
+    db.upsert_onboarding(user["id"], next_step, json.dumps(settings), completed=completed)
+    return {"step": next_step, "completed": completed}
+
+
+@app.post("/api/onboarding/skip")
+async def onboarding_skip(request: Request):
+    """Skip onboarding entirely. Marks completed without setting anything."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    db.upsert_onboarding(user["id"], "done", "{}", completed=True)
+    return {"ok": True}
+
+
 # ── HTML page ───────────────────────────────────────────────────────────────
 
 @app.get("/long-term", response_class=HTMLResponse)
@@ -6007,6 +6199,17 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 </head><body><div class="wrap">
 <h1>Long-term Holding</h1>
 <div class="sub">Cycle phase, fundamentals, drawdown — the lens for months/years, not minutes.</div>
+
+<div id="onboarding-overlay" hidden style="position:fixed;inset:0;background:rgba(10,13,18,.95);z-index:100;overflow-y:auto;padding:24px">
+  <div style="max-width:640px;margin:40px auto;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:1.1em;color:var(--text)">Quick setup</h2>
+      <button id="onb-skip" class="ghost" style="font-size:.8em">Skip for now</button>
+    </div>
+    <div id="onb-progress" style="display:flex;gap:4px;margin-bottom:16px"></div>
+    <div id="onb-content"></div>
+  </div>
+</div>
 
 <div class="tabs">
   <div class="tab active" data-tab="overview">Overview</div>
@@ -6223,6 +6426,10 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   </div>
 
   <div data-sub="mine">
+    <h3 style="font-size:1em;margin:14px 0 6px">Live subscriptions</h3>
+    <div class="note">Subscribed strategies run automatically every 5 minutes through the safety gauntlet (dry-run defaults still apply).</div>
+    <div id="sub-list" style="margin:8px 0 18px"></div>
+    <h3 style="font-size:1em;margin:14px 0 6px">My strategies</h3>
     <div id="my-list" style="margin-top:10px"></div>
   </div>
 
@@ -7168,7 +7375,50 @@ function resetEditor() {
   document.getElementById('st-msg').innerHTML = '';
 }
 
-function loadStrategies() { loadMyStrategies(); }
+function loadStrategies() { loadMyStrategies(); loadSubscriptions(); }
+
+async function loadSubscriptions(){
+  const out = document.getElementById('sub-list');
+  out.innerHTML = '<div style="color:var(--muted);font-size:.85em">Loading…</div>';
+  try {
+    const r = await api('/api/long-term/subscriptions');
+    if (!r.subscriptions.length) { out.innerHTML = '<div class="note">No live subscriptions yet — subscribe from the Leaderboard.</div>'; return; }
+    out.innerHTML = '';
+    for (const s of r.subscriptions) {
+      const card = document.createElement('div'); card.className = 'card';
+      const status = s.paused ? '<span class="r-watchful">paused</span>' : s.active ? '<span class="r-calm">active</span>' : '<span class="r-neutral">inactive</span>';
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:10px">
+          <div>
+            <h3 style="margin:0 0 4px">${s.strategy_name} ${status}</h3>
+            <div style="font-size:.85em;color:var(--muted)">${s.base_ticker} · last run: ${s.last_run_at || 'never'} · next: ${s.next_run_at || 'asap'}</div>
+            ${s.last_action ? `<div style="font-size:.85em;margin-top:4px">Last action: ${s.last_action}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="ghost" data-run="${s.id}">Run now</button>
+            <button class="ghost" data-pause="${s.id}" data-paused="${s.paused}">${s.paused ? 'Resume' : 'Pause'}</button>
+            <button class="ghost danger" data-delsub="${s.id}">Unsubscribe</button>
+          </div>
+        </div>`;
+      out.appendChild(card);
+    }
+    out.querySelectorAll('button[data-run]').forEach(b => b.onclick = async () => {
+      const r = await api('/api/long-term/subscriptions/'+b.dataset.run+'/run-now', {method:'POST'});
+      alert('Ran. ' + r.decisions.map(d => `${d.action}: ${d.reason}`).join(' | '));
+      loadSubscriptions();
+    });
+    out.querySelectorAll('button[data-pause]').forEach(b => b.onclick = async () => {
+      const paused = b.dataset.paused === 'true' || b.dataset.paused === '1';
+      await api('/api/long-term/subscriptions/'+b.dataset.pause+'/pause', {method:'POST', body: JSON.stringify({paused: !paused})});
+      loadSubscriptions();
+    });
+    out.querySelectorAll('button[data-delsub]').forEach(b => b.onclick = async () => {
+      if (!confirm('Unsubscribe?')) return;
+      await api('/api/long-term/subscriptions/'+b.dataset.delsub, {method:'DELETE'});
+      loadSubscriptions();
+    });
+  } catch(e) { out.innerHTML = `<div class="err">${e.message}</div>`; }
+}
 
 async function loadMyStrategies(){
   const out = document.getElementById('my-list');
@@ -7214,11 +7464,22 @@ async function loadLeaderboard(){
         <td class="loss">${pct(row.max_drawdown_pct)}</td>
         <td>${row.trade_count}</td>
         <td><b>${fmt(row.score,2)}</b></td>
-        <td><button class="ghost" data-fork="${row.id}">Fork</button></td>`;
+        <td><button class="ghost" data-fork="${row.id}">Fork</button>
+            <button data-sub="${row.id}">Subscribe</button></td>`;
       tbody.appendChild(tr);
     });
     tbody.querySelectorAll('button[data-fork]').forEach(b => b.onclick = () => forkStrategy(parseInt(b.dataset.fork)));
+    tbody.querySelectorAll('button[data-sub]').forEach(b => b.onclick = () => subscribeStrategy(parseInt(b.dataset.sub)));
   } catch(e) { tbody.innerHTML = `<tr><td colspan="10" class="err">${e.message}</td></tr>`; }
+}
+
+async function subscribeStrategy(id){
+  if (!confirm('Subscribe to this strategy?\n\nIt will run every 5 min through the safety gauntlet (dry-run mode applies until you explicitly turn it off).')) return;
+  try {
+    await api('/api/long-term/strategies/'+id+'/subscribe', {method:'POST'});
+    alert('Subscribed. Check the "My strategies" sub-tab for the live subscription card.');
+    loadMyStrategies();
+  } catch(e) { alert(e.message); }
 }
 
 async function loadMarketplace(){
@@ -7455,6 +7716,190 @@ loadExecution = async function(){
 // Register SW eagerly so the cache primes while the user browses.
 registerServiceWorker();
 
+// ── Onboarding wizard ──────────────────────────────────────────────────────
+
+const ONB_TITLES = {
+  welcome: 'Welcome',
+  jurisdiction: 'Tax setup',
+  exchange: 'Connect an exchange',
+  targets: 'Target weights',
+  strategy: 'Pick a strategy',
+  push: 'Notifications',
+  done: 'All set',
+};
+
+async function loadOnboarding(){
+  try {
+    const state = await api('/api/onboarding/state');
+    if (state.completed) return;  // skip wizard if already done
+    renderOnboarding(state);
+  } catch(e) { /* not authenticated or other issue — just skip */ }
+}
+
+function renderOnboarding(state){
+  const overlay = document.getElementById('onboarding-overlay');
+  overlay.hidden = false;
+  const steps = state.steps;
+  const idx = steps.indexOf(state.step);
+  // Progress bar
+  const prog = document.getElementById('onb-progress');
+  prog.innerHTML = '';
+  steps.forEach((s, i) => {
+    const seg = document.createElement('div');
+    seg.style.cssText = `flex:1;height:4px;border-radius:2px;background:${i <= idx ? 'var(--blue)' : 'var(--card2)'}`;
+    prog.appendChild(seg);
+  });
+
+  const content = document.getElementById('onb-content');
+  if (state.step === 'welcome') {
+    content.innerHTML = `
+      <p>CryptoEdge is a long-term holding workbench: cycle-aware DCA, on-chain analytics, tax-optimal selling, and live execution on Coinbase / Kraken.</p>
+      <p>This 5-minute setup wires the basics. Everything starts in <b>dry-run</b> — real orders never go out until you explicitly turn that off.</p>
+      <div class="actionrow" style="margin-top:14px"><button id="onb-next">Get started</button></div>`;
+    document.getElementById('onb-next').onclick = () => onbAdvance('welcome', {});
+    return;
+  }
+
+  if (state.step === 'jurisdiction') {
+    content.innerHTML = `
+      <p>Your jurisdiction picks the default lot-selection method (HIFO for US, Section 104 pool for UK, FIFO for DE) and the long-term capital-gains threshold.</p>
+      <div class="actionrow">
+        <div class="field"><label>Jurisdiction</label>
+          <select id="onb-jur"><option value="US">US</option><option value="UK">UK</option><option value="DE">DE</option></select>
+        </div>
+        <div class="field"><label>Default lot method</label>
+          <select id="onb-method">
+            <option value="HIFO">HIFO (minimise gain)</option>
+            <option value="FIFO">FIFO</option>
+            <option value="LIFO">LIFO</option>
+            <option value="POOL">Section 104 pool (UK)</option>
+            <option value="TAX_OPTIMAL">Tax-optimal heuristic</option>
+          </select>
+        </div>
+      </div>
+      <div class="actionrow" style="margin-top:14px"><button id="onb-next">Continue</button></div>`;
+    document.getElementById('onb-next').onclick = () => onbAdvance('jurisdiction', {
+      jurisdiction: document.getElementById('onb-jur').value,
+      default_lot_method: document.getElementById('onb-method').value,
+    });
+    return;
+  }
+
+  if (state.step === 'exchange') {
+    content.innerHTML = `
+      <p>Connecting an exchange enables auto-execution. You can skip and configure later in the Execution tab.</p>
+      <p class="note">Use API keys with <b>view + trade only</b> — never enable withdraw.</p>
+      <div class="actionrow">
+        <button id="onb-next">I'll do this later (skip)</button>
+        <button id="onb-go-exchange" class="ghost">Open Execution tab</button>
+      </div>`;
+    document.getElementById('onb-next').onclick = () => onbAdvance('exchange', {connected: false});
+    document.getElementById('onb-go-exchange').onclick = () => {
+      onbAdvance('exchange', {connected: false}).then(() => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        document.querySelector('[data-tab="execution"]').classList.add('active');
+        document.querySelectorAll('section').forEach(s => s.hidden = s.dataset.section !== 'execution');
+        loadExecution();
+      });
+    };
+    return;
+  }
+
+  if (state.step === 'targets') {
+    content.innerHTML = `
+      <p>Set portfolio target weights — the rebalance recommender will keep your holdings within drift bands. The defaults below are a "majors-only" allocation; tweak any row to 0 to drop an asset.</p>
+      <div id="onb-targets" class="grid"></div>
+      <div class="actionrow" style="margin-top:14px"><button id="onb-next">Continue</button></div>`;
+    const defaults = [['BTC', 0.50], ['ETH', 0.30], ['SOL', 0.15], ['DOGE', 0.0], ['XRP', 0.05]];
+    const grid = document.getElementById('onb-targets');
+    defaults.forEach(([tk, w]) => {
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = `<div class="field"><label>${tk} weight</label><input class="onb-w" data-ticker="${tk}" type="number" step="0.01" min="0" max="1" value="${w}"></div>`;
+      grid.appendChild(card);
+    });
+    document.getElementById('onb-next').onclick = () => {
+      const targets = [...document.querySelectorAll('.onb-w')].map(el => ({
+        ticker: el.dataset.ticker, weight: parseFloat(el.value || 0),
+      }));
+      const total = targets.reduce((a, b) => a + b.weight, 0);
+      if (total > 1.01) { alert(`Weights sum to ${total.toFixed(2)}, must be ≤ 1.0`); return; }
+      onbAdvance('targets', {targets});
+    };
+    return;
+  }
+
+  if (state.step === 'strategy') {
+    content.innerHTML = `<p>Pick a starter strategy from the leaderboard, or skip to author your own later.</p><div id="onb-lb" style="margin:10px 0"></div>
+      <div class="actionrow"><button id="onb-skip-strat">Skip</button></div>`;
+    document.getElementById('onb-skip-strat').onclick = () => onbAdvance('strategy', {});
+    api('/api/long-term/strategies/leaderboard').then(r => {
+      const lb = document.getElementById('onb-lb');
+      if (!r.leaderboard.length) { lb.innerHTML = '<div class="note">No public strategies yet — skip and build your own.</div>'; return; }
+      lb.innerHTML = '';
+      for (const s of r.leaderboard.slice(0, 5)) {
+        const card = document.createElement('div'); card.className = 'card';
+        card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><b>${s.name}</b> — ${s.base_ticker}<br>
+          <span style="font-size:.85em;color:var(--muted)">Return ${pct(s.total_return_pct)} · Sharpe ${fmt(s.sharpe,2)} · MaxDD ${pct(s.max_drawdown_pct)}</span></div>
+          <button data-onb-pick="${s.id}">Subscribe</button></div>`;
+        lb.appendChild(card);
+      }
+      lb.querySelectorAll('button[data-onb-pick]').forEach(b => b.onclick = () => {
+        onbAdvance('strategy', {strategy_id: parseInt(b.dataset.onbPick)});
+      });
+    }).catch(() => {});
+    return;
+  }
+
+  if (state.step === 'push') {
+    content.innerHTML = `
+      <p>Push notifications fire on cycle-indicator alerts, DCA fills, and the portfolio circuit breaker.</p>
+      <div class="actionrow"><button id="onb-push-yes">Enable push</button><button id="onb-push-no" class="ghost">Skip</button></div>
+      <div id="onb-push-msg" style="margin-top:8px"></div>`;
+    document.getElementById('onb-push-yes').onclick = async () => {
+      const msg = document.getElementById('onb-push-msg');
+      msg.textContent = ' requesting permission…';
+      try {
+        await pushEnable();
+        msg.textContent = '';
+        onbAdvance('push', {enabled: true});
+      } catch(e) { msg.innerHTML = '<span class="err">'+e.message+'</span>'; }
+    };
+    document.getElementById('onb-push-no').onclick = () => onbAdvance('push', {enabled: false});
+    return;
+  }
+
+  if (state.step === 'done') {
+    content.innerHTML = `<p>You're set up. The dashboard is loaded below this card. A few things to know:</p>
+      <ul>
+        <li><b>Dry-run is on by default</b> — flip it off in the Execution tab when you're ready.</li>
+        <li>The cycle-aware DCA recommender uses Mayer multiple + drawdown. Pause threshold is at Mayer 2.7.</li>
+        <li>The Strategies tab has a backtester. Public strategies appear on the leaderboard.</li>
+      </ul>
+      <div class="actionrow"><button id="onb-close">Open dashboard</button></div>`;
+    document.getElementById('onb-close').onclick = () => {
+      document.getElementById('onboarding-overlay').hidden = true;
+    };
+  }
+}
+
+async function onbAdvance(step, payload){
+  try {
+    const r = await api('/api/onboarding/advance', {method:'POST', body: JSON.stringify({step, payload})});
+    if (r.completed) {
+      document.getElementById('onboarding-overlay').hidden = true;
+      return;
+    }
+    renderOnboarding({...r, steps: ['welcome','jurisdiction','exchange','targets','strategy','push','done']});
+  } catch(e) { alert(e.message); }
+}
+
+document.getElementById('onb-skip').onclick = async () => {
+  await api('/api/onboarding/skip', {method:'POST'});
+  document.getElementById('onboarding-overlay').hidden = true;
+};
+
+loadOnboarding();
 loadOverview();
 </script>
 </div></body></html>

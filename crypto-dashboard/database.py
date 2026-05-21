@@ -466,6 +466,39 @@ CREATE TABLE IF NOT EXISTS crypto_strategy_follows (
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, strategy_id)
 );
+
+-- ── Onboarding state ────────────────────────────────────────────────────────
+-- One row per user that's started onboarding. Step is the *next* one they
+-- need to complete; completed_at is set when they hit the last step.
+CREATE TABLE IF NOT EXISTS crypto_user_onboarding (
+    user_id        TEXT PRIMARY KEY,
+    step           TEXT NOT NULL DEFAULT 'welcome',
+    settings_json  TEXT DEFAULT '{}',
+    completed_at   TEXT,
+    started_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Live strategy subscriptions ─────────────────────────────────────────────
+-- Subscribing chains a public strategy into the user's account. The
+-- subscription evaluator runs the strategy's rules each tick and routes
+-- the resulting buys/sells through _evaluate_leg (same safety gauntlet).
+-- Subscriptions are *isolated* from the user's manual DCA schedule so
+-- they don't overwrite each other.
+CREATE TABLE IF NOT EXISTS crypto_strategy_subscriptions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    strategy_id     INTEGER NOT NULL,
+    active          INTEGER NOT NULL DEFAULT 1,
+    paused          INTEGER NOT NULL DEFAULT 0,
+    last_run_at     TEXT,
+    next_run_at     TEXT,
+    last_action     TEXT DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, strategy_id)
+);
+CREATE INDEX IF NOT EXISTS idx_strat_subs_user ON crypto_strategy_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_strat_subs_active ON crypto_strategy_subscriptions(active, next_run_at);
 """
 
 
@@ -2012,6 +2045,118 @@ def leaderboard_data(limit: int) -> list[Row]:
             (limit,),
         ).fetchall()
     return _rows(rows)
+
+
+# ── Onboarding ──────────────────────────────────────────────────────────────
+
+def get_onboarding(user_id: str) -> Optional[Row]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM crypto_user_onboarding WHERE user_id = ?", (user_id,),
+        ).fetchone()
+    return _row(row)
+
+
+def upsert_onboarding(user_id: str, step: str, settings_json: str = "{}",
+                      completed: bool = False) -> None:
+    completed_at = "datetime('now')" if completed else "NULL"
+    with _conn() as c:
+        c.execute(
+            f"""INSERT INTO crypto_user_onboarding
+                  (user_id, step, settings_json, completed_at, updated_at)
+                VALUES (?, ?, ?, {completed_at}, datetime('now'))
+                ON CONFLICT(user_id) DO UPDATE SET
+                  step = excluded.step,
+                  settings_json = excluded.settings_json,
+                  completed_at = COALESCE(crypto_user_onboarding.completed_at, excluded.completed_at),
+                  updated_at = datetime('now')""",
+            (user_id, step, settings_json),
+        )
+
+
+# ── Strategy subscriptions ──────────────────────────────────────────────────
+
+def upsert_strategy_subscription(user_id: str, strategy_id: int,
+                                 next_run_at: str | None = None) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_strategy_subscriptions
+                 (user_id, strategy_id, next_run_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(user_id, strategy_id) DO UPDATE SET
+                 active = 1, paused = 0,
+                 next_run_at = COALESCE(?, crypto_strategy_subscriptions.next_run_at)""",
+            (user_id, strategy_id, next_run_at, next_run_at),
+        )
+        # ON CONFLICT doesn't return a new lastrowid; look it up.
+        if cur.lastrowid:
+            return int(cur.lastrowid)
+        row = c.execute(
+            "SELECT id FROM crypto_strategy_subscriptions WHERE user_id = ? AND strategy_id = ?",
+            (user_id, strategy_id),
+        ).fetchone()
+        return int(row["id"]) if row else 0
+
+
+def get_strategy_subscriptions(user_id: str) -> list[Row]:
+    """Subscriptions for one user, joined with strategy name + visibility."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT sub.*, s.name AS strategy_name, s.base_ticker, s.visibility
+               FROM crypto_strategy_subscriptions sub
+               JOIN crypto_strategies s ON s.id = sub.strategy_id
+               WHERE sub.user_id = ? ORDER BY sub.created_at DESC""",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def get_due_strategy_subscriptions() -> list[Row]:
+    """All active, unpaused subscriptions whose next_run_at <= now."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT sub.*, s.rules_json, s.name AS strategy_name, s.base_ticker
+               FROM crypto_strategy_subscriptions sub
+               JOIN crypto_strategies s ON s.id = sub.strategy_id
+               WHERE sub.active = 1 AND sub.paused = 0
+                 AND (sub.next_run_at IS NULL OR sub.next_run_at <= ?)""",
+            (now,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def update_strategy_subscription_run(subscription_id: int, next_run_at: str,
+                                     last_action: str = "") -> None:
+    with _conn() as c:
+        c.execute(
+            """UPDATE crypto_strategy_subscriptions
+               SET last_run_at = datetime('now'),
+                   next_run_at = ?,
+                   last_action = ?
+               WHERE id = ?""",
+            (next_run_at, last_action[:200], subscription_id),
+        )
+
+
+def set_strategy_subscription_paused(user_id: str, subscription_id: int,
+                                     paused: bool) -> bool:
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE crypto_strategy_subscriptions SET paused = ? "
+            "WHERE id = ? AND user_id = ?",
+            (1 if paused else 0, subscription_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def delete_strategy_subscription(user_id: str, subscription_id: int) -> bool:
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM crypto_strategy_subscriptions WHERE id = ? AND user_id = ?",
+            (subscription_id, user_id),
+        )
+        return cur.rowcount > 0
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

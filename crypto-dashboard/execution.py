@@ -33,10 +33,13 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import json
+
 import database as db
 import exchanges as ex
 import long_term as lt
 import tax as tax_mod
+import strategy as strat_mod
 
 log = logging.getLogger("crypto.execution")
 
@@ -527,6 +530,84 @@ def reconcile_open_orders(user_id: str) -> int:
 
 
 # ─── Preview ────────────────────────────────────────────────────────────────
+
+# ─── Live strategy subscriptions ────────────────────────────────────────────
+
+def execute_subscription_now(user_id: str, subscription_id: int) -> list[ExecutionDecision]:
+    """Manually run one subscription. The cron loop calls this for every
+    due subscription on each tick."""
+    subs = db.get_strategy_subscriptions(user_id)
+    sub = next((s for s in subs if s["id"] == subscription_id), None)
+    if not sub:
+        return [ExecutionDecision(
+            "skipped", "subscription not found", "", "—", "buy",
+            0.0, None, None, "",
+        )]
+    return _run_subscription(sub)
+
+
+def _run_subscription(sub) -> list[ExecutionDecision]:
+    """Internal: evaluate one subscription's strategy and execute the
+    resulting actions through `_evaluate_leg`. Updates next_run_at on
+    success."""
+    user_id = sub["user_id"]
+    try:
+        rules = json.loads(sub["rules_json"])
+    except (json.JSONDecodeError, TypeError):
+        return [ExecutionDecision(
+            "skipped", "malformed strategy rules", sub.get("base_ticker", ""),
+            "—", "buy", 0.0, None, None, "",
+        )]
+    strategy = strat_mod.Strategy.from_dict(rules)
+    actions = strat_mod.evaluate_today(strategy)
+    safety = get_safety_for(user_id)
+    decisions: list[ExecutionDecision] = []
+    last_action_summary = ""
+    for a in actions:
+        if a.kind == "buy":
+            d = _evaluate_leg(user_id, a.ticker, "buy", a.usd_amount, safety,
+                              client_order_id=f"narve-sub{sub['id']}-{uuid.uuid4().hex[:8]}")
+            decisions.append(d)
+            last_action_summary = f"{d.action}: {a.reason}"
+        elif a.kind == "pause":
+            d = ExecutionDecision(
+                "skipped", f"strategy paused: {a.reason}",
+                a.ticker, safety["preferred_exchange"], "buy",
+                0.0, None, None, "",
+            )
+            decisions.append(d)
+            last_action_summary = d.reason
+        else:
+            last_action_summary = a.reason
+
+    # Advance the schedule even if we skipped, so we don't hot-loop.
+    next_at = strat_mod.next_run_after(strategy).isoformat()
+    db.update_strategy_subscription_run(sub["id"], next_at, last_action_summary)
+    return decisions
+
+
+def tick_subscriptions() -> dict:
+    """Cron entry. Find every subscription whose next_run_at is in the past
+    and run its strategy through the safety gauntlet. Mirrors
+    `tick_due_schedules()` but for strategy subscriptions."""
+    due = db.get_due_strategy_subscriptions()
+    summary = {"checked": len(due), "actions": []}
+    for sub in due:
+        try:
+            decisions = _run_subscription(sub)
+            for d in decisions:
+                summary["actions"].append({
+                    "user_id": sub["user_id"], "strategy_id": sub["strategy_id"],
+                    "ticker": d.ticker, "action": d.action, "reason": d.reason,
+                })
+        except Exception as e:
+            log.warning("subscription tick failed for sub %s: %s", sub["id"], e)
+            summary["actions"].append({
+                "user_id": sub["user_id"], "strategy_id": sub["strategy_id"],
+                "action": "error", "reason": str(e),
+            })
+    return summary
+
 
 def preview_dca(user_id: str) -> list[dict]:
     """Same as tick_due_schedules but without actually executing — shows the

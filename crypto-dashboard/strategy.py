@@ -440,3 +440,71 @@ def _strategy_row_to_dict(row) -> dict:
         "created_at": row["created_at"], "updated_at": row["updated_at"],
         "latest_backtest": dict(latest_backtest) if latest_backtest else None,
     }
+
+
+# ─── Live evaluation (used by the subscription ticker) ──────────────────────
+
+@dataclass
+class StrategyAction:
+    kind: str          # buy | hold | pause
+    ticker: str
+    usd_amount: float
+    reason: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _last_close_and_mayer(ticker: str) -> tuple[Optional[float], Optional[float], float]:
+    """Returns (price, mayer, current_dd) using the daily-bar table."""
+    _, closes = lt.get_daily_closes(ticker, days=365)
+    if len(closes) == 0:
+        return None, None, 0.0
+    price = float(closes[-1])
+    mayer = None
+    if len(closes) >= 200:
+        ma200 = float(np.mean(closes[-200:]))
+        if ma200 > 0:
+            mayer = price / ma200
+    peak = float(np.max(closes))
+    current_dd = (price - peak) / peak if peak > 0 else 0.0
+    return price, mayer, current_dd
+
+
+def evaluate_today(strategy: Strategy, now: Optional[datetime] = None) -> list[StrategyAction]:
+    """Return the actions the strategy would take RIGHT NOW. Doesn't touch
+    the portfolio; the caller (the subscription ticker) routes any actions
+    through the live executor with all the existing safety rails.
+
+    First cut: DCA-only. Harvest + rebalance are evaluated by the existing
+    Phase 3 / Phase 2 machinery; the subscription ticker calls them
+    separately on the same cadence."""
+    actions: list[StrategyAction] = []
+    now = now or datetime.now(timezone.utc)
+    if not strategy.dca_enabled:
+        return [StrategyAction("hold", strategy.base_ticker, 0.0, "DCA disabled")]
+
+    # Cadence gate. We rely on the subscription's `next_run_at` to gate the
+    # call entirely (the ticker only invokes this when due), so here we
+    # just compute the multiplier and amount.
+    price, mayer, dd = _last_close_and_mayer(strategy.base_ticker)
+    if price is None:
+        return [StrategyAction("hold", strategy.base_ticker, 0.0, "no price data")]
+
+    mult, reason = _multiplier_for(strategy, mayer, dd)
+    amount = strategy.dca_amount_usd * mult
+    if amount <= 0:
+        return [StrategyAction("pause", strategy.base_ticker, 0.0, reason)]
+    return [StrategyAction("buy", strategy.base_ticker, round(amount, 2), reason)]
+
+
+def next_run_after(strategy: Strategy, from_ts: Optional[datetime] = None) -> datetime:
+    """Compute the next scheduled DCA timestamp for this strategy."""
+    base = from_ts or datetime.now(timezone.utc)
+    if strategy.dca_frequency == "daily":
+        return base + timedelta(days=1)
+    if strategy.dca_frequency == "weekly":
+        return base + timedelta(days=7)
+    if strategy.dca_frequency == "monthly":
+        return base + timedelta(days=30)
+    return base + timedelta(days=7)
