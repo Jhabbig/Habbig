@@ -549,7 +549,46 @@ CREATE TABLE IF NOT EXISTS crypto_referral_attributions (
     payout_status          TEXT DEFAULT 'pending'  -- pending | paid | clawed_back
 );
 CREATE INDEX IF NOT EXISTS idx_ref_attr_referrer ON crypto_referral_attributions(referrer_user_id);
-CREATE INDEX IF NOT EXISTS idx_ref_attr_converted ON crypto_referral_attributions(converted_at);
+-- ── News (Bloomberg-style entity-tagged feed + alert rules) ────────────────
+CREATE TABLE IF NOT EXISTS crypto_news_items (
+    id            TEXT PRIMARY KEY,         -- 16-char URL hash
+    source        TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    url           TEXT NOT NULL,
+    published_at  TEXT,
+    body_snippet  TEXT DEFAULT '',
+    sentiment     REAL DEFAULT 0,
+    topics        TEXT DEFAULT '',          -- CSV
+    tickers       TEXT DEFAULT '',
+    regulators    TEXT DEFAULT '',
+    entities      TEXT DEFAULT '',
+    tags          TEXT DEFAULT '',
+    scraped_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_news_scraped ON crypto_news_items(scraped_at DESC);
+CREATE INDEX IF NOT EXISTS idx_news_source ON crypto_news_items(source, scraped_at DESC);
+
+CREATE TABLE IF NOT EXISTS crypto_news_alert_rules (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    query_json    TEXT NOT NULL DEFAULT '{}',
+    notify_push   INTEGER NOT NULL DEFAULT 1,
+    notify_email  INTEGER NOT NULL DEFAULT 0,
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_news_rules_user ON crypto_news_alert_rules(user_id);
+
+CREATE TABLE IF NOT EXISTS crypto_news_alert_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id     INTEGER NOT NULL,
+    user_id     TEXT NOT NULL,
+    news_id     TEXT NOT NULL,
+    fired_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(rule_id, news_id)
+);
+CREATE INDEX IF NOT EXISTS idx_news_history_user ON crypto_news_alert_history(user_id, fired_at DESC);
 
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
@@ -2467,6 +2506,176 @@ def update_attribution_tier(attribution_id: int, tier: str) -> None:
             "UPDATE crypto_referral_attributions SET conversion_tier = ? WHERE id = ?",
             (tier, attribution_id),
         )
+
+
+# ── News items + alert rules ────────────────────────────────────────────────
+
+def upsert_news_items(rows: list[tuple]) -> dict:
+    """Insert news items. Returns {new_ids: [...]} so the caller can fire
+    alerts only on truly new items (RSS feeds repeat items every refresh).
+    rows: (id, source, title, url, published_at, body_snippet, sentiment,
+           topics, tickers, regulators, entities, tags)."""
+    if not rows:
+        return {"new_ids": []}
+    new_ids = []
+    with _conn() as c:
+        for r in rows:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO crypto_news_items
+                     (id, source, title, url, published_at, body_snippet,
+                      sentiment, topics, tickers, regulators, entities, tags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                r,
+            )
+            if cur.rowcount > 0:
+                new_ids.append(r[0])
+    return {"new_ids": new_ids}
+
+
+def get_news_items(filters: dict, limit: int = 50) -> list[Row]:
+    """Query news with filters. Tickers / regulators / topics are CSV
+    columns; we use LIKE with '%' boundaries and a comma to match exactly
+    one CSV entry without matching substrings (e.g. ',SEC,' won't match
+    ',SECTOR,')."""
+    sql = "SELECT * FROM crypto_news_items WHERE 1=1"
+    params: list = []
+
+    def _csv_match(col: str, needles: list[str]) -> tuple[str, list]:
+        # Any-of match across the CSV column.
+        sub = []
+        sub_params: list = []
+        for n in needles:
+            sub.append(f"',' || {col} || ',' LIKE ?")
+            sub_params.append(f"%,{n},%")
+        return "(" + " OR ".join(sub) + ")", sub_params
+
+    for col in ("tickers", "regulators", "topics", "sources"):
+        vals = filters.get(col)
+        if not vals:
+            continue
+        if not isinstance(vals, list):
+            continue
+        if col == "sources":
+            # `source` is a single-value column, not CSV.
+            placeholders = ",".join("?" * len(vals))
+            sql += f" AND source IN ({placeholders})"
+            params.extend(vals)
+        else:
+            clause, sub_params = _csv_match(col, vals)
+            sql += " AND " + clause
+            params.extend(sub_params)
+
+    if filters.get("since"):
+        sql += " AND scraped_at >= ?"
+        params.append(str(filters["since"]))
+    if filters.get("min_sentiment") is not None:
+        sql += " AND sentiment >= ?"
+        params.append(float(filters["min_sentiment"]))
+    if filters.get("max_sentiment") is not None:
+        sql += " AND sentiment <= ?"
+        params.append(float(filters["max_sentiment"]))
+    if filters.get("q"):
+        sql += " AND (title LIKE ? OR body_snippet LIKE ?)"
+        like = f"%{filters['q']}%"
+        params.extend([like, like])
+
+    sql += " ORDER BY scraped_at DESC LIMIT ?"
+    params.append(int(limit))
+    with _conn() as c:
+        rows = c.execute(sql, params).fetchall()
+    return _rows(rows)
+
+
+def get_active_news_alert_rules() -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT id, user_id, name, query_json, notify_push, notify_email
+               FROM crypto_news_alert_rules WHERE active = 1"""
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["notify_push"] = bool(d["notify_push"])
+        d["notify_email"] = bool(d["notify_email"])
+        out.append(d)
+    return out
+
+
+def get_user_news_alert_rules(user_id: str) -> list[Row]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT id, name, query_json, notify_push, notify_email,
+                      active, created_at
+               FROM crypto_news_alert_rules
+               WHERE user_id = ? ORDER BY created_at DESC""",
+            (user_id,),
+        ).fetchall()
+    return _rows(rows)
+
+
+def insert_news_alert_rule(user_id: str, name: str, query_json: str,
+                            notify_push: bool, notify_email: bool) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO crypto_news_alert_rules
+                 (user_id, name, query_json, notify_push, notify_email)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, name[:120], query_json,
+             1 if notify_push else 0, 1 if notify_email else 0),
+        )
+        return int(cur.lastrowid)
+
+
+def update_news_alert_rule(user_id: str, rule_id: int, active: bool) -> bool:
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE crypto_news_alert_rules SET active = ? "
+            "WHERE id = ? AND user_id = ?",
+            (1 if active else 0, rule_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def delete_news_alert_rule(user_id: str, rule_id: int) -> bool:
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM crypto_news_alert_rules WHERE id = ? AND user_id = ?",
+            (rule_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def insert_news_alert_history(rule_id: int, user_id: str, news_id: str) -> bool:
+    """Insert OR IGNORE — the UNIQUE(rule_id, news_id) constraint enforces
+    one fire per (rule, item). Returns True if a new history row was created."""
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT OR IGNORE INTO crypto_news_alert_history
+                 (rule_id, user_id, news_id)
+               VALUES (?, ?, ?)""",
+            (rule_id, user_id, news_id),
+        )
+        return cur.rowcount > 0
+
+
+def has_alert_fired(rule_id: int, news_id: str) -> bool:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM crypto_news_alert_history "
+            "WHERE rule_id = ? AND news_id = ? LIMIT 1",
+            (rule_id, news_id),
+        ).fetchone()
+    return row is not None
+
+
+def count_user_news_alert_rules(user_id: str) -> int:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM crypto_news_alert_rules "
+            "WHERE user_id = ? AND active = 1",
+            (user_id,),
+        ).fetchone()
+    return int(row["n"]) if row else 0
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────

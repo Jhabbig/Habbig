@@ -46,6 +46,7 @@ import strategy as strat_mod
 import billing as billing_mod
 import digest as digest_mod
 import referrals as ref_mod
+import news as news_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -499,6 +500,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(execution_ticker()))
     _bg_tasks.add(asyncio.create_task(fill_poller_task()))
     _bg_tasks.add(asyncio.create_task(digest_cron_task()))
+    _bg_tasks.add(asyncio.create_task(news_refresher()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -547,6 +549,21 @@ async def macro_refresher():
         except Exception as e:
             print(f"[macro] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(12 * 3600)
+
+
+async def news_refresher():
+    """Pull RSS feeds every 7 minutes, persist new items, evaluate user
+    alert rules + fire pushes for matches. Errors are swallowed —
+    a single flaky source must not bring down the loop."""
+    await asyncio.sleep(45)
+    while True:
+        try:
+            summary = await asyncio.to_thread(news_mod.refresh_news)
+            if summary.get("new"):
+                print(f"[news] {summary}")
+        except Exception as e:
+            print(f"[news] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(7 * 60)
 
 
 async def digest_cron_task():
@@ -6495,6 +6512,154 @@ document.getElementById('run-it').onclick = async () => {{
 </div></body></html>"""
 
 
+# ===================================================================
+# NEWS — entity-tagged real-time feed + alert rules (Bloomberg-style)
+# ===================================================================
+
+# Free users: up to 3 active rules. Pro: 15. Wealth: 100.
+_NEWS_RULE_LIMITS = {"free": 3, "pro": 15, "wealth": 100, "admin": 100}
+
+
+@app.get("/api/news/feed")
+async def news_feed(request: Request,
+                    tickers: str | None = None,
+                    regulators: str | None = None,
+                    topics: str | None = None,
+                    sources: str | None = None,
+                    min_sentiment: float | None = None,
+                    max_sentiment: float | None = None,
+                    q: str | None = None,
+                    limit: int = 50):
+    """Paginated news feed. All filters optional — none = recent news,
+    newest first. CSV-list params (tickers, regulators, topics, sources)."""
+    def _split(v: str | None) -> list[str]:
+        return [x.strip() for x in (v or "").split(",") if x.strip()]
+    # Validate against known keys so an attacker can't smuggle arbitrary
+    # strings into the LIKE pattern.
+    valid_tickers = [t for t in _split(tickers) if t in news_mod.VALID_TICKER_KEYS]
+    valid_regs = [r for r in _split(regulators) if r in news_mod.VALID_REGULATOR_KEYS]
+    valid_topics = [t for t in _split(topics) if t in news_mod.VALID_TOPIC_KEYS]
+    valid_sources = [s for s in _split(sources)
+                     if s in {sid for sid, _, _, _ in news_mod.RSS_SOURCES}]
+    q_safe = (q or "")[:80] if q else None
+    filters = {
+        "tickers": valid_tickers, "regulators": valid_regs,
+        "topics": valid_topics, "sources": valid_sources,
+        "q": q_safe,
+        "min_sentiment": min_sentiment, "max_sentiment": max_sentiment,
+    }
+    items = await asyncio.to_thread(news_mod.list_news, filters, limit)
+    return {"items": items, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/news/refresh")
+async def news_force_refresh(request: Request):
+    """Force a refresh now. Admin / localhost only — full refresh hits
+    10 external RSS feeds and we don't want public abuse."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    is_local = client_host in ("127.0.0.1", "::1", "localhost")
+    if not is_local and not (user and user["tier"] == "admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    summary = await asyncio.to_thread(news_mod.refresh_news)
+    return summary
+
+
+@app.get("/api/news/dictionaries")
+async def news_dictionaries(request: Request):
+    """Expose the entity / topic / source key lists so the UI can render
+    proper dropdowns instead of free-text inputs (which would be both
+    worse UX and a bigger injection surface)."""
+    return {
+        "tickers": news_mod.VALID_TICKER_KEYS,
+        "regulators": news_mod.VALID_REGULATOR_KEYS,
+        "entities": news_mod.VALID_ENTITY_KEYS,
+        "topics": news_mod.VALID_TOPIC_KEYS,
+        "sources": [{"id": sid, "label": label}
+                    for sid, label, _, _ in news_mod.RSS_SOURCES],
+    }
+
+
+# ── Alert rules ─────────────────────────────────────────────────────────────
+
+@app.get("/api/news/rules")
+async def list_news_rules(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.get_user_news_alert_rules(user["id"])
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["query"] = json.loads(d.get("query_json") or "{}")
+        except (ValueError, TypeError):
+            d["query"] = {}
+        d["notify_push"] = bool(d["notify_push"])
+        d["notify_email"] = bool(d["notify_email"])
+        d["active"] = bool(d["active"])
+        d.pop("query_json", None)
+        out.append(d)
+    return {"rules": out, "limit": _NEWS_RULE_LIMITS.get(user["tier"], 3)}
+
+
+@app.post("/api/news/rules")
+async def create_news_rule(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    # Tier-gated rule count.
+    limit = _NEWS_RULE_LIMITS.get(user["tier"], 3)
+    existing = db.count_user_news_alert_rules(user["id"])
+    if existing >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Your {user['tier']} tier allows {limit} active alert rule(s).",
+        )
+    raw_query = payload.get("query") or {}
+    if not isinstance(raw_query, dict):
+        raise HTTPException(status_code=400, detail="query must be an object")
+    clean_query = news_mod.sanitize_rule_query(raw_query)
+    # Require at least one populated filter — empty rules would fire on
+    # every news item, drowning the user.
+    if not any(clean_query.values()):
+        raise HTTPException(status_code=400,
+                            detail="rule must specify at least one filter")
+    name = str(payload.get("name", "")).strip()[:120] or "untitled rule"
+    notify_push = bool(payload.get("notify_push", True))
+    notify_email = bool(payload.get("notify_email", False))
+    rule_id = db.insert_news_alert_rule(
+        user["id"], name, json.dumps(clean_query),
+        notify_push, notify_email,
+    )
+    return {"id": rule_id, "query": clean_query}
+
+
+@app.patch("/api/news/rules/{rule_id}")
+async def toggle_news_rule(rule_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    active = bool(payload.get("active", True))
+    ok = db.update_news_alert_rule(user["id"], rule_id, active)
+    if not ok:
+        raise HTTPException(status_code=404, detail="rule not found")
+    return {"ok": True, "active": active}
+
+
+@app.delete("/api/news/rules/{rule_id}")
+async def delete_news_rule(rule_id: int, request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = db.delete_news_alert_rule(user["id"], rule_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="rule not found")
+    return {"ok": True}
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -6807,6 +6972,7 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="tab" data-tab="execution">Execution</div>
   <div class="tab" data-tab="tax">Taxes</div>
   <div class="tab" data-tab="strategies">Strategies</div>
+  <div class="tab" data-tab="news">News</div>
 </div>
 
 <section data-section="overview">
@@ -7088,6 +7254,28 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   </div>
 </section>
 
+<section data-section="news" hidden>
+  <h2>News</h2>
+  <div class="note">Real-time feed of crypto press + regulator + macro headlines. Entities and topics auto-tagged. Set alert rules to get a push notification when anything matching fires.</div>
+
+  <div class="actionrow" style="flex-wrap:wrap;margin-top:8px">
+    <div class="field"><label>Search</label><input id="nf-q" type="text" placeholder="title or body…" style="min-width:160px"></div>
+    <div class="field"><label>Tickers</label><select id="nf-tickers" multiple style="min-width:120px;height:80px"></select></div>
+    <div class="field"><label>Regulators</label><select id="nf-regulators" multiple style="min-width:140px;height:80px"></select></div>
+    <div class="field"><label>Topics</label><select id="nf-topics" multiple style="min-width:120px;height:80px"></select></div>
+    <div class="field"><label>Sentiment ≥</label><input id="nf-min-sent" type="number" step="0.1" min="-1" max="1" placeholder="-1.0" style="width:90px"></div>
+    <div class="field"><label>Sentiment ≤</label><input id="nf-max-sent" type="number" step="0.1" min="-1" max="1" placeholder="1.0" style="width:90px"></div>
+    <button id="nf-apply">Apply</button>
+    <button id="nf-rule" class="ghost">Save as alert rule</button>
+  </div>
+
+  <h2 style="margin-top:18px">Feed</h2>
+  <div id="news-list" style="margin-top:8px"></div>
+
+  <h2 style="margin-top:18px">My alert rules <span id="nf-rule-count" style="font-size:.75em;color:var(--muted)"></span></h2>
+  <div id="news-rules" style="margin-top:8px"></div>
+</section>
+
 <section data-section="tax" hidden>
   <h2>Tax settings</h2>
   <div class="actionrow">
@@ -7209,6 +7397,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (which === 'execution') loadExecution();
   if (which === 'tax') loadTax();
   if (which === 'strategies') loadStrategies();
+  if (which === 'news') loadNews();
 });
 
 // Sub-tabs inside the Strategies section
@@ -8234,6 +8423,164 @@ function renderBacktest(r){
       ${r.final_qty != null ? `<div class="row"><span class="l">Final position</span><span class="v">${fmt(r.final_qty,6)} ${r.ticker || ''}, ${usd(r.final_cash_usd)} cash</span></div>` : ''}
       ${svg}
     </div>`;
+}
+
+// ── News tab ───────────────────────────────────────────────────────────────
+
+let NEWS_DICT = null;
+
+async function loadNews(){
+  if (!NEWS_DICT) {
+    try { NEWS_DICT = await api('/api/news/dictionaries'); }
+    catch(e) { NEWS_DICT = {tickers:[], regulators:[], topics:[], sources:[]}; }
+    populateFilterSelects();
+  }
+  await loadNewsFeed();
+  await loadNewsRules();
+}
+
+function populateFilterSelects(){
+  function fill(id, items, getLabel){
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '';
+    for (const it of items) {
+      const opt = document.createElement('option');
+      const v = typeof it === 'string' ? it : it.id;
+      opt.value = v;
+      opt.textContent = getLabel(it);
+      sel.appendChild(opt);
+    }
+  }
+  fill('nf-tickers', NEWS_DICT.tickers, x => x);
+  fill('nf-regulators', NEWS_DICT.regulators, x => x);
+  fill('nf-topics', NEWS_DICT.topics, x => x);
+}
+
+function readFilters(){
+  const sel = id => Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
+  return {
+    q: document.getElementById('nf-q').value || '',
+    tickers: sel('nf-tickers'),
+    regulators: sel('nf-regulators'),
+    topics: sel('nf-topics'),
+    min_sentiment: document.getElementById('nf-min-sent').value,
+    max_sentiment: document.getElementById('nf-max-sent').value,
+  };
+}
+
+function filtersToQS(f){
+  const p = new URLSearchParams();
+  if (f.q) p.set('q', f.q);
+  if (f.tickers.length) p.set('tickers', f.tickers.join(','));
+  if (f.regulators.length) p.set('regulators', f.regulators.join(','));
+  if (f.topics.length) p.set('topics', f.topics.join(','));
+  if (f.min_sentiment !== '') p.set('min_sentiment', f.min_sentiment);
+  if (f.max_sentiment !== '') p.set('max_sentiment', f.max_sentiment);
+  return p.toString();
+}
+
+async function loadNewsFeed(){
+  const out = document.getElementById('news-list');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const qs = filtersToQS(readFilters());
+    const r = await api('/api/news/feed' + (qs ? '?' + qs : ''));
+    if (!r.items.length) { out.innerHTML = '<div class="note">No news matching these filters. The refresher runs every 7 min on startup.</div>'; return; }
+    out.innerHTML = '';
+    for (const n of r.items) {
+      const sentColor = n.sentiment > 0.15 ? 'var(--green)' : n.sentiment < -0.15 ? 'var(--red)' : 'var(--muted)';
+      const sentLabel = n.sentiment > 0.3 ? 'bullish' : n.sentiment > 0.1 ? 'pos' :
+                       n.sentiment < -0.3 ? 'bearish' : n.sentiment < -0.1 ? 'neg' : '·';
+      const chips = [
+        ...(n.tickers || []).map(t => `<span class="pill p-expansion">${esc(t)}</span>`),
+        ...(n.regulators || []).map(r => `<span class="pill p-defensive">${esc(r)}</span>`),
+        ...(n.entities || []).filter(e => !(n.regulators || []).includes(e)).map(e => `<span class="pill p-neutral">${esc(e)}</span>`),
+      ].join(' ');
+      const topicChips = (n.topics || []).map(t => `<span class="pill" style="background:rgba(125,138,153,.15);color:var(--muted)">${esc(t)}</span>`).join(' ');
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.marginBottom = '8px';
+      // url is escaped to prevent javascript: injection via the link.
+      const urlSafe = /^https?:\/\//i.test(n.url) ? n.url : '#';
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:6px;font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">
+              <b>${esc(n.source)}</b> · ${esc(n.published_at || n.scraped_at)}
+              <span style="color:${sentColor}">· ${esc(sentLabel)} (${n.sentiment >= 0 ? '+' : ''}${(n.sentiment).toFixed(2)})</span>
+            </div>
+            <div style="margin:4px 0 6px;font-weight:600">
+              <a href="${esc(urlSafe)}" target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none">${esc(n.title)}</a>
+            </div>
+            <div style="font-size:.85em;color:var(--muted)">${esc(n.body_snippet)}</div>
+            <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${chips} ${topicChips}</div>
+          </div>
+        </div>`;
+      out.appendChild(card);
+    }
+  } catch(e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+document.getElementById('nf-apply').onclick = loadNewsFeed;
+
+document.getElementById('nf-rule').onclick = async () => {
+  const f = readFilters();
+  const query = {};
+  if (f.tickers.length) query.must_have_tickers = f.tickers;
+  if (f.regulators.length) query.must_have_entities = f.regulators;
+  if (f.topics.length) query.topics = f.topics;
+  if (f.min_sentiment !== '') query.min_sentiment = parseFloat(f.min_sentiment);
+  if (f.max_sentiment !== '') query.max_sentiment = parseFloat(f.max_sentiment);
+  if (f.q) query.keywords = [f.q];
+  if (!Object.keys(query).length) { alert('Pick at least one filter first.'); return; }
+  const name = prompt('Name this alert rule:', 'New rule');
+  if (!name) return;
+  try {
+    await api('/api/news/rules', {method:'POST', body: JSON.stringify({name, query, notify_push: true})});
+    loadNewsRules();
+    alert('Saved. New news matching this filter will push a notification.');
+  } catch(e) { alert(e.message); }
+};
+
+async function loadNewsRules(){
+  const out = document.getElementById('news-rules');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  try {
+    const r = await api('/api/news/rules');
+    document.getElementById('nf-rule-count').textContent =
+      `(${r.rules.filter(x => x.active).length}/${r.limit} active)`;
+    if (!r.rules.length) { out.innerHTML = '<div class="note">No alert rules yet — use the filter above and "Save as alert rule".</div>'; return; }
+    out.innerHTML = '';
+    for (const rule of r.rules) {
+      const card = document.createElement('div'); card.className = 'card';
+      card.style.marginBottom = '8px';
+      const status = rule.active ? '<span class="r-calm">active</span>' : '<span class="r-neutral">paused</span>';
+      const summary = Object.entries(rule.query || {}).map(([k, v]) => `${esc(k)}: ${esc(JSON.stringify(v))}`).join(' · ');
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:10px">
+          <div style="flex:1;min-width:0">
+            <h3 style="margin:0 0 4px">${esc(rule.name)} ${status}</h3>
+            <div style="font-size:.8em;color:var(--muted);word-break:break-word">${summary}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <button class="ghost" data-toggle="${rule.id}" data-active="${rule.active}">${rule.active ? 'Pause' : 'Resume'}</button>
+            <button class="ghost danger" data-delrule="${rule.id}">Delete</button>
+          </div>
+        </div>`;
+      out.appendChild(card);
+    }
+    out.querySelectorAll('button[data-toggle]').forEach(b => b.onclick = async () => {
+      const active = !(b.dataset.active === 'true');
+      await api('/api/news/rules/' + b.dataset.toggle, {method:'PATCH', body: JSON.stringify({active})});
+      loadNewsRules();
+    });
+    out.querySelectorAll('button[data-delrule]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete this rule?')) return;
+      await api('/api/news/rules/' + b.dataset.delrule, {method:'DELETE'});
+      loadNewsRules();
+    });
+  } catch(e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
 // ── Push notifications + PWA ───────────────────────────────────────────────
