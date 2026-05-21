@@ -214,8 +214,30 @@ _db.upsert_race_call(
 )
 
 
+class _FakeRequest:
+    def __init__(self, headers=None):
+        self.headers = headers or {}
+
+
 async def _live_test():
-    payload = await main_mod.data_live_dashboard()
+    # The endpoint now returns a JSONResponse for cache-busting via ETag;
+    # extract the raw payload through the underlying builder so the
+    # assertions still target the data shape, not the HTTP envelope.
+    payload = main_mod._build_live_dashboard()
+
+    # Also exercise the cached endpoint path end-to-end
+    resp = await main_mod.data_live_dashboard(_FakeRequest())
+    if not hasattr(resp, "headers") or "etag" not in {k.lower() for k in resp.headers}:
+        fail("live endpoint: returns ETag header", str(resp.headers))
+    etag = resp.headers["etag"]
+
+    # Second call with If-None-Match should be 304
+    resp2 = await main_mod.data_live_dashboard(_FakeRequest({"if-none-match": etag}))
+    if getattr(resp2, "status_code", None) != 304:
+        fail("live endpoint: returns 304 on matching If-None-Match",
+             str(getattr(resp2, "status_code", "n/a")))
+    passed("live endpoint: ETag + 304 short-circuit works")
+
     rows = payload.get("rows", [])
     ab = next((r for r in rows if r["race_key"] == "senate_AB"), None)
     cd = next((r for r in rows if r["race_key"] == "senate_CD"), None)

@@ -2759,6 +2759,17 @@ async def embed_race(race_key: str):
 # RSS / Atom feed — biggest movers in the last 24h
 # ===================================================================
 
+_FEED_CACHE = None
+
+
+def _get_feed_cache():
+    global _FEED_CACHE
+    if _FEED_CACHE is None:
+        from cache import TTLCache
+        _FEED_CACHE = TTLCache(default_ttl=300.0)  # 5 minutes
+    return _FEED_CACHE
+
+
 @app.get("/feed/movements.xml")
 async def feed_movements():
     """Atom feed of the biggest cross-source movements in the last 24h.
@@ -2766,8 +2777,18 @@ async def feed_movements():
     Anyone can subscribe in a feed reader, paste into Substack, or pipe
     into IFTTT/Zapier — turns the site's data into a distribution channel
     that travels even when users aren't on the dashboard.
+
+    Cached for 5 minutes in-process — every RSS reader hits it on its own
+    schedule so concurrent uncached requests are wasteful.
     """
     from fastapi.responses import Response
+    cache = _get_feed_cache()
+    feed_xml = await cache.get_or_compute("movements_feed", _build_feed_xml)
+    return Response(content=feed_xml, media_type="application/atom+xml",
+                    headers={"Cache-Control": "public, max-age=300"})
+
+
+def _build_feed_xml() -> str:
     base = os.getenv("PUBLIC_BASE_URL", "https://midterm.narve.ai").rstrip("/")
     all_markets = state.db.get_all_markets(active_only=True)
     titles = {market_race_key(m): m.get("event_title") or m.get("title") or "" for m in all_markets}
@@ -2810,7 +2831,7 @@ async def feed_movements():
             f"<summary>{source} moved {delta_pp:+.1f}pp on this race in the last 24h.</summary>"
             f"</entry>"
         )
-    feed_xml = (
+    return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<feed xmlns="http://www.w3.org/2005/Atom">'
         f"<title>MidtermEdge — biggest movers</title>"
@@ -2821,8 +2842,6 @@ async def feed_movements():
         + "".join(items_xml) +
         "</feed>"
     )
-    return Response(content=feed_xml, media_type="application/atom+xml",
-                    headers={"Cache-Control": "public, max-age=300"})
 
 
 # ===================================================================
@@ -3167,12 +3186,47 @@ def _build_live_dashboard() -> dict:
     }
 
 
+_LIVE_CACHE = None
+_LIVE_CACHE_TTL_SEC = 5.0   # short — frontend polls every 15s, this absorbs the spike
+
+
+def _get_live_cache():
+    """Lazy-init so tests that import main without starting the event loop
+    don't crash on asyncio.Lock construction."""
+    global _LIVE_CACHE
+    if _LIVE_CACHE is None:
+        from cache import TTLCache
+        _LIVE_CACHE = TTLCache(default_ttl=_LIVE_CACHE_TTL_SEC)
+    return _LIVE_CACHE
+
+
 @app.get("/data/live/dashboard")
-async def data_live_dashboard():
+async def data_live_dashboard(request: Request):
     """Single-payload live-mode dashboard. Designed for 15-30s polling on
     election night — heavy work is one DB scan, no LLM calls, no external
-    fetches in the hot path."""
-    return _build_live_dashboard()
+    fetches in the hot path.
+
+    Hardening for the Nov-3 spike:
+      - 5-second in-process cache. Concurrent callers within the window
+        share one computation (stampede-safe via per-key lock).
+      - Content-hash ETag + Cache-Control: max-age=5. Clients that
+        already have the latest payload get a 304 Not Modified — cheap
+        bandwidth and zero JSON re-serialization.
+    """
+    from cache import etag_for
+    cache = _get_live_cache()
+    payload = await cache.get_or_compute("live_dashboard", _build_live_dashboard)
+    etag = etag_for(payload)
+    if request.headers.get("if-none-match") == etag:
+        from fastapi.responses import Response
+        return Response(status_code=304, headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=5",
+        })
+    return JSONResponse(
+        content=payload,
+        headers={"ETag": etag, "Cache-Control": "public, max-age=5"},
+    )
 
 
 @app.get("/data/live/calls")
