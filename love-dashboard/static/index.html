@@ -329,6 +329,39 @@
   .sparkline-card svg circle.dot { fill: var(--accent); }
   .sparkline-card .empty { font-size: 12px; color: var(--text-3); padding: 12px 0 4px; }
 
+  table.rankings td.compare, table.rankings th:first-child { width: 26px; padding-left: 14px; padding-right: 0; }
+  table.rankings input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
+  table.rankings td.stab-dot { width: 18px; text-align: center; padding: 0; }
+  .stab-dot .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
+  .stab-dot .dot.high { background: var(--good); }
+  .stab-dot .dot.medium { background: var(--warn); }
+  .stab-dot .dot.low { background: var(--accent-2); }
+  .stab-dot .dot.unknown { background: var(--bg-3); }
+
+  /* Compare modal */
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+  .compare-grid .head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+  .compare-grid .head .flag { font-size: 18px; }
+  .compare-grid .head .composite { margin-left: auto; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .compare-grid .meta { color: var(--text-3); font-size: 11px; margin-bottom: 12px; }
+  .compare-sub {
+    display: grid; grid-template-columns: 90px 1fr 36px; gap: 8px; align-items: center;
+    margin-top: 6px; font-size: 12px;
+  }
+  .compare-sub .label { color: var(--text-2); }
+  .compare-sub .bar { height: 5px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+  .compare-sub .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .compare-sub .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
+  .compare-diff {
+    margin-top: 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 8px;
+    font-size: 12px; color: var(--text-2);
+  }
+  .compare-diff dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; margin: 0; }
+  .compare-diff dt { color: var(--text-3); }
+  .compare-diff dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .compare-diff dd.up { color: var(--good); }
+  .compare-diff dd.down { color: var(--accent-2); }
+
   /* Drill-down modal */
   .modal-backdrop {
     position: fixed; inset: 0;
@@ -539,28 +572,36 @@
         <option value="LM">Lower-middle</option>
         <option value="L">Low</option>
       </select>
+      <select id="filter-region">
+        <option value="">All regions</option>
+      </select>
       <select id="filter-status">
         <option value="">Ranked + unranked</option>
         <option value="ranked">Ranked only</option>
         <option value="unranked">Unranked only</option>
       </select>
+      <button class="btn" id="reset-filters">Clear filters</button>
+      <button class="btn primary" id="compare-btn" style="display:none">Compare 2 selected</button>
     </div>
     <div class="table-wrap">
       <table class="rankings">
         <thead>
           <tr>
+            <th title="Select up to 2 to compare"></th>
             <th data-sort="rank" class="sorted">#</th>
             <th></th>
             <th data-sort="name">Country</th>
             <th data-sort="income_tier">Tier</th>
+            <th data-sort="region">Region</th>
             <th data-sort="composite">Index</th>
+            <th title="Rank stability under 13 weight perturbations">±</th>
             <th data-sort="connection">Conn</th>
             <th data-sort="partnership">Part</th>
             <th data-sort="stability">Stab</th>
             <th data-sort="activity">Act</th>
           </tr>
         </thead>
-        <tbody id="rankings-body"><tr><td colspan="9" style="color:var(--text-3); padding: 18px; text-align: center;">loading…</td></tr></tbody>
+        <tbody id="rankings-body"><tr><td colspan="12" style="color:var(--text-3); padding: 18px; text-align: center;">loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -617,13 +658,78 @@ let state = {
   countriesByISO: {},
   summary: null,
   insights: [],
+  sensitivity: null,
+  stabilityByISO: {},    // iso3 -> "high" | "medium" | "low"
   sortKey: "rank",
   sortDir: "asc",
   filterTier: "",
+  filterRegion: "",
   filterStatus: "",
   search: "",
+  compareSelection: new Set(),  // up to 2 iso3 strings
+  openCountry: null,
+  openCompare: null,     // [iso1, iso2] when compare modal is open
   worldGeo: null,
+  _suppressUrlSync: false,  // set true while applying URL state to avoid feedback loops
 };
+
+// ---- URL state (shareable permalinks) ----
+// State lives in the URL hash (no reload). On init we read it and prime the
+// JS state; on any user-driven change we write it back.
+function readURLState() {
+  const out = {};
+  const h = location.hash.replace(/^#/, "");
+  if (!h) return out;
+  for (const [k, v] of new URLSearchParams(h)) out[k] = v;
+  return out;
+}
+function writeURLState() {
+  if (state._suppressUrlSync) return;
+  const p = new URLSearchParams();
+  if (state.search) p.set("q", state.search);
+  if (state.filterTier) p.set("tier", state.filterTier);
+  if (state.filterRegion) p.set("region", state.filterRegion);
+  if (state.filterStatus) p.set("status", state.filterStatus);
+  if (state.sortKey !== "rank" || state.sortDir !== "asc")
+    p.set("sort", `${state.sortKey}:${state.sortDir}`);
+  if (state.weights) {
+    for (const k of SUBSCORES) p.set(`w_${k}`, state.weights[k].toFixed(4));
+  }
+  if (state.openCountry) p.set("country", state.openCountry);
+  if (state.openCompare && state.openCompare.length === 2)
+    p.set("compare", state.openCompare.join(","));
+  const s = p.toString();
+  history.replaceState(null, "", s ? "#" + s : location.pathname + location.search);
+}
+function applyURLState(u) {
+  state._suppressUrlSync = true;
+  try {
+    if (u.q != null) { state.search = u.q; const el = document.getElementById("search"); if (el) el.value = u.q; }
+    if (u.tier != null) { state.filterTier = u.tier; const el = document.getElementById("filter-tier"); if (el) el.value = u.tier; }
+    if (u.region != null) { state.filterRegion = u.region; }
+    if (u.status != null) { state.filterStatus = u.status; const el = document.getElementById("filter-status"); if (el) el.value = u.status; }
+    if (u.sort) {
+      const [k, d] = u.sort.split(":");
+      if (k) state.sortKey = k;
+      if (d) state.sortDir = d;
+    }
+    const wEntries = SUBSCORES.map(k => [k, u[`w_${k}`]]).filter(([_, v]) => v != null);
+    if (wEntries.length) {
+      const w = {};
+      let s = 0;
+      for (const k of SUBSCORES) {
+        w[k] = Number(u[`w_${k}`] ?? 0);
+        s += w[k];
+      }
+      if (s > 0) {
+        for (const k of SUBSCORES) w[k] /= s;
+        state.weights = w;
+      }
+    }
+  } finally {
+    state._suppressUrlSync = false;
+  }
+}
 
 const ISO2_FLAG = c => c && c.length === 2
   ? String.fromCodePoint(...[...c.toUpperCase()].map(x => 0x1F1E6 + x.charCodeAt(0) - 65))
@@ -727,6 +833,17 @@ async function loadCountries() {
   catch { d = []; }
   state.countries = d;
   state.countriesByISO = Object.fromEntries(d.map(c => [c.iso3, c]));
+  // Populate the region filter dropdown with whatever appears in the data.
+  const sel = document.getElementById("filter-region");
+  if (sel && sel.options.length <= 1) {
+    const regions = Array.from(new Set(d.map(c => c.region).filter(Boolean))).sort();
+    for (const r of regions) {
+      const opt = document.createElement("option");
+      opt.value = r; opt.textContent = r;
+      sel.appendChild(opt);
+    }
+    if (state.filterRegion) sel.value = state.filterRegion;
+  }
   renderTable();
 }
 
@@ -740,16 +857,18 @@ function renderTable() {
     (c.iso2 || "").toLowerCase().includes(q) ||
     (c.region || "").toLowerCase().includes(q));
   if (state.filterTier) rows = rows.filter(c => c.income_tier === state.filterTier);
+  if (state.filterRegion) rows = rows.filter(c => c.region === state.filterRegion);
   if (state.filterStatus === "ranked") rows = rows.filter(c => c.composite != null);
   if (state.filterStatus === "unranked") rows = rows.filter(c => c.composite == null);
 
+  const STAB_ORDER = { high: 0, medium: 1, low: 2 };
   rows.sort((a, b) => {
     if (state.sortKey === "rank" || state.sortKey === "composite") {
       const av = a.composite, bv = b.composite;
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
-      return state.sortDir === "asc" ? bv - av : av - bv; // rank asc = best first
+      return state.sortDir === "asc" ? bv - av : av - bv;
     }
     if (["connection","partnership","stability","activity"].includes(state.sortKey)) {
       const av = a.subscores?.[state.sortKey], bv = b.subscores?.[state.sortKey];
@@ -758,7 +877,7 @@ function renderTable() {
       if (bv == null) return -1;
       return state.sortDir === "asc" ? bv - av : av - bv;
     }
-    if (state.sortKey === "name" || state.sortKey === "income_tier") {
+    if (state.sortKey === "name" || state.sortKey === "income_tier" || state.sortKey === "region") {
       const av = (a[state.sortKey] || ""), bv = (b[state.sortKey] || "");
       return state.sortDir === "asc"
         ? String(av).localeCompare(String(bv))
@@ -769,44 +888,100 @@ function renderTable() {
 
   tbody.innerHTML = "";
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="color:var(--text-3); padding: 24px; text-align:center;">no countries match — backend may still be fetching, or filters too narrow</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" style="color:var(--text-3); padding: 24px; text-align:center;">no countries match — backend may still be fetching, or filters too narrow</td></tr>`;
   }
   let visualRank = 0;
   rows.forEach(c => {
     const tr = document.createElement("tr");
-    tr.onclick = () => openCountry(c.iso3);
     const ranked = c.composite != null;
     if (ranked) visualRank++;
     const subCell = (k) => {
       const v = c.subscores?.[k];
       return `<td class="score ${v == null ? "missing" : ""}">${fmt(v, 0)}</td>`;
     };
+    const stab = state.stabilityByISO[c.iso3] || "unknown";
+    const stabTitle = stab === "unknown" ? "Stability unknown" : `Rank stability: ${stab}`;
+    const checked = state.compareSelection.has(c.iso3) ? "checked" : "";
     tr.innerHTML = `
+      <td class="compare"><input type="checkbox" data-iso="${esc(c.iso3)}" ${checked}></td>
       <td class="rank">${ranked ? visualRank : "—"}</td>
       <td class="flag">${ISO2_FLAG(c.iso2)}</td>
       <td>${esc(c.name)}</td>
       <td class="tier">${TIER_LABELS[c.income_tier] || ""}</td>
+      <td class="tier">${esc(c.region || "")}</td>
       <td class="composite ${ranked ? "" : "unranked"}">${fmt(c.composite)}</td>
+      <td class="stab-dot" title="${esc(stabTitle)}"><span class="dot ${stab}"></span></td>
       ${subCell("connection")}
       ${subCell("partnership")}
       ${subCell("stability")}
       ${subCell("activity")}`;
+    // Row click opens country detail unless they clicked the checkbox cell.
+    tr.addEventListener("click", (ev) => {
+      if (ev.target.tagName === "INPUT" || ev.target.closest("td.compare")) return;
+      openCountry(c.iso3);
+    });
+    tr.querySelector('input[type=checkbox]').addEventListener("change", (ev) => {
+      ev.stopPropagation();
+      const iso = ev.target.dataset.iso;
+      if (ev.target.checked) {
+        state.compareSelection.add(iso);
+        // Keep at most 2 selected — drop the oldest when we exceed.
+        if (state.compareSelection.size > 2) {
+          const first = state.compareSelection.values().next().value;
+          state.compareSelection.delete(first);
+          const old = document.querySelector(`input[data-iso="${first}"]`);
+          if (old) old.checked = false;
+        }
+      } else {
+        state.compareSelection.delete(iso);
+      }
+      updateCompareButton();
+    });
     tbody.appendChild(tr);
   });
   document.getElementById("table-count").textContent = `${rows.length} shown`;
   document.querySelectorAll("table.rankings th").forEach(th => {
     th.classList.toggle("sorted", th.dataset.sort === state.sortKey);
   });
+  updateCompareButton();
+}
+
+function updateCompareButton() {
+  const btn = document.getElementById("compare-btn");
+  if (!btn) return;
+  btn.style.display = state.compareSelection.size === 2 ? "" : "none";
+  if (state.compareSelection.size === 2) {
+    const [a, b] = Array.from(state.compareSelection);
+    const an = state.countriesByISO[a]?.name || a;
+    const bn = state.countriesByISO[b]?.name || b;
+    btn.textContent = `Compare ${an} vs ${bn}`;
+  }
 }
 
 document.getElementById("search").addEventListener("input", e => {
-  state.search = e.target.value; renderTable();
+  state.search = e.target.value; renderTable(); writeURLState();
 });
 document.getElementById("filter-tier").addEventListener("change", e => {
-  state.filterTier = e.target.value; renderTable();
+  state.filterTier = e.target.value; renderTable(); writeURLState();
+});
+document.getElementById("filter-region").addEventListener("change", e => {
+  state.filterRegion = e.target.value; renderTable(); writeURLState();
 });
 document.getElementById("filter-status").addEventListener("change", e => {
-  state.filterStatus = e.target.value; renderTable();
+  state.filterStatus = e.target.value; renderTable(); writeURLState();
+});
+document.getElementById("reset-filters").addEventListener("click", () => {
+  state.search = ""; state.filterTier = ""; state.filterRegion = ""; state.filterStatus = "";
+  document.getElementById("search").value = "";
+  document.getElementById("filter-tier").value = "";
+  document.getElementById("filter-region").value = "";
+  document.getElementById("filter-status").value = "";
+  renderTable(); writeURLState();
+});
+document.getElementById("compare-btn").addEventListener("click", () => {
+  if (state.compareSelection.size !== 2) return;
+  const [a, b] = Array.from(state.compareSelection);
+  openCompare(a, b);
 });
 document.querySelectorAll("table.rankings th[data-sort]").forEach(th => {
   th.addEventListener("click", () => {
@@ -814,6 +989,7 @@ document.querySelectorAll("table.rankings th[data-sort]").forEach(th => {
     if (state.sortKey === k) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
     else { state.sortKey = k; state.sortDir = "asc"; }
     renderTable();
+    writeURLState();
   });
 });
 
@@ -852,6 +1028,7 @@ document.getElementById("apply-weights").addEventListener("click", () => {
   document.getElementById("weights-status").textContent = "custom";
   document.getElementById("weights-status").classList.remove("warn");
   document.getElementById("weights-status").classList.add("info");
+  writeURLState();
   refresh();
 });
 
@@ -861,6 +1038,7 @@ document.getElementById("reset-weights").addEventListener("click", () => {
   document.getElementById("weights-status").classList.add("warn");
   document.getElementById("weights-status").classList.remove("info");
   buildSliders();
+  writeURLState();
   refresh();
 });
 
@@ -910,6 +1088,11 @@ async function loadSensitivity() {
     return;
   }
   state.sensitivity = d;
+  state.stabilityByISO = {};
+  for (const [iso3, c] of Object.entries(d.countries || {})) {
+    if (c.stability) state.stabilityByISO[iso3] = c.stability;
+  }
+  if (state.countries.length) renderTable();  // refresh dots once we know stability
   const dist = d.stability_distribution || {high:0, medium:0, low:0};
   document.getElementById("stress-high").textContent = dist.high;
   document.getElementById("stress-medium").textContent = dist.medium;
@@ -961,6 +1144,9 @@ async function openCountry(iso3) {
   const modal = document.getElementById("modal");
   const content = document.getElementById("modal-content");
   modal.classList.add("on");
+  state.openCountry = iso3;
+  state.openCompare = null;
+  writeURLState();
   content.innerHTML = `<div style="color:var(--text-3)">loading ${esc(iso3)}…</div>`;
   let detail, history;
   try {
@@ -1079,15 +1265,87 @@ function renderCountryDetail(c, root) {
     ${rawEntries ? `<div class="raw"><h4>Raw indicators</h4><dl>${rawEntries}</dl></div>` : ""}`;
 }
 
-document.getElementById("modal-close").addEventListener("click", () => {
+function closeModal() {
   document.getElementById("modal").classList.remove("on");
-});
+  state.openCountry = null;
+  state.openCompare = null;
+  writeURLState();
+}
+document.getElementById("modal-close").addEventListener("click", closeModal);
 document.getElementById("modal").addEventListener("click", (e) => {
-  if (e.target.id === "modal") e.currentTarget.classList.remove("on");
+  if (e.target.id === "modal") closeModal();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") document.getElementById("modal").classList.remove("on");
+  if (e.key === "Escape") closeModal();
 });
+
+// ---- compare modal ----
+async function openCompare(isoA, isoB) {
+  const modal = document.getElementById("modal");
+  const content = document.getElementById("modal-content");
+  modal.classList.add("on");
+  state.openCountry = null;
+  state.openCompare = [isoA, isoB];
+  writeURLState();
+  content.innerHTML = `<div style="color:var(--text-3)">loading comparison…</div>`;
+  let a, b;
+  try {
+    [a, b] = await Promise.all([
+      fetchJSON(`/api/country/${encodeURIComponent(isoA)}` + weightQS()),
+      fetchJSON(`/api/country/${encodeURIComponent(isoB)}` + weightQS()),
+    ]);
+  } catch (err) {
+    content.innerHTML = `<div style="color:var(--accent-2)">Compare load failed: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (a.error || b.error) {
+    content.innerHTML = `<div style="color:var(--text-2)">${esc(a.error || b.error)}</div>`;
+    return;
+  }
+  renderCompare(a, b, content);
+}
+
+function renderCompare(a, b, root) {
+  const sideHTML = (c) => {
+    const subs = SUBSCORES.map(k => {
+      const v = c.subscores?.[k];
+      return `
+        <div class="compare-sub">
+          <div class="label">${SUB_LABELS[k]}</div>
+          <div class="bar"><span style="width:${v == null ? 0 : Math.min(100, Math.max(0, v))}%"></span></div>
+          <div class="val">${fmt(v, 0)}</div>
+        </div>`;
+    }).join("");
+    return `
+      <div>
+        <div class="head">
+          <span class="flag">${ISO2_FLAG(c.iso2)}</span>
+          <span>${esc(c.name)}</span>
+          <span class="composite">${fmt(c.composite)}</span>
+        </div>
+        <div class="meta">${esc(c.region || "")} · ${esc(TIER_LABELS[c.income_tier] || "")}${c.income_tier ? " income" : ""}</div>
+        ${subs}
+      </div>`;
+  };
+  // Per-subscore delta a − b (positive means a leads).
+  const diffRows = SUBSCORES.concat(["composite"]).map(k => {
+    const av = k === "composite" ? a.composite : a.subscores?.[k];
+    const bv = k === "composite" ? b.composite : b.subscores?.[k];
+    if (av == null || bv == null) return `<dt>${k === "composite" ? "Composite" : SUB_LABELS[k]}</dt><dd style="color:var(--text-3)">—</dd>`;
+    const d = av - bv;
+    const cls = d > 0 ? "up" : d < 0 ? "down" : "";
+    const sign = d > 0 ? "+" : "";
+    return `<dt>${k === "composite" ? "Composite" : SUB_LABELS[k]}</dt><dd class="${cls}">${sign}${d.toFixed(1)}</dd>`;
+  }).join("");
+  root.innerHTML = `
+    <h2>${ISO2_FLAG(a.iso2)} ${esc(a.name)} <span style="color:var(--text-3); font-weight:400; font-size:18px">vs</span> ${ISO2_FLAG(b.iso2)} ${esc(b.name)}</h2>
+    <div class="country-meta">Side-by-side comparison · weighted by ${state.weights ? "your custom weights" : "default weights"}</div>
+    <div class="compare-grid">${sideHTML(a)}${sideHTML(b)}</div>
+    <div class="compare-diff">
+      <div style="color:var(--text-3); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">${esc(a.name)} − ${esc(b.name)}</div>
+      <dl>${diffRows}</dl>
+    </div>`;
+}
 
 // ---- D3 choropleth ----
 const WORLD_TOPO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
@@ -1200,9 +1458,23 @@ async function refresh() {
 }
 
 async function init() {
+  applyURLState(readURLState());
+  if (state.weights) {
+    // Mark sliders + status badge as customized before they render.
+    const ws = document.getElementById("weights-status");
+    if (ws) { ws.textContent = "custom"; ws.classList.remove("warn"); ws.classList.add("info"); }
+  }
   buildSliders();
   await refresh();
   await loadSources();
+  // Replay deep-link: open country or compare modal after data has loaded.
+  const u = readURLState();
+  if (u.compare) {
+    const [a, b] = u.compare.split(",");
+    if (a && b) openCompare(a, b);
+  } else if (u.country) {
+    openCountry(u.country);
+  }
 }
 
 init();

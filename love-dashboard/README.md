@@ -1,7 +1,23 @@
-# State of Love Dashboard (v3.3)
+# State of Love Dashboard (v3.4)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.4 adds (frontend UX):**
+
+- **Shareable URL state** — search, filters, sort, custom weights, open-country
+  modal, and active compare all round-trip through the URL hash. Reload
+  preserves the entire view; paste a link to share an exact dashboard state.
+- **Country compare panel** — pick any two countries from the rankings table
+  (checkbox column), click "Compare" and the modal renders both side-by-side
+  with subscore bars and an A − B delta block. Works with custom weights.
+- **Region filter** — third dropdown in the rankings toolbar, populated from
+  whatever World Bank regions appear in the loaded data.
+- **Stability dot in the rankings table** — colored badge next to every
+  composite (green / yellow / red / grey) so the sensitivity-analysis
+  signal is visible at a glance, not just in the drill-down modal.
+- **Clear-filters button** resets search + all three filter dropdowns in
+  one click.
 
 **v3.3 adds:**
 
