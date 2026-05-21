@@ -109,8 +109,8 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "stripe_price_monthly": "TODO_AIRACE_STRIPE_MONTHLY",
-      "stripe_price_annual": "TODO_AIRACE_STRIPE_ANNUAL"
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     }
   }
 }

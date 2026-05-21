@@ -59,6 +59,14 @@ if not _sso_secret and not _DEV_MODE:
 
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
+    # /api/health is a liveness probe — must answer without the SSO header so
+    # Docker/container healthchecks work without round-tripping through the
+    # gateway. Returns no sensitive data.
+    if request.url.path == "/api/health":
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     if _sso_secret:
         client_secret = request.headers.get("x-gateway-secret", "")
         if not hmac.compare_digest(client_secret, _sso_secret):
