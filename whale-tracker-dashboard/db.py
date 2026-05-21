@@ -194,6 +194,42 @@ CREATE TABLE IF NOT EXISTS cusip_ticker (
     resolved_at TEXT
 );
 
+-- LLM-extracted structured fields per 13D/G filing.
+CREATE TABLE IF NOT EXISTS activist_intent (
+    accession              TEXT PRIMARY KEY,
+    intent                 TEXT,
+    demands                TEXT,        -- JSON array (stringified)
+    prior_history_mentioned INTEGER,
+    fund_type              TEXT,
+    confidence             REAL,
+    summary                TEXT,
+    extracted_at           TEXT,
+    model                  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activist_intent_intent ON activist_intent(intent);
+
+-- LLM-extracted structured M&A deal terms per 8-K filing.
+CREATE TABLE IF NOT EXISTS ma_deal_terms (
+    accession                   TEXT PRIMARY KEY,
+    is_definitive_agreement     INTEGER,
+    deal_type                   TEXT,
+    target_name                 TEXT,
+    target_ticker               TEXT,
+    acquirer_name               TEXT,
+    acquirer_ticker             TEXT,
+    consideration_type          TEXT,
+    consideration_per_share_usd REAL,
+    exchange_ratio              REAL,
+    implied_premium_pct         REAL,
+    termination_fee_usd         REAL,
+    expected_close              TEXT,
+    summary                     TEXT,
+    extracted_at                TEXT,
+    model                       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ma_terms_target ON ma_deal_terms(target_ticker);
+CREATE INDEX IF NOT EXISTS idx_ma_terms_acquirer ON ma_deal_terms(acquirer_ticker);
+
 -- One row per labeled filing outcome (used to compute Bayesian skill).
 -- filer_type ∈ {insider, activist, congress}; filer_id is the natural key per type
 -- (reporter_cik, filer_cik, representative respectively). source_id is the
@@ -340,6 +376,8 @@ def counts() -> dict[str, int]:
             "options_flow_trade": cx.execute("SELECT COUNT(*) FROM options_flow_trade").fetchone()[0],
             "dark_pool_print":    cx.execute("SELECT COUNT(*) FROM dark_pool_print").fetchone()[0],
             "cusip_ticker":       cx.execute("SELECT COUNT(*) FROM cusip_ticker").fetchone()[0],
+            "activist_intent":    cx.execute("SELECT COUNT(*) FROM activist_intent").fetchone()[0],
+            "ma_deal_terms":      cx.execute("SELECT COUNT(*) FROM ma_deal_terms").fetchone()[0],
         }
 
 
@@ -442,6 +480,96 @@ def upsert_dark_pool(rows: list[dict]) -> int:
             rows,
         )
         return cur.rowcount
+
+
+def upsert_activist_intent(row: dict) -> bool:
+    with _lock, connect() as cx:
+        cur = cx.execute(
+            """
+            INSERT OR REPLACE INTO activist_intent (
+                accession, intent, demands, prior_history_mentioned,
+                fund_type, confidence, summary, extracted_at, model
+            ) VALUES (
+                :accession, :intent, :demands, :prior_history_mentioned,
+                :fund_type, :confidence, :summary, :extracted_at, :model
+            )
+            """,
+            row,
+        )
+        return cur.rowcount > 0
+
+
+def upsert_ma_deal_terms(row: dict) -> bool:
+    with _lock, connect() as cx:
+        cur = cx.execute(
+            """
+            INSERT OR REPLACE INTO ma_deal_terms (
+                accession, is_definitive_agreement, deal_type, target_name,
+                target_ticker, acquirer_name, acquirer_ticker, consideration_type,
+                consideration_per_share_usd, exchange_ratio, implied_premium_pct,
+                termination_fee_usd, expected_close, summary, extracted_at, model
+            ) VALUES (
+                :accession, :is_definitive_agreement, :deal_type, :target_name,
+                :target_ticker, :acquirer_name, :acquirer_ticker, :consideration_type,
+                :consideration_per_share_usd, :exchange_ratio, :implied_premium_pct,
+                :termination_fee_usd, :expected_close, :summary, :extracted_at, :model
+            )
+            """,
+            row,
+        )
+        return cur.rowcount > 0
+
+
+def have_activist_intent(accession: str) -> bool:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT 1 FROM activist_intent WHERE accession = ? LIMIT 1",
+            (accession,),
+        ).fetchone()
+    return row is not None
+
+
+def have_ma_deal_terms(accession: str) -> bool:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT 1 FROM ma_deal_terms WHERE accession = ? LIMIT 1",
+            (accession,),
+        ).fetchone()
+    return row is not None
+
+
+def pending_activist_extractions(limit: int = 20) -> list[dict]:
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT a.accession, a.filing_url, a.filer_name, a.issuer_ticker
+            FROM activist_stake a
+            LEFT JOIN activist_intent i ON i.accession = a.accession
+            WHERE i.accession IS NULL
+              AND a.filing_url IS NOT NULL AND a.filing_url != ''
+            ORDER BY a.filed_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pending_ma_extractions(limit: int = 20) -> list[dict]:
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT m.accession, m.filing_url, m.headline, m.issuer_ticker
+            FROM ma_event m
+            LEFT JOIN ma_deal_terms d ON d.accession = m.accession
+            WHERE d.accession IS NULL
+              AND m.filing_url IS NOT NULL AND m.filing_url != ''
+            ORDER BY m.filed_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_cusip_tickers(rows: list[dict]) -> int:

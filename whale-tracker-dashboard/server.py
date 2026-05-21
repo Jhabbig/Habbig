@@ -333,6 +333,32 @@ async def api_dark_pool_by_ticker(
     )
 
 
+@app.post("/api/admin/llm-extract")
+async def api_admin_llm_extract(
+    target: str = Query("both", pattern="^(activist|ma|both)$"),
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Run a local-LLM extraction pass. DEV_MODE only."""
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    import llm_client, llm_extract  # noqa: F401 — imported here so the dep is obvious
+    # Temporarily override the per-pass cap so the admin call respects `limit`.
+    original = ingest.LLM_EXTRACT_PER_PASS
+    ingest.LLM_EXTRACT_PER_PASS = int(limit)
+    try:
+        a = await ingest._llm_extract_activists() if target in ("activist", "both") else 0
+        m = await ingest._llm_extract_ma() if target in ("ma", "both") else 0
+    finally:
+        ingest.LLM_EXTRACT_PER_PASS = original
+    _cache.clear()
+    return {
+        "activist_extracted": a,
+        "ma_extracted": m,
+        "model": llm_client.LLM_MODEL,
+        "counts": db.counts(),
+    }
+
+
 @app.post("/api/admin/resolve-cusips")
 async def api_admin_resolve_cusips(limit: int = Query(500, ge=1, le=5000)):
     """Resolve up to `limit` unresolved CUSIPs via OpenFIGI. DEV_MODE only."""

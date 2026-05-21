@@ -224,7 +224,7 @@
     <table id="ac-table">
       <thead><tr>
         <th>Filed</th><th>Filer</th><th>Issuer</th><th>Ticker</th>
-        <th>Type</th><th class="num">% Owned</th><th class="num">Shares</th><th>Filing</th>
+        <th>Type</th><th class="num">% Owned</th><th>Intent</th><th>Filing</th>
       </tr></thead>
       <tbody><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table>
@@ -239,10 +239,11 @@
     </div>
     <table id="ma-table">
       <thead><tr>
-        <th>Filed</th><th>Issuer</th><th>Items</th>
-        <th>Headline</th><th class="num">Score</th><th>Filing</th>
+        <th>Filed</th><th>Issuer</th><th>Type</th>
+        <th>Target / Acquirer</th><th>Terms</th>
+        <th class="num">Prem.</th><th class="num">Score</th><th>Filing</th>
       </tr></thead>
-      <tbody><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+      <tbody><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table>
   </section>
 
@@ -589,12 +590,26 @@ async function loadActivist() {
         <td><span class="ticker">${esc(r.issuer_ticker||"—")}</span></td>
         <td><span class="pill activist">${esc(r.filing_type||"")}</span></td>
         <td class="num">${r.pct_owned?Number(r.pct_owned).toFixed(2)+"%":"—"}</td>
-        <td class="num">${fmtNum(r.shares_owned)}</td>
+        <td>${intentPill(r.intent)}${r.summary?`<div class="live" style="font-size:11px">${esc(r.summary)}</div>`:""}</td>
         <td>${r.filing_url?`<a href="${esc(r.filing_url)}" target="_blank" rel="noopener">SEC</a>`:""}</td>
       </tr>`).join("");
   } catch(e) {
     tb.innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`;
   }
+}
+
+function intentPill(intent) {
+  if (!intent) return `<span class="pill" title="not yet extracted">—</span>`;
+  const map = {
+    "passive":              ["passive", ""],
+    "activist_governance":  ["governance", "activist"],
+    "activist_strategic":   ["strategic", "activist"],
+    "sale_or_breakup":      ["sale/breakup", "ma"],
+    "block":                ["block", "ma"],
+    "other":                ["other", ""],
+  };
+  const [label, cls] = map[intent] || [intent, ""];
+  return `<span class="pill ${cls}">${esc(label)}</span>`;
 }
 
 // ── M&A Feed ──
@@ -606,20 +621,32 @@ async function loadMA() {
   try {
     const rows = await fetchJSON(`/api/ma-feed?days=${days}&min_score=${min}`);
     if (!rows.length) {
-      tb.innerHTML = `<tr><td colspan="6" class="empty">No flagged 8-Ks in window.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="8" class="empty">No flagged 8-Ks in window.</td></tr>`;
       return;
     }
-    tb.innerHTML = rows.map(r => `
+    tb.innerHTML = rows.map(r => {
+      const pair = (r.target_name || r.acquirer_name)
+        ? `${esc(r.target_name||"?")}${r.target_ticker?` <span class="ticker">${esc(r.target_ticker)}</span>`:""} ← ${esc(r.acquirer_name||"?")}${r.acquirer_ticker?` <span class="ticker">${esc(r.acquirer_ticker)}</span>`:""}`
+        : esc(r.headline||"");
+      const terms = [];
+      if (r.consideration_per_share_usd) terms.push(`$${Number(r.consideration_per_share_usd).toFixed(2)}/sh`);
+      if (r.exchange_ratio) terms.push(`${Number(r.exchange_ratio).toFixed(3)}x`);
+      if (r.consideration_type) terms.push(esc(r.consideration_type));
+      if (r.expected_close) terms.push(`close ${esc(r.expected_close)}`);
+      return `
       <tr>
         <td>${esc(fmtDate(r.filed_at))}</td>
         <td>${esc(r.issuer_name||"")}</td>
-        <td>${(r.items||"").split(",").filter(Boolean).map(i=>`<span class="pill ma">${esc(i)}</span>`).join(" ")}</td>
-        <td>${esc(r.headline||"")}</td>
+        <td>${r.deal_type?`<span class="pill ma">${esc(r.deal_type)}</span>`:`<span class="pill">—</span>`}</td>
+        <td>${pair}</td>
+        <td>${terms.length?terms.join(" · "):'<span class="live">—</span>'}</td>
+        <td class="num ${(r.implied_premium_pct||0)>=0?"pos":"neg"}">${r.implied_premium_pct?(r.implied_premium_pct>=0?"+":"")+Number(r.implied_premium_pct).toFixed(1)+"%":"—"}</td>
         <td class="num">${r.ma_score}</td>
         <td>${r.filing_url?`<a href="${esc(r.filing_url)}" target="_blank" rel="noopener">SEC</a>`:""}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
   } catch(e) {
-    tb.innerHTML = `<tr><td colspan="6" class="err">${esc(e.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`;
   }
 }
 

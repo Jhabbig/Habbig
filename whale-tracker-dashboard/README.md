@@ -56,6 +56,8 @@ docker compose up --build whales
 | `filings8k.py` | 8-K filter — scores filings by reported items (1.01, 2.01, 8.01) and M&A keywords ("definitive agreement", "merger", etc.). |
 | `congress.py` | Congressional PTR fetcher — pulls house-stock-watcher and senate-stock-watcher S3 datasets (used by every consumer Congress tracker), normalises field names, dedupes by transaction id. |
 | `options_flow.py` | unusual_whales adapter — pulls flow alerts + dark pool prints, normalises to the dashboard schema. No-op without `UNUSUAL_WHALES_API_KEY`. Vendor-swappable: replace the two `fetch_*` functions to switch to Polygon / CBOE / Tradier. |
+| `llm_client.py` | Generic local-LLM client speaking the OpenAI-compatible Chat Completions API. Works with Ollama (default), LM Studio, vLLM, llama.cpp server, etc. Forces JSON object output, single-flight semaphore so a slow GPU doesn't get flooded. |
+| `llm_extract.py` | Domain extractors: `extract_activist_intent` parses 13D/G "Purpose of Transaction" into structured intent + demands + fund type; `extract_ma_terms` parses 8-K material agreements into target / acquirer / consideration / premium / expected-close. Strips HTML, slices to the relevant section before prompting. |
 | `openfigi.py` | CUSIP → ticker resolver via OpenFIGI's batch mapping API. Free without a key (25 req/min, batches of 10); accepts `OPENFIGI_API_KEY` for higher throughput. Resolved entries cached in `cusip_ticker`. |
 | `prices.py` | Stooq daily-close fetcher with local SQLite cache. Concurrency-capped, normalises tickers to `<ticker>.us`. Co-fetches SPY as the benchmark. |
 | `bayesian.py` | Beta(α,β) posterior + Wilson-score 95% confidence interval. Hand-rolled to avoid pulling scipy. |
@@ -99,6 +101,7 @@ docker compose up --build whales
 | `GET /api/dark-pool?days=&min_premium=&limit=` | Dark pool prints (paid feed). |
 | `GET /api/dark-pool-by-ticker?ticker=<X>&days=` | Dark pool prints for one ticker. |
 | `GET /api/backtest?threshold=&hold_days=&start_date=&end_date=&window_days=` | First-crossing backtest of the synthesis score. Returns `{trades, summary, equity_curve}` with per-trade alpha vs SPY, win rate, mean/median/total/annualised alpha, Sharpe, best/worst trade, and a daily equity curve. |
+| `POST /api/admin/llm-extract?target=<activist\|ma\|both>&limit=` | Run a local-LLM extraction pass over pending 13D/G and/or 8-K filings. DEV_MODE only. |
 | `POST /api/admin/resolve-cusips?limit=` | Resolve unresolved 13F CUSIPs via OpenFIGI; backfills `fund_holding.issuer_ticker`. DEV_MODE only. |
 | `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |
 | `GET /api/skill-detail?filer_type=<...>&filer_id=<X>&horizon_days=30` | Per-filer skill posterior + last N labeled outcomes. |
@@ -186,7 +189,7 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     (`efts.sec.gov`) — admin endpoint pulls N months of filings in one
     shot so skill posteriors converge immediately rather than over 3
     months of live ingest.
-- Phase 5 shipped (this version):
+- Phase 5 shipped:
   - Unusual options activity + dark pool prints (unusual_whales adapter,
     swappable to Polygon / CBOE / Tradier by replacing the two `fetch_*`
     functions in `options_flow.py`). `Options Flow` and `Dark Pool` tabs
@@ -197,7 +200,16 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     pass sends unresolved CUSIPs to OpenFIGI and backfills tickers into
     `fund_holding`. Lifts 13F ticker coverage from ~70% (big-cap names)
     to ~95%+.
-- Phase 6 candidates: foreign-equivalent filings (UK Companies House
+- Phase 6 shipped (this version):
+  - Synthesis backtest engine + `Backtest` tab (commit f958f5f).
+  - Local-LLM extraction layer for 13D/G activist intent + 8-K M&A deal
+    terms. Talks any OpenAI-compatible local server (Ollama, LM Studio,
+    vLLM, llama.cpp). Default model qwen2.5:7b-instruct runs on a laptop
+    GPU and emits structured JSON. Background pass every 10 minutes;
+    `POST /api/admin/llm-extract` for manual runs. UI: Activist tab
+    shows extracted intent pill + summary; M&A Feed shows target ←
+    acquirer, deal type, consideration, expected close, implied premium.
+- Phase 7 candidates: foreign-equivalent filings (UK Companies House
   PSC notices, EU Transparency Directive 5% notifications); WebSocket
   push from unusual_whales for true real-time alerting; volume-weighted
   fund-skill (today's binary win/loss treats a $1B and a $1M position

@@ -24,6 +24,8 @@ import filings8k
 import filings13d
 import form4
 import form13f
+import llm_client
+import llm_extract
 import openfigi
 import options_flow
 import skill as skill_mod
@@ -57,16 +59,23 @@ OPENFIGI_INTERVAL_S = int(os.environ.get("OPENFIGI_INTERVAL_S", "1800"))
 OPENFIGI_PER_PASS   = int(os.environ.get("OPENFIGI_PER_PASS", "500"))
 _last_openfigi_run = 0.0
 
+# Local-LLM filing extraction cadence. 7B Q4 on a laptop GPU does roughly
+# one 13D/8-K extraction per 30-60s, so default a slow background sweep.
+LLM_EXTRACT_INTERVAL_S = int(os.environ.get("LLM_EXTRACT_INTERVAL_S", "600"))
+LLM_EXTRACT_PER_PASS   = int(os.environ.get("LLM_EXTRACT_PER_PASS", "10"))
+_last_llm_extract_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
-    global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run
+    global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run, _last_llm_extract_run
     results = {
         "form4": 0, "13d": 0, "13g": 0, "8k": 0,
         "13f_filings": 0, "13f_holdings": 0,
         "congress": 0, "skill_labeled": 0,
         "options_flow": 0, "dark_pool": 0,
         "cusips_resolved": 0,
+        "llm_activist": 0, "llm_ma": 0,
     }
 
     # Refresh CIK→ticker map (no-op if already current).
@@ -132,6 +141,17 @@ async def run_once() -> dict[str, int]:
             _last_openfigi_run = now
         except Exception as e:
             log.exception("openfigi resolve failed: %s", e)
+
+    # Local-LLM extraction (13D intent + 8-K deal terms). No-op if the local
+    # model isn't reachable — we time out and move on.
+    if llm_client.is_configured() and now - _last_llm_extract_run >= LLM_EXTRACT_INTERVAL_S:
+        try:
+            a, m = await _llm_extraction_pass()
+            results["llm_activist"] = a
+            results["llm_ma"] = m
+            _last_llm_extract_run = now
+        except Exception as e:
+            log.exception("llm extraction pass failed: %s", e)
 
     # Bayesian skill labeling — also slow cadence
     if now - _last_skill_run >= SKILL_INTERVAL_S:
@@ -480,6 +500,105 @@ async def _ingest_congress() -> int:
 
 
 # ───────────────────────────── Backfill helper ─────────────────────────────
+
+# ───────────────────────────── Local-LLM extraction ─────────────────────────────
+
+async def _llm_extraction_pass() -> tuple[int, int]:
+    """Extract 13D activist intent + 8-K deal terms via a local LLM.
+
+    Picks the most-recent N filings without extractions, fetches the
+    primary doc, strips HTML, sends to the configured LLM, persists.
+    """
+    a_done = await _llm_extract_activists()
+    m_done = await _llm_extract_ma()
+    return (a_done, m_done)
+
+
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+async def _llm_extract_activists() -> int:
+    pending = db.pending_activist_extractions(limit=LLM_EXTRACT_PER_PASS)
+    inserted = 0
+    for p in pending:
+        try:
+            body = await edgar.fetch(p["filing_url"])
+        except Exception as e:
+            log.info("llm: 13D fetch %s failed: %s", p["accession"], e)
+            continue
+        try:
+            parsed = await llm_extract.extract_activist_intent(body)
+        except Exception as e:
+            log.info("llm: 13D extract %s failed: %s", p["accession"], e)
+            continue
+        if not parsed or not isinstance(parsed, dict):
+            continue
+        import json as _json
+        row = {
+            "accession":               p["accession"],
+            "intent":                  (parsed.get("intent") or "")[:64] or None,
+            "demands":                 _json.dumps(parsed.get("demands") or []),
+            "prior_history_mentioned": 1 if parsed.get("prior_history_mentioned") else 0,
+            "fund_type":               (parsed.get("fund_type") or "")[:64] or None,
+            "confidence":              float(parsed.get("confidence") or 0) or None,
+            "summary":                 (parsed.get("summary") or "")[:1000] or None,
+            "extracted_at":            _now_iso(),
+            "model":                   llm_client.LLM_MODEL,
+        }
+        if db.upsert_activist_intent(row):
+            inserted += 1
+    return inserted
+
+
+async def _llm_extract_ma() -> int:
+    pending = db.pending_ma_extractions(limit=LLM_EXTRACT_PER_PASS)
+    inserted = 0
+    for p in pending:
+        try:
+            body = await edgar.fetch(p["filing_url"])
+        except Exception as e:
+            log.info("llm: 8-K fetch %s failed: %s", p["accession"], e)
+            continue
+        try:
+            parsed = await llm_extract.extract_ma_terms(body)
+        except Exception as e:
+            log.info("llm: 8-K extract %s failed: %s", p["accession"], e)
+            continue
+        if not parsed or not isinstance(parsed, dict):
+            continue
+        row = {
+            "accession":                   p["accession"],
+            "is_definitive_agreement":     1 if parsed.get("is_definitive_agreement") else 0,
+            "deal_type":                   (parsed.get("deal_type") or "")[:32] or None,
+            "target_name":                 (parsed.get("target_name") or "")[:200] or None,
+            "target_ticker":               ((parsed.get("target_ticker") or "")[:10] or None) and (parsed["target_ticker"] or "").upper() or None,
+            "acquirer_name":               (parsed.get("acquirer_name") or "")[:200] or None,
+            "acquirer_ticker":             ((parsed.get("acquirer_ticker") or "")[:10] or None) and (parsed["acquirer_ticker"] or "").upper() or None,
+            "consideration_type":          (parsed.get("consideration_type") or "")[:16] or None,
+            "consideration_per_share_usd": _safe_float(parsed.get("consideration_per_share_usd")),
+            "exchange_ratio":              _safe_float(parsed.get("exchange_ratio")),
+            "implied_premium_pct":         _safe_float(parsed.get("implied_premium_pct")),
+            "termination_fee_usd":         _safe_float(parsed.get("termination_fee_usd")),
+            "expected_close":              (parsed.get("expected_close") or "")[:16] or None,
+            "summary":                     (parsed.get("summary") or "")[:1000] or None,
+            "extracted_at":                _now_iso(),
+            "model":                       llm_client.LLM_MODEL,
+        }
+        if db.upsert_ma_deal_terms(row):
+            inserted += 1
+    return inserted
+
+
+def _safe_float(v):
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
 
 # ───────────────────────────── Options flow / dark pool ─────────────────────────────
 

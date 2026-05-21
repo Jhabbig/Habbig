@@ -137,12 +137,14 @@ def recent_activist_stakes(window_days: int = 14) -> list[dict]:
     with connect() as cx:
         rows = cx.execute(
             """
-            SELECT accession, filed_at, filer_name, filer_cik,
-                   issuer_name, issuer_ticker, issuer_cik,
-                   pct_owned, shares_owned, filing_type, filing_url
-            FROM activist_stake
-            WHERE filed_at >= datetime('now', ? )
-            ORDER BY filed_at DESC
+            SELECT a.accession, a.filed_at, a.filer_name, a.filer_cik,
+                   a.issuer_name, a.issuer_ticker, a.issuer_cik,
+                   a.pct_owned, a.shares_owned, a.filing_type, a.filing_url,
+                   i.intent, i.demands, i.fund_type, i.confidence, i.summary
+            FROM activist_stake a
+            LEFT JOIN activist_intent i ON i.accession = a.accession
+            WHERE a.filed_at >= datetime('now', ? )
+            ORDER BY a.filed_at DESC
             LIMIT 200
             """,
             (f"-{int(window_days)} days",),
@@ -154,12 +156,18 @@ def recent_ma_events(window_days: int = 7, min_score: float = 2.0) -> list[dict]
     with connect() as cx:
         rows = cx.execute(
             """
-            SELECT accession, filed_at, issuer_name, issuer_ticker,
-                   issuer_cik, items, headline, ma_score, filing_url
-            FROM ma_event
-            WHERE filed_at >= datetime('now', ? )
-              AND ma_score >= ?
-            ORDER BY ma_score DESC, filed_at DESC
+            SELECT m.accession, m.filed_at, m.issuer_name, m.issuer_ticker,
+                   m.issuer_cik, m.items, m.headline, m.ma_score, m.filing_url,
+                   d.deal_type, d.target_name, d.target_ticker,
+                   d.acquirer_name, d.acquirer_ticker, d.consideration_type,
+                   d.consideration_per_share_usd, d.exchange_ratio,
+                   d.implied_premium_pct, d.termination_fee_usd,
+                   d.expected_close, d.is_definitive_agreement, d.summary AS deal_summary
+            FROM ma_event m
+            LEFT JOIN ma_deal_terms d ON d.accession = m.accession
+            WHERE m.filed_at >= datetime('now', ? )
+              AND m.ma_score >= ?
+            ORDER BY m.ma_score DESC, m.filed_at DESC
             LIMIT 200
             """,
             (f"-{int(window_days)} days", float(min_score)),
