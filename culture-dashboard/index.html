@@ -363,6 +363,73 @@
                border-radius: 10px; padding: 18px; }
   .breakdown h2 { margin: 0 0 12px; font-size: 13px; color: var(--muted);
                   text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* Per-section index sparkline grid */
+  .section-indexes { display: grid;
+                      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                      gap: 10px; margin-bottom: 22px; }
+  .section-index { background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 10px 12px; }
+  .section-index .name { color: var(--muted); font-size: 11px;
+                          text-transform: uppercase; letter-spacing: 0.06em; }
+  .section-index .value { font-size: 22px; font-weight: 700;
+                           font-variant-numeric: tabular-nums; color: var(--fg);
+                           line-height: 1.1; margin-top: 2px; }
+  .section-index .value.dim { color: var(--muted); }
+  .section-index svg { width: 100%; height: 28px; margin-top: 4px; display: block; }
+  .section-index .delta { font-size: 11px; font-variant-numeric: tabular-nums;
+                           margin-top: 2px; }
+  .section-index .delta.up { color: var(--good); }
+  .section-index .delta.down { color: var(--bad); }
+  .section-index .delta.flat { color: var(--muted); }
+
+  /* Daily headlines timeline */
+  .headlines { background: var(--panel); border: 1px solid var(--border);
+                border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
+  .headlines h2 { margin: 0 0 4px; font-size: 14px; }
+  .headlines .sub { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .headlines-list { display: grid; gap: 10px; max-height: 480px; overflow-y: auto; }
+  .headline-day { background: var(--panel-2); border-radius: 6px;
+                   padding: 10px 14px; display: grid;
+                   grid-template-columns: 100px 60px 1fr; gap: 12px;
+                   font-size: 12px; align-items: start; }
+  .headline-day .date { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .headline-day .idx { color: var(--accent); font-weight: 700;
+                        font-size: 18px; line-height: 1;
+                        font-variant-numeric: tabular-nums; }
+  .headline-day .idx-label { display: block; color: var(--muted);
+                              font-size: 9px; text-transform: uppercase;
+                              letter-spacing: 0.05em; font-weight: 400; margin-top: 2px; }
+  .headline-day .topics-line { color: var(--muted); margin-top: 4px; }
+  .headline-day .topics-line strong { color: var(--fg); }
+  .headline-day .topics-line a { color: var(--accent); text-decoration: none; }
+  .headline-day .topics-line a:hover { text-decoration: underline; }
+
+  /* Source quality leaderboard */
+  .source-quality { background: var(--panel); border: 1px solid var(--border);
+                     border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
+  .source-quality h2 { margin: 0 0 4px; font-size: 14px; }
+  .source-quality .sub { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .sq-table { display: grid; gap: 4px; font-size: 12px; }
+  .sq-row { display: grid;
+             grid-template-columns: 160px 60px 1fr 80px;
+             gap: 8px; padding: 6px 0; align-items: center;
+             border-bottom: 1px solid var(--border); }
+  .sq-row.header { color: var(--muted); font-size: 10px;
+                    text-transform: uppercase; letter-spacing: 0.06em;
+                    border-bottom: 1px solid var(--accent); padding-bottom: 6px; }
+  .sq-row .src { font-weight: 600; font-family: monospace; font-size: 11px; }
+  .sq-row .rate { text-align: right; font-variant-numeric: tabular-nums;
+                   font-weight: 700; font-size: 14px; }
+  .sq-row .rate.good { color: var(--good); }
+  .sq-row .rate.warn { color: var(--warn); }
+  .sq-row .rate.bad { color: var(--bad); }
+  .sq-row .rate.unknown { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .sq-row .bar { height: 6px; background: var(--panel-2); border-radius: 3px;
+                  overflow: hidden; }
+  .sq-row .bar-fill { height: 100%; background: var(--good); }
+  .sq-row .n { text-align: right; color: var(--muted);
+                font-variant-numeric: tabular-nums; font-size: 11px; }
   .bars { display: grid; gap: 8px; }
   .bar-row { display: grid; grid-template-columns: 130px 1fr 60px;
              gap: 10px; align-items: center; font-size: 13px; }
@@ -444,6 +511,10 @@
     </div>
   </div>
 
+  <section class="section-indexes" id="section-indexes"
+           aria-label="Per-section culture index history">
+  </section>
+
   <section class="rising" id="rising">
     <h2>Rising now</h2>
     <div class="sub">Items whose attention spiked past their 7-day baseline (z-score)</div>
@@ -498,6 +569,18 @@
         <div class="backtest-examples" id="backtest-topics-examples"></div>
       </div>
     </div>
+  </section>
+
+  <section class="headlines" id="headlines" aria-labelledby="headlines-title">
+    <h2 id="headlines-title">Daily timeline</h2>
+    <div class="sub">One snapshot per UTC day — overall index, top surges, top cross-source topics.</div>
+    <div class="headlines-list" id="headlines-list"></div>
+  </section>
+
+  <section class="source-quality" id="source-quality" aria-labelledby="sq-title">
+    <h2 id="sq-title">Source quality (last 30 days)</h2>
+    <div class="sub">Per-source hit rate: when this source contributed to a surging topic, did matched markets actually move?</div>
+    <div class="sq-table" id="sq-table"></div>
   </section>
 
   <section class="topics" id="topics">
@@ -877,6 +960,110 @@ async function loadBacktest() {
 
 document.getElementById("backtest-form")?.addEventListener("change", loadBacktest);
 
+function renderSectionIndexes(currentSections, historyPoints) {
+  const root = document.getElementById("section-indexes");
+  if (!root) return;
+  const ordered = ["memes", "attention", "entertainment", "markets",
+                   "news", "language", "lifestyle"];
+  root.innerHTML = "";
+  for (const name of ordered) {
+    const cur = currentSections?.[name];
+    const series = (historyPoints || [])
+      .map(p => p.sections?.[name]?.score)
+      .filter(v => v != null);
+    const card = document.createElement("div");
+    card.className = "section-index";
+    let sparkSvg = "";
+    let delta = "";
+    if (series.length >= 2) {
+      const path = sparkPath(series, 140, 28, 1);
+      if (path) {
+        sparkSvg = `<svg viewBox="0 0 140 28" preserveAspectRatio="none">
+          <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.2"/>
+        </svg>`;
+      }
+      const change = series[series.length - 1] - series[0];
+      const cls = change > 0.5 ? "up" : change < -0.5 ? "down" : "flat";
+      const sign = change >= 0 ? "+" : "";
+      delta = `<div class="delta ${cls}">72h ${sign}${change.toFixed(1)}</div>`;
+    } else {
+      delta = `<div class="delta flat">history building</div>`;
+    }
+    const score = cur?.score;
+    const dimCls = score == null ? "dim" : "";
+    card.innerHTML = `
+      <div class="name">${name}</div>
+      <div class="value ${dimCls}">${score == null ? "—" : score.toFixed(1)}</div>
+      ${sparkSvg}
+      ${delta}`;
+    root.appendChild(card);
+  }
+}
+
+async function loadHeadlines() {
+  const r = await fetch("/api/headlines?days=30");
+  const data = await r.json();
+  const root = document.getElementById("headlines-list");
+  if (!data.headlines.length) {
+    root.innerHTML = '<div class="empty-state">First daily snapshot will appear within ~5 minutes of startup.</div>';
+    return;
+  }
+  root.innerHTML = data.headlines.map(h => {
+    const p = h.payload || {};
+    const overall = p.overall != null ? p.overall.toFixed(1) : "—";
+    const topics = (p.top_topics || []).slice(0, 3).map(t =>
+      `<a href="/topic/${encodeURIComponent(t.label)}">${t.label}</a>`).join(" · ");
+    const surges = (p.top_surges || []).slice(0, 3).map(s =>
+      `<strong>${escapeHtml(s.title.length > 50 ? s.title.slice(0, 50) + "…" : s.title)}</strong>`).join(" · ");
+    return `<div class="headline-day">
+      <div class="date">${h.date}</div>
+      <div>
+        <div class="idx">${overall}</div>
+        <div class="idx-label">index</div>
+      </div>
+      <div>
+        ${surges ? `<div>${surges}</div>` : ""}
+        ${topics ? `<div class="topics-line">topics: ${topics}</div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function loadSourceQuality() {
+  const r = await fetch("/api/source_quality?days=30");
+  const data = await r.json();
+  const root = document.getElementById("sq-table");
+  if (!data.sources.length) {
+    root.innerHTML = '<div class="empty-state">Needs topic snapshots + market price history accumulating before hit rates compute.</div>';
+    return;
+  }
+  const maxRate = Math.max(...data.sources.map(s => s.hit_rate || 0), 0.01);
+  const rows = data.sources.map(s => {
+    let rateHtml;
+    if (s.hit_rate == null) {
+      rateHtml = `<span class="rate unknown">— n=${s.validatable}</span>`;
+    } else {
+      const cls = s.hit_rate >= 0.4 ? "good" : s.hit_rate >= 0.2 ? "warn" : "bad";
+      rateHtml = `<span class="rate ${cls}">${(s.hit_rate * 100).toFixed(0)}%</span>`;
+    }
+    const barWidth = s.hit_rate != null ? (s.hit_rate / maxRate) * 100 : 0;
+    return `<div class="sq-row">
+      <span class="src">${s.source}</span>
+      ${rateHtml}
+      <div class="bar"><div class="bar-fill" style="width:${barWidth}%"></div></div>
+      <span class="n">${s.hit}/${s.validatable}</span>
+    </div>`;
+  }).join("");
+  root.innerHTML = `
+    <div class="sq-row header">
+      <span>Source</span>
+      <span style="text-align:right">Hit rate</span>
+      <span>Relative</span>
+      <span style="text-align:right">Hits/n</span>
+    </div>
+    ${rows}`;
+}
+
 async function loadSurges() {
   const r = await fetch("/api/surges?limit=8");
   const data = await r.json();
@@ -930,6 +1117,7 @@ async function loadIndex() {
   document.getElementById("overall-meta").textContent =
     "weighted across " + Object.keys(data.sections).length + " sections";
   drawSpark(history.points);
+  renderSectionIndexes(data.sections, history.points);
 
   const bars = document.getElementById("bars");
   bars.innerHTML = "";
@@ -1018,6 +1206,7 @@ async function refreshAll() {
   document.getElementById("updated").textContent = "refreshing…";
   await Promise.all([
     loadDigest(), loadIndex(), loadSurges(), loadEdges(), loadBacktest(),
+    loadHeadlines(), loadSourceQuality(),
     loadTopics(), loadSections(), loadHealth(),
   ]);
   document.getElementById("updated").textContent = new Date().toLocaleTimeString();

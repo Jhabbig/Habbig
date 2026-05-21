@@ -132,6 +132,12 @@ def init_db() -> None:
             except sqlite3.OperationalError:
                 pass
         c.executescript("""
+            CREATE TABLE IF NOT EXISTS daily_headlines (
+                date         TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                created_at   REAL NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS topic_snapshots (
                 snapshot_id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts                 REAL NOT NULL,
@@ -514,6 +520,36 @@ def prune_topic_snapshots(days: int = 30) -> int:
     with _txn() as c:
         cur = c.execute("DELETE FROM topic_snapshots WHERE ts < ?", (cutoff,))
         return cur.rowcount
+
+
+def upsert_daily_headline(date_str: str, payload: dict) -> None:
+    """Replace today's headline row each cycle; by end of day it holds the
+    final state. `date_str` is an ISO date YYYY-MM-DD."""
+    with _txn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO daily_headlines (date, payload_json, created_at) "
+            "VALUES (?, ?, ?)",
+            (date_str, json.dumps(payload), time.time()),
+        )
+
+
+def daily_headlines(days: int = 30) -> list[dict]:
+    cutoff = time.time() - days * 86400
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT date, payload_json, created_at FROM daily_headlines "
+            "WHERE created_at >= ? ORDER BY date DESC",
+            (cutoff,),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d.pop("payload_json"))
+            except json.JSONDecodeError:
+                d["payload"] = {}
+            out.append(d)
+        return out
 
 
 def prune_market_prices(days: int = 30) -> int:

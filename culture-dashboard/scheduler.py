@@ -19,6 +19,7 @@ import cache
 import dedup
 import digest
 import edge as edge_mod
+import headlines
 import index_calc
 import surge_calc
 import time as _time
@@ -161,6 +162,10 @@ async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
                     log.info("recorded %d topic snapshots", len(snaps))
             except Exception as e:  # noqa: BLE001
                 log.warning("topic snapshot hiccup: %s", e)
+            try:
+                headlines.write_today()
+            except Exception as e:  # noqa: BLE001
+                log.warning("daily headline write failed: %s", e)
         except Exception as e:  # noqa: BLE001
             log.warning("surge worker hiccup: %s", e)
         try:

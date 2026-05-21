@@ -37,6 +37,7 @@ import digest as digest_mod                                    # noqa: E402
 import edge                                                    # noqa: E402
 import export as export_mod                                    # noqa: E402
 import index_calc                                              # noqa: E402
+import source_quality                                          # noqa: E402
 import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
 from scheduler import (                                        # noqa: E402
@@ -242,6 +243,18 @@ async def compare_page() -> HTMLResponse:
 @app.get("/export", response_class=HTMLResponse)
 async def export_page() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/headlines")
+async def api_headlines(days: int = 30) -> JSONResponse:
+    days = max(1, min(days, 365))
+    return JSONResponse({"days": days, "headlines": cache.daily_headlines(days)})
+
+
+@app.get("/api/source_quality")
+async def api_source_quality(days: int = 30) -> JSONResponse:
+    days = max(1, min(days, 365))
+    return JSONResponse(source_quality.compute(days=days))
 
 
 @app.get("/api/export")

@@ -232,6 +232,34 @@ payload; Discord webhook → markdown content) or overridden via
 (`type: "culture.digest"`, with `body_md` + token counts) is the default
 and is what you want for piping into a custom downstream.
 
+### Per-section index sparklines
+
+Below the composite index, a row of seven mini cards — one per section
+(memes, attention, entertainment, markets, news, language, lifestyle).
+Each shows the current score, a 72-hour sparkline, and the 72-hour delta
+in green/red/grey. Reads the same `/api/index/history` payload the main
+sparkline uses, so no extra storage.
+
+### Daily timeline (`/api/headlines`)
+
+Each surge-worker cycle calls `headlines.write_today()` which builds a
+`{overall, sections, top_surges, top_topics, top_news}` payload and
+UPSERTs into the `daily_headlines` table keyed by UTC date. By end of
+day the row holds the final state; reads expose the last 30 days
+newest-first. UI: a scrollable timeline panel above the topics grid
+that links each topic label to its `/topic/{label}` permalink.
+
+### Source-quality leaderboard (`/api/source_quality`)
+
+For every cross-source topic snapshot with `surge_signal ≥ 1.5`, the
+basket-average move across its matched markets is attributed to **each**
+source that contributed to the cluster (Reddit + TikTok + Wikipedia,
+say). `culture_markets`-direct surge alerts feed in the same way.
+Per-source counts → hit rate; the UI ranks sources, color-coded
+(green ≥ 40%, amber ≥ 20%, red below), with a relative bar and the raw
+hit/n. Small sample sizes are unreliable — counts are exposed so the
+caller can apply their own significance threshold.
+
 ### Topic comparison
 
 `/compare?a=foo&b=bar&c=baz&d=qux` overlays up to four topic surge
@@ -310,6 +338,8 @@ the dashboard is already surfacing.
 | `GET /topic/{slug}` | HTML topic page (same SPA shell; the front-end router renders the detail view). |
 | `GET /compare?a=x&b=y[&c=z&d=w]` | HTML overlay of up to 4 topic trajectories on one chart, with per-topic stat cards. |
 | `GET /api/backtest?days=30&threshold_pct=0.05&window_hours=24` | Hit/weak/miss rates. All three parameters are tunable from the dashboard's backtest controls. |
+| `GET /api/headlines?days=30` | One row per UTC day: overall index, per-section scores, top 3 surges/topics/news. |
+| `GET /api/source_quality?days=30` | Per-source hit rate from topic snapshots × matched-market velocity. |
 | `GET /api/export` | List exportable data types. |
 | `GET /api/export?type=X&days=30&format=csv` | Streaming CSV of one table (or `format=json` for the full result set). |
 | `GET /export` | HTML page with download links for every export type, with a window selector. |
