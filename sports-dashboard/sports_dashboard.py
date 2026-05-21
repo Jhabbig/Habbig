@@ -476,6 +476,18 @@ def _init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_signal_expl_key ON sports_signal_explanations(cache_key, created_at);
+            -- Per-user bankroll for Kelly-aware stake suggestions and
+            -- drawdown alerts. Defaults are conservative half-Kelly with
+            -- a 5% per-bet ceiling.
+            CREATE TABLE IF NOT EXISTS sports_bankroll (
+                user_id TEXT PRIMARY KEY,
+                starting_bankroll REAL NOT NULL,
+                current_bankroll REAL NOT NULL,
+                kelly_fraction REAL DEFAULT 0.5,
+                max_per_bet_pct REAL DEFAULT 5.0,
+                drawdown_alert_pct REAL DEFAULT 10.0,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
             CREATE TABLE IF NOT EXISTS sports_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sport TEXT,
@@ -7270,6 +7282,199 @@ async def trade_csv(request: Request):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=trades.csv"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Bankroll + Kelly stake suggestions (T4.3)
+# ---------------------------------------------------------------------------
+
+DEFAULT_KELLY_FRACTION = 0.5      # half-Kelly is the de-facto retail standard
+DEFAULT_MAX_PER_BET_PCT = 5.0     # never risk more than 5% of bankroll per bet
+DEFAULT_DRAWDOWN_ALERT_PCT = 10.0  # alert when down 10% from starting
+
+
+def _kelly_suggested_stake(bankroll: dict, kelly_pct: float | None) -> dict:
+    """Compute a Kelly-adjusted stake suggestion for a single bet.
+
+    Inputs:
+      bankroll: row from sports_bankroll (or defaults). We use
+        current_bankroll, kelly_fraction, max_per_bet_pct.
+      kelly_pct: full-Kelly fraction in percent (0-100), as already
+        computed by match_and_compare (`kelly_pct` field on outcomes).
+
+    Returns dict with the suggested stake in USD plus the ceiling that
+    bound it (helpful for the UI to explain WHY the suggestion is what
+    it is — capped by max-per-bet, by available bankroll, or zero).
+    """
+    current = float(bankroll.get("current_bankroll") or 0)
+    frac = float(bankroll.get("kelly_fraction") or DEFAULT_KELLY_FRACTION)
+    cap_pct = float(bankroll.get("max_per_bet_pct") or DEFAULT_MAX_PER_BET_PCT)
+
+    if current <= 0 or kelly_pct is None or kelly_pct <= 0:
+        return {"stake_usd": 0.0, "kelly_pct": 0.0, "capped_by": "no_edge"}
+
+    # match_and_compare already applies half-Kelly. If the user wants
+    # something different (full Kelly = 1.0, quarter-Kelly = 0.25), we
+    # rescale: stored kelly_pct = full_kelly * 0.5, so full_kelly = kelly_pct * 2.
+    full_kelly_pct = float(kelly_pct) * 2.0
+    fractional_pct = full_kelly_pct * frac
+
+    # Two ceilings: user's max-per-bet, and the bankroll itself.
+    stake_from_kelly = current * (fractional_pct / 100.0)
+    stake_from_cap = current * (cap_pct / 100.0)
+
+    if stake_from_kelly <= stake_from_cap:
+        capped_by = "kelly"
+        stake = stake_from_kelly
+    else:
+        capped_by = "max_per_bet_pct"
+        stake = stake_from_cap
+
+    return {
+        "stake_usd": round(stake, 2),
+        "kelly_pct": round(fractional_pct, 3),
+        "capped_by": capped_by,
+    }
+
+
+def _get_user_bankroll(user_id: str) -> dict | None:
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_bankroll WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _annotate_bankroll(bankroll: dict | None) -> dict | None:
+    """Add computed fields the UI cares about: pnl, return%, drawdown
+    flag. Returns None when no bankroll is configured."""
+    if not bankroll:
+        return None
+    starting = float(bankroll.get("starting_bankroll") or 0)
+    current = float(bankroll.get("current_bankroll") or 0)
+    pnl = round(current - starting, 2)
+    return_pct = round((pnl / starting) * 100, 3) if starting > 0 else 0.0
+    dd_threshold = float(bankroll.get("drawdown_alert_pct")
+                          or DEFAULT_DRAWDOWN_ALERT_PCT)
+    in_drawdown = (starting > 0) and (return_pct <= -dd_threshold)
+    out = dict(bankroll)
+    out["pnl"] = pnl
+    out["return_pct"] = return_pct
+    out["in_drawdown"] = in_drawdown
+    return out
+
+
+@app.get("/api/bankroll")
+async def api_get_bankroll(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    return JSONResponse({"bankroll": _annotate_bankroll(row)})
+
+
+@app.put("/api/bankroll")
+async def api_put_bankroll(request: Request):
+    """Create or replace the user's bankroll config.
+
+    Body: {"starting_bankroll": float, "current_bankroll": float?,
+    "kelly_fraction": float?, "max_per_bet_pct": float?,
+    "drawdown_alert_pct": float?}. If current_bankroll is omitted, it
+    defaults to starting_bankroll (initial setup case).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    try:
+        starting = float(body.get("starting_bankroll", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "starting_bankroll must be a number"}, status_code=400)
+    if starting <= 0 or starting > 10_000_000:
+        return JSONResponse({"error": "starting_bankroll must be 0 < x <= 10,000,000"},
+                             status_code=400)
+    current = body.get("current_bankroll", starting)
+    try:
+        current = float(current)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "current_bankroll must be a number"}, status_code=400)
+    if current < 0:
+        return JSONResponse({"error": "current_bankroll must be >= 0"}, status_code=400)
+
+    def _clamp_float(name: str, default: float, lo: float, hi: float) -> float:
+        if name not in body:
+            return default
+        try:
+            v = float(body[name])
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a number")
+        if not (lo <= v <= hi):
+            raise ValueError(f"{name} out of range")
+        return v
+
+    try:
+        kelly = _clamp_float("kelly_fraction", DEFAULT_KELLY_FRACTION, 0.0, 1.0)
+        cap = _clamp_float("max_per_bet_pct", DEFAULT_MAX_PER_BET_PCT, 0.1, 100.0)
+        dd = _clamp_float("drawdown_alert_pct", DEFAULT_DRAWDOWN_ALERT_PCT, 0.5, 100.0)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    with _get_db() as conn:
+        conn.execute(
+            "INSERT INTO sports_bankroll "
+            "(user_id, starting_bankroll, current_bankroll, kelly_fraction, "
+            " max_per_bet_pct, drawdown_alert_pct, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "  starting_bankroll = excluded.starting_bankroll, "
+            "  current_bankroll = excluded.current_bankroll, "
+            "  kelly_fraction = excluded.kelly_fraction, "
+            "  max_per_bet_pct = excluded.max_per_bet_pct, "
+            "  drawdown_alert_pct = excluded.drawdown_alert_pct, "
+            "  updated_at = excluded.updated_at",
+            (user["id"], starting, current, kelly, cap, dd),
+        )
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    return JSONResponse({"bankroll": _annotate_bankroll(row)})
+
+
+@app.post("/api/bankroll/suggest-stake")
+async def api_bankroll_suggest_stake(request: Request):
+    """Return a Kelly-adjusted stake suggestion for a given kelly_pct.
+
+    Body: {"kelly_pct": float}. Uses the user's current bankroll config;
+    returns 404 if no bankroll is set so the UI can prompt the user to
+    configure one before showing suggestions.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    kelly_pct = body.get("kelly_pct")
+    try:
+        kelly_pct = float(kelly_pct) if kelly_pct is not None else None
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "kelly_pct must be a number"}, status_code=400)
+
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    if not row:
+        return JSONResponse({"error": "no bankroll configured"}, status_code=404)
+    suggestion = _kelly_suggested_stake(row, kelly_pct)
+    annotated = _annotate_bankroll(row)
+    return JSONResponse({
+        "suggestion": suggestion,
+        "in_drawdown": annotated.get("in_drawdown", False) if annotated else False,
+    })
 
 
 # ---------------------------------------------------------------------------
