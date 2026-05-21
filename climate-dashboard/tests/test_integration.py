@@ -206,3 +206,50 @@ def test_upstream_failure_yields_503(client):
         r = client.get("/api/temperature")
         assert r.status_code == 503
         assert "error" in r.get_json()
+
+
+def test_snapshot_txt_endpoint(client):
+    r = client.get("/snapshot.txt")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers["Content-Type"]
+    body = r.data.decode("utf-8")
+    assert "Climate snapshot" in body
+    assert "CO₂" in body or "CO2" in body
+
+
+def test_rss_feed_endpoint(client):
+    r = client.get("/feed.xml")
+    assert r.status_code == 200
+    assert "rss" in r.headers["Content-Type"]
+    body = r.data.decode("utf-8")
+    assert "<rss" in body and "</rss>" in body
+    assert "<channel>" in body and "</channel>" in body
+
+
+def test_index_has_expected_sections(client):
+    r = client.get("/")
+    body = r.data.decode("utf-8")
+    # Major section titles should all appear
+    for marker in (
+        "Top CO₂ emitters",
+        "Indicator overlay",
+        "Top opportunities",
+        "Climate markets",
+        "Model performance",
+        "/api/summary",
+        "/api/markets",
+        "uPlot",  # chart library reference
+        "kellyBet",  # the position-sizing logic
+        "fanChart",  # the projection cone
+        "ensoSegments",  # ENSO shading
+        "downloadCSV",  # export helper
+    ):
+        assert marker in body, f"index page missing expected marker: {marker}"
+
+
+def test_methodology_page_lists_all_known_models(client):
+    r = client.get("/methodology")
+    body = r.data.decode("utf-8")
+    # Has the loader scripts
+    assert "/api/methodology" in body
+    assert "/api/backtest" in body

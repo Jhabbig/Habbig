@@ -17,7 +17,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, send_from_directory
 
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
@@ -30,6 +30,7 @@ from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sf6 as sf6_src
 from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
+from app import snapshot as snapshot_module
 from app.models import co2 as co2_model
 from app.models import calibration
 from app.models import emissions as emissions_model
@@ -92,6 +93,50 @@ def api_health():
 @app.route("/api/methodology")
 def api_methodology():
     return jsonify(methodology_payload(commit=_COMMIT))
+
+
+@app.route("/snapshot.txt")
+def api_snapshot_text():
+    """Plain-text dashboard snapshot suitable for posting / piping / cron."""
+    g = gistemp_src.fetch()
+    c = co2_src.fetch()
+    ch4 = methane_src.fetch()
+    n2o = n2o_src.fetch()
+    sf6 = sf6_src.fetch()
+    s = sea_ice_src.fetch()
+    o = oni_src.fetch()
+    em = emissions_src.fetch()
+    forcing = forcing_model.compute(co2=c, methane=ch4, n2o=n2o, sf6=sf6)
+    em_summary = None
+    if em:
+        em_summary = {
+            "latest_year": em["latest_year"],
+            "top_emitters": emissions_model.top_emitters(em, n=10),
+        }
+    hl = highlights_model.compute(
+        gistemp=g, co2=c, methane=ch4, n2o=n2o, sea_ice=s, oni=o,
+    )
+    text = snapshot_module.text_snapshot(
+        gistemp=g, co2=c, methane=ch4, n2o=n2o, sf6=sf6,
+        sea_ice=s, oni=o, forcing=forcing, highlights=hl,
+        emissions=em_summary,
+    )
+    return Response(text, mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/feed.xml")
+def feed_xml():
+    """RSS 2.0 feed of the highlights chips. Subscribe in any reader."""
+    hl = highlights_model.compute(
+        gistemp=gistemp_src.fetch(),
+        co2=co2_src.fetch(),
+        methane=methane_src.fetch(),
+        n2o=n2o_src.fetch(),
+        sea_ice=sea_ice_src.fetch(),
+        oni=oni_src.fetch(),
+    )
+    xml = snapshot_module.rss_feed(hl)
+    return Response(xml, mimetype="application/rss+xml; charset=utf-8")
 
 
 @app.route("/api/highlights")
