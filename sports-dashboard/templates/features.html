@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Features · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.55; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+  .header { display: flex; align-items: baseline; justify-content: space-between;
+            margin-bottom: 8px; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 30px; margin: 0; letter-spacing: -0.01em; }
+  .header .right { color: var(--muted); font-size: 13px; }
+  .sub { color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+
+  .section { margin-bottom: 36px; }
+  .section h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); font-weight: 600; margin: 0 0 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .grid { display: grid; gap: 12px;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px;
+    display: flex; flex-direction: column; gap: 6px;
+    text-decoration: none; color: var(--fg);
+    transition: border-color 100ms ease, transform 100ms ease;
+  }
+  .card:hover {
+    border-color: var(--accent); transform: translateY(-1px);
+    text-decoration: none;
+  }
+  .card h3 { margin: 0; font-size: 15px; display: flex;
+             justify-content: space-between; align-items: baseline; gap: 8px; }
+  .card .desc { color: var(--muted); font-size: 13px; flex: 1; }
+  .card .meta { font-size: 11px; color: var(--accent); margin-top: 4px;
+                font-variant-numeric: tabular-nums; }
+  .card.pro { border-color: rgba(245, 158, 11, 0.3); }
+  .card.pro::after {
+    content: "Pro"; position: absolute; top: 12px; right: 14px;
+    font-size: 10px; color: var(--amber); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .card { position: relative; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    background: rgba(16, 185, 129, 0.15); color: var(--green);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; margin-left: 6px;
+  }
+  .badge-public {
+    background: rgba(59, 130, 246, 0.15); color: var(--accent);
+  }
+  .badge-new {
+    background: rgba(245, 158, 11, 0.15); color: var(--amber);
+  }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 40px;
+            padding-top: 20px; border-top: 1px solid var(--border); }
+  .footer a { color: var(--muted); }
+  .footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>Sharpe — feature index</h1>
+    <div class="right"><a href="/">Open the live dashboard →</a></div>
+  </div>
+  <p class="sub">
+    Every surface in one place. Bookmark this page — the main dashboard
+    focuses on the live signal feed; everything else lives here.
+  </p>
+
+  <div class="section">
+    <h2>Trust + Proof</h2>
+    <div class="grid">
+      <a class="card" href="/track-record">
+        <h3>Track record <span class="badge badge-public">Public</span></h3>
+        <div class="desc">CLV, simulated P&amp;L, and calibration of every flagged
+          signal over the last 30/90/180/365 days. Tunable threshold + stake.</div>
+        <div class="meta">/track-record · /api/track-record/{clv,pnl,calibration}</div>
+      </a>
+      <a class="card" href="/leaderboard">
+        <h3>CLV leaderboard <span class="badge badge-public">Public</span></h3>
+        <div class="desc">Opt-in roster of sharp users ranked by mean closing
+          line value. Minimum 10 resolved trades to qualify.</div>
+        <div class="meta">/leaderboard · /api/leaderboard/clv</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Cross-venue signals</h2>
+    <div class="grid">
+      <a class="card" href="/">
+        <h3>Live dashboard</h3>
+        <div class="desc">Book × Polymarket × Kalshi divergence feed for the
+          active sport, with sharp-consensus, liquidity, and staleness
+          gates applied. Real-time WS push for live price moves.</div>
+        <div class="meta">/ · /api/data · WebSocket /ws</div>
+      </a>
+      <a class="card" href="/player-props">
+        <h3>Player props</h3>
+        <div class="desc">Bookmaker player props (DraftKings, FanDuel, BetMGM)
+          joined against Kalshi props on (player, stat, line). EV signals at
+          divergence ≥ 5pp.</div>
+        <div class="meta">/player-props · /api/player-props/cross-venue</div>
+      </a>
+      <a class="card" href="/cross-book-arbitrage">
+        <h3>Cross-book arbitrage</h3>
+        <div class="desc">Low-hold (negative-vig) and middling opportunities
+          across configured books. Pure book-vs-book — no Polymarket needed.</div>
+        <div class="meta">/cross-book-arbitrage · /api/cross-book-arbitrage</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Differentiation moats</h2>
+    <div class="grid">
+      <a class="card" href="/smart-money">
+        <h3>Smart money <span class="badge badge-new">New</span></h3>
+        <div class="desc">Top-50 Polymarket wallets' positions overlaid on the
+          active sport. "23 whales hold this position with $X exposure" —
+          nobody else surfaces this for sports markets.</div>
+        <div class="meta">/smart-money · /api/smart-money</div>
+      </a>
+      <a class="card" href="/poly-fills">
+        <h3>Polymarket fills tape <span class="badge badge-new">Live</span></h3>
+        <div class="desc">Real-time feed of large Polymarket fills (≥$1k by
+          default). See sharp money landing before the price catches up.</div>
+        <div class="meta">/poly-fills · /api/poly-fills</div>
+      </a>
+      <a class="card" href="/steam-moves">
+        <h3>Steam moves</h3>
+        <div class="desc">Sharp-book line moves ≥2pp within 30 min. Tunable
+          threshold and window. Sorted by absolute swing.</div>
+        <div class="meta">/steam-moves · /api/steam-moves</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Your edge</h2>
+    <div class="grid">
+      <a class="card pro" href="/trades">
+        <h3>Bet tracker</h3>
+        <div class="desc">Log placed bets, track P&amp;L and per-trade CLV,
+          break down by sport/book/market type, export CSV.</div>
+        <div class="meta">/trades · /api/trades/* · /api/trades/csv</div>
+      </a>
+      <a class="card pro" href="/backtest">
+        <h3>Backtest replay</h3>
+        <div class="desc">Replay an arbitrary alert rule against resolved
+          historical signals. Tune filters; see hypothetical P&amp;L, win
+          rate, Sharpe, max drawdown.</div>
+        <div class="meta">/backtest · /api/backtest/replay</div>
+      </a>
+      <a class="card pro" href="/api/bankroll">
+        <h3>Bankroll + Kelly</h3>
+        <div class="desc">Persist your bankroll, configure Kelly fraction
+          and per-bet cap. Get sized stake suggestions per signal with
+          drawdown alerts.</div>
+        <div class="meta">/api/bankroll · /api/bankroll/suggest-stake</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Pro automation</h2>
+    <div class="grid">
+      <a class="card pro" href="/api/alert-rules">
+        <h3>Rule-based alerts</h3>
+        <div class="desc">Build structured alert rules (sport, market type,
+          divergence floor, volume, time-to-event, quality gates, quiet
+          hours, channel routing).</div>
+        <div class="meta">/api/alert-rules (GET, POST, PATCH, DELETE)</div>
+      </a>
+      <a class="card pro" href="/api/auth/tokens">
+        <h3>API tokens</h3>
+        <div class="desc">Bearer tokens for programmatic access. Authorization:
+          Bearer &lt;token&gt;. Tokens are SHA-256 hashed at rest; plaintext
+          shown once.</div>
+        <div class="meta">/api/auth/tokens (GET, POST, DELETE)</div>
+      </a>
+      <a class="card pro" href="/api/webhooks/signing-key">
+        <h3>Signed webhooks</h3>
+        <div class="desc">HMAC-SHA256 signatures on every webhook payload via
+          X-Sharpe-Signature. Verify with constant-time compare; replay
+          protection via X-Sharpe-Timestamp.</div>
+        <div class="meta">/api/webhooks/signing-key · /api/webhooks/test</div>
+      </a>
+      <a class="card pro" href="/api/push/vapid-public-key">
+        <h3>Browser push (PWA)</h3>
+        <div class="desc">Install the dashboard as a PWA, subscribe to Web
+          Push for real-time signals on phone or desktop even when the
+          tab is closed.</div>
+        <div class="meta">/api/push/* · manifest.json · sw.js</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>AI</h2>
+    <div class="grid">
+      <a class="card" href="#" onclick="explainDemo(); return false;">
+        <h3>Signal explanation</h3>
+        <div class="desc">Plain-English "why is this mispriced" for any signal,
+          generated by Claude. Cached 30 min per signal identity to bound
+          API cost.</div>
+        <div class="meta">POST /api/signals/explain</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Operational</h2>
+    <div class="grid">
+      <a class="card" href="/metrics">
+        <h3>Prometheus metrics</h3>
+        <div class="desc">25+ metrics including poll-loop duration, comparisons,
+          signals, alert delivery, WS reconnects, Odds API quota, fill capture
+          counts, push delivery.</div>
+        <div class="meta">/metrics (no auth — bind to private network)</div>
+      </a>
+      <a class="card" href="/api/diagnostics/match-rejects">
+        <h3>Diagnostics</h3>
+        <div class="desc">Recent fuzzy-match near-rejects (helps tune team
+          aliases) and Odds API quota tracker (low-water mark, exhaustion
+          count). Admin-only.</div>
+        <div class="meta">/api/diagnostics/{match-rejects,odds-quota}</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="footer">
+    Sharpe — multi-venue sports EV. Polymarket × Kalshi × major sportsbooks.
+    See <a href="https://github.com/Jhabbig/Habbig">source</a>.
+  </div>
+</div>
+
+<script>
+function explainDemo() {
+  alert(
+    "POST /api/signals/explain with a signal payload (home_team, away_team, " +
+    "outcome, divergence, sport, ...) to get a Claude-generated explanation.\n\n" +
+    "Try it from the dashboard's signal cards, or use curl:\n\n" +
+    "curl -X POST -H 'Content-Type: application/json' \\\n" +
+    "  -d '{\"home_team\":\"Lakers\",\"away_team\":\"Warriors\",\"outcome\":\"Lakers\",\"divergence\":6.5,\"sport\":\"basketball_nba\",\"sharp_prob\":55,\"poly_prob\":48.5}' \\\n" +
+    "  /api/signals/explain"
+  );
+}
+</script>
+</body>
+</html>

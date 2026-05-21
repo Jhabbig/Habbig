@@ -10271,6 +10271,18 @@ async def websocket_endpoint(ws: WebSocket):
 # Dashboard HTML
 # ---------------------------------------------------------------------------
 
+@app.get("/features", response_class=HTMLResponse)
+async def features_page(request: Request):
+    """Command-center index page that lists every dashboard surface.
+
+    Anonymous-readable: shows the same map but with login CTAs on the
+    auth-gated pages. The main /dashboard is huge and predates most of
+    these features, so this is the discoverability surface that ties
+    them together.
+    """
+    return HTMLResponse(_load_template("features"))
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     user = get_current_user(request)
