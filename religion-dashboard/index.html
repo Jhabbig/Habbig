@@ -137,6 +137,24 @@
   .timeline-tooltip { position: absolute; background: #161b22; border: 1px solid var(--grid);
                       border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
                       max-width: 240px; z-index: 20; display: none; }
+  /* ─── Edge panel ─── */
+  .edge-row { display: grid; grid-template-columns: 1fr 70px 70px 80px 60px; gap: 10px; align-items: center;
+              padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .edge-row:last-child { border-bottom: 0; }
+  .edge-row .qq { color: var(--fg); }
+  .edge-row .qq a { color: var(--accent); text-decoration: none; }
+  .edge-row .qq a:hover { text-decoration: underline; }
+  .edge-row .qq .basis { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .edge-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .edge-row .market-p { color: var(--muted); }
+  .edge-row .model-p { font-weight: 600; }
+  .edge-pp-pos { color: #56d364; font-weight: 700; }
+  .edge-pp-neg { color: #f85149; font-weight: 700; }
+  .edge-pp-flat { color: var(--muted); }
+  .side-pill { padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; text-align: center; }
+  .side-YES  { background: #1f6feb; color: #fff; }
+  .side-NO   { background: #5a1d1d; color: #ffb3b0; }
+  .side-     { background: #21262d; color: var(--muted); }
   /* ─── Conclave panel ─── */
   .conclave-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;
                    margin-bottom: 16px; }
@@ -339,6 +357,13 @@
   </section>
 
   <section class="panel">
+    <h2>Edge — model vs market</h2>
+    <div id="edge-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="edge-rows">loading…</div>
+    <p class="footnote">For each market matched to a leader actuarial or papabile prior, we compute <code>edge = model_p − market_p</code>. Positive edge = buy YES; negative = buy NO. Sorted by |edge|. Actuarial uses SSA 2022 × HR 0.85 (religious-office adjustment); papabile uses Vaticanist-consensus priors. Treat as a screening signal, not a recommendation.</p>
+  </section>
+
+  <section class="panel">
     <h2>Religion news — live feed</h2>
     <div id="news">loading…</div>
     <p class="footnote">Aggregated from BBC Religion &amp; Ethics, Religion News Service, AP Religion, Vatican News.</p>
@@ -370,7 +395,7 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR] = await Promise.allSettled([
+  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
@@ -382,6 +407,7 @@ async function load() {
     fetchJson("/api/freedom"),
     fetchJson("/api/markets"),
     fetchJson("/api/news"),
+    fetchJson("/api/edge"),
   ]);
 
   if (sumR.status === "fulfilled") renderSummary(sumR.value);
@@ -401,6 +427,9 @@ async function load() {
   else document.getElementById("markets").innerHTML = '<div class="err">markets load failed: ' + escapeHtml(mktR.reason.message) + '</div>';
   if (newsR.status === "fulfilled") renderNews(newsR.value);
   else document.getElementById("news").innerHTML = '<div class="err">news load failed: ' + escapeHtml(newsR.reason.message) + '</div>';
+
+  if (edgeR.status === "fulfilled") renderEdge(edgeR.value);
+  else document.getElementById("edge-rows").innerHTML = '<div class="err">edge load failed: ' + escapeHtml(edgeR.reason.message) + '</div>';
 
   meta.textContent = "loaded " + new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
@@ -836,6 +865,37 @@ function renderMarkets(d) {
            `<div class="yes">${yes}</div><div class="vol">${vol}</div><div class="end">${end}</div></div>`;
   }).join("");
   root.innerHTML = header + rows;
+}
+
+function renderEdge(d) {
+  const sum = document.getElementById("edge-summary");
+  const root = document.getElementById("edge-rows");
+  sum.textContent = `${d.matched_markets} of ${d.total_markets} markets matched a model · ref ${d.today} · hazard ratio ${d.model_hazard_ratio}`;
+
+  const matched = d.markets.filter(m => m.edge_pp !== null && m.edge_pp !== undefined);
+  if (!matched.length) {
+    root.innerHTML = '<div class="empty">No matchable markets right now. (Markets need to reference a tracked leader or papabile by name and have a future end-date.)</div>';
+    return;
+  }
+
+  const header = `<div class="edge-row" style="font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
+    <div>Market</div><div class="num">Model</div><div class="num">Market</div><div class="num">Edge (pp)</div><div>Side</div>
+  </div>`;
+  root.innerHTML = header + matched.slice(0, 25).map(m => {
+    const edgeCls = m.edge_pp > 1 ? "edge-pp-pos" : m.edge_pp < -1 ? "edge-pp-neg" : "edge-pp-flat";
+    const sign = m.edge_pp > 0 ? "+" : "";
+    const link = m.url ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${escapeHtml(m.question)}</a>` : escapeHtml(m.question);
+    return `<div class="edge-row">
+      <div class="qq">
+        <div>${link}</div>
+        <div class="basis">${escapeHtml(m.model_basis || "")}</div>
+      </div>
+      <div class="num model-p">${(m.model_p*100).toFixed(1)}%</div>
+      <div class="num market-p">${(m.market_p*100).toFixed(1)}%</div>
+      <div class="num ${edgeCls}">${sign}${m.edge_pp.toFixed(1)}</div>
+      <div><span class="side-pill side-${m.side}">${m.side || "—"}</span></div>
+    </div>`;
+  }).join("");
 }
 
 function renderNews(d) {

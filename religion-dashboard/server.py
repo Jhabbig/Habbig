@@ -38,6 +38,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import actuarial
 import cardinals as cd
+import edge as edge_calc
 import historical_leaders as hl
 import religion_data as rd
 import vatican_scraper
@@ -623,6 +624,35 @@ def api_markets():
         "fetched_at": int(time.time()),
         "count": len(markets),
         "markets": markets,
+    })
+
+
+@app.route("/api/edge")
+def api_edge():
+    """Polymarket markets ranked by edge against our quantitative models.
+
+    Each market is matched (when possible) against one of:
+      - Leader actuarial (P(alive)/P(dies) for tracked religious leaders)
+      - Vacancy of the Holy See
+      - Papabile prior (P(this cardinal is next Pope))
+
+    Returns markets sorted by absolute edge in percentage points; unmatched
+    markets fall to the bottom and are ranked by volume.
+    """
+    from datetime import date as _date
+    markets = fetch_markets()
+    today = _date.today()
+    ranked = edge_calc.rank_markets_by_edge(
+        markets, rd.RELIGIOUS_LEADERS, cd.PAPABILE_PRIORS, today=today,
+    )
+    matched = [m for m in ranked if m.get("edge_pp") is not None]
+    return jsonify({
+        "fetched_at": int(time.time()),
+        "today": today.isoformat(),
+        "total_markets": len(ranked),
+        "matched_markets": len(matched),
+        "model_hazard_ratio": hl.MORTALITY_HAZARD_RATIO_RELIGIOUS,
+        "markets": ranked,
     })
 
 
