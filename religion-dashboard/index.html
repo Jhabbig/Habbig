@@ -284,7 +284,12 @@
     <div id="conclave-hero" class="conclave-hero"></div>
     <h3>Papabile — Vaticanist consensus priors</h3>
     <div id="papabile" class="papabile-list">loading…</div>
-    <h3>Cardinal-electors (sample of the most influential / most discussed)</h3>
+    <h3>Cardinal-electors</h3>
+    <div class="registry-controls" style="margin-bottom:8px">
+      <input id="card-search" placeholder="Search name, country, role…" type="search">
+      <span class="count" id="card-count">189</span>
+    </div>
+    <div id="card-filters" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px"></div>
     <div id="cardinals">loading…</div>
     <p class="footnote">Sources: Vatican Press Office, the College of Cardinals Report (cardinalsreport.com), Vaticanist English-language press (Allen/Crux, Magister, La Croix, The Pillar). 'Wing' assignments are journalistic shorthand — cardinals don't run on platforms. Priors sum to ~59%; the residual ~41% is the field (historically, the next pope is often not a top-tier papabile — Bergoglio 2013, Wojtyła 1978). Updated at each consistory.</p>
   </section>
@@ -772,19 +777,102 @@ function renderConclave(d) {
       </div>
     </div>`).join("");
 
-  // Cardinal table — full enumerated list, sorted by tier then age asc
-  const cards = d.cardinals.slice();
-  const header = `<div class="cardinal-row" style="font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
-    <div>Cardinal / Role</div><div class="num">Age</div><div>Region</div><div>Appointed by</div><div>Wing · Tier</div>
+  // Cardinal table — wire up search + filters + sortable columns.
+  // Cache the full data for re-rendering on filter change.
+  window._cardData = d.cardinals.slice();
+  initCardinalControls(d);
+  renderCardinalTable();
+}
+
+// ─── Cardinal table: search + filters + sort ──────────────────────────────
+
+const CARD_STATE = {sortKey: "papabile_tier", sortDir: -1, q: "", region: "", appointer: "", electorsOnly: false};
+
+function initCardinalControls(d) {
+  const cards = window._cardData || [];
+
+  // Region filter chips
+  const regions = Array.from(new Set(cards.map(c => c.region))).sort();
+  const appointers = Array.from(new Set(cards.map(c => c.appointed_by))).sort();
+  const fb = document.getElementById("card-filters");
+  function btn(label, key, val) {
+    const active = CARD_STATE[key] === val;
+    const bg = active ? "var(--accent)" : "#21262d";
+    const fg = active ? "#0e1117" : "var(--fg)";
+    return `<button data-key="${key}" data-val="${escapeHtml(String(val))}" style="background:${bg};color:${fg};border:1px solid var(--grid);padding:3px 9px;border-radius:999px;font-size:11px;cursor:pointer">${escapeHtml(label)}</button>`;
+  }
+  let html = `<span style="color:var(--muted);font-size:11px;margin-right:4px">Region:</span>`;
+  html += btn("All", "region", "");
+  for (const r of regions) html += btn(r, "region", r);
+  html += `<span style="color:var(--muted);font-size:11px;margin:0 4px 0 12px">Appointer:</span>`;
+  html += btn("All", "appointer", "");
+  for (const a of appointers) html += btn(a, "appointer", a);
+  html += `<span style="color:var(--muted);font-size:11px;margin:0 4px 0 12px">·</span>`;
+  html += btn(CARD_STATE.electorsOnly ? "✓ Electors only" : "Electors only", "electorsOnly", !CARD_STATE.electorsOnly);
+  fb.innerHTML = html;
+
+  fb.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.key;
+      const v = b.dataset.val;
+      CARD_STATE[k] = k === "electorsOnly" ? (v === "true") : v;
+      initCardinalControls();   // re-render chips (active state changes)
+      renderCardinalTable();
+    });
+  });
+
+  const search = document.getElementById("card-search");
+  if (search && !search._wired) {
+    search.addEventListener("input", e => {
+      CARD_STATE.q = e.target.value.toLowerCase().trim();
+      renderCardinalTable();
+    });
+    search._wired = true;
+  }
+}
+
+function renderCardinalTable() {
+  const data = window._cardData || [];
+  let list = data.slice();
+  if (CARD_STATE.region) list = list.filter(c => c.region === CARD_STATE.region);
+  if (CARD_STATE.appointer) list = list.filter(c => c.appointed_by === CARD_STATE.appointer);
+  if (CARD_STATE.electorsOnly) list = list.filter(c => c.elector);
+  if (CARD_STATE.q) {
+    list = list.filter(c =>
+      (c.name || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.country || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.role || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.summary || "").toLowerCase().includes(CARD_STATE.q)
+    );
+  }
+  const k = CARD_STATE.sortKey, dir = CARD_STATE.sortDir;
+  list.sort((a, b) => {
+    const av = a[k] ?? 0, bv = b[k] ?? 0;
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+
+  document.getElementById("card-count").textContent = `${list.length} / ${data.length}`;
+
+  function th(label, key, extra="") {
+    const arrow = CARD_STATE.sortKey === key ? (CARD_STATE.sortDir > 0 ? " ↑" : " ↓") : "";
+    return `<div ${extra} onclick="cardSort('${key}')" style="cursor:pointer;color:${CARD_STATE.sortKey===key?'var(--accent)':'var(--muted)'}">${label}${arrow}</div>`;
+  }
+  const header = `<div class="cardinal-row" style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
+    ${th("Cardinal / Role", "name")}
+    ${th("Age", "age", 'class="num"')}
+    ${th("Region", "region")}
+    ${th("Appointed by", "appointed_by")}
+    ${th("Wing · Tier", "papabile_tier")}
   </div>`;
-  document.getElementById("cardinals").innerHTML = header + cards.map(c => {
+  document.getElementById("cardinals").innerHTML = header + list.map(c => {
     const wing = `<span class="wing-pill wing-${c.wing}">${escapeHtml(c.wing)}</span>`;
     const tier = `<span class="tier-pill tier-${c.papabile_tier}">T${c.papabile_tier}</span>`;
     const verifyMark = c.verified === false ? ' <span title="approximated" style="color:#d29922">~</span>' : "";
     return `<div class="cardinal-row">
       <div>
         <div class="who">${escapeHtml(c.name)}${verifyMark}${c.elector ? "" : " <span style=\"color:var(--muted);font-size:10px\">(non-elector)</span>"}</div>
-        <div class="role">${escapeHtml(c.role)} · ${escapeHtml(c.country)}</div>
+        <div class="role">${escapeHtml(c.role || "")} · ${escapeHtml(c.country)}</div>
       </div>
       <div class="num">${c.age}</div>
       <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.region)}</div>
@@ -792,6 +880,12 @@ function renderConclave(d) {
       <div>${wing} ${tier}</div>
     </div>`;
   }).join("");
+}
+
+function cardSort(key) {
+  if (CARD_STATE.sortKey === key) CARD_STATE.sortDir = -CARD_STATE.sortDir;
+  else { CARD_STATE.sortKey = key; CARD_STATE.sortDir = (key === "age" ? 1 : -1); }
+  renderCardinalTable();
 }
 
 // ─── Country composition ──────────────────────────────────────────────────
