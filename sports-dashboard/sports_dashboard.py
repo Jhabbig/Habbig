@@ -3238,6 +3238,149 @@ def _compute_calibration(sport: str | None = None, days: int = 180) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Backtest replay — apply an arbitrary alert rule to historical signals
+# ---------------------------------------------------------------------------
+#
+# _compute_pnl_simulation only supports a flat divergence threshold. The
+# backtest replay endpoint accepts the same rule shape used by
+# /api/alert-rules (sports allowlist, market_type allowlist, min_volume,
+# max_time_to_event, quality-gate flags) and replays it across resolved
+# edge_history. Pros use this to test new rules before turning them on.
+
+def _signal_from_edge_row(row: dict) -> tuple[str, dict]:
+    """Reshape a sports_edge_history row into the comparison-shaped dict
+    that _signal_matches_rule expects.
+
+    Some fields aren't stored on edge_history (poly_volume, time-to-event,
+    per-gate flags), so we synthesize neutral values: poly_volume=0 means
+    rules with a min_volume filter will reject the row (caller's choice),
+    and the quality gates default to True since rows in edge_history
+    already passed the live gates at signal time.
+    """
+    sport = row.get("sport") or ""
+    outcome = {
+        "outcome_name": row.get("outcome", ""),
+        "divergence_pct": row.get("divergence", 0),
+        "is_signal": True,
+        "sharp_consensus_ok": True,
+        "not_stale": True,
+        "liquidity_ok": True,
+    }
+    # Compute time-to-event from commence_time at the moment the signal
+    # fired (detected_at) — closer to what the live rule sees.
+    tth = None
+    commence = _parse_iso_utc(row.get("commence_time") or "")
+    detected = _parse_iso_utc(row.get("detected_at") or "")
+    if commence and detected:
+        delta = (commence - detected).total_seconds() / 3600.0
+        tth = max(0.0, delta)
+    return sport, {
+        "home_team": row.get("home_team", ""),
+        "away_team": row.get("away_team", ""),
+        "market_type": row.get("market_type", "h2h"),
+        "max_divergence": abs(float(row.get("divergence") or 0)),
+        "poly_volume": 0,
+        "time_to_event_hours": tth,
+        "outcomes": [outcome],
+    }
+
+
+def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
+    """Replay resolved signals against a rule. Returns aggregate stats +
+    the per-bet equity curve + the first 200 matched signals.
+
+    The rule shape matches what /api/alert-rules accepts: sports (JSON
+    list), market_types (JSON list), min_divergence_pp, min_volume,
+    max_time_to_event_hours, require_sharp_consensus, require_not_stale,
+    require_liquidity_ok.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM sports_edge_history
+               WHERE detected_at >= ?
+                 AND resolved = 1
+                 AND resolution IN ('correct', 'incorrect')
+               ORDER BY detected_at ASC""",
+            (cutoff,),
+        ).fetchall()
+
+    bets: list[float] = []
+    equity: list[float] = []
+    running = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    matches: list[dict] = []
+
+    for raw in rows:
+        row = dict(raw)
+        sport, signal = _signal_from_edge_row(row)
+        if not _signal_matches_rule(signal, sport, rule):
+            continue
+        poly = float(row.get("poly_prob") or 0)
+        if poly <= 0 or poly >= 100:
+            continue
+        if row.get("resolution") == "correct":
+            profit = stake * (100.0 / poly - 1.0)
+        else:
+            profit = -stake
+        bets.append(profit)
+        running += profit
+        peak = max(peak, running)
+        dd = peak - running
+        if dd > max_dd:
+            max_dd = dd
+        equity.append(round(running, 2))
+        if len(matches) < 200:
+            matches.append({
+                "detected_at": row.get("detected_at"),
+                "sport": sport,
+                "event": f"{row.get('home_team', '')} vs {row.get('away_team', '')}".strip(" vs"),
+                "outcome": row.get("outcome"),
+                "divergence": row.get("divergence"),
+                "poly_prob": poly,
+                "resolution": row.get("resolution"),
+                "pnl": round(profit, 2),
+            })
+
+    n = len(bets)
+    if n == 0:
+        return {
+            "days": days, "stake": stake,
+            "n_bets": 0, "total_pnl": 0.0,
+            "win_rate": 0.0, "roi_pct": 0.0,
+            "sharpe": 0.0, "max_drawdown": 0.0,
+            "equity_curve": [], "matches": [],
+        }
+
+    total_pnl = sum(bets)
+    wins = sum(1 for b in bets if b > 0)
+    win_rate = wins / n
+    roi = (total_pnl / (n * stake)) * 100
+
+    if n > 1:
+        mean = total_pnl / n
+        var = sum((b - mean) ** 2 for b in bets) / (n - 1)
+        std = math.sqrt(var) if var > 0 else 0.0
+        sharpe = (mean / std) * math.sqrt(n) if std > 0 else 0.0
+    else:
+        sharpe = 0.0
+
+    return {
+        "days": days,
+        "stake": stake,
+        "n_bets": n,
+        "total_pnl": round(total_pnl, 2),
+        "win_rate": round(win_rate, 4),
+        "roi_pct": round(roi, 3),
+        "sharpe": round(sharpe, 3),
+        "max_drawdown": round(max_dd, 2),
+        "equity_curve": equity,
+        "matches": matches,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Auto-resolution: fetch scores and resolve edge history
 # ---------------------------------------------------------------------------
 
@@ -7718,6 +7861,148 @@ async def api_explain_signal(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Smart-money mirror — Polymarket top-trader positions on sports markets
+# ---------------------------------------------------------------------------
+#
+# We already fetch top_trader_positions for the leaderboard wallets every
+# 10 minutes via _refresh_top_trader_positions. Each row in that table is
+# (wallet, condition_id, outcome, net_size, avg_price, ...). We also
+# already attach matching positions to every comparison via
+# _attach_top_traders_to_comparisons. What was missing: a dedicated UI
+# surface that says "of the top 50 Polymarket whales, N of them hold
+# position X on this market" — a powerful conversion signal because
+# nobody else surfaces this for sports.
+
+def _smart_money_for_comparisons(comparisons: list[dict]) -> list[dict]:
+    """For each comparison with at least one matching whale position,
+    return an enriched row: condition_id, event, outcome, top-trader
+    wallets in/against the position, aggregate USD exposure, and the
+    most-recent timestamp."""
+    out: list[dict] = []
+    for c in comparisons or []:
+        positions = c.get("top_trader_positions") or []
+        if not positions:
+            continue
+
+        # Group by outcome side
+        by_outcome: dict[str, list[dict]] = {}
+        for p in positions:
+            outcome = p.get("outcome") or ""
+            by_outcome.setdefault(outcome, []).append(p)
+
+        sides = []
+        for outcome, ps in by_outcome.items():
+            net_usd = sum(float(p.get("net_usd") or 0) for p in ps)
+            if abs(net_usd) < 50:  # ignore dust positions
+                continue
+            avg_entry = (
+                sum(float(p.get("avg_price") or 0) * abs(float(p.get("net_size") or 0))
+                    for p in ps)
+                / max(sum(abs(float(p.get("net_size") or 0)) for p in ps), 1.0)
+            )
+            top_wallets = sorted(
+                ps,
+                key=lambda x: -abs(float(x.get("net_usd") or 0)),
+            )[:5]
+            most_recent = max(
+                (int(p.get("last_traded_ts") or 0) for p in ps),
+                default=0,
+            )
+            sides.append({
+                "outcome": outcome,
+                "n_whales": len(ps),
+                "net_usd": round(net_usd, 2),
+                "avg_entry_price": round(avg_entry, 4),
+                "last_trade_ts": most_recent,
+                "top_wallets": [
+                    {
+                        "wallet": w.get("wallet"),
+                        "pseudonym": w.get("pseudonym") or "",
+                        "name": w.get("name") or "",
+                        "rank": w.get("rank"),
+                        "net_usd": round(float(w.get("net_usd") or 0), 2),
+                        "net_size": round(float(w.get("net_size") or 0), 2),
+                        "avg_price": round(float(w.get("avg_price") or 0), 4),
+                        "last_side": w.get("last_side") or "",
+                    } for w in top_wallets
+                ],
+            })
+
+        if not sides:
+            continue
+
+        # Sort sides by absolute USD exposure (biggest conviction first)
+        sides.sort(key=lambda s: -abs(s["net_usd"]))
+
+        out.append({
+            "event": f"{c.get('home_team', '')} vs {c.get('away_team', '')}".strip(" vs"),
+            "home_team": c.get("home_team", ""),
+            "away_team": c.get("away_team", ""),
+            "sport": c.get("sport"),  # may be None on legacy comparisons
+            "commence_time": c.get("commence_time", ""),
+            "condition_id": c.get("condition_id", ""),
+            "poly_slug": c.get("poly_slug"),
+            "poly_question": c.get("poly_question"),
+            "trade_poly_url": c.get("trade_poly_url"),
+            "has_signal": bool(c.get("has_signal")),
+            "max_divergence": c.get("max_divergence"),
+            "sides": sides,
+            "total_whales": sum(s["n_whales"] for s in sides),
+            "total_usd": round(sum(abs(s["net_usd"]) for s in sides), 2),
+        })
+
+    # Sort by total whale exposure desc
+    out.sort(key=lambda r: -r["total_usd"])
+    return out
+
+
+@app.get("/api/smart-money")
+async def api_smart_money(request: Request):
+    """Smart-money positions overlaid on current sports comparisons.
+
+    For each market with at least one top-50-wallet position, returns the
+    aggregated whale exposure by side, the top-5 wallets per side, and
+    the most-recent trade timestamp.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    requested_sport = request.query_params.get("sport")
+    async with _data_lock:
+        active_sport = dashboard_data.get("active_sport")
+        snapshot = copy.deepcopy(dashboard_data.get("comparisons") or [])
+
+    if requested_sport and requested_sport != active_sport:
+        return JSONResponse(
+            {"status": "switching", "active_sport": active_sport,
+             "requested_sport": requested_sport, "rows": []},
+            status_code=202,
+        )
+
+    rows = _smart_money_for_comparisons(snapshot)
+    return JSONResponse({
+        "sport": active_sport,
+        "n_markets": len(rows),
+        "n_whales_unique": len({
+            w["wallet"]
+            for r in rows for s in r["sides"] for w in s["top_wallets"]
+            if w.get("wallet")
+        }),
+        "rows": rows,
+    })
+
+
+@app.get("/smart-money", response_class=HTMLResponse)
+async def smart_money_page(request: Request):
+    """UI for smart-money positions overlaid on sports comparisons."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("smart_money"))
+
+
+# ---------------------------------------------------------------------------
 # Layout customization endpoints
 # ---------------------------------------------------------------------------
 
@@ -8173,6 +8458,70 @@ async def api_track_record_calibration(request: Request):
     except ValueError:
         days = 180
     return JSONResponse(await asyncio.to_thread(_compute_calibration, sport, days))
+
+
+@app.post("/api/backtest/replay")
+async def api_backtest_replay(request: Request):
+    """Replay a hypothetical alert rule against resolved historical signals.
+
+    Body: {"rule": {...same shape as /api/alert-rules...}, "days": int,
+    "stake": float}. Returns aggregate stats + equity curve + first 200
+    matched signals. Auth required — backtests can be a paid feature
+    later but logic is shared.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    raw_rule = body.get("rule") or {}
+    if not isinstance(raw_rule, dict):
+        return JSONResponse({"error": "rule must be an object"}, status_code=400)
+
+    # Validate + coerce through the same path the CRUD endpoints use so the
+    # backtest behaves identically to a live rule.
+    fields, err = _validate_rule_body(raw_rule)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    # _signal_matches_rule reads the JSON-encoded fields directly, so build
+    # a rule dict the same shape rows have when read from sqlite (sports
+    # and market_types are JSON strings, flags are 0/1 ints).
+    rule = {
+        "sports": fields.get("sports", "[]"),
+        "market_types": fields.get("market_types", "[]"),
+        "min_divergence_pp": fields.get("min_divergence_pp", 5.0),
+        "min_volume": fields.get("min_volume"),
+        "max_time_to_event_hours": fields.get("max_time_to_event_hours"),
+        "require_sharp_consensus": fields.get("require_sharp_consensus", 1),
+        "require_not_stale": fields.get("require_not_stale", 1),
+        "require_liquidity_ok": fields.get("require_liquidity_ok", 1),
+    }
+    try:
+        days = max(1, min(365, int(body.get("days", 90))))
+    except (TypeError, ValueError):
+        days = 90
+    try:
+        stake = max(1.0, min(10000.0, float(body.get("stake", 100))))
+    except (TypeError, ValueError):
+        stake = 100.0
+
+    result = await asyncio.to_thread(_simulate_alert_rule, rule, days, stake)
+    return JSONResponse(result)
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest_page(request: Request):
+    """Backtest replay UI — tune a rule, see what would have triggered."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("backtest"))
 
 
 # ---------------------------------------------------------------------------

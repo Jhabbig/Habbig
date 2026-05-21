@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backtest · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .layout { display: grid; grid-template-columns: 320px 1fr;
+            gap: 20px; align-items: start; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--border);
+           border-radius: 8px; padding: 18px; }
+  .form-row { display: flex; flex-direction: column; gap: 4px;
+              margin-bottom: 12px; }
+  .form-row label { font-size: 11px; color: var(--muted);
+                    text-transform: uppercase; letter-spacing: 0.05em; }
+  select, input { background: #0d0e13; color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 7px 10px; font-size: 13px; width: 100%; }
+  .checkboxes { display: flex; flex-direction: column; gap: 6px; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  button { background: var(--accent); color: #fff; border: 0;
+           border-radius: 4px; padding: 9px 14px; font-size: 13px;
+           font-weight: 600; cursor: pointer; width: 100%; }
+  button:hover { background: #2563eb; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+             gap: 10px; margin-bottom: 16px; }
+  .stat { background: #0d0e13; border: 1px solid var(--border);
+          border-radius: 6px; padding: 10px 12px; }
+  .stat .label { color: var(--muted); font-size: 11px;
+                 text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .val { font-size: 18px; font-weight: 700; margin-top: 2px;
+               font-variant-numeric: tabular-nums; }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  svg { width: 100%; height: 220px; display: block;
+        background: #0d0e13; border: 1px solid var(--border);
+        border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px;
+          font-variant-numeric: tabular-nums; margin-top: 8px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 10px; text-transform: uppercase;
+       letter-spacing: 0.05em; }
+  td.num { text-align: right; }
+  td.pos { color: var(--green); }
+  td.neg { color: var(--red); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Backtest a rule</h1>
+  <p class="sub">
+    Pick filters and a stake, replay them against resolved historical
+    signals. Quality gates default to ON because rows in edge_history
+    already passed the live gates — turn them off to see how much extra
+    volume opens up with looser filters.
+    <a href="/">← Back to dashboard</a>
+  </p>
+
+  <div class="layout">
+    <div class="panel">
+      <h2 style="margin-top: 0">Rule</h2>
+      <div class="form-row">
+        <label>Sports</label>
+        <select id="sports" multiple size="6">
+          <option value="basketball_nba">NBA</option>
+          <option value="americanfootball_nfl">NFL</option>
+          <option value="icehockey_nhl">NHL</option>
+          <option value="baseball_mlb">MLB</option>
+          <option value="soccer_epl">EPL</option>
+          <option value="soccer_spain_la_liga">La Liga</option>
+          <option value="soccer_germany_bundesliga">Bundesliga</option>
+          <option value="soccer_italy_serie_a">Serie A</option>
+          <option value="soccer_france_ligue_one">Ligue 1</option>
+          <option value="soccer_uefa_champs_league">UCL</option>
+        </select>
+        <span style="color: var(--muted); font-size: 11px;">
+          Hold ⌘/Ctrl to select multiple. Empty = all sports.
+        </span>
+      </div>
+      <div class="form-row">
+        <label>Market types</label>
+        <select id="marketTypes" multiple size="5">
+          <option value="h2h">H2H</option>
+          <option value="spreads">Spread</option>
+          <option value="totals">Total</option>
+          <option value="futures">Future</option>
+          <option value="props">Prop</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Min divergence (pp)</label>
+        <input id="minDiv" type="number" min="0" max="50" step="0.5" value="5">
+      </div>
+      <div class="form-row">
+        <label>Max time to event (hours, blank = no limit)</label>
+        <input id="maxTth" type="number" min="0" max="240" step="1">
+      </div>
+      <div class="form-row">
+        <label>Quality gates</label>
+        <div class="checkboxes">
+          <label class="check"><input id="reqSharp" type="checkbox" checked> require sharp consensus</label>
+          <label class="check"><input id="reqStale" type="checkbox" checked> require not-stale</label>
+          <label class="check"><input id="reqLiq"   type="checkbox" checked> require liquidity ok</label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Window (days)</label>
+        <input id="days" type="number" min="1" max="365" step="1" value="90">
+      </div>
+      <div class="form-row">
+        <label>Stake per bet (USD)</label>
+        <input id="stake" type="number" min="1" max="10000" step="1" value="100">
+      </div>
+      <button id="runBtn">Run backtest</button>
+    </div>
+
+    <div>
+      <div id="summary" class="summary">
+        <div class="stat"><div class="label">PnL</div><div class="val" id="sPnl">—</div></div>
+        <div class="stat"><div class="label">Win rate</div><div class="val" id="sWin">—</div></div>
+        <div class="stat"><div class="label">ROI</div><div class="val" id="sRoi">—</div></div>
+        <div class="stat"><div class="label">Sharpe</div><div class="val" id="sSharpe">—</div></div>
+        <div class="stat"><div class="label">Max DD</div><div class="val" id="sDd">—</div></div>
+        <div class="stat"><div class="label">Bets</div><div class="val" id="sN">—</div></div>
+      </div>
+      <h2>Equity curve</h2>
+      <svg id="curve" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+      <h2>Matched signals (first 200)</h2>
+      <div id="matches"><div class="empty">Run a backtest to see the trades it would have placed.</div></div>
+    </div>
+  </div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function fmt(n, d = 2) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtUSD(n) { return n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Number(n).toFixed(2); }
+function fmtPct(n, d = 1) { return n == null ? "—" : (Number(n) * 100).toFixed(d) + "%"; }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+
+function readSelections(id) {
+  return [...$(id).selectedOptions].map(o => o.value);
+}
+
+async function run() {
+  const btn = $("runBtn");
+  btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const body = {
+      rule: {
+        sports: readSelections("sports"),
+        market_types: readSelections("marketTypes"),
+        min_divergence_pp: parseFloat($("minDiv").value || "0"),
+        max_time_to_event_hours: $("maxTth").value ? parseFloat($("maxTth").value) : null,
+        require_sharp_consensus: $("reqSharp").checked,
+        require_not_stale: $("reqStale").checked,
+        require_liquidity_ok: $("reqLiq").checked,
+      },
+      days: parseInt($("days").value || "90", 10),
+      stake: parseFloat($("stake").value || "100"),
+    };
+    const r = await fetch("/api/backtest/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert("Backtest failed: " + (err.error || r.status));
+      return;
+    }
+    const d = await r.json();
+    renderSummary(d);
+    renderCurve(d.equity_curve || []);
+    renderMatches(d.matches || []);
+  } finally {
+    btn.disabled = false; btn.textContent = "Run backtest";
+  }
+}
+
+function renderSummary(d) {
+  const pnl = $("sPnl");
+  pnl.textContent = fmtUSD(d.total_pnl);
+  pnl.classList.toggle("green", (d.total_pnl || 0) > 0);
+  pnl.classList.toggle("red",   (d.total_pnl || 0) < 0);
+  $("sWin").textContent = fmtPct(d.win_rate);
+  $("sRoi").textContent = (d.roi_pct == null ? "—" : fmt(d.roi_pct, 2) + "%");
+  $("sSharpe").textContent = fmt(d.sharpe, 2);
+  $("sDd").textContent = fmtUSD(-(d.max_drawdown || 0));
+  $("sN").textContent = d.n_bets || 0;
+}
+
+function renderCurve(points) {
+  const svg = $("curve");
+  svg.innerHTML = "";
+  if (points.length < 2) {
+    svg.innerHTML = '<text x="300" y="110" text-anchor="middle" fill="#6b7280">No data</text>';
+    return;
+  }
+  const w = 600, h = 220, pad = 6;
+  const minV = Math.min(0, ...points);
+  const maxV = Math.max(0, ...points);
+  const xStep = (w - 2*pad) / (points.length - 1);
+  const yScale = v => h - pad - ((v - minV) / (maxV - minV || 1)) * (h - 2*pad);
+  let path = "";
+  points.forEach((p, i) => {
+    path += (i === 0 ? "M" : "L") + (pad + i * xStep) + "," + yScale(p);
+  });
+  const stroke = (points[points.length - 1] >= 0) ? "#10b981" : "#ef4444";
+  if (minV < 0 && maxV > 0) {
+    svg.innerHTML += `<line x1="0" x2="${w}" y1="${yScale(0)}" y2="${yScale(0)}" stroke="#1f2128" />`;
+  }
+  svg.innerHTML += `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="2" />`;
+}
+
+function renderMatches(rows) {
+  if (!rows.length) {
+    $("matches").innerHTML = '<div class="empty">No signals matched this rule.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>When</th><th>Sport</th><th>Event</th><th>Outcome</th>' +
+    '<th class="num">Divergence</th><th class="num">Poly</th>' +
+    '<th>Result</th><th class="num">PnL</th></tr></thead><tbody>';
+  for (const m of rows) {
+    const cls = m.pnl > 0 ? "pos" : (m.pnl < 0 ? "neg" : "");
+    html += '<tr>' +
+      `<td>${esc((m.detected_at || "").slice(0, 10))}</td>` +
+      `<td>${esc(m.sport)}</td>` +
+      `<td>${esc(m.event)}</td>` +
+      `<td>${esc(m.outcome || "")}</td>` +
+      `<td class="num">${fmt(m.divergence, 1)}pp</td>` +
+      `<td class="num">${fmt(m.poly_prob, 1)}%</td>` +
+      `<td>${esc(m.resolution)}</td>` +
+      `<td class="num ${cls}">${fmtUSD(m.pnl)}</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("matches").innerHTML = html;
+}
+
+$("runBtn").addEventListener("click", run);
+</script>
+</body>
+</html>
