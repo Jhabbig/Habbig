@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from analysis import arbitrage as arb_mod
+from analysis import carry as carry_mod
 from analysis import funding as funding_mod
 from analysis import liquidations_agg
 from analysis import onchain_lookup
@@ -47,12 +48,14 @@ from ingestion import (
     coingecko,
     defillama,
     defillama_prices,
+    deribit,
     etherscan_gas,
     etherscan_token,
     fear_greed,
     hyperliquid,
     jito,
     kraken,
+    macro,
     mempool_btc,
     news,
     okx,
@@ -416,6 +419,46 @@ async def api_btc_treasuries() -> JSONResponse:
     return JSONResponse(btc_treasuries.holdings_table())
 
 
+# ─── Derivatives (Deribit options) ────────────────────────────────────────────
+
+@app.get("/api/deribit/{currency}")
+async def api_deribit(currency: str) -> JSONResponse:
+    cur = currency.upper()
+    if cur not in {"BTC", "ETH", "SOL"}:
+        cur = "BTC"
+    return JSONResponse(deribit.market_overview(cur))
+
+
+# ─── Macro cross-asset ────────────────────────────────────────────────────────
+
+@app.get("/api/macro")
+async def api_macro() -> JSONResponse:
+    return JSONResponse(macro.snapshot())
+
+
+@app.get("/api/macro/correlations")
+async def api_macro_corr() -> JSONResponse:
+    return JSONResponse(macro.btc_correlation_30d())
+
+
+# ─── Funding carry ────────────────────────────────────────────────────────────
+
+@app.get("/api/funding/carry")
+async def api_funding_carry() -> JSONResponse:
+    premium = binance.futures_premium_index()
+    by = bybit.tickers("linear")
+    okx_swap = okx.tickers("SWAP")
+    fr = funding_mod.collect(binance_premium=premium, bybit_tickers=by,
+                              okx_tickers=okx_swap)
+    enriched_rows = carry_mod.enrich_funding_rows(fr.get("rows_top") or [])
+    enriched_rows.sort(key=lambda r: abs(r.get("carry_pct_annualised") or 0),
+                       reverse=True)
+    return JSONResponse({
+        "rows_top": enriched_rows[:30],
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ─── Alerts ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/alerts")
@@ -692,6 +735,9 @@ async def _startup() -> None:
         ("bybit_proxy_liq",       lambda: bybit_liquidations.probable_liquidations(),    120),
         ("llama_cross_dex",       lambda: defillama_prices.cross_dex_prices(),  60),
         ("alerts_check",          lambda: alerts_mod.check_all(),                       30),
+        ("deribit_btc",           lambda: deribit.market_overview("BTC"),               60),
+        ("deribit_eth",           lambda: deribit.market_overview("ETH"),               60),
+        ("macro_snapshot",        lambda: macro.snapshot(),                             300),
     ])
 
 

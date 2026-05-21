@@ -234,6 +234,21 @@
   </section>
 
   <section>
+    <h2>Options market (Deribit) <small>BTC + ETH put/call ratio, ATM IV, 25Δ skew, top open interest</small></h2>
+    <div id="deribit-card"></div>
+  </section>
+
+  <section>
+    <h2>Macro cross-asset <small>S&amp;P / Nasdaq / DXY / 10y / VIX / gold / crude &middot; daily &middot; 30d BTC correlation</small></h2>
+    <div id="macro-card"></div>
+  </section>
+
+  <section>
+    <h2>Funding-rate carry <small>annualised yield from delta-neutral cash-and-carry</small></h2>
+    <div id="carry-table"></div>
+  </section>
+
+  <section>
     <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
     <div id="alerts-card"></div>
   </section>
@@ -725,6 +740,105 @@
     </div>`;
   }
 
+  // ─── Deribit options ───────────────────────────────────────────────────────
+  async function loadDeribit() {
+    try {
+      const [btc, eth] = await Promise.all([
+        fetchJson("/api/deribit/BTC"),
+        fetchJson("/api/deribit/ETH"),
+      ]);
+      const target = document.getElementById("deribit-card");
+      const cards = [btc, eth].map(d => {
+        if (!d || d.error) return `<div class="card"><div class="muted">${escapeHtml(d?.currency || "?")} Deribit unavailable: ${escapeHtml(d?.error || "")}</div></div>`;
+        const pcOI = d.put_call_ratio_oi;
+        const pcCls = pcOI == null ? "muted" : pcOI > 1.1 ? "up" : pcOI < 0.9 ? "down" : "";
+        const skew = d.skew_25d_pct;
+        const skewCls = skew == null ? "muted" : skew > 5 ? "down" : skew < -5 ? "up" : "";
+        return `<div class="card">
+          <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+            <span style="font-size:18px;font-weight:700">${escapeHtml(d.currency)}</span>
+            <span class="muted" style="font-size:12px">underlying ${fmtPrice(d.underlying_price)}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-variant-numeric:tabular-nums">
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">Total OI</div><div style="font-size:18px;font-weight:600">$${fmtBig(d.total_oi_notional_usd)}</div></div>
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">Put/Call (OI)</div><div style="font-size:18px;font-weight:600" class="${pcCls}">${pcOI != null ? pcOI.toFixed(2) : "-"}</div></div>
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">ATM Call IV</div><div style="font-size:18px;font-weight:600">${d.atm_iv_call_pct != null ? d.atm_iv_call_pct.toFixed(1) + "%" : "-"}</div></div>
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">ATM Put IV</div><div style="font-size:18px;font-weight:600">${d.atm_iv_put_pct != null ? d.atm_iv_put_pct.toFixed(1) + "%" : "-"}</div></div>
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">25Δ Skew</div><div style="font-size:18px;font-weight:600" class="${skewCls}">${skew != null ? (skew > 0 ? "+" : "") + skew.toFixed(1) + "%" : "-"}</div></div>
+            <div><div class="muted" style="font-size:10px;text-transform:uppercase">Front month</div><div style="font-size:18px;font-weight:600">${escapeHtml(d.front_month_expiry || "-")}</div></div>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:8px">${fmt(d.instrument_count)} instruments &middot; ${fmt(d.expiry_count)} expiries &middot; 24h vol: calls $${fmtBig(d.call_volume_usd_24h)} &middot; puts $${fmtBig(d.put_volume_usd_24h)}</div>
+        </div>`;
+      });
+      target.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">${cards.join("")}</div>`;
+    } catch (e) {
+      document.getElementById("deribit-card").innerHTML = `<div class="err">Deribit fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Macro cross-asset ─────────────────────────────────────────────────────
+  async function loadMacro() {
+    try {
+      const [snap, corr] = await Promise.all([
+        fetchJson("/api/macro"),
+        fetchJson("/api/macro/correlations"),
+      ]);
+      const target = document.getElementById("macro-card");
+      const corrMap = {};
+      (corr.correlations || []).forEach(c => { corrMap[c.symbol] = c.btc_corr_30d; });
+      const rows = (snap.rows || []).map(r => {
+        const chg = r.change_pct;
+        const cls = chg == null ? "muted" : chg >= 0 ? "up" : "down";
+        const corrVal = corrMap[r.symbol];
+        const corrCls = corrVal == null ? "muted" : Math.abs(corrVal) > 0.5 ? (corrVal > 0 ? "up" : "down") : "";
+        return `<tr>
+          <td><strong>${escapeHtml(r.label)}</strong> <span class="sym">${escapeHtml(r.symbol || "")}</span></td>
+          <td>${pill(r.asset_class || "?", "info")}</td>
+          <td class="num">${r.current != null ? fmt(r.current, 2) : (r.error || "-")}</td>
+          <td class="num ${cls}">${chg != null ? pct(chg, 2) : "-"}</td>
+          <td class="num ${corrCls}">${corrVal != null ? (corrVal >= 0 ? "+" : "") + corrVal.toFixed(2) : "-"}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Asset</th><th>Class</th><th>Last</th><th>24h Δ</th><th>30d corr vs BTC</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div class="footer" style="margin-top:8px">Yahoo Finance daily closes. Pearson correlation on 30 daily returns. Higher |corr| = stronger co-movement.</div>`;
+    } catch (e) {
+      document.getElementById("macro-card").innerHTML = `<div class="err">Macro fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Funding carry ─────────────────────────────────────────────────────────
+  async function loadCarry() {
+    try {
+      const data = await fetchJson("/api/funding/carry");
+      const target = document.getElementById("carry-table");
+      const rows = data.rows_top || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No funding-carry data.</div>'; return; }
+      const tbody = rows.map(r => {
+        const carry = r.carry_pct_annualised;
+        const cls = carry == null ? "muted" : carry >= 0 ? "up" : "down";
+        const dirPill = r.carry_direction === "SHORT_PERP_HOLD_SPOT" ? pill("short perp · hold spot", "up")
+                      : r.carry_direction === "LONG_PERP_SHORT_SPOT" ? pill("long perp · short spot", "down")
+                      : pill("flat", "");
+        return `<tr>
+          <td><strong>${escapeHtml(r.base)}</strong></td>
+          <td class="num ${cls}">${carry != null ? (carry >= 0 ? "+" : "") + carry.toFixed(1) + "%" : "-"}</td>
+          <td>${dirPill}</td>
+          <td class="num muted">${(r.median_rate * 100).toFixed(4)}%</td>
+          <td class="num muted">${r.spread_bps.toFixed(2)} bp</td>
+          <td class="sym">${escapeHtml((r.venues || []).join(", "))}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Coin</th><th>Carry (ann.)</th><th>Direction</th><th>Median 8h funding</th><th>Venue spread</th><th>Venues</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">Cash-and-carry yield = -3 × 365 × median funding. Sign assumes spot-hedge — positive carry earned by short-perp + hold-spot; negative by reverse.</div>`;
+    } catch (e) {
+      document.getElementById("carry-table").innerHTML = `<div class="err">Carry fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // ─── Custom alerts ─────────────────────────────────────────────────────────
   async function loadAlerts() {
     try {
@@ -898,6 +1012,9 @@
   loadCrossEx();
   loadFunding();
   loadTrending();
+  loadDeribit();
+  loadMacro();
+  loadCarry();
   loadAlerts();
   loadSources();
 
@@ -907,6 +1024,9 @@
   setInterval(loadCrossEx,  60 * 1000);
   setInterval(loadFunding,  90 * 1000);
   setInterval(loadTrending, 5 * 60 * 1000);
+  setInterval(loadDeribit,  60 * 1000);
+  setInterval(loadMacro,    5 * 60 * 1000);
+  setInterval(loadCarry,    60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();
