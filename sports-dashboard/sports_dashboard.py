@@ -476,6 +476,22 @@ def _init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_signal_expl_key ON sports_signal_explanations(cache_key, created_at);
+            -- Per-user API tokens for Bearer auth. token_hash is the
+            -- SHA-256 of the token; we never store the plaintext after
+            -- the create response.
+            CREATE TABLE IF NOT EXISTS sports_api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                token_hash TEXT NOT NULL UNIQUE,
+                token_prefix TEXT DEFAULT '',
+                scopes TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_used_at TEXT,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON sports_api_tokens(user_id, revoked_at);
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON sports_api_tokens(token_hash) WHERE revoked_at IS NULL;
             -- Per-user bankroll for Kelly-aware stake suggestions and
             -- drawdown alerts. Defaults are conservative half-Kelly with
             -- a 5% per-bet ceiling.
@@ -752,6 +768,18 @@ def get_current_user(request: Request) -> dict | None:
                 "_gateway_sso": True,
             }
 
+    # Bearer token auth — for programmatic API clients. Falls back to
+    # other auth paths if the token is missing or invalid (we don't 401
+    # here so a malformed Authorization header doesn't break sessions
+    # that would otherwise auth via DEV_MODE or gateway SSO).
+    authz = request.headers.get("authorization", "")
+    if authz.startswith("Bearer "):
+        token = authz[7:].strip()
+        if token:
+            user = _resolve_bearer_token(token)
+            if user:
+                return user
+
     # DEV_MODE: synthesize a local dev user so the dashboard renders without gateway SSO
     if _DEV_MODE:
         return {
@@ -764,6 +792,52 @@ def get_current_user(request: Request) -> dict | None:
 
     # No gateway SSO -- not authenticated (auth handled by gateway)
     return None
+
+
+def _hash_api_token(token: str) -> str:
+    """SHA-256 of the token, hex-encoded. We never store the plaintext."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _resolve_bearer_token(token: str) -> dict | None:
+    """Look up a Bearer token, return the user dict it authenticates.
+
+    Updates last_used_at on hit. Constant-time compare via hash lookup
+    rather than equality on the plaintext.
+    """
+    if not token or len(token) < 16 or len(token) > 100:
+        return None
+    token_hash = _hash_api_token(token)
+    try:
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT t.id, t.user_id, t.scopes, p.email, p.username, p.is_admin "
+                "FROM sports_api_tokens t "
+                "LEFT JOIN profiles p ON p.id = t.user_id "
+                "WHERE t.token_hash = ? AND t.revoked_at IS NULL LIMIT 1",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            # Bump last_used_at — best-effort, ignore failures
+            try:
+                conn.execute(
+                    "UPDATE sports_api_tokens SET last_used_at = datetime('now') "
+                    "WHERE id = ?",
+                    (row["id"],),
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("Bearer token lookup error: %s", e)
+        return None
+    return {
+        "id": row["user_id"],
+        "email": row["email"] or "",
+        "username": row["username"] or "",
+        "is_admin": row["is_admin"] or 0,
+        "_bearer_token_id": row["id"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3390,6 +3464,201 @@ def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
         "equity_curve": equity,
         "matches": matches,
     }
+
+
+# ---------------------------------------------------------------------------
+# Steam moves — detect rapid sharp-book line moves (T4.1)
+# ---------------------------------------------------------------------------
+#
+# A "steam move" is a fast, sharp-money-driven line move at a major book.
+# We detect it by scanning consecutive snapshots in sports_market_snapshots
+# for the same (sport, event, outcome) and flagging any pair where:
+#   |book_prob_late - book_prob_early| >= STEAM_MIN_DELTA_PP
+#   and (snapshot_at_late - snapshot_at_early) <= STEAM_WINDOW_MINUTES
+#
+# Pros trade off steam moves because they signal that sharp action just
+# hit a major book — the rest of the market is about to follow.
+
+STEAM_MIN_DELTA_PP = 2.0     # minimum sharp-book move to qualify
+STEAM_WINDOW_MINUTES = 30    # over no more than this many minutes
+
+
+def _detect_steam_moves(sport: str | None, hours: int = 24,
+                          min_delta_pp: float | None = None,
+                          window_min: int | None = None) -> list[dict]:
+    """Scan recent market snapshots for fast sharp-book moves.
+
+    For each (sport, event, outcome), walk the snapshot stream and emit
+    a steam-move row whenever two snapshots within `window_min` minutes
+    show a |book_prob| swing >= `min_delta_pp`. Each event/outcome can
+    emit multiple moves if the line keeps stair-stepping.
+    """
+    min_d = float(min_delta_pp if min_delta_pp is not None else STEAM_MIN_DELTA_PP)
+    win = int(window_min if window_min is not None else STEAM_WINDOW_MINUTES)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    where = ["snapshot_at >= ?", "book_prob IS NOT NULL"]
+    params: list = [cutoff]
+    if sport:
+        where.append("sport = ?")
+        params.append(sport)
+
+    sql = ("SELECT sport, event_name, outcome, book_prob, poly_prob, "
+           "       kalshi_prob, snapshot_at "
+           "FROM sports_market_snapshots "
+           "WHERE " + " AND ".join(where) + " "
+           "ORDER BY sport, event_name, outcome, snapshot_at ASC")
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    moves: list[dict] = []
+    # Group consecutive rows by (sport, event, outcome) — they're already
+    # sorted, so we just walk and reset whenever the key changes.
+    current_key = None
+    history: list[dict] = []
+    for r in rows:
+        key = (r["sport"], r["event_name"], r["outcome"])
+        if key != current_key:
+            current_key = key
+            history = []
+        history.append(r)
+
+        # Walk back through this key's history looking for the most-recent
+        # snapshot still inside the window. Compare against r to detect a
+        # move. We don't dedupe overlapping moves per key — successive
+        # snapshots can each emit a move, which is the desired behavior
+        # for a line that keeps stair-stepping.
+        late_dt = _parse_iso_utc(r["snapshot_at"])
+        if not late_dt:
+            continue
+        for i in range(len(history) - 2, -1, -1):
+            early = history[i]
+            early_dt = _parse_iso_utc(early["snapshot_at"])
+            if not early_dt:
+                continue
+            elapsed_min = (late_dt - early_dt).total_seconds() / 60.0
+            if elapsed_min > win:
+                break  # rest of history is older than the window
+            try:
+                early_prob = float(early["book_prob"])
+                late_prob = float(r["book_prob"])
+            except (TypeError, ValueError):
+                continue
+            delta = late_prob - early_prob
+            if abs(delta) >= min_d:
+                # Don't double-emit the same (window, direction). The
+                # caller usually cares about the strongest move per key,
+                # so we only emit if this is the largest move involving
+                # `r` we've seen so far for this pair span.
+                moves.append({
+                    "sport": r["sport"],
+                    "event": r["event_name"],
+                    "outcome": r["outcome"],
+                    "delta_pp": round(delta, 2),
+                    "from_prob": round(early_prob, 2),
+                    "to_prob": round(late_prob, 2),
+                    "elapsed_min": round(elapsed_min, 1),
+                    "from_ts": early["snapshot_at"],
+                    "to_ts": r["snapshot_at"],
+                    "poly_prob": r.get("poly_prob"),
+                    "kalshi_prob": r.get("kalshi_prob"),
+                })
+                break  # one move per `late` row is enough
+
+    # Dedupe to most-significant move per (key, late_ts) — within a single
+    # snapshot we might match multiple earlier snapshots; the inner break
+    # above already enforces "first match wins" but we also collapse the
+    # outer list to one row per (key, to_ts) to be safe.
+    seen = set()
+    unique: list[dict] = []
+    for m in moves:
+        ident = (m["sport"], m["event"], m["outcome"], m["to_ts"])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        unique.append(m)
+
+    # Sort by absolute delta desc — biggest moves first.
+    unique.sort(key=lambda m: -abs(m["delta_pp"]))
+    return unique
+
+
+# ---------------------------------------------------------------------------
+# Closing line consensus — sharp book closing prob per (event, outcome) (T4.2)
+# ---------------------------------------------------------------------------
+#
+# The closing line at a sharp book is the canonical "true" probability for
+# retrospective CLV analysis. We compute it from sports_market_snapshots
+# as "the latest book_prob snapshot before (or at) the event's
+# commence_time" — same logic _compute_clv uses, but exposed as a
+# first-class endpoint so pros can pull closing lines for arbitrary
+# events without inferring them from the CLV summary.
+
+def _compute_closing_lines(sport: str | None, days: int = 7) -> list[dict]:
+    """Return closing-line rows for every (sport, event, outcome) with at
+    least one snapshot inside the window.
+
+    Closing line = latest book_prob whose snapshot_at is <= the linked
+    event's commence_time (joined from sports_scores). If commence_time
+    is unknown for an event, we fall back to the latest snapshot in the
+    window (best-effort).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    where = ["s.snapshot_at >= ?"]
+    params: list = [cutoff]
+    if sport:
+        where.append("s.sport = ?")
+        params.append(sport)
+
+    sql = (
+        "SELECT s.sport, s.event_name, s.outcome, "
+        "       s.book_prob, s.poly_prob, s.kalshi_prob, s.snapshot_at, "
+        "       sc.commence_time, sc.home_team, sc.away_team "
+        "FROM sports_market_snapshots s "
+        "LEFT JOIN sports_scores sc "
+        "  ON sc.sport = s.sport "
+        " AND (s.event_name = sc.home_team || ' vs ' || sc.away_team) "
+        "WHERE " + " AND ".join(where) + " "
+        "  AND s.book_prob IS NOT NULL "
+        "ORDER BY s.sport, s.event_name, s.outcome, s.snapshot_at ASC"
+    )
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    # Group by (sport, event, outcome) and pick the latest snapshot <= commence_time
+    closings: dict[tuple[str, str, str], dict] = {}
+    for r in rows:
+        key = (r["sport"], r["event_name"], r["outcome"])
+        commence_dt = _parse_iso_utc(r.get("commence_time") or "")
+        snap_dt = _parse_iso_utc(r["snapshot_at"])
+        if not snap_dt:
+            continue
+        if commence_dt and snap_dt > commence_dt:
+            # snapshot was after kickoff — skip
+            continue
+        existing = closings.get(key)
+        if existing is None or snap_dt > existing["_snap_dt"]:
+            closings[key] = {
+                "sport": r["sport"],
+                "event": r["event_name"],
+                "outcome": r["outcome"],
+                "closing_book_prob": round(float(r["book_prob"]), 2),
+                "closing_poly_prob": (round(float(r["poly_prob"]), 2)
+                                       if r.get("poly_prob") is not None else None),
+                "closing_kalshi_prob": (round(float(r["kalshi_prob"]), 2)
+                                         if r.get("kalshi_prob") is not None else None),
+                "closing_ts": r["snapshot_at"],
+                "commence_time": r.get("commence_time") or None,
+                "_snap_dt": snap_dt,
+            }
+
+    out = []
+    for v in closings.values():
+        v.pop("_snap_dt", None)
+        out.append(v)
+    # Most-recently closed first
+    out.sort(key=lambda x: x.get("closing_ts") or "", reverse=True)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -7445,6 +7714,120 @@ async def api_put_bankroll(request: Request):
     return JSONResponse({"bankroll": _annotate_bankroll(row)})
 
 
+# ---------------------------------------------------------------------------
+# API tokens — Bearer auth for programmatic clients (T5.1)
+# ---------------------------------------------------------------------------
+
+import secrets as _secrets
+
+
+@app.get("/api/auth/tokens")
+async def api_list_tokens(request: Request):
+    """List the current user's API tokens. Plaintext tokens are never
+    returned — only metadata + prefix for visual identification."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        # A Bearer token can't list itself / other tokens — that's a
+        # session-only operation.
+        return JSONResponse(
+            {"error": "Bearer tokens cannot manage tokens; use a session"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, token_prefix, scopes, created_at, last_used_at, "
+            "       revoked_at "
+            "FROM sports_api_tokens WHERE user_id = ? ORDER BY id DESC",
+            (user["id"],),
+        ).fetchall()
+    return JSONResponse({"tokens": [dict(r) for r in rows]})
+
+
+@app.post("/api/auth/tokens")
+async def api_create_token(request: Request):
+    """Create a new API token. Returns the plaintext token ONCE.
+
+    Body: {"name": str (optional), "scopes": list[str] (optional)}.
+    The plaintext token is generated server-side and never persisted —
+    only the SHA-256 hash + a short prefix for visual identification.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot create tokens; use a session"},
+            status_code=403,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    name = (body.get("name") or "")[:80]
+    raw_scopes = body.get("scopes") or []
+    if not isinstance(raw_scopes, list) or not all(isinstance(s, str) for s in raw_scopes):
+        return JSONResponse({"error": "scopes must be a list of strings"}, status_code=400)
+    scopes = json.dumps(raw_scopes)
+
+    # Token format: "shrp_" + 40 url-safe chars. ~240 bits of entropy.
+    plaintext = "shrp_" + _secrets.token_urlsafe(30)
+    token_hash = _hash_api_token(plaintext)
+    prefix = plaintext[:8]
+
+    with _get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO sports_api_tokens "
+            "(user_id, name, token_hash, token_prefix, scopes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user["id"], name, token_hash, prefix, scopes),
+        )
+        token_id = cur.lastrowid
+
+    return JSONResponse({
+        "id": token_id,
+        "name": name,
+        "token": plaintext,  # only time the plaintext is returned
+        "token_prefix": prefix,
+        "scopes": raw_scopes,
+        "warning": ("Save this token now — it is not retrievable later. "
+                    "Use as Authorization: Bearer <token>"),
+    })
+
+
+@app.delete("/api/auth/tokens/{token_id}")
+async def api_revoke_token(token_id: int, request: Request):
+    """Revoke a token. Idempotent — revoking an already-revoked token
+    returns 200 (Bearer auth fails immediately for revoked rows)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot revoke tokens; use a session"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        cur = conn.execute(
+            "UPDATE sports_api_tokens SET revoked_at = datetime('now') "
+            "WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+            (token_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            # Either doesn't exist or already revoked — return 404 only
+            # if no row matches the user at all
+            exists = conn.execute(
+                "SELECT 1 FROM sports_api_tokens WHERE id = ? AND user_id = ?",
+                (token_id, user["id"]),
+            ).fetchone()
+            if not exists:
+                return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
 @app.post("/api/bankroll/suggest-stake")
 async def api_bankroll_suggest_stake(request: Request):
     """Return a Kelly-adjusted stake suggestion for a given kelly_pct.
@@ -8727,6 +9110,66 @@ async def backtest_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return HTMLResponse(_load_template("backtest"))
+
+
+@app.get("/api/steam-moves")
+async def api_steam_moves(request: Request):
+    """Recent sharp-book line moves above the steam threshold.
+
+    Query params:
+      sport: optional sport key filter
+      hours: lookback in hours (default 24, max 168)
+      min_delta_pp: minimum |swing| in pp (default 2)
+      window_min: max minutes between snapshots to qualify (default 30)
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        hours = max(1, min(168, int(request.query_params.get("hours", "24"))))
+    except ValueError:
+        hours = 24
+    try:
+        min_d = max(0.5, min(50.0, float(request.query_params.get("min_delta_pp", STEAM_MIN_DELTA_PP))))
+    except ValueError:
+        min_d = STEAM_MIN_DELTA_PP
+    try:
+        window = max(1, min(240, int(request.query_params.get("window_min", STEAM_WINDOW_MINUTES))))
+    except ValueError:
+        window = STEAM_WINDOW_MINUTES
+
+    rows = await asyncio.to_thread(_detect_steam_moves, sport, hours, min_d, window)
+    return JSONResponse({
+        "sport": sport, "hours": hours,
+        "min_delta_pp": min_d, "window_min": window,
+        "n_moves": len(rows), "moves": rows,
+    })
+
+
+@app.get("/api/closing-lines")
+async def api_closing_lines(request: Request):
+    """Sharp-book closing line per (event, outcome) over the recent window."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(60, int(request.query_params.get("days", "7"))))
+    except ValueError:
+        days = 7
+    rows = await asyncio.to_thread(_compute_closing_lines, sport, days)
+    return JSONResponse({"sport": sport, "days": days,
+                          "n_events": len(rows), "rows": rows})
+
+
+@app.get("/steam-moves", response_class=HTMLResponse)
+async def steam_moves_page(request: Request):
+    """Sharp-book line-move feed."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("steam_moves"))
 
 
 # ---------------------------------------------------------------------------
