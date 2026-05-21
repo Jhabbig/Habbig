@@ -30,6 +30,7 @@ from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app.models import co2 as co2_model
 from app.models import calibration
+from app.models import highlights as highlights_model
 from app.models import markets as markets_model
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
@@ -86,6 +87,23 @@ def api_health():
 @app.route("/api/methodology")
 def api_methodology():
     return jsonify(methodology_payload(commit=_COMMIT))
+
+
+@app.route("/api/highlights")
+def api_highlights():
+    """Auto-derived 'what's notable today' chips. Pure derivative of cached
+    upstream data — no extra HTTP fetches."""
+    return jsonify({
+        "items": highlights_model.compute(
+            gistemp=gistemp_src.fetch(),
+            co2=co2_src.fetch(),
+            methane=methane_src.fetch(),
+            n2o=n2o_src.fetch(),
+            sea_ice=sea_ice_src.fetch(),
+            oni=oni_src.fetch(),
+        ),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # ─── Per-source endpoints ──────────────────────────────────────────────────────

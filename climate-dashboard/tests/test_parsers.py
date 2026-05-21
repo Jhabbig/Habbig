@@ -20,6 +20,7 @@ from app.fetchers import oni as oni_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
+from app.models import highlights as highlights_model
 from app.models import markets
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
@@ -344,6 +345,72 @@ def test_ice_extent_market_handles_km_unit():
     # Plain "km²" — needs the [mk] alternation we added
     p2 = markets.ice_min_market_p("Arctic minimum below 4.5 km²", proj)
     assert p2 is not None and 0 < p2 < 1
+
+
+def test_highlights_detects_temperature_record():
+    gist = {
+        "annual": [
+            {"year": 2020, "anomaly_c": 1.02},
+            {"year": 2021, "anomaly_c": 0.86},
+            {"year": 2022, "anomaly_c": 0.90},
+            {"year": 2023, "anomaly_c": 1.17},
+            {"year": 2024, "anomaly_c": 1.29},  # new record
+        ],
+    }
+    items = highlights_model.compute(gistemp=gist)
+    texts = [i["text"] for i in items]
+    assert any("2024" in t and "record" in t.lower() for t in texts)
+    # 2023 (1.17) and 2024 (1.29) are both above +1.0°C — a 2-year streak.
+    # 2022 (0.90) breaks it. We expect exactly that to be highlighted.
+    streak_lines = [t for t in texts if "consecutive year" in t and "+1.0°C" in t]
+    assert streak_lines, texts
+    assert "2 consecutive years" in streak_lines[0]
+
+
+def test_highlights_co2_12month_change():
+    co2 = {
+        "monthly": [
+            {"year": 2024, "month": m, "ppm": 420.0 + 0.2 * m}
+            for m in range(1, 13)
+        ] + [
+            {"year": 2025, "month": m, "ppm": 423.0 + 0.2 * m}
+            for m in range(1, 7)
+        ],
+    }
+    items = highlights_model.compute(co2=co2)
+    texts = [i["text"] for i in items]
+    co2_lines = [t for t in texts if "CO₂" in t and "12 months" in t]
+    assert co2_lines, texts
+    # Latest is 423 + 0.2*6 = 424.2; 13 months prior is 420 + 0.2*6 = 421.2
+    # Delta should be ~+3.0
+    assert "+3.00 ppm" in co2_lines[0] or "+3.0 ppm" in co2_lines[0]
+
+
+def test_highlights_enso_streak():
+    # 5 consecutive El Niño months
+    oni = {"monthly": [
+        {"year": 2024, "month": 8, "oni": 0.3},   # neutral
+        {"year": 2024, "month": 9, "oni": 0.6},   # el niño
+        {"year": 2024, "month": 10, "oni": 0.8},  # el niño
+        {"year": 2024, "month": 11, "oni": 1.0},  # el niño
+        {"year": 2024, "month": 12, "oni": 1.2},  # el niño
+        {"year": 2025, "month": 1, "oni": 1.1},   # el niño
+    ]}
+    items = highlights_model.compute(oni=oni)
+    texts = [i["text"] for i in items]
+    enso_lines = [t for t in texts if "ENSO" in t]
+    assert enso_lines, texts
+    assert "El Niño" in enso_lines[0] and "5 consecutive months" in enso_lines[0]
+
+
+def test_highlights_returns_nothing_for_quiet_data():
+    # Boring: no records, no streaks, neutral ENSO
+    gist = {"annual": [{"year": 2024, "anomaly_c": 0.5}]}
+    oni = {"monthly": [{"year": 2024, "month": 12, "oni": 0.1}]}
+    items = highlights_model.compute(gistemp=gist, oni=oni)
+    # The single year doesn't count as a "new record" (no prior to compare to),
+    # and 0.5°C doesn't trigger the >1.0°C streak.
+    assert items == []
 
 
 def test_n2o_market_routed_correctly():

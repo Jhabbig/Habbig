@@ -96,6 +96,16 @@ MODELS = [
         "code": "app/models/markets.py",
     },
     {
+        "id": "highlights",
+        "name": "Today's highlights",
+        "summary": "Pure-derivative one-liners surfaced at the top of the dashboard. Examines the cached upstream data for: (a) whether the last completed year was a new annual temperature record; (b) streaks of years above +1.0°C / +1.5°C anomaly; (c) the 12-month change in CO₂ / CH₄ / N₂O; (d) the Arctic sea-ice rank for today's day-of-year; (e) the current ENSO state and how long it's held. Nothing inferred — every chip can be derived directly from the data the dashboard already shows.",
+        "inputs": ["All of the upstream fetchers — no new HTTP requests"],
+        "outputs": {
+            "items": "List of {kind, text} chips. Kinds: record / trend / alert / regime / milestone.",
+        },
+        "code": "app/models/highlights.py",
+    },
+    {
         "id": "kelly_position_sizing",
         "name": "Kelly position sizing",
         "summary": "Standard Kelly criterion applied to each binary market: f* = (p·b − q) / b, where p is the model probability of YES, q=1−p, and b=(1−implied)/implied. We compute f* for both YES and NO sides and surface the larger positive value. Output is rendered as a percentage of bankroll, or — if a bankroll is set — as a $ amount. Display defaults to Half-Kelly (¼–½ Kelly are the standard real-world multipliers; full Kelly's drawdowns are brutal). The bankroll is stored only in the browser's localStorage and never leaves the device.",

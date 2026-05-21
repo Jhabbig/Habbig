@@ -314,6 +314,39 @@
   }
   .export-link:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
 
+  .highlights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .hl {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-3);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--text-2);
+    flex: 1 1 280px;
+    min-width: 0;
+  }
+  .hl b { color: var(--text-1); font-weight: 600; }
+  .hl.record  { border-left-color: var(--accent-2); }
+  .hl.trend   { border-left-color: var(--warn); }
+  .hl.alert   { border-left-color: var(--accent-2); }
+  .hl.regime  { border-left-color: var(--good); }
+  .hl.milestone { border-left-color: #a78bfa; }
+  .hl-kind {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    margin-right: 6px;
+    font-weight: 600;
+  }
+
   @media (max-width: 600px) {
     main { padding: 14px 14px 60px; }
     .grid { grid-template-columns: 1fr; }
@@ -441,6 +474,8 @@
 <main>
 
 <div id="regime" class="regime" style="display:none" role="region" aria-label="Current ENSO regime"></div>
+
+<div id="highlights" class="highlights" role="region" aria-label="Today's highlights"></div>
 
 <div class="grid" id="cards" role="region" aria-label="Indicator cards"></div>
 
@@ -936,6 +971,25 @@ async function getJSON(url) {
     console.warn("fetch failed", url, e);
     return null;
   }
+}
+
+async function loadHighlights() {
+  const r = await getJSON("/api/highlights");
+  const root = document.getElementById("highlights");
+  if (!root) return;
+  const items = (r && r.items) || [];
+  if (!items.length) { root.style.display = "none"; return; }
+  root.style.display = "flex";
+  // Bold numbers and "+X°C" / "+X ppm" / etc. in the text so they pop.
+  const emphasise = (t) => t.replace(
+    /([+\-]?\d+(?:\.\d+)?\s*(?:°C|ppm|ppb|consecutive|consecutive years?|consecutive months?))/g,
+    "<b>$1</b>",
+  );
+  root.innerHTML = items.map(i => `
+    <div class="hl ${i.kind}">
+      <span class="hl-kind">${i.kind}</span>${emphasise(i.text)}
+    </div>
+  `).join("");
 }
 
 async function loadRegime() {
@@ -1647,6 +1701,7 @@ document.getElementById("export-backtest").addEventListener("click", () => {
 });
 
 loadRegime();
+loadHighlights();
 loadCards();
 loadOverlay();
 loadMarkets();
