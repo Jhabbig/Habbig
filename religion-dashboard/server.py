@@ -39,6 +39,7 @@ from flask import Flask, jsonify, request, send_from_directory
 import actuarial
 import cardinals as cd
 import edge as edge_calc
+import health_signals
 import historical_leaders as hl
 import religion_data as rd
 import vatican_scraper
@@ -625,6 +626,21 @@ def api_markets():
         "count": len(markets),
         "markets": markets,
     })
+
+
+@app.route("/api/pope-health")
+def api_pope_health():
+    """Lexical health-signal scorer for the current Pope.
+
+    Aggregates news items in the past N days (default 14) for phrases
+    indicating hospitalisation, cancelled audiences, illness, etc.
+    Returns a 0-10 score with band classification.
+    """
+    from datetime import date as _date
+    window = max(1, min(int(request.args.get("days", "14")), 60))
+    news = fetch_news()
+    result = health_signals.compute_health_signal(news, today=_date.today(), window_days=window)
+    return jsonify({**result, "fetched_at": int(time.time())})
 
 
 @app.route("/api/edge")

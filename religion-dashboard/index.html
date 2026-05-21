@@ -273,6 +273,7 @@
 
   <section class="panel">
     <h2>Religious leaders — actuarial</h2>
+    <div id="pope-health-banner" style="margin-bottom:12px"></div>
     <div id="leaders">loading…</div>
     <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 32 historical religious leaders (mean age at death 79.2y). Sorted by 1-year mortality probability — most market-relevant first.</p>
   </section>
@@ -395,7 +396,7 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR] = await Promise.allSettled([
+  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR, healthR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
@@ -408,6 +409,7 @@ async function load() {
     fetchJson("/api/markets"),
     fetchJson("/api/news"),
     fetchJson("/api/edge"),
+    fetchJson("/api/pope-health"),
   ]);
 
   if (sumR.status === "fulfilled") renderSummary(sumR.value);
@@ -430,6 +432,8 @@ async function load() {
 
   if (edgeR.status === "fulfilled") renderEdge(edgeR.value);
   else document.getElementById("edge-rows").innerHTML = '<div class="err">edge load failed: ' + escapeHtml(edgeR.reason.message) + '</div>';
+
+  if (healthR.status === "fulfilled") renderPopeHealth(healthR.value);
 
   meta.textContent = "loaded " + new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
@@ -865,6 +869,28 @@ function renderMarkets(d) {
            `<div class="yes">${yes}</div><div class="vol">${vol}</div><div class="end">${end}</div></div>`;
   }).join("");
   root.innerHTML = header + rows;
+}
+
+function renderPopeHealth(d) {
+  const banner = document.getElementById("pope-health-banner");
+  if (!banner) return;
+  if (d.match_count === 0) {
+    banner.innerHTML = `<div style="background:#0e1117;border:1px solid var(--grid);border-left:3px solid #56d364;border-radius:4px;padding:8px 12px;font-size:12px;color:var(--muted)">
+      <strong style="color:#56d364">●</strong> Pope health signal: <strong>quiet</strong> (score ${d.score}, 0 matches in last ${d.window_days} days)
+    </div>`;
+    return;
+  }
+  const bandColor = d.band === "critical" ? "#f85149"
+                  : d.band === "high"     ? "#d29922"
+                  : d.band === "elevated" ? "#f7d76b"
+                  : "#56d364";
+  const recentChips = d.recent_signals.slice(0, 5).map(s =>
+    `<a href="${escapeHtml(s.link || '#')}" target="_blank" rel="noopener" style="display:inline-block;background:#21262d;border:1px solid var(--grid);padding:2px 8px;border-radius:999px;font-size:11px;color:var(--fg);text-decoration:none;margin-right:4px;margin-top:4px">${escapeHtml(s.phrase)} <span style="color:var(--muted)">${escapeHtml(s.date)}</span></a>`
+  ).join("");
+  banner.innerHTML = `<div style="background:#0e1117;border:1px solid var(--grid);border-left:3px solid ${bandColor};border-radius:4px;padding:8px 12px">
+    <div style="font-size:13px"><strong style="color:${bandColor}">●</strong> Pope health signal: <strong style="color:${bandColor};text-transform:uppercase">${escapeHtml(d.band)}</strong> · score ${d.score}/10 · ${d.match_count} matches in last ${d.window_days} days</div>
+    <div style="margin-top:4px">${recentChips}</div>
+  </div>`;
 }
 
 function renderEdge(d) {
