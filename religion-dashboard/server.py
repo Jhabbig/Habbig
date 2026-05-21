@@ -36,11 +36,13 @@ import requests
 from defusedxml import ElementTree as DET
 from flask import Flask, jsonify, request, send_from_directory
 
+import acled_client
 import actuarial
 import cardinals as cd
 import edge as edge_calc
 import health_signals
 import historical_leaders as hl
+import reddit_sentinel
 import religion_data as rd
 import religious_calendar as rcal
 import vatican_scraper
@@ -708,6 +710,28 @@ def _attach_leader_news(leaders: list[dict], news: list[dict]) -> list[dict]:
                     break
         out.append({**L, "news": matched, "news_count": len(matched)})
     return out
+
+
+@app.route("/api/violence")
+def api_violence():
+    """ACLED religious-violence events for the past N days.
+
+    Requires ACLED_EMAIL + ACLED_API_KEY env vars in production. Falls
+    back to ok=False + empty list if creds are missing or API fails.
+    """
+    try:
+        days_back = max(1, min(int(request.args.get("days", "30")), 365))
+    except ValueError:
+        days_back = 30
+    force = request.args.get("force") in ("1", "true", "yes")
+    return jsonify(acled_client.fetch_recent_violence(days_back=days_back, force=force))
+
+
+@app.route("/api/cult-sentinel")
+def api_cult_sentinel():
+    """Public-Reddit emerging-group mentions (read-only)."""
+    force = request.args.get("force") in ("1", "true", "yes")
+    return jsonify(reddit_sentinel.fetch_sentinel(force=force))
 
 
 @app.route("/api/pope-health")

@@ -351,6 +351,20 @@
   </section>
 
   <section class="panel">
+    <h2>Religious-violence events — ACLED, last 30 days</h2>
+    <div id="violence-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="violence-rows">loading…</div>
+    <p class="footnote">Filtered from ACLED for events with religious-motivation indicators (actor names, location-type, notes keywords). Requires <code>ACLED_EMAIL</code> + <code>ACLED_API_KEY</code> in production. Source: <a href="https://acleddata.com" target="_blank" rel="noopener" style="color:var(--accent)">acleddata.com</a>.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Cult / NRM emergence sentinel — Reddit</h2>
+    <div id="sentinel-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="sentinel-rows">loading…</div>
+    <p class="footnote">Public read-only Reddit JSON from r/cults, r/cultsurvivors, r/exjw, r/exmormon, r/EXMUSLIM, r/Scientology. Capitalised multi-word phrases extracted from posts; ranked by mention volume. Surfacing here is RECON, not curation — names need investigation before promoting to the watchlist.</p>
+  </section>
+
+  <section class="panel">
     <h2>Religious-freedom designations (USCIRF 2024)</h2>
     <div id="freedom">loading…</div>
     <p class="footnote">CPC = Country of Particular Concern · SWL = Special Watch List · EPC = Entity of Particular Concern (non-state actor).</p>
@@ -401,7 +415,7 @@ async function fetchJson(url) {
 
 async function load() {
   const meta = document.getElementById("meta");
-  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR, healthR] = await Promise.allSettled([
+  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR, healthR, violR, sentR] = await Promise.allSettled([
     fetchJson("/api/summary"),
     fetchJson("/api/religions"),
     fetchJson("/api/religions-full"),
@@ -415,6 +429,8 @@ async function load() {
     fetchJson("/api/news"),
     fetchJson("/api/edge"),
     fetchJson("/api/pope-health"),
+    fetchJson("/api/violence"),
+    fetchJson("/api/cult-sentinel"),
   ]);
 
   if (sumR.status === "fulfilled") renderSummary(sumR.value);
@@ -439,6 +455,8 @@ async function load() {
   else document.getElementById("edge-rows").innerHTML = '<div class="err">edge load failed: ' + escapeHtml(edgeR.reason.message) + '</div>';
 
   if (healthR.status === "fulfilled") renderPopeHealth(healthR.value);
+  if (violR.status === "fulfilled") renderViolence(violR.value);
+  if (sentR.status === "fulfilled") renderSentinel(sentR.value);
 
   meta.textContent = "loaded " + new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
 
@@ -971,6 +989,51 @@ function renderMarkets(d) {
            `<div class="yes">${yes}</div><div class="vol">${vol}</div><div class="end">${end}</div></div>`;
   }).join("");
   root.innerHTML = header + rows;
+}
+
+function renderViolence(d) {
+  const sum = document.getElementById("violence-summary");
+  const rows = document.getElementById("violence-rows");
+  if (!d.ok) {
+    sum.innerHTML = `<span style="color:#d29922">●</span> ACLED feed offline: ${escapeHtml(d.error || "")}`;
+    rows.innerHTML = '<div class="empty">No data. Set ACLED_EMAIL + ACLED_API_KEY in production to enable.</div>';
+    return;
+  }
+  const topCountries = Object.entries(d.by_country)
+    .sort((a, b) => b[1].fatalities - a[1].fatalities).slice(0, 8);
+  sum.innerHTML = `<span style="color:#56d364">●</span> ${d.total_events} events in last ${d.days_back} days · top by fatalities: ` +
+    topCountries.map(([c, v]) => `<strong>${escapeHtml(c)}</strong> (${v.fatalities})`).join(" · ");
+  const recent = d.events.slice(0, 15);
+  rows.innerHTML = recent.map(e => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--grid);font-size:12px">
+      <div><strong>${escapeHtml(e.date)}</strong> · ${escapeHtml(e.country)}${e.admin1 ? " / " + escapeHtml(e.admin1) : ""}${e.location ? " · " + escapeHtml(e.location) : ""} · <span style="color:#f85149">${e.fatalities} dead</span></div>
+      <div style="color:var(--muted);font-size:11px">${escapeHtml(e.sub_event_type || e.event_type)} · ${escapeHtml(e.actor1 || "?")} → ${escapeHtml(e.actor2 || "civilians")} · ${escapeHtml(e.match_reason)}</div>
+      <div style="font-size:11px;margin-top:3px">${escapeHtml(e.notes || "").substring(0, 280)}${(e.notes||"").length > 280 ? "…" : ""}</div>
+    </div>`).join("");
+}
+
+function renderSentinel(d) {
+  const sum = document.getElementById("sentinel-summary");
+  const rows = document.getElementById("sentinel-rows");
+  if (!d.ok) {
+    sum.innerHTML = `<span style="color:#d29922">●</span> Reddit sentinel offline: ${escapeHtml(d.error || "")}`;
+    rows.innerHTML = '<div class="empty">No data. Reddit unreachable in this environment.</div>';
+    return;
+  }
+  sum.innerHTML = `<span style="color:#56d364">●</span> ${d.posts_seen} posts seen across ${d.subs_polled.length} subreddits · ${d.top_mentions.length} groups mentioned 2+ times`;
+  if (!d.top_mentions.length) {
+    rows.innerHTML = '<div class="empty">No multi-mention groups in current window.</div>';
+    return;
+  }
+  rows.innerHTML = d.top_mentions.slice(0, 20).map(m => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--grid);display:grid;grid-template-columns:200px 60px 1fr;gap:10px;align-items:center;font-size:12px">
+      <div><strong>${escapeHtml(m.name)}</strong></div>
+      <div style="color:var(--accent);font-weight:600;text-align:center">${m.count}×</div>
+      <div style="color:var(--muted);font-size:11px">
+        ${m.subs.map(s => `<span style="background:#21262d;padding:1px 6px;border-radius:3px;margin-right:3px">r/${escapeHtml(s)}</span>`).join("")}
+        ${m.recent_posts.slice(0, 2).map(p => `<div style="margin-top:3px"><a href="${escapeHtml(p.permalink)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(p.title)}</a></div>`).join("")}
+      </div>
+    </div>`).join("");
 }
 
 function renderPopeHealth(d) {
