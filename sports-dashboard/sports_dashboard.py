@@ -170,6 +170,10 @@ M_PM_FILLS_CAPTURED = _PromCounter(
     "Large Polymarket fills captured from the WS feed",
     labelnames=("side",),  # BUY | SELL
 )
+M_PM_WS_FAILURES = _PromGauge(
+    "sports_dashboard_pm_ws_consecutive_failures",
+    "Polymarket WS consecutive connect failures; circuit opens at threshold",
+)
 
 
 load_dotenv()
@@ -6272,10 +6276,56 @@ async def _handle_pm_ws_message(raw: str) -> None:
         await _broadcast_live_update(affected_comps)
 
 
+# ── Polymarket WS circuit breaker ───────────────────────────────────────────
+# After PM_WS_CIRCUIT_THRESHOLD consecutive failures, open the circuit
+# and sleep PM_WS_CIRCUIT_OPEN_SECONDS before the next attempt. Open
+# duration doubles on each subsequent failed probe, capped at the max.
+# This keeps a wedged Polymarket from triggering 1000+ failed connect
+# attempts per hour while still recovering automatically.
+PM_WS_CIRCUIT_THRESHOLD = 5         # failures before circuit opens
+PM_WS_CIRCUIT_OPEN_SECONDS = 300    # 5 min initial cooldown
+PM_WS_CIRCUIT_MAX_SECONDS = 3600    # 1 h cap
+
+_pm_ws_failure_count = 0
+_pm_ws_circuit_open_seconds = PM_WS_CIRCUIT_OPEN_SECONDS
+
+
+def _pm_ws_record_failure() -> tuple[int, float]:
+    """Increment the failure counter and compute the next sleep.
+
+    Returns (consecutive_failures, sleep_seconds). Below the threshold
+    we use short exponential backoff (1s -> 60s). At threshold we open
+    the circuit and sleep longer; subsequent failures double the open
+    duration up to the cap.
+    """
+    global _pm_ws_failure_count, _pm_ws_circuit_open_seconds
+    _pm_ws_failure_count += 1
+    if _pm_ws_failure_count < PM_WS_CIRCUIT_THRESHOLD:
+        # Exponential backoff: 1, 2, 4, 8s for failures 1-4
+        sleep = min(2.0 ** (_pm_ws_failure_count - 1), 60.0)
+    else:
+        # Circuit open. Double duration each failure past threshold.
+        sleep = _pm_ws_circuit_open_seconds
+        _pm_ws_circuit_open_seconds = min(
+            _pm_ws_circuit_open_seconds * 2,
+            PM_WS_CIRCUIT_MAX_SECONDS,
+        )
+    M_PM_WS_FAILURES.set(_pm_ws_failure_count)
+    return _pm_ws_failure_count, sleep
+
+
+def _pm_ws_record_success() -> None:
+    """Reset the circuit on a successful connection."""
+    global _pm_ws_failure_count, _pm_ws_circuit_open_seconds
+    _pm_ws_failure_count = 0
+    _pm_ws_circuit_open_seconds = PM_WS_CIRCUIT_OPEN_SECONDS
+    M_PM_WS_FAILURES.set(0)
+
+
 async def _polymarket_ws_loop() -> None:
     """Maintain a persistent WS connection. Reconnects with exponential
-    backoff on failure, and on demand whenever the desired subscription
-    set changes."""
+    backoff on transient failures, then opens a circuit breaker if
+    Polymarket stays unreachable to avoid hammering their endpoint."""
     global _pm_ws_reconnect_event
     _pm_ws_reconnect_event = asyncio.Event()
     try:
@@ -6284,7 +6334,6 @@ async def _polymarket_ws_loop() -> None:
         log.warning("websockets package missing — live PM feed disabled")
         return
 
-    backoff = 1.0
     while True:
         if not _PM_WS_DESIRED_TOKENS:
             # Nothing to subscribe to yet — wait for the first poll to populate.
@@ -6309,7 +6358,7 @@ async def _polymarket_ws_loop() -> None:
                     "type": "MARKET",
                     "assets_ids": list(subscribed),
                 }))
-                backoff = 1.0
+                _pm_ws_record_success()
                 log.info("Polymarket WS connected, subscribed=%d", len(subscribed))
 
                 # Race: incoming messages vs. reconnect signal
@@ -6323,13 +6372,20 @@ async def _polymarket_ws_loop() -> None:
                         continue  # No traffic for 30s; loop again
                     await _handle_pm_ws_message(msg)
         except Exception as e:
-            log.warning("PM WS error: %s (retry in %.1fs)", e, backoff)
+            failures, sleep = _pm_ws_record_failure()
+            if failures >= PM_WS_CIRCUIT_THRESHOLD:
+                log.warning(
+                    "PM WS circuit OPEN after %d failures: %s "
+                    "(cooling down %.0fs)",
+                    failures, e, sleep,
+                )
+            else:
+                log.warning("PM WS error: %s (retry in %.1fs)", e, sleep)
             try:
-                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=backoff)
+                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=sleep)
                 _pm_ws_reconnect_event.clear()
             except asyncio.TimeoutError:
                 pass
-            backoff = min(backoff * 2, 60.0)
 
 
 # ---------------------------------------------------------------------------
