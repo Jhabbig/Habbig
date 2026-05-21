@@ -1,7 +1,20 @@
-# State of Love Dashboard (v3.4)
+# State of Love Dashboard (v3.5)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.5 adds:**
+
+- **Multi-line sparkline** — the country drill-down's history chart now
+  plots Connection / Partnership / Stability / Activity as thin coloured
+  overlays under the composite line. A legend below the chart maps colour
+  to subscore. Single y-axis (0–100) so the lines are directly comparable.
+- **Weight presets** — five curated weighting schemes in the customization
+  card: *Balanced (default)*, *Connection-first*, *Tradition*,
+  *Equal weights*, *Cohabitation-friendly*. One click applies the preset,
+  updates the sliders, re-fetches the index, and shares via the URL hash.
+  The status badge surfaces the active preset by name; dragging a slider
+  to a value that happens to match a preset auto-detects it.
 
 **v3.4 adds (frontend UX):**
 

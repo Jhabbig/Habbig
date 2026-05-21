@@ -171,6 +171,17 @@
   }
 
   /* Sliders for weight customization */
+  .weights-card .presets {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
+  }
+  .weights-card .presets .btn {
+    font-size: 11px; padding: 4px 8px;
+  }
+  .weights-card .presets .btn.active {
+    background: rgba(244, 114, 182, 0.18);
+    border-color: rgba(244, 114, 182, 0.55);
+    color: var(--accent);
+  }
   .weights-card .sliders {
     display: grid; grid-template-columns: 1fr; gap: 8px;
   }
@@ -323,10 +334,28 @@
   .sparkline-card .header .delta { letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
   .sparkline-card .header .delta.up { color: var(--good); }
   .sparkline-card .header .delta.down { color: var(--accent-2); }
-  .sparkline-card svg { display: block; width: 100%; height: 56px; }
-  .sparkline-card svg path.line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
-  .sparkline-card svg path.area { fill: rgba(244, 114, 182, 0.15); stroke: none; }
+  .sparkline-card svg { display: block; width: 100%; height: 80px; }
+  .sparkline-card svg path.area { fill: rgba(244, 114, 182, 0.12); stroke: none; }
+  .sparkline-card svg path.line { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+  .sparkline-card svg path.sub { fill: none; stroke-width: 1; opacity: 0.55; }
+  .sparkline-card svg path.sub[data-sub="connection"]  { stroke: var(--info); }
+  .sparkline-card svg path.sub[data-sub="partnership"] { stroke: var(--good); }
+  .sparkline-card svg path.sub[data-sub="stability"]   { stroke: var(--warn); }
+  .sparkline-card svg path.sub[data-sub="activity"]    { stroke: var(--text-2); }
   .sparkline-card svg circle.dot { fill: var(--accent); }
+  .sparkline-card .legend {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px;
+    font-size: 11px; color: var(--text-3);
+  }
+  .sparkline-card .legend .swatch {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    vertical-align: middle; margin-right: 4px;
+  }
+  .sparkline-card .legend .swatch.composite  { background: var(--accent); }
+  .sparkline-card .legend .swatch.connection { background: var(--info); }
+  .sparkline-card .legend .swatch.partnership{ background: var(--good); }
+  .sparkline-card .legend .swatch.stability  { background: var(--warn); }
+  .sparkline-card .legend .swatch.activity   { background: var(--text-2); }
   .sparkline-card .empty { font-size: 12px; color: var(--text-3); padding: 12px 0 4px; }
 
   table.rankings td.compare, table.rankings th:first-child { width: 26px; padding-left: 14px; padding-right: 0; }
@@ -505,7 +534,8 @@
 
     <div class="card weights-card">
       <h3>Weight customization <span class="pill warn" id="weights-status">defaults</span></h3>
-      <div style="font-size: 11px; color: var(--text-3); margin-bottom: 12px;">Re-weight subscores and rankings update live. Weights renormalize to sum to 100%.</div>
+      <div style="font-size: 11px; color: var(--text-3); margin-bottom: 8px;">Pick a preset or drag the sliders below. Weights renormalize to sum to 100%.</div>
+      <div class="presets" id="presets"></div>
       <div class="sliders" id="sliders"></div>
       <div class="actions">
         <button class="btn primary" id="apply-weights">Apply</button>
@@ -993,8 +1023,67 @@ document.querySelectorAll("table.rankings th[data-sort]").forEach(th => {
   });
 });
 
-// ---- weight sliders ----
+// ---- weight sliders + presets ----
 const DEFAULT_WEIGHTS = { connection: 0.35, partnership: 0.30, stability: 0.25, activity: 0.10 };
+
+// Curated weighting schemes. Each is a defensible argument about what
+// "love" should weight — click one to argue with it. "Balanced" is the
+// methodology default; selecting it clears state.weights so future code
+// paths still treat it as default.
+const WEIGHT_PRESETS = [
+  { id: "balanced",     label: "Balanced (default)",   w: DEFAULT_WEIGHTS },
+  { id: "connection",   label: "Connection-first",     w: { connection: 0.60, partnership: 0.15, stability: 0.15, activity: 0.10 } },
+  { id: "tradition",    label: "Tradition",            w: { connection: 0.15, partnership: 0.40, stability: 0.40, activity: 0.05 } },
+  { id: "equal",        label: "Equal weights",        w: { connection: 0.25, partnership: 0.25, stability: 0.25, activity: 0.25 } },
+  { id: "cohabitation", label: "Cohabitation-friendly",w: { connection: 0.35, partnership: 0.20, stability: 0.30, activity: 0.15 } },
+];
+
+function weightsEqual(a, b, eps = 1e-3) {
+  if (!a || !b) return false;
+  return SUBSCORES.every(k => Math.abs((a[k] ?? 0) - (b[k] ?? 0)) <= eps);
+}
+
+function currentPresetId() {
+  const current = state.weights || DEFAULT_WEIGHTS;
+  for (const p of WEIGHT_PRESETS) {
+    if (weightsEqual(current, p.w)) return p.id;
+  }
+  return null;  // custom: doesn't match any preset
+}
+
+function renderPresets() {
+  const wrap = document.getElementById("presets");
+  if (!wrap) return;
+  const active = currentPresetId();
+  wrap.innerHTML = "";
+  for (const p of WEIGHT_PRESETS) {
+    const btn = document.createElement("button");
+    btn.className = "btn" + (p.id === active ? " active" : "");
+    btn.textContent = p.label;
+    btn.title = SUBSCORES.map(k => `${SUB_LABELS[k]} ${Math.round(p.w[k]*100)}%`).join(" · ");
+    btn.addEventListener("click", () => applyPreset(p));
+    wrap.appendChild(btn);
+  }
+}
+
+function applyPreset(preset) {
+  // Balanced is the default: clear state.weights so subsequent calls hit
+  // the no-args cache. Any other preset sets explicit weights.
+  if (preset.id === "balanced") {
+    state.weights = null;
+    const ws = document.getElementById("weights-status");
+    ws.textContent = "defaults"; ws.classList.add("warn"); ws.classList.remove("info");
+  } else {
+    state.weights = { ...preset.w };
+    const ws = document.getElementById("weights-status");
+    ws.textContent = `preset: ${preset.label.toLowerCase()}`;
+    ws.classList.remove("warn"); ws.classList.add("info");
+  }
+  buildSliders();
+  renderPresets();
+  writeURLState();
+  refresh();
+}
 
 function buildSliders() {
   const c = document.getElementById("sliders");
@@ -1012,6 +1101,8 @@ function buildSliders() {
   c.querySelectorAll("input[type=range]").forEach(inp => {
     inp.addEventListener("input", () => {
       c.querySelector(`[data-val="${inp.dataset.w}"]`).textContent = inp.value;
+      // De-highlight all presets while the user is actively dragging.
+      document.querySelectorAll("#presets .btn").forEach(b => b.classList.remove("active"));
     });
   });
 }
@@ -1025,9 +1116,19 @@ document.getElementById("apply-weights").addEventListener("click", () => {
   if (s <= 0) { alert("Set at least one weight above 0."); return; }
   for (const k of SUBSCORES) w[k] /= s;
   state.weights = w;
-  document.getElementById("weights-status").textContent = "custom";
-  document.getElementById("weights-status").classList.remove("warn");
-  document.getElementById("weights-status").classList.add("info");
+  // Manually-set sliders may happen to match a preset — show that.
+  const match = WEIGHT_PRESETS.find(p => weightsEqual(w, p.w));
+  const ws = document.getElementById("weights-status");
+  if (match && match.id !== "balanced") {
+    ws.textContent = `preset: ${match.label.toLowerCase()}`;
+    ws.classList.remove("warn"); ws.classList.add("info");
+  } else if (match && match.id === "balanced") {
+    state.weights = null;
+    ws.textContent = "defaults"; ws.classList.add("warn"); ws.classList.remove("info");
+  } else {
+    ws.textContent = "custom"; ws.classList.remove("warn"); ws.classList.add("info");
+  }
+  renderPresets();
   writeURLState();
   refresh();
 });
@@ -1038,6 +1139,7 @@ document.getElementById("reset-weights").addEventListener("click", () => {
   document.getElementById("weights-status").classList.add("warn");
   document.getElementById("weights-status").classList.remove("info");
   buildSliders();
+  renderPresets();
   writeURLState();
   refresh();
 });
@@ -1179,31 +1281,58 @@ function renderSparkline(points) {
         <div class="empty">Single snapshot on ${esc(pts[0].date)} · composite ${fmt(pts[0].composite)}. More points accumulate daily.</div>
       </div>`;
   }
-  const W = 320, H = 56, pad = 4;
-  const vals = pts.map(p => p.composite);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  const span = Math.max(1e-6, hi - lo);
+  const W = 320, H = 80, pad = 4;
+  // Subscores share the composite's 0-100 percentile space, so a single
+  // y axis makes the lines directly comparable.
   const x = i => pad + (i * (W - 2 * pad)) / (pts.length - 1);
-  const y = v => (H - pad) - ((v - lo) / span) * (H - 2 * pad);
-  let path = `M ${x(0).toFixed(2)} ${y(vals[0]).toFixed(2)}`;
-  for (let i = 1; i < pts.length; i++) path += ` L ${x(i).toFixed(2)} ${y(vals[i]).toFixed(2)}`;
-  const area = path + ` L ${x(pts.length - 1).toFixed(2)} ${H} L ${x(0).toFixed(2)} ${H} Z`;
-  const first = vals[0], last = vals[vals.length - 1];
+  const y = v => (H - pad) - ((v / 100) * (H - 2 * pad));
+
+  function pathFor(key) {
+    let d = "", started = false;
+    for (let i = 0; i < pts.length; i++) {
+      const v = pts[i][key];
+      if (v == null) { started = false; continue; }  // skip gaps cleanly
+      d += `${started ? " L" : " M"} ${x(i).toFixed(2)} ${y(v).toFixed(2)}`;
+      started = true;
+    }
+    return d.trim();
+  }
+
+  const compositePath = pathFor("composite");
+  const compVals = pts.map(p => p.composite);
+  const area = compositePath +
+    ` L ${x(pts.length - 1).toFixed(2)} ${H} L ${x(0).toFixed(2)} ${H} Z`;
+
+  const subPaths = SUBSCORES.map(k => {
+    const d = pathFor(k);
+    return d ? `<path class="sub" data-sub="${k}" d="${d}" />` : "";
+  }).join("");
+
+  const presentSubs = SUBSCORES.filter(k => pts.some(p => p[k] != null));
+  const legend = `
+    <div class="legend">
+      <span><span class="swatch composite"></span>Composite</span>
+      ${presentSubs.map(k => `<span><span class="swatch ${k}"></span>${SUB_LABELS[k]}</span>`).join("")}
+    </div>`;
+
+  const first = compVals[0], last = compVals[compVals.length - 1];
   const delta = last - first;
   const deltaCls = delta > 0 ? "up" : delta < 0 ? "down" : "";
   const deltaStr = delta === 0 ? "flat" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} pts`;
+
   return `
     <div class="sparkline-card">
       <div class="header">
-        <span>Composite · ${pts.length} snapshot${pts.length === 1 ? "" : "s"} (${esc(pts[0].date)} → ${esc(pts[pts.length-1].date)})</span>
+        <span>Composite + subscores · ${pts.length} snapshot${pts.length === 1 ? "" : "s"} (${esc(pts[0].date)} → ${esc(pts[pts.length-1].date)})</span>
         <span class="delta ${deltaCls}">${esc(deltaStr)}</span>
       </div>
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
         <path class="area" d="${area}" />
-        <path class="line" d="${path}" />
+        ${subPaths}
+        <path class="line" d="${compositePath}" />
         <circle class="dot" cx="${x(pts.length - 1).toFixed(2)}" cy="${y(last).toFixed(2)}" r="2.5" />
       </svg>
+      ${legend}
     </div>`;
 }
 
@@ -1461,10 +1590,23 @@ async function init() {
   applyURLState(readURLState());
   if (state.weights) {
     // Mark sliders + status badge as customized before they render.
+    // If URL weights happen to match a named preset, surface the label.
     const ws = document.getElementById("weights-status");
-    if (ws) { ws.textContent = "custom"; ws.classList.remove("warn"); ws.classList.add("info"); }
+    if (ws) {
+      const match = WEIGHT_PRESETS.find(p => weightsEqual(state.weights, p.w));
+      if (match && match.id === "balanced") {
+        state.weights = null;
+        ws.textContent = "defaults"; ws.classList.add("warn"); ws.classList.remove("info");
+      } else if (match) {
+        ws.textContent = `preset: ${match.label.toLowerCase()}`;
+        ws.classList.remove("warn"); ws.classList.add("info");
+      } else {
+        ws.textContent = "custom"; ws.classList.remove("warn"); ws.classList.add("info");
+      }
+    }
   }
   buildSliders();
+  renderPresets();
   await refresh();
   await loadSources();
   // Replay deep-link: open country or compare modal after data has loaded.
