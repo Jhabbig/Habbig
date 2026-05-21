@@ -41,6 +41,19 @@ INDICATORS: dict[str, str] = {
     "gdp_per_capita": "NY.GDP.PCAP.CD",
 }
 
+# Additional per-country indicators surfaced in the country-detail card.
+# Same source / no-key API. CSV-style annual cadence.
+DETAIL_INDICATORS: dict[str, str] = {
+    "inflation_yoy_pct": "FP.CPI.TOTL.ZG",         # CPI inflation, annual %
+    "unemployment_pct":  "SL.UEM.TOTL.ZS",         # Unemployment, total %
+    "gdp_growth_pct":    "NY.GDP.MKTP.KD.ZG",      # Real GDP growth, annual %
+    "life_expectancy":   "SP.DYN.LE00.IN",         # Life expectancy at birth, years
+    "population":        "SP.POP.TOTL",            # Total population
+}
+
+# Sector-composition time-series window for the country-detail trajectory.
+_HISTORY_WINDOW = (1991, 2024)
+
 # Aggregate "countries" we want to exclude (regions, income groups, the world itself).
 # The World Bank API returns these mixed in with real countries; filter on ISO3.
 _AGG_ISO3 = {
@@ -150,6 +163,123 @@ def get_cached(force: bool = False) -> dict:
         _CACHE["data"] = rows
         _CACHE["fetched_at"] = now
     return {"countries": rows, "fetched_at": now}
+
+
+# ── Per-country detail (with annual time-series) ─────────────────────────────
+# Cached separately so the world summary stays cheap to compute.
+
+_DETAIL_CACHE: dict[str, dict] = {}
+_DETAIL_FETCHED_AT: dict[str, float] = {}
+_DETAIL_TTL = 24 * 3600
+_detail_lock = Lock()
+
+
+def _fetch_indicator_for_country(indicator_id: str, iso3: str, start: int, end: int) -> list[tuple[int, float]]:
+    """Return (year, value) pairs for one country's series, oldest first."""
+    url = f"https://api.worldbank.org/v2/country/{iso3}/indicator/{indicator_id}?format=json&date={start}:{end}&per_page=200"
+    try:
+        body = _fetch(url)
+    except Exception as exc:
+        log.warning("World Bank country fetch failed %s %s: %s", iso3, indicator_id, exc)
+        return []
+    if not isinstance(body, list) or len(body) < 2 or not isinstance(body[1], list):
+        return []
+    out: list[tuple[int, float]] = []
+    for row in body[1]:
+        v = row.get("value")
+        if v is None:
+            continue
+        try:
+            year = int(row.get("date") or 0)
+        except (TypeError, ValueError):
+            continue
+        out.append((year, float(v)))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def fetch_country_detail(iso3: str) -> dict:
+    """Build a full per-country profile: sector trajectory + the detail indicators."""
+    iso3 = iso3.upper()
+    history_start, history_end = _HISTORY_WINDOW
+    sector_pulls = {
+        name: _fetch_indicator_for_country(sid, iso3, history_start, history_end)
+        for name, sid in {
+            "agriculture": INDICATORS["agriculture"],
+            "industry":    INDICATORS["industry"],
+            "services":    INDICATORS["services"],
+        }.items()
+    }
+    # Build a year-keyed trajectory where all three sectors are present
+    years = sorted(set(y for series in sector_pulls.values() for (y, _) in series))
+    by_year: dict[int, dict] = {}
+    for y in years:
+        a = next((v for (yy, v) in sector_pulls["agriculture"] if yy == y), None)
+        i = next((v for (yy, v) in sector_pulls["industry"]    if yy == y), None)
+        s = next((v for (yy, v) in sector_pulls["services"]    if yy == y), None)
+        if a is None or i is None or s is None:
+            continue
+        total = a + i + s
+        if total <= 0:
+            continue
+        by_year[y] = {
+            "year": y,
+            "agriculture_pct": a / total * 100,
+            "industry_pct":    i / total * 100,
+            "services_pct":    s / total * 100,
+        }
+    trajectory = [by_year[y] for y in sorted(by_year)]
+
+    # Detail indicators — keep latest, plus a short tail for sparklines
+    detail: dict[str, dict] = {}
+    for name, sid in DETAIL_INDICATORS.items():
+        pts = _fetch_indicator_for_country(sid, iso3, history_start, history_end)
+        latest = pts[-1] if pts else None
+        prior = pts[-2] if len(pts) >= 2 else None
+        delta = None
+        if latest and prior:
+            delta = latest[1] - prior[1]
+        detail[name] = {
+            "indicator_id": sid,
+            "latest": {"year": latest[0], "value": latest[1]} if latest else None,
+            "delta_vs_prior_year": delta,
+            "series": [{"year": y, "value": v} for (y, v) in pts[-30:]],
+        }
+
+    name = None
+    iso2 = None
+    try:
+        body = _fetch(f"https://api.worldbank.org/v2/country/{iso3}?format=json")
+        if isinstance(body, list) and len(body) >= 2 and body[1]:
+            meta = body[1][0]
+            name = meta.get("name")
+            iso2 = meta.get("iso2Code")
+    except Exception as exc:
+        log.warning("World Bank country metadata fetch failed %s: %s", iso3, exc)
+
+    return {
+        "iso3": iso3,
+        "iso2": iso2,
+        "name": name or iso3,
+        "trajectory": trajectory,
+        "detail": detail,
+    }
+
+
+def get_country_detail_cached(iso3: str, force: bool = False) -> dict:
+    iso3 = iso3.upper()
+    now = time.time()
+    with _detail_lock:
+        cached = _DETAIL_CACHE.get(iso3)
+        fetched_at = _DETAIL_FETCHED_AT.get(iso3, 0.0)
+        fresh = (now - fetched_at) < _DETAIL_TTL and cached is not None
+        if fresh and not force:
+            return {**cached, "fetched_at": fetched_at}
+    data = fetch_country_detail(iso3)
+    with _detail_lock:
+        _DETAIL_CACHE[iso3] = data
+        _DETAIL_FETCHED_AT[iso3] = now
+    return {**data, "fetched_at": now}
 
 
 if __name__ == "__main__":

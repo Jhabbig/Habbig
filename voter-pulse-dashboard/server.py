@@ -142,6 +142,18 @@ async def api_world(force: bool = False) -> JSONResponse:
     })
 
 
+@app.get("/api/country/{iso3}")
+async def api_country(iso3: str, force: bool = False) -> JSONResponse:
+    iso3 = iso3.upper()
+    if not (3 <= len(iso3) <= 3 and iso3.isalpha()):
+        return JSONResponse({"error": "iso3 must be a 3-letter country code"}, status_code=400)
+    profile = worldbank_client.get_country_detail_cached(iso3, force=force)
+    profile["trajectory"] = world_analysis.annotate_trajectory(profile.get("trajectory") or [])
+    if profile["trajectory"]:
+        profile["latest_stage"] = profile["trajectory"][-1]
+    return JSONResponse(profile)
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)

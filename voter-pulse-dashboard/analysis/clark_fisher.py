@@ -102,6 +102,21 @@ def annotate(country: dict) -> dict:
     }
 
 
+def annotate_trajectory(trajectory: list[dict]) -> list[dict]:
+    """Stamp each annual point with stage + ternary coords for trail rendering."""
+    out: list[dict] = []
+    for p in trajectory:
+        a = p.get("agriculture_pct") or 0.0
+        i = p.get("industry_pct") or 0.0
+        s = p.get("services_pct") or 0.0
+        out.append({
+            **p,
+            **classify(a, i, s),
+            "ternary": ternary_xy(a, i, s),
+        })
+    return out
+
+
 # Stage metadata for the legend / UI. Order matters - it's the natural arc.
 STAGE_META: list[dict] = [
     {"bucket": "pre_industrial",   "label": "Pre-industrial",         "stage": 1, "color": "#a78bfa", "blurb": "Agriculture ≥ 40% of employment"},

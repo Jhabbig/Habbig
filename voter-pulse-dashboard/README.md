@@ -42,6 +42,11 @@ to capture the "fear gap" that often drives sentiment.
    services) with the five Clark–Fisher development stages shaded.
    Hover for country details; filter and sort the side table by name,
    sector share, or stage. Sourced from the World Bank Indicators API.
+   Click any country (or a row in the side table) to open a profile
+   card with its latest inflation, unemployment, real GDP growth, life
+   expectancy, and population — plus the country's full 1991–today
+   sector trajectory drawn as a path on the ternary, so you can see
+   where it's been on the arc and where it is now.
 8. **Election backtest** — every month since 1978 we rebuild the mood
    index using only data available at that point and score it against
    every US presidential election at 12 / 6 / 3 / 1-month horizons.
@@ -120,6 +125,7 @@ DEV_MODE=1 python3 server.py
 - `GET /api/backtest` — election backtest (history, per-election calls, per-horizon accuracy + correlation)
 - `GET /api/states` — state-level unemployment, mood proxy, tile layout, rankings
 - `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
+- `GET /api/country/{iso3}` — full per-country profile: latest inflation, unemployment, GDP growth, life expectancy, population + annual sector trajectory on the Clark–Fisher arc
 - `GET /healthz` — liveness
 
 Every API endpoint accepts `?force=true` to bypass the cache.
