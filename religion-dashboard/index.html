@@ -261,25 +261,32 @@
 </head>
 <body>
 <header>
-  <h1>Religion &amp; Cults Tracker</h1>
+  <h1 id="h-title">Religion &amp; Cults Tracker</h1>
   <span class="meta" id="meta">loading…</span>
+  <select id="lang-picker" style="margin-left:auto;background:#0e1117;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer">
+    <option value="en">English</option>
+    <option value="es">Español</option>
+    <option value="it">Italiano</option>
+    <option value="fr">Français</option>
+    <option value="pt">Português</option>
+  </select>
 </header>
 <main>
 
   <section class="panel">
-    <h2>Global snapshot</h2>
+    <h2 data-i18n="panel.summary">Global snapshot</h2>
     <div class="summary-grid" id="summary">loading…</div>
   </section>
 
   <section class="panel">
-    <h2>Religious leaders — actuarial</h2>
+    <h2 data-i18n="panel.leaders">Religious leaders — actuarial</h2>
     <div id="pope-health-banner" style="margin-bottom:12px"></div>
     <div id="leaders">loading…</div>
     <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 32 historical religious leaders (mean age at death 79.2y). Sorted by 1-year mortality probability — most market-relevant first.</p>
   </section>
 
   <section class="panel">
-    <h2>Conclave model — College of Cardinals + papabile</h2>
+    <h2 data-i18n="panel.conclave">Conclave model — College of Cardinals + papabile</h2>
     <div id="conclave-source" style="margin-bottom:12px;font-size:12px;color:var(--muted)">checking Vatican feed…</div>
     <div id="conclave-hero" class="conclave-hero"></div>
     <h3>Papabile — Vaticanist consensus priors</h3>
@@ -295,19 +302,19 @@
   </section>
 
   <section class="panel">
-    <h2>Upcoming religious calendar — 2026</h2>
+    <h2 data-i18n="panel.calendar">Upcoming religious calendar</h2>
     <div id="calendar-strip">loading…</div>
     <p class="footnote">Movable feasts pre-computed for 2026. Source: ecclesiastical calendars + Pew religious-calendar reference.</p>
   </section>
 
   <section class="panel">
-    <h2>World religions — adherents (millions)</h2>
+    <h2 data-i18n="panel.religions">World religions — adherents (millions)</h2>
     <div id="religions">loading…</div>
     <p class="footnote">Source: Pew Research Center, baseline 2020 estimates. Growth = annualised change in share of world population.</p>
   </section>
 
   <section class="panel">
-    <h2>Full registry — 100 traditions, sects &amp; movements</h2>
+    <h2 data-i18n="panel.registry">Full registry — 100 traditions, sects &amp; movements</h2>
     <div class="timeline" id="timeline"></div>
     <div class="registry-controls">
       <input id="reg-search" placeholder="Search name, region, summary…" type="search">
@@ -331,7 +338,7 @@
   </section>
 
   <section class="panel">
-    <h2>New religious movements &amp; cults — watchlist</h2>
+    <h2 data-i18n="panel.cults">New religious movements &amp; cults — watchlist</h2>
     <div class="filters" id="cult-filters">
       <button data-risk="" class="active">All</button>
       <button data-risk="extreme">Extreme</button>
@@ -344,47 +351,47 @@
   </section>
 
   <section class="panel">
-    <h2>Country religion composition — top 30 by population</h2>
+    <h2 data-i18n="panel.countries">Country religion composition — top 30 by population</h2>
     <div class="legend" id="country-legend"></div>
     <div id="countries">loading…</div>
     <p class="footnote">Source: Pew Research Center "Religious Composition by Country" series. Categories follow Pew's mutually-exclusive top-level taxonomy.</p>
   </section>
 
   <section class="panel">
-    <h2>Religious-violence events — ACLED, last 30 days</h2>
+    <h2 data-i18n="panel.violence">Religious-violence events — ACLED, last 30 days</h2>
     <div id="violence-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
     <div id="violence-rows">loading…</div>
     <p class="footnote">Filtered from ACLED for events with religious-motivation indicators (actor names, location-type, notes keywords). Requires <code>ACLED_EMAIL</code> + <code>ACLED_API_KEY</code> in production. Source: <a href="https://acleddata.com" target="_blank" rel="noopener" style="color:var(--accent)">acleddata.com</a>.</p>
   </section>
 
   <section class="panel">
-    <h2>Cult / NRM emergence sentinel — Reddit</h2>
+    <h2 data-i18n="panel.sentinel">Cult / NRM emergence sentinel — Reddit</h2>
     <div id="sentinel-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
     <div id="sentinel-rows">loading…</div>
     <p class="footnote">Public read-only Reddit JSON from r/cults, r/cultsurvivors, r/exjw, r/exmormon, r/EXMUSLIM, r/Scientology. Capitalised multi-word phrases extracted from posts; ranked by mention volume. Surfacing here is RECON, not curation — names need investigation before promoting to the watchlist.</p>
   </section>
 
   <section class="panel">
-    <h2>Religious-freedom designations (USCIRF 2024)</h2>
+    <h2 data-i18n="panel.freedom">Religious-freedom designations (USCIRF 2024)</h2>
     <div id="freedom">loading…</div>
     <p class="footnote">CPC = Country of Particular Concern · SWL = Special Watch List · EPC = Entity of Particular Concern (non-state actor).</p>
   </section>
 
   <section class="panel">
-    <h2>Polymarket — religion-tagged markets</h2>
+    <h2 data-i18n="panel.markets">Polymarket — religion-tagged markets</h2>
     <div id="markets">loading…</div>
     <p class="footnote">Live from Polymarket Gamma API. YES = market-implied probability. Refreshes every 5 minutes.</p>
   </section>
 
   <section class="panel">
-    <h2>Edge — model vs market</h2>
+    <h2 data-i18n="panel.edge">Edge — model vs market</h2>
     <div id="edge-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
     <div id="edge-rows">loading…</div>
     <p class="footnote">For each market matched to a leader actuarial or papabile prior, we compute <code>edge = model_p − market_p</code>. Positive edge = buy YES; negative = buy NO. Sorted by |edge|. Actuarial uses SSA 2022 × HR 0.85 (religious-office adjustment); papabile uses Vaticanist-consensus priors. Treat as a screening signal, not a recommendation.</p>
   </section>
 
   <section class="panel">
-    <h2>Religion news — live feed</h2>
+    <h2 data-i18n="panel.news">Religion news — live feed</h2>
     <div id="news">loading…</div>
     <p class="footnote">Aggregated from BBC Religion &amp; Ethics, Religion News Service, AP Religion, Vatican News.</p>
   </section>
@@ -412,6 +419,42 @@ async function fetchJson(url) {
   if (!r.ok) throw new Error(url + " HTTP " + r.status);
   return r.json();
 }
+
+// ─── i18n bootstrap ───────────────────────────────────────────────────────
+
+let _i18nStrings = {};
+function ti(key) { return _i18nStrings[key] || key; }
+
+async function applyLanguage(lang) {
+  try {
+    const r = await fetch("/api/i18n?lang=" + encodeURIComponent(lang));
+    if (!r.ok) return;
+    const d = await r.json();
+    _i18nStrings = d.strings || {};
+    localStorage.setItem("religion-lang", d.lang);
+    document.documentElement.lang = d.lang;
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      const key = el.getAttribute("data-i18n");
+      const txt = _i18nStrings[key];
+      if (txt) el.textContent = txt;
+    });
+    // Header title
+    const ht = document.getElementById("h-title");
+    if (ht && _i18nStrings["header.title"]) ht.textContent = _i18nStrings["header.title"];
+  } catch (e) {
+    console.warn("i18n load failed:", e);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const stored = localStorage.getItem("religion-lang") || "en";
+  const picker = document.getElementById("lang-picker");
+  if (picker) {
+    picker.value = stored;
+    picker.addEventListener("change", e => applyLanguage(e.target.value));
+  }
+  applyLanguage(stored);
+});
 
 async function load() {
   const meta = document.getElementById("meta");

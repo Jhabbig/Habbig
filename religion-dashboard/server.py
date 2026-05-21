@@ -44,6 +44,7 @@ import cardinals as cd
 import edge as edge_calc
 import health_signals
 import historical_leaders as hl
+import i18n
 import reddit_sentinel
 import religion_data as rd
 import religious_calendar as rcal
@@ -807,6 +808,22 @@ def _start_alerts_thread_once() -> None:
     t = threading.Thread(target=_alerts_loop, name="alerts-loop", daemon=True)
     t.start()
     _alerts_thread_started = True
+
+
+@app.route("/api/i18n")
+def api_i18n():
+    """Return the full UI translation dictionary for the requested language.
+
+    ?lang=es|it|fr|pt|en (default en). Missing keys fall back to English.
+    """
+    lang = (request.args.get("lang") or "en").strip().lower()
+    if lang not in i18n.available_languages():
+        lang = "en"
+    return jsonify({
+        "lang": lang,
+        "available": i18n.available_languages(),
+        "strings": i18n.all_strings(lang),
+    })
 
 
 @app.route("/api/violence")
