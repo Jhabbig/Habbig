@@ -185,6 +185,11 @@ class DigestSubscriptionBody(BaseModel):
     enabled: bool = True
 
 
+class SocialPostBody(BaseModel):
+    race_key: str
+    hours: Optional[int] = 24
+
+
 class RaceCallBody(BaseModel):
     race_key: str
     provider: Optional[str] = "manual"
@@ -789,6 +794,16 @@ async def alert_delivery_loop():
                 )
                 if webhook_fires:
                     logger.info(f"Webhook worker fired {webhook_fires} hooks this cycle")
+
+                # Social auto-poster — runs on the same cycle but with its
+                # own 24h dedup so a slowly-evolving race doesn't get
+                # 12 tweets in 12 hours.
+                try:
+                    posts = await _run_social_cycle(top_by_race, titles)
+                    if posts:
+                        logger.info(f"Social poster: {posts} race(s) posted this cycle")
+                except Exception as e:
+                    logger.error(f"Social poster error: {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Webhook worker error: {e}", exc_info=True)
         except Exception as e:
@@ -3293,6 +3308,153 @@ async def admin_race_call_remove(race_key: str, provider: str, request: Request)
     if not state.db.remove_race_call(race_key, provider):
         raise HTTPException(status_code=404, detail="call not found")
     return {"ok": True}
+
+
+# ===================================================================
+# Social auto-poster
+# ===================================================================
+
+_SOCIAL_THRESHOLD_PP = float(os.getenv("SOCIAL_POST_THRESHOLD_PP", "5.0"))
+_SOCIAL_WINDOW_HOURS = int(os.getenv("SOCIAL_POST_WINDOW_HOURS", "6"))
+
+
+def _social_webhook_urls() -> list[str]:
+    """Currently we reuse the outbound-webhook table — any hook whose
+    URL contains 'social' in the path, OR webhooks tagged with format
+    'generic' that the admin specifically created for social bridges.
+
+    Future-proof: a dedicated ``midterm_social_webhooks`` table would be
+    cleaner, but reuse keeps the CRUD UI single-source.
+
+    Env var ``SOCIAL_POST_WEBHOOK_URL`` provides an alternative for
+    operators who want exactly one fixed destination (e.g. a Zapier
+    catch-hook). Returns the deduplicated union.
+    """
+    urls: set[str] = set()
+    env_url = os.getenv("SOCIAL_POST_WEBHOOK_URL", "").strip()
+    if env_url:
+        urls.add(env_url)
+    for wh in state.db.get_webhooks(enabled_only=True):
+        url = (wh.get("url") or "").strip()
+        if not url:
+            continue
+        # Heuristic: if the URL path mentions "social", "zapier", "ifttt"
+        # or the operator labeled the format generic, treat it as a social
+        # destination. The dedicated outbound-webhook firing already happened
+        # in run_webhook_cycle; the social loop adds its own per-race text.
+        low = url.lower()
+        if any(k in low for k in ("/social", "zapier", "ifttt", "make.com", "n8n")):
+            urls.add(url)
+    return sorted(urls)
+
+
+def _cached_explanation_summary(race_key: str) -> str | None:
+    """Pick the most-recent grounded explanation for this race, if any.
+
+    We look back up to a few hour-buckets so a race that moved at 09:00
+    can still cite the 09-bucket explanation when the social loop fires
+    at 09:30.
+    """
+    now = datetime.now(timezone.utc)
+    for delta_h in range(0, 4):
+        ts = now - timedelta(hours=delta_h)
+        for window in (24, 6):
+            bucket = f"{ts.strftime('%Y-%m-%dT%H')}_{window}h"
+            cached = state.db.get_movement_explanation(race_key, bucket)
+            if cached:
+                summary = (cached.get("explanation") or {}).get("summary")
+                if summary:
+                    return summary
+    return None
+
+
+async def _run_social_cycle(
+    top_by_race: dict[str, dict[str, float]],
+    titles: dict[str, str],
+) -> int:
+    """One pass: find races worth tweeting, post each to all configured
+    social webhooks, log the result. Returns the count of distinct races
+    that were posted (not the count of individual webhook deliveries)."""
+    from social import _best_movement_for, _was_recently_posted, post_for_race
+
+    webhook_urls = _social_webhook_urls()
+    if not webhook_urls:
+        return 0
+
+    posted = 0
+    for race_key in top_by_race:
+        if race_key.startswith("unmatched_"):
+            continue
+        if _was_recently_posted(state.db, race_key):
+            continue
+        movement = _best_movement_for(
+            state.db, race_key,
+            hours=_SOCIAL_WINDOW_HOURS,
+            divergence_col_map=DIVERGENCE_COL,
+        )
+        if not movement or abs(movement["delta_pp"]) < _SOCIAL_THRESHOLD_PP:
+            continue
+        explanation = _cached_explanation_summary(race_key)
+        delivered = await post_for_race(
+            state.db, state.http_session,
+            race_key=race_key, race_title=titles.get(race_key, race_key),
+            movement=movement, explanation_summary=explanation,
+            webhook_urls=webhook_urls,
+        )
+        if delivered:
+            posted += 1
+    return posted
+
+
+@app.post("/admin/social/post")
+async def admin_social_post(body: SocialPostBody, request: Request):
+    """Force a social post for one race even if the auto-poster would
+    skip it (e.g. movement < threshold, or already posted in last 24h).
+
+    Useful for narrating a story the algorithm missed: a candidate dropping
+    out, a debate moment, or a back-and-forth between markets and a
+    just-released poll. The post still goes through the same delivery +
+    logging path; dedup is bypassed but the post is recorded so the next
+    auto-cycle won't repeat it.
+    """
+    await require_tier(request, "admin")
+    from social import _best_movement_for, post_for_race
+
+    webhook_urls = _social_webhook_urls()
+    if not webhook_urls:
+        raise HTTPException(status_code=400, detail="no social webhooks configured")
+
+    movement = _best_movement_for(
+        state.db, body.race_key,
+        hours=max(1, int(body.hours or 24)),
+        divergence_col_map=DIVERGENCE_COL,
+    )
+    if not movement:
+        raise HTTPException(status_code=400, detail="no movement data in window")
+
+    # Resolve the race title from active markets (best-effort)
+    title = body.race_key
+    for m in state.db.get_all_markets(active_only=True):
+        if market_race_key(m) == body.race_key:
+            title = m.get("event_title") or m.get("title") or body.race_key
+            break
+
+    delivered = await post_for_race(
+        state.db, state.http_session,
+        race_key=body.race_key, race_title=title,
+        movement=movement,
+        explanation_summary=_cached_explanation_summary(body.race_key),
+        webhook_urls=webhook_urls,
+    )
+    return {"ok": True, "delivered": delivered, "webhooks": len(webhook_urls)}
+
+
+@app.get("/admin/social/log")
+async def admin_social_log(request: Request, race_key: Optional[str] = None, limit: int = 50):
+    """Recent social posts (most recent first). Use to audit what the
+    auto-poster sent and verify nothing weird is going out."""
+    await require_tier(request, "admin")
+    return {"posts": state.db.get_social_posts(race_key=race_key, limit=limit)}
 
 
 # ===================================================================

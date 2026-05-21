@@ -125,6 +125,14 @@ export const api = {
   adminClearCall: (raceKey, provider) =>
     request(`/admin/race-call/${encodeURIComponent(raceKey)}/${encodeURIComponent(provider)}`, { method: 'DELETE' }),
 
+  // Social auto-poster
+  adminSocialLog: (raceKey, limit = 50) => {
+    const q = new URLSearchParams({ ...(raceKey ? { race_key: raceKey } : {}), limit: String(limit) }).toString()
+    return request(`/admin/social/log?${q}`)
+  },
+  adminSocialPost: (raceKey, hours = 24) =>
+    request('/admin/social/post', { method: 'POST', body: JSON.stringify({ race_key: raceKey, hours }) }),
+
   // Accuracy + movements
   accuracy: () => request('/data/accuracy'),
   accuracyBadge: (source, raceType) => {

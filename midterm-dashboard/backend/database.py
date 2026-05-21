@@ -369,6 +369,23 @@ CREATE TABLE IF NOT EXISTS midterm_race_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_race_calls_called_at ON midterm_race_calls(called_at);
 
+-- Social-post dedup log. The auto-poster writes one row per (race_key,
+-- platform_url) every time it fires; the worker uses last_posted_at to
+-- back off (no more than one post per race per 24h by default). The
+-- text is preserved so admins can see exactly what was sent.
+CREATE TABLE IF NOT EXISTS midterm_social_post_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_key        TEXT NOT NULL,
+    platform_url    TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    status          TEXT,
+    delta_pp        REAL,
+    source          TEXT,
+    posted_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_social_post_race_time
+    ON midterm_social_post_log(race_key, posted_at DESC);
+
 -- Hot query path indexes. ``get_markets`` filters by combinations of
 -- (state, race_type, source) and (active, closed); ``get_all_markets``
 -- filters on (active, closed). Price history is queried per-market.
@@ -1603,6 +1620,49 @@ class Database:
                     "UPDATE midterm_digest_subscriptions SET last_sent_at=? WHERE user_id=?",
                     (now, user_id),
                 )
+
+    # === Social posts ======================================================
+
+    def log_social_post(
+        self, race_key: str, platform_url: str, text: str,
+        *, status: str = "ok", delta_pp: float | None = None,
+        source: str | None = None,
+    ) -> int:
+        with _lock:
+            with _get_conn() as conn:
+                cur = conn.execute(
+                    """INSERT INTO midterm_social_post_log
+                        (race_key, platform_url, text, status, delta_pp, source)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (race_key, platform_url, text, status, delta_pp, source),
+                )
+                return cur.lastrowid
+
+    def last_social_post_at(self, race_key: str) -> str | None:
+        """ISO timestamp of the most recent post about this race, or None."""
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT posted_at FROM midterm_social_post_log
+                   WHERE race_key=? ORDER BY posted_at DESC LIMIT 1""",
+                (race_key,),
+            ).fetchone()
+        return row["posted_at"] if row else None
+
+    def get_social_posts(self, race_key: str | None = None, limit: int = 50) -> list[dict]:
+        with _get_conn() as conn:
+            if race_key:
+                rows = conn.execute(
+                    """SELECT * FROM midterm_social_post_log
+                       WHERE race_key=? ORDER BY posted_at DESC LIMIT ?""",
+                    (race_key, min(limit, 500)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM midterm_social_post_log
+                       ORDER BY posted_at DESC LIMIT ?""",
+                    (min(limit, 500),),
+                ).fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     # === Race calls (election night) =======================================
 

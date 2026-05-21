@@ -227,6 +227,109 @@ HISTORICAL_PREDICTIONS = [
     {"race_key": "governor_MT_2020", "race_type": "governor", "year": 2020, "state": "MT",
      "winner": "Greg Gianforte", "winning_party": "R",
      "sources": {"predictit": 0.75, "polling": 0.70}},
+
+    # ====================================================================
+    # 2018 Senate (PredictIt + polling era — Polymarket pre-launch)
+    # ====================================================================
+    {"race_key": "senate_TX_2018", "race_type": "senate", "year": 2018, "state": "TX",
+     "winner": "Ted Cruz", "winning_party": "R",
+     "sources": {"predictit": 0.78, "polling": 0.72}},
+    {"race_key": "senate_MO_2018", "race_type": "senate", "year": 2018, "state": "MO",
+     "winner": "Josh Hawley", "winning_party": "R",
+     "sources": {"predictit": 0.62, "polling": 0.50}},  # polling missed
+    {"race_key": "senate_IN_2018", "race_type": "senate", "year": 2018, "state": "IN",
+     "winner": "Mike Braun", "winning_party": "R",
+     "sources": {"predictit": 0.55, "polling": 0.45}},
+    {"race_key": "senate_ND_2018", "race_type": "senate", "year": 2018, "state": "ND",
+     "winner": "Kevin Cramer", "winning_party": "R",
+     "sources": {"predictit": 0.80, "polling": 0.70}},
+    {"race_key": "senate_MT_2018", "race_type": "senate", "year": 2018, "state": "MT",
+     "winner": "Jon Tester", "winning_party": "D",
+     "sources": {"predictit": 0.72, "polling": 0.65}},
+    {"race_key": "senate_FL_2018", "race_type": "senate", "year": 2018, "state": "FL",
+     "winner": "Rick Scott", "winning_party": "R",
+     "sources": {"predictit": 0.55, "polling": 0.45}},
+    {"race_key": "senate_AZ_2018", "race_type": "senate", "year": 2018, "state": "AZ",
+     "winner": "Kyrsten Sinema", "winning_party": "D",
+     "sources": {"predictit": 0.70, "polling": 0.65}},
+    {"race_key": "senate_NV_2018", "race_type": "senate", "year": 2018, "state": "NV",
+     "winner": "Jacky Rosen", "winning_party": "D",
+     "sources": {"predictit": 0.62, "polling": 0.58}},
+    {"race_key": "senate_MN_2018", "race_type": "senate", "year": 2018, "state": "MN",
+     "winner": "Amy Klobuchar", "winning_party": "D",
+     "sources": {"predictit": 0.97, "polling": 0.97}},
+    {"race_key": "senate_NJ_2018", "race_type": "senate", "year": 2018, "state": "NJ",
+     "winner": "Bob Menendez", "winning_party": "D",
+     "sources": {"predictit": 0.85, "polling": 0.78}},
+    {"race_key": "senate_WV_2018", "race_type": "senate", "year": 2018, "state": "WV",
+     "winner": "Joe Manchin", "winning_party": "D",
+     "sources": {"predictit": 0.82, "polling": 0.75}},
+    {"race_key": "senate_OH_2018", "race_type": "senate", "year": 2018, "state": "OH",
+     "winner": "Sherrod Brown", "winning_party": "D",
+     "sources": {"predictit": 0.92, "polling": 0.88}},
+
+    # ====================================================================
+    # 2018 Governor
+    # ====================================================================
+    {"race_key": "governor_FL_2018", "race_type": "governor", "year": 2018, "state": "FL",
+     "winner": "Ron DeSantis", "winning_party": "R",
+     "sources": {"predictit": 0.50, "polling": 0.40}},  # Gillum lost narrowly
+    {"race_key": "governor_GA_2018", "race_type": "governor", "year": 2018, "state": "GA",
+     "winner": "Brian Kemp", "winning_party": "R",
+     "sources": {"predictit": 0.62, "polling": 0.55}},
+    {"race_key": "governor_OH_2018", "race_type": "governor", "year": 2018, "state": "OH",
+     "winner": "Mike DeWine", "winning_party": "R",
+     "sources": {"predictit": 0.70, "polling": 0.55}},
+    {"race_key": "governor_KS_2018", "race_type": "governor", "year": 2018, "state": "KS",
+     "winner": "Laura Kelly", "winning_party": "D",
+     "sources": {"predictit": 0.55, "polling": 0.50}},
+    {"race_key": "governor_WI_2018", "race_type": "governor", "year": 2018, "state": "WI",
+     "winner": "Tony Evers", "winning_party": "D",
+     "sources": {"predictit": 0.55, "polling": 0.55}},
+    {"race_key": "governor_MI_2018", "race_type": "governor", "year": 2018, "state": "MI",
+     "winner": "Gretchen Whitmer", "winning_party": "D",
+     "sources": {"predictit": 0.88, "polling": 0.82}},
+
+    # ====================================================================
+    # 2024 US House — bellwether districts
+    # ====================================================================
+    {"race_key": "house_CA-22_2024", "race_type": "house", "year": 2024, "state": "CA",
+     "winner": "David Valadao", "winning_party": "R",
+     "sources": {"polymarket": 0.65, "polling": 0.55}},
+    {"race_key": "house_NY-17_2024", "race_type": "house", "year": 2024, "state": "NY",
+     "winner": "Mike Lawler", "winning_party": "R",
+     "sources": {"polymarket": 0.60, "polling": 0.50}},
+    {"race_key": "house_IA-01_2024", "race_type": "house", "year": 2024, "state": "IA",
+     "winner": "Mariannette Miller-Meeks", "winning_party": "R",
+     "sources": {"polymarket": 0.70, "polling": 0.55}},
+    {"race_key": "house_NY-19_2024", "race_type": "house", "year": 2024, "state": "NY",
+     "winner": "Josh Riley", "winning_party": "D",
+     "sources": {"polymarket": 0.55, "polling": 0.50}},
+    {"race_key": "house_PA-08_2024", "race_type": "house", "year": 2024, "state": "PA",
+     "winner": "Rob Bresnahan", "winning_party": "R",
+     "sources": {"polymarket": 0.55, "polling": 0.45}},
+    {"race_key": "house_OH-09_2024", "race_type": "house", "year": 2024, "state": "OH",
+     "winner": "Marcy Kaptur", "winning_party": "D",
+     "sources": {"polymarket": 0.58, "polling": 0.52}},
+    {"race_key": "house_AK-AL_2024", "race_type": "house", "year": 2024, "state": "AK",
+     "winner": "Nick Begich III", "winning_party": "R",
+     "sources": {"polymarket": 0.62, "polling": 0.55}},
+    {"race_key": "house_NE-02_2024", "race_type": "house", "year": 2024, "state": "NE",
+     "winner": "Don Bacon", "winning_party": "R",
+     "sources": {"polymarket": 0.55, "polling": 0.50}},
+
+    # ====================================================================
+    # 2020 House — known upsets / bellwethers
+    # ====================================================================
+    {"race_key": "house_NY-22_2020", "race_type": "house", "year": 2020, "state": "NY",
+     "winner": "Claudia Tenney", "winning_party": "R",
+     "sources": {"predictit": 0.45, "polling": 0.40}},  # razor-thin R win
+    {"race_key": "house_CA-25_2020", "race_type": "house", "year": 2020, "state": "CA",
+     "winner": "Mike Garcia", "winning_party": "R",
+     "sources": {"predictit": 0.50, "polling": 0.45}},
+    {"race_key": "house_IA-02_2020", "race_type": "house", "year": 2020, "state": "IA",
+     "winner": "Mariannette Miller-Meeks", "winning_party": "R",
+     "sources": {"predictit": 0.50, "polling": 0.42}},  # decided by 6 votes
 ]
 
 

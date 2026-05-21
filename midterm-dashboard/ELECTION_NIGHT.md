@@ -77,6 +77,58 @@ In-memory per-identity at 60 RPM (free), 120 RPM (premium), unlimited
 - [ ] Confirm Sentry is receiving events
 - [ ] Subscribe to the alert digest yourself so you'll see if the worker stops
 
+## 5b. Real-world rehearsal (T-1 week)
+
+Walk through the actual night against staging. Each of these surfaces a
+class of failures that's invisible until traffic + real provider data
+collides.
+
+```bash
+# 1. Burst — 1000 concurrent users from disparate IPs (use a CDN-front
+#    or a small VPS swarm — single localhost gets rate-limited as one IP).
+python3 loadtest_live.py --base https://staging.midterm.narve.ai \
+    --clients 1000 --interval 0 --duration 5
+# Expected: most 200/304, some 429s only if same IP hits >60 RPM.
+
+# 2. Steady-state — 200 users polling every 15s for 5 minutes (what
+#    real election-night traffic actually looks like).
+python3 loadtest_live.py --base https://staging.midterm.narve.ai \
+    --clients 200 --interval 15 --duration 300
+# Expected: ≥70% 304 responses (ETag working), p95 < 300ms.
+
+# 3. Provider failover drill — pretend AP goes down.
+unset AP_API_KEY
+# Restart worker. /live should keep working in markets-only-plus-DDHQ mode.
+
+# 4. Disagreement drill — call a race for the wrong party and watch
+#    the disagreement badge appear in /live.
+curl -X POST https://staging.../admin/race-call \
+    -H "Content-Type: application/json" \
+    -H "Cookie: <admin session>" \
+    -d '{"race_key": "senate_GA", "called_party": "R", "provider": "manual",
+         "called_candidate": "Test candidate", "reporting_pct": 50}'
+# Then retract:
+curl -X DELETE https://staging.../admin/race-call/senate_GA/manual ...
+
+# 5. Social poster smoke test — confirm posts land in your test
+#    Zapier hook or Slack channel.
+curl -X POST https://staging.../admin/social/post \
+    -d '{"race_key": "senate_GA", "hours": 24}' ...
+# Then GET /admin/social/log to verify the text + delivered status.
+
+# 6. Walk the /live page on iOS Safari, Android Chrome, and one PC
+#    browser. Confirm the disagreement ring is visible at arm's length —
+#    this is the whole UX value prop for election night.
+```
+
+Recovery drills:
+- [ ] Kill the worker mid-night. Confirm new uvicorn worker starts cleanly,
+      cache repopulates within 5s, no DB corruption.
+- [ ] Provider returns malformed JSON. Confirm `_fetch_ap_calls` /
+      `_fetch_ddhq_calls` log + skip, never crash the poller loop.
+- [ ] DB file goes read-only (disk full). Read paths should still serve
+      from cache; write paths return 5xx without bringing down the worker.
+
 ## 6. During the night
 
 - Watch logs for `Race-call poller: N calls upserted` — that's the heartbeat
