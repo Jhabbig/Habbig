@@ -555,6 +555,66 @@ def test_trend_reversal_rule():
     ok("Alpha (up-then-down) and Beta (down-then-up) fire; same-direction Gamma, too-small-flip Delta, no-history Eps all skipped")
 
 
+def test_loneliness_inverts_and_combines_with_whr():
+    print("test: loneliness CSV inverts to a Connection contribution averaged with WHR")
+    _clear_cache()
+    with patch.object(server, "get_country_meta", return_value=META):
+        # USA reports 30% lonely -> 70/100 connection contribution.
+        csv_in = "country,loneliness\nUnited States,30\nGermany,0.20\n"
+        out = server._parse_loneliness_csv(csv_in)
+        if abs(out.get("USA", 0) - 70.0) > 1e-9:
+            fail(f"USA inversion wrong: {out}")
+        # DEU value 0.20 is a fraction -> 20% lonely -> 80/100.
+        if abs(out.get("DEU", 0) - 80.0) > 1e-9:
+            fail(f"DEU fraction auto-rescale wrong: {out}")
+        ok("loneliness inverted to connection contribution; 0-1 fractions auto-rescaled to 0-100")
+
+
+def test_event_overlay_rule():
+    print("test: rule_event_overlay fires when composite moves across event date")
+    from datetime import date, timedelta
+    today = date.today()
+    # Construct an event 200 days ago. Country composite at event-180d should
+    # differ from event+180d (or today) by >= EVENT_MIN_DELTA = 4.
+    ev_date = today - timedelta(days=200)
+    before_date = (ev_date - timedelta(days=insights_module.EVENT_WINDOW_DAYS)).isoformat()
+    after_date  = min(today, ev_date + timedelta(days=insights_module.EVENT_WINDOW_DAYS)).isoformat()
+
+    events = [
+        {"iso3": "AAA", "date": ev_date.isoformat(), "kind": "legalization", "label": "Same-sex marriage legalized"},
+        # Too old to consider:
+        {"iso3": "BBB", "date": (today - timedelta(days=1000)).isoformat(), "kind": "legalization", "label": "Ancient event"},
+    ]
+    countries = [
+        # AAA had a meaningful move across the event date
+        {"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+         "subscores": {"connection": 60, "partnership": 60, "stability": 60, "activity": None},
+         "composite": 70.0, "used": ["connection","partnership","stability"]},
+        # BBB has the same kind of move but its event is outside the lookback window
+        {"iso3": "BBB", "name": "Beta", "income_tier": "H",
+         "subscores": {"connection": 60, "partnership": 60, "stability": 60, "activity": None},
+         "composite": 70.0, "used": ["connection","partnership","stability"]},
+        # CCC has an event but barely moved -> below EVENT_MIN_DELTA = 4
+        {"iso3": "CCC", "name": "Gamma", "income_tier": "H",
+         "subscores": {"connection": 60, "partnership": 60, "stability": 60, "activity": None},
+         "composite": 61.0, "used": ["connection","partnership","stability"]},
+    ]
+    history = {
+        "AAA": [{"date": before_date, "composite": 60.0}, {"date": after_date, "composite": 70.0}],
+        "BBB": [{"date": before_date, "composite": 60.0}, {"date": after_date, "composite": 70.0}],
+        "CCC": [{"date": before_date, "composite": 60.0}, {"date": after_date, "composite": 61.0}],
+    }
+    events.append({"iso3": "CCC", "date": ev_date.isoformat(), "kind": "legalization", "label": "Civil-union recognition"})
+
+    out = insights_module.rule_event_overlay(countries, lambda iso3: history.get(iso3, []), events)
+    isos = sorted(i.iso3 for i in out)
+    if isos != ["AAA"]:
+        fail(f"event_overlay should pick only AAA (in-window + meaningful move); got {isos}")
+    if "Same-sex" not in out[0].title:
+        fail(f"event_overlay title should name the event label; got: {out[0].title}")
+    ok("Alpha (10pt move across legalization) fires; Beta (event too old) and Gamma (1pt move) skipped")
+
+
 def test_outlier_skipped_on_zero_variance():
     print("test: outlier rule skips a tier subscore when variance is zero")
     countries = [
@@ -596,6 +656,8 @@ def main():
     test_merge_prefer_first()
     test_un_csv_parser_merges_globally()
     test_activity_csv_parser()
+    test_loneliness_inverts_and_combines_with_whr()
+    test_event_overlay_rule()
     print("\nall tests passed.")
 
 

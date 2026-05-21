@@ -73,6 +73,7 @@ _TTL = {
     "wb_adolescent":        24 * 3600,
     "whr_social_support":   7 * 24 * 3600,   # WHR is annual
     "un_marriage_divorce":  7 * 24 * 3600,   # UN DESA is annual
+    "loneliness_csv":       7 * 24 * 3600,   # Meta-Gallup is annual
     "activity_csv":         24 * 3600,
     "summary":              60 * 60,
     "index":                60 * 60,
@@ -509,6 +510,59 @@ def fetch_un_marriage_divorce() -> tuple[dict[str, float], dict[str, float]]:
 
 ACTIVITY_LOCAL = Path(__file__).parent / "data" / "activity.csv"
 
+# ---------------------------------------------------------------------------
+# Meta-Gallup loneliness (Connection subscore — Tier B)
+#
+# Companion to WHR social-support: where WHR captures the "have someone to
+# count on" side of Connection, this captures the inverse. Combine them so
+# the subscore isn't single-sourced. Operator-supplied CSV with columns
+# `country`, `loneliness` (0-100, *lower* = better; we invert before merging).
+# ---------------------------------------------------------------------------
+
+LONELINESS_LOCAL = Path(__file__).parent / "data" / "loneliness.csv"
+
+
+def _parse_loneliness_csv(text: str) -> dict[str, float]:
+    """Returns {iso3: connection_score_0_to_100} — already inverted from
+    loneliness so it stacks the same direction as WHR social-support."""
+    meta = get_country_meta()
+    name_to_iso3 = _whr_name_to_iso3(meta)
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return {}
+    name_col = next((c for c in reader.fieldnames if "country" in c.lower()), None)
+    val_col = next((c for c in reader.fieldnames if "lonel" in c.lower()), None)
+    if not name_col or not val_col:
+        return {}
+    out: dict[str, float] = {}
+    for row in reader:
+        nm = _normalize_country_name(row.get(name_col) or "")
+        if not nm:
+            continue
+        iso3 = name_to_iso3.get(nm)
+        if not iso3:
+            continue
+        try:
+            lonely = float(row[val_col])
+        except (ValueError, TypeError):
+            continue
+        # Auto-rescale 0-1 fractions to 0-100; then invert so higher == better.
+        if 0.0 <= lonely <= 1.0:
+            lonely *= 100.0
+        out[iso3] = 100.0 - max(0.0, min(100.0, lonely))
+    return out
+
+
+def fetch_loneliness_data() -> dict[str, float]:
+    if not LONELINESS_LOCAL.exists():
+        log.info("Loneliness fetcher: no data file at %s — Connection uses WHR only", LONELINESS_LOCAL)
+        return {}
+    try:
+        return _parse_loneliness_csv(LONELINESS_LOCAL.read_text())
+    except Exception as exc:
+        log.warning("Loneliness local file %s parse failed: %s", LONELINESS_LOCAL, exc)
+        return {}
+
 
 def _parse_activity_csv(text: str) -> dict[str, float]:
     meta = get_country_meta()
@@ -619,6 +673,7 @@ def _build_subscore_layers() -> dict[str, Any]:
     adolescent_fertility = _safe_fetch("wb_adolescent",
                                        lambda: fetch_wb_indicator("SP.ADO.TFRT"))
     social_support       = _safe_fetch("whr_social_support", fetch_whr_social_support)
+    loneliness_inv       = _safe_fetch("loneliness_csv",     fetch_loneliness_data)
 
     # UN DESA covers the world; Eurostat covers EU+EFTA with fresher numbers.
     # Use Eurostat where available, fall back to UN for everyone else.
@@ -634,9 +689,17 @@ def _build_subscore_layers() -> dict[str, Any]:
 
     activity_raw = _safe_fetch("activity_csv", fetch_activity_data)
 
-    # Connection: WHR social-support index (0-100), already on the right scale.
-    # Rank within income tier so cross-tier comparisons stay fair.
-    connection_pct = percentile_rank_within_tier(social_support, higher_is_better=True)
+    # Connection: average of two ranked indicators where available — WHR
+    # social-support and inverted Meta-Gallup loneliness. Each is percentile-
+    # ranked within tier separately so a country with only one of the two
+    # still scores cleanly.
+    whr_pct        = percentile_rank_within_tier(social_support, higher_is_better=True)
+    loneliness_pct = percentile_rank_within_tier(loneliness_inv, higher_is_better=True)
+    connection_pct: dict[str, float] = {}
+    for iso in set(whr_pct) | set(loneliness_pct):
+        v = avg_present(whr_pct.get(iso), loneliness_pct.get(iso))
+        if v is not None:
+            connection_pct[iso] = v
 
     # Partnership: marriage rate (v1 proxy for partnership rate); cap at 80th pct.
     # We also keep the uncapped version on the side so rule_cap_impact can
@@ -940,6 +1003,7 @@ def insights_route():
         layers["meta"],
         partnership_uncapped=partnership_uncapped,
         history_accessor=history_for,
+        events=insights_module.STARTER_EVENTS,
     ))
 
 
@@ -979,6 +1043,7 @@ def sources():
             "eurostat_demo_ndivind":  {"tier": "A", "covers": "EU + EFTA",      "in_use": True,  "feeds": "stability"},
             "world_bank_wdi":         {"tier": "A", "covers": "global",         "in_use": True,  "feeds": "stability + meta"},
             "world_happiness_report": {"tier": "B", "covers": "~150 countries", "in_use": bool(layers["subscores"]["connection"]), "feeds": "connection"},
+            "meta_gallup_loneliness": {"tier": "B", "covers": "~140 countries", "in_use": LONELINESS_LOCAL.exists(), "feeds": "connection (combined with WHR)"},
             "un_desa":                {"tier": "A", "covers": "global",         "in_use": UN_MARRIAGE_LOCAL.exists(), "feeds": "partnership + stability worldwide (fallback after Eurostat)"},
             "activity_csv":           {"tier": "C", "covers": "operator-supplied", "in_use": bool(layers["subscores"]["activity"]), "feeds": "activity"},
         },

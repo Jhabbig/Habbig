@@ -35,6 +35,9 @@ MOVER_MIN_DAYS = 30            # earliest comparison snapshot >= N days old
 MOVER_MIN_DELTA = 5.0          # composite must have shifted >= 5 pct pts
 TREND_LEG_DELTA = 3.0          # each leg of a trend must move >= 3 pct pts
 TREND_SAMPLE_TOLERANCE = 15    # accept a snapshot within +/- N days of the target spacing
+EVENT_LOOKBACK_DAYS = 730      # only consider events from the last ~2 years
+EVENT_WINDOW_DAYS = 180        # compare composite at event -window vs +window
+EVENT_MIN_DELTA = 4.0          # |delta| across the event window must be >= this
 MAX_INSIGHTS_PER_RULE = 4
 MAX_TOTAL_INSIGHTS = 16
 
@@ -459,6 +462,25 @@ def rule_mover(countries: list[dict], history_accessor) -> list[Insight]:
     return out
 
 
+# Starter registry of well-documented historical events. Operators can append
+# their own by passing a wider list to `generate_insights(events=...)`.
+# ISO3 "*" applies the event to every country in the panel (e.g. WHO pandemic
+# declaration). Format: (iso3, ISO date, kind, label).
+STARTER_EVENTS: list[dict] = [
+    {"iso3": "NLD", "date": "2001-04-01", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "BEL", "date": "2003-06-01", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "ESP", "date": "2005-07-03", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "CAN", "date": "2005-07-20", "kind": "legalization", "label": "Same-sex marriage legalized federally"},
+    {"iso3": "ARG", "date": "2010-07-22", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "USA", "date": "2015-06-26", "kind": "legalization", "label": "Obergefell v. Hodges"},
+    {"iso3": "IRL", "date": "2015-11-16", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "DEU", "date": "2017-10-01", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "AUS", "date": "2017-12-09", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "TWN", "date": "2019-05-24", "kind": "legalization", "label": "Same-sex marriage legalized"},
+    {"iso3": "*",   "date": "2020-03-11", "kind": "pandemic",      "label": "WHO declares COVID-19 pandemic"},
+]
+
+
 def _nearest_snapshot(history: list[dict], target_date, tolerance_days: int) -> dict | None:
     """Closest snapshot to `target_date`, within +/- tolerance_days."""
     from datetime import date as _date
@@ -545,12 +567,90 @@ def rule_trend_reversal(countries: list[dict], history_accessor) -> list[Insight
     return out
 
 
+def rule_event_overlay(countries: list[dict], history_accessor, events: list[dict]) -> list[Insight]:
+    """Composite inflection within ±EVENT_WINDOW_DAYS of a curated event.
+
+    For each event in the last EVENT_LOOKBACK_DAYS, compares the affected
+    country's composite at event-window vs event+window (or today if the
+    +window falls in the future). Fires when |delta| >= EVENT_MIN_DELTA —
+    i.e. the country meaningfully moved across the event date.
+    """
+    from datetime import date as _date, timedelta
+    today = _date.today()
+    cutoff = today - timedelta(days=EVENT_LOOKBACK_DAYS)
+    countries_by_iso = {c["iso3"]: c for c in countries if c.get("composite") is not None}
+
+    fired: list[tuple[str, str, dict, float, float, dict]] = []
+    for ev in events:
+        try:
+            ev_date = _date.fromisoformat(ev["date"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if ev_date < cutoff or ev_date > today:
+            continue
+        targets = [c for iso, c in countries_by_iso.items()
+                   if ev["iso3"] in ("*", iso)]
+        if not targets:
+            continue
+        before_target = ev_date - timedelta(days=EVENT_WINDOW_DAYS)
+        after_target  = min(today, ev_date + timedelta(days=EVENT_WINDOW_DAYS))
+        for c in targets:
+            history = history_accessor(c["iso3"])
+            if not history:
+                continue
+            before = _nearest_snapshot(history, before_target, TREND_SAMPLE_TOLERANCE * 2)
+            after  = _nearest_snapshot(history, after_target,  TREND_SAMPLE_TOLERANCE * 2)
+            if before is None or after is None:
+                continue
+            delta = after["composite"] - before["composite"]
+            if abs(delta) < EVENT_MIN_DELTA:
+                continue
+            fired.append((c["iso3"], c.get("name", c["iso3"]), c, delta,
+                          before["composite"], ev))
+    # Biggest absolute move first
+    fired.sort(key=lambda t: -abs(t[3]))
+
+    out: list[Insight] = []
+    seen: set[tuple[str, str]] = set()  # (iso3, event_date) dedupe
+    for iso3, name, c, delta, before_val, ev in fired:
+        key = (iso3, ev["date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        direction = "↑" if delta > 0 else "↓"
+        scope = "global" if ev["iso3"] == "*" else iso3
+        out.append(Insight(
+            kind="event_overlay",
+            severity="info" if abs(delta) < 8 else "warn",
+            iso3=iso3,
+            country=name,
+            title=f"{name} {direction} {abs(delta):.1f} pts around {ev['label']} ({ev['date']})",
+            body=(
+                f"Composite moved from {before_val:.1f} to {before_val + delta:.1f} across the "
+                f"±{EVENT_WINDOW_DAYS}-day window centered on {ev['date']} "
+                f"({ev['kind']}, {scope}). Correlation, not causation — the rule just "
+                f"surfaces co-located moves so editorial can investigate."
+            ),
+            confidence=_confidence_for(c.get("used") or []),
+            pointers=[
+                {"label": "event",   "value": ev["label"]},
+                {"label": "before",  "value": round(before_val, 1)},
+                {"label": "after",   "value": round(before_val + delta, 1)},
+                {"label": "Δ",       "value": round(delta, 1)},
+            ],
+        ))
+        if len(out) >= MAX_INSIGHTS_PER_RULE:
+            break
+    return out
+
+
 def generate_insights(
     countries: list[dict],
     meta: dict[str, dict],
     *,
     partnership_uncapped: dict[str, float] | None = None,
     history_accessor=None,
+    events: list[dict] | None = None,
 ) -> list[dict]:
     pool: list[Insight] = []
     pool.extend(rule_peer_leader(countries))
@@ -565,6 +665,7 @@ def generate_insights(
     if history_accessor is not None:
         pool.extend(rule_mover(countries, history_accessor))
         pool.extend(rule_trend_reversal(countries, history_accessor))
+        pool.extend(rule_event_overlay(countries, history_accessor, events or STARTER_EVENTS))
 
     severity_rank = {"alert": 0, "warn": 1, "info": 2}
     confidence_rank = {"high": 0, "medium": 1, "low": 2}

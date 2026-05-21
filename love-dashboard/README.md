@@ -1,7 +1,20 @@
-# State of Love Dashboard (v3.2)
+# State of Love Dashboard (v3.3)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.3 adds:**
+
+- **Event-overlay insight rule** — bundled starter registry of well-documented
+  events (same-sex marriage legalizations 2001–2019, WHO COVID-19 pandemic
+  declaration). For each event in the last ~2 years, compares the affected
+  country's composite at ±6 months and fires when |Δ| ≥ 4pp. Operators can
+  pass a custom event list to `generate_insights(events=...)`. "Correlation
+  not causation" framing baked into the body copy.
+- **Meta-Gallup loneliness layer** — operator drops a CSV at
+  `data/loneliness.csv` (columns `country`, `loneliness`, 0-100 or 0-1 fraction).
+  Server inverts to a Connection contribution and averages with WHR per income
+  tier; each country with either feed scores cleanly, both feeds stack.
 
 **v3.2 adds:**
 
@@ -310,6 +323,7 @@ missing.
 | Path | Columns | Feeds |
 |---|---|---|
 | `data/whr.csv` | `country`, `social support` (0-1 or 0-100) | Connection |
+| `data/loneliness.csv` | `country`, `loneliness` (0-100 or 0-1) | Connection (combined with WHR) |
 | `data/un_marriage.csv` | `country`, `marriage_rate`, `divorce_rate` (per 1000) | Partnership + Stability globally (UN DESA Demographic Yearbook) |
 | `data/activity.csv` | `country`, `activity` (any scale) | Activity (Tier C — indicative) |
 
@@ -319,8 +333,9 @@ plus a small overrides table for common informal names (`Russia`/`RUS`,
 
 ## Roadmap (v3.x)
 
-- **Event-overlay rule** — needs a curated event registry (legalization
-  dates, war start dates, recession bands per country). Detect composite
-  inflections within 12 months of an event.
-- **Loneliness layer** — Meta-Gallup *State of Social Connections* once we
-  agree on a parser for their PDF / report-level CSV.
+- **Wider event registry** — the bundled starter set is small. A community-
+  maintained `data/events.json` (per-country recessions, civil-conflict
+  start dates, major policy changes) would deepen `rule_event_overlay`.
+- **Per-country age-stratified data** — partnership rates often diverge
+  sharply by age cohort; bringing UN WPP age-at-first-union into Partnership
+  would catch that signal.
