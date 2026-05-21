@@ -44,6 +44,21 @@ jobs:
       - name: Run pytest
         run: python -m pytest tests/
 
+  headless-dom-check-climate-dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: climate-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install jsdom (transient — not committed)
+        run: npm install --no-save --no-package-lock jsdom@^25
+      - name: Run headless-DOM smoke test
+        run: node scripts/check_dom.js
+
   docker-build:
     runs-on: ubuntu-latest
     env:

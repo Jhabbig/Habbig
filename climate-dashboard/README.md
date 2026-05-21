@@ -103,10 +103,28 @@ pip install pytest
 python3 -m pytest tests/
 ```
 
-39 tests cover parsers (with realistic upstream-format fixtures), math
+65 tests cover parsers (with realistic upstream-format fixtures), math
 helpers, projection models, threshold-probability monotonicity, the
 market-scoring regex routing, the Kelly formula, the ENSO segmenter,
-calibration summaries, and regressions for the v4 bug-review findings.
+calibration summaries, regressions for the v4 bug-review findings,
+country-emissions parsing, the radiative-forcing math, and end-to-end
+integration with mocked HTTP fetchers.
+
+## Headless-DOM smoke test
+
+A jsdom-based check loads the real `static/index.html`, mocks all the
+`/api/*` responses, runs the inline JS, and reports any runtime errors
+plus the length of each rendered section. Catches a class of bugs the
+parse-only check misses (missing element IDs, race conditions, type
+errors on null returns from `getElementById`, etc).
+
+```bash
+npm install --no-save --no-package-lock jsdom@^25
+node scripts/check_dom.js
+```
+
+CI runs this on every push under the `headless-dom-check-climate-dashboard`
+job — failures there mean the dashboard would have errored in a browser.
 
 ## Endpoints
 
