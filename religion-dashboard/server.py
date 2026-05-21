@@ -22,6 +22,7 @@ with TTL caching (5 min for markets, 10 min for news).
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import re
@@ -38,6 +39,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import acled_client
 import actuarial
+import alerts
 import cardinals as cd
 import edge as edge_calc
 import health_signals
@@ -712,6 +714,101 @@ def _attach_leader_news(leaders: list[dict], news: list[dict]) -> list[dict]:
     return out
 
 
+def _require_alerts_auth() -> Optional[tuple]:
+    """Return None when authorised, else (response, status)."""
+    expected = "Bearer " + alerts.HMAC_SECRET
+    if not hmac.compare_digest(request.headers.get("Authorization", ""), expected):
+        return (jsonify({"error": "unauthorised — supply Authorization: Bearer <ALERTS_HMAC_SECRET>"}), 401)
+    return None
+
+
+@app.route("/api/alerts", methods=["POST"])
+def api_alerts_subscribe():
+    err = _require_alerts_auth()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    url = (body.get("webhook_url") or "").strip()
+    conds = body.get("conditions") or []
+    label = body.get("label") or ""
+    if not url:
+        return jsonify({"ok": False, "error": "webhook_url required"}), 400
+    result = alerts.subscribe(url, conds, label)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/api/alerts", methods=["GET"])
+def api_alerts_list():
+    err = _require_alerts_auth()
+    if err:
+        return err
+    return jsonify({"subscriptions": alerts.list_subscriptions()})
+
+
+@app.route("/api/alerts/<int:sub_id>", methods=["DELETE"])
+def api_alerts_delete(sub_id: int):
+    err = _require_alerts_auth()
+    if err:
+        return err
+    return jsonify(alerts.delete_subscription(sub_id))
+
+
+def _snapshot_for_alerts() -> dict:
+    """Snapshot the model outputs the alert engine inspects."""
+    from datetime import date as _date
+    try:
+        ph = health_signals.compute_health_signal(fetch_news(), today=_date.today(), window_days=14)
+    except Exception as e:
+        log.warning("alerts snapshot: pope_health failed: %s", e)
+        ph = None
+    try:
+        markets = fetch_markets()
+        ranked = edge_calc.rank_markets_by_edge(markets, rd.RELIGIOUS_LEADERS, cd.PAPABILE_PRIORS,
+                                                today=_date.today())
+        edge_snap = {"markets": ranked}
+    except Exception as e:
+        log.warning("alerts snapshot: edge failed: %s", e)
+        edge_snap = None
+    try:
+        vat = vatican_scraper.fetch_full_college()
+        drift = vatican_scraper.detect_drift(vat.get("cardinals") or [], cd.CARDINALS) if vat.get("ok") else {}
+        conclave_snap = {"source": "live" if vat.get("ok") else "fallback-curated", "drift": drift}
+    except Exception as e:
+        log.warning("alerts snapshot: conclave failed: %s", e)
+        conclave_snap = None
+    return {"pope_health": ph, "edge": edge_snap, "conclave_drift": conclave_snap}
+
+
+def _alerts_loop() -> None:
+    """Background thread: periodically run all subscription conditions."""
+    log.info("alerts loop started (interval %ds)", alerts.CHECK_INTERVAL_SECONDS)
+    while True:
+        time.sleep(alerts.CHECK_INTERVAL_SECONDS)
+        try:
+            snap = _snapshot_for_alerts()
+            report = alerts.run_check_cycle(snap)
+            if report["fired"]:
+                log.info("alerts cycle: %s", report)
+        except Exception as e:
+            log.warning("alerts loop error: %s", e)
+
+
+# Start the background thread once when the module is imported by the Flask
+# app. Daemon=True so it exits with the process.
+_alerts_thread_started = False
+def _start_alerts_thread_once() -> None:
+    global _alerts_thread_started
+    if _alerts_thread_started:
+        return
+    if os.environ.get("DISABLE_ALERTS") == "1":
+        return
+    t = threading.Thread(target=_alerts_loop, name="alerts-loop", daemon=True)
+    t.start()
+    _alerts_thread_started = True
+
+
 @app.route("/api/violence")
 def api_violence():
     """ACLED religious-violence events for the past N days.
@@ -816,4 +913,7 @@ def api_summary():
 
 if __name__ == "__main__":
     log.info("religion-dashboard listening on :%d", PORT)
+    _start_alerts_thread_once()
     app.run(host=os.environ.get("BIND_HOST", "0.0.0.0"), port=PORT, threaded=True)
+else:
+    _start_alerts_thread_once()
