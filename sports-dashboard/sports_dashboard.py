@@ -165,6 +165,11 @@ M_EXPLAIN_REQUESTS = _PromCounter(
     "AI-explanation requests by outcome",
     labelnames=("result",),  # cache_hit | api_call | error | disabled
 )
+M_PM_FILLS_CAPTURED = _PromCounter(
+    "sports_dashboard_pm_fills_total",
+    "Large Polymarket fills captured from the WS feed",
+    labelnames=("side",),  # BUY | SELL
+)
 
 
 load_dotenv()
@@ -653,6 +658,14 @@ def _migrate_db():
         # Bet tracker enrichment: sport, book, market_type, line,
         # commence_time, source, closing_book_prob, clv_pp.
         tr_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_trades)").fetchall()}
+        # Per-user webhook HMAC signing key (encrypted via Fernet).
+        ac_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(sports_alert_config)").fetchall()}
+        if "webhook_signing_key" not in ac_cols:
+            conn.execute(
+                "ALTER TABLE sports_alert_config "
+                "ADD COLUMN webhook_signing_key TEXT DEFAULT ''"
+            )
         for col, decl in [
             ("sport", "TEXT DEFAULT ''"),
             ("book", "TEXT DEFAULT ''"),           # which venue: polymarket, kalshi, draftkings, ...
@@ -670,6 +683,21 @@ def _migrate_db():
                 conn.execute(f"ALTER TABLE sports_trades ADD COLUMN {col} {decl}")
 
 _migrate_db()
+
+
+def _event_name(home: str | None, away: str | None) -> str:
+    """Build a canonical 'Home vs Away' event name.
+
+    Edge cases: when one side is missing, drop the ' vs ' join entirely.
+    Do NOT use `.strip(' vs')` on the joined string — `.strip()` strips
+    a character SET, not a substring, so 'Lakers vs Warriors'.strip(' vs')
+    becomes 'Lakers vs Warrior' (the trailing 's' is in the set).
+    """
+    h = (home or "").strip()
+    a = (away or "").strip()
+    if h and a:
+        return f"{h} vs {a}"
+    return h or a
 
 
 def _is_safe_webhook_url(url: str) -> bool:
@@ -693,6 +721,56 @@ def _is_safe_webhook_url(url: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def _get_webhook_signing_key(user_id: str) -> str | None:
+    """Look up the user's webhook signing secret (plaintext, encrypted at rest).
+
+    Returns None if no key is set (delivery still proceeds — signing is
+    optional, recipients can ignore the header). Keys are stored on
+    sports_alert_config to keep webhook config in one place.
+    """
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT webhook_signing_key FROM sports_alert_config WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row or not row["webhook_signing_key"]:
+        return None
+    try:
+        return _decrypt_field(row["webhook_signing_key"])
+    except Exception:
+        return None
+
+
+def _signed_webhook_post(url: str, payload: dict, signing_key: str | None = None,
+                          timeout: int = 10) -> bool:
+    """POST a webhook with optional HMAC-SHA256 signature on the raw body.
+
+    Headers:
+      Content-Type: application/json
+      X-Sharpe-Timestamp: <unix seconds at send time>
+      X-Sharpe-Signature: sha256=<hex hmac of (timestamp + '.' + body)>
+
+    Recipients verify by recomputing HMAC and constant-time comparing.
+    Including the timestamp in the signature prevents replay attacks.
+    """
+    if not _is_safe_webhook_url(url):
+        return False
+    body_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    headers = {"Content-Type": "application/json"}
+    if signing_key:
+        ts = str(int(time.time()))
+        message = ts.encode() + b"." + body_bytes
+        sig = hmac.new(signing_key.encode(), message, hashlib.sha256).hexdigest()
+        headers["X-Sharpe-Timestamp"] = ts
+        headers["X-Sharpe-Signature"] = f"sha256={sig}"
+    try:
+        requests.post(url, data=body_bytes, headers=headers, timeout=timeout)
+        return True
+    except Exception as e:
+        log.warning("Webhook POST failed (%s): %s", url, e)
+        return False
 
 
 def log_activity(user_id: str, action: str, detail: str = ""):
@@ -3421,7 +3499,7 @@ def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
             matches.append({
                 "detected_at": row.get("detected_at"),
                 "sport": sport,
-                "event": f"{row.get('home_team', '')} vs {row.get('away_team', '')}".strip(" vs"),
+                "event": _event_name(row.get("home_team"), row.get("away_team")),
                 "outcome": row.get("outcome"),
                 "divergence": row.get("divergence"),
                 "poly_prob": poly,
@@ -5984,6 +6062,14 @@ PM_WS_MAX_SUBSCRIPTIONS = 200
 PM_WS_PRICE_FRESH_SECONDS = 90  # ignore live prices older than this
 
 _LIVE_POLY_PRICES: dict[str, dict] = {}  # asset_id -> {"price": float, "ts": float}
+
+# Ring buffer of recent large Polymarket fills. Pros watch this for
+# real-time conviction signals — when a $50k+ buy hits a market, that's
+# information OddsJam-class tools don't surface for sports.
+PM_FILL_BUFFER_MAX = 500
+PM_FILL_MIN_USD = float(os.getenv("PM_FILL_MIN_USD", "1000"))
+_LIVE_POLY_FILLS: list[dict] = []
+_LIVE_POLY_FILLS_LOCK = threading.Lock()
 _PM_WS_DESIRED_TOKENS: set[str] = set()
 _pm_ws_reconnect_event: asyncio.Event | None = None  # set on startup
 
@@ -6130,6 +6216,34 @@ async def _handle_pm_ws_message(raw: str) -> None:
         _LIVE_POLY_PRICES[asset_id] = {"price": price, "ts": time.time()}
         affected_ids.add(asset_id)
         M_WS_PRICE_EVENTS.inc()
+
+        # Capture large fills for the live tape. price_change events on
+        # the Polymarket WS carry `size` (shares) and `side` (BUY/SELL);
+        # USD value = price * size. Only buffer above PM_FILL_MIN_USD so
+        # we don't drown in dust trades.
+        size_raw = ev.get("size") or ev.get("matched_amount")
+        side = (ev.get("side") or "").upper()
+        if size_raw is not None and side in ("BUY", "SELL"):
+            try:
+                size = float(size_raw)
+            except (TypeError, ValueError):
+                size = 0.0
+            usd = price * size
+            if usd >= PM_FILL_MIN_USD:
+                fill = {
+                    "ts": time.time(),
+                    "asset_id": asset_id,
+                    "price": round(price, 4),
+                    "size": round(size, 2),
+                    "usd": round(usd, 2),
+                    "side": side,
+                    "market": ev.get("market") or ev.get("condition_id") or "",
+                }
+                with _LIVE_POLY_FILLS_LOCK:
+                    _LIVE_POLY_FILLS.append(fill)
+                    if len(_LIVE_POLY_FILLS) > PM_FILL_BUFFER_MAX:
+                        del _LIVE_POLY_FILLS[: -PM_FILL_BUFFER_MAX]
+                M_PM_FILLS_CAPTURED.labels(side=side).inc()
     M_WS_LIVE_PRICES.set(len(_LIVE_POLY_PRICES))
 
     if not affected_ids:
@@ -7721,6 +7835,86 @@ async def api_put_bankroll(request: Request):
 import secrets as _secrets
 
 
+@app.post("/api/webhooks/signing-key")
+async def api_rotate_webhook_signing_key(request: Request):
+    """Generate a new HMAC signing key for this user's webhook payloads.
+
+    Returns the plaintext ONCE; the user must record it. The key is
+    encrypted at rest via the same Fernet key used for Telegram tokens.
+    Rotating invalidates the previous key.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot rotate webhook keys"},
+            status_code=403,
+        )
+    plaintext = "whsec_" + _secrets.token_urlsafe(32)
+    encrypted = _encrypt_field(plaintext)
+    with _get_db() as conn:
+        # Ensure a row exists in sports_alert_config; PUT-like upsert.
+        conn.execute(
+            "INSERT INTO sports_alert_config (user_id, webhook_signing_key) "
+            "VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "  webhook_signing_key = excluded.webhook_signing_key",
+            (user["id"], encrypted),
+        )
+    return JSONResponse({
+        "signing_key": plaintext,
+        "warning": ("Save this key now — it's encrypted at rest and "
+                    "not retrievable later. Use it to verify "
+                    "X-Sharpe-Signature on incoming webhooks."),
+    })
+
+
+@app.delete("/api/webhooks/signing-key")
+async def api_revoke_webhook_signing_key(request: Request):
+    """Clear the user's signing key — future webhooks fire unsigned."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot revoke webhook keys"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE sports_alert_config SET webhook_signing_key = '' "
+            "WHERE user_id = ?",
+            (user["id"],),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/webhooks/test")
+async def api_test_webhook(request: Request):
+    """Fire a test webhook to the user's configured webhook_url, signed
+    with their current key if one is set. Useful for verifying the
+    signature flow before relying on it for production alerts."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT webhook_url FROM sports_alert_config WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+    if not row or not row["webhook_url"]:
+        return JSONResponse({"error": "no webhook_url configured"}, status_code=400)
+    key = _get_webhook_signing_key(user["id"])
+    payload = {
+        "kind": "test",
+        "ts": int(time.time()),
+        "message": "Sharpe webhook test — if you can verify this signature, you're good to go.",
+    }
+    ok = await asyncio.to_thread(_signed_webhook_post, row["webhook_url"], payload, key)
+    return JSONResponse({"status": "ok" if ok else "failed", "signed": bool(key)})
+
+
 @app.get("/api/auth/tokens")
 async def api_list_tokens(request: Request):
     """List the current user's API tokens. Plaintext tokens are never
@@ -8344,7 +8538,7 @@ def _build_explain_payload(signal: dict) -> dict:
     """Project a comparison/signal dict into the fields the prompt cares about."""
     return {
         "sport": signal.get("sport") or "unknown",
-        "event": f"{signal.get('home_team', '')} vs {signal.get('away_team', '')}".strip(" vs"),
+        "event": _event_name(signal.get("home_team"), signal.get("away_team")),
         "outcome": signal.get("outcome") or signal.get("outcome_name") or "",
         "sharp_book_prob_pct": signal.get("sharp_prob"),
         "consensus_devigged_pct": (signal.get("consensus_over_devigged")
@@ -8523,7 +8717,7 @@ def _smart_money_for_comparisons(comparisons: list[dict]) -> list[dict]:
         sides.sort(key=lambda s: -abs(s["net_usd"]))
 
         out.append({
-            "event": f"{c.get('home_team', '')} vs {c.get('away_team', '')}".strip(" vs"),
+            "event": _event_name(c.get("home_team"), c.get("away_team")),
             "home_team": c.get("home_team", ""),
             "away_team": c.get("away_team", ""),
             "sport": c.get("sport"),  # may be None on legacy comparisons
@@ -9170,6 +9364,83 @@ async def steam_moves_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return HTMLResponse(_load_template("steam_moves"))
+
+
+@app.get("/api/poly-fills")
+async def api_poly_fills(request: Request):
+    """Recent large Polymarket fills captured from the live WS feed.
+
+    Joins each fill to its asset's market context (event, outcome) using
+    the current comparison set. Capped at PM_FILL_BUFFER_MAX (~500)
+    rows in memory — older fills age out as new ones arrive.
+
+    Query params:
+      min_usd: USD floor (default = PM_FILL_MIN_USD env var or 1000)
+      side: BUY | SELL (optional filter)
+      limit: max rows to return (default 100, max 500)
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        min_usd = max(0.0, float(request.query_params.get("min_usd", PM_FILL_MIN_USD)))
+    except ValueError:
+        min_usd = PM_FILL_MIN_USD
+    side_filter = (request.query_params.get("side") or "").upper() or None
+    try:
+        limit = max(1, min(PM_FILL_BUFFER_MAX, int(request.query_params.get("limit", "100"))))
+    except ValueError:
+        limit = 100
+
+    # Build a token_id → (event, outcome) lookup from current comparisons
+    async with _data_lock:
+        comparisons = dashboard_data.get("comparisons") or []
+    token_lookup: dict[str, dict] = {}
+    for c in comparisons:
+        event_name = _event_name(c.get("home_team"), c.get("away_team"))
+        for oc in c.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if tid:
+                token_lookup[tid] = {
+                    "event": event_name,
+                    "outcome": oc.get("outcome") or oc.get("outcome_name", ""),
+                    "condition_id": c.get("condition_id"),
+                    "trade_poly_url": c.get("trade_poly_url"),
+                }
+
+    # Snapshot the ring buffer
+    with _LIVE_POLY_FILLS_LOCK:
+        all_fills = list(_LIVE_POLY_FILLS)
+
+    out: list[dict] = []
+    for f in reversed(all_fills):  # newest first
+        if f["usd"] < min_usd:
+            continue
+        if side_filter and f["side"] != side_filter:
+            continue
+        ctx = token_lookup.get(f["asset_id"])
+        row = dict(f)
+        if ctx:
+            row.update(ctx)
+        out.append(row)
+        if len(out) >= limit:
+            break
+
+    return JSONResponse({
+        "n_buffer": len(all_fills),
+        "min_usd": min_usd,
+        "limit": limit,
+        "fills": out,
+    })
+
+
+@app.get("/poly-fills", response_class=HTMLResponse)
+async def poly_fills_page(request: Request):
+    """Live Polymarket fills tape."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("poly_fills"))
 
 
 # ---------------------------------------------------------------------------
