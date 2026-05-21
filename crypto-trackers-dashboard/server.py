@@ -41,7 +41,10 @@ from ingestion import (
     _persistence,
     alerts as alerts_mod,
     binance,
+    defillama_bridges,
     defillama_yields,
+    nft_floors,
+    rekt_hacks,
     stablecoin_peg,
     binance_liquidations,
     btc_treasuries,
@@ -444,6 +447,27 @@ async def api_macro_corr() -> JSONResponse:
     return JSONResponse(macro.btc_correlation_30d())
 
 
+# ─── Bridges ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/bridges")
+async def api_bridges() -> JSONResponse:
+    return JSONResponse(defillama_bridges.overview())
+
+
+# ─── Hacks ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/hacks")
+async def api_hacks() -> JSONResponse:
+    return JSONResponse(rekt_hacks.hacks_overview())
+
+
+# ─── NFT floors ───────────────────────────────────────────────────────────────
+
+@app.get("/api/nft/floors")
+async def api_nft_floors(limit: int = 30) -> JSONResponse:
+    return JSONResponse(nft_floors.top_collections(limit=limit))
+
+
 # ─── DeFi yields ──────────────────────────────────────────────────────────────
 
 @app.get("/api/defi/yields")
@@ -771,6 +795,9 @@ async def _startup() -> None:
         ("macro_snapshot",        lambda: macro.snapshot(),                             300),
         ("defillama_yields",      lambda: defillama_yields.top_yields(1_000_000, 100),  900),
         ("stablecoin_peg",        lambda: stablecoin_peg.peg_status(),                  60),
+        ("defillama_bridges",     lambda: defillama_bridges.overview(),                 900),
+        ("rekt_hacks",            lambda: rekt_hacks.hacks_overview(),                  3600),
+        ("nft_floors",            lambda: nft_floors.top_collections(30),               600),
     ])
 
 

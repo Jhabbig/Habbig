@@ -264,6 +264,21 @@
   </section>
 
   <section>
+    <h2>Cross-chain bridges <small>Wormhole / Stargate / Across / deBridge etc &middot; 24h+7d volumes</small></h2>
+    <div id="bridges-card"></div>
+  </section>
+
+  <section>
+    <h2>Major hacks <small>curated 2022-2025 + Rekt News RSS &middot; biggest losses first</small></h2>
+    <div id="hacks-card"></div>
+  </section>
+
+  <section>
+    <h2>NFT floors <small>top collections by 24h volume &middot; Reservoir aggregator</small></h2>
+    <div id="nft-card"></div>
+  </section>
+
+  <section>
     <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
     <div id="alerts-card"></div>
   </section>
@@ -954,6 +969,87 @@
   window._toggleYieldStable = (v) => { _yieldsStable = v; loadYields(); };
   window._toggleYieldIL = (v) => { _yieldsNoIL = v; loadYields(); };
 
+  // ─── Bridges ───────────────────────────────────────────────────────────────
+  async function loadBridges() {
+    try {
+      const data = await fetchJson("/api/bridges");
+      const target = document.getElementById("bridges-card");
+      const rows = data.bridges || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No bridge data.")}</div>`; return; }
+      const tbody = rows.slice(0, 20).map(b => `<tr>
+        <td><strong>${escapeHtml(b.name || "?")}</strong></td>
+        <td class="muted" style="font-size:11px">${escapeHtml((b.chains || []).slice(0, 5).join(", "))}${(b.chains || []).length > 5 ? "+" : ""}</td>
+        <td class="num">$${fmtBig(b.volume_24h_usd)}</td>
+        <td class="num muted">$${fmtBig(b.volume_7d_usd)}</td>
+        <td class="num muted">${fmt(b.tx_count_24h)}</td>
+      </tr>`).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Bridge</th><th>Chains</th><th>24h volume</th><th>7d volume</th><th>24h txs</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">Tracked: ${data.count} bridges &middot; 24h total: <strong>$${fmtBig(data.total_volume_24h_usd)}</strong> &middot; 7d total: $${fmtBig(data.total_volume_7d_usd)}</div>`;
+    } catch (e) {
+      document.getElementById("bridges-card").innerHTML = `<div class="err">Bridges fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Hacks ─────────────────────────────────────────────────────────────────
+  async function loadHacks() {
+    try {
+      const data = await fetchJson("/api/hacks");
+      const target = document.getElementById("hacks-card");
+      const top = data.top_hacks || [];
+      const posts = data.latest_posts || [];
+      const tbody = top.slice(0, 12).map(h => `<tr>
+        <td class="muted" style="font-size:11px">${escapeHtml(h.date)}</td>
+        <td><strong>${escapeHtml(h.name)}</strong></td>
+        <td>${pill(h.chain, "info")}</td>
+        <td class="muted" style="font-size:11px">${escapeHtml(h.vector)}</td>
+        <td class="num down" style="font-weight:600">$${fmtBig(h.loss_usd)}</td>
+      </tr>`).join("");
+      const postsList = posts.length ? `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Latest Rekt.news posts</div>
+        ${posts.slice(0, 5).map(p => `<div style="padding:4px 0"><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a></div>`).join("")}
+      </div>` : "";
+      target.innerHTML = `<div class="card">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+          <div class="stat"><div class="label">Total tracked losses</div><div class="val down">$${fmtBig(data.total_losses_usd)}</div></div>
+          <div class="stat"><div class="label">Biggest single hack</div><div class="val">${escapeHtml(data.biggest_hack?.name || "?")} <span style="font-size:14px;color:var(--text-3)">$${fmtBig(data.biggest_hack?.loss_usd || 0)}</span></div></div>
+          <div class="stat"><div class="label">Tracked since 2022</div><div class="val">${fmt(data.total_hacks_tracked)} hacks</div></div>
+        </div>
+        <table><thead><tr>
+          <th>Date</th><th>Target</th><th>Chain</th><th>Vector</th><th>Loss</th>
+        </tr></thead><tbody>${tbody}</tbody></table>
+        ${postsList}
+      </div>`;
+    } catch (e) {
+      document.getElementById("hacks-card").innerHTML = `<div class="err">Hacks fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── NFT floors ────────────────────────────────────────────────────────────
+  async function loadNFT() {
+    try {
+      const data = await fetchJson("/api/nft/floors?limit=25");
+      const target = document.getElementById("nft-card");
+      const rows = data.collections || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No NFT data.")}</div>`; return; }
+      const tbody = rows.slice(0, 20).map(c => `<tr>
+        <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt="" onerror="this.style.display='none'"/>` : ""}<div><div>${escapeHtml(c.name || "?")}</div><div class="sym">${fmt(c.supply)} supply &middot; ${fmt(c.owners)} owners</div></div></div></td>
+        <td class="num">${c.floor_eth != null ? c.floor_eth.toFixed(4) + " ETH" : "-"}</td>
+        <td class="num muted">${c.floor_usd != null ? "$" + fmt(c.floor_usd, 0) : "-"}</td>
+        <td class="num">${fmt(c.volume_1d_eth, 2)} ETH</td>
+        <td class="num muted">${fmt(c.volume_7d_eth, 1)} ETH</td>
+        <td>${c.external_url ? `<a href="${escapeHtml(c.external_url)}" target="_blank" rel="noopener">→</a>` : ""}</td>
+      </tr>`).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Collection</th><th>Floor (ETH)</th><th>Floor (USD)</th><th>24h volume</th><th>7d volume</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">Chain: ${escapeHtml(data.chain || "?")} &middot; ${data.count} collections &middot; 24h total volume: <strong>${fmt(data.total_volume_1d_eth, 1)} ETH</strong></div>`;
+    } catch (e) {
+      document.getElementById("nft-card").innerHTML = `<div class="err">NFT fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // ─── Custom alerts ─────────────────────────────────────────────────────────
   async function loadAlerts() {
     try {
@@ -1133,6 +1229,9 @@
   loadStablePeg();
   loadDexCexPremium();
   loadYields();
+  loadBridges();
+  loadHacks();
+  loadNFT();
   loadAlerts();
   loadSources();
 
@@ -1148,6 +1247,9 @@
   setInterval(loadStablePeg, 60 * 1000);
   setInterval(loadDexCexPremium, 60 * 1000);
   setInterval(loadYields,   15 * 60 * 1000);
+  setInterval(loadBridges,  15 * 60 * 1000);
+  setInterval(loadHacks,    60 * 60 * 1000);
+  setInterval(loadNFT,      10 * 60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();
