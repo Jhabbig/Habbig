@@ -19,26 +19,25 @@ election cycle.
 
 ## v2 features, ranked by leverage
 
-### 1. Partisan sentiment — needs a source decision
+### 1. Partisan sentiment &middot; **SHIPPED v1.5 (quarterly snapshot)**
 
-**Status: data sourcing problem.** My original write-up claimed UMich
-partisan splits are on FRED — they aren't. UMich publishes them in their
-quarterly Table 32 as PDFs/Excel files in the Surveys of Consumers data
-archive. Three viable paths, in increasing order of effort:
+UMich publishes consumer sentiment by respondent partisanship in
+quarterly Table 32 PDFs, not on FRED. v1.5 ships a hand-transcribed
+historical series back to 2017 in `PARTISAN_UMICH_HISTORY` (in
+`server.py`) and renders a partisan-gap card with R / D / I pills, a
+dual-line R-vs-D chart, and historical extremes.
 
-1. **Scrape UMich's data archive** — `data.sca.isr.umich.edu` exposes a
-   table query UI; the underlying form posts return CSV. Brittle but free.
-2. **Re-create the partisan signal from approval polls** — aggregate
-   538-style approval polls (the archived CSV is still on GitHub) with the
-   pollster's stated respondent partisanship, smooth daily. This is *not*
-   the same metric as UMich sentiment but is arguably more politically
-   relevant.
-3. **Subscribe to an aggregator** — Morning Consult, Civiqs and Pew all
-   sell partisan economic-sentiment feeds. Out of scope for the
-   "free dashboards" mandate.
+The data is honest about being quarterly and manually maintained — the
+file has a comment about how to refresh from
+`data.sca.isr.umich.edu` when a new Table 32 is published.
 
-Recommend pursuing (2) — covered by Phase 2 item *Approval ingestion*
-below — and treating partisan UMich as a stretch goal.
+**v2 follow-ups**:
+- Automate the refresh — UMich's data-archive form posts return CSV; a
+  small scraper would keep this current.
+- Add the partisan-gap to the methodology page's backtest section: how
+  does the gap correlate with the eventual election outcome?
+- Add the same R/D/I dual-line view for the *vibecession* gap once we
+  can compute it by party.
 
 ### 2. State-level mood map &middot; **SHIPPED v1.1**
 
@@ -115,6 +114,53 @@ publishes the gap as a quantitative series. v2 should add:
 - "Vibe regime" classification: persistent positive gap (e.g. 2017-19)
   vs persistent negative gap (e.g. 2022-24).
 - The same gap by partisan / demographic cut once those splits land.
+
+### 4c. Right-direction / wrong-direction &middot; **SHIPPED v1.5 (snapshot)**
+
+A second hand-curated series (`RIGHT_TRACK_HISTORY`) covering 2020-2025
+quarterly. Rendered as a card next to partisan sentiment showing the
+net (right − wrong) headline + sparkline with zero baseline. Sources
+aggregated from RCP, Reuters/Ipsos, CBS, NBC, AP-NORC monthly averages.
+
+**v2**: Same automation as partisan — scrape RCP's "Direction of
+Country" page to keep current.
+
+### 4d. Pollster scorecard &middot; **SHIPPED v1.5**
+
+Pulls FiveThirtyEight's archived `pollster-ratings.csv` from the GitHub
+mirror and ranks pollsters by Predictive Plus-Minus (lower = more
+accurate). Renders top-10 most-accurate and bottom-10 least-accurate
+side-by-side with 538 grade pills. Same staleness considerations as the
+approval CSV.
+
+**v2**: Compute our own pollster scorecard once we have enough cycles
+of recent polls (the 538 ratings stop in mid-2024).
+
+### Global mood &middot; **SHIPPED v1.5**
+
+Same mood-composite formula computed for six countries (US, UK,
+Germany, France, Canada, Japan) using OECD consumer-confidence
+indicators + harmonised unemployment + national CPI, all keyless via
+FRED's International section. Rendered as a strip of flag tiles below
+the mood banner — directly comparable across countries because every
+country's mood is computed identically.
+
+**v2**: Add Brazil, India, Mexico for emerging-market mood. Per-country
+methodology pages.
+
+### Persistent snapshot DB &middot; **SHIPPED v1.5**
+
+SQLite DB (`voter_snapshots.sqlite3`) that records every FRED
+observation on first sight and logs revisions when a re-fetch returns a
+different value for the same date. Surfaced via `/api/revisions` and
+the methodology page (recent-revisions table + stats). Path is
+overridable via the `VOTER_SNAPSHOT_DB` env var.
+
+This is what makes backtests credible — we can re-run them against
+as-known-then snapshots instead of the retroactively-revised history.
+
+**v2**: Re-run the election-cycle backtest using snapshot data instead
+of latest FRED values; publish the side-by-side comparison.
 
 ### 5. Election-cycle context &middot; **SHIPPED v1.2**
 

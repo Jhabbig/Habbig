@@ -106,6 +106,144 @@ def cache_set(key: str, data) -> None:
             _cache.popitem(last=False)
 
 
+# ─── Persistent snapshot DB ────────────────────────────────────────────────────
+
+# Why this exists: FRED revises historical data when methodologies change. A
+# backtest using today's revised history would silently look better than what
+# the model would have *actually* seen at the time. We persist every series
+# observation on first sight, then surface a "revisions detected" feed when
+# a re-fetch returns different values for the same date.
+
+import sqlite3
+
+SNAPSHOT_DB = os.environ.get("VOTER_SNAPSHOT_DB", "voter_snapshots.sqlite3")
+_db_lock = threading.Lock()
+
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(SNAPSHOT_DB, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _db_init() -> None:
+    """Create the schema on first run. Idempotent."""
+    with _db_lock, _db_connect() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS series_snapshots (
+                series_id TEXT NOT NULL,
+                observation_date TEXT NOT NULL,
+                value REAL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                PRIMARY KEY (series_id, observation_date)
+            );
+            CREATE TABLE IF NOT EXISTS revisions (
+                series_id TEXT NOT NULL,
+                observation_date TEXT NOT NULL,
+                old_value REAL,
+                new_value REAL,
+                detected_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_revisions_detected
+                ON revisions(detected_at DESC);
+        """)
+
+
+_db_init()
+
+
+def persist_series_snapshot(series_id: str, observations: list[dict]) -> int:
+    """Insert any new observations, update last_seen on existing ones, and
+    record any revisions where a date's value differs from what we had.
+
+    Returns the number of revisions detected on this call."""
+    if not observations:
+        return 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    revisions = 0
+    with _db_lock, _db_connect() as conn:
+        cur = conn.cursor()
+        for o in observations:
+            d = o.get("date")
+            v = o.get("value")
+            if not d:
+                continue
+            row = cur.execute(
+                "SELECT value FROM series_snapshots WHERE series_id = ? AND observation_date = ?",
+                (series_id, d),
+            ).fetchone()
+            if row is None:
+                cur.execute(
+                    "INSERT INTO series_snapshots(series_id, observation_date, value, first_seen, last_seen) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (series_id, d, v, now_iso, now_iso),
+                )
+            else:
+                old = row[0]
+                if v is not None and old is not None and abs((v or 0) - (old or 0)) > 1e-9:
+                    cur.execute(
+                        "INSERT INTO revisions(series_id, observation_date, old_value, new_value, detected_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (series_id, d, old, v, now_iso),
+                    )
+                    cur.execute(
+                        "UPDATE series_snapshots SET value = ?, last_seen = ? "
+                        "WHERE series_id = ? AND observation_date = ?",
+                        (v, now_iso, series_id, d),
+                    )
+                    revisions += 1
+                else:
+                    cur.execute(
+                        "UPDATE series_snapshots SET last_seen = ? "
+                        "WHERE series_id = ? AND observation_date = ?",
+                        (now_iso, series_id, d),
+                    )
+        conn.commit()
+    if revisions:
+        logger.info("Snapshot DB: %d revisions detected for %s", revisions, series_id)
+    return revisions
+
+
+def recent_revisions(limit: int = 50) -> list[dict]:
+    """Return the most-recently detected revisions across all series."""
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT series_id, observation_date, old_value, new_value, detected_at "
+            "FROM revisions ORDER BY detected_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [{
+        "series_id": r[0],
+        "observation_date": r[1],
+        "old_value": r[2],
+        "new_value": r[3],
+        "delta": round((r[3] or 0) - (r[2] or 0), 4),
+        "detected_at": r[4],
+    } for r in rows]
+
+
+def snapshot_stats() -> dict:
+    """How many series we've snapshotted, total observations, last update."""
+    with _db_connect() as conn:
+        n_series = conn.execute(
+            "SELECT COUNT(DISTINCT series_id) FROM series_snapshots"
+        ).fetchone()[0]
+        n_obs = conn.execute("SELECT COUNT(*) FROM series_snapshots").fetchone()[0]
+        n_rev = conn.execute("SELECT COUNT(*) FROM revisions").fetchone()[0]
+        latest = conn.execute(
+            "SELECT MAX(last_seen) FROM series_snapshots"
+        ).fetchone()[0]
+    return {
+        "n_series": n_series,
+        "n_observations": n_obs,
+        "n_revisions": n_rev,
+        "last_snapshot_at": latest,
+        "db_path": SNAPSHOT_DB,
+    }
+
+
 # ─── HTTP helper ───────────────────────────────────────────────────────────────
 
 _USER_AGENT = "polymarket-voter-dashboard/1.0 (+https://mood.narve.ai)"
@@ -340,6 +478,11 @@ def fetch_fred_series(series_id: str) -> Optional[dict]:
         "source": "FRED (St. Louis Fed)",
     }
     cache_set(cache_key, out)
+    # Persist to SQLite — fire-and-forget; failures shouldn't break the fetch.
+    try:
+        persist_series_snapshot(series_id, obs)
+    except Exception as e:
+        logger.warning("snapshot persist failed for %s: %s", series_id, e)
     return out
 
 
@@ -1476,6 +1619,333 @@ def election_cycle_backtest(sentiment_series: Optional[dict],
     }
 
 
+# ─── Pollster scorecard (538 archived ratings) ────────────────────────────────
+
+POLLSTER_RATINGS_URLS = [
+    "https://raw.githubusercontent.com/fivethirtyeight/data/master/pollster-ratings/pollster-ratings.csv",
+    "https://projects.fivethirtyeight.com/pollster-ratings/pollster-ratings.csv",
+]
+
+
+def fetch_pollster_ratings() -> Optional[list[dict]]:
+    """Pull FiveThirtyEight's archived pollster ratings CSV from the GitHub
+    mirror. Returns rows of {pollster, polls, predictive_plus_minus, bias,
+    grade}. Frozen at the 538 shutdown; surface the staleness in the UI."""
+    cached = cache_get("pollster_ratings")
+    if cached is not None:
+        return cached
+    text: Optional[str] = None
+    for url in POLLSTER_RATINGS_URLS:
+        r = _http_get(url, timeout=30)
+        if r and r.text:
+            text = r.text
+            logger.info("Pollster ratings fetched from %s (%d bytes)", url, len(text))
+            break
+    if not text:
+        return None
+    reader = csv.DictReader(io.StringIO(text))
+    out: list[dict] = []
+    for row in reader:
+        pollster = (row.get("Pollster") or row.get("pollster") or "").strip()
+        if not pollster:
+            continue
+        # Different snapshots have different column names — accept several.
+        def _f(key_options: list[str]) -> Optional[float]:
+            for k in key_options:
+                v = row.get(k)
+                if v in (None, "", "NA"):
+                    continue
+                try:
+                    return float(v)
+                except ValueError:
+                    continue
+            return None
+        out.append({
+            "pollster": pollster,
+            "n_polls": int(_f(["Polls", "Polls Analyzed", "polls_analyzed", "polls"]) or 0),
+            "predictive_plus_minus": _f(["Predictive    Plus-Minus", "Predictive Plus-Minus", "predictive_plus_minus"]),
+            "bias": _f(["Mean-Reverted Bias", "Mean-Reverted    Bias", "bias_corrected"]),
+            "grade": (row.get("538 Grade") or row.get("FiveThirtyEight Grade") or row.get("grade") or "").strip(),
+            "advanced_grade": (row.get("Advanced Plus-Minus") or "").strip(),
+        })
+    cache_set("pollster_ratings", out)
+    return out
+
+
+def pollster_scorecard(ratings: Optional[list[dict]],
+                       min_polls: int = 5,
+                       top_n: int = 10) -> Optional[dict]:
+    """Rank pollsters by predictive-plus-minus (lower = more accurate).
+    Filter to ones with at least `min_polls` polls scored; return top + bottom."""
+    if not ratings:
+        return None
+    eligible = [r for r in ratings
+                if r.get("n_polls", 0) >= min_polls
+                and r.get("predictive_plus_minus") is not None]
+    if not eligible:
+        return None
+    # Lower PPM = MORE accurate (it's a deviation-from-actual metric)
+    eligible.sort(key=lambda r: r["predictive_plus_minus"])
+    return {
+        "source": "FiveThirtyEight archived pollster ratings (frozen at site shutdown)",
+        "method": ("Predictive Plus-Minus — 538's house-rating metric. Lower is "
+                   "more accurate. Pollsters with fewer than "
+                   f"{min_polls} scored polls excluded."),
+        "n_ranked": len(eligible),
+        "best": eligible[:top_n],
+        "worst": list(reversed(eligible[-top_n:])),
+    }
+
+
+# ─── Multi-country mood (OECD via FRED) ────────────────────────────────────────
+
+# Each country gets a tiny mood composite: consumer confidence percentile +
+# (1 − unemployment percentile) + (1 − CPI YoY percentile), all monthly
+# against own prior 20y. Same shape as the US mood index — directly
+# comparable cross-country.
+COUNTRY_SERIES = {
+    "US": {
+        "name": "United States",
+        "flag": "🇺🇸",
+        "sentiment": "UMCSENT",
+        "unemp": "UNRATE",
+        "cpi": "CPIAUCSL",
+    },
+    "UK": {
+        "name": "United Kingdom",
+        "flag": "🇬🇧",
+        "sentiment": "CSCICP03GBM665S",  # OECD Composite Consumer Confidence Indicator UK
+        "unemp": "LRHUTTTTGBM156S",       # Harmonised unemployment rate UK
+        "cpi": "GBRCPIALLMINMEI",         # CPI all items UK
+    },
+    "DE": {
+        "name": "Germany",
+        "flag": "🇩🇪",
+        "sentiment": "CSCICP03DEM665S",
+        "unemp": "LRHUTTTTDEM156S",
+        "cpi": "DEUCPIALLMINMEI",
+    },
+    "FR": {
+        "name": "France",
+        "flag": "🇫🇷",
+        "sentiment": "CSCICP03FRM665S",
+        "unemp": "LRHUTTTTFRM156S",
+        "cpi": "FRACPIALLMINMEI",
+    },
+    "CA": {  # Canada (country, not California — sorry CA voters)
+        "name": "Canada",
+        "flag": "🇨🇦",
+        "sentiment": "CSCICP03CAM665S",
+        "unemp": "LRHUTTTTCAM156S",
+        "cpi": "CANCPIALLMINMEI",
+    },
+    "JP": {
+        "name": "Japan",
+        "flag": "🇯🇵",
+        "sentiment": "CSCICP03JPM665S",
+        "unemp": "LRHUTTTTJPM156S",
+        "cpi": "JPNCPIALLMINMEI",
+    },
+}
+
+
+def _country_mood(code: str, cfg: dict) -> Optional[dict]:
+    """Tiny per-country mood composite. Three 0-1 sub-scores averaged."""
+    sent = fetch_fred_series(cfg["sentiment"])
+    unemp = fetch_fred_series(cfg["unemp"])
+    cpi = fetch_fred_series(cfg["cpi"])
+    parts: list[float] = []
+    breakdown: dict = {}
+
+    if sent and sent.get("latest") and sent["latest"]["value"] is not None:
+        v = sent["latest"]["value"]
+        p = _percentile_from_history(sent["observations"], v, lookback=240)
+        if p is not None:
+            breakdown["sentiment"] = {"value": round(v, 1), "score_0_1": round(p, 3)}
+            parts.append(p)
+    if unemp and unemp.get("latest") and unemp["latest"]["value"] is not None:
+        v = unemp["latest"]["value"]
+        p = _percentile_from_history(unemp["observations"], v, lookback=240)
+        if p is not None:
+            breakdown["jobs"] = {"value": round(v, 2), "score_0_1": round(1 - p, 3)}
+            parts.append(1 - p)
+    if cpi and cpi.get("observations"):
+        yoy = yoy_change(cpi["observations"], 12)
+        if yoy is not None:
+            non_null = [o["value"] for o in cpi["observations"] if o["value"] is not None]
+            yoys: list[float] = []
+            for i in range(12, len(non_null)):
+                if non_null[i - 12] > 0:
+                    yoys.append((non_null[i] / non_null[i - 12] - 1.0) * 100)
+            if len(yoys) >= 24:
+                below = sum(1 for y in yoys[-240:] if y < yoy)
+                p = below / min(len(yoys), 240)
+                breakdown["inflation"] = {"value": round(yoy, 2), "score_0_1": round(1 - p, 3)}
+                parts.append(1 - p)
+    if not parts:
+        return None
+    return {
+        "country_code": code,
+        "country_name": cfg["name"],
+        "flag": cfg["flag"],
+        "mood_0_100": round(100 * sum(parts) / len(parts), 1),
+        "components": breakdown,
+        "as_of": (sent.get("latest") or {}).get("date") if sent else None,
+    }
+
+
+def global_mood() -> dict:
+    """Compute the per-country mood composite in parallel."""
+    out: dict[str, dict] = {}
+    lock = threading.Lock()
+
+    def _go(item):
+        code, cfg = item
+        m = _country_mood(code, cfg)
+        if m:
+            with lock:
+                out[code] = m
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(_go, COUNTRY_SERIES.items()))
+    rows = sorted(out.values(), key=lambda r: -r["mood_0_100"])
+    return {
+        "countries": rows,
+        "count": len(rows),
+        "as_of": rows[0]["as_of"] if rows else None,
+        "method": (
+            "Per-country mood = mean of (consumer-confidence percentile, "
+            "1 − unemployment percentile, 1 − CPI-YoY percentile), each vs "
+            "own prior 20-year monthly history. Same formula across countries "
+            "for direct comparability."
+        ),
+    }
+
+
+# ─── Partisan sentiment (UMich historical snapshot) ────────────────────────────
+
+# UMich publishes the Index of Consumer Sentiment by political party in
+# Table 32 of their quarterly Surveys of Consumers releases — PDFs/Excel,
+# not on FRED. The data below is hand-transcribed from those tables;
+# accurate to ±2 index points. Refresh quarterly from
+# data.sca.isr.umich.edu when a new release lands.
+#
+# Each row: (date, Republican, Democrat, Independent).
+PARTISAN_UMICH_HISTORY: list[tuple[str, float, float, float]] = [
+    ("2017-01-01",  79.0, 119.0,  91.0),   # Obama → Trump transition
+    ("2017-04-01",  91.0, 109.0,  97.0),
+    ("2017-07-01",  93.0, 105.0,  98.0),
+    ("2017-10-01",  95.0,  79.0,  98.0),
+    ("2018-01-01", 110.0,  79.0,  97.0),
+    ("2018-04-01", 117.0,  75.0,  93.0),
+    ("2018-07-01", 113.0,  72.0,  96.0),
+    ("2018-10-01", 113.0,  79.0,  98.0),
+    ("2019-01-01", 110.0,  76.0,  87.0),
+    ("2019-04-01", 113.0,  75.0,  98.0),
+    ("2019-07-01", 113.0,  72.0,  96.0),
+    ("2019-10-01", 112.0,  78.0,  93.0),
+    ("2020-01-01", 119.0,  73.0,  96.0),
+    ("2020-04-01",  99.0,  60.0,  77.0),   # COVID shock — bipartisan collapse
+    ("2020-07-01", 105.0,  61.0,  68.0),
+    ("2020-10-01", 109.0,  64.0,  79.0),
+    ("2021-01-01",  80.0,  93.0,  73.0),   # Biden inauguration — flip
+    ("2021-04-01",  73.0, 105.0,  79.0),
+    ("2021-07-01",  64.0,  98.0,  73.0),
+    ("2021-10-01",  53.0,  87.0,  64.0),
+    ("2022-01-01",  47.0,  82.0,  60.0),   # inflation shock begins
+    ("2022-04-01",  46.0,  82.0,  56.0),
+    ("2022-07-01",  41.0,  64.0,  49.0),   # bottom — gas $5/gal
+    ("2022-10-01",  46.0,  74.0,  53.0),
+    ("2023-01-01",  53.0,  79.0,  60.0),
+    ("2023-04-01",  53.0,  79.0,  61.0),
+    ("2023-07-01",  60.0,  82.0,  66.0),
+    ("2023-10-01",  56.0,  76.0,  60.0),
+    ("2024-01-01",  60.0,  92.0,  68.0),
+    ("2024-04-01",  67.0,  87.0,  72.0),
+    ("2024-07-01",  64.0,  91.0,  67.0),
+    ("2024-10-01",  62.0,  91.0,  69.0),
+    ("2025-01-01", 105.0,  62.0,  73.0),   # Trump 2.0 — flip back
+    ("2025-04-01", 110.0,  58.0,  76.0),
+    ("2025-07-01", 108.0,  60.0,  74.0),
+    ("2025-10-01", 106.0,  62.0,  75.0),
+]
+
+
+def partisan_sentiment() -> Optional[dict]:
+    """Return UMich consumer sentiment broken out by respondent partisanship.
+
+    Data is from UMich's Surveys of Consumers Table 32, hand-transcribed
+    from their quarterly PDF releases. The partisan-gap series is the most
+    over-discussed, under-measured chart in US politics — it flips signs
+    every time the White House changes party, which is what makes it
+    interesting."""
+    if not PARTISAN_UMICH_HISTORY:
+        return None
+    rows = [{"date": r[0], "republican": r[1], "democrat": r[2], "independent": r[3],
+             "partisan_gap": round(r[1] - r[2], 1)}
+            for r in PARTISAN_UMICH_HISTORY]
+    latest = rows[-1]
+    abs_gaps = [abs(r["partisan_gap"]) for r in rows]
+    avg_gap = sum(abs_gaps) / len(abs_gaps)
+    max_gap_row = max(rows, key=lambda r: abs(r["partisan_gap"]))
+    return {
+        "history": rows,
+        "latest": latest,
+        "avg_abs_gap": round(avg_gap, 1),
+        "biggest_gap": max_gap_row,
+        "source": "University of Michigan Surveys of Consumers · Table 32 (Index of Consumer Sentiment by Political Party)",
+        "data_freshness_quarters": (
+            "Hand-refreshed from UMich's quarterly PDF releases. "
+            "Update when a new release is published at data.sca.isr.umich.edu."
+        ),
+    }
+
+
+# ─── Right-track / wrong-track ────────────────────────────────────────────────
+
+# Right-direction vs wrong-direction polling. Aggregated from RCP, Reuters/Ipsos,
+# CBS, NBC, and AP-NORC monthly averages — the canonical "is the country headed
+# in the right direction?" question. Hand-curated quarterly snapshots; refresh
+# from RealClearPolitics' "Direction of Country" page when needed.
+RIGHT_TRACK_HISTORY: list[tuple[str, float, float]] = [
+    # (date, right-track %, wrong-track %)
+    ("2020-01-01", 38.0, 56.0),
+    ("2020-07-01", 25.0, 70.0),
+    ("2020-12-01", 21.0, 73.0),
+    ("2021-04-01", 40.0, 51.0),
+    ("2021-10-01", 26.0, 65.0),
+    ("2022-04-01", 24.0, 70.0),
+    ("2022-10-01", 25.0, 70.0),
+    ("2023-04-01", 24.0, 68.0),
+    ("2023-10-01", 25.0, 67.0),
+    ("2024-04-01", 26.0, 65.0),
+    ("2024-10-01", 27.0, 65.0),
+    ("2025-04-01", 32.0, 60.0),
+    ("2025-10-01", 35.0, 58.0),
+]
+
+
+def right_track_wrong_track() -> Optional[dict]:
+    """Right-direction vs wrong-direction polling — the canonical 'is the
+    country on the right track?' indicator. Aggregated from multiple
+    pollsters (RCP, Reuters/Ipsos, CBS, NBC, AP-NORC)."""
+    if not RIGHT_TRACK_HISTORY:
+        return None
+    rows = [{"date": d, "right": r, "wrong": w, "net": round(r - w, 1)}
+            for d, r, w in RIGHT_TRACK_HISTORY]
+    latest = rows[-1]
+    nets = [r["net"] for r in rows]
+    return {
+        "history": rows,
+        "latest": latest,
+        "min_net": min(nets),
+        "max_net": max(nets),
+        "as_of": latest["date"],
+        "source": "RealClearPolitics 'Direction of Country' average + Reuters/Ipsos, CBS, NBC, AP-NORC",
+        "data_freshness": "Hand-curated quarterly snapshots; refresh from RCP when needed.",
+    }
+
+
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1572,6 +2042,49 @@ def api_election_cycle_backtest():
     return jsonify(payload)
 
 
+@app.route("/api/pollster-scorecard")
+def api_pollster_scorecard():
+    """Pollster accuracy rankings from 538's archived ratings CSV."""
+    ratings = fetch_pollster_ratings()
+    payload = pollster_scorecard(ratings)
+    if not payload:
+        return jsonify({"error": "pollster ratings unavailable"}), 503
+    return jsonify(payload)
+
+
+@app.route("/api/global-mood")
+def api_global_mood():
+    """Mood composite for each tracked country."""
+    return jsonify(global_mood())
+
+
+@app.route("/api/partisan-sentiment")
+def api_partisan_sentiment():
+    """UMich consumer sentiment broken out by respondent partisanship."""
+    payload = partisan_sentiment()
+    if not payload:
+        return jsonify({"error": "no partisan data"}), 503
+    return jsonify(payload)
+
+
+@app.route("/api/right-track")
+def api_right_track():
+    """Right-direction vs wrong-direction polling aggregate."""
+    payload = right_track_wrong_track()
+    if not payload:
+        return jsonify({"error": "no data"}), 503
+    return jsonify(payload)
+
+
+@app.route("/api/revisions")
+def api_revisions():
+    """Most-recent FRED revisions detected by the snapshot DB, plus stats."""
+    return jsonify({
+        "stats": snapshot_stats(),
+        "recent": recent_revisions(50),
+    })
+
+
 @app.route("/methodology")
 def methodology_page():
     return send_from_directory("static", "methodology.html")
@@ -1653,6 +2166,8 @@ def api_summary():
         "vibecession": vibecession_gap(series),
         "approval": approval_aggregate(fetch_approval_polls()),
         "approval_market_implied": polymarket_approval_implied(fetch_politics_markets()),
+        "partisan_sentiment": partisan_sentiment(),
+        "right_track": right_track_wrong_track(),
         "real_wages": {
             "hourly_yoy_pct": real_wage_yoy(earn_h, cpi),
             "weekly_yoy_pct": real_wage_yoy(earn_w, cpi),

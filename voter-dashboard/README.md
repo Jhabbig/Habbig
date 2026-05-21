@@ -118,6 +118,18 @@ python3 server.py
   and the live LOO backtest table
 - `GET /embed/<card>` — iframe-friendly single-card widget; supported
   cards: `mood`, `forecast`, `vibecession`, `approval`
+- `GET /api/pollster-scorecard` — top/bottom pollsters by predictive
+  plus-minus from FiveThirtyEight's archived ratings CSV
+- `GET /api/global-mood` — same mood-composite formula computed for
+  six countries (US, UK, Germany, France, Canada, Japan) from OECD
+  consumer-confidence + harmonised unemployment + CPI via FRED
+- `GET /api/partisan-sentiment` — UMich consumer sentiment by
+  respondent partisanship (R / D / I + partisan-gap) from quarterly
+  Table 32 releases
+- `GET /api/right-track` — right-direction vs wrong-direction polling
+  aggregate across major pollsters
+- `GET /api/revisions` — persistent-snapshot DB feed of FRED
+  revisions we've detected, plus stats on observations tracked
 - `GET /api/series/<id>` — raw FRED series (any of the IDs above) with
   computed YoY where applicable
 - `GET /api/health` — liveness

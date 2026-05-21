@@ -231,6 +231,28 @@ state-level retail gas.</p>
 pulled via the public <code>fredgraph.csv?id=...</code> endpoint.</p>
 
 <!-- ─────────────────────────────────────────────────── -->
+<h2>Persistent snapshot DB &amp; revision tracking</h2>
+<p>FRED revises historical data when methodologies change. A backtest
+using today's revised history would silently look better than what the
+model would have <i>actually</i> seen at the time.</p>
+
+<p>To keep the dashboard honest we persist every observation on first
+sight to a SQLite snapshot DB. When a later fetch returns a different
+value for the same date, we log the delta with a timestamp and surface
+it through <code>/api/revisions</code>. The methodology backtests can
+then be re-run against the as-known-then snapshots, not the
+retroactively-revised history.</p>
+
+<div class="stat-row" id="snapshotStats"><div class="stat"><div class="k">Loading…</div></div></div>
+
+<h3>Recent revisions</h3>
+<table id="revisionsTable"><thead><tr>
+  <th>Series</th><th>Date</th>
+  <th class="num">Old</th><th class="num">New</th><th class="num">Δ</th>
+  <th>Detected</th>
+</tr></thead><tbody><tr><td colspan="6" class="muted">Loading…</td></tr></tbody></table>
+
+<!-- ─────────────────────────────────────────────────── -->
 <h2>Open data &amp; embeds</h2>
 <ul>
   <li><b>CSV per series:</b> <code>/api/csv/UMCSENT</code>, <code>/api/csv/UNRATE</code>, <code>/api/csv/CAUR</code>, etc.</li>
@@ -276,6 +298,42 @@ async function loadBacktest() {
   }).join("");
 }
 loadBacktest();
+
+async function loadRevisions() {
+  let r;
+  try {
+    r = await fetch("/api/revisions");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+  } catch (e) {
+    document.querySelector("#revisionsTable tbody").innerHTML =
+      `<tr><td colspan="6" class="muted">Revisions feed unavailable: ${e.message}</td></tr>`;
+    return;
+  }
+  const data = await r.json();
+  const stats = document.getElementById("snapshotStats");
+  stats.innerHTML = `
+    <div class="stat"><div class="k">Series tracked</div><div class="v">${data.stats.n_series}</div></div>
+    <div class="stat"><div class="k">Observations</div><div class="v">${data.stats.n_observations.toLocaleString()}</div></div>
+    <div class="stat"><div class="k">Revisions detected</div><div class="v">${data.stats.n_revisions}</div></div>
+  `;
+  const tbody = document.querySelector("#revisionsTable tbody");
+  if (!data.recent.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="muted">No revisions detected yet. We log them as they happen.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data.recent.map(r => {
+    const cls = Math.abs(r.delta) >= 0.5 ? "warn" : "good";
+    return `<tr>
+      <td><code>${r.series_id}</code></td>
+      <td>${r.observation_date}</td>
+      <td class="num">${r.old_value ?? "—"}</td>
+      <td class="num">${r.new_value ?? "—"}</td>
+      <td class="num"><span class="pill ${cls}">${r.delta >= 0 ? "+" : ""}${r.delta}</span></td>
+      <td class="small">${r.detected_at.slice(0, 19).replace("T", " ")}</td>
+    </tr>`;
+  }).join("");
+}
+loadRevisions();
 </script>
 </body>
 </html>

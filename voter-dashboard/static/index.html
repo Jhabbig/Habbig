@@ -342,6 +342,112 @@
     display: block;
   }
 
+  /* Partisan + right-track */
+  .signal-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .signal-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+  }
+  .signal-card h4 {
+    margin: 0 0 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .signal-card .big {
+    font-size: 32px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin-top: 4px;
+  }
+  .signal-card .big.up { color: var(--good); }
+  .signal-card .big.down { color: var(--bad); }
+  .signal-card .big.warn { color: var(--warn); }
+  .signal-card .sub { color: var(--text-2); font-size: 12px; margin-top: 6px; }
+  .signal-card .meta { color: var(--text-3); font-size: 11px; margin-top: 8px; }
+  .signal-card svg.line { width: 100%; height: 80px; display: block; margin-top: 10px; }
+  .partisan-pills { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .partisan-pills .pp { display: inline-flex; align-items: baseline; gap: 6px;
+    padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: var(--bg-2); }
+  .partisan-pills .pp.r { color: #f87171; border: 1px solid rgba(248,113,113,.35); }
+  .partisan-pills .pp.d { color: #60a5fa; border: 1px solid rgba(96,165,250,.35); }
+  .partisan-pills .pp.i { color: var(--text-2); border: 1px solid var(--border); }
+
+  /* Global mood strip */
+  .global-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .global-tile {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .global-tile .flag { font-size: 22px; line-height: 1; }
+  .global-tile .name { font-size: 11px; color: var(--text-3); margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .global-tile .score { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .global-tile .score.up   { color: var(--good); }
+  .global-tile .score.warn { color: var(--warn); }
+  .global-tile .score.down { color: var(--bad); }
+
+  /* Pollster scorecard table */
+  .pollster-section {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .pollster-section h4 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .pollster-section .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 720px) { .pollster-section .grid2 { grid-template-columns: 1fr; } }
+  .pollster-list { display: flex; flex-direction: column; gap: 4px; }
+  .pollster-list .row {
+    display: grid;
+    grid-template-columns: 24px 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 5px 6px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .pollster-list .row:hover { background: var(--bg-2); }
+  .pollster-list .rk { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-3); text-align: right; }
+  .pollster-list .grade {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-2);
+    width: 28px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 0;
+  }
+  .pollster-list .ppm { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11px; }
+
   /* State stress section */
   .state-row {
     display: grid;
@@ -538,6 +644,26 @@
   </div>
 </div>
 
+<div class="global-row" id="globalRow" style="display:none"></div>
+
+<div class="signal-row" id="signalRow" style="display:none">
+  <div class="signal-card" id="partisanCard">
+    <h4>Partisan sentiment gap &middot; UMich</h4>
+    <div class="big" id="partisanBig">—</div>
+    <div class="sub" id="partisanSub">—</div>
+    <div class="partisan-pills" id="partisanPills"></div>
+    <svg class="line" id="partisanLine" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>
+    <div class="meta" id="partisanMeta">—</div>
+  </div>
+  <div class="signal-card" id="rtCard">
+    <h4>Right direction vs wrong direction</h4>
+    <div class="big" id="rtBig">—</div>
+    <div class="sub" id="rtSub">—</div>
+    <svg class="line" id="rtLine" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>
+    <div class="meta" id="rtMeta">—</div>
+  </div>
+</div>
+
 <div class="vibe-row" id="vibeRow" style="display:none">
   <div class="vibe-card" id="vibeCard">
     <div class="label">Vibecession index &middot; sentiment minus fundamentals</div>
@@ -577,6 +703,21 @@
       <div class="state-list" id="leastStressed"></div>
     </div>
   </div>
+</div>
+
+<div class="pollster-section" id="pollsterSection" style="display:none">
+  <h4>Pollster scorecard &middot; from FiveThirtyEight's archived ratings</h4>
+  <div class="grid2">
+    <div>
+      <div class="meta" style="color:var(--text-3);font-size:11px;margin-bottom:6px">Most accurate <span style="color:var(--text-2)">(lower predictive plus-minus = better)</span></div>
+      <div class="pollster-list" id="pollsterBest"></div>
+    </div>
+    <div>
+      <div class="meta" style="color:var(--text-3);font-size:11px;margin-bottom:6px">Least accurate</div>
+      <div class="pollster-list" id="pollsterWorst"></div>
+    </div>
+  </div>
+  <div class="meta" id="pollsterMeta" style="margin-top:10px"></div>
 </div>
 
 <div class="section-title">Politics &amp; sentiment markets — Polymarket</div>
@@ -1277,6 +1418,122 @@ async function loadStates() {
   meta.textContent = `${data.count} states &middot; avg cross-section stress ${avgPct ?? "—"}/100 &middot; as of ${dateNice(data.as_of)}`.replace(/&middot;/g, "·");
 }
 
+function _lineSvg(elId, points, opts = {}) {
+  const W = opts.width || 600, H = opts.height || 80;
+  const padT = 6, padB = 16, padL = 4, padR = 4;
+  const w = W - padL - padR, h = H - padT - padB;
+  const svg = document.getElementById(elId);
+  if (!svg) return;
+  if (!points || points.length < 2) { svg.innerHTML = ""; return; }
+  const xs = points.map((_, i) => i);
+  const ys = points.map(p => typeof p === "number" ? p : p.value);
+  const lo = Math.min(...ys, opts.includeZero ? 0 : Infinity);
+  const hi = Math.max(...ys, opts.includeZero ? 0 : -Infinity);
+  const range = (hi - lo) || 1;
+  const px = i => padL + (i / (ys.length - 1)) * w;
+  const py = v => padT + (1 - (v - lo) / range) * h;
+  const pts = ys.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+  const parts = [];
+  // Zero line if relevant
+  if (opts.includeZero && lo <= 0 && hi >= 0) {
+    const y0 = py(0).toFixed(1);
+    parts.push(`<line x1="${padL}" y1="${y0}" x2="${padL+w}" y2="${y0}" stroke="#374151" stroke-dasharray="3 3" stroke-width="1"/>`);
+  }
+  // Optional R/D dual-line mode
+  if (opts.dual) {
+    const ys2 = points.map(p => p.value2);
+    const lo2 = Math.min(...ys2), hi2 = Math.max(...ys2);
+    const both_lo = Math.min(lo, lo2), both_hi = Math.max(hi, hi2);
+    const both_range = (both_hi - both_lo) || 1;
+    const py_d = v => padT + (1 - (v - both_lo) / both_range) * h;
+    const pts1 = points.map((p, i) => `${px(i).toFixed(1)},${py_d(p.value).toFixed(1)}`).join(" ");
+    const pts2 = points.map((p, i) => `${px(i).toFixed(1)},${py_d(p.value2).toFixed(1)}`).join(" ");
+    parts.push(`<polyline fill="none" stroke="${opts.color  || "#f87171"}" stroke-width="1.5" points="${pts1}"/>`);
+    parts.push(`<polyline fill="none" stroke="${opts.color2 || "#60a5fa"}" stroke-width="1.5" points="${pts2}"/>`);
+  } else {
+    parts.push(`<polyline fill="none" stroke="${opts.color || "#818cf8"}" stroke-width="1.5" points="${pts}"/>`);
+  }
+  // Y-axis end labels
+  parts.push(`<text x="${padL+w}" y="${py(hi)+4}" fill="#64748b" font-size="10" text-anchor="end">${hi >= 0 ? "+" : ""}${hi.toFixed(0)}</text>`);
+  parts.push(`<text x="${padL+w}" y="${py(lo)}" fill="#64748b" font-size="10" text-anchor="end">${lo >= 0 ? "+" : ""}${lo.toFixed(0)}</text>`);
+  svg.innerHTML = parts.join("");
+}
+
+function renderPartisan(ps) {
+  if (!ps || !ps.latest) return;
+  document.getElementById("signalRow").style.display = "grid";
+  const gap = ps.latest.partisan_gap;
+  const big = document.getElementById("partisanBig");
+  const cls = gap > 0 ? "up" : "down";
+  big.className = `big ${cls}`;
+  big.textContent = (gap >= 0 ? "+" : "") + gap.toFixed(0) + " pts";
+  // R / D / I pills
+  document.getElementById("partisanPills").innerHTML = `
+    <span class="pp r">R <b>${ps.latest.republican}</b></span>
+    <span class="pp d">D <b>${ps.latest.democrat}</b></span>
+    <span class="pp i">I <b>${ps.latest.independent}</b></span>
+  `;
+  const sign = gap > 0 ? "Republicans" : "Democrats";
+  document.getElementById("partisanSub").textContent =
+    `${sign} are ${Math.abs(gap).toFixed(0)} index points more optimistic than the other party · as of ${ps.latest.date}`;
+  // R / D dual-line chart
+  const pts = ps.history.map(r => ({ value: r.republican, value2: r.democrat }));
+  _lineSvg("partisanLine", pts, { dual: true, color: "#f87171", color2: "#60a5fa" });
+  document.getElementById("partisanMeta").textContent =
+    `Avg |gap| ${ps.avg_abs_gap} · biggest historical gap ${ps.biggest_gap.partisan_gap >= 0 ? "+" : ""}${ps.biggest_gap.partisan_gap} on ${ps.biggest_gap.date} · ${ps.source.split(" · ")[0]}`;
+}
+
+function renderRightTrack(rt) {
+  if (!rt || !rt.latest) return;
+  document.getElementById("signalRow").style.display = "grid";
+  const net = rt.latest.net;
+  const big = document.getElementById("rtBig");
+  const cls = net >= -15 ? "warn" : "down";  // it's essentially always negative
+  big.className = `big ${cls}`;
+  big.textContent = (net >= 0 ? "+" : "") + net.toFixed(0) + " net";
+  document.getElementById("rtSub").textContent =
+    `${rt.latest.right}% right direction vs ${rt.latest.wrong}% wrong direction · as of ${rt.latest.date}`;
+  const pts = rt.history.map(r => ({ value: r.net }));
+  _lineSvg("rtLine", pts, { color: "#fbbf24", includeZero: true });
+  document.getElementById("rtMeta").textContent =
+    `Range over snapshot: ${rt.min_net} to ${rt.max_net} · ${rt.source}`;
+}
+
+function renderGlobalMood(gm) {
+  if (!gm || !gm.countries || !gm.countries.length) return;
+  document.getElementById("globalRow").style.display = "grid";
+  document.getElementById("globalRow").innerHTML = gm.countries.map(c => {
+    const cls = c.mood_0_100 >= 60 ? "up" : c.mood_0_100 >= 45 ? "warn" : "down";
+    return `
+      <div class="global-tile" title="${c.country_name} · ${Object.keys(c.components || {}).join(", ")}">
+        <div class="flag">${c.flag}</div>
+        <div class="name">${c.country_code}</div>
+        <div class="score ${cls}">${Math.round(c.mood_0_100)}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderPollsterScorecard(ps) {
+  if (!ps || !ps.best || !ps.best.length) return;
+  document.getElementById("pollsterSection").style.display = "block";
+  const render = (rows) => rows.map((r, i) => {
+    const sign = r.predictive_plus_minus >= 0 ? "+" : "";
+    return `
+      <div class="row">
+        <span class="rk">#${i+1}</span>
+        <span>${r.pollster}</span>
+        <span class="grade">${r.grade || "—"}</span>
+        <span class="ppm">PPM ${sign}${r.predictive_plus_minus.toFixed(2)}</span>
+      </div>
+    `;
+  }).join("");
+  document.getElementById("pollsterBest").innerHTML = render(ps.best);
+  document.getElementById("pollsterWorst").innerHTML = render(ps.worst);
+  document.getElementById("pollsterMeta").textContent =
+    `${ps.n_ranked} pollsters ranked · ${ps.method} · ${ps.source}`;
+}
+
 async function loadAll() {
   const [summary, marketsResp] = await Promise.all([
     getJSON("/api/summary"),
@@ -1285,6 +1542,8 @@ async function loadAll() {
   if (summary) {
     renderMood(summary.mood);
     renderForecast(summary.election_cycle);
+    renderPartisan(summary.partisan_sentiment);
+    renderRightTrack(summary.right_track);
     renderVibecession(summary.vibecession);
     renderApproval(summary.approval, summary.approval_market_implied);
     renderMovers(summary.biggest_movers);
@@ -1294,8 +1553,10 @@ async function loadAll() {
   }
   allMarkets = (marketsResp && marketsResp.markets) || [];
   renderMarkets(allMarkets);
-  // States load separately — 51 series, slower, doesn't block above-the-fold.
+  // These three load separately — slower fetches, don't block above-the-fold.
   loadStates();
+  getJSON("/api/global-mood").then(renderGlobalMood);
+  getJSON("/api/pollster-scorecard").then(renderPollsterScorecard);
 }
 
 document.getElementById("search").addEventListener("input", () => renderMarkets(allMarkets));
