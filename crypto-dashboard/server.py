@@ -43,6 +43,8 @@ import execution as exec_mod
 import tax as tax_mod
 import push as push_mod
 import strategy as strat_mod
+import billing as billing_mod
+import digest as digest_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -415,16 +417,20 @@ async def unit_toggle_middleware(request: Request, call_next):
 
 
 def _get_session_user(request: Request) -> dict | None:
-    """Get the authenticated user from gateway SSO headers."""
+    """Get the authenticated user from gateway SSO headers. Resolves the
+    effective billing tier (free / pro / wealth / admin) via billing.get_tier()
+    so feature-gating queries can consult `user['tier']` directly."""
     _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
     if _sso_secret and hmac.compare_digest(request.headers.get("x-gateway-secret", ""), _sso_secret):
         gw_id = request.headers.get("x-gateway-user-id")
         gw_email = request.headers.get("x-gateway-user-email")
+        gw_role = request.headers.get("x-gateway-user-role", "")
         if gw_id and gw_email:
+            gateway_tier = "admin" if gw_role == "admin" else None
             return {
                 "id": gw_id,
                 "email": gw_email,
-                "tier": "admin",
+                "tier": billing_mod.get_tier(gw_id, gateway_tier=gateway_tier),
                 "display_name": gw_email.split("@")[0],
             }
 
@@ -432,8 +438,22 @@ def _get_session_user(request: Request) -> dict | None:
     if os.environ.get("DEV_LOCALHOST_BYPASS", "").strip() == "1":
         client_host = request.client.host if request.client else ""
         if client_host in ("127.0.0.1", "::1", "localhost"):
-            return {"id": "00000000-0000-0000-0000-000000000000", "email": "localhost", "tier": "admin", "display_name": "System"}
+            return {"id": "00000000-0000-0000-0000-000000000000",
+                    "email": "localhost", "tier": "admin",
+                    "display_name": "System"}
     return None
+
+
+def _require_feature(user: dict, feature: str) -> None:
+    """Raise 402 (Payment Required) if the user's tier doesn't unlock the
+    feature. Distinct from 401 (not authed) and 403 (authed but forbidden
+    for non-tier reasons)."""
+    if not billing_mod.feature_allowed(user["tier"], feature):
+        min_tier = billing_mod.FEATURE_TIERS.get(feature, "free")
+        raise HTTPException(
+            status_code=402,
+            detail=f"Feature '{feature}' requires {min_tier} tier (current: {user['tier']})",
+        )
 
 
 def _check_auth(request: Request) -> bool:
@@ -477,6 +497,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(macro_refresher()))
     _bg_tasks.add(asyncio.create_task(execution_ticker()))
     _bg_tasks.add(asyncio.create_task(fill_poller_task()))
+    _bg_tasks.add(asyncio.create_task(digest_cron_task()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -525,6 +546,21 @@ async def macro_refresher():
         except Exception as e:
             print(f"[macro] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(12 * 3600)
+
+
+async def digest_cron_task():
+    """Hourly tick that sends weekly digests to users whose preferred
+    day-of-week is today and who haven't received one in the last 6 days
+    (debounce). Reuses the existing SMTP transport in email_alerts.py."""
+    await asyncio.sleep(300)  # let other tasks warm up
+    while True:
+        try:
+            result = await asyncio.to_thread(digest_mod.run_digest_tick)
+            if result["sent"] or result["failed"]:
+                print(f"[digest] {result}")
+        except Exception as e:
+            print(f"[digest] tick error: {type(e).__name__}: {e}")
+        await asyncio.sleep(3600)
 
 
 async def strategy_subscription_ticker():
@@ -5304,10 +5340,20 @@ async def save_exchange_creds(request: Request):
     user = _get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "exchange_connect")
     payload = await request.json()
     exchange = str(payload.get("exchange", "")).lower()
     if exchange not in ("coinbase", "kraken"):
         raise HTTPException(status_code=400, detail="exchange must be coinbase or kraken")
+    # Wealth-only: multiple exchanges configured at once.
+    if not billing_mod.feature_allowed(user["tier"], "multi_exchange"):
+        existing = xch.configured_exchanges(user["id"])
+        if existing and existing != [exchange]:
+            raise HTTPException(
+                status_code=402,
+                detail="Multi-exchange routing requires the Wealth tier. "
+                       "Disconnect the existing exchange to switch.",
+            )
     if exchange == "coinbase":
         api_key = str(payload.get("api_key", "")).strip()
         pem = str(payload.get("private_key_pem", "")).strip()
@@ -5397,8 +5443,15 @@ async def set_safety(request: Request):
     user = _get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = await request.json()
-    return exec_mod.update_safety_for(user["id"], payload or {})
+    payload = await request.json() or {}
+    # Free users can read + change everything EXCEPT dry_run = False
+    # (turning off dry-run is the paywall — it's what makes execution real).
+    if payload.get("dry_run") is False and not billing_mod.feature_allowed(user["tier"], "live_execution"):
+        raise HTTPException(
+            status_code=402,
+            detail="Disabling dry-run requires the Pro tier. Free users can preview + simulate as much as they like.",
+        )
+    return exec_mod.update_safety_for(user["id"], payload)
 
 
 # ── Execution ──────────────────────────────────────────────────────────────
@@ -5574,6 +5627,7 @@ async def execute_harvest_api(request: Request):
     user = _get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "tax_harvest_execute")
     payload = await request.json()
     holding_ids = payload.get("holding_ids")
     if not holding_ids:
@@ -5605,6 +5659,7 @@ async def tax_export(year: int, request: Request):
     user = _get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "tax_form_8949")
     csv_text = await asyncio.to_thread(tax_mod.export_form_8949, user["id"], year)
     return Response(
         content=csv_text,
@@ -5860,6 +5915,8 @@ async def create_strategy_api(request: Request):
     payload = await request.json()
     rules = payload.get("rules") or {}
     visibility = str(payload.get("visibility", "private"))
+    if visibility == "public":
+        _require_feature(user, "strategy_publish")
     try:
         strategy = strat_mod.Strategy.from_dict(rules)
         sid = await asyncio.to_thread(
@@ -5963,6 +6020,18 @@ async def subscribe_strategy(strategy_id: int, request: Request):
     # Restrict subscription to public strategies OR the user's own.
     if s["visibility"] != "public" and s["owner_user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Cannot subscribe to private strategy")
+    # Tier-based subscription cap.
+    limit = billing_mod.subscription_limit(user["tier"])
+    if limit is not None:
+        current = db.get_strategy_subscriptions(user["id"])
+        # Allow re-subscribe to an existing strategy (no new slot used).
+        if not any(c["strategy_id"] == strategy_id for c in current):
+            if len(current) >= limit:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"Your {user['tier']} tier allows {limit} active subscription(s). "
+                           f"Upgrade for more, or unsubscribe an existing one.",
+                )
     # First run = now (so the user sees an immediate dry-run result).
     sub_id = await asyncio.to_thread(
         db.upsert_strategy_subscription, user["id"], strategy_id,
@@ -6014,6 +6083,256 @@ async def run_subscription_now(subscription_id: int, request: Request):
         exec_mod.execute_subscription_now, user["id"], subscription_id,
     )
     return {"decisions": [d.to_dict() for d in decisions]}
+
+
+# ===================================================================
+# BILLING — Stripe subscriptions + tier resolution
+# ===================================================================
+
+@app.get("/api/billing/tier")
+async def get_billing_tier(request: Request):
+    """Current tier + which features it unlocks. Free users see this to
+    understand what an upgrade buys them."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "tier": user["tier"],
+        "features": {
+            k: billing_mod.feature_allowed(user["tier"], k)
+            for k in billing_mod.FEATURE_TIERS.keys()
+        },
+        "subscription_limit": billing_mod.subscription_limit(user["tier"]),
+        "billing_configured": billing_mod.billing_configured(),
+    }
+
+
+@app.post("/api/billing/checkout")
+async def billing_checkout(request: Request):
+    """Create a Stripe Checkout Session for the requested tier. Returns the
+    `url` the client should redirect to. Free → Pro / Free → Wealth /
+    Pro → Wealth all use the same flow."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not billing_mod.billing_configured():
+        raise HTTPException(status_code=503, detail="Billing not configured on this deployment")
+    payload = await request.json()
+    tier = str(payload.get("tier", "")).lower()
+    if tier not in ("pro", "wealth"):
+        raise HTTPException(status_code=400, detail="tier must be pro or wealth")
+    success = os.environ.get("STRIPE_SUCCESS_URL", "").strip() or "https://crypto.narve.ai/long-term?upgraded=1"
+    cancel = os.environ.get("STRIPE_CANCEL_URL", "").strip() or "https://crypto.narve.ai/pricing"
+    result = await asyncio.to_thread(
+        billing_mod.create_checkout_session,
+        user["id"], user["email"], tier, success, cancel,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {"url": result.get("url"), "id": result.get("id")}
+
+
+@app.post("/api/billing/portal")
+async def billing_portal(request: Request):
+    """Create a Stripe Customer Portal session — lets the user upgrade,
+    downgrade, or cancel without going back through Checkout."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return_url = "https://crypto.narve.ai/long-term"
+    result = await asyncio.to_thread(
+        billing_mod.create_billing_portal_session, user["id"], return_url,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {"url": result.get("url")}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Receives Stripe events. Signature-verified with the webhook secret.
+    Idempotent — Stripe retries failed deliveries."""
+    sig = request.headers.get("stripe-signature", "")
+    body = await request.body()
+    if not billing_mod.verify_webhook_signature(body, sig):
+        raise HTTPException(status_code=400, detail="invalid signature")
+    try:
+        event = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid payload")
+    result = await asyncio.to_thread(billing_mod.handle_webhook_event, event)
+    return result
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+async def pricing_page(request: Request):
+    """Public pricing page. Three tiers, one CTA each. Free is "stay where
+    you are"; Pro and Wealth open a Stripe Checkout Session."""
+    user = _get_session_user(request)
+    tier = user["tier"] if user else "free"
+    badge = f'<span style="background:#3b82f6;color:#fff;padding:3px 10px;border-radius:12px;font-size:.75em;margin-left:8px">{tier.upper()}</span>' if user else ""
+    return HTMLResponse(_pricing_html(tier, billing_mod.billing_configured(), badge))
+
+
+def _pricing_html(current_tier: str, billing_on: bool, badge_html: str) -> str:
+    pro_btn = ('<button id="buy-pro">Upgrade to Pro</button>' if billing_on
+               else '<button disabled title="Billing not configured">Pro</button>')
+    wealth_btn = ('<button id="buy-wealth">Upgrade to Wealth</button>' if billing_on
+                  else '<button disabled title="Billing not configured">Wealth</button>')
+    return r"""<!doctype html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoEdge — pricing</title>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0d12;color:#e6edf5}
+.wrap{max-width:1100px;margin:0 auto;padding:32px 20px}
+h1{font-size:1.8em;margin:0 0 6px}
+.sub{color:#7d8a99;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.card{background:#131820;border:1px solid #222a36;border-radius:12px;padding:20px}
+.card.featured{border-color:#3b82f6;box-shadow:0 0 0 1px #3b82f6}
+.price{font-size:2em;font-weight:700;margin:8px 0}
+.muted{color:#7d8a99}
+ul{padding-left:18px;line-height:1.6;margin:14px 0}
+button{background:#3b82f6;color:#fff;border:0;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:.95em;width:100%;margin-top:8px}
+button:disabled{background:#3b82f680;cursor:not-allowed}
+button:hover{opacity:.85}
+a{color:#3b82f6}
+@media (max-width:700px){.wrap{padding:20px 12px}}
+</style></head><body>
+<div class="wrap">
+<h1>Pricing __BADGE__</h1>
+<div class="sub">Everything in the lower tier is included in the higher one. Annual plans are coming — for now, monthly.</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Free</h2>
+    <div class="price">$0<span class="muted" style="font-size:.5em">/mo</span></div>
+    <ul>
+      <li>All cycle indicators + on-chain data</li>
+      <li>Portfolio + lot tracking</li>
+      <li>Cycle-aware DCA recommendations</li>
+      <li>1 strategy subscription</li>
+      <li>Dry-run execution only</li>
+      <li>Push notifications</li>
+    </ul>
+    <button disabled>Current tier</button>
+  </div>
+
+  <div class="card featured">
+    <h2>Pro</h2>
+    <div class="price">$25<span class="muted" style="font-size:.5em">/mo</span></div>
+    <ul>
+      <li>Everything in Free</li>
+      <li><b>Live execution</b> on Coinbase or Kraken</li>
+      <li><b>Tax-loss harvest</b> one-click execute</li>
+      <li><b>Form 8949 CSV</b> export</li>
+      <li>Publish strategies to the marketplace</li>
+      <li>3 strategy subscriptions</li>
+    </ul>
+    __PRO_BTN__
+  </div>
+
+  <div class="card">
+    <h2>Wealth</h2>
+    <div class="price">$75<span class="muted" style="font-size:.5em">/mo</span></div>
+    <ul>
+      <li>Everything in Pro</li>
+      <li>Both exchanges linked at once</li>
+      <li>Unlimited strategy subscriptions</li>
+      <li>Priority support</li>
+    </ul>
+    __WEALTH_BTN__
+  </div>
+</div>
+
+<div style="margin-top:30px;text-align:center;color:#7d8a99;font-size:.9em">
+  <a href="#" id="portal-btn">Manage existing subscription →</a>
+</div>
+
+<script>
+async function checkout(tier){
+  try {
+    const r = await fetch('/api/billing/checkout', {
+      method:'POST', credentials:'include',
+      headers: {'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({tier})
+    });
+    if (!r.ok) { alert((await r.json()).detail || 'Checkout failed'); return; }
+    const d = await r.json();
+    if (d.url) window.location.href = d.url;
+  } catch(e) { alert(e.message); }
+}
+const proBtn = document.getElementById('buy-pro');
+if (proBtn) proBtn.onclick = () => checkout('pro');
+const wealthBtn = document.getElementById('buy-wealth');
+if (wealthBtn) wealthBtn.onclick = () => checkout('wealth');
+
+document.getElementById('portal-btn').onclick = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await fetch('/api/billing/portal', {
+      method:'POST', credentials:'include',
+      headers: {'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+    });
+    if (!r.ok) { alert((await r.json()).detail || 'No active subscription'); return; }
+    const d = await r.json();
+    if (d.url) window.location.href = d.url;
+  } catch(err) { alert(err.message); }
+};
+</script>
+</div></body></html>
+""".replace("__BADGE__", badge_html).replace("__PRO_BTN__", pro_btn).replace("__WEALTH_BTN__", wealth_btn)
+
+
+# ── Notification preferences (digest opt-in) ────────────────────────────────
+
+@app.get("/api/preferences")
+async def get_preferences(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    prefs = db.get_user_preferences(user["id"])
+    if not prefs:
+        return {
+            "user_id": user["id"], "email": user["email"],
+            "digest_enabled": True, "digest_day_of_week": 0,
+            "last_digest_sent_at": None,
+        }
+    if not prefs.get("email"):
+        prefs["email"] = user["email"]
+    return prefs
+
+
+@app.post("/api/preferences")
+async def set_preferences(request: Request):
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    email = payload.get("email") or user["email"]
+    digest_enabled = payload.get("digest_enabled")
+    digest_dow = payload.get("digest_day_of_week")
+    db.upsert_user_preferences(
+        user["id"], email=email,
+        digest_enabled=bool(digest_enabled) if digest_enabled is not None else None,
+        digest_day_of_week=int(digest_dow) if digest_dow is not None else None,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/preferences/digest/test")
+async def send_test_digest(request: Request):
+    """Send a one-off digest to the user now. Useful for "make sure it works"
+    after adjusting preferences."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    prefs = db.get_user_preferences(user["id"]) or {}
+    email = prefs.get("email") or user["email"]
+    if not email:
+        raise HTTPException(status_code=400, detail="no email on file")
+    ok = await asyncio.to_thread(digest_mod.send_digest_for_user, user["id"], email)
+    return {"sent": ok}
 
 
 # ── Onboarding ──────────────────────────────────────────────────────────────

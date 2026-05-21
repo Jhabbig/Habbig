@@ -499,6 +499,28 @@ CREATE TABLE IF NOT EXISTS crypto_strategy_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_strat_subs_user ON crypto_strategy_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_strat_subs_active ON crypto_strategy_subscriptions(active, next_run_at);
+
+-- ── Billing (Stripe subscriptions, tier mapping) ────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_billing (
+    user_id                TEXT PRIMARY KEY,
+    tier                   TEXT NOT NULL DEFAULT 'free',  -- free | pro | wealth
+    stripe_customer_id     TEXT,
+    stripe_subscription_id TEXT,
+    status                 TEXT DEFAULT 'active',         -- active | past_due | cancelled
+    current_period_end     TEXT,
+    updated_at             TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_billing_customer ON crypto_billing(stripe_customer_id);
+
+-- ── User preferences (digest, email) ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_user_preferences (
+    user_id              TEXT PRIMARY KEY,
+    email                TEXT,
+    digest_enabled       INTEGER NOT NULL DEFAULT 1,
+    digest_day_of_week   INTEGER NOT NULL DEFAULT 0,  -- 0=Monday
+    last_digest_sent_at  TEXT,
+    updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -2157,6 +2179,119 @@ def delete_strategy_subscription(user_id: str, subscription_id: int) -> bool:
             (subscription_id, user_id),
         )
         return cur.rowcount > 0
+
+
+# ── Billing ─────────────────────────────────────────────────────────────────
+
+def get_billing_row(user_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT user_id, tier, stripe_customer_id, stripe_subscription_id, "
+            "       status, current_period_end, updated_at "
+            "FROM crypto_billing WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_billing_by_customer(stripe_customer_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT user_id, tier, stripe_customer_id, stripe_subscription_id, "
+            "       status, current_period_end "
+            "FROM crypto_billing WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_billing(user_id: str, tier: str,
+                   stripe_customer_id: str | None = None,
+                   stripe_subscription_id: str | None = None,
+                   status: str = "active",
+                   current_period_end: str | None = None) -> None:
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_billing
+                 (user_id, tier, stripe_customer_id, stripe_subscription_id,
+                  status, current_period_end, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 tier = excluded.tier,
+                 stripe_customer_id = COALESCE(excluded.stripe_customer_id, crypto_billing.stripe_customer_id),
+                 stripe_subscription_id = COALESCE(excluded.stripe_subscription_id, crypto_billing.stripe_subscription_id),
+                 status = excluded.status,
+                 current_period_end = COALESCE(excluded.current_period_end, crypto_billing.current_period_end),
+                 updated_at = datetime('now')""",
+            (user_id, tier, stripe_customer_id, stripe_subscription_id,
+             status, current_period_end),
+        )
+
+
+# ── User preferences (digest, email) ────────────────────────────────────────
+
+def get_user_preferences(user_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT user_id, email, digest_enabled, digest_day_of_week, "
+            "       last_digest_sent_at FROM crypto_user_preferences "
+            "WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["digest_enabled"] = bool(d["digest_enabled"])
+    return d
+
+
+def upsert_user_preferences(user_id: str, email: str | None = None,
+                            digest_enabled: bool | None = None,
+                            digest_day_of_week: int | None = None) -> None:
+    existing = get_user_preferences(user_id) or {}
+    final_email = email if email is not None else existing.get("email")
+    final_enabled = digest_enabled if digest_enabled is not None else existing.get("digest_enabled", True)
+    final_dow = digest_day_of_week if digest_day_of_week is not None else existing.get("digest_day_of_week", 0)
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO crypto_user_preferences
+                 (user_id, email, digest_enabled, digest_day_of_week, updated_at)
+               VALUES (?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 email = COALESCE(excluded.email, crypto_user_preferences.email),
+                 digest_enabled = excluded.digest_enabled,
+                 digest_day_of_week = excluded.digest_day_of_week,
+                 updated_at = datetime('now')""",
+            (user_id, final_email, 1 if final_enabled else 0,
+             max(0, min(6, int(final_dow)))),
+        )
+
+
+def update_user_preference_digest_sent(user_id: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE crypto_user_preferences SET last_digest_sent_at = datetime('now') "
+            "WHERE user_id = ?",
+            (user_id,),
+        )
+
+
+def get_users_due_for_digest(today_dow: int, debounce_days: int = 6) -> list[dict]:
+    """Users whose digest_day_of_week matches today AND haven't received in
+    the last `debounce_days` days. Cron should run hourly; debounce avoids
+    double-fires within a single day."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=debounce_days)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT user_id, email, digest_day_of_week, last_digest_sent_at
+               FROM crypto_user_preferences
+               WHERE digest_enabled = 1
+                 AND digest_day_of_week = ?
+                 AND email IS NOT NULL AND email != ''
+                 AND (last_digest_sent_at IS NULL OR last_digest_sent_at < ?)""",
+            (today_dow, cutoff),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────
