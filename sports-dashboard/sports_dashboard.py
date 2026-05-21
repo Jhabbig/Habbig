@@ -497,6 +497,14 @@ def _init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON sports_api_tokens(user_id, revoked_at);
             CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON sports_api_tokens(token_hash) WHERE revoked_at IS NULL;
+            -- Opt-in roster for the public CLV leaderboard. Users
+            -- choose a display name (often distinct from email); only
+            -- rows in this table appear on the public /leaderboard.
+            CREATE TABLE IF NOT EXISTS sports_clv_leaderboard_optin (
+                user_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                joined_at TEXT DEFAULT (datetime('now'))
+            );
             -- Per-user bankroll for Kelly-aware stake suggestions and
             -- drawdown alerts. Defaults are conservative half-Kelly with
             -- a 5% per-bet ceiling.
@@ -9240,6 +9248,163 @@ async def api_track_record_calibration(request: Request):
     except ValueError:
         days = 180
     return JSONResponse(await asyncio.to_thread(_compute_calibration, sport, days))
+
+
+# ---------------------------------------------------------------------------
+# Public CLV leaderboard (T4.7) — opt-in social proof / virality lever
+# ---------------------------------------------------------------------------
+#
+# Users who opt in see their (display_name, n_resolved_trades, mean_clv,
+# total_pnl) on a public ranking page. Distinct from /track-record:
+#   - /track-record is the AGGREGATE proof across all signals (dashboard-
+#     level).
+#   - /leaderboard is the per-user roster — sharp bettors aspire to be
+#     on it, which surfaces them to other users and creates social proof.
+# Both pages are anonymous-readable. Opting in requires auth.
+
+LEADERBOARD_MIN_TRADES = int(os.getenv("LEADERBOARD_MIN_TRADES", "10"))
+
+
+def _compute_clv_leaderboard(days: int = 90, limit: int = 50) -> list[dict]:
+    """Aggregate per-user CLV from sports_trades for users who opted in.
+
+    Only counts closed trades with a non-null clv_pp. A user must have
+    at least LEADERBOARD_MIN_TRADES qualifying trades to appear —
+    keeps the list out of "1 lucky bet" territory.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT o.user_id, o.display_name,
+                      COUNT(t.id) AS n_trades,
+                      AVG(t.clv_pp) AS mean_clv,
+                      SUM(t.pnl) AS total_pnl,
+                      SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END) AS wins
+               FROM sports_clv_leaderboard_optin o
+               JOIN sports_trades t ON t.user_id = o.user_id
+               WHERE t.status = 'closed'
+                 AND t.clv_pp IS NOT NULL
+                 AND t.resolved_at >= ?
+               GROUP BY o.user_id, o.display_name
+               HAVING COUNT(t.id) >= ?
+               ORDER BY mean_clv DESC
+               LIMIT ?""",
+            (cutoff, LEADERBOARD_MIN_TRADES, limit),
+        ).fetchall()
+
+    out: list[dict] = []
+    for rank, r in enumerate(rows, start=1):
+        n = r["n_trades"] or 0
+        wins = r["wins"] or 0
+        out.append({
+            "rank": rank,
+            "display_name": r["display_name"],
+            "n_trades": n,
+            "mean_clv_pp": round(float(r["mean_clv"] or 0), 3),
+            "total_pnl": round(float(r["total_pnl"] or 0), 2),
+            "win_rate": round(wins / n, 4) if n > 0 else 0.0,
+        })
+    return out
+
+
+@app.get("/api/leaderboard/clv")
+async def api_leaderboard_clv(request: Request):
+    """Public CLV leaderboard — anonymous-readable. Same docstring
+    rationale as /api/track-record/clv: this is the conversion surface."""
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "90"))))
+    except ValueError:
+        days = 90
+    try:
+        limit = max(1, min(200, int(request.query_params.get("limit", "50"))))
+    except ValueError:
+        limit = 50
+    rows = await asyncio.to_thread(_compute_clv_leaderboard, days, limit)
+    return JSONResponse({
+        "days": days, "min_trades": LEADERBOARD_MIN_TRADES,
+        "n_users": len(rows), "rows": rows,
+    })
+
+
+@app.get("/api/leaderboard/optin")
+async def api_get_optin(request: Request):
+    """Return the user's current opt-in status (display_name or null)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT display_name, joined_at FROM sports_clv_leaderboard_optin "
+            "WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+    return JSONResponse({"optin": dict(row) if row else None})
+
+
+_LEADERBOARD_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_\-. ]{1,29}$")
+
+
+@app.put("/api/leaderboard/optin")
+async def api_put_optin(request: Request):
+    """Join the public leaderboard with a display name.
+
+    Body: {"display_name": str}. Names must be 2-30 chars, start with
+    alphanumeric/underscore, and contain only [A-Za-z0-9_-. ]. Display
+    name must be unique across all opted-in users (case-insensitive)
+    to prevent impersonation.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = (body.get("display_name") or "").strip()
+    if not _LEADERBOARD_NAME_RE.match(name):
+        return JSONResponse(
+            {"error": "display_name must be 2-30 chars, alphanumeric + _-. and space"},
+            status_code=400,
+        )
+    with _get_db() as conn:
+        # Reject names already taken by another user (case-insensitive)
+        existing = conn.execute(
+            "SELECT user_id FROM sports_clv_leaderboard_optin "
+            "WHERE LOWER(display_name) = LOWER(?) AND user_id != ? LIMIT 1",
+            (name, user["id"]),
+        ).fetchone()
+        if existing:
+            return JSONResponse(
+                {"error": "display_name already taken"}, status_code=409
+            )
+        conn.execute(
+            "INSERT INTO sports_clv_leaderboard_optin (user_id, display_name) "
+            "VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name",
+            (user["id"], name),
+        )
+    return JSONResponse({"status": "ok", "display_name": name})
+
+
+@app.delete("/api/leaderboard/optin")
+async def api_delete_optin(request: Request):
+    """Leave the public leaderboard."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        conn.execute(
+            "DELETE FROM sports_clv_leaderboard_optin WHERE user_id = ?",
+            (user["id"],),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+async def leaderboard_page(request: Request):
+    """Public CLV leaderboard page. Anonymous-readable (matches the
+    /track-record conversion strategy)."""
+    return HTMLResponse(_load_template("leaderboard"))
 
 
 @app.post("/api/backtest/replay")
