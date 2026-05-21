@@ -409,7 +409,9 @@ def test_stream_insight_handles_malformed_final_json():
 
 
 def test_client_factory_raises_without_api_key(monkeypatch):
+    # Clear both so we're on the anthropic branch with no key
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
         insight._client()
 

@@ -5972,13 +5972,38 @@ def _track_record_loop():
         _time.sleep(3600)  # 1 hour
 
 
-# Per-pass cap on auto-mode insight generation. Tuned conservatively —
-# at 10 calls/pass × 12 passes/hour × Haiku ~$0.003/call cached, this
-# tops out around $0.36/hr of LLM spend even if every signal is novel.
-_INSIGHT_AUTO_PER_PASS = 10
-_INSIGHT_AUTO_INTERVAL_SECONDS = 300  # 5 minutes
-_INSIGHT_AUTO_DEDUP_HOURS = 6.0
-_INSIGHT_AUTO_MIN_EDGE = 0.05
+# Auto-mode is **opt-in via env var**. The default 0 means the loop
+# heartbeats but never fires — set INSIGHT_AUTO_PER_PASS to a positive
+# integer to enable. This is the biggest cost lever in the dashboard:
+# even at 10 calls/pass × 12 passes/hour × $0.003/call cached, novel
+# markets every pass can rack up ~$8/day. Setting to 0 is free.
+#
+#   INSIGHT_AUTO_PER_PASS         (default 0  — disabled)
+#   INSIGHT_AUTO_INTERVAL_SECONDS (default 300)
+#   INSIGHT_AUTO_DEDUP_HOURS      (default 6)
+#   INSIGHT_AUTO_MIN_EDGE         (default 0.10 — raised from 0.05)
+#
+# These are read once at import. Change requires restart, which is the
+# right tradeoff — we don't want a thread tuning its own throttle while
+# in flight.
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_INSIGHT_AUTO_PER_PASS = max(0, _env_int("INSIGHT_AUTO_PER_PASS", 0))
+_INSIGHT_AUTO_INTERVAL_SECONDS = max(30, _env_int("INSIGHT_AUTO_INTERVAL_SECONDS", 300))
+_INSIGHT_AUTO_DEDUP_HOURS = max(0.5, _env_float("INSIGHT_AUTO_DEDUP_HOURS", 6.0))
+_INSIGHT_AUTO_MIN_EDGE = max(0.0, _env_float("INSIGHT_AUTO_MIN_EDGE", 0.10))
 
 
 def _insight_auto_loop():
@@ -5992,9 +6017,17 @@ def _insight_auto_loop():
     _time.sleep(600)  # 10 min after boot — let the market cache populate
     while True:
         try:
-            if not os.environ.get("ANTHROPIC_API_KEY"):
-                # No key → no calls. Loop continues so /api/healthz still
-                # shows a fresh heartbeat; nothing to do this pass.
+            # Two short-circuits, both intentional:
+            #   1. per-pass cap set to 0 → user has explicitly disabled
+            #      auto-mode (the default). Heartbeat and continue.
+            #   2. no Anthropic key AND provider is anthropic → no way
+            #      to call. The local provider needs no key, so we
+            #      still proceed for it.
+            if _INSIGHT_AUTO_PER_PASS <= 0:
+                _record_run("insight_auto", ok=True)
+                _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
+                continue
+            if _insight.active_provider() == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
                 _record_run("insight_auto", ok=True)
                 _time.sleep(_INSIGHT_AUTO_INTERVAL_SECONDS)
                 continue

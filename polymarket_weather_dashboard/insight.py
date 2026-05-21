@@ -674,17 +674,49 @@ class StreamChunk:
     data: dict
 
 
+def active_provider() -> str:
+    """Resolve the active LLM provider — 'anthropic' (default) or 'local'.
+
+    Driven by the LLM_PROVIDER env var. Exposed as a public function so
+    server.py's auto-mode loop can skip Anthropic-only short-circuits
+    when running against a local model.
+    """
+    v = (os.environ.get("LLM_PROVIDER") or "anthropic").lower().strip()
+    return "local" if v in ("local", "ollama") else "anthropic"
+
+
 def _client():
-    """Lazy-import + construct so the rest of the module can be imported
-    without the anthropic SDK installed (handy for tests that mock the
-    wrapper). Raises with a clear hint when ANTHROPIC_API_KEY is unset."""
+    """Lazy-import + construct the right provider based on env.
+
+    Anthropic is the default; LLM_PROVIDER=local picks the Ollama-
+    compatible adapter. Anthropic factory raises with a clear hint when
+    the key is unset; local factory has no auth so it never raises here
+    (network errors surface inside the stream).
+    """
+    if active_provider() == "local":
+        import insight_local
+        return insight_local.LocalLLMClient()
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set; insight engine cannot run. "
-            "Add it to the dashboard's environment before enabling /api/insight."
+            "Either add the key, or set LLM_PROVIDER=local to use Ollama."
         )
     import anthropic
     return anthropic.Anthropic()
+
+
+def resolve_model_name(claude_name: str) -> str:
+    """Translate a Claude model alias into the active provider's name.
+
+    Anthropic keeps the Claude name verbatim; local routes through the
+    OLLAMA_MODEL_* env vars (`llama3.1:8b` for fast, `llama3.3:70b` for
+    deep, etc.). Called by stream_insight + the ensemble runner so the
+    rest of the codebase keeps using Claude-shaped constants.
+    """
+    if active_provider() == "local":
+        import insight_local
+        return insight_local.local_model_for(claude_name)
+    return claude_name
 
 
 def stream_insight(context: dict, *,
@@ -713,10 +745,14 @@ def stream_insight(context: dict, *,
         model = MODEL_FAST
 
     cli = client if client is not None else _client()
+    # Translate Claude model alias → active provider's model name.
+    # Anthropic path keeps "claude-haiku-4-5" verbatim; local routes
+    # through OLLAMA_MODEL_FAST etc.
+    resolved_model = resolve_model_name(model)
 
     try:
         with cli.messages.stream(
-            model=model,
+            model=resolved_model,
             max_tokens=2048,
             system=_system_blocks(),
             messages=[{
