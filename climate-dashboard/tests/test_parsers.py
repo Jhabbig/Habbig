@@ -264,3 +264,98 @@ def test_calibration_summary_known_values():
 def test_calibration_summary_returns_none_when_empty():
     assert calibration_model.summary([], "error_c", "°C") is None
     assert calibration_model.summary([{"foo": 1}], "error_c", "°C") is None
+
+
+# ─── Regression tests for bugs found in the Phase-4 code review ────────────────
+
+def test_arctic_is_post_min_handles_october_onwards():
+    # B1: the original buggy formula was `month >= 9 and day >= 15`, which
+    # incorrectly returned False for Oct 1, Nov 14, etc — silently dropping
+    # the current year from the Arctic fit for ~3 months of the year.
+    from app.models.sea_ice import _is_post_arctic_min
+    assert _is_post_arctic_min(9, 14) is False
+    assert _is_post_arctic_min(9, 15) is True
+    assert _is_post_arctic_min(10, 1) is True
+    assert _is_post_arctic_min(11, 14) is True
+    assert _is_post_arctic_min(12, 31) is True
+
+
+def test_safe_implied_rejects_zero_and_missing():
+    # B2: market dicts without lastTradePrice and bestBid used to fall back to
+    # implied=0.0, producing monstrous +95pp edges against non-existent prices.
+    from app.models.markets import _safe_implied
+    assert _safe_implied({}) is None
+    assert _safe_implied({"lastTradePrice": None, "bestBid": None}) is None
+    assert _safe_implied({"lastTradePrice": 0}) is None
+    assert _safe_implied({"lastTradePrice": 1}) is None
+    assert _safe_implied({"lastTradePrice": 0.42}) == 0.42
+    assert _safe_implied({"bestBid": "0.31"}) == 0.31
+    # lastTradePrice takes precedence if usable
+    assert _safe_implied({"lastTradePrice": 0.55, "bestBid": 0.6}) == 0.55
+    # If lastTradePrice is junk, fall through to bestBid
+    assert _safe_implied({"lastTradePrice": "junk", "bestBid": 0.4}) == 0.4
+
+
+def test_temperature_record_excludes_current_year():
+    # B3: once GISTEMP publishes the J-D row for the current year, that row
+    # would be picked as "current record" and p_breaks_record collapsed to
+    # ~0.5 even when the projection IS the actual record.
+    gist = {
+        "monthly": [{"year": 2024, "month": m, "anomaly_c": 1.2} for m in range(1, 13)]
+                 + [{"year": 2025, "month": m, "anomaly_c": 1.4} for m in range(1, 9)],
+        "annual": [
+            {"year": 2022, "anomaly_c": 0.9},
+            {"year": 2023, "anomaly_c": 1.0},
+            {"year": 2024, "anomaly_c": 1.2},
+            {"year": 2025, "anomaly_c": 1.4},  # current year's annual mean published
+        ],
+    }
+    proj = temperature_model.projection(gist)
+    # Record must NOT be 2025 — that's the current year. The prior-year max is 2024.
+    assert proj["current_record"]["year"] == 2024
+
+
+def test_co2_market_accepts_four_digit_threshold():
+    # B4: regex used to be \d{3}(?:\.\d+)? — refused to match "1000 ppm".
+    # Picking a threshold within ~1σ of the projection so we get a meaningful
+    # probability instead of one that underflows to exactly 0 or 1.
+    proj = {"projected_year_end_ppm": 1005.0, "residual_std_ppm": 5.0}
+    p = markets.co2_threshold_market_p("Will CO₂ exceed 1000 ppm in 2050?", proj)
+    assert p is not None and 0.5 < p < 1
+
+
+def test_methane_ppm_branch_works_without_literal_methane_word():
+    # B5: ppm branch used to require literal "methane" in the question text.
+    # In practice the outer routing already filters by "methane"/"ch4"/"ppb",
+    # so the inner guard was redundant AND broke "Will CH₄ exceed 1.95 ppm?".
+    proj = {"projected_year_end_ppb": 1940.0, "residual_std_ppb": 5.0}
+    p = markets.methane_threshold_market_p("Will CH4 exceed 1.95 ppm?", proj)
+    assert p is not None  # would have returned None pre-fix
+    assert p < 0.05  # 1.95 ppm == 1950 ppb, projection is 1940
+
+
+def test_ice_extent_market_handles_km_unit():
+    # B6: regex used to require literal "m" right after the number, so
+    # "below 4.5 km²" without "million" silently failed.
+    proj = {"projected_min_mkm2": 4.5, "residual_std_mkm2": 0.3}
+    # "million km²" — m of "million" consumed the unit char
+    p1 = markets.ice_min_market_p("Arctic minimum below 4 million km²", proj)
+    assert p1 is not None and 0 < p1 < 1
+    # Plain "km²" — needs the [mk] alternation we added
+    p2 = markets.ice_min_market_p("Arctic minimum below 4.5 km²", proj)
+    assert p2 is not None and 0 < p2 < 1
+
+
+def test_n2o_market_routed_correctly():
+    # B18: edges_for_markets didn't pass n2o_proj, so any N₂O market would
+    # never get a model probability. Verifies routing now picks it up.
+    n2o_proj = {"projected_year_end_ppb": 340.0, "residual_std_ppb": 0.5,
+                "ppb_per_year": 1.0}
+    fake_market = {
+        "_event_title": "Atmospheric N₂O in 2026",
+        "question": "Will atmospheric N2O exceed 342 ppb in 2026?",
+        "lastTradePrice": 0.30,
+    }
+    enriched = markets.edges_for_markets([fake_market], None, None, None, None, None, n2o_proj)
+    assert enriched[0]["_model_p"] is not None
+    assert enriched[0]["_edge_pp"] is not None

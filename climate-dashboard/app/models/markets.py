@@ -10,9 +10,12 @@ from typing import Optional
 
 from ..math_utils import normal_cdf
 
-_RE_LT = re.compile(r"(?:less than|below|under)\s*([\d.]+)\s*m", re.I)
-_RE_GE = re.compile(r"(?:at least|more than|above|over|exceed[a-z]*)\s*([\d.]+)\s*m", re.I)
-_RE_BETWEEN = re.compile(r"between\s*([\d.]+)\s*m?\s*(?:&|and|to|-)\s*([\d.]+)\s*m", re.I)
+# Ice-extent thresholds. The unit suffix accepts either "m" (million) or "k"
+# (km²) so that phrases like "below 4 million km²" and "below 4.5 km²" both
+# match. The number before the unit is captured.
+_RE_LT = re.compile(r"(?:less than|below|under)\s*([\d.]+)\s*[mk]", re.I)
+_RE_GE = re.compile(r"(?:at least|more than|above|over|exceed[a-z]*)\s*([\d.]+)\s*[mk]", re.I)
+_RE_BETWEEN = re.compile(r"between\s*([\d.]+)\s*[mk]?\s*(?:&|and|to|-)\s*([\d.]+)\s*[mk]", re.I)
 
 _RE_ANOMALY_GE = re.compile(r"(?:above|exceed[a-z]*|at least|over|greater than|more than)\s*\+?\s*([\d.]+)\s*°?\s*c", re.I)
 _RE_ANOMALY_LT = re.compile(r"(?:below|under|less than)\s*\+?\s*([\d.]+)\s*°?\s*c", re.I)
@@ -61,15 +64,18 @@ def temperature_anomaly_market_p(question: str, proj: dict) -> Optional[float]:
 
 
 def co2_threshold_market_p(question: str, proj: dict) -> Optional[float]:
+    """Threshold ppm pattern accepts 3- or 4-digit values so we're future-proof
+    when atmospheric CO₂ crosses 1000 ppm (or earlier, when markets just
+    happen to pose ridiculous thresholds)."""
     mu = proj.get("projected_year_end_ppm")
     sigma = max(proj.get("residual_std_ppm") or 0.5, 0.3)
     if mu is None:
         return None
     q = question.lower()
-    m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least|reach[a-z]*)\s*(\d{3}(?:\.\d+)?)\s*ppm", q)
+    m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least|reach[a-z]*)\s*(\d{3,4}(?:\.\d+)?)\s*ppm", q)
     if m:
         return 1.0 - normal_cdf((float(m.group(1)) - mu) / sigma)
-    m = re.search(r"(?:below|under|less than)\s*(\d{3}(?:\.\d+)?)\s*ppm", q)
+    m = re.search(r"(?:below|under|less than)\s*(\d{3,4}(?:\.\d+)?)\s*ppm", q)
     if m:
         return normal_cdf((float(m.group(1)) - mu) / sigma)
     return None
@@ -77,7 +83,9 @@ def co2_threshold_market_p(question: str, proj: dict) -> Optional[float]:
 
 def methane_threshold_market_p(question: str, proj: dict) -> Optional[float]:
     """Methane thresholds in markets are typically expressed in ppb (4 digits)
-    or occasionally ppm (1.9-2.0 with 'ppm' explicit). We accept both."""
+    or occasionally ppm (1.9-2.0 with 'ppm' explicit). Both branches are
+    reached for any market that ``edges_for_markets`` routes here — the
+    outer routing already checks for "methane"/"ch4"/"ppb"."""
     mu = proj.get("projected_year_end_ppb")
     sigma = max(proj.get("residual_std_ppb") or 5.0, 2.0)
     if mu is None:
@@ -89,10 +97,48 @@ def methane_threshold_market_p(question: str, proj: dict) -> Optional[float]:
     m = re.search(r"(?:below|under|less than)\s*(\d{4}(?:\.\d+)?)\s*ppb", q)
     if m:
         return normal_cdf((float(m.group(1)) - mu) / sigma)
+    # ppm fallback: 1.95 ppm == 1950 ppb. We don't gate on the literal word
+    # "methane" here because the outer routing already ensures the question
+    # is methane-related (it checks "methane"/"ch4"/"ppb").
     m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least)\s*([12](?:\.\d{1,3})?)\s*ppm", q)
-    if m and "methane" in q:
+    if m:
         thr = float(m.group(1)) * 1000.0
         return 1.0 - normal_cdf((thr - mu) / sigma)
+    return None
+
+
+def n2o_threshold_market_p(question: str, proj: dict) -> Optional[float]:
+    """N₂O ppb threshold matcher. N₂O sits around 337-340 ppb (3 digits)."""
+    mu = proj.get("projected_year_end_ppb")
+    sigma = max(proj.get("residual_std_ppb") or 0.5, 0.3)
+    if mu is None:
+        return None
+    q = question.lower()
+    m = re.search(r"(?:exceed[a-z]*|above|over|more than|at least|reach[a-z]*)\s*(\d{3}(?:\.\d+)?)\s*ppb", q)
+    if m:
+        return 1.0 - normal_cdf((float(m.group(1)) - mu) / sigma)
+    m = re.search(r"(?:below|under|less than)\s*(\d{3}(?:\.\d+)?)\s*ppb", q)
+    if m:
+        return normal_cdf((float(m.group(1)) - mu) / sigma)
+    return None
+
+
+def _safe_implied(m: dict) -> Optional[float]:
+    """Pick a usable implied probability from a Polymarket market dict.
+
+    A literal 0.0 means "no trade and no bid" — NOT "the market thinks YES
+    is a 0% event". Returning 0.0 in that case computes monstrous +95pp
+    edges against thin-air prices and pollutes the top-opportunities ribbon.
+    Only accept strictly-between-0-and-1 values.
+    """
+    for k in ("lastTradePrice", "bestBid"):
+        v = m.get(k)
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 < f < 1:
+            return f
     return None
 
 
@@ -101,16 +147,14 @@ def edges_for_markets(markets: list[dict],
                       co2_proj: Optional[dict],
                       arctic_proj: Optional[dict] = None,
                       antarctic_proj: Optional[dict] = None,
-                      methane_proj: Optional[dict] = None) -> list[dict]:
+                      methane_proj: Optional[dict] = None,
+                      n2o_proj: Optional[dict] = None) -> list[dict]:
     """Attach a model probability + edge (in pp) to markets we can score."""
     out = []
     for m in markets:
         title = ((m.get("_event_title") or "") + " " + (m.get("question") or "")).strip()
         tl = title.lower()
-        try:
-            implied = float(m.get("lastTradePrice") or m.get("bestBid") or 0)
-        except (ValueError, TypeError):
-            implied = None
+        implied = _safe_implied(m)
         model_p: Optional[float] = None
         rationale = ""
 
@@ -158,13 +202,25 @@ def edges_for_markets(markets: list[dict],
                              f"σ={co2_proj['residual_std_ppm']} ppm), "
                              f"+{co2_proj['ppm_per_year']}/yr")
 
-        if model_p is None and methane_proj and ("methane" in tl or "ch4" in tl or "ppb" in tl):
+        if model_p is None and methane_proj and ("methane" in tl or "ch4" in tl
+                                                  or ("ppb" in tl and "n2o" not in tl
+                                                      and "nitrous" not in tl)):
             p = methane_threshold_market_p(title, methane_proj)
             if p is not None:
                 model_p = max(0.0, min(1.0, p))
                 rationale = (f"N(μ={methane_proj['projected_year_end_ppb']} ppb, "
                              f"σ={methane_proj['residual_std_ppb']} ppb), "
                              f"+{methane_proj['ppb_per_year']}/yr")
+
+        # 7) N₂O threshold markets — none on Polymarket today, but the
+        # routing is here so the moment one appears we score it correctly.
+        if model_p is None and n2o_proj and ("n2o" in tl or "nitrous" in tl):
+            p = n2o_threshold_market_p(title, n2o_proj)
+            if p is not None:
+                model_p = max(0.0, min(1.0, p))
+                rationale = (f"N(μ={n2o_proj['projected_year_end_ppb']} ppb, "
+                             f"σ={n2o_proj['residual_std_ppb']} ppb), "
+                             f"+{n2o_proj['ppb_per_year']}/yr")
 
         edge = (round((model_p - implied) * 100, 1)
                 if implied is not None and model_p is not None else None)

@@ -170,23 +170,27 @@ def api_markets():
     c = co2_src.fetch()
     s = sea_ice_src.fetch()
     ch4 = methane_src.fetch()
+    n2o = n2o_src.fetch()
     gp = temperature_model.projection(g) if g else None
     cp = co2_model.projection(c) if c else None
     ap = sea_ice_model.arctic_min_projection(s) if s else None
     aap = sea_ice_model.antarctic_min_projection(s) if s else None
     mp = methane_model.projection(ch4) if ch4 else None
-    enriched = markets_model.edges_for_markets(markets, gp, cp, ap, aap, mp)
+    np_ = n2o_model.projection(n2o) if n2o else None
+    enriched = markets_model.edges_for_markets(markets, gp, cp, ap, aap, mp, np_)
     return jsonify({
         "markets": enriched,
         "count": len(enriched),
         "gistemp_projection": gp,
         "co2_projection": cp,
         "methane_projection": mp,
+        "n2o_projection": np_,
         "arctic_min_projection": ap,
         "antarctic_min_projection": aap,
         "temperature_thresholds": temperature_model.threshold_probs(gp),
         "co2_thresholds": co2_model.threshold_probs(cp),
         "methane_thresholds": methane_model.threshold_probs(mp),
+        "n2o_thresholds": n2o_model.threshold_probs(np_),
     })
 
 

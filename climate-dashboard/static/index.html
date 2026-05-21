@@ -532,26 +532,38 @@ function fanChart(containerSelector, history, forecast, color) {
   const el = document.querySelector(containerSelector);
   if (!el) return null;
 
-  const lastX = history[history.length - 1].x;
-  const lastY = history[history.length - 1].y;
+  const N = history.length;
+  const lastX = history[N - 1].x;
+  const lastY = history[N - 1].y;
   const horizonX = forecast.x;
-  // Build forecast cone in 8 steps so uncertainty grows visibly with horizon.
+  // Build forecast steps strictly AFTER the last history point so we don't
+  // duplicate that x-value on the axis. The cone widens linearly from
+  // σ=0 at the bridge to σ=forecast.sigma at horizon.
   const STEPS = 8;
-  const forecastPts = [];
+  const forecastX = [];
+  const forecastMu = [];
+  const forecastLo = [];
+  const forecastHi = [];
   for (let i = 1; i <= STEPS; i++) {
     const t = i / STEPS;
-    forecastPts.push({
-      x: lastX + (horizonX - lastX) * t,
-      mu: lastY + (forecast.mu - lastY) * t,
-      sig: forecast.sigma * t,  // linearly widening
-    });
+    const x = lastX + (horizonX - lastX) * t;
+    const mu = lastY + (forecast.mu - lastY) * t;
+    const sig = forecast.sigma * t;
+    forecastX.push(x);
+    forecastMu.push(mu);
+    forecastLo.push(mu - Z90 * sig);
+    forecastHi.push(mu + Z90 * sig);
   }
-  const allX = history.map(p => p.x).concat([lastX]).concat(forecastPts.map(p => p.x));
-  // Observed series — historical values, then nulls so the line stops at "now"
-  const observed = history.map(p => p.y).concat([lastY]).concat(forecastPts.map(() => null));
-  const median = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu));
-  const lower = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu - Z90 * p.sig));
-  const upper = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu + Z90 * p.sig));
+  // x-axis: history's x-values + forecast x-values (no duplicates)
+  const allX = history.map(p => p.x).concat(forecastX);
+  // Observed series carries history then trails off into nulls
+  const observed = history.map(p => p.y).concat(new Array(STEPS).fill(null));
+  // Median/band series are null during history but BOTH start at the last
+  // history point (=lastY, σ=0) so the cone emerges from a single bridge
+  // value instead of being disconnected from the historical line.
+  const median = new Array(N - 1).fill(null).concat([lastY], forecastMu);
+  const lower = new Array(N - 1).fill(null).concat([lastY], forecastLo);
+  const upper = new Array(N - 1).fill(null).concat([lastY], forecastHi);
 
   // uPlot wants column-oriented data: [xs, series1, series2, …]
   const data = [allX, observed, median, lower, upper];
@@ -1082,8 +1094,12 @@ async function loadCards() {
     const cur = sst.series.find(s => /^\d{4}$/.test(s.name) && Number(s.name) === new Date().getUTCFullYear());
     const mean = sst.series.find(s => /mean/i.test(s.name));
     if (cur?.data) {
-      const lastIdx = cur.data.findIndex(v => v === null) - 1;
-      const idx = lastIdx > 0 ? lastIdx : cur.data.length - 1;
+      // findIndex returns -1 if no null is found (full year of data) — then
+      // we want the last valid index. If null is found at position p, last
+      // valid is p-1. We must accept lastIdx === 0 (only Jan 1 has data).
+      const firstNull = cur.data.findIndex(v => v === null);
+      const lastIdx = firstNull === -1 ? cur.data.length - 1 : firstNull - 1;
+      const idx = lastIdx >= 0 ? lastIdx : cur.data.length - 1;
       const v = cur.data[idx];
       const baseline = mean?.data?.[idx];
       const anom = v && baseline ? v - baseline : null;
@@ -1175,6 +1191,13 @@ function topOpportunities(markets, n = 3) {
   return opps.slice(0, n);
 }
 
+function _kellyMultiplierLabel(frac) {
+  if (frac === 0.25) return "¼K";
+  if (frac === 0.5) return "½K";
+  if (frac === 1) return "fullK";
+  return `${frac}×K`;
+}
+
 function renderOpps() {
   const root = document.getElementById("opps");
   if (!root) return;
@@ -1183,24 +1206,31 @@ function renderOpps() {
     root.innerHTML = `<div class="opp" style="border-left-color:var(--border);cursor:default"><div class="q" style="color:var(--text-3);font-style:italic">No high-conviction opportunities right now — every scored market is either close to fair or thinly traded.</div></div>`;
     return;
   }
+  const kFrac = Number(document.getElementById("kelly-fraction").value) || 0.5;
   root.innerHTML = opps.map(m => {
     const edge = m._edge_pp;
     const cls = edge > 0 ? "pos" : "neg";
-    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : "#";
+    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
     const liq = Number(m.liquidity || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
     const kelly = kellyBet(m._model_p, m._implied_p);
-    const kPct = kelly && kelly.fraction > 0 ? `${(kelly.fraction * 50).toFixed(1)}% (½K ${kelly.side})` : "—";
-    return `
-      <a class="opp ${edge < 0 ? "neg" : ""}" href="${url}" target="_blank" rel="noopener">
-        <div class="q">${(m.question || "")}</div>
-        <div class="meta">
-          <span class="edge ${cls}">${edge > 0 ? "+" : ""}${edge.toFixed(1)} pp</span>
-          · model ${pct(m._model_p)} vs implied ${pct(m._implied_p)}
-          · liq $${liq}
-          · ${kPct}
-        </div>
-      </a>
-    `;
+    // Mirror the markets-table convention: respect the user's selected
+    // Kelly multiplier instead of hard-coding half-Kelly.
+    const kPct = kelly && kelly.fraction > 0
+      ? `${(kelly.fraction * kFrac * 100).toFixed(1)}% (${_kellyMultiplierLabel(kFrac)} ${kelly.side})`
+      : "—";
+    const meta = `
+      <div class="meta">
+        <span class="edge ${cls}">${edge > 0 ? "+" : ""}${edge.toFixed(1)} pp</span>
+        · model ${pct(m._model_p)} vs implied ${pct(m._implied_p)}
+        · liq $${liq}
+        · ${kPct}
+      </div>`;
+    const inner = `<div class="q">${(m.question || "")}</div>${meta}`;
+    // Don't render a clickable <a> for markets without a Polymarket slug —
+    // it would scroll to top instead of going anywhere useful.
+    return url
+      ? `<a class="opp ${edge < 0 ? "neg" : ""}" href="${url}" target="_blank" rel="noopener">${inner}</a>`
+      : `<div class="opp ${edge < 0 ? "neg" : ""}" style="cursor:default">${inner}</div>`;
   }).join("");
 }
 
@@ -1265,7 +1295,10 @@ function renderMarkets() {
       return (Number(b.liquidity || 0) - Number(a.liquidity || 0));
     }
     if (sortBy === "end") {
-      return new Date(a.endDate || "9999") - new Date(b.endDate || "9999");
+      // Use +Infinity for markets with no end date so they sink to the
+      // bottom regardless of the parser's interpretation of "9999".
+      const t = (m) => m.endDate ? new Date(m.endDate).getTime() : Infinity;
+      return t(a) - t(b);
     }
     return 0;
   });
@@ -1482,11 +1515,16 @@ const _LS_KFRAC = "climate.kellyFraction";
   if (kf) document.getElementById("kelly-fraction").value = kf;
 })();
 document.getElementById("bankroll").addEventListener("input", e => {
-  if (e.target.value) localStorage.setItem(_LS_BANKROLL, e.target.value);
+  // Only persist a strictly-positive bankroll. Empty string or "0" gets the
+  // entry removed so localStorage isn't polluted with non-actionable values.
+  const v = Number(e.target.value);
+  if (e.target.value && v > 0) localStorage.setItem(_LS_BANKROLL, e.target.value);
   else localStorage.removeItem(_LS_BANKROLL);
 });
 document.getElementById("kelly-fraction").addEventListener("change", e => {
   localStorage.setItem(_LS_KFRAC, e.target.value);
+  // The opps ribbon also displays Kelly fractions — keep it in sync.
+  renderOpps();
 });
 
 loadRegime();

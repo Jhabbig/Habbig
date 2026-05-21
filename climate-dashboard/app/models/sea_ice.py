@@ -44,7 +44,10 @@ def daily_record_check(sea_ice: dict) -> Optional[dict]:
 
 
 def _is_post_arctic_min(month: int, day: int) -> bool:
-    return month >= 9 and day >= 15
+    # Arctic minimum is typically mid-September. After ~Sep 15 we treat the
+    # year's minimum as found. Months 10-12 + early-January count as "post-min"
+    # too — only Jan-Aug + early-Sep are pre-min.
+    return month > 9 or (month == 9 and day >= 15)
 
 
 def _is_post_antarctic_min(month: int, day: int) -> bool:

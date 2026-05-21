@@ -40,7 +40,12 @@ def projection(gistemp: dict) -> Optional[dict]:
     drift_std = math.sqrt(sum((d - drift) ** 2 for d in diffs) / len(diffs)) if len(diffs) > 1 else 0.05
     proj = round(ytd_mean + drift, 3)
 
-    record = max(annual, key=lambda a: a["anomaly_c"])
+    # Exclude the current year from the record candidates — otherwise the
+    # moment GISTEMP publishes the J-D annual mean for ``cur_year``, that
+    # value becomes the "current record" and the model trivially predicts a
+    # 50/50 chance of breaking it.
+    prior = [a for a in annual if a["year"] != cur_year]
+    record = max(prior, key=lambda a: a["anomaly_c"]) if prior else annual[-1]
     p_breaks_record = normal_cdf((proj - record["anomaly_c"]) / max(drift_std, 0.01))
 
     return {
