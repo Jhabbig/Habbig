@@ -1033,6 +1033,7 @@ async function loadCards() {
   const seaData = await getJSON("/api/sea-ice");
   const ch4Data = await getJSON("/api/methane");
   const n2oData = await getJSON("/api/n2o");
+  const sf6Data = await getJSON("/api/sf6");
 
   const cards = [];
   // Each entry: {id, history, forecast, color} — wired to fan-chart containers
@@ -1182,6 +1183,60 @@ async function loadCards() {
         ${threshHtml}
         <div class="fanchart" id="n2o-fan"></div>
         ${calibBadge(s.n2o.calibration)}
+      </div>
+    `);
+  }
+
+  // Sulfur hexafluoride card (SF₆)
+  if (s?.sf6?.latest) {
+    const l = s.sf6.latest;
+    const p = s.sf6.projection;
+    if (p) {
+      const monthly = (sf6Data?.monthly || []).slice(-60);
+      fans.push({
+        id: "sf6-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppt })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppt,
+                    sigma: p.residual_std_ppt || 0.05 },
+        color: "#ec4899",
+      });
+    }
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric SF₆</h3>
+        <div class="big">${fmt(l.ppt, 2)} <span style="font-size:14px;color:var(--text-2)">ppt</span></div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppt_per_year ?? 0, 2)} ppt/yr · σ=${fmt(p?.residual_std_ppt ?? 0, 2)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppt ?? 0, 2)} ppt</b></div>
+        <div class="fanchart" id="sf6-fan"></div>
+        <div class="calib-badge" style="margin-top:8px;color:var(--text-3)">
+          GWP ~25,000× CO₂ over 100 yr · electrical-industry tracer
+        </div>
+      </div>
+    `);
+  }
+
+  // Total radiative forcing card — derived from the GHG cards above
+  if (s?.forcing) {
+    const f = s.forcing;
+    const breakdown = [];
+    if ("co2_wm2" in f) breakdown.push(["CO₂", f.co2_wm2, "#fbbf24"]);
+    if ("ch4_wm2" in f) breakdown.push(["CH₄", f.ch4_wm2, "#a78bfa"]);
+    if ("n2o_wm2" in f) breakdown.push(["N₂O", f.n2o_wm2, "#fb923c"]);
+    if ("sf6_wm2" in f) breakdown.push(["SF₆", f.sf6_wm2, "#ec4899"]);
+    const breakdownHtml = breakdown.map(([label, v, color]) =>
+      `<span class="threshold-pill" style="color:${color};border-color:${color}40">${label} <b style="color:${color}">${v.toFixed(2)} W/m²</b></span>`,
+    ).join("");
+    cards.push(`
+      <div class="card">
+        <h3>Anthropogenic radiative forcing</h3>
+        <div class="big">${fmt(f.total_wm2, 2)} <span style="font-size:14px;color:var(--text-2)">W/m²</span></div>
+        <div class="sub">Above pre-industrial (1750) · effective CO₂ <b>${fmt(f.effective_co2_ppm, 0)} ppm</b> vs actual ${fmt(f.current_co2_ppm, 1)} ppm</div>
+        <div class="thresholds" style="margin-top:8px">${breakdownHtml}</div>
+        <div class="calib-badge" style="margin-top:8px">
+          <a href="/methodology" title="See methodology for the formulas">Method</a>
+          IPCC AR5 / Myhre 1998${!f.have_all_gases ? " · partial (missing some gases)" : ""}
+        </div>
       </div>
     `);
   }

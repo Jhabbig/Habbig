@@ -56,6 +56,36 @@ MODELS = [
         "code": "app/models/n2o.py",
     },
     {
+        "id": "sf6_year_end_projection",
+        "name": "Year-end atmospheric SF₆",
+        "summary": "Same 24-month linear regression as the other GHGs, on NOAA GML globally-averaged sulfur hexafluoride. SF₆ rises ~0.3 ppt/yr almost monotonically (electrical-industry leaks; ~25,000× CO₂'s 100-yr GWP) so the σ floor is the tightest at 0.05 ppt.",
+        "inputs": ["NOAA GML globally-averaged monthly SF₆ (ppt)"],
+        "outputs": {
+            "projected_year_end_ppt": "Year-end SF₆ projection",
+            "ppt_per_year": "Fitted slope",
+            "residual_std_ppt": "Floored at 0.05 ppt",
+        },
+        "code": "app/models/sf6.py",
+    },
+    {
+        "id": "radiative_forcing",
+        "name": "Total anthropogenic GHG radiative forcing",
+        "summary": "Combines CO₂ + CH₄ + N₂O + SF₆ atmospheric concentrations into a single W/m² number — the actual climate-relevant metric. Uses the simplified IPCC AR5 / Myhre 1998 formulas, with the CH₄ ↔ N₂O absorption-band overlap term. Reports per-gas breakdown plus 'effective CO₂ ppm' — the CO₂ concentration that alone would produce the same total forcing.",
+        "inputs": [
+            "Current monthly means from NOAA GML for CO₂, CH₄, N₂O, SF₆",
+            "Pre-industrial (1750) reference values: CO₂=278 ppm, CH₄=722 ppb, N₂O=270 ppb, SF₆=0 ppt",
+        ],
+        "outputs": {
+            "co2_wm2": "CO₂ contribution to radiative forcing",
+            "ch4_wm2": "CH₄ contribution (with N₂O overlap correction)",
+            "n2o_wm2": "N₂O contribution (with CH₄ overlap correction)",
+            "sf6_wm2": "SF₆ contribution",
+            "total_wm2": "Sum across gases",
+            "effective_co2_ppm": "CO₂ concentration that would produce the same total forcing alone",
+        },
+        "code": "app/models/forcing.py",
+    },
+    {
         "id": "arctic_min_projection",
         "name": "Arctic annual-minimum sea ice extent",
         "summary": "Linear regression of the last 25 years' annual minimum extents against year. Current year is excluded from the fit until its minimum is reached (mid-September).",
@@ -134,6 +164,10 @@ BACKTESTS = [
     {
         "id": "n2o_backtest",
         "summary": "Same June-cutoff 24-month regression as CO₂/CH₄, scored against the actual December N₂O reading.",
+    },
+    {
+        "id": "sf6_backtest",
+        "summary": "Same June-cutoff 24-month regression, scored against the actual December SF₆ reading.",
     },
 ]
 

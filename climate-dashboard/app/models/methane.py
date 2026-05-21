@@ -5,7 +5,7 @@ from typing import Optional
 
 from ..math_utils import linear_regression, normal_cdf
 
-_MIN_TAIL = 6
+_MIN_TAIL = 12
 _TAIL_MONTHS = 24
 _MIN_SIGMA_PPB = 2.0
 

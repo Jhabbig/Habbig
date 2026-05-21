@@ -26,15 +26,18 @@ from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
 from app.fetchers import polymarket as polymarket_src
 from app.fetchers import sea_ice as sea_ice_src
+from app.fetchers import sf6 as sf6_src
 from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app.models import co2 as co2_model
 from app.models import calibration
+from app.models import forcing as forcing_model
 from app.models import highlights as highlights_model
 from app.models import markets as markets_model
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
 from app.models import sea_ice as sea_ice_model
+from app.models import sf6 as sf6_model
 from app.models import temperature as temperature_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -144,6 +147,35 @@ def api_n2o():
                     "thresholds": n2o_model.threshold_probs(proj)})
 
 
+@app.route("/api/sf6")
+def api_sf6():
+    s = sf6_src.fetch()
+    if not s:
+        return jsonify({"error": "SF6 fetch failed"}), 503
+    proj = sf6_model.projection(s)
+    return jsonify({**s, "projection": proj,
+                    "thresholds": sf6_model.threshold_probs(proj)})
+
+
+@app.route("/api/forcing")
+def api_forcing():
+    """Combined GHG radiative forcing in W/m² above pre-industrial.
+
+    No new HTTP fetches — composes CO₂ + CH₄ + N₂O + SF₆ data we already
+    cache. Returns per-gas breakdown plus an "effective CO₂ ppm" framing
+    (the CO₂ concentration alone that would produce the same forcing).
+    """
+    payload = forcing_model.compute(
+        co2=co2_src.fetch(),
+        methane=methane_src.fetch(),
+        n2o=n2o_src.fetch(),
+        sf6=sf6_src.fetch(),
+    )
+    if payload is None:
+        return jsonify({"error": "CO2 data required for forcing calculation"}), 503
+    return jsonify(payload)
+
+
 @app.route("/api/sea-ice")
 def api_sea_ice():
     s = sea_ice_src.fetch()
@@ -221,12 +253,15 @@ def api_summary():
     o = oni_src.fetch()
     ch4 = methane_src.fetch()
     n2o = n2o_src.fetch()
+    sf6 = sf6_src.fetch()
     gp = temperature_model.projection(g) if g else None
     cp = co2_model.projection(c) if c else None
     ap = sea_ice_model.arctic_min_projection(s) if s else None
     aap = sea_ice_model.antarctic_min_projection(s) if s else None
     mp = methane_model.projection(ch4) if ch4 else None
     np_ = n2o_model.projection(n2o) if n2o else None
+    sp = sf6_model.projection(sf6) if sf6 else None
+    forcing = forcing_model.compute(co2=c, methane=ch4, n2o=n2o, sf6=sf6)
     return jsonify({
         "gistemp": {
             "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
@@ -256,6 +291,12 @@ def api_summary():
             "calibration": calibration.summary(
                 n2o_model.backtest(n2o) if n2o else [], "error_ppb", "ppb"),
         },
+        "sf6": {
+            "latest": sf6["latest"] if sf6 else None,
+            "projection": sp,
+            "thresholds": sf6_model.threshold_probs(sp),
+        },
+        "forcing": forcing,
         "sea_ice": {
             "record_check": sea_ice_model.daily_record_check(s) if s else None,
             "arctic_projection": ap,

@@ -18,13 +18,16 @@ from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
 from app.fetchers import sea_ice as sea_ice_src
+from app.fetchers import sf6 as sf6_src
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
+from app.models import forcing as forcing_model
 from app.models import highlights as highlights_model
 from app.models import markets
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
 from app.models import sea_ice as sea_ice_model
+from app.models import sf6 as sf6_model
 from app.models import temperature as temperature_model
 
 FIXTURES = Path(os.path.dirname(__file__)) / "fixtures"
@@ -411,6 +414,55 @@ def test_highlights_returns_nothing_for_quiet_data():
     # The single year doesn't count as a "new record" (no prior to compare to),
     # and 0.5°C doesn't trigger the >1.0°C streak.
     assert items == []
+
+
+def test_sf6_parser_and_projection():
+    raw = sf6_src.parse(_load("sf6_sample.csv"))
+    assert len(raw) == 24
+    assert raw[0]["ppt"] == 11.10
+    proj = sf6_model.projection({"monthly": raw})
+    assert proj is not None
+    # SF6 rises ~0.3 ppt/yr (we encoded that linearly in the fixture)
+    assert 0.2 < proj["ppt_per_year"] < 0.5
+    assert proj["residual_std_ppt"] >= 0.05  # floor
+
+
+def test_forcing_returns_none_without_co2():
+    # CO₂ is required — without it nothing else is meaningful
+    assert forcing_model.compute(co2=None, methane={"latest": {"ppb": 1900}}) is None
+
+
+def test_forcing_co2_only_matches_alpha_ln_ratio():
+    # With only CO₂ at the pre-industrial value, forcing should be ~0.
+    pre = {"latest": {"ppm": 278.0}}
+    result = forcing_model.compute(co2=pre)
+    assert abs(result["co2_wm2"]) < 1e-9
+    assert abs(result["total_wm2"]) < 1e-9
+    # Effective CO₂ ppm equals the input when only CO₂ contributes
+    assert abs(result["effective_co2_ppm"] - 278.0) < 0.01
+
+
+def test_forcing_current_conditions_sane():
+    # Approximately today's values: 425 ppm CO₂, 1925 ppb CH₄, 337 ppb N₂O,
+    # 11.5 ppt SF₆. Total anthropogenic forcing should be in the IPCC AR6
+    # ballpark of ~3.0-3.3 W/m².
+    payload = forcing_model.compute(
+        co2={"latest": {"ppm": 425.0}},
+        methane={"latest": {"ppb": 1925.0}},
+        n2o={"latest": {"ppb": 337.0}},
+        sf6={"latest": {"ppt": 11.5}},
+    )
+    assert payload["co2_wm2"] > 1.8 and payload["co2_wm2"] < 2.5
+    # CH4 and N2O each contribute several tenths of a W/m²
+    assert 0.3 < payload["ch4_wm2"] < 0.7
+    assert 0.15 < payload["n2o_wm2"] < 0.35
+    # SF6 is small but non-zero
+    assert payload["sf6_wm2"] > 0
+    # Total in the right ballpark
+    assert 2.5 < payload["total_wm2"] < 3.8
+    # Effective CO2 framing — should be in the upper-400s ppm range
+    assert 450 < payload["effective_co2_ppm"] < 600
+    assert payload["have_all_gases"] is True
 
 
 def test_n2o_market_routed_correctly():
