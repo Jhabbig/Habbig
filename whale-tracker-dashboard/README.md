@@ -60,6 +60,7 @@ docker compose up --build whales
 | `prices.py` | Stooq daily-close fetcher with local SQLite cache. Concurrency-capped, normalises tickers to `<ticker>.us`. Co-fetches SPY as the benchmark. |
 | `bayesian.py` | Beta(α,β) posterior + Wilson-score 95% confidence interval. Hand-rolled to avoid pulling scipy. |
 | `skill.py` | Outcome labeler + skill leaderboards. For each insider buy/sell, activist filing, and congressional trade older than `SKILL_HORIZON_DAYS`, compares ticker forward return to SPY → win/loss. Aggregates per filer into a posterior. |
+| `backtest.py` | First-crossing backtest of the synthesis score. For each ticker, finds the earliest date its synthesis crosses a threshold, buys at the next close, holds N days, computes alpha vs SPY. Emits per-trade rows, summary stats (win rate, mean / total / annualised alpha, Sharpe), and a daily equity curve for plotting. |
 | `signals.py` | Computes ranked feeds over the persisted DB: insider clusters (now annotated with each buyer's skill posterior), recent buys, activist stakes, M&A events, fund list / fund holdings / position changes, ticker holders, congress trades, ticker synthesis (now incorporates fund + congress signals), hot leaderboard. |
 | `db.py` | SQLite schema + helpers. Tables: `insider_txn`, `activist_stake`, `ma_event`, `fund_filing`, `fund_holding`, `congress_trade`, `price_daily`, `filer_outcome`, `ingest_state`. WAL mode. |
 
@@ -97,6 +98,7 @@ docker compose up --build whales
 | `GET /api/options-by-ticker?ticker=<X>&days=` | Options flow for one ticker. |
 | `GET /api/dark-pool?days=&min_premium=&limit=` | Dark pool prints (paid feed). |
 | `GET /api/dark-pool-by-ticker?ticker=<X>&days=` | Dark pool prints for one ticker. |
+| `GET /api/backtest?threshold=&hold_days=&start_date=&end_date=&window_days=` | First-crossing backtest of the synthesis score. Returns `{trades, summary, equity_curve}` with per-trade alpha vs SPY, win rate, mean/median/total/annualised alpha, Sharpe, best/worst trade, and a daily equity curve. |
 | `POST /api/admin/resolve-cusips?limit=` | Resolve unresolved 13F CUSIPs via OpenFIGI; backfills `fund_holding.issuer_ticker`. DEV_MODE only. |
 | `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |
 | `GET /api/skill-detail?filer_type=<...>&filer_id=<X>&horizon_days=30` | Per-filer skill posterior + last N labeled outcomes. |

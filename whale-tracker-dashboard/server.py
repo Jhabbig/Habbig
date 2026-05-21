@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+import backtest as backtest_mod
 import cik_ticker
 import db
 import events
@@ -379,6 +380,29 @@ async def api_skill_detail(
             filer_type=filer_type, filer_id=filer_id,
             horizon_days=horizon_days, recent_limit=recent_limit,
         ),
+    )
+
+
+# ─── Backtest ───────────────────────────────────────────────────────
+
+@app.get("/api/backtest")
+async def api_backtest(
+    threshold: float = Query(5.0, ge=0, le=100),
+    hold_days: int = Query(30, ge=1, le=365),
+    start_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    window_days: int = Query(90, ge=1, le=365),
+):
+    """Backtest the synthesis score's predictive power.
+
+    Strategy: for each ticker with any signal activity in [start, end],
+    find the earliest date where synthesis_score >= threshold, buy at
+    next-day close, hold for `hold_days`, compute alpha vs SPY. Aggregate.
+    """
+    return await backtest_mod.run_backtest(
+        threshold=threshold, hold_days=hold_days,
+        start_date=start_date, end_date=end_date,
+        window_days=window_days,
     )
 
 

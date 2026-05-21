@@ -149,6 +149,7 @@
   <button data-tab="options">Options Flow</button>
   <button data-tab="darkpool">Dark Pool</button>
   <button data-tab="skill">Skill</button>
+  <button data-tab="backtest">Backtest</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
 </nav>
@@ -386,6 +387,29 @@
         <th class="num">Avg α</th><th>Status</th>
       </tr></thead>
       <tbody><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ── Backtest ─────────────────────────────────────────────── -->
+  <section id="tab-backtest" hidden>
+    <div class="controls">
+      <label>Threshold <input type="number" id="bt-thr" value="5" min="0" max="100" step="0.5"></label>
+      <label>Hold (days) <input type="number" id="bt-hold" value="30" min="1" max="365"></label>
+      <label>Window (days) <input type="number" id="bt-win" value="90" min="1" max="365"></label>
+      <label>Start <input type="text" id="bt-start" placeholder="YYYY-MM-DD"></label>
+      <label>End <input type="text" id="bt-end" placeholder="YYYY-MM-DD"></label>
+      <button id="bt-go">Run</button>
+      <span class="live">First-crossing strategy: buy each ticker the first time synthesis ≥ threshold, hold for N days, compare vs SPY.</span>
+    </div>
+    <div id="bt-summary"></div>
+    <div id="bt-curve" style="margin:12px 0"></div>
+    <table id="bt-table">
+      <thead><tr>
+        <th>Ticker</th><th>Signal date</th><th>Buy</th><th>Sell</th>
+        <th class="num">Score</th><th class="num">Ticker %</th><th class="num">SPY %</th>
+        <th class="num">Alpha %</th><th>Result</th>
+      </tr></thead>
+      <tbody><tr><td colspan="9" class="empty">Run a backtest above to populate.</td></tr></tbody>
     </table>
   </section>
 
@@ -824,6 +848,99 @@ async function loadSkill() {
   }
 }
 
+// ── Backtest ──
+// Default the start/end inputs to last 1Y on first open.
+(function initBacktestDates(){
+  const e = new Date();
+  const s = new Date(); s.setFullYear(s.getFullYear() - 1);
+  const fmt = d => d.toISOString().slice(0,10);
+  $("#bt-start").value = fmt(s);
+  $("#bt-end").value   = fmt(e);
+})();
+
+async function loadBacktest() {
+  const thr   = +$("#bt-thr").value || 5;
+  const hold  = +$("#bt-hold").value || 30;
+  const win   = +$("#bt-win").value || 90;
+  const start = $("#bt-start").value;
+  const end   = $("#bt-end").value;
+  const summary = $("#bt-summary");
+  const curve   = $("#bt-curve");
+  const tb      = $("#bt-table tbody");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    summary.innerHTML = `<div class="err">Dates must be YYYY-MM-DD.</div>`;
+    return;
+  }
+  summary.innerHTML = `<div class="empty">Running…</div>`;
+  curve.innerHTML = "";
+  tb.innerHTML = `<tr><td colspan="9" class="empty">Running…</td></tr>`;
+  try {
+    const q = new URLSearchParams({threshold: thr, hold_days: hold, window_days: win, start_date: start, end_date: end});
+    const r = await fetchJSON(`/api/backtest?${q.toString()}`);
+    const s = r.summary || {};
+    summary.innerHTML = `
+      <div class="syn-grid">
+        <div class="syn-card"><h4>Trades</h4><div class="v">${s.n_trades||0}</div></div>
+        <div class="syn-card"><h4>Win rate</h4><div class="v">${((s.win_rate||0)*100).toFixed(1)}%</div></div>
+        <div class="syn-card"><h4>Mean α</h4><div class="v ${(s.mean_alpha_pct||0)>=0?"pos":"neg"}">${(s.mean_alpha_pct>=0?"+":"")}${(s.mean_alpha_pct||0).toFixed(2)}%</div></div>
+        <div class="syn-card"><h4>Median α</h4><div class="v ${(s.median_alpha_pct||0)>=0?"pos":"neg"}">${(s.median_alpha_pct>=0?"+":"")}${(s.median_alpha_pct||0).toFixed(2)}%</div></div>
+        <div class="syn-card"><h4>Total α</h4><div class="v ${(s.total_return_pct||0)>=0?"pos":"neg"}">${(s.total_return_pct>=0?"+":"")}${(s.total_return_pct||0).toFixed(2)}%</div></div>
+        <div class="syn-card"><h4>Annualised</h4><div class="v ${(s.annualised_alpha_pct||0)>=0?"pos":"neg"}">${(s.annualised_alpha_pct>=0?"+":"")}${(s.annualised_alpha_pct||0).toFixed(1)}%</div></div>
+        <div class="syn-card"><h4>Sharpe</h4><div class="v">${(s.sharpe||0).toFixed(2)}</div></div>
+        <div class="syn-card"><h4>Best / worst</h4><div class="v"><span class="pos">${(s.best_alpha_pct>=0?"+":"")}${(s.best_alpha_pct||0).toFixed(1)}%</span> / <span class="neg">${(s.worst_alpha_pct||0).toFixed(1)}%</span></div></div>
+      </div>`;
+    if ((r.equity_curve||[]).length) {
+      curve.innerHTML = renderEquityCurve(r.equity_curve);
+    }
+    if (!r.trades || !r.trades.length) {
+      tb.innerHTML = `<tr><td colspan="9" class="empty">No trades fired. Try a lower threshold or wider window.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = r.trades.map(t => `
+      <tr>
+        <td><span class="ticker">${esc(t.ticker)}</span></td>
+        <td>${esc(t.signal_date)}</td>
+        <td>${esc(t.buy_date)}</td>
+        <td>${esc(t.sell_date)}</td>
+        <td class="num">${t.score_at_signal}</td>
+        <td class="num ${t.return_pct>=0?"pos":"neg"}">${(t.return_pct>=0?"+":"")}${t.return_pct}%</td>
+        <td class="num ${t.benchmark_pct>=0?"pos":"neg"}">${(t.benchmark_pct>=0?"+":"")}${t.benchmark_pct}%</td>
+        <td class="num ${t.alpha_pct>=0?"pos":"neg"}">${(t.alpha_pct>=0?"+":"")}${t.alpha_pct}%</td>
+        <td>${t.win?'<span class="pill buy">win</span>':'<span class="pill ma">loss</span>'}</td>
+      </tr>`).join("");
+  } catch(e) {
+    summary.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+    tb.innerHTML = `<tr><td colspan="9" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderEquityCurve(points) {
+  if (!points.length) return "";
+  const W = 1100, H = 200, PAD = 28;
+  const xs = points.map((_,i)=>i);
+  const ys = points.map(p=>p.equity);
+  const ymin = Math.min(1, ...ys), ymax = Math.max(1, ...ys);
+  const px = i => PAD + (i / Math.max(1, xs.length-1)) * (W - 2*PAD);
+  const py = v => H - PAD - ((v - ymin) / Math.max(1e-9, ymax - ymin)) * (H - 2*PAD);
+  const d = points.map((p,i) => `${i===0?"M":"L"}${px(i).toFixed(1)},${py(p.equity).toFixed(1)}`).join(" ");
+  const baseY = py(1);
+  const lastEquity = ys[ys.length-1];
+  return `
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <div class="live" style="font-size:11px">Equity curve · synthesis-vs-SPY · equal-weighted across active trades</div>
+        <div style="font-family:var(--mono);font-size:13px">final: <span class="${lastEquity>=1?"pos":"neg"}">${(lastEquity).toFixed(4)}x</span></div>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block">
+        <line x1="${PAD}" y1="${baseY}" x2="${W-PAD}" y2="${baseY}" stroke="#3a4453" stroke-dasharray="3 3"/>
+        <text x="${W-PAD-4}" y="${baseY-4}" fill="var(--muted)" font-family="var(--mono)" font-size="10" text-anchor="end">SPY (1.0x)</text>
+        <path d="${d}" stroke="var(--accent)" stroke-width="1.6" fill="none"/>
+        <text x="${PAD}" y="${PAD-8}" fill="var(--muted)" font-family="var(--mono)" font-size="10">${points[0].date}</text>
+        <text x="${W-PAD}" y="${PAD-8}" fill="var(--muted)" font-family="var(--mono)" font-size="10" text-anchor="end">${points[points.length-1].date}</text>
+      </svg>
+    </div>`;
+}
+
 // ── Ticker Synthesis ──
 async function loadSynthesis() {
   const t = $("#sy-ticker").value.trim().toUpperCase();
@@ -971,6 +1088,7 @@ const loaders = {
   options:     loadOptionsFlow,
   darkpool:    loadDarkPool,
   skill:       loadSkill,
+  backtest:    () => { /* manual run only */ },
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
 };
@@ -986,6 +1104,7 @@ $("#cg-go").addEventListener("click", loadCongress);
 $("#of-go").addEventListener("click", loadOptionsFlow);
 $("#dp-go").addEventListener("click", loadDarkPool);
 $("#sk-go").addEventListener("click", loadSkill);
+$("#bt-go").addEventListener("click", loadBacktest);
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
 $("#sy-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") loadSynthesis(); });

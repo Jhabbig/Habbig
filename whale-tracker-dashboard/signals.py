@@ -167,6 +167,106 @@ def recent_ma_events(window_days: int = 7, min_score: float = 2.0) -> list[dict]
     return [dict(r) for r in rows]
 
 
+def synthesis_score_at(ticker: str, as_of_date: str, window_days: int = 90) -> float:
+    """Synthesis score for `ticker` using only filings on or before as_of_date.
+
+    Same scoring rules as `ticker_synthesis`, just with a temporal upper bound
+    on every input. Used by the backtest engine to answer "what would the
+    dashboard have shown on day T?". Returns a single float — no detail lists.
+    """
+    t = (ticker or "").upper().strip()
+    if not t or not as_of_date:
+        return 0.0
+    end = as_of_date[:10]
+    start_dt = f"datetime('{end}', '-{int(window_days)} days')"
+    end_dt = f"datetime('{end}', '+1 day')"
+
+    with connect() as cx:
+        insiders = cx.execute(
+            f"""
+            SELECT reporter_relation, is_buy, txn_code
+            FROM insider_txn
+            WHERE issuer_ticker = ?
+              AND filed_at >= {start_dt} AND filed_at < {end_dt}
+            """,
+            (t,),
+        ).fetchall()
+        activists = cx.execute(
+            f"""
+            SELECT pct_owned FROM activist_stake
+            WHERE issuer_ticker = ?
+              AND filed_at >= {start_dt} AND filed_at < {end_dt}
+            """,
+            (t,),
+        ).fetchall()
+        ma = cx.execute(
+            f"""
+            SELECT ma_score FROM ma_event
+            WHERE issuer_ticker = ?
+              AND filed_at >= {start_dt} AND filed_at < {end_dt}
+            """,
+            (t,),
+        ).fetchall()
+        # For 13F fund presence we count holdings whose owning filing was
+        # filed on or before as_of_date (any period). Distinct funds only.
+        fund_holders = cx.execute(
+            f"""
+            SELECT COUNT(DISTINCT h.fund_cik) AS n
+            FROM fund_holding h
+            JOIN fund_filing f ON f.accession = h.accession
+            WHERE h.issuer_ticker = ?
+              AND f.filed_at < {end_dt}
+            """,
+            (t,),
+        ).fetchone()
+        congress = cx.execute(
+            f"""
+            SELECT transaction_type FROM congress_trade
+            WHERE ticker = ?
+              AND disclosure_date >= date('{end}', '-{int(window_days)} days')
+              AND disclosure_date <= '{end}'
+            """,
+            (t,),
+        ).fetchall()
+        options = cx.execute(
+            f"""
+            SELECT side, premium FROM options_flow_trade
+            WHERE ticker = ?
+              AND alerted_at >= {start_dt} AND alerted_at < {end_dt}
+            """,
+            (t,),
+        ).fetchall()
+        dark = cx.execute(
+            f"""
+            SELECT premium FROM dark_pool_print
+            WHERE ticker = ?
+              AND executed_at >= {start_dt} AND executed_at < {end_dt}
+            """,
+            (t,),
+        ).fetchall()
+
+    insider_score = sum(_seniority_score(r["reporter_relation"] or "")
+                        for r in insiders if r["is_buy"])
+    activist_score = sum(2.0 + 0.05 * float(r["pct_owned"] or 0) for r in activists)
+    ma_score_sum = sum(float(r["ma_score"] or 0) for r in ma)
+    fund_score = min(2.0, (fund_holders["n"] or 0) * 0.05) if fund_holders else 0.0
+    cong_buys = sum(1 for c in congress if (c["transaction_type"] or "").lower().startswith("p"))
+    cong_sells = sum(1 for c in congress if (c["transaction_type"] or "").lower().startswith("s"))
+    congress_score = max(0.0, (cong_buys - cong_sells) * 0.75)
+    opt_call = sum(1 for o in options if o["side"] == "CALL")
+    opt_put = sum(1 for o in options if o["side"] == "PUT")
+    opt_prem = sum(float(o["premium"] or 0) for o in options)
+    options_score = min(4.0, (opt_call - opt_put) * 0.5 + min(2.0, opt_prem / 1_000_000))
+    dp_prem = sum(float(d["premium"] or 0) for d in dark)
+    dp_score = min(2.0, dp_prem / 5_000_000)
+
+    return round(
+        insider_score + activist_score + ma_score_sum + congress_score
+        + fund_score + options_score + dp_score,
+        2,
+    )
+
+
 def ticker_synthesis(ticker: str, window_days: int = 90) -> dict:
     """Composite view of one ticker.
 
