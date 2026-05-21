@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="manifest" href="/static/manifest.webmanifest" />
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
+<meta name="theme-color" content="#f59e0b" />
 <title>Crypto Trackers - narve.ai</title>
 <style>
   :root {
@@ -138,6 +141,16 @@
   <section>
     <h2>Market mood <small>Fear &amp; Greed Index (Alternative.me)</small></h2>
     <div id="fng-card"></div>
+  </section>
+
+  <section>
+    <h2>My watchlist <small>browser-local, no signup &middot; click ★ on any row in the universe to add/remove</small></h2>
+    <div id="watchlist-card"></div>
+  </section>
+
+  <section>
+    <h2>Sectors <small>top-500 coins grouped by L1 / L2 / DeFi / Meme / AI / Stable / LST / RWA / Exchange</small></h2>
+    <div id="sectors-card"></div>
   </section>
 
   <section>
@@ -445,9 +458,13 @@
   function renderUniverse(coins) {
     const target = document.getElementById("universe-table");
     if (!coins.length) { target.innerHTML = '<div class="card">No coins match filters.</div>'; return; }
-    const rows = coins.map(c => `<tr style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id || '')}'">
-      <td class="num muted">${c.market_cap_rank ?? "-"}</td>
-      <td><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name || "")}</div><div class="sym">${escapeHtml(c.symbol || "")}</div></div></div></td>
+    const wl = new Set(loadWatchlist());
+    const rows = coins.map(c => {
+      const starred = wl.has(c.id);
+      return `<tr>
+      <td onclick="window._toggleWatch('${escapeHtml(c.id || "")}', event)" style="cursor:pointer;color:${starred ? 'var(--accent)' : 'var(--text-3)'};font-weight:600">${starred ? "★" : "☆"}</td>
+      <td class="num muted" style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id || '')}'">${c.market_cap_rank ?? "-"}</td>
+      <td style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id || '')}'"><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name || "")}</div><div class="sym">${escapeHtml(c.symbol || "")}</div></div></div></td>
       <td class="num">${fmtPrice(c.current_price)}</td>
       ${upDown(c.change_1h)}
       ${upDown(c.change_24h)}
@@ -456,9 +473,10 @@
       <td class="num">$${fmtBig(c.market_cap)}</td>
       <td class="num">$${fmtBig(c.total_volume)}</td>
       <td class="num muted">${c.ath_change_pct != null ? pct(c.ath_change_pct, 1) : "-"}</td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     target.innerHTML = `<table><thead><tr>
-      <th>#</th><th>Coin</th><th>Price</th><th>1h</th><th>24h</th><th>7d</th><th>30d</th><th>Mcap</th><th>Vol 24h</th><th>From ATH</th>
+      <th></th><th>#</th><th>Coin</th><th>Price</th><th>1h</th><th>24h</th><th>7d</th><th>30d</th><th>Mcap</th><th>Vol 24h</th><th>From ATH</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
@@ -969,6 +987,95 @@
   window._toggleYieldStable = (v) => { _yieldsStable = v; loadYields(); };
   window._toggleYieldIL = (v) => { _yieldsNoIL = v; loadYields(); };
 
+  // ─── Watchlist (localStorage) ─────────────────────────────────────────────
+  const WATCHLIST_KEY = "ct_watchlist_v1";
+
+  function loadWatchlist() {
+    try {
+      const raw = localStorage.getItem(WATCHLIST_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }
+  function saveWatchlist(ids) {
+    try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(ids)); } catch {}
+  }
+
+  window._toggleWatch = (id, ev) => {
+    if (ev) ev.stopPropagation();
+    if (!id) return;
+    let wl = loadWatchlist();
+    if (wl.includes(id)) {
+      wl = wl.filter(x => x !== id);
+    } else {
+      wl.unshift(id);
+      wl = wl.slice(0, 50);
+    }
+    saveWatchlist(wl);
+    if (_universeCache) renderUniverse(_universeCache.coins || _universeCache);
+    renderWatchlist();
+  };
+
+  function renderWatchlist() {
+    const ids = loadWatchlist();
+    const target = document.getElementById("watchlist-card");
+    if (!ids.length) {
+      target.innerHTML = `<div class="card"><div class="muted">No coins on your watchlist. Click ☆ on any row in the universe screener below.</div></div>`;
+      return;
+    }
+    const universe = _universeCache?.coins || _universeCache || [];
+    const byId = new Map(universe.map(c => [c.id, c]));
+    const rows = ids.map(id => byId.get(id)).filter(Boolean);
+    if (!rows.length) {
+      target.innerHTML = `<div class="card"><div class="muted">Your ${ids.length} watched coins aren't in the loaded universe slice. Expand the screener limit to 500.</div></div>`;
+      return;
+    }
+    const tbody = rows.map(c => `<tr>
+      <td onclick="window._toggleWatch('${escapeHtml(c.id)}', event)" style="cursor:pointer;color:var(--accent);font-weight:600">★</td>
+      <td style="cursor:pointer" onclick="window.location.href='/coin?id=${encodeURIComponent(c.id)}'"><div class="coin-cell">${c.image ? `<img src="${escapeHtml(c.image)}" alt=""/>` : ""}<div><div>${escapeHtml(c.name)}</div><div class="sym">${escapeHtml(c.symbol)}</div></div></div></td>
+      <td class="num">${fmtPrice(c.current_price)}</td>
+      ${upDown(c.change_24h)}
+      ${upDown(c.change_7d)}
+      <td class="num">$${fmtBig(c.market_cap)}</td>
+    </tr>`).join("");
+    target.innerHTML = `<table><thead><tr>
+      <th></th><th>Coin</th><th>Price</th><th>24h</th><th>7d</th><th>Mcap</th>
+    </tr></thead><tbody>${tbody}</tbody></table>`;
+  }
+
+  // ─── Sectors ───────────────────────────────────────────────────────────────
+  async function loadSectors() {
+    try {
+      const data = await fetchJson("/api/sectors");
+      const target = document.getElementById("sectors-card");
+      const rows = data.ordered || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No sector data.</div>'; return; }
+      const cards = rows.map(s => {
+        const cls = s.avg_change_24h == null ? "muted" : s.avg_change_24h >= 0 ? "up" : "down";
+        const top3 = (s.top_coins || []).slice(0, 3).map(c =>
+          `<a href="/coin?id=${encodeURIComponent(c.id)}" class="pill info" style="text-decoration:none">${escapeHtml(c.symbol || c.name)}</a>`).join("");
+        return `<div class="card">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <strong style="font-size:14px">${escapeHtml(s.sector)}</strong>
+            <span class="muted" style="font-size:11px">${s.count} coins</span>
+          </div>
+          <div style="margin-top:6px">$${fmtBig(s.total_mcap)} mcap &middot; $${fmtBig(s.total_volume_24h)} vol</div>
+          <div class="${cls}" style="font-weight:600;margin-top:4px">${s.avg_change_24h == null ? "-" : pct(s.avg_change_24h, 2)} avg 24h</div>
+          <div style="margin-top:6px">${top3}</div>
+        </div>`;
+      }).join("");
+      target.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">${cards}</div>`;
+    } catch (e) {
+      document.getElementById("sectors-card").innerHTML = `<div class="err">Sectors fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Browser PWA service worker ───────────────────────────────────────────
+  async function maybeRegisterServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    try { await navigator.serviceWorker.register("/static/sw.js"); }
+    catch (e) { /* non-critical */ }
+  }
+
   // ─── Bridges ───────────────────────────────────────────────────────────────
   async function loadBridges() {
     try {
@@ -1218,6 +1325,9 @@
   }
   startWS();
 
+  maybeRegisterServiceWorker();
+  renderWatchlist();
+  loadSectors();
   loadSummary();
   loadUniverse();
   loadCrossEx();
@@ -1250,6 +1360,8 @@
   setInterval(loadBridges,  15 * 60 * 1000);
   setInterval(loadHacks,    60 * 60 * 1000);
   setInterval(loadNFT,      10 * 60 * 1000);
+  setInterval(loadSectors,  3 * 60 * 1000);
+  setInterval(renderWatchlist, 60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();

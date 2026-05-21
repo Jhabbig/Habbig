@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <g fill="none" stroke="#f59e0b" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Simple candlestick-stack icon -->
+    <line x1="140" y1="120" x2="140" y2="240"/>
+    <rect x="112" y="240" width="56" height="120" fill="#f59e0b"/>
+    <line x1="140" y1="360" x2="140" y2="420"/>
+    <line x1="256" y1="100" x2="256" y2="180"/>
+    <rect x="228" y="180" width="56" height="160" fill="#34d399" stroke="#34d399"/>
+    <line x1="256" y1="340" x2="256" y2="400"/>
+    <line x1="372" y1="160" x2="372" y2="220"/>
+    <rect x="344" y="220" width="56" height="100" fill="#ef4444" stroke="#ef4444"/>
+    <line x1="372" y1="320" x2="372" y2="380"/>
+  </g>
+</svg>

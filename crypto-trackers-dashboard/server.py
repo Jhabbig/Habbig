@@ -35,6 +35,7 @@ from analysis import funding as funding_mod
 from analysis import liquidations_agg
 from analysis import onchain_lookup
 from analysis import screener as screener_mod
+from analysis import sectors as sectors_mod
 from ingestion import (
     _background,
     _health,
@@ -445,6 +446,19 @@ async def api_macro() -> JSONResponse:
 @app.get("/api/macro/correlations")
 async def api_macro_corr() -> JSONResponse:
     return JSONResponse(macro.btc_correlation_30d())
+
+
+# ─── Sectors ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/sectors")
+async def api_sectors() -> JSONResponse:
+    univ = coingecko.universe(500)
+    coins = univ.get("coins") or []
+    grouped = sectors_mod.group(coins)
+    return JSONResponse({
+        **grouped,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # ─── Bridges ──────────────────────────────────────────────────────────────────
