@@ -1,23 +1,15 @@
-"""SEC press-release RSS (US).
+"""SEC press-release feed (US) — config now in `sources.py`.
 
-Source: https://www.sec.gov/news/pressreleases.rss
-
-The press-releases feed covers enforcement actions, rule proposals, statements,
-and personnel announcements. Litigation releases live on a separate feed —
-deferred to a later version (split out as `sec_litigation.py`) so v0 stays
-focused on the highest-signal items.
+This shim preserves the legacy `from ingestion import sec_rss` import path
+and the `python3 -m ingestion.sec_rss` smoke-test invocation.
 """
 
 from __future__ import annotations
 
-from ._rss import RssSource, fetch_source
+from ._rss import fetch_source
+from .sources import get
 
-SOURCE = RssSource(
-    code="SEC",
-    name="U.S. Securities and Exchange Commission",
-    jurisdiction="US",
-    rss_url="https://www.sec.gov/news/pressreleases.rss",
-)
+SOURCE = get("SEC")
 
 
 def fetch(max_items: int = 50, since_days: int | None = 90) -> list[dict]:

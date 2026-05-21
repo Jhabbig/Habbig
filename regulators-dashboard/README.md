@@ -43,6 +43,8 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/subscribe/confirm?token=…` | — | Email-click confirmation; flips pending → confirmed |
 | `GET /api/subscribe/unsubscribe?token=…` | — | Email-click unsubscribe; idempotent |
 | `POST /api/digest/send_now` | — | Admin-token-gated digest dispatcher; external cron drives the schedule |
+| `GET /api/sources` | — | v2.0 — master list of every registered RSS source + jurisdictions covered |
+| `GET /api/courts` | 1 h | v2.0 — CJEU + UK judiciary + SCOTUS financial-relevant case feed |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -111,6 +113,8 @@ regulators-dashboard/
 │   ├── kalshi_client.py            Kalshi /trade-api/v2/markets → normalized markets (5-min cache)
 │   ├── ofac_sdn.py                 OFAC SDN XML fetch + parse + per-day snapshot + day-over-day delta
 │   ├── confirmation_hearings.py    Senate Banking + House FS hearing-RSS filter (1h cache)
+│   ├── sources.py                  v2.0 — master list of every registered RSS source (28 bodies)
+│   ├── court_cases.py              v2.0 — CJEU + UK + SCOTUS financial-relevant case feed
 │   ├── digest_subscribers.py       v1.6 — SQLite subscriber store (pending/confirmed/unsubscribed)
 │   ├── email_send.py               v1.6 — stdlib SMTP sender with DRY_RUN fallback
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
@@ -462,6 +466,62 @@ delivers the FREE half (SEC's own LR feed); deep PACER per-case
 access (complaints, motions, exhibits, court dockets) stays
 deferred until there's budget plus a clear cost-justified use case.
 
+### v2.0 — global regulator expansion
+
+The v0 → v1.6 architecture (single-file config → automatic pipeline) pays
+off here. `ingestion/sources.py` is now the only place RSS sources are
+declared; everything downstream — classifier, severity, topics, market
+match, heatmap, stance, diff, RSS feed, email digest — picks them up
+automatically.
+
+**Sources (28 total, 13 jurisdictions):**
+
+| Region | Bodies |
+|---|---|
+| US | SEC, SEC-LIT, CFTC, FinCEN, OCC, FDIC, CFPB, OFAC |
+| UK | FCA, PRA, BoE |
+| EU | ESMA, EBA, EIOPA, ECB |
+| Continental EU | BaFin (DE), FINMA (CH), AMF (FR), CONSOB (IT) |
+| APAC | MAS (SG), HKMA (HK), SFC-HK, ASIC (AU), RBA, SEBI (IN), RBI |
+| Americas (non-US) | OSC (CA), CVM (BR) |
+
+`ingestion/court_cases.py` adds **CJEU, UK judiciary, and SCOTUS** as a
+parallel free-RSS source pipeline. Items are keyword-filtered against
+financial / regulatory / sanctions terms so the dashboard isn't drowned
+by generic civil litigation. Surfaces in a dedicated **Court cases** UI
+panel between the hearings panel and the stance ladder. **8/8 relevance
+fixtures pass** (securities/MiFID/crypto-AML/OFAC matched; family law,
+immigration, patent cases correctly filtered out).
+
+`data/personnel.py` expanded from 4 to **18 entries** across 15 regulators
+(US Fed, SEC ×4, CFTC, CFPB; UK FCA, BoE; EU ESMA, ECB; DE BaFin; CH
+FINMA; SG MAS; HK HKMA; AU ASIC; IN SEBI; JP BoJ). Each carries a
+verifiable `source_url`. Same loud-comment caveat applies: best-effort,
+verify before relying, auto-scrape on the deferred roadmap.
+
+`analysis/market_match.ANCHOR_TOKENS` expanded from 36 to **81 tokens** —
+every new regulator code plus notable people (Lagarde, Bailey, Ueda,
+Behnam, Pham, Peirce, Crenshaw, etc.) so the prediction-market matcher
+catches markets about the wider roster.
+
+The jurisdiction filter-chip row in the action-feed panel is now
+**populated dynamically** from `/api/sources` — adding a new code to
+`ingestion/sources.py` auto-surfaces a chip with no HTML edit.
+
+**Known UI scaling limit:** the heatmap was designed for 3-5 regulators
+per render. With 28 rows it'll be tall and most rows sparse. A
+"collapse low-volume regulators" toggle would help; deferred until
+real usage shows whether the noise actually hurts. The other panels
+(action feed, personnel, courts) handle the larger source pool fine
+because they're already row-oriented.
+
+**Same URL-verification caveat as every other RSS module:** the seeded
+URLs are best-guess against common regulator RSS conventions. The
+graceful-degradation lane (per-source `ok=false` with a real error
+string) means a bad URL is visually obvious in the per-source status
+row at the bottom of the action feed. Drop the live URL into
+`ingestion/sources.py` and redeploy; no other code change needed.
+
 ### v1.6 — managed email digest
 
 End-to-end subscriber flow with double-opt-in confirmation and
@@ -534,6 +594,7 @@ firings are safe.
 | **v1.4** | ✓ done | OFAC SDN delta-per-day — fetch + parse Treasury `sdn.xml`, persist daily digest, compute additions/removals + per-program counts |
 | **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN` |
 | **v1.6** | ✓ done | Managed email digest — SQLite subscriber store, double-opt-in confirmation flow, manual `POST /api/digest/send_now` (external cron drives schedule), DRY_RUN fallback when SMTP_HOST unset. Auto bounce-handling deferred. |
+| **v2.0** | ✓ done | **Global regulator expansion** — 28 sources across 13 jurisdictions (US/UK/EU/DE/CH/FR/IT/SG/HK/AU/IN/CA/BR). New `ingestion/sources.py` master config; new court-cases module (CJEU + UK + SCOTUS); personnel roster grew from 4 to 18; jurisdiction filter chips populated dynamically from `/api/sources`; anchor tokens expanded to 81. |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars

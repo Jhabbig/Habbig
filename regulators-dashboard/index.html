@@ -47,6 +47,17 @@
   .jx.US { background: #1f6feb; color: #fff; }
   .jx.UK { background: #8957e5; color: #fff; }
   .jx.EU { background: #d29922; color: #0e1117; }
+  .jx.DE { background: #f0883e; color: #0e1117; }
+  .jx.CH { background: #e34c26; color: #fff; }
+  .jx.FR { background: #2c5cb3; color: #fff; }
+  .jx.IT { background: #1a8a4d; color: #fff; }
+  .jx.SG { background: #d12c4a; color: #fff; }
+  .jx.HK { background: #c9302c; color: #fff; }
+  .jx.AU { background: #006e4e; color: #fff; }
+  .jx.IN { background: #ff9933; color: #0e1117; }
+  .jx.JP { background: #bc002d; color: #fff; }
+  .jx.BR { background: #009c3b; color: #fff; }
+  .jx.CA { background: #d32f2f; color: #fff; }
   .jx.OTHER { background: #30363d; color: var(--muted); }
   .tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px;
          font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -229,6 +240,10 @@
     <h2>Confirmation hearings — Senate Banking + House FS</h2>
     <div id="hearings-body"><div class="heatmap-empty">loading…</div></div>
   </section>
+  <section class="panel" id="courts-panel">
+    <h2>Court cases — financial-relevant decisions (CJEU / UK / SCOTUS)</h2>
+    <div id="courts-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
   <section class="panel" id="stance-panel">
     <h2>Speech stance — latest per regulator</h2>
     <div id="stance-body"><div class="heatmap-empty">loading…</div></div>
@@ -239,12 +254,10 @@
   </section>
   <section class="panel">
     <h2>Action feed</h2>
-    <div class="filters">
+    <div class="filters" id="jx-filter-row">
       <span class="hint">Jurisdiction:</span>
       <span class="chip active" data-jx="">All</span>
-      <span class="chip" data-jx="US">US</span>
-      <span class="chip" data-jx="UK">UK</span>
-      <span class="chip" data-jx="EU">EU</span>
+      <!-- jurisdiction chips populated from /api/sources at load -->
       <input type="search" id="q" class="search" placeholder="Search title/summary…" />
     </div>
     <div class="filters">
@@ -773,6 +786,72 @@ async function loadHearings() {
   }
 }
 
+function renderCourts(data) {
+  const body = document.getElementById("courts-body");
+  const items = data.items || [];
+  const okSources = (data.sources || []).filter(s => s.ok).length;
+  if (!items.length) {
+    if (okSources === 0) {
+      body.innerHTML = '<div class="heatmap-empty">All court feeds unavailable — verify URLs in <code>ingestion/court_cases.py</code>.</div>';
+    } else {
+      body.innerHTML = '<div class="heatmap-empty">No financial-relevant cases in the feed window.</div>';
+    }
+    return;
+  }
+  body.innerHTML = items.slice(0, 25).map(c => {
+    const dt = (c.published || "").slice(0, 10);
+    const link = c.link
+      ? `<a href="${escapeHtml(c.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.title)}</a>`
+      : escapeHtml(c.title);
+    return `
+      <div class="hearing-row">
+        <div class="hearing-date">${escapeHtml(dt)}</div>
+        <div class="hearing-cmte">${escapeHtml(c.court)}</div>
+        <div class="hearing-title">${link}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadCourts() {
+  try {
+    const r = await fetch("/api/courts");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderCourts(data);
+  } catch (e) {
+    document.getElementById("courts-body").innerHTML =
+      `<div class="heatmap-empty err">courts load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadJurisdictionChips() {
+  // Build jurisdiction filter chips dynamically from /api/sources so a new
+  // regulator code added in `ingestion/sources.py` auto-surfaces a chip.
+  let data;
+  try {
+    const r = await fetch("/api/sources");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    data = await r.json();
+  } catch (e) {
+    return;  // chips silently absent — feed still works
+  }
+  const row = document.getElementById("jx-filter-row");
+  const qInput = document.getElementById("q");
+  for (const jx of data.jurisdictions) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.dataset.jx = jx;
+    chip.textContent = jx;
+    chip.addEventListener("click", () => {
+      row.querySelectorAll('.chip[data-jx]').forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      state.jurisdiction = jx;
+      load();
+    });
+    row.insertBefore(chip, qInput);
+  }
+}
+
 function updateRssLink() {
   // Mirror the current filter state into a /feed.xml URL so subscribers
   // can right-click → copy. Token is left empty here — operators behind
@@ -1010,16 +1089,18 @@ document.getElementById("q").addEventListener("input", e => {
   qTimer = setTimeout(() => { state.q = e.target.value; load(); }, 250);
 });
 
+loadJurisdictionChips();
 load();
 loadHeatmap();
 loadTopics();
 loadPeople();
 loadHearings();
+loadCourts();
 loadStance();
 loadDiff();
 loadSdn();
 updateRssLink();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadCourts(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
 setInterval(loadSdn, 30 * 60 * 1000);
 </script>
 </body>

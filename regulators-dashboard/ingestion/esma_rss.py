@@ -1,26 +1,11 @@
-"""ESMA news RSS (EU).
-
-Source: https://www.esma.europa.eu/press-news/esma-news/rss.xml
-
-Covers ESMA statements, Q&As, peer reviews, and MiCA-related guidance. The
-EBA and EIOPA publish separately and will land as their own modules.
-
-Note: ESMA has changed its RSS path before. If this URL stops working, the
-graceful-degradation path means the dashboard still loads with SEC + FCA
-showing data — confirm the new URL on https://www.esma.europa.eu/news-publications
-and update the constant here.
-"""
+"""ESMA news feed (EU) — config now in `sources.py`."""
 
 from __future__ import annotations
 
-from ._rss import RssSource, fetch_source
+from ._rss import fetch_source
+from .sources import get
 
-SOURCE = RssSource(
-    code="ESMA",
-    name="European Securities and Markets Authority",
-    jurisdiction="EU",
-    rss_url="https://www.esma.europa.eu/press-news/esma-news/rss.xml",
-)
+SOURCE = get("ESMA")
 
 
 def fetch(max_items: int = 50, since_days: int | None = 90) -> list[dict]:

@@ -12,6 +12,8 @@ Routes:
   - GET /api/diff               → latest-vs-prior speech diff per regulator
   - GET /api/sdn                → OFAC SDN delta — today vs prior snapshot (12h cache)
   - GET /api/hearings           → Senate Banking + House FS confirmation hearings (1h cache)
+  - GET /api/courts             → CJEU + UK + SCOTUS financial-relevant case feed (1h cache)
+  - GET /api/sources            → Master list of every registered RSS source
   - GET /feed.xml?…             → RSS 2.0 alert feed with the same filter params as /api/feed
   - POST /api/subscribe         → v1.6 — accept email + filter; send confirmation email
   - GET /api/subscribe/confirm  → email-click confirmation handler
@@ -35,6 +37,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ingestion import (
     confirmation_hearings,
+    court_cases,
     digest_subscribers,
     email_send,
     kalshi_client,
@@ -42,6 +45,7 @@ from ingestion import (
     polymarket_client,
     unified_feed,
 )
+from ingestion import sources as sources_registry
 from analysis import diff as diff_module
 from analysis import email_digest
 from analysis import heatmap as heatmap_aggr
@@ -228,6 +232,28 @@ async def api_diff(force: bool = False) -> JSONResponse:
     return JSONResponse({
         "fetched_at": data["fetched_at"],
         "diffs": diff_module.compute_all(data["items"]),
+    })
+
+
+@app.get("/api/courts")
+async def api_courts(force: bool = False) -> JSONResponse:
+    """v2.0 — court-case feed across CJEU / UK judiciary / SCOTUS,
+    filtered to financial/regulatory relevance."""
+    return JSONResponse(court_cases.get_cached(force=force))
+
+
+@app.get("/api/sources")
+async def api_sources() -> JSONResponse:
+    """v2.0 — list every registered RSS source. Useful for the UI to
+    populate per-source filter chips and document coverage."""
+    return JSONResponse({
+        "count": len(sources_registry.SOURCES),
+        "jurisdictions": sources_registry.jurisdictions(),
+        "sources": [
+            {"code": s.code, "name": s.name, "jurisdiction": s.jurisdiction,
+             "rss_url": s.rss_url}
+            for s in sources_registry.SOURCES
+        ],
     })
 
 

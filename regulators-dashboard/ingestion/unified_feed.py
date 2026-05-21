@@ -1,9 +1,12 @@
 """Unified action feed.
 
-Pulls every regulator source in parallel-ish (sequentially, but each wrapped
-in try/except) and merges into one list sorted by published-desc. Cache
-defaults to 30 min — RSS feeds don't update faster, and tighter polling
-hammers the source.
+Iterates every source declared in `sources.SOURCES`, fetches via the
+shared `_rss.fetch_source` (defusedxml + same RSS/Atom parser), and
+merges into one list sorted by published-desc. Per-source try/except so
+one bad URL never breaks the rest.
+
+Cache defaults to 30 min — RSS feeds don't update faster, and tighter
+polling hammers the source.
 """
 
 from __future__ import annotations
@@ -14,19 +17,10 @@ from threading import Lock
 
 from analysis.classifier import classify_item
 
-from . import esma_rss, fca_rss, sec_litigation_rss, sec_rss
+from ._rss import fetch_source
+from .sources import SOURCES
 
 log = logging.getLogger(__name__)
-
-# Each entry is (module, source_code) — extending in later versions is just
-# adding to this tuple after writing the corresponding `*_rss.py` (or
-# scraper) module that exposes a `fetch()` returning the same dict shape.
-_SOURCES = (
-    sec_rss,
-    sec_litigation_rss,
-    fca_rss,
-    esma_rss,
-)
 
 _CACHE_TTL = 30 * 60  # 30 min
 _CACHE: dict = {"data": None, "fetched_at": 0.0}
@@ -34,13 +28,13 @@ _lock = Lock()
 
 
 def _fetch_all(max_per_source: int, since_days: int | None) -> dict:
-    """Fetch every source, swallow failures per-source, return a status dict."""
+    """Fetch every registered source, swallow failures per-source, return
+    items + per-source status."""
     items: list[dict] = []
     sources_status: list[dict] = []
-    for mod in _SOURCES:
-        src = mod.SOURCE
+    for src in SOURCES:
         try:
-            got = mod.fetch(max_items=max_per_source, since_days=since_days)
+            got = fetch_source(src, max_items=max_per_source, since_days=since_days)
             sources_status.append({
                 "code": src.code,
                 "name": src.name,
@@ -51,7 +45,7 @@ def _fetch_all(max_per_source: int, since_days: int | None) -> dict:
                 "error": None,
             })
             items.extend(got)
-        except Exception as exc:  # belt-and-braces — fetch_source already swallows
+        except Exception as exc:
             log.warning("Source %s raised: %s", src.code, exc)
             sources_status.append({
                 "code": src.code,
@@ -67,7 +61,6 @@ def _fetch_all(max_per_source: int, since_days: int | None) -> dict:
     for it in items:
         classify_item(it)
 
-    # Newest first — items missing a published date sink to the bottom.
     items.sort(key=lambda x: x.get("published") or "", reverse=True)
     return {"items": items, "sources": sources_status}
 

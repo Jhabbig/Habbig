@@ -35,10 +35,20 @@ from dataclasses import dataclass
 # a real signal. Without an anchor, two press releases mentioning "rules"
 # and "the" would otherwise hit a non-trivial Jaccard.
 ANCHOR_TOKENS: set[str] = {
-    # Regulators
-    "sec", "fca", "esma", "cftc", "fincen", "ofac", "bafin", "finma",
-    "mas", "asic", "jfsa", "hkma", "doj", "fed", "fdic", "occ", "pra", "eba",
-    # Topics
+    # ── Regulators (v2.0 global coverage) ──────────────────────────────────
+    # US
+    "sec", "cftc", "fincen", "ofac", "fed", "fdic", "occ", "cfpb", "doj", "treasury",
+    # UK
+    "fca", "pra", "boe",
+    # EU
+    "esma", "eba", "eiopa", "ecb",
+    # Continental EU
+    "bafin", "finma", "amf", "consob",
+    # APAC
+    "mas", "hkma", "sfc", "asic", "rba", "sebi", "rbi", "jfsa", "fsc",
+    # Americas (non-US)
+    "osc", "cvm",
+    # ── Topics ─────────────────────────────────────────────────────────────
     "etf", "etfs", "stablecoin", "stablecoins",
     "bitcoin", "ethereum", "btc", "eth", "solana", "sol", "xrp",
     "binance", "coinbase", "kraken", "ftx", "tether",
@@ -46,8 +56,21 @@ ANCHOR_TOKENS: set[str] = {
     "climate", "esg", "carbon", "emissions",
     "ico", "nft", "defi", "mica",
     "ransomware", "cybersecurity",
-    # Notable people who anchor regulator-themed markets
-    "powell", "gensler", "atkin", "atkins", "uyeda",
+    # ── Notable people who anchor regulator-themed markets ─────────────────
+    # Fed
+    "powell", "yellen",
+    # SEC (recent chairs / commissioners)
+    "gensler", "atkin", "atkins", "uyeda", "peirce", "crenshaw",
+    # CFTC
+    "behnam", "pham", "mersinger",
+    # FCA
+    "rathi", "alder",
+    # ESMA
+    "ross",
+    # ECB / national CBs
+    "lagarde", "schnabel", "panetta", "knot", "ueda",
+    # BoE
+    "bailey",
 }
 
 STOPWORDS: set[str] = {

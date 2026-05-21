@@ -1,23 +1,11 @@
-"""FCA news RSS (UK).
-
-Source: https://www.fca.org.uk/news/rss.xml
-
-Covers enforcement notices, policy statements, consultations, and speeches
-from the Financial Conduct Authority. The PRA (separate body, also UK)
-publishes on the Bank of England website and is deferred until we wire up a
-PRA-specific source.
-"""
+"""FCA news feed (UK) — config now in `sources.py`."""
 
 from __future__ import annotations
 
-from ._rss import RssSource, fetch_source
+from ._rss import fetch_source
+from .sources import get
 
-SOURCE = RssSource(
-    code="FCA",
-    name="Financial Conduct Authority",
-    jurisdiction="UK",
-    rss_url="https://www.fca.org.uk/news/rss.xml",
-)
+SOURCE = get("FCA")
 
 
 def fetch(max_items: int = 50, since_days: int | None = 90) -> list[dict]:
