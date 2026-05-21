@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { api } from './api'
 import { TrendingUp, TrendingDown, Newspaper, AlertCircle, ExternalLink, Sparkles, Info } from 'lucide-react'
 
-const SOURCE_COLORS = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981' }
+const SOURCE_COLORS = {
+  polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b',
+  polling: '#10b981', manifold: '#ec4899', metaculus: '#06b6d4',
+}
 
 const CONFIDENCE_STYLES = {
   high: 'bg-emerald-100 text-emerald-700 border-emerald-200',

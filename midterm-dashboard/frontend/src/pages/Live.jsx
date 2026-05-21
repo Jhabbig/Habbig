@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Activity, AlertTriangle, CheckCircle2, ExternalLink, Pause, Play, RefreshCw, Tv } from 'lucide-react'
 
-const SOURCE_LABELS = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: 'Polling' }
+const SOURCE_LABELS = {
+  polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt',
+  polling: 'Polling', manifold: 'Manifold', metaculus: 'Metaculus',
+}
 const PARTY_COLOR = {
   D: { bg: 'bg-blue-500/15', text: 'text-blue-300', solid: 'bg-blue-500', label: 'D' },
   R: { bg: 'bg-red-500/15', text: 'text-red-300', solid: 'bg-red-500', label: 'R' },

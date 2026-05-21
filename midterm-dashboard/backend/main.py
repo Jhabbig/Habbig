@@ -24,6 +24,8 @@ from aggregators import (
     KalshiAggregator,
     PredictItAggregator,
     PollingAggregator,
+    ManifoldAggregator,
+    MetaculusAggregator,
 )
 from race_keys import parse_district_from_title, race_key_to_jurisdiction
 
@@ -97,6 +99,19 @@ PORT = int(os.getenv("PORT", "8051"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 DATA_REFRESH_INTERVAL = 300  # 5 minutes
 DIVERGENCE_INTERVAL = 300  # 5 minutes
+
+# Map of source name → divergence-snapshot column name. Most sources use
+# ``<src>_prob`` but polling is historical naming (``polling_avg``). Using
+# this map everywhere keeps the per-source iteration loops correct.
+DIVERGENCE_COL = {
+    "polymarket": "polymarket_prob",
+    "kalshi":     "kalshi_prob",
+    "predictit":  "predictit_prob",
+    "polling":    "polling_avg",
+    "manifold":   "manifold_prob",
+    "metaculus":  "metaculus_prob",
+}
+ALL_SOURCES = tuple(DIVERGENCE_COL.keys())
 
 # Rate-limit thresholds (requests per minute)
 RATE_LIMITS = {"free": 60, "premium": 120, "admin": 0}  # 0 = unlimited
@@ -190,6 +205,8 @@ class AppState:
     kalshi: KalshiAggregator
     predictit: PredictItAggregator
     polling: PollingAggregator
+    manifold: ManifoldAggregator
+    metaculus: MetaculusAggregator
 
     def __init__(self):
         self.background_tasks: list[asyncio.Task] = []
@@ -328,9 +345,11 @@ async def data_refresh_loop():
                 with_timeout(state.predictit.fetch_election_markets(), "PredictIt"),
                 with_timeout(state.polling.fetch_all_polls(), "Polling", seconds=30),
                 with_timeout(state.polymarket.fetch_world_election_markets(), "Polymarket-World", seconds=120),
+                with_timeout(state.manifold.fetch_election_markets(), "Manifold", seconds=60),
+                with_timeout(state.metaculus.fetch_election_markets(), "Metaculus", seconds=60),
                 return_exceptions=True,
             )
-            poly_data, kalshi_data, pi_data, poll_data, poly_world = results
+            poly_data, kalshi_data, pi_data, poll_data, poly_world, manifold_data, metaculus_data = results
 
             # Kalshi world uses cached data from the midterm fetch above
             try:
@@ -346,6 +365,8 @@ async def data_refresh_loop():
                 ("polymarket", "Polymarket", poly_data),
                 ("kalshi", "Kalshi", kalshi_data),
                 ("predictit", "PredictIt", pi_data),
+                ("manifold", "Manifold", manifold_data),
+                ("metaculus", "Metaculus", metaculus_data),
             ]:
                 if isinstance(data, list):
                     state.db.upsert_markets_batch(data)
@@ -444,6 +465,8 @@ async def divergence_calculator():
                         "kalshi": source_probs.get("kalshi"),
                         "predictit": source_probs.get("predictit"),
                         "polling": source_probs.get("polling"),
+                        "manifold": source_probs.get("manifold"),
+                        "metaculus": source_probs.get("metaculus"),
                         "max_divergence": round(max_div, 4),
                         "details": source_probs,
                     },
@@ -861,8 +884,8 @@ async def daily_digest_loop():
                     continue
                 hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
                 best = 0.0
-                for src in ("polymarket", "kalshi", "predictit", "polling"):
-                    vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+                for src in ALL_SOURCES:
+                    vals = [h.get(DIVERGENCE_COL[src]) for h in hist if h.get(DIVERGENCE_COL[src]) is not None]
                     if len(vals) >= 2:
                         delta = abs((vals[-1] - vals[0]) * 100)
                         if delta > best:
@@ -942,6 +965,8 @@ async def lifespan(app: FastAPI):
     state.kalshi = KalshiAggregator(session=state.http_session)
     state.predictit = PredictItAggregator(session=state.http_session)
     state.polling = PollingAggregator(session=state.http_session)
+    state.manifold = ManifoldAggregator(session=state.http_session)
+    state.metaculus = MetaculusAggregator(session=state.http_session)
 
     # Seed district profiles from static data on startup
     _seed_district_profiles()
@@ -1761,7 +1786,7 @@ def _comparison_rows(race_type: Optional[str] = None, state_abbr: Optional[str] 
 
     rows = []
     for rk, b in by_race.items():
-        sources_present = [s for s in ("polymarket", "kalshi", "predictit", "polling") if b.get(s) is not None]
+        sources_present = [s for s in ALL_SOURCES if b.get(s) is not None]
         if len(sources_present) < 2:
             continue
         probs = [b[s] for s in sources_present]
@@ -1822,10 +1847,7 @@ async def data_export_races_csv(
             "title": m.get("event_title") or m.get("title") or "",
             "race_type": m.get("race_type") or "",
             "state": m.get("state") or "",
-            "polymarket": "",
-            "kalshi": "",
-            "predictit": "",
-            "polling": "",
+            **{s: "" for s in ALL_SOURCES},
             "volume": 0.0,
         })
         bucket["volume"] += float(m.get("volume") or 0)
@@ -1836,12 +1858,12 @@ async def data_export_races_csv(
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["race_key", "title", "race_type", "state",
-                     "polymarket", "kalshi", "predictit", "polling", "volume"])
+                     *ALL_SOURCES, "volume"])
     for rk in sorted(by_race.keys()):
         r = by_race[rk]
         writer.writerow([
             r["race_key"], r["title"], r["race_type"], r["state"],
-            r["polymarket"], r["kalshi"], r["predictit"], r["polling"],
+            *[r[s] for s in ALL_SOURCES],
             f"{r['volume']:.0f}",
         ])
 
@@ -2803,8 +2825,8 @@ def _build_feed_xml() -> str:
         hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
         best = 0.0
         best_source = ""
-        for src in ("polymarket", "kalshi", "predictit", "polling"):
-            vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+        for src in ALL_SOURCES:
+            vals = [h.get(DIVERGENCE_COL[src]) for h in hist if h.get(DIVERGENCE_COL[src]) is not None]
             if len(vals) >= 2:
                 delta = (vals[-1] - vals[0]) * 100
                 if abs(delta) > abs(best):
@@ -3020,13 +3042,13 @@ async def v1_api_race_history_csv(race_key: str, request: Request, days: int = 3
     import csv, io
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["snapshot_time", "polymarket_prob", "kalshi_prob",
-                     "predictit_prob", "polling_avg", "max_divergence"])
+    cols = [DIVERGENCE_COL[s] for s in ALL_SOURCES]
+    writer.writerow(["snapshot_time", *cols, "max_divergence"])
     for h in history:
         writer.writerow([
-            h.get("snapshot_time", ""), h.get("polymarket_prob", ""),
-            h.get("kalshi_prob", ""), h.get("predictit_prob", ""),
-            h.get("polling_avg", ""), h.get("max_divergence", ""),
+            h.get("snapshot_time", ""),
+            *[h.get(c, "") for c in cols],
+            h.get("max_divergence", ""),
         ])
     from fastapi.responses import Response
     return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
@@ -3068,8 +3090,8 @@ async def v1_api_movements(request: Request, hours: int = 24, min_delta_pp: floa
         hist = sorted(hist, key=lambda h: h.get("snapshot_time") or "")
         per_source = {}
         max_abs = 0.0
-        for src in ("polymarket", "kalshi", "predictit", "polling"):
-            vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+        for src in ALL_SOURCES:
+            vals = [h.get(DIVERGENCE_COL[src]) for h in hist if h.get(DIVERGENCE_COL[src]) is not None]
             if len(vals) < 2:
                 continue
             delta = (vals[-1] - vals[0]) * 100

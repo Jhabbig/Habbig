@@ -8,9 +8,11 @@ const SOURCE_BADGES = {
   kalshi: 'bg-blue-100 text-blue-700',
   predictit: 'bg-amber-100 text-amber-700',
   polling: 'bg-emerald-100 text-emerald-700',
+  manifold: 'bg-pink-100 text-pink-700',
+  metaculus: 'bg-cyan-100 text-cyan-700',
 }
 
-const SOURCE_ORDER = ['polymarket', 'kalshi', 'predictit', 'polling']
+const SOURCE_ORDER = ['polymarket', 'kalshi', 'predictit', 'polling', 'manifold', 'metaculus']
 
 function pct(p) {
   if (p == null) return null

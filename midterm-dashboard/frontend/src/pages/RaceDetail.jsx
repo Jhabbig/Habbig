@@ -8,8 +8,8 @@ import Comments from '../lib/Comments'
 import Movements from '../lib/Movements'
 import AccuracyBadge from '../lib/AccuracyBadge'
 
-const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
-const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
+const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', manifold: '#ec4899', metaculus: '#06b6d4' }
+const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', manifold: 'Manifold', metaculus: 'Metaculus' }
 
 const PARTY_COLORS = { DEM: '#3b82f6', REP: '#ef4444', IND: '#f59e0b' }
 function partyColor(party) {

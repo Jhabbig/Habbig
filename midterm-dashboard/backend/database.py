@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS midterm_divergence_snapshots (
     divergence_details  TEXT,       -- JSON object stored as TEXT
     snapshot_time       TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+-- Columns added in v2 — use ALTER TABLE-style migrations below so the
+-- CREATE-IF-NOT-EXISTS above stays valid for fresh databases too.
 
 CREATE TABLE IF NOT EXISTS midterm_user_watchlists (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -382,9 +384,25 @@ CREATE INDEX IF NOT EXISTS idx_polling_state_type ON midterm_polling_data(state,
 
 
 def _init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, then apply additive migrations.
+
+    Forward-compatible: every migration is an ``ALTER TABLE ... ADD COLUMN``
+    guarded against re-application by inspecting ``PRAGMA table_info``. SQLite
+    doesn't support ``ADD COLUMN IF NOT EXISTS`` until 3.35+, so we do the
+    check in Python.
+    """
     with _get_conn() as conn:
         conn.executescript(_SCHEMA)
+
+        # ---- Migration v2: divergence snapshots gain manifold + metaculus
+        existing_cols = {row["name"] for row in conn.execute(
+            "PRAGMA table_info(midterm_divergence_snapshots)"
+        ).fetchall()}
+        for col in ("manifold_prob", "metaculus_prob"):
+            if col not in existing_cols:
+                conn.execute(
+                    f"ALTER TABLE midterm_divergence_snapshots ADD COLUMN {col} REAL"
+                )
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -634,8 +652,9 @@ class Database:
                 conn.execute(
                     """INSERT INTO midterm_divergence_snapshots
                         (race_key, state, race_type, polymarket_prob, kalshi_prob,
-                         predictit_prob, polling_avg, max_divergence, divergence_details)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                         predictit_prob, polling_avg, manifold_prob, metaculus_prob,
+                         max_divergence, divergence_details)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         race_key,
                         state,
@@ -644,6 +663,8 @@ class Database:
                         data.get("kalshi"),
                         data.get("predictit"),
                         data.get("polling"),
+                        data.get("manifold"),
+                        data.get("metaculus"),
                         data.get("max_divergence"),
                         details_json,
                     ),
@@ -673,6 +694,8 @@ class Database:
                 data.get("kalshi"),
                 data.get("predictit"),
                 data.get("polling"),
+                data.get("manifold"),
+                data.get("metaculus"),
                 data.get("max_divergence"),
                 details_json,
             ))
@@ -681,8 +704,9 @@ class Database:
                 conn.executemany(
                     """INSERT INTO midterm_divergence_snapshots
                         (race_key, state, race_type, polymarket_prob, kalshi_prob,
-                         predictit_prob, polling_avg, max_divergence, divergence_details)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                         predictit_prob, polling_avg, manifold_prob, metaculus_prob,
+                         max_divergence, divergence_details)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     rows,
                 )
 

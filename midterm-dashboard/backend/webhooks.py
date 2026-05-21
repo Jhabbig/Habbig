@@ -192,8 +192,15 @@ async def run_webhook_cycle(
             best_delta = 0.0
             best_from = 0.0
             best_to = 0.0
-            for src in ("polymarket", "kalshi", "predictit", "polling"):
-                vals = [h.get(f"{src}_prob") for h in hist if h.get(f"{src}_prob") is not None]
+            # Map source name → snapshot column. Local copy so webhooks.py
+            # has no import cycle with main.
+            _COLS = {
+                "polymarket": "polymarket_prob", "kalshi": "kalshi_prob",
+                "predictit": "predictit_prob", "polling": "polling_avg",
+                "manifold": "manifold_prob", "metaculus": "metaculus_prob",
+            }
+            for src, col in _COLS.items():
+                vals = [h.get(col) for h in hist if h.get(col) is not None]
                 if len(vals) < 2:
                     continue
                 delta = (vals[-1] - vals[0]) * 100
