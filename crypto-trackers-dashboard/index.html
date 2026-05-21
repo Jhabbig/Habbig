@@ -249,6 +249,21 @@
   </section>
 
   <section>
+    <h2>Stablecoin peg <small>15 stables vs $1.00 &middot; deviation in basis points &middot; auto-refresh 60s</small></h2>
+    <div id="stable-peg-card"></div>
+  </section>
+
+  <section>
+    <h2>DEX vs CEX premium <small>17 tracked tokens, DefiLlama vs Binance spot &middot; sorted by |spread|</small></h2>
+    <div id="dex-cex-card"></div>
+  </section>
+
+  <section>
+    <h2>DeFi yields <small>top APY pools with TVL &ge; $1M &middot; DefiLlama yields aggregator</small></h2>
+    <div id="defi-yields-card"></div>
+  </section>
+
+  <section>
     <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
     <div id="alerts-card"></div>
   </section>
@@ -839,6 +854,106 @@
     }
   }
 
+  // ─── Stablecoin peg ────────────────────────────────────────────────────────
+  async function loadStablePeg() {
+    try {
+      const data = await fetchJson("/api/stablecoins/peg");
+      const target = document.getElementById("stable-peg-card");
+      const rows = data.rows || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No stablecoin data.</div>'; return; }
+      const tbody = rows.map(r => {
+        const bps = r.deviation_bps;
+        const cls = Math.abs(bps) > 50 ? (bps > 0 ? "down" : "up") :
+                    Math.abs(bps) > 25 ? "warn" : "muted";
+        return `<tr>
+          <td><strong>${escapeHtml(r.symbol)}</strong></td>
+          <td class="num">$${r.price.toFixed(4)}</td>
+          <td class="num ${cls}" style="font-weight:600">${bps >= 0 ? "+" : ""}${bps.toFixed(1)} bps</td>
+          <td class="num ${r.change_24h == null ? "muted" : r.change_24h >= 0 ? "up" : "down"}">${r.change_24h != null ? pct(r.change_24h, 3) : "-"}</td>
+          <td class="num muted">$${fmtBig(r.market_cap_usd)}</td>
+        </tr>`;
+      }).join("");
+      const depegs = (data.any_depeg_over_25_bps || []).length;
+      const worst = data.worst_peg;
+      target.innerHTML = `<table><thead><tr>
+        <th>Stable</th><th>Price</th><th>Δ peg</th><th>24h Δ</th><th>Mcap</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${depegs ? `<strong>${depegs} stable(s) off-peg &gt;25 bps</strong>` : "All stables within 25 bps of $1.00"}${worst ? ` &middot; worst: <strong>${escapeHtml(worst.symbol)}</strong> ${worst.deviation_bps >= 0 ? "+" : ""}${worst.deviation_bps.toFixed(1)} bps` : ""}.</div>`;
+    } catch (e) {
+      document.getElementById("stable-peg-card").innerHTML = `<div class="err">Peg fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── DEX vs CEX premium ────────────────────────────────────────────────────
+  async function loadDexCexPremium() {
+    try {
+      const data = await fetchJson("/api/dex_cex/premium");
+      const target = document.getElementById("dex-cex-card");
+      const rows = data.rows || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No DEX-CEX pairs.")}</div>`; return; }
+      const tbody = rows.map(r => {
+        const cls = Math.abs(r.premium_bps) > 20 ? (r.premium_bps > 0 ? "up" : "down") : "muted";
+        return `<tr>
+          <td><strong>${escapeHtml(r.symbol)}</strong>${r.symbol !== r.cex_lookup ? ` <span class="sym">→ ${escapeHtml(r.cex_lookup)}</span>` : ""}</td>
+          <td>${pill(r.chain || "?", "info")}</td>
+          <td class="num">${fmtPrice(r.dex_price)}</td>
+          <td class="num">${fmtPrice(r.cex_price)}</td>
+          <td class="num ${cls}" style="font-weight:600">${r.premium_bps >= 0 ? "+" : ""}${r.premium_bps.toFixed(2)} bps</td>
+          <td>${pill(r.sign === "DEX_RICH" ? "DEX rich" : "CEX rich", r.sign === "DEX_RICH" ? "up" : "down")}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Token</th><th>Chain</th><th>DEX</th><th>CEX (Binance)</th><th>Premium</th><th>Side</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.actionable_count} pair(s) with |premium| &gt; 20 bps. Threshold for "watch" is 20 bps; profitable arb after gas + slippage typically needs &gt; 50 bps.</div>`;
+    } catch (e) {
+      document.getElementById("dex-cex-card").innerHTML = `<div class="err">DEX-CEX fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── DeFi yields ───────────────────────────────────────────────────────────
+  let _yieldsStable = false;
+  let _yieldsNoIL = false;
+  async function loadYields() {
+    try {
+      const params = new URLSearchParams({
+        min_tvl: "1000000", limit: "40",
+        stable: _yieldsStable ? "true" : "false",
+        no_il: _yieldsNoIL ? "true" : "false",
+      });
+      const data = await fetchJson("/api/defi/yields?" + params);
+      const target = document.getElementById("defi-yields-card");
+      const rows = data.pools || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No yields match filters.</div>'; return; }
+      const tbody = rows.slice(0, 25).map(p => {
+        const cls = p.apy_pct > 50 ? "down" : p.apy_pct > 15 ? "warn" : "up";
+        const stablePill = p.stablecoin ? pill("stable", "good") : "";
+        const ilPill = p.il_risk === "yes" ? pill("IL risk", "down") : "";
+        return `<tr>
+          <td><strong>${escapeHtml(p.symbol || "?")}</strong> ${stablePill} ${ilPill}</td>
+          <td>${pill(p.project, "info")}</td>
+          <td>${pill(p.chain, "warn")}</td>
+          <td class="num ${cls}" style="font-weight:600">${p.apy_pct.toFixed(2)}%</td>
+          <td class="num muted">${p.apy_base_pct != null ? p.apy_base_pct.toFixed(2) + "%" : "-"}</td>
+          <td class="num">$${fmtBig(p.tvl_usd)}</td>
+          <td>${p.url ? `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">→</a>` : ""}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<div class="filters" style="margin-bottom:10px">
+        <label><input type="checkbox" ${_yieldsStable ? "checked" : ""} onchange="window._toggleYieldStable(this.checked)"/> Stablecoins only</label>
+        <label><input type="checkbox" ${_yieldsNoIL ? "checked" : ""} onchange="window._toggleYieldIL(this.checked)"/> No impermanent loss</label>
+      </div>
+      <table><thead><tr>
+        <th>Pool</th><th>Project</th><th>Chain</th><th>APY</th><th>Base APY</th><th>TVL</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.count} pools matched. Top projects by TVL: ${(data.by_project || []).slice(0, 5).map(p => `<strong>${escapeHtml(p.project)}</strong> $${fmtBig(p.tvl_usd)}`).join(" &middot; ")}</div>`;
+    } catch (e) {
+      document.getElementById("defi-yields-card").innerHTML = `<div class="err">Yields fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  window._toggleYieldStable = (v) => { _yieldsStable = v; loadYields(); };
+  window._toggleYieldIL = (v) => { _yieldsNoIL = v; loadYields(); };
+
   // ─── Custom alerts ─────────────────────────────────────────────────────────
   async function loadAlerts() {
     try {
@@ -1015,6 +1130,9 @@
   loadDeribit();
   loadMacro();
   loadCarry();
+  loadStablePeg();
+  loadDexCexPremium();
+  loadYields();
   loadAlerts();
   loadSources();
 
@@ -1027,6 +1145,9 @@
   setInterval(loadDeribit,  60 * 1000);
   setInterval(loadMacro,    5 * 60 * 1000);
   setInterval(loadCarry,    60 * 1000);
+  setInterval(loadStablePeg, 60 * 1000);
+  setInterval(loadDexCexPremium, 60 * 1000);
+  setInterval(loadYields,   15 * 60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();

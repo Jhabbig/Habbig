@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from analysis import arbitrage as arb_mod
 from analysis import carry as carry_mod
+from analysis import dex_cex_premium
 from analysis import funding as funding_mod
 from analysis import liquidations_agg
 from analysis import onchain_lookup
@@ -40,6 +41,8 @@ from ingestion import (
     _persistence,
     alerts as alerts_mod,
     binance,
+    defillama_yields,
+    stablecoin_peg,
     binance_liquidations,
     btc_treasuries,
     bybit,
@@ -441,6 +444,34 @@ async def api_macro_corr() -> JSONResponse:
     return JSONResponse(macro.btc_correlation_30d())
 
 
+# ─── DeFi yields ──────────────────────────────────────────────────────────────
+
+@app.get("/api/defi/yields")
+async def api_defi_yields(min_tvl: float = 1_000_000, limit: int = 100,
+                          stable: bool = False,
+                          no_il: bool = False) -> JSONResponse:
+    return JSONResponse(defillama_yields.top_yields(
+        min_tvl_usd=min_tvl, limit=max(5, min(limit, 500)),
+        stablecoin_only=stable, max_il_risk="no" if no_il else None,
+    ))
+
+
+# ─── Stablecoin peg ───────────────────────────────────────────────────────────
+
+@app.get("/api/stablecoins/peg")
+async def api_stable_peg() -> JSONResponse:
+    return JSONResponse(stablecoin_peg.peg_status())
+
+
+# ─── DEX vs CEX premium ───────────────────────────────────────────────────────
+
+@app.get("/api/dex_cex/premium")
+async def api_dex_cex_premium() -> JSONResponse:
+    dex = defillama_prices.cross_dex_prices()
+    cex = binance.spot_ticker_24h()
+    return JSONResponse(dex_cex_premium.compute(dex_prices=dex, binance_spot=cex))
+
+
 # ─── Funding carry ────────────────────────────────────────────────────────────
 
 @app.get("/api/funding/carry")
@@ -738,6 +769,8 @@ async def _startup() -> None:
         ("deribit_btc",           lambda: deribit.market_overview("BTC"),               60),
         ("deribit_eth",           lambda: deribit.market_overview("ETH"),               60),
         ("macro_snapshot",        lambda: macro.snapshot(),                             300),
+        ("defillama_yields",      lambda: defillama_yields.top_yields(1_000_000, 100),  900),
+        ("stablecoin_peg",        lambda: stablecoin_peg.peg_status(),                  60),
     ])
 
 
