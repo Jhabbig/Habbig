@@ -78,6 +78,10 @@
       <tr><td>Consumer sentiment</td><td><code>UMCSENT</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
       <tr><td>Inflation expectations (1 year)</td><td><code>MICH</code></td><td>Monthly</td><td>University of Michigan SRC via FRED</td></tr>
       <tr><td>State unemployment (50 + DC)</td><td><code>{ST}UR</code></td><td>Monthly</td><td>BLS LAUS via FRED</td></tr>
+      <tr><td>Employment in agriculture (all countries)</td><td><code>SL.AGR.EMPL.ZS</code></td><td>Annual</td><td>ILO via World Bank</td></tr>
+      <tr><td>Employment in industry (all countries)</td><td><code>SL.IND.EMPL.ZS</code></td><td>Annual</td><td>ILO via World Bank</td></tr>
+      <tr><td>Employment in services (all countries)</td><td><code>SL.SRV.EMPL.ZS</code></td><td>Annual</td><td>ILO via World Bank</td></tr>
+      <tr><td>GDP per capita (all countries)</td><td><code>NY.GDP.PCAP.CD</code></td><td>Annual</td><td>World Bank national accounts</td></tr>
     </tbody>
   </table>
 
@@ -148,6 +152,40 @@
     presidential term. Inauguration dates are hard-coded
     (<code>analysis/eras.py</code>); we include eras from 1947 onward.
     Eras with no overlapping observations show <em>no data</em>.
+  </p>
+
+  <h2>World jobs — the Clark–Fisher arc</h2>
+  <p>
+    Every country with reported sector-employment data is plotted on a
+    classical ternary triangle whose vertices are pure agriculture
+    (top), pure industry (bottom-left), and pure services (bottom-right).
+    Position is barycentric in the three sector shares — a country that
+    splits 33/33/33 lands at the centroid. The shaded zones mark the
+    five Clark–Fisher development stages we surface in the legend.
+  </p>
+  <p>
+    Sector shares come from the World Bank Indicators API,
+    <code>SL.AGR.EMPL.ZS</code> / <code>SL.IND.EMPL.ZS</code> /
+    <code>SL.SRV.EMPL.ZS</code> — "modeled ILO estimate" of employment
+    share by sector. We pull the most recent non-null observation per
+    country in the 2018–2024 window and renormalise so the three sectors
+    sum to exactly 100% (the modeled ILO numbers can round to 99 or 101).
+    GDP per capita (<code>NY.GDP.PCAP.CD</code>) is fetched alongside but
+    currently used only as context, not in the classification.
+  </p>
+  <h3>Stage cutoffs</h3>
+  <div class="formula">
+    Pre-industrial  : agriculture ≥ 40%<br>
+    Industrialising : agriculture 20–40%<br>
+    Industrial      : industry ≥ 30% AND services &lt; 60%<br>
+    Information     : services ≥ 75%<br>
+    Post-industrial : everything else (typically services 60–75%)
+  </div>
+  <p class="note">
+    Cutoffs are loose calibrations against the IMF / World Bank
+    income-group classification, not fitted to any outcome. They're easy
+    to retune — they live in
+    <code>analysis/clark_fisher.py:classify()</code>.
   </p>
 
   <h2>State-level mood (the "Across America" map)</h2>

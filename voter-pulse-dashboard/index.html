@@ -192,6 +192,43 @@
   .state-detail .big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 6px; }
   .state-detail .row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; color: var(--muted); }
 
+  /* ── Clark-Fisher world panel ────────────────────────────────────────── */
+  .world-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .world-grid { grid-template-columns: 1fr; } }
+  .ternary-wrap { position: relative; }
+  .ternary-svg { width: 100%; height: auto; display: block; }
+  .ternary-tip {
+    position: absolute; pointer-events: none; background: #0e1117;
+    border: 1px solid var(--grid); padding: 6px 10px; border-radius: 4px;
+    font-size: 11px; color: var(--fg); display: none; z-index: 5;
+    font-variant-numeric: tabular-nums;
+  }
+  .ternary-tip strong { color: var(--accent); }
+  .stage-legend { display: grid; gap: 6px; margin-top: 12px; }
+  .stage-legend .row { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+  .stage-legend .row .swatch { width: 12px; height: 12px; border-radius: 2px; }
+  .stage-legend .row .lbl { color: var(--fg); font-weight: 600; }
+  .stage-legend .row .blurb { color: var(--muted); font-size: 11px; }
+  .stage-legend .row .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .country-tbl { font-size: 12px; }
+  .country-tbl thead th { cursor: pointer; user-select: none; }
+  .country-tbl thead th:hover { color: var(--fg); }
+  .country-tbl td { padding: 6px 10px; }
+  .country-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .country-tbl .stage-dot { display: inline-block; width: 8px; height: 8px;
+                            border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .country-search {
+    width: 100%; padding: 6px 10px; background: var(--panel-2);
+    border: 1px solid var(--grid); border-radius: 4px; color: var(--fg);
+    font: inherit; margin-bottom: 8px;
+  }
+  .country-search:focus { outline: none; border-color: var(--accent); }
+  .ternary-arc {
+    stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 4 4;
+    fill: none; opacity: 0.5;
+  }
+
   /* ── Backtest ─────────────────────────────────────────────────────────── */
   .bt-hero {
     display: grid; grid-template-columns: 280px 1fr; gap: 24px;
@@ -367,6 +404,39 @@
       </div>
     </div>
     <p class="footnote">Source: BLS LAUS state unemployment via FRED (one series per state, pattern <code>{ST}UR</code>). National benchmark shown for context: <span id="natBench">—</span>.</p>
+  </section>
+
+  <!-- WORLD JOBS / CLARK-FISHER -->
+  <section class="panel">
+    <h2>World jobs — the Clark–Fisher arc</h2>
+    <p class="desc">Every country plotted by employment share in agriculture, industry, and services. Position on the triangle = where the country sits on the classical development arc.</p>
+    <div class="world-grid">
+      <div>
+        <div class="ternary-wrap">
+          <svg class="ternary-svg" id="ternarySvg" viewBox="0 0 520 470"></svg>
+          <div class="ternary-tip" id="ternaryTip"></div>
+        </div>
+        <div class="stage-legend" id="stageLegend"></div>
+      </div>
+      <div>
+        <input class="country-search" id="countrySearch" placeholder="Filter countries…" autocomplete="off">
+        <div style="max-height: 460px; overflow-y: auto; border: 1px solid var(--grid); border-radius: 4px;">
+          <table class="country-tbl" id="countryTbl">
+            <thead>
+              <tr>
+                <th data-sort="name">Country</th>
+                <th data-sort="agriculture_pct" class="num">Agri%</th>
+                <th data-sort="industry_pct" class="num">Ind%</th>
+                <th data-sort="services_pct" class="num">Svc%</th>
+                <th data-sort="stage" class="num">Stage</th>
+              </tr>
+            </thead>
+            <tbody><tr><td>loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <p class="footnote">Source: World Bank Indicators API · series <code>SL.AGR.EMPL.ZS</code>, <code>SL.IND.EMPL.ZS</code>, <code>SL.SRV.EMPL.ZS</code> (modeled ILO estimates). Latest available year per country shown; <span id="worldMeta">—</span>.</p>
   </section>
 
   <!-- BACKTEST -->
@@ -778,6 +848,198 @@ function showStateDetail(postal) {
   document.getElementById("sd4y").style.color = s.delta_4y_pp == null ? "" : (s.delta_4y_pp > 0 ? "#f85149" : "#56d364");
 }
 
+const WORLD_STATE = { countries: [], stages: [], sort: { key: "stage", asc: true }, filter: "" };
+
+function renderWorld(payload) {
+  if (!payload) return;
+  WORLD_STATE.countries = payload.countries || [];
+  WORLD_STATE.stages = payload.stages || [];
+
+  // Build the ternary SVG. Coordinate system: ternary x in [0,1], y in [0, sqrt(3)/2≈0.866].
+  // Map to SVG viewBox 520×470 with 30px padding.
+  const PAD = 30, W = 520, H = 470;
+  const PLOT_W = W - 2 * PAD;
+  const PLOT_H = H - 2 * PAD;
+  const tx = (x) => PAD + x * PLOT_W;
+  const ty = (y) => H - PAD - (y / (Math.sqrt(3) / 2)) * PLOT_H;
+
+  const vTop    = { x: tx(0.5), y: ty(Math.sqrt(3) / 2) };
+  const vLeft   = { x: tx(0),   y: ty(0) };
+  const vRight  = { x: tx(1),   y: ty(0) };
+
+  // Helper: cartesian point for a given (a, i, s) trio in [0,1]
+  const tri = (a, i, s) => {
+    const t = a + i + s || 1;
+    const xx = (a / t) * 0.5 + (s / t) * 1.0;
+    const yy = (a / t) * (Math.sqrt(3) / 2);
+    return { x: tx(xx), y: ty(yy) };
+  };
+
+  // Stage zones — render as polygons inside the triangle, colour-tinted.
+  // We define the boundaries the same way the back-end classifier does.
+  const stageColor = Object.fromEntries(WORLD_STATE.stages.map(s => [s.bucket, s.color]));
+
+  // Build polygons by sampling the triangle on a fine grid. Cheap and exact.
+  // For each (a, i) pair on a 20×20 grid where a+i ≤ 1, compute the bucket
+  // and accumulate into a per-bucket point list. Then draw small triangles.
+  function bucketOf(a, i, s) {
+    if (a >= 0.40) return "pre_industrial";
+    if (a >= 0.20) return "industrialising";
+    if (i >= 0.30 && s < 0.60) return "industrial";
+    if (s >= 0.75) return "information";
+    return "post_industrial";
+  }
+
+  let zones = "";
+  const N = 36;
+  for (let ia = 0; ia <= N; ia++) {
+    for (let ii = 0; ii + ia <= N; ii++) {
+      const a = ia / N, i = ii / N, s = 1 - a - i;
+      const b = bucketOf(a, i, s);
+      const p1 = tri(a, i, s);
+      const a2 = (ia + 1) / N, s2 = 1 - a2 - i;
+      const p2 = (ia + 1 <= N && s2 >= 0) ? tri(a2, i, s2) : null;
+      const i3 = (ii + 1) / N, s3 = 1 - a - i3;
+      const p3 = (ii + 1 + ia <= N && s3 >= 0) ? tri(a, i3, s3) : null;
+      if (p2 && p3) {
+        zones += `<polygon points="${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}" fill="${stageColor[b] || "#444"}" fill-opacity="0.16" stroke="none"/>`;
+      }
+    }
+  }
+
+  // Triangle outline + vertex labels
+  const triOutline = `
+    <polygon points="${vTop.x},${vTop.y} ${vLeft.x},${vLeft.y} ${vRight.x},${vRight.y}"
+             fill="none" stroke="#30363d" stroke-width="1.5"/>
+    <text x="${vTop.x}" y="${vTop.y - 10}" text-anchor="middle" fill="#c9d1d9" font-size="13" font-weight="600">Agriculture 100%</text>
+    <text x="${vLeft.x - 12}" y="${vLeft.y + 16}" text-anchor="end" fill="#c9d1d9" font-size="13" font-weight="600">Industry 100%</text>
+    <text x="${vRight.x + 12}" y="${vRight.y + 16}" text-anchor="start" fill="#c9d1d9" font-size="13" font-weight="600">Services 100%</text>
+  `;
+
+  // Grid lines every 20%
+  let gridLines = "";
+  for (let k = 1; k <= 4; k++) {
+    const p = k / 5; // 0.2, 0.4, 0.6, 0.8
+    // Constant-a (parallel to industry-services edge)
+    const aL = tri(p, 1 - p, 0), aR = tri(p, 0, 1 - p);
+    gridLines += `<line x1="${aL.x}" y1="${aL.y}" x2="${aR.x}" y2="${aR.y}" stroke="#30363d" stroke-opacity="0.5" stroke-width="0.5"/>`;
+    // Constant-i
+    const iL = tri(1 - p, p, 0), iR = tri(0, p, 1 - p);
+    gridLines += `<line x1="${iL.x}" y1="${iL.y}" x2="${iR.x}" y2="${iR.y}" stroke="#30363d" stroke-opacity="0.5" stroke-width="0.5"/>`;
+    // Constant-s
+    const sL = tri(1 - p, 0, p), sR = tri(0, 1 - p, p);
+    gridLines += `<line x1="${sL.x}" y1="${sL.y}" x2="${sR.x}" y2="${sR.y}" stroke="#30363d" stroke-opacity="0.5" stroke-width="0.5"/>`;
+  }
+
+  // The "development arc" — a hand-drawn curve from pure agriculture through
+  // a heavily-industrial midpoint to a service-dominated endpoint.
+  const arcPts = [
+    tri(0.85, 0.08, 0.07),
+    tri(0.55, 0.20, 0.25),
+    tri(0.30, 0.30, 0.40),
+    tri(0.10, 0.32, 0.58),
+    tri(0.03, 0.20, 0.77),
+    tri(0.01, 0.12, 0.87),
+  ];
+  const arcPath = arcPts.map((p, i) => (i ? "L" : "M") + p.x.toFixed(1) + "," + p.y.toFixed(1)).join(" ");
+
+  // Country dots
+  let dots = "";
+  for (const c of WORLD_STATE.countries) {
+    const t = c.ternary;
+    if (!t || t.x == null) continue;
+    const p = { x: tx(t.x), y: ty(t.y) };
+    const color = stageColor[c.bucket] || "#aaa";
+    dots += `<circle data-iso3="${escapeAttr(c.iso3)}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}"
+              r="3.5" fill="${color}" fill-opacity="0.85" stroke="#0e1117" stroke-width="0.8"
+              style="cursor: pointer;"/>`;
+  }
+
+  document.getElementById("ternarySvg").innerHTML =
+    `<g>${zones}</g>` +
+    `<g>${gridLines}</g>` +
+    `<path class="ternary-arc" d="${arcPath}"/>` +
+    triOutline +
+    `<g>${dots}</g>`;
+
+  // Stage legend with country counts
+  const counts = payload.stage_counts || {};
+  document.getElementById("stageLegend").innerHTML = (payload.stages || []).map(s => `
+    <div class="row">
+      <span class="swatch" style="background:${s.color}"></span>
+      <span><span class="lbl">${escapeHtml(s.label)}</span> <span class="blurb">· ${escapeHtml(s.blurb)}</span></span>
+      <span class="count">${counts[s.bucket] || 0}</span>
+    </div>`).join("");
+
+  // Tooltip wiring
+  const tip = document.getElementById("ternaryTip");
+  const svg = document.getElementById("ternarySvg");
+  svg.querySelectorAll("circle[data-iso3]").forEach(el => {
+    el.addEventListener("mouseenter", (e) => {
+      const c = WORLD_STATE.countries.find(x => x.iso3 === el.dataset.iso3);
+      if (!c) return;
+      tip.innerHTML = `<strong>${escapeHtml(c.name)}</strong> (${escapeHtml(c.iso3)}) · ${c.year}<br>
+        Agri ${c.agriculture_pct.toFixed(1)}% · Ind ${c.industry_pct.toFixed(1)}% · Svc ${c.services_pct.toFixed(1)}%<br>
+        ${escapeHtml(c.label)} (stage ${c.stage})`;
+      tip.style.display = "block";
+    });
+    el.addEventListener("mousemove", (e) => {
+      const rect = svg.parentElement.getBoundingClientRect();
+      tip.style.left = (e.clientX - rect.left + 10) + "px";
+      tip.style.top  = (e.clientY - rect.top + 10) + "px";
+    });
+    el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+
+  // Table + sort + filter
+  document.getElementById("countrySearch").oninput = (e) => {
+    WORLD_STATE.filter = e.target.value.trim().toLowerCase();
+    renderCountryTable();
+  };
+  document.querySelectorAll("#countryTbl thead th[data-sort]").forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (WORLD_STATE.sort.key === k) WORLD_STATE.sort.asc = !WORLD_STATE.sort.asc;
+      else WORLD_STATE.sort = { key: k, asc: k === "name" };
+      renderCountryTable();
+    };
+  });
+  renderCountryTable();
+
+  // Footnote meta
+  const meds = payload.global_medians || {};
+  const meta = document.getElementById("worldMeta");
+  if (payload.n_countries && meds.services_pct != null) {
+    meta.textContent =
+      `${payload.n_countries} countries · global median: agri ${meds.agriculture_pct.toFixed(1)}%, ind ${meds.industry_pct.toFixed(1)}%, svc ${meds.services_pct.toFixed(1)}%`;
+  }
+}
+
+function renderCountryTable() {
+  const stageColor = Object.fromEntries(WORLD_STATE.stages.map(s => [s.bucket, s.color]));
+  const f = WORLD_STATE.filter;
+  let rows = WORLD_STATE.countries.filter(c =>
+    !f || c.name.toLowerCase().includes(f) || c.iso3.toLowerCase().includes(f));
+  const k = WORLD_STATE.sort.key, asc = WORLD_STATE.sort.asc;
+  rows.sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "string") return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+    return asc ? av - bv : bv - av;
+  });
+  const tb = document.querySelector("#countryTbl tbody");
+  tb.innerHTML = rows.slice(0, 200).map(c => `
+    <tr>
+      <td><span class="stage-dot" style="background:${stageColor[c.bucket] || "#888"}"></span>${escapeHtml(c.name)} <span style="color:var(--muted);font-size:10px;">${escapeHtml(c.iso3)}</span></td>
+      <td class="num">${c.agriculture_pct.toFixed(1)}</td>
+      <td class="num">${c.industry_pct.toFixed(1)}</td>
+      <td class="num">${c.services_pct.toFixed(1)}</td>
+      <td class="num">${c.stage}</td>
+    </tr>`).join("");
+}
+
 function renderBacktest(payload) {
   if (!payload) return;
   const headlineNum = document.getElementById("btHeadline");
@@ -892,6 +1154,7 @@ async function load() {
     renderPolls(data.polls);
     renderEras(data.eras);
     renderStates(data.states);
+    renderWorld(data.world);
     renderBacktest(data.backtest);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;

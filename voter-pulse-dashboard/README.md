@@ -37,6 +37,11 @@ to capture the "fear gap" that often drives sentiment.
    unemployment rate (BLS LAUS via FRED, `{ST}UR` pattern). Click any
    tile for that state's latest reading plus 1-year and 4-year deltas.
    Rankings panel surfaces the lowest, highest, and biggest-improver states.
+8. **World jobs — the Clark–Fisher arc** — every country plotted on a
+   sector-employment ternary triangle (agriculture / industry /
+   services) with the five Clark–Fisher development stages shaded.
+   Hover for country details; filter and sort the side table by name,
+   sector share, or stage. Sourced from the World Bank Indicators API.
 8. **Election backtest** — every month since 1978 we rebuild the mood
    index using only data available at that point and score it against
    every US presidential election at 12 / 6 / 3 / 1-month horizons.
@@ -69,6 +74,8 @@ the mood-index formula, and the four-year-delta computation.
 | Consumer sentiment (UMCSENT) | FRED | monthly |
 | Inflation expectations 1y (MICH) | FRED | monthly |
 | State unemployment (50 + DC, `{ST}UR`) | FRED LAUS | monthly |
+| Sector employment by country (agri/ind/svc) | World Bank Indicators API | annual (24h cache) |
+| GDP per capita by country | World Bank Indicators API | annual (24h cache) |
 | Sentiment markets | Polymarket Gamma API | live (5 min cache) |
 | Presidential approval polls | FiveThirtyEight archive CSV | monthly aggregate (6h cache) |
 | Generic congressional ballot | FiveThirtyEight archive CSV | monthly aggregate (6h cache) |
@@ -112,6 +119,7 @@ DEV_MODE=1 python3 server.py
 - `GET /api/eras` — per-administration averages of selected indicators
 - `GET /api/backtest` — election backtest (history, per-election calls, per-horizon accuracy + correlation)
 - `GET /api/states` — state-level unemployment, mood proxy, tile layout, rankings
+- `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
 - `GET /healthz` — liveness
 
 Every API endpoint accepts `?force=true` to bypass the cache.

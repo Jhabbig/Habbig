@@ -23,11 +23,12 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from analysis import clark_fisher as world_analysis
 from analysis import elections as election_analysis
 from analysis import eras as era_analysis
 from analysis import mood_index
 from analysis import state_mood as state_mood_analysis
-from ingestion import fred_client, polls_client, polymarket_client, states_client
+from ingestion import fred_client, polls_client, polymarket_client, states_client, worldbank_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -132,6 +133,15 @@ async def api_states(force: bool = False) -> JSONResponse:
     return JSONResponse({**state_mood_analysis.compose(raw), "fetched_at": raw.get("fetched_at")})
 
 
+@app.get("/api/world")
+async def api_world(force: bool = False) -> JSONResponse:
+    raw = worldbank_client.get_cached(force=force)
+    return JSONResponse({
+        **world_analysis.summarise(raw["countries"]),
+        "fetched_at": raw.get("fetched_at"),
+    })
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
@@ -151,6 +161,8 @@ async def api_summary(force: bool = False) -> JSONResponse:
     backtest = _backtest_payload(force=force)
     raw_states = states_client.get_cached(force=force)
     states = {**state_mood_analysis.compose(raw_states), "fetched_at": raw_states.get("fetched_at")}
+    raw_world = worldbank_client.get_cached(force=force)
+    world = {**world_analysis.summarise(raw_world["countries"]), "fetched_at": raw_world.get("fetched_at")}
     return JSONResponse({
         "mood": composed,
         "life": life,
@@ -159,6 +171,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
         "eras": eras,
         "backtest": backtest,
         "states": states,
+        "world": world,
     })
 
 
