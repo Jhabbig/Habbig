@@ -10327,6 +10327,52 @@ async def websocket_endpoint(ws: WebSocket):
 # Dashboard HTML
 # ---------------------------------------------------------------------------
 
+@app.get("/healthz")
+async def healthz():
+    """Liveness probe. Returns 200 immediately as long as the process
+    is up — does not check downstream APIs (Odds API, Polymarket, etc.)
+    so a third-party outage doesn't fail the LB health check."""
+    return JSONResponse({
+        "status": "ok",
+        "service": "sports-dashboard",
+        "polymarket_ws_failures": _pm_ws_failure_count,
+        "odds_quota_remaining": odds_quota_remaining(),
+    })
+
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness probe. 503 if critical subsystems aren't ready yet
+    (data updater hasn't run, DB unreachable). Use this as the gate
+    for adding the pod to load balancing."""
+    issues: list[str] = []
+    # DB reachable?
+    try:
+        with _get_db() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except Exception as e:
+        issues.append(f"db: {e}")
+    # Data updater has produced at least one comparison set?
+    try:
+        async with _data_lock:
+            has_data = bool(dashboard_data.get("last_update"))
+    except Exception as e:
+        issues.append(f"data_lock: {e}")
+        has_data = False
+    if not has_data:
+        issues.append("data_updater has not run yet")
+    status = "ready" if not issues else "not_ready"
+    return JSONResponse({"status": status, "issues": issues},
+                          status_code=200 if not issues else 503)
+
+
+@app.get("/changelog", response_class=HTMLResponse)
+async def changelog_page(request: Request):
+    """What's new in Sharpe. Public — same conversion rationale as
+    /features and /track-record."""
+    return HTMLResponse(_load_template("changelog"))
+
+
 @app.get("/features", response_class=HTMLResponse)
 async def features_page(request: Request):
     """Command-center index page that lists every dashboard surface.
