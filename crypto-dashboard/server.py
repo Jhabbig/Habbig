@@ -5143,8 +5143,22 @@ async def add_holding(request: Request):
         raise HTTPException(status_code=400, detail="qty and cost_basis must be numeric")
     if qty <= 0 or cost_basis <= 0:
         raise HTTPException(status_code=400, detail="qty and cost_basis must be positive")
-    acquired_at = str(payload.get("acquired_at") or datetime.now(timezone.utc).date().isoformat())
+    # Validate acquired_at is a real ISO date so it can't carry CSV-injection
+    # payloads into the Form 8949 export downstream. Strict parse — fall
+    # back to today on missing.
+    acquired_raw = payload.get("acquired_at")
+    if acquired_raw:
+        try:
+            parsed = datetime.fromisoformat(str(acquired_raw))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="acquired_at must be ISO 8601 (YYYY-MM-DD)")
+        acquired_at = parsed.date().isoformat()
+    else:
+        acquired_at = datetime.now(timezone.utc).date().isoformat()
     note = str(payload.get("note", ""))[:200]
+    # Sanitize the note for the same CSV-injection reason — it doesn't currently
+    # hit the export but is rendered as innerHTML on the portfolio page.
+    note = "".join(ch for ch in note if ord(ch) >= 0x20 or ch in ("\n", "\t"))
     holding_id = db.add_holding(user["id"], ticker, qty, cost_basis, acquired_at, note)
     return {"id": holding_id}
 
@@ -5936,6 +5950,10 @@ async def update_strategy_api(strategy_id: int, request: Request):
     payload = await request.json()
     rules = payload.get("rules") or {}
     visibility = payload.get("visibility")
+    # Publishing to the marketplace requires Pro — gate on update too,
+    # not just create.
+    if visibility == "public":
+        _require_feature(user, "strategy_publish")
     strategy = strat_mod.Strategy.from_dict(rules)
     ok = await asyncio.to_thread(
         strat_mod.update_strategy, user["id"], strategy_id, strategy, visibility,
@@ -6345,10 +6363,13 @@ async def public_strategy_page(strategy_id: int, request: Request,
     s = await asyncio.to_thread(strat_mod.get_strategy, strategy_id, None)
     if not s or s["visibility"] != "public":
         raise HTTPException(status_code=404, detail="Not found")
-    return HTMLResponse(_public_strategy_html(s, ref or ""))
+    # ref_code must already be in the referral alphabet — anything else is
+    # treated as no referral. We do NOT interpolate it raw into the inline
+    # script; the JS reads URLSearchParams from window.location at runtime.
+    return HTMLResponse(_public_strategy_html(s))
 
 
-def _public_strategy_html(strategy: dict, ref_code: str) -> str:
+def _public_strategy_html(strategy: dict) -> str:
     bt = strategy.get("latest_backtest") or {}
     name_esc = html_mod.escape(strategy["name"])
     desc_esc = html_mod.escape(strategy.get("description") or "")
@@ -6425,7 +6446,13 @@ function getAnonId() {{
   return newId;
 }}
 
-const ref = {repr(ref_code)};
+// Read ref from URL at runtime — NEVER inline server-side into the script.
+// The track endpoint also validates the alphabet, so an attacker-controlled
+// `?ref=` cannot poison anything beyond a no-op POST.
+const REF_RE = /^[2-9A-HJ-NP-TV-Z]{{6,12}}$/i;
+const params = new URLSearchParams(window.location.search);
+const refRaw = params.get('ref') || '';
+const ref = REF_RE.test(refRaw) ? refRaw.toUpperCase() : '';
 const anonId = getAnonId();
 if (ref) {{
   fetch('/api/referrals/track', {{
@@ -6436,10 +6463,13 @@ if (ref) {{
   }}).catch(() => {{}});
 }}
 
+// strategy_id is a server-injected integer (FastAPI Path coerces).
+const STRATEGY_ID = {int(strategy['id'])};
+
 document.getElementById('run-it').onclick = async () => {{
   // First try to subscribe (we might already be signed in).
   try {{
-    const r = await fetch('/api/long-term/strategies/{strategy['id']}/subscribe', {{
+    const r = await fetch('/api/long-term/strategies/' + STRATEGY_ID + '/subscribe', {{
       method: 'POST',
       credentials: 'include',
       headers: {{'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}},
@@ -6449,8 +6479,9 @@ document.getElementById('run-it').onclick = async () => {{
       return;
     }}
     if (r.status === 401) {{
-      // Redirect to gateway login, then back here.
-      window.location.href = `/login?next=/s/{strategy['id']}{f"?ref={ref_code}" if ref_code else ''}`;
+      // Redirect to gateway login, then back here. Use validated ref only.
+      const next = '/s/' + STRATEGY_ID + (ref ? '?ref=' + encodeURIComponent(ref) : '');
+      window.location.href = '/login?next=' + encodeURIComponent(next);
       return;
     }}
     if (r.status === 402) {{
@@ -6580,16 +6611,33 @@ async def onboarding_advance(request: Request):
             else:
                 db.remove_target_weight(user["id"], tk)
     elif step == "strategy":
-        # Optional: subscribe to a leaderboard strategy.
-        sid = data.get("strategy_id")
-        if sid:
+        # Optional: subscribe to a leaderboard strategy. Apply the same
+        # authorization + tier-limit checks as POST /api/long-term/strategies/{id}/subscribe
+        # so the onboarding shortcut can't be used to bypass:
+        #   - the private-strategy privacy gate (enumeration of others' rules)
+        #   - the per-tier subscription cap
+        sid_raw = data.get("strategy_id")
+        if sid_raw is not None:
             try:
-                db.upsert_strategy_subscription(
-                    user["id"], int(sid),
-                    datetime.now(timezone.utc).isoformat(),
-                )
-            except Exception as e:
-                log.warning("onboarding subscribe failed: %s", e)
+                sid = int(sid_raw)
+            except (TypeError, ValueError):
+                sid = None
+            if sid:
+                try:
+                    s = strat_mod.get_strategy(sid, user["id"])
+                    if s and (s["visibility"] == "public"
+                              or s["owner_user_id"] == user["id"]):
+                        # Enforce the per-tier subscription cap.
+                        limit = billing_mod.subscription_limit(user["tier"])
+                        current = db.get_strategy_subscriptions(user["id"])
+                        already = any(c["strategy_id"] == sid for c in current)
+                        if already or limit is None or len(current) < limit:
+                            db.upsert_strategy_subscription(
+                                user["id"], sid,
+                                datetime.now(timezone.utc).isoformat(),
+                            )
+                except Exception as e:
+                    log.warning("onboarding subscribe failed: %s", e)
 
     # Compute next step.
     idx = ONBOARDING_STEPS.index(step)
@@ -7125,6 +7173,15 @@ const TICKERS = ["BTC","ETH","SOL","DOGE","XRP"];
 const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
 const pct = (v) => v == null || isNaN(v) ? '—' : (Number(v)*100).toFixed(1)+'%';
 const usd = (v) => v == null || isNaN(v) ? '—' : '$'+fmt(v);
+// Escape any user-controlled string before embedding it in innerHTML. The
+// server applies the same sanitization on write (length cap + control-char
+// strip) but the client must not trust legacy rows either.
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 async function api(path, opts={}) {
   const r = await fetch(path, {credentials:'include', headers: {'X-Requested-With':'XMLHttpRequest', 'Content-Type':'application/json'}, ...opts});
@@ -7940,9 +7997,9 @@ async function loadSubscriptions(){
       card.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:start;gap:10px">
           <div>
-            <h3 style="margin:0 0 4px">${s.strategy_name} ${status}</h3>
-            <div style="font-size:.85em;color:var(--muted)">${s.base_ticker} · last run: ${s.last_run_at || 'never'} · next: ${s.next_run_at || 'asap'}</div>
-            ${s.last_action ? `<div style="font-size:.85em;margin-top:4px">Last action: ${s.last_action}</div>` : ''}
+            <h3 style="margin:0 0 4px">${esc(s.strategy_name)} ${status}</h3>
+            <div style="font-size:.85em;color:var(--muted)">${esc(s.base_ticker)} · last run: ${esc(s.last_run_at || 'never')} · next: ${esc(s.next_run_at || 'asap')}</div>
+            ${s.last_action ? `<div style="font-size:.85em;margin-top:4px">Last action: ${esc(s.last_action)}</div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px">
             <button class="ghost" data-run="${s.id}">Run now</button>
@@ -7983,8 +8040,8 @@ async function loadMyStrategies(){
       const sharpe = bt && bt.sharpe != null ? fmt(bt.sharpe, 2) : '—';
       const card = document.createElement('div'); card.className = 'card';
       card.innerHTML = `
-        <h3>${s.name} <span class="pill ${s.visibility==='public'?'p-expansion':'p-neutral'}">${s.visibility}</span></h3>
-        <div class="row"><span class="l">Asset</span><span class="v">${s.base_ticker}</span></div>
+        <h3>${esc(s.name)} <span class="pill ${s.visibility==='public'?'p-expansion':'p-neutral'}">${esc(s.visibility)}</span></h3>
+        <div class="row"><span class="l">Asset</span><span class="v">${esc(s.base_ticker)}</span></div>
         <div class="row"><span class="l">Starting capital</span><span class="v">${usd(s.starting_capital_usd)}</span></div>
         <div class="row"><span class="l">Latest backtest return</span><span class="v">${ret}</span></div>
         <div class="row"><span class="l">Sharpe</span><span class="v">${sharpe}</span></div>
@@ -8008,7 +8065,7 @@ async function loadLeaderboard(){
     tbody.innerHTML = '';
     r.leaderboard.forEach((row, i) => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${i+1}</td><td>${row.name}</td><td>${row.base_ticker}</td>
+      tr.innerHTML = `<td>${i+1}</td><td>${esc(row.name)}</td><td>${esc(row.base_ticker)}</td>
         <td class="${row.total_return_pct>=0?'gain':'loss'}">${pct(row.total_return_pct)}</td>
         <td>${fmt(row.sharpe,2)}</td><td>${fmt(row.sortino,2)}</td>
         <td class="loss">${pct(row.max_drawdown_pct)}</td>
@@ -8043,9 +8100,9 @@ async function loadMarketplace(){
       const bt = s.latest_backtest;
       const card = document.createElement('div'); card.className = 'card';
       card.innerHTML = `
-        <h3>${s.name}</h3>
-        <div class="note">${s.description || ''}</div>
-        <div class="row"><span class="l">Asset · capital</span><span class="v">${s.base_ticker} · ${usd(s.starting_capital_usd)}</span></div>
+        <h3>${esc(s.name)}</h3>
+        <div class="note">${esc(s.description || '')}</div>
+        <div class="row"><span class="l">Asset · capital</span><span class="v">${esc(s.base_ticker)} · ${usd(s.starting_capital_usd)}</span></div>
         ${bt ? `
         <div class="row"><span class="l">Return</span><span class="v ${bt.total_return_pct>=0?'gain':'loss'}">${pct(bt.total_return_pct)}</span></div>
         <div class="row"><span class="l">Sharpe / Max DD</span><span class="v">${fmt(bt.sharpe,2)} / ${pct(bt.max_drawdown_pct)}</span></div>
@@ -8534,7 +8591,7 @@ function renderOnboarding(state){
       for (const s of r.leaderboard.slice(0, 5)) {
         const card = document.createElement('div'); card.className = 'card';
         card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <div><b>${s.name}</b> — ${s.base_ticker}<br>
+          <div><b>${esc(s.name)}</b> — ${esc(s.base_ticker)}<br>
           <span style="font-size:.85em;color:var(--muted)">Return ${pct(s.total_return_pct)} · Sharpe ${fmt(s.sharpe,2)} · MaxDD ${pct(s.max_drawdown_pct)}</span></div>
           <button data-onb-pick="${s.id}">Subscribe</button></div>`;
         lb.appendChild(card);

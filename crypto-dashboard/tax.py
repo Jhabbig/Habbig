@@ -477,6 +477,22 @@ def list_dispositions(user_id: str, limit: int = 200) -> list[dict]:
 
 # ─── Form 8949 CSV export ───────────────────────────────────────────────────
 
+def _csv_safe_cell(value) -> str:
+    """Defuse CSV-injection payloads. Excel / Sheets / Numbers evaluate any
+    cell starting with =, +, -, @, TAB, or CR as a formula. We prefix such
+    cells with a single quote, which the spreadsheet displays as text and
+    drops on save. Done at export time so we can also handle legacy rows
+    even if input validation slipped earlier."""
+    if value is None:
+        return ""
+    s = str(value)
+    if not s:
+        return ""
+    if s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 def export_form_8949(user_id: str, year: int) -> str:
     """Generate a Form 8949 CSV.
     One row per lot consumption (i.e. one row per acquisition lot that was
@@ -502,9 +518,10 @@ def export_form_8949(user_id: str, year: int) -> str:
             cost = float(c["consumed_qty"]) * float(c["cost_basis"])
             gain = float(c["realized_gain"])
             w.writerow([
-                part, description,
-                c["acquired_at"] if "acquired_at" in c.keys() else "",
-                d["sell_date"],
+                _csv_safe_cell(part),
+                _csv_safe_cell(description),
+                _csv_safe_cell(c["acquired_at"] if "acquired_at" in c.keys() else ""),
+                _csv_safe_cell(d["sell_date"]),
                 f"{proceeds:.2f}", f"{cost:.2f}", "", "",
                 f"{gain:.2f}",
             ])

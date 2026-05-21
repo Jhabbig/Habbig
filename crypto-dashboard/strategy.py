@@ -301,11 +301,37 @@ def backtest(strategy: Strategy) -> dict:
 
 # ─── CRUD + leaderboard helpers ─────────────────────────────────────────────
 
+_NAME_MAX = 80
+_DESC_MAX = 500
+
+
+def _sanitise_text(s: str | None, max_len: int) -> str:
+    """Strip control characters that could break out of HTML contexts and
+    cap length. Client also escapes on render — this is defence-in-depth so
+    legacy rows can't poison the DB either."""
+    if not s:
+        return ""
+    s = str(s)
+    # Strip C0/C1 control chars (except common whitespace) — these include
+    # things like NUL that some HTML parsers handle inconsistently.
+    out = []
+    for ch in s:
+        cp = ord(ch)
+        if cp < 0x20 and ch not in ("\n", "\t"):
+            continue
+        if 0x7F <= cp < 0xA0:
+            continue
+        out.append(ch)
+    return "".join(out)[:max_len]
+
+
 def create_strategy(user_id: str, strategy: Strategy,
                     forked_from: Optional[int] = None,
                     visibility: str = "private") -> int:
     if visibility not in ("private", "public"):
         raise ValueError("visibility must be private or public")
+    strategy.name = _sanitise_text(strategy.name, _NAME_MAX) or "untitled"
+    strategy.description = _sanitise_text(strategy.description, _DESC_MAX)
     rules_json = json.dumps(strategy.to_dict())
     return db.insert_strategy(
         owner_user_id=user_id, name=strategy.name,
@@ -322,6 +348,8 @@ def update_strategy(user_id: str, strategy_id: int, strategy: Strategy,
     row = db.get_strategy(strategy_id)
     if not row or row["owner_user_id"] != user_id:
         return False
+    strategy.name = _sanitise_text(strategy.name, _NAME_MAX) or "untitled"
+    strategy.description = _sanitise_text(strategy.description, _DESC_MAX)
     db.update_strategy_row(
         strategy_id=strategy_id, name=strategy.name,
         description=strategy.description,
