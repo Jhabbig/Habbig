@@ -13,6 +13,10 @@ Routes:
   - GET /api/sdn                → OFAC SDN delta — today vs prior snapshot (12h cache)
   - GET /api/hearings           → Senate Banking + House FS confirmation hearings (1h cache)
   - GET /feed.xml?…             → RSS 2.0 alert feed with the same filter params as /api/feed
+  - POST /api/subscribe         → v1.6 — accept email + filter; send confirmation email
+  - GET /api/subscribe/confirm  → email-click confirmation handler
+  - GET /api/subscribe/unsubscribe → email-click unsubscribe handler
+  - POST /api/digest/send_now   → admin-token-gated digest dispatcher; external cron drives schedule
   - GET /healthz                → liveness
 
 Auth: same gateway-SSO pattern as centralbank-dashboard. Set DEV_MODE=1 to
@@ -31,12 +35,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ingestion import (
     confirmation_hearings,
+    digest_subscribers,
+    email_send,
     kalshi_client,
     ofac_sdn,
     polymarket_client,
     unified_feed,
 )
 from analysis import diff as diff_module
+from analysis import email_digest
 from analysis import heatmap as heatmap_aggr
 from analysis import market_match
 from analysis import people as people_roster
@@ -54,15 +61,26 @@ HTML_PATH = Path(__file__).parent / "index.html"
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 _rss_token = os.environ.get("RSS_SHARED_TOKEN", "")
+_digest_admin_token = os.environ.get("DIGEST_ADMIN_TOKEN", "")
+_public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
 if not _rss_token and not _DEV_MODE:
     log.warning("RSS_SHARED_TOKEN unset — /feed.xml will refuse requests in non-DEV_MODE")
+if not _digest_admin_token and not _DEV_MODE:
+    log.warning("DIGEST_ADMIN_TOKEN unset — /api/digest/send_now will refuse requests in non-DEV_MODE")
 
-# Routes that bypass the gateway-SSO middleware. /feed.xml is gated by
-# its own RSS_SHARED_TOKEN check inside the handler so RSS readers
-# (which can't send custom headers) can subscribe.
-_SSO_BYPASS = ("/healthz", "/feed.xml")
+# Routes that bypass the gateway-SSO middleware. RSS readers and email-
+# click links can't send custom headers, so each of these handlers gates
+# itself via its own URL-param token instead.
+_SSO_BYPASS = (
+    "/healthz",
+    "/feed.xml",
+    "/api/subscribe",
+    "/api/subscribe/confirm",
+    "/api/subscribe/unsubscribe",
+    "/api/digest/send_now",
+)
 
 
 @app.middleware("http")
@@ -275,6 +293,166 @@ async def feed_rss(
         limit=50,
     )
     return Response(content=xml, media_type="application/rss+xml; charset=utf-8")
+
+
+_VALID_FILTER_KEYS = {"jurisdiction", "source", "tag", "severity", "topic", "q"}
+
+
+def _base_url(request: Request) -> str:
+    """Preferred public URL for the dashboard. PUBLIC_BASE_URL wins so
+    email links don't expose the internal scheme/port; falls back to the
+    request URL's origin for DEV_MODE convenience."""
+    if _public_base_url:
+        return _public_base_url
+    return f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+
+
+_EMAIL_OK_RX = __import__("re").compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request) -> JSONResponse:
+    """v1.6 — accept an email + filter dict, send a confirmation email,
+    return a pending-row reference. Double-opt-in: no further mail goes
+    out until the user clicks the link in the confirmation email."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body must be a JSON object"}, status_code=400)
+    email = (body.get("email") or "").strip().lower()
+    if not _EMAIL_OK_RX.match(email):
+        return JSONResponse({"ok": False, "error": "invalid email"}, status_code=400)
+    raw_filter = body.get("filter") or {}
+    if not isinstance(raw_filter, dict):
+        return JSONResponse({"ok": False, "error": "filter must be an object"}, status_code=400)
+    filter_dict = {k: str(v) for k, v in raw_filter.items() if k in _VALID_FILTER_KEYS and v}
+
+    sub = digest_subscribers.add_pending(email, filter_dict)
+    base = _base_url(request)
+    confirm_url = f"{base}/api/subscribe/confirm?token={sub['confirm_token']}"
+
+    subj, text_body, html_body = email_digest.render_confirmation(
+        email=email, confirm_url=confirm_url, filter_dict=filter_dict,
+    )
+    send_result = email_send.send(
+        to_addr=email, subject=subj, html_body=html_body, text_body=text_body,
+    )
+    log.info("subscribe id=%s email=%s send=%s", sub["id"], email, send_result)
+    return JSONResponse({
+        "ok": True,
+        "id": sub["id"],
+        "email": email,
+        "filter": filter_dict,
+        "status": "pending",
+        "email_sent": send_result.get("ok", False),
+        "email_dry_run": send_result.get("dry_run", False),
+    })
+
+
+_HTML_PAGE = """<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;max-width:560px;margin:48px auto;padding:0 24px;line-height:1.5"><h2>{title}</h2><p>{body}</p></body></html>"""
+
+
+@app.get("/api/subscribe/confirm")
+async def api_subscribe_confirm(token: str = "") -> Response:
+    row = digest_subscribers.confirm(token)
+    if not row:
+        return Response(
+            content=_HTML_PAGE.format(
+                title="Link expired or invalid",
+                body="This confirmation link is no longer valid. If you still want the digest, sign up again on the dashboard.",
+            ),
+            status_code=404, media_type="text/html",
+        )
+    return Response(
+        content=_HTML_PAGE.format(
+            title="Subscription confirmed",
+            body=f"You're now subscribed to the Regulators Dashboard daily digest as <strong>{row['email']}</strong>. The next digest will arrive on the next scheduled dispatch.",
+        ),
+        media_type="text/html",
+    )
+
+
+@app.get("/api/subscribe/unsubscribe")
+async def api_subscribe_unsubscribe(token: str = "") -> Response:
+    row = digest_subscribers.unsubscribe(token)
+    if not row:
+        return Response(
+            content=_HTML_PAGE.format(
+                title="Link not recognized",
+                body="That unsubscribe link doesn't match any subscription we know about.",
+            ),
+            status_code=404, media_type="text/html",
+        )
+    return Response(
+        content=_HTML_PAGE.format(
+            title="Unsubscribed",
+            body=f"<strong>{row['email']}</strong> has been unsubscribed. You will receive no further digests.",
+        ),
+        media_type="text/html",
+    )
+
+
+@app.post("/api/digest/send_now")
+async def api_digest_send_now(request: Request, token: str = "") -> JSONResponse:
+    """Manually trigger digest dispatch to every confirmed subscriber whose
+    last_sent_at is before today UTC. Designed to be hit by an external
+    cron / k8s CronJob — separation of concerns means no in-process
+    scheduler to babysit.
+
+    Auth: DIGEST_ADMIN_TOKEN required outside DEV_MODE. Pass via the
+    `token` query param or the `X-Admin-Token` header."""
+    header_token = request.headers.get("x-admin-token", "")
+    presented = token or header_token
+    if _digest_admin_token:
+        if not hmac.compare_digest(presented, _digest_admin_token):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    elif not _DEV_MODE:
+        return JSONResponse(
+            {"ok": False, "error": "DIGEST_ADMIN_TOKEN not set"},
+            status_code=503,
+        )
+
+    due = digest_subscribers.list_due()
+    feed_data = unified_feed.get_cached()
+    base = _base_url(request)
+    sent: list[dict] = []
+    for sub in due:
+        items = _apply_item_filters(
+            feed_data["items"],
+            jurisdiction=sub["filter"].get("jurisdiction", ""),
+            source=sub["filter"].get("source", ""),
+            tag=sub["filter"].get("tag", ""),
+            severity=sub["filter"].get("severity", ""),
+            topic=sub["filter"].get("topic", ""),
+            q=sub["filter"].get("q", ""),
+        )
+        unsubscribe_url = f"{base}/api/subscribe/unsubscribe?token={sub['unsubscribe_token']}"
+        subj, text_body, html_body = email_digest.render_daily_digest(
+            email=sub["email"], items=items, filter_dict=sub["filter"],
+            unsubscribe_url=unsubscribe_url, dashboard_url=base,
+        )
+        result = email_send.send(
+            to_addr=sub["email"], subject=subj,
+            html_body=html_body, text_body=text_body,
+        )
+        if result.get("ok"):
+            digest_subscribers.mark_sent(sub["id"])
+        sent.append({
+            "id": sub["id"], "email": sub["email"],
+            "items": len(items),
+            "send_ok": result.get("ok", False),
+            "dry_run": result.get("dry_run", False),
+            "error": result.get("error"),
+        })
+    return JSONResponse({
+        "ok": True,
+        "due_count": len(due),
+        "sent": sent,
+        "stats": digest_subscribers.stats(),
+        "dry_run": email_send.is_dry_run(),
+    })
 
 
 @app.get("/api/sdn")

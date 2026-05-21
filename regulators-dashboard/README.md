@@ -39,6 +39,10 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/sdn` | 12 h | OFAC SDN today's snapshot meta + delta vs prior snapshot (top-20 added/removed previews + program deltas) |
 | `GET /api/hearings` | 1 h | Senate Banking + House FS confirmation hearings (filtered to nomination/confirmation items) |
 | `GET /feed.xml?…` | 30 min (via feed cache) | RSS 2.0 alert feed — same filters as `/api/feed`, gated by `RSS_SHARED_TOKEN` |
+| `POST /api/subscribe` | — | v1.6 — accept `{email, filter}`, send confirmation email, store pending row |
+| `GET /api/subscribe/confirm?token=…` | — | Email-click confirmation; flips pending → confirmed |
+| `GET /api/subscribe/unsubscribe?token=…` | — | Email-click unsubscribe; idempotent |
+| `POST /api/digest/send_now` | — | Admin-token-gated digest dispatcher; external cron drives the schedule |
 | `GET /healthz` | — | Liveness probe |
 
 Filter semantics:
@@ -88,6 +92,8 @@ python3 -m analysis.diff              # latest-vs-prior diff sanity over 4 synth
 python3 -m ingestion.ofac_sdn         # SDN parser + persist + delta fixtures (synthetic 2-day XML)
 python3 -m ingestion.confirmation_hearings  # Hearing-filter + regulator-hint fixtures (7 cases)
 python3 -m analysis.rss_feed          # RSS 2.0 renderer round-trip via defusedxml parse-back
+python3 -m ingestion.digest_subscribers  # Sqlite subscriber-store lifecycle (subscribe/confirm/list/sent/unsub)
+python3 -m analysis.email_digest      # Confirmation + daily-digest template renderer fixtures
 ```
 
 ## Files
@@ -105,6 +111,8 @@ regulators-dashboard/
 │   ├── kalshi_client.py            Kalshi /trade-api/v2/markets → normalized markets (5-min cache)
 │   ├── ofac_sdn.py                 OFAC SDN XML fetch + parse + per-day snapshot + day-over-day delta
 │   ├── confirmation_hearings.py    Senate Banking + House FS hearing-RSS filter (1h cache)
+│   ├── digest_subscribers.py       v1.6 — SQLite subscriber store (pending/confirmed/unsubscribed)
+│   ├── email_send.py               v1.6 — stdlib SMTP sender with DRY_RUN fallback
 │   └── unified_feed.py             Per-source try/except + 30-min cache + classifier hook
 ├── analysis/
 │   ├── classifier_keywords.py      Six-category phrase dictionary (tunable)
@@ -118,7 +126,8 @@ regulators-dashboard/
 │   ├── stance_keywords.py          Per-regulator stance axes (SEC/FCA/ESMA), tunable
 │   ├── stance.py                   Per-regulator stance scorer + 7 fixture self-test
 │   ├── diff.py                     Token-level speech diff (latest vs prior per regulator)
-│   └── rss_feed.py                 RSS 2.0 renderer for /feed.xml (zero-dep hand-rolled XML)
+│   ├── rss_feed.py                 RSS 2.0 renderer for /feed.xml (zero-dep hand-rolled XML)
+│   └── email_digest.py             v1.6 — confirmation + daily-digest HTML/text templates
 ├── data/
 │   └── personnel.py                Hand-curated roster (EDIT HERE to add chairs/commissioners)
 ├── index.html                      Single-file UI: filter chips + tag chips + action table, no JS deps
@@ -453,6 +462,59 @@ delivers the FREE half (SEC's own LR feed); deep PACER per-case
 access (complaints, motions, exhibits, court dockets) stays
 deferred until there's budget plus a clear cost-justified use case.
 
+### v1.6 — managed email digest
+
+End-to-end subscriber flow with double-opt-in confirmation and
+manual cron-driven dispatch:
+
+  1. **`POST /api/subscribe`** with `{email, filter}` — creates a
+     `pending` row in `data/digest.sqlite` (SQLite, configurable
+     via `DIGEST_DB_PATH`) and sends a confirmation email.
+  2. **`GET /api/subscribe/confirm?token=…`** — email-click flips
+     `pending → confirmed`. Renders a small HTML "you're subscribed"
+     page.
+  3. **`POST /api/digest/send_now`** (admin-token-gated) — finds
+     every confirmed subscriber whose `last_sent_at < today UTC`,
+     filters the cached feed against each subscriber's `filter`,
+     renders the digest (HTML + text), sends, marks
+     `last_sent_at=now`. Designed to be hit by external cron /
+     k8s CronJob — no in-process scheduler to babysit.
+  4. **`GET /api/subscribe/unsubscribe?token=…`** — email-click
+     flips to `unsubscribed`. Idempotent; the row stays around for
+     audit.
+
+**SMTP shape:** `ingestion/email_send.py` uses stdlib `smtplib`
+with optional STARTTLS. If `SMTP_HOST` is unset the sender
+**DRY_RUNs** — logs the message and returns `ok=True, dry_run=True`.
+That lets the sandbox + staging exercise the full subscribe →
+confirm → send-now flow without real delivery. For production
+deliverability at scale (DKIM, SPF, dedicated IP, bounce processing)
+swap in a managed provider (Postmark, SendGrid, AWS SES) by
+replacing the one `send()` function — caller surfaces unchanged.
+
+**Auth shape:** all four endpoints are added to the gateway-SSO
+bypass list since email-click links can't supply custom headers.
+`/api/digest/send_now` is gated on `DIGEST_ADMIN_TOKEN` (query
+param or `X-Admin-Token` header); the three subscribe routes are
+gated by the secrecy of their per-subscriber `confirm_token` /
+`unsubscribe_token` (32-byte URL-safe random per row).
+
+**Auto bounce-handling is deferred** — a hard-bounce mailbox
+should mark itself `unsubscribed` after N strikes, but that
+requires receiving bounce notifications, which is provider-
+specific. Out of scope for v1.6; tracked as the next polish lift.
+
+**UI surface:** a small `email@example.com [Email me daily ↗]`
+form inline in the action-feed filter row. Filter state is
+auto-captured into the subscribe payload so users get whatever
+they're currently looking at, not a global digest.
+
+**Operational note:** add a cron entry like
+`0 16 * * * curl -X POST https://your-host/api/digest/send_now -H "X-Admin-Token: $TOKEN"`
+to dispatch daily at 16:00 UTC. The endpoint is idempotent on
+re-hit (it skips subscribers already sent today), so doubled cron
+firings are safe.
+
 ## Roadmap
 
 | Step | Status | Adds |
@@ -470,7 +532,8 @@ deferred until there's budget plus a clear cost-justified use case.
 | **v1.2** | ✓ done | Statement diff viewer — latest-vs-prior speech per regulator with token-level inline diff and similarity score |
 | **v1.3** | ✓ done (LR only) | SEC Litigation Releases pulled as a new source code `SEC-LIT`; flows through the v0.1 → v0.5 pipeline (classifier, severity, topics, market match, heatmap) automatically. Deep PACER per-case scraping (complaints, motions, exhibits) remains deferred — paid feed, ROI unproven. |
 | **v1.4** | ✓ done | OFAC SDN delta-per-day — fetch + parse Treasury `sdn.xml`, persist daily digest, compute additions/removals + per-program counts |
-| **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN`. Email digest deferred as v1.6 |
+| **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN` |
+| **v1.6** | ✓ done | Managed email digest — SQLite subscriber store, double-opt-in confirmation flow, manual `POST /api/digest/send_now` (external cron drives schedule), DRY_RUN fallback when SMTP_HOST unset. Auto bounce-handling deferred. |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars
@@ -482,6 +545,10 @@ deferred until there's budget plus a clear cost-justified use case.
 | `PORT` | `7080` | Override listen port. |
 | `SDN_SNAPSHOT_DIR` | tempfile path | Where v1.4 persists per-day OFAC SDN digests. Set to a mounted volume in production. |
 | `RSS_SHARED_TOKEN` | unset | Token gating `/feed.xml` (v1.5). Required outside `DEV_MODE`; subscribers append `?token=<value>` to the URL. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` / `SMTP_STARTTLS` | unset | v1.6 SMTP config. `SMTP_HOST` unset = DRY_RUN. |
+| `DIGEST_DB_PATH` | tempfile path | v1.6 SQLite subscriber DB path. Production = mounted volume. |
+| `DIGEST_ADMIN_TOKEN` | unset | v1.6 — gates `POST /api/digest/send_now`. Required outside DEV_MODE. |
+| `PUBLIC_BASE_URL` | request origin | v1.6 — base URL baked into email confirm/unsubscribe links. |
 
 ## Caveats / known limits
 

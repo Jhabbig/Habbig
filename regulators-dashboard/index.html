@@ -185,6 +185,18 @@
   .rss-link { font-size: 11px; color: var(--muted); }
   .rss-link a { color: var(--accent); text-decoration: none; }
   .rss-link a:hover { text-decoration: underline; }
+  .subscribe { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; font-size: 11px; }
+  .subscribe input { padding: 4px 8px; font-size: 11px; background: #0e1117;
+                     color: var(--fg); border: 1px solid var(--grid);
+                     border-radius: 4px; min-width: 180px; }
+  .subscribe input:focus { outline: none; border-color: var(--accent); }
+  .subscribe button { padding: 4px 10px; font-size: 11px; background: var(--accent);
+                      color: #0e1117; border: none; border-radius: 4px;
+                      font-weight: 600; cursor: pointer; }
+  .subscribe button:hover { filter: brightness(1.1); }
+  .subscribe-msg { font-size: 11px; }
+  .subscribe-msg.ok  { color: #56d364; }
+  .subscribe-msg.err { color: #f85149; }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -264,6 +276,11 @@
       <span class="chip active" data-mkt="">All items</span>
       <span class="chip" data-mkt="true">Has Polymarket / Kalshi match</span>
       <span class="rss-link" id="rss-link"></span>
+      <form class="subscribe" id="subscribe-form">
+        <input type="email" id="subscribe-email" placeholder="email@example.com" required>
+        <button type="submit">Email me daily ↗</button>
+        <span class="subscribe-msg" id="subscribe-msg"></span>
+      </form>
     </div>
     <table>
       <thead>
@@ -946,6 +963,46 @@ document.querySelectorAll(".chip[data-mkt]").forEach(el => {
 // Keep the RSS subscribe link in sync with the filter state.
 const _origLoad = load;
 load = async function() { await _origLoad(); updateRssLink(); };
+
+// v1.6 — email digest subscribe form.
+document.getElementById("subscribe-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const emailEl = document.getElementById("subscribe-email");
+  const msgEl = document.getElementById("subscribe-msg");
+  const email = emailEl.value.trim();
+  if (!email) return;
+  msgEl.className = "subscribe-msg";
+  msgEl.textContent = "Sending…";
+  // Build filter dict from current state. has_market isn't part of the
+  // server-side filter set (it's a per-request join), so we omit it here.
+  const filter = {};
+  if (state.jurisdiction) filter.jurisdiction = state.jurisdiction;
+  if (state.tag) filter.tag = state.tag;
+  if (state.sev) filter.severity = state.sev;
+  if (state.topic) filter.topic = state.topic;
+  if (state.q) filter.q = state.q;
+  try {
+    const r = await fetch("/api/subscribe", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({email, filter}),
+    });
+    const data = await r.json();
+    if (r.ok && data.ok) {
+      msgEl.className = "subscribe-msg ok";
+      msgEl.textContent = data.email_dry_run
+        ? "Subscribed (DRY_RUN — no email actually sent)"
+        : "Check your inbox for a confirmation link.";
+      emailEl.value = "";
+    } else {
+      msgEl.className = "subscribe-msg err";
+      msgEl.textContent = data.error || "Subscribe failed.";
+    }
+  } catch (err) {
+    msgEl.className = "subscribe-msg err";
+    msgEl.textContent = "Network error: " + err.message;
+  }
+});
 
 let qTimer;
 document.getElementById("q").addEventListener("input", e => {
