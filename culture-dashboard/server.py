@@ -28,13 +28,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, HTTPException, Request           # noqa: E402
-from fastapi.responses import HTMLResponse, JSONResponse      # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # noqa: E402
 
 import backtest                                                # noqa: E402
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
 import digest as digest_mod                                    # noqa: E402
 import edge                                                    # noqa: E402
+import export as export_mod                                    # noqa: E402
 import index_calc                                              # noqa: E402
 import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
@@ -236,6 +237,34 @@ async def api_backtest(
 @app.get("/compare", response_class=HTMLResponse)
 async def compare_page() -> HTMLResponse:
     return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/export", response_class=HTMLResponse)
+async def export_page() -> HTMLResponse:
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/export")
+async def api_export(
+    type: str | None = None,
+    days: int = 30,
+    format: str = "csv",
+):
+    days = max(1, min(days, 365))
+    if type is None:
+        return JSONResponse({"types": export_mod.available_types()})
+    if type not in export_mod.available_types():
+        raise HTTPException(404, f"unknown export type: {type}")
+    if format == "json":
+        return JSONResponse(export_mod.as_json(type, days))
+    if format != "csv":
+        raise HTTPException(400, "format must be csv or json")
+    filename = f"culture_{type}_{days}d.csv"
+    return StreamingResponse(
+        export_mod.stream_csv(type, days),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/digest/refresh")

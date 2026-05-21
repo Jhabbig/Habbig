@@ -81,7 +81,38 @@
   .topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
                 gap: 10px; }
   .topic-card { background: var(--panel-2); border-radius: 6px; padding: 10px 12px;
-                font-size: 13px; line-height: 1.35; }
+                font-size: 13px; line-height: 1.35; position: relative;
+                transition: outline-color 0.15s ease; outline: 2px solid transparent; }
+  .topic-card.selected { outline-color: var(--accent); }
+  .topic-select { position: absolute; top: 6px; right: 6px;
+                   background: transparent; color: var(--muted);
+                   border: 1px solid var(--border); border-radius: 4px;
+                   width: 22px; height: 22px; padding: 0; cursor: pointer;
+                   font-size: 13px; line-height: 1; }
+  .topic-select:hover { color: var(--accent); border-color: var(--accent); }
+  .topic-select[aria-pressed="true"] {
+    background: var(--accent); color: var(--bg); border-color: var(--accent);
+  }
+
+  .compare-bar { position: fixed; bottom: 16px; left: 50%;
+                  transform: translateX(-50%); display: none;
+                  align-items: center; gap: 14px; padding: 10px 16px;
+                  background: var(--panel); border: 1px solid var(--accent);
+                  border-radius: 999px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+                  font-size: 13px; z-index: 50; }
+  .compare-bar a.compare-btn {
+    background: var(--accent); color: var(--bg);
+    padding: 6px 14px; border-radius: 999px;
+    text-decoration: none; font-weight: 600;
+  }
+  .compare-bar a.compare-btn:hover { filter: brightness(1.1); }
+  .compare-bar button.compare-clear {
+    background: transparent; color: var(--muted);
+    border: none; cursor: pointer; font-size: 13px;
+  }
+  .compare-bar button.compare-clear:hover { color: var(--fg); }
+  .compare-bar .compare-label { color: var(--muted); font-size: 11px;
+                                  text-transform: uppercase; letter-spacing: 0.06em; }
   .topic-label { font-weight: 600; font-size: 15px;
                  text-transform: capitalize; margin-bottom: 4px; }
   .topic-meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
@@ -157,6 +188,33 @@
                                border: 1px solid var(--border); border-radius: 4px;
                                padding: 4px 8px; font-size: 12px; }
   .backtest-controls select:focus-visible { outline: 2px solid var(--accent); }
+
+  /* ── Export page ───────────────────────────────────────────────── */
+  .export-page { max-width: 720px; margin: 0 auto; }
+  .export-grid { display: grid; gap: 12px; margin-top: 18px; }
+  .export-card { background: var(--panel); border: 1px solid var(--border);
+                  border-radius: 10px; padding: 16px;
+                  display: grid; grid-template-columns: 1fr auto auto;
+                  gap: 12px; align-items: center; }
+  .export-card .name { font-weight: 600; }
+  .export-card .desc { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .export-card .download {
+    background: var(--accent); color: var(--bg);
+    padding: 6px 14px; border-radius: 6px; text-decoration: none;
+    font-size: 13px; font-weight: 600;
+  }
+  .export-card .download:hover { filter: brightness(1.1); }
+  .export-card .download.json {
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .export-controls { display: flex; align-items: center; gap: 10px;
+                      margin-bottom: 16px; }
+  .export-controls label { font-size: 11px; color: var(--muted);
+                            text-transform: uppercase; letter-spacing: 0.05em; }
+  .export-controls select { background: var(--panel-2); color: var(--fg);
+                              border: 1px solid var(--border); border-radius: 4px;
+                              padding: 4px 8px; font-size: 12px; }
 
   /* ── Compare page ──────────────────────────────────────────────── */
   .compare-page { max-width: 1000px; margin: 0 auto; }
@@ -352,6 +410,7 @@
 <header role="banner">
   <a href="/" style="color: inherit; text-decoration: none;"><h1>State of Culture</h1></a>
   <span class="sub" id="updated" aria-live="polite">loading…</span>
+  <a href="/export" style="color: var(--muted); text-decoration: none; font-size: 12px; margin-left: 12px;">Export ↓</a>
   <button id="refresh" aria-label="Refresh all data now">Refresh now</button>
 </header>
 
@@ -454,6 +513,7 @@
 
   <div id="topic-view" class="topic-page" hidden></div>
   <div id="compare-view" class="compare-page" hidden></div>
+  <div id="export-view" class="export-page" hidden></div>
 </main>
 
 <script>
@@ -555,6 +615,78 @@ document.getElementById("digest-refresh").addEventListener("click", async () => 
   setTimeout(loadDigest, 6000);
 });
 
+// ── Topic multi-select (compare bar) ────────────────────────────────────
+const selectedTopics = new Set();
+
+function updateCompareBar() {
+  let bar = document.getElementById("compare-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "compare-bar";
+    bar.className = "compare-bar";
+    bar.setAttribute("role", "region");
+    bar.setAttribute("aria-label", "Topic comparison selection");
+    document.body.appendChild(bar);
+  }
+  if (selectedTopics.size === 0) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  const list = Array.from(selectedTopics);
+  const params = list.slice(0, 4)
+    .map((s, i) => `${["a", "b", "c", "d"][i]}=${encodeURIComponent(s)}`)
+    .join("&");
+  const labels = list.slice(0, 3).join(", ") +
+    (list.length > 3 ? `, +${list.length - 3}` : "");
+  bar.innerHTML = `
+    <span class="compare-label">${selectedTopics.size} selected</span>
+    <span>${labels}</span>
+    <a href="/compare?${params}" class="compare-btn">Compare →</a>
+    <button class="compare-clear" type="button">Clear</button>`;
+  bar.querySelector(".compare-clear").addEventListener("click", clearTopicSelection);
+}
+
+function clearTopicSelection() {
+  selectedTopics.clear();
+  document.querySelectorAll(".topic-card.selected").forEach(c => c.classList.remove("selected"));
+  document.querySelectorAll(".topic-select[aria-pressed='true']").forEach(b => {
+    b.setAttribute("aria-pressed", "false");
+    b.setAttribute("aria-label", b.getAttribute("aria-label").replace("Remove ", "Add "));
+  });
+  updateCompareBar();
+}
+
+function toggleTopic(label, btn) {
+  const card = btn.closest(".topic-card");
+  if (selectedTopics.has(label)) {
+    selectedTopics.delete(label);
+    card.classList.remove("selected");
+    btn.setAttribute("aria-pressed", "false");
+    btn.setAttribute("aria-label", `Add ${label} to comparison`);
+  } else {
+    if (selectedTopics.size >= 4) {
+      btn.animate(
+        [{transform: "scale(1)"}, {transform: "scale(1.2)"}, {transform: "scale(1)"}],
+        {duration: 200},
+      );
+      return;
+    }
+    selectedTopics.add(label);
+    card.classList.add("selected");
+    btn.setAttribute("aria-pressed", "true");
+    btn.setAttribute("aria-label", `Remove ${label} from comparison`);
+  }
+  updateCompareBar();
+}
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".topic-select");
+  if (!btn) return;
+  ev.preventDefault();
+  toggleTopic(btn.dataset.label, btn);
+});
+
 async function loadTopics() {
   const r = await fetch("/api/topics?limit=12");
   const data = await r.json();
@@ -565,8 +697,9 @@ async function loadTopics() {
   }
   grid.innerHTML = "";
   for (const t of data.topics) {
-    const card = document.createElement("div");
-    card.className = "topic-card";
+    const isSelected = selectedTopics.has(t.label);
+    card.className = "topic-card" + (isSelected ? " selected" : "");
+    card.dataset.label = t.label;
     const sources = t.sources.map(s => `<span class="topic-source-tag">${s}</span>`).join("");
     const items = t.items.slice(0, 4).map(it =>
       it.url
@@ -583,6 +716,9 @@ async function loadTopics() {
     const surgeHtml = (t.surge_signal != null)
       ? ` · <b>z ${t.surge_signal.toFixed(1)}</b>` : "";
     card.innerHTML = `
+      <button class="topic-select" data-label="${t.label}"
+              aria-pressed="${isSelected}"
+              aria-label="${isSelected ? 'Remove' : 'Add'} ${t.label} to comparison">⊕</button>
       <div class="topic-label"><a href="/topic/${encodeURIComponent(t.label)}">${t.label}</a></div>
       <div class="topic-meta">spread <b>${t.spread}</b> · score ${fmt(t.total_score)}${surgeHtml}</div>
       <div class="topic-sources">${sources}</div>
@@ -905,6 +1041,7 @@ function routeFromPath() {
       .map(s => s.trim().toLowerCase());
     return { kind: "compare", slugs };
   }
+  if (path === "/export") return { kind: "export" };
   return { kind: "main" };
 }
 
@@ -912,6 +1049,76 @@ function hideAllViews() {
   document.getElementById("main-view").hidden = true;
   document.getElementById("topic-view").hidden = true;
   document.getElementById("compare-view").hidden = true;
+  document.getElementById("export-view").hidden = true;
+}
+
+function showExportView() {
+  hideAllViews();
+  const root = document.getElementById("export-view");
+  root.hidden = false;
+  loadExportPage();
+}
+
+const EXPORT_DESCRIPTIONS = {
+  surges: "Surge alerts (item z-scores past threshold).",
+  market_prices: "Polymarket favorite-market price snapshots, with bid/ask/mid/spread.",
+  topic_snapshots: "Cross-source topic clusters captured each surge-worker cycle.",
+  item_history: "Per-item score+velocity samples that feed the surge detector.",
+  index_history: "Composite culture-index snapshots (overall + per-section).",
+  digests: "LLM digest history (markdown + token counts).",
+};
+
+async function loadExportPage() {
+  const root = document.getElementById("export-view");
+  let types;
+  try {
+    const r = await fetch("/api/export");
+    types = (await r.json()).types || [];
+  } catch (e) {
+    root.innerHTML = '<div class="empty-state">Failed to list exports.</div>';
+    return;
+  }
+  const cards = types.map(t => `
+    <article class="export-card" aria-labelledby="exp-${t}">
+      <div>
+        <div class="name" id="exp-${t}">${t}</div>
+        <div class="desc">${EXPORT_DESCRIPTIONS[t] || ""}</div>
+      </div>
+      <a class="download" href="/api/export?type=${t}&days=__DAYS__&format=csv" download>CSV</a>
+      <a class="download json" href="/api/export?type=${t}&days=__DAYS__&format=json">JSON</a>
+    </article>`).join("");
+  root.innerHTML = `
+    <div class="topic-page-head">
+      <a class="back" href="/">← Back to dashboard</a>
+      <h1>Export data</h1>
+    </div>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+      Download persistent history from the dashboard's SQLite cache. CSV is
+      streaming (no full-buffer in memory); JSON loads the full result set.
+    </p>
+    <div class="export-controls">
+      <label for="export-days">Window</label>
+      <select id="export-days">
+        <option value="7">7 days</option>
+        <option value="14">14 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="60">60 days</option>
+        <option value="90">90 days</option>
+        <option value="365">1 year</option>
+      </select>
+    </div>
+    <div class="export-grid">${cards}</div>`;
+  // Rewrite download links when the window changes.
+  const updateLinks = () => {
+    const days = document.getElementById("export-days").value;
+    document.querySelectorAll("#export-view .download").forEach(a => {
+      a.href = a.href.replace(/days=\d+/, `days=${days}`);
+    });
+  };
+  document.querySelectorAll("#export-view .download").forEach(a => {
+    a.href = a.href.replace("__DAYS__", "30");
+  });
+  document.getElementById("export-days").addEventListener("change", updateLinks);
 }
 
 function showMainView() {
@@ -1134,6 +1341,8 @@ if (initial.kind === "topic") {
   showTopicView(initial.slug);
 } else if (initial.kind === "compare") {
   showCompareView(initial.slugs);
+} else if (initial.kind === "export") {
+  showExportView();
 } else {
   showMainView();
   setInterval(refreshAll, 5 * 60 * 1000);
@@ -1144,6 +1353,7 @@ window.addEventListener("popstate", () => {
   const r = routeFromPath();
   if (r.kind === "topic") showTopicView(r.slug);
   else if (r.kind === "compare") showCompareView(r.slugs);
+  else if (r.kind === "export") showExportView();
   else showMainView();
 });
 </script>

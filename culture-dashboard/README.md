@@ -237,9 +237,22 @@ and is what you want for piping into a custom downstream.
 `/compare?a=foo&b=bar&c=baz&d=qux` overlays up to four topic surge
 trajectories on a single chart with per-topic stat cards (snapshots,
 peak spread, peak surge z, last seen). Useful for asking "is this
-spiking together with that?" Direct links from anywhere works — the
-labels in the topics grid + market signal panel are click-throughs to
-`/topic/...`, and you can stitch two of those into a comparison URL.
+spiking together with that?".
+
+Easiest way in: every topic card on the main grid has a ⊕ select
+button. Click two-to-four of them and a floating compare bar appears
+at the bottom of the screen with a one-click link to the comparison
+URL.
+
+### Data export
+
+`GET /export` is an HTML page listing every persistent table behind a
+single CSV/JSON download per row. The CSV path streams (no full-buffer
+in memory); the JSON path materialises the full result set. Window
+selector at the top picks the row cutoff (`days` query param). Exposed
+tables: surges, market_prices, topic_snapshots, item_history,
+index_history, digests. Useful for offline analysis or piping into a
+notebook.
 
 ### Backtest tunable
 
@@ -297,6 +310,9 @@ the dashboard is already surfacing.
 | `GET /topic/{slug}` | HTML topic page (same SPA shell; the front-end router renders the detail view). |
 | `GET /compare?a=x&b=y[&c=z&d=w]` | HTML overlay of up to 4 topic trajectories on one chart, with per-topic stat cards. |
 | `GET /api/backtest?days=30&threshold_pct=0.05&window_hours=24` | Hit/weak/miss rates. All three parameters are tunable from the dashboard's backtest controls. |
+| `GET /api/export` | List exportable data types. |
+| `GET /api/export?type=X&days=30&format=csv` | Streaming CSV of one table (or `format=json` for the full result set). |
+| `GET /export` | HTML page with download links for every export type, with a window selector. |
 | `GET /api/section/{section}` | Top items in a section, deduped across sources. Pass `?dedup_results=false` to see the raw rows. |
 | `GET /api/source/{source}` | Top items from one source (debug). |
 | `POST /api/refresh?source=…` | Kick all scrapers (or one). |
