@@ -3348,12 +3348,14 @@ def _social_webhook_urls() -> list[str]:
     return sorted(urls)
 
 
-def _cached_explanation_summary(race_key: str) -> str | None:
-    """Pick the most-recent grounded explanation for this race, if any.
+def _cached_explanation(race_key: str) -> dict:
+    """Pick the most-recent grounded explanation for this race.
 
-    We look back up to a few hour-buckets so a race that moved at 09:00
-    can still cite the 09-bucket explanation when the social loop fires
-    at 09:30.
+    Returns ``{summary, citations}`` where citations is the validated
+    article list from the LLM. Both fields can be empty — callers handle
+    that gracefully. We look back up to a few hour-buckets so a race
+    that moved at 09:00 can still cite the 09-bucket explanation when
+    the social loop fires at 09:30.
     """
     now = datetime.now(timezone.utc)
     for delta_h in range(0, 4):
@@ -3361,11 +3363,20 @@ def _cached_explanation_summary(race_key: str) -> str | None:
         for window in (24, 6):
             bucket = f"{ts.strftime('%Y-%m-%dT%H')}_{window}h"
             cached = state.db.get_movement_explanation(race_key, bucket)
-            if cached:
-                summary = (cached.get("explanation") or {}).get("summary")
-                if summary:
-                    return summary
-    return None
+            if not cached:
+                continue
+            exp = cached.get("explanation") or {}
+            summary = exp.get("summary") or ""
+            citations = exp.get("explanations") or []
+            if summary or citations:
+                return {"summary": summary, "citations": citations}
+    return {"summary": "", "citations": []}
+
+
+def _cached_explanation_summary(race_key: str) -> str | None:
+    """Backward-compat shim for callers that only want the summary string."""
+    exp = _cached_explanation(race_key)
+    return exp["summary"] or None
 
 
 async def _run_social_cycle(
@@ -3394,11 +3405,13 @@ async def _run_social_cycle(
         )
         if not movement or abs(movement["delta_pp"]) < _SOCIAL_THRESHOLD_PP:
             continue
-        explanation = _cached_explanation_summary(race_key)
+        exp = _cached_explanation(race_key)
         delivered = await post_for_race(
             state.db, state.http_session,
             race_key=race_key, race_title=titles.get(race_key, race_key),
-            movement=movement, explanation_summary=explanation,
+            movement=movement,
+            explanation_summary=exp["summary"] or None,
+            cited_articles=exp["citations"],
             webhook_urls=webhook_urls,
         )
         if delivered:
@@ -3439,14 +3452,19 @@ async def admin_social_post(body: SocialPostBody, request: Request):
             title = m.get("event_title") or m.get("title") or body.race_key
             break
 
+    exp = _cached_explanation(body.race_key)
     delivered = await post_for_race(
         state.db, state.http_session,
         race_key=body.race_key, race_title=title,
         movement=movement,
-        explanation_summary=_cached_explanation_summary(body.race_key),
+        explanation_summary=exp["summary"] or None,
+        cited_articles=exp["citations"],
         webhook_urls=webhook_urls,
     )
-    return {"ok": True, "delivered": delivered, "webhooks": len(webhook_urls)}
+    return {
+        "ok": True, "delivered": delivered, "webhooks": len(webhook_urls),
+        "thread_length": 1 + len([c for c in exp["citations"] if c.get("url") and (c.get("quote") or c.get("rationale"))]),
+    }
 
 
 @app.get("/admin/social/log")

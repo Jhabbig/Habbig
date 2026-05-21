@@ -86,6 +86,81 @@ def format_post(
     return text
 
 
+def format_thread(
+    *, race_title: str, race_key: str, source: str, delta_pp: float,
+    from_prob: float, to_prob: float,
+    explanation_summary: str | None = None,
+    cited_articles: list[dict] | None = None,
+) -> list[str]:
+    """Multi-post thread format. Returns a list of tweet-sized strings.
+
+    Use when the race has enough material to warrant more than one post —
+    typically when the LLM cited 2+ articles. Each article becomes its
+    own tweet so readers can click through to the actual source.
+
+    Numbering convention: "1/", "2/", "3/n" etc. as the first chars of
+    each post, so X/Twitter/Bluesky thread-renderers pick them up
+    automatically.
+
+    Returns a single-element list (the headline post) if there's nothing
+    worth threading — callers can treat that uniformly.
+
+    Shape:
+      [0] Headline: race + delta + summary + dashboard URL  ← always
+      [1..N] Per-article citation tweets, max 6 (X thread display
+             tends to truncate beyond that anyway)
+    """
+    articles = cited_articles or []
+    # Filter to entries with both URL + a quote/rationale we can render
+    citations = [
+        a for a in articles
+        if (a.get("url") or "").strip() and (a.get("quote") or a.get("rationale") or "").strip()
+    ][:6]
+
+    headline = format_post(
+        race_title=race_title, race_key=race_key, source=source,
+        delta_pp=delta_pp, from_prob=from_prob, to_prob=to_prob,
+        explanation_summary=explanation_summary,
+    )
+    if not citations:
+        return [headline]
+
+    n = len(citations) + 1  # +1 for the headline itself
+    posts: list[str] = []
+
+    # Repaginate the headline with a "1/n" prefix
+    prefix = f"1/{n} "
+    head_main = headline
+    # If adding the prefix pushes the headline over budget, ellipsize the
+    # summary portion specifically (the URL is load-bearing).
+    if len(prefix) + len(headline) > 280:
+        # Reformat without the explanation summary; the citations carry
+        # the substance anyway.
+        head_main = format_post(
+            race_title=race_title, race_key=race_key, source=source,
+            delta_pp=delta_pp, from_prob=from_prob, to_prob=to_prob,
+            explanation_summary=None,
+        )
+    posts.append(f"{prefix}{head_main}")
+
+    for i, art in enumerate(citations, start=2):
+        cite_prefix = f"{i}/{n} "
+        url = (art.get("url") or "").strip()
+        # Prefer quote, fall back to rationale
+        body = (art.get("quote") or art.get("rationale") or "").strip().replace("\n", " ")
+        # Budget: 280 chars total minus "i/n " minus URL line minus ~10 buffer
+        cap = 280 - len(cite_prefix) - len(url) - 6  # newlines + safety
+        if cap < 40:
+            # URL is huge — drop the body, just link
+            posts.append(f"{cite_prefix}{url}")
+            continue
+        if len(body) > cap:
+            body = body[: cap - 1].rstrip() + "…"
+        posts.append(f"{cite_prefix}{body}\n{url}")
+
+    return posts
+
+
 async def deliver_to_webhook(
     session: aiohttp.ClientSession, url: str, payload: dict,
     *, timeout: float = 8.0,
@@ -163,30 +238,50 @@ async def post_for_race(
     *, race_key: str, race_title: str,
     movement: dict, explanation_summary: str | None,
     webhook_urls: list[str],
+    cited_articles: list[dict] | None = None,
 ) -> int:
-    """Deliver one race's post to every configured social webhook URL.
+    """Deliver one race's post (or thread) to every configured social
+    webhook URL.
 
-    Returns the number of successful deliveries. Dedup logging happens
-    here, not in the caller, so manual ``/admin/social/post`` and the
-    background loop share the same path.
+    If ``cited_articles`` has ≥2 entries with a URL + body, fires as a
+    thread — each post in the thread is delivered to each webhook as
+    its own POST with a ``thread_index`` / ``thread_total`` header so
+    the receiver (Zapier/IFTTT) can either reply-chain on platforms
+    that support threads or post sequentially with a 1s delay.
+
+    Returns the number of successful FIRST-POST deliveries (one per
+    webhook URL). Subsequent thread parts that fail don't change the
+    return value — the headline is what matters for "did this race get
+    shared at all".
     """
-    text = format_post(
+    posts = format_thread(
         race_title=race_title, race_key=race_key,
         source=movement["source"], delta_pp=movement["delta_pp"],
         from_prob=movement["from"], to_prob=movement["to"],
         explanation_summary=explanation_summary,
+        cited_articles=cited_articles,
     )
-    payload = post_payload(text, race_key)
     delivered = 0
     for url in webhook_urls:
-        ok, status = await deliver_to_webhook(session, url, payload)
-        db.log_social_post(
-            race_key=race_key, platform_url=url, text=text,
-            status=status if ok else f"error:{status}",
-            delta_pp=movement["delta_pp"], source=movement["source"],
-        )
-        if ok:
+        first_ok = False
+        for i, text in enumerate(posts):
+            payload = post_payload(text, race_key)
+            payload["thread_index"] = i  # 0-indexed
+            payload["thread_total"] = len(posts)
+            ok, status = await deliver_to_webhook(session, url, payload)
+            db.log_social_post(
+                race_key=race_key, platform_url=url, text=text,
+                status=status if ok else f"error:{status}",
+                delta_pp=movement["delta_pp"], source=movement["source"],
+            )
+            if i == 0:
+                first_ok = ok
+            if not ok:
+                logger.warning(f"Social post {i + 1}/{len(posts)} to {url} failed: {status}")
+                # If the headline failed, don't bother with the thread —
+                # delete attempts would just clutter the receiver
+                if i == 0:
+                    break
+        if first_ok:
             delivered += 1
-        else:
-            logger.warning(f"Social post to {url} failed: {status}")
     return delivered
