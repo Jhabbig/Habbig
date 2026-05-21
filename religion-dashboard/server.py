@@ -28,7 +28,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +42,7 @@ import edge as edge_calc
 import health_signals
 import historical_leaders as hl
 import religion_data as rd
+import religious_calendar as rcal
 import vatican_scraper
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -594,22 +595,59 @@ def api_countries():
 
 @app.route("/api/calendar")
 def api_calendar():
-    """Religious calendar 2026. ?upcoming=1 returns only events ≥ today; ?days=N caps horizon."""
+    """Multi-year religious calendar generator (Meeus Easter + lookup tables).
+
+    Default year = current year. Supports 2025-2034 (lookup tables); Easter
+    + dependents are algorithmic and work indefinitely.
+
+    Filters:
+        ?year=N         — pick a calendar year
+        ?upcoming=1     — only events ≥ today
+        ?days=N         — cap horizon at N days from today (1-1095)
+    """
     upcoming_only = request.args.get("upcoming") in ("1", "true", "yes")
     horizon = int(request.args.get("days") or "365")
-    horizon = max(1, min(horizon, 730))
+    horizon = max(1, min(horizon, 1095))   # up to 3 years
     today = date.today()
-    items = list(rd.RELIGIOUS_CALENDAR_2026)
+    try:
+        year = int(request.args.get("year") or today.year)
+    except ValueError:
+        year = today.year
+
+    # If asking for upcoming + horizon spans multiple years, generate the
+    # union to avoid hiding events that fall after Dec 31.
+    years = {year}
+    if upcoming_only and horizon > 0:
+        end_date = today + timedelta(days=horizon)
+        years.add(end_date.year)
+    items: list[dict] = []
+    for y in sorted(years):
+        items.extend(rcal.generate_calendar(y))
+
+    # De-dupe by (date, name)
+    seen = set()
+    deduped = []
+    for e in items:
+        key = (e["date"], e["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(e)
+
     if upcoming_only:
-        items = [e for e in items if date.fromisoformat(e["date"]) >= today]
-    items = [e for e in items if (date.fromisoformat(e["date"]) - today).days <= horizon]
-    items.sort(key=lambda e: e["date"])
+        deduped = [e for e in deduped if date.fromisoformat(e["date"]) >= today]
+        # Horizon filter only applies in upcoming mode (otherwise the user
+        # explicitly asked for a year and we should return that whole year).
+        deduped = [e for e in deduped if (date.fromisoformat(e["date"]) - today).days <= horizon]
+    deduped.sort(key=lambda e: e["date"])
+
     return jsonify({
         "fetched_at": int(time.time()),
         "today": today.isoformat(),
-        "year": 2026,
-        "count": len(items),
-        "events": items,
+        "year": year,
+        "supported_years": rcal.get_supported_years(),
+        "count": len(deduped),
+        "events": deduped,
     })
 
 
