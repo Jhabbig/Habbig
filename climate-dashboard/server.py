@@ -24,6 +24,7 @@ from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
+from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import polymarket as polymarket_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sf6 as sf6_src
@@ -31,6 +32,7 @@ from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app.models import co2 as co2_model
 from app.models import calibration
+from app.models import emissions as emissions_model
 from app.models import forcing as forcing_model
 from app.models import highlights as highlights_model
 from app.models import markets as markets_model
@@ -155,6 +157,27 @@ def api_sf6():
     proj = sf6_model.projection(s)
     return jsonify({**s, "projection": proj,
                     "thresholds": sf6_model.threshold_probs(proj)})
+
+
+@app.route("/api/emissions")
+def api_emissions():
+    """Country-level CO₂ emissions from Our World in Data.
+
+    Returns top-N emitters (defaults to 10) for the latest year present in
+    the upstream dataset, plus a global summary. We strip the per-country
+    full time-series before responding to keep the payload small — that
+    history is on the upstream URL if anyone wants it.
+    """
+    parsed = emissions_src.fetch()
+    if not parsed:
+        return jsonify({"error": "OWID emissions fetch failed"}), 503
+    return jsonify({
+        "source": parsed["source"],
+        "latest_year": parsed["latest_year"],
+        "top_emitters": emissions_model.top_emitters(parsed, n=10),
+        "global": emissions_model.global_summary(parsed),
+        "fetched_at": parsed["fetched_at"],
+    })
 
 
 @app.route("/api/forcing")

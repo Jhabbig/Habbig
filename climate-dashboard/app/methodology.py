@@ -68,6 +68,17 @@ MODELS = [
         "code": "app/models/sf6.py",
     },
     {
+        "id": "country_emissions",
+        "name": "Country-level CO₂ emissions",
+        "summary": "Top emitters by total annual CO₂ (million tonnes) for the latest year on record, plus per-capita and share-of-global breakdowns. Filters out regional aggregates (codes starting with 'OWID_') so the leaderboard is real countries only. Includes a global summary showing the 10-year change in worldwide emissions.",
+        "inputs": ["Our World in Data owid-co2-data.csv (mirror of CDIAC + EDGAR + national inventories)"],
+        "outputs": {
+            "top_emitters": "Sorted list of {iso, country, co2_mt, co2_per_capita_t, share_global}",
+            "global": "World total CO₂ + 10-year change",
+        },
+        "code": "app/models/emissions.py",
+    },
+    {
         "id": "radiative_forcing",
         "name": "Total anthropogenic GHG radiative forcing",
         "summary": "Combines CO₂ + CH₄ + N₂O + SF₆ atmospheric concentrations into a single W/m² number — the actual climate-relevant metric. Uses the simplified IPCC AR5 / Myhre 1998 formulas, with the CH₄ ↔ N₂O absorption-band overlap term. Reports per-gas breakdown plus 'effective CO₂ ppm' — the CO₂ concentration that alone would produce the same total forcing.",

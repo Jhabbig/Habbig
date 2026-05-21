@@ -17,10 +17,12 @@ from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import oni as oni_src
+from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sf6 as sf6_src
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
+from app.models import emissions as emissions_model
 from app.models import forcing as forcing_model
 from app.models import highlights as highlights_model
 from app.models import markets
@@ -463,6 +465,51 @@ def test_forcing_current_conditions_sane():
     # Effective CO2 framing — should be in the upper-400s ppm range
     assert 450 < payload["effective_co2_ppm"] < 600
     assert payload["have_all_gases"] is True
+
+
+def test_owid_emissions_parser_buckets_by_country():
+    parsed = emissions_src.parse(_load("owid_emissions_sample.csv"))
+    assert parsed["latest_year"] == 2022
+    # ISO-3 keys for real countries
+    assert "CHN" in parsed["countries"]
+    assert "USA" in parsed["countries"]
+    # World aggregate has the OWID_ prefix
+    assert "OWID_WRL" in parsed["countries"]
+    # Per-country, year-keyed data with CO2 and per-capita
+    chn_2022 = parsed["countries"]["CHN"]["data"][2022]
+    assert chn_2022["co2_mt"] == 11396.0
+    assert chn_2022["co2_per_capita_t"] == 8.0
+    assert chn_2022["share_global"] == 30.7
+
+
+def test_top_emitters_excludes_regional_aggregates():
+    parsed = emissions_src.parse(_load("owid_emissions_sample.csv"))
+    top = emissions_model.top_emitters(parsed, n=5)
+    isos = [r["iso"] for r in top]
+    # Should NOT include OWID_WRL, OWID_ASI, OWID_EUR
+    assert all(not iso.startswith("OWID_") for iso in isos)
+    # China should be #1 (largest absolute emissions)
+    assert top[0]["iso"] == "CHN"
+    assert top[0]["co2_mt"] > top[1]["co2_mt"]
+    # All five are ISO-3 codes
+    assert all(len(iso) == 3 for iso in isos)
+
+
+def test_top_emitters_handles_missing_data():
+    assert emissions_model.top_emitters(None) == []
+    assert emissions_model.top_emitters({"countries": {}}) == []
+
+
+def test_global_summary_computes_decade_change():
+    parsed = emissions_src.parse(_load("owid_emissions_sample.csv"))
+    g = emissions_model.global_summary(parsed)
+    assert g is not None
+    assert g["year"] == 2022
+    assert g["global_co2_mt"] == 37154.0
+    assert g["decade_ago_year"] == 2012
+    assert g["decade_ago_co2_mt"] == 35043.0
+    # +6.0% over the decade
+    assert 5 < g["decade_change_pct"] < 7
 
 
 def test_n2o_market_routed_correctly():

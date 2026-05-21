@@ -56,6 +56,8 @@ def _fake_http_get(url: str, *, timeout=20, params=None):
                                        {"name": "1982-2011 mean", "data": [19.5, 19.6, 19.7, 19.8]}])
     if "oni.data" in url:
         return FakeResponse(text=_load("oni_sample.txt"))
+    if "owid-co2-data.csv" in url:
+        return FakeResponse(text=_load("owid_emissions_sample.csv"))
     if "gamma-api.polymarket.com" in url:
         # Polymarket events — empty list is a valid response shape
         return FakeResponse(json_data=[])
@@ -124,6 +126,15 @@ def test_sf6_endpoint_with_mocked_upstream(client):
     assert body["units"] == "ppt"
     assert body["projection"] is not None
     assert body["projection"]["residual_std_ppt"] >= 0.05
+
+
+def test_emissions_endpoint_with_mocked_upstream(client):
+    r = client.get("/api/emissions")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["latest_year"] == 2022
+    assert body["top_emitters"][0]["iso"] == "CHN"
+    assert body["global"]["global_co2_mt"] > 0
 
 
 def test_forcing_endpoint_with_mocked_upstream(client):

@@ -368,6 +368,39 @@
     font-weight: 600;
   }
 
+  .emitters {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .emitters > div {
+    background: var(--bg-1);
+    padding: 9px 12px;
+  }
+  .emitters .head {
+    background: var(--bg-2);
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .emitters .country { color: var(--text-1); display: flex; gap: 8px; align-items: center; }
+  .emitters .country .rank { color: var(--text-3); font-size: 11px; min-width: 18px; }
+  .emitters .num { text-align: right; color: var(--text-2); }
+  .emitters .num b { color: var(--text-1); }
+  .emitters-summary {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .emitters-summary b { color: var(--text-1); }
+
   @media (max-width: 600px) {
     main { padding: 14px 14px 60px; }
     .grid { grid-template-columns: 1fr; }
@@ -499,6 +532,9 @@
 <div id="highlights" class="highlights" role="region" aria-label="Today's highlights"></div>
 
 <div class="grid" id="cards" role="region" aria-label="Indicator cards"></div>
+
+<div class="section-title">Top CO₂ emitters <a class="export-link" id="export-emitters" role="button" tabindex="0">↓ CSV</a></div>
+<div id="emitters-card" class="card"><div class="empty">Loading country emissions…</div></div>
 
 <div class="section-title">Indicator overlay <a class="export-link" id="export-overlay" role="button" tabindex="0">↓ CSV</a></div>
 <div class="overlay-card">
@@ -992,6 +1028,38 @@ async function getJSON(url) {
     console.warn("fetch failed", url, e);
     return null;
   }
+}
+
+let _emittersPayload = null;
+async function loadEmitters() {
+  const root = document.getElementById("emitters-card");
+  if (!root) return;
+  const r = await getJSON("/api/emissions");
+  _emittersPayload = r;
+  if (!r || !r.top_emitters || !r.top_emitters.length) {
+    root.innerHTML = `<div class="empty">Country emissions unavailable — upstream fetch failed.</div>`;
+    return;
+  }
+  const summary = r.global;
+  const summaryHtml = summary && summary.decade_change_pct != null
+    ? `<div class="emitters-summary">Global CO₂ in <b>${summary.year}</b>: <b>${(summary.global_co2_mt / 1000).toFixed(1)} Gt</b> — ${summary.decade_change_pct >= 0 ? "+" : ""}${summary.decade_change_pct}% vs ${summary.decade_ago_year}. Source: <a href="https://github.com/owid/co2-data" target="_blank">Our World in Data</a>.</div>`
+    : "";
+  const rows = r.top_emitters.map((e, i) => `
+    <div class="country"><span class="rank">${i + 1}.</span>${e.country}</div>
+    <div class="num"><b>${(e.co2_mt / 1000).toFixed(2)}</b> Gt</div>
+    <div class="num">${e.co2_per_capita_t != null ? `<b>${e.co2_per_capita_t.toFixed(1)}</b> t` : "—"}</div>
+    <div class="num">${e.share_global != null ? `<b>${e.share_global.toFixed(1)}</b>%` : "—"}</div>
+  `).join("");
+  root.innerHTML = `
+    <div class="emitters" role="table" aria-label="Top CO₂ emitters">
+      <div class="head">Country</div>
+      <div class="head num">Annual CO₂</div>
+      <div class="head num">Per capita</div>
+      <div class="head num">Share global</div>
+      ${rows}
+    </div>
+    ${summaryHtml}
+  `;
 }
 
 async function loadHighlights() {
@@ -1807,8 +1875,20 @@ function _wireKeyboardActivate(el) {
     }
   });
 }
-["export-markets", "export-overlay", "export-backtest"].forEach(id => {
-  _wireKeyboardActivate(document.getElementById(id));
+["export-markets", "export-overlay", "export-backtest", "export-emitters"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) _wireKeyboardActivate(el);
+});
+
+document.getElementById("export-emitters").addEventListener("click", () => {
+  if (!_emittersPayload || !_emittersPayload.top_emitters) return;
+  downloadCSV(
+    `climate-top-emitters-${_today()}.csv`,
+    ["Rank", "Country", "ISO", "Year", "CO2_Mt", "CO2_per_capita_t", "Share_global_pct"],
+    _emittersPayload.top_emitters.map((e, i) => [
+      i + 1, e.country, e.iso, e.year, e.co2_mt, e.co2_per_capita_t, e.share_global,
+    ]),
+  );
 });
 
 document.getElementById("export-markets").addEventListener("click", () => {
@@ -1856,6 +1936,7 @@ document.getElementById("export-backtest").addEventListener("click", () => {
 loadRegime();
 loadHighlights();
 loadCards();
+loadEmitters();
 loadOverlay();
 loadMarkets();
 loadBacktest();

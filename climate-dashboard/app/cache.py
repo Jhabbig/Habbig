@@ -25,6 +25,7 @@ TTL: dict[str, int] = {
     "methane": 60 * 60 * 12,
     "n2o": 60 * 60 * 12,
     "sf6": 60 * 60 * 12,
+    "owid_emissions": 60 * 60 * 24,  # country emissions update annually
     "sea_ice": 60 * 60 * 6,
     "sst": 60 * 60 * 3,
     "oni": 60 * 60 * 12,
