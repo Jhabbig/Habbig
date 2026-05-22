@@ -4,15 +4,31 @@ This repo ships a curated set of Claude Code skills, agents, plugins, and MCP se
 
 ## What's installed
 
-### Skills (`.claude/skills/`) — from [obra/superpowers](https://github.com/obra/superpowers)
-14 skills covering brainstorming, TDD, systematic debugging, parallel-agent dispatch, plan writing, code review, git worktrees, verification-before-completion, and the meta-skill for writing new skills.
+### Skills (`.claude/skills/`)
+15 skills — 14 from [obra/superpowers](https://github.com/obra/superpowers) (brainstorming, TDD, systematic debugging, parallel-agent dispatch, plan writing, code review, git worktrees, verification-before-completion, writing-skills) plus `confidence-check` from SuperClaude.
 
-### Agents (`.claude/agents/`) — from [wshobson/agents](https://github.com/wshobson/agents)
-126 unique subagent definitions, flattened from the source plugin marketplace (first occurrence wins on name collisions). Invoke via the `Agent` tool with `subagent_type=<name>`. The full 81-plugin marketplace is preserved under `.claude/plugins/wshobson/` if you want the plugin-style grouping.
+### Agents (`.claude/agents/`)
+375 unique subagents combined from:
+- [wshobson/agents](https://github.com/wshobson/agents) — 126 agents
+- [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) — gap-fill from 162 agents
+- [0xfurai/claude-code-subagents](https://github.com/0xfurai/claude-code-subagents) — gap-fill from 139 agents
+- [SuperClaude-Org/SuperClaude_Framework](https://github.com/SuperClaude-Org/SuperClaude_Framework) — 17 agents
+Dedup rule: first-wins on filename. Full wshobson plugin marketplace preserved under `.claude/plugins/wshobson/`.
+
+### Commands (`.claude/commands/`)
+30 SuperClaude slash commands: `/sc:analyze`, `/sc:brainstorm`, `/sc:build`, `/sc:implement`, `/sc:design`, `/sc:document`, `/sc:estimate`, `/sc:explain`, `/sc:improve`, `/sc:git`, `/sc:pm`, `/sc:research`, `/sc:test`, `/sc:troubleshoot`, `/sc:workflow`, etc.
 
 ### MCP servers (`.mcp.json`)
-- **playwright** — `@playwright/mcp` for browser automation (snapshots, click, type, network inspection).
-- **repomix** — pack this codebase or any remote repo into a single AI-readable file. Useful for cross-file review.
+- **playwright** — `@playwright/mcp` for browser automation.
+- **repomix** — pack codebases for AI analysis.
+- **obsidian** — vault integration (needs `OBSIDIAN_API_KEY`).
+- **context7** — live, version-specific library docs (`@upstash/context7-mcp`).
+- **sequential-thinking** — structured multi-step reasoning.
+- **memory** — persistent knowledge graph across sessions (stores in `.claude/memory.json`).
+- **sentry** — error tracking integration (needs `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`).
+- **chrome-devtools** — live browser inspection (network, console, perf).
+- **fetch** — HTTP requests for arbitrary URLs.
+- **time** — timezone/date utilities.
 
 ### Hooks (`.claude/settings.json`)
 - `SessionStart` runs the superpowers session-start hook.
