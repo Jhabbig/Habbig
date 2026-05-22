@@ -29,7 +29,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-ALL_PORTS="7000 8000 8050 8051 8052 5050 8888 7050 7053 7054 7060 7062 7070"
+ALL_PORTS="7000 8000 8050 8051 8052 5050 8888 7050 7053 7054 7060 7062 7070 8053"
 
 # Kill dashboard processes — prefer PID files, fall back to port scan
 cleanup() {
@@ -118,7 +118,7 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 8. Central Bank Dashboard (port 7060)
-    echo -e "${GREEN}[8/10]${NC} Starting Central Bank Dashboard on port 7060..."
+    echo -e "${GREEN}[8/13]${NC} Starting Central Bank Dashboard on port 7060..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
     PORT=7060 python3 -m uvicorn server:app --host 127.0.0.1 --port 7060 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid
@@ -150,15 +150,23 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 12. AI Race Dashboard (port 7070)
-    echo -e "${GREEN}[12/13]${NC} Starting AI Race Dashboard on port 7070..."
+    echo -e "${GREEN}[12/14]${NC} Starting AI Race Dashboard on port 7070..."
     cd "$SCRIPT_DIR/ai-race-dashboard"
     python3 -m uvicorn server:app --host 127.0.0.1 --port 7070 > /tmp/dashboard_airace.log 2>&1 &
     echo $! > /tmp/dashboard_airace.pid
     echo "       PID: $(cat /tmp/dashboard_airace.pid)"
     cd "$SCRIPT_DIR"
 
-    # 13. Gateway (port 7000) — starts last so upstreams are up first
-    echo -e "${GREEN}[13/13]${NC} Starting Gateway on port 7000..."
+    # 13. Whale Watch Dashboard (port 8053)
+    echo -e "${GREEN}[13/14]${NC} Starting Whale Watch on port 8053..."
+    cd "$SCRIPT_DIR/whale-dashboard/backend"
+    PORT=8053 python3 main.py > /tmp/dashboard_whale.log 2>&1 &
+    echo $! > /tmp/dashboard_whale.pid
+    echo "       PID: $(cat /tmp/dashboard_whale.pid)"
+    cd "$SCRIPT_DIR"
+
+    # 14. Gateway (port 7000) — starts last so upstreams are up first
+    echo -e "${GREEN}[14/14]${NC} Starting Gateway on port 7000..."
     cd "$SCRIPT_DIR/gateway"
     python3 server.py > /tmp/dashboard_gateway.log 2>&1 &
     echo $! > /tmp/dashboard_gateway.pid
@@ -184,6 +192,7 @@ start_all() {
     echo -e "  ${GREEN}Central Bank Dashboard:${NC} http://localhost:7060"
     echo -e "  ${GREEN}Religion & Cults Dashboard:${NC} http://localhost:7062"
     echo -e "  ${GREEN}AI Race Dashboard:${NC}      http://localhost:7070"
+    echo -e "  ${GREEN}Whale Watch Dashboard:${NC} http://localhost:8053"
     echo ""
     echo -e "  Local subdomain test: http://crypto.localhost:7000"
     echo -e "  Logs: /tmp/dashboard_*.log"
@@ -207,6 +216,7 @@ status() {
     echo -e "  Port 7060 (CB):       $(lsof -ti :7060 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7062 (Religion): $(lsof -ti :7062 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo -e "  Port 7070 (AI Race):  $(lsof -ti :7070 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
+    echo -e "  Port 8053 (Whale):    $(lsof -ti :8053 >/dev/null 2>&1 && echo -e "${GREEN}RUNNING${NC}" || echo -e "${RED}STOPPED${NC}")"
     echo ""
 }
 
