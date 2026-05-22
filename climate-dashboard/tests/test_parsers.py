@@ -16,10 +16,12 @@ from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
+from app.fetchers import ocean_heat as ocean_heat_src
 from app.fetchers import oni as oni_src
 from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sf6 as sf6_src
+from app.fetchers import snow_cover as snow_cover_src
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
 from app.models import emissions as emissions_model
@@ -511,6 +513,63 @@ def test_global_summary_computes_decade_change():
     assert g["decade_ago_co2_mt"] == 35043.0
     # +6.0% over the decade
     assert 5 < g["decade_change_pct"] < 7
+
+
+def test_ocean_heat_parser_picks_first_numeric_after_year():
+    series = ocean_heat_src.parse(_load("ocean_heat_sample.csv"))
+    assert len(series) == 10
+    # First record is 2015 with world (WO) anomaly 12.4
+    assert series[0] == {"year": 2015, "ohc_1e22_J": 12.4}
+    # Last record is 2024
+    assert series[-1]["year"] == 2024
+    # Monotone rising (real OHC does this)
+    values = [r["ohc_1e22_J"] for r in series]
+    assert all(values[i] <= values[i + 1] for i in range(len(values) - 1))
+
+
+def test_ocean_heat_parser_skips_header_line():
+    # The "YEAR,WO,NH,..." line must NOT be parsed as data
+    series = ocean_heat_src.parse(_load("ocean_heat_sample.csv"))
+    assert not any(r["year"] in (0, -1) for r in series)
+
+
+def test_ocean_heat_parser_tolerates_whitespace_separator():
+    text = "1970  -2.1  -1.0\n1971  -1.8  -0.9\n2020  20.5  9.0"
+    series = ocean_heat_src.parse(text)
+    assert len(series) == 3
+    assert series[0]["year"] == 1970 and series[0]["ohc_1e22_J"] == -2.1
+
+
+def test_snow_cover_parser_long_format():
+    series = snow_cover_src.parse(_load("snow_cover_sample.txt"))
+    # 12 months of 2023 + 6 months of 2024 = 18
+    assert len(series) == 18
+    # Sorted by (year, month)
+    assert series[0] == {"year": 2023, "month": 1, "extent_mkm2": 47.2}
+    assert series[-1] == {"year": 2024, "month": 6, "extent_mkm2": 6.9}
+    # Seasonal cycle: summer values much lower than winter
+    summer = [r for r in series if r["year"] == 2023 and r["month"] in (6, 7, 8)]
+    winter = [r for r in series if r["year"] == 2023 and r["month"] in (12, 1, 2)]
+    assert max(s["extent_mkm2"] for s in summer) < min(w["extent_mkm2"] for w in winter)
+
+
+def test_snow_cover_parser_converts_raw_km2():
+    # If the upstream switches to raw km² instead of million-km², the parser
+    # divides by 1e6 automatically when values are > 1000.
+    text = "2024 7 3200000\n2024 1 47200000"
+    series = snow_cover_src.parse(text)
+    assert len(series) == 2
+    # Both should be in million-km² range after conversion
+    assert all(0 < r["extent_mkm2"] < 60 for r in series)
+
+
+def test_snow_cover_parser_wide_format():
+    # Year + 12 monthly values on one line, in million km²
+    text = "2024 47.5 46.4 41.0 30.5 18.2 7.5 3.0 2.7 8.0 20.5 33.5 44.5"
+    series = snow_cover_src.parse(text)
+    assert len(series) == 12
+    assert series[0] == {"year": 2024, "month": 1, "extent_mkm2": 47.5}
+    assert series[-1] == {"year": 2024, "month": 12, "extent_mkm2": 44.5}
 
 
 def test_scenarios_interpolation_between_anchors():

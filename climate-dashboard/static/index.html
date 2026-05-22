@@ -1289,6 +1289,8 @@ async function loadCards() {
   const n2oData = await getJSON("/api/n2o");
   const sf6Data = await getJSON("/api/sf6");
   const scenariosData = await getJSON("/api/scenarios");
+  const ohcData = await getJSON("/api/ocean-heat");
+  const snowData = await getJSON("/api/snow-cover");
 
   const cards = [];
   // Each entry: {id, history, forecast, color} — wired to fan-chart containers
@@ -1502,6 +1504,57 @@ async function loadCards() {
           <a href="/methodology" title="See methodology for the formulas">Method</a>
           IPCC AR5 / Myhre 1998${!f.have_all_gases ? " · partial (missing some gases)" : ""}
         </div>
+      </div>
+    `);
+  }
+
+  // Ocean heat content card. Real-units yearly anomaly in 10^22 J — the
+  // single most-watched climate indicator. If NCEI's URL has shifted we
+  // render an explicit "data unavailable" placeholder rather than silently
+  // hiding the card.
+  if (ohcData && ohcData.yearly && ohcData.yearly.length) {
+    const latest = ohcData.latest;
+    const ten = ohcData.yearly.slice(-10);
+    const sparkVals = ten.map(r => r.ohc_1e22_J);
+    const change = ohcData.yearly.length > 1
+      ? latest.ohc_1e22_J - ohcData.yearly[ohcData.yearly.length - 2].ohc_1e22_J
+      : 0;
+    cards.push(`
+      <div class="card">
+        <h3>Ocean heat content (0-2000 m)</h3>
+        <div class="big">+${fmt(latest.ohc_1e22_J, 2)} <span style="font-size:14px;color:var(--text-2)">×10²² J</span></div>
+        <div class="sub">${latest.year} · ${change >= 0 ? "+" : ""}${fmt(change, 2)} vs prior year · NOAA NCEI</div>
+        <div class="sub" style="margin-top:6px;color:var(--text-3)">The integrating metric — atmospheric noise averages out, energy accumulation shows up cleanly.</div>
+        ${sparkline(sparkVals, 260, 56, "#60a5fa")}
+      </div>
+    `);
+  } else if (ohcData === null) {
+    // Both null (network) and 503 collapse to null via getJSON
+    cards.push(`
+      <div class="card" style="opacity:0.7">
+        <h3>Ocean heat content (0-2000 m)</h3>
+        <div class="big" style="font-size:14px;color:var(--text-3);font-weight:500;line-height:1.4">Data unavailable — likely a URL change at NOAA NCEI.<br/>See <a href="/methodology#ocean_heat_content">methodology</a>.</div>
+      </div>
+    `);
+  }
+
+  // Snow cover card
+  if (snowData && snowData.monthly && snowData.monthly.length) {
+    const latest = snowData.latest;
+    const sparkVals = snowData.monthly.slice(-36).map(r => r.extent_mkm2);
+    cards.push(`
+      <div class="card">
+        <h3>NH snow cover extent</h3>
+        <div class="big">${fmt(latest.extent_mkm2, 1)} <span style="font-size:14px;color:var(--text-2)">M km²</span></div>
+        <div class="sub">${MONTH[latest.month - 1]} ${latest.year} · Rutgers Global Snow Lab</div>
+        ${sparkline(sparkVals, 260, 56, "#a5b4fc")}
+      </div>
+    `);
+  } else if (snowData === null) {
+    cards.push(`
+      <div class="card" style="opacity:0.7">
+        <h3>NH snow cover extent</h3>
+        <div class="big" style="font-size:14px;color:var(--text-3);font-weight:500;line-height:1.4">Data unavailable — Rutgers URL not reachable.<br/>See <a href="/methodology#snow_cover">methodology</a>.</div>
       </div>
     `);
   }

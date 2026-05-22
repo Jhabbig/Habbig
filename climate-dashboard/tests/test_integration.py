@@ -58,6 +58,10 @@ def _fake_http_get(url: str, *, timeout=20, params=None):
         return FakeResponse(text=_load("oni_sample.txt"))
     if "owid-co2-data.csv" in url:
         return FakeResponse(text=_load("owid_emissions_sample.csv"))
+    if "heat_content_anomaly" in url:
+        return FakeResponse(text=_load("ocean_heat_sample.csv"))
+    if "moncov.nhland" in url:
+        return FakeResponse(text=_load("snow_cover_sample.txt"))
     if "gamma-api.polymarket.com" in url:
         # Polymarket events — empty list is a valid response shape
         return FakeResponse(json_data=[])
@@ -126,6 +130,34 @@ def test_sf6_endpoint_with_mocked_upstream(client):
     assert body["units"] == "ppt"
     assert body["projection"] is not None
     assert body["projection"]["residual_std_ppt"] >= 0.05
+
+
+def test_ocean_heat_endpoint(client):
+    r = client.get("/api/ocean-heat")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["units"] == "10^22 J"
+    assert len(body["yearly"]) > 0
+    assert body["latest"]["year"] >= 2020
+
+
+def test_snow_cover_endpoint(client):
+    r = client.get("/api/snow-cover")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["units"] == "million km²"
+    assert len(body["monthly"]) > 0
+
+
+def test_ocean_heat_503_includes_hint(client):
+    cache_module.clear()
+    with patch("app.http.get", return_value=None):
+        r = client.get("/api/ocean-heat")
+        assert r.status_code == 503
+        body = r.get_json()
+        # The hint helps the dashboard explain WHY a card is empty
+        assert "hint" in body
+        assert "url" in body
 
 
 def test_scenarios_endpoint(client):

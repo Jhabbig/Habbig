@@ -128,6 +128,16 @@ const MOCK_RESPONSES = {
     { kind: "record", text: "2024 set a new annual temperature record at +1.29°C (vs 1951-1980)." },
     { kind: "trend", text: "CO₂ rose +2.34 ppm over the last 12 months (now 425.30 ppm)." },
   ] },
+  "/api/ocean-heat": {
+    source: "NOAA NCEI", units: "10^22 J",
+    yearly: Array.from({ length: 10 }, (_, i) => ({ year: 2015 + i, ohc_1e22_J: 12 + i * 1.8 })),
+    latest: { year: 2024, ohc_1e22_J: 29.2 },
+  },
+  "/api/snow-cover": {
+    source: "Rutgers", units: "million km²",
+    monthly: Array.from({ length: 24 }, (_, i) => ({ year: 2023 + Math.floor(i / 12), month: (i % 12) + 1, extent_mkm2: 25 + Math.sin(i / 12 * Math.PI * 2) * 20 })),
+    latest: { year: 2024, month: 12, extent_mkm2: 44.5 },
+  },
   "/api/scenarios": {
     trajectories: {
       temperature_c_vs_1850_1900: { "SSP1-2.6": [{year:2020,value:1.10},{year:2050,value:1.70},{year:2100,value:1.80}] },
@@ -211,9 +221,12 @@ setTimeout(() => {
   console.log("  highlights: " + highlightsHTML.length + (highlightsHTML.length > 50 ? " ✓" : " ✗ EMPTY"));
   console.log("  emitters:   " + emittersHTML.length + (emittersHTML.length > 100 ? " ✓" : " ✗ EMPTY"));
 
-  // The card grid should have all 6+ cards (temp, co2, ch4, n2o, sf6, forcing, arctic, antarctic, sst)
-  const cardCount = (cardsHTML.match(/<div class="card">/g) || []).length;
-  console.log("  card count: " + cardCount + (cardCount >= 6 ? " ✓" : " ✗ TOO FEW"));
+  // The card grid should have at least 10 cards (temp, co2, ch4, n2o, sf6,
+  // forcing, ocean heat, snow cover, arctic, antarctic, sst). Cards that
+  // gracefully degrade to "data unavailable" still match the <div class="card">
+  // pattern, so a fall in this count means we lost a card module entirely.
+  const cardCount = (cardsHTML.match(/<div class="card"/g) || []).length;
+  console.log("  card count: " + cardCount + (cardCount >= 10 ? " ✓" : " ✗ TOO FEW"));
 
   if (errors.length > 0) {
     console.log("\nFAILED — " + errors.length + " error(s)");

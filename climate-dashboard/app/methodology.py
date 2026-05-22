@@ -68,6 +68,28 @@ MODELS = [
         "code": "app/models/sf6.py",
     },
     {
+        "id": "ocean_heat_content",
+        "name": "Ocean heat content (0-2000 m)",
+        "summary": "NOAA NCEI yearly anomaly in 10^22 J. Ocean heat content is the integrator climate scientists trust most — atmospheric noise averages out and the underlying energy accumulation shows up cleanly. URL is the canonical /data/oceans/woa/DATA_ANALYSIS/3M_HEAT_CONTENT/... path; if NCEI restructures their data hosting the dashboard's card will explicitly show 'data unavailable' rather than disappearing silently.",
+        "inputs": ["NOAA NCEI heat_content_anomaly_0-2000_yearly.csv"],
+        "outputs": {
+            "yearly": "List of {year, ohc_1e22_J}",
+            "latest": "Most recent year's anomaly",
+        },
+        "code": "app/fetchers/ocean_heat.py",
+    },
+    {
+        "id": "snow_cover",
+        "name": "Northern Hemisphere snow cover extent",
+        "summary": "Rutgers Global Snow Lab monthly NH land snow cover in million km². Parser handles both long-format (year month extent) and wide-format (year + 12 monthly columns), and auto-converts raw km² values to million km² if the upstream switches units.",
+        "inputs": ["Rutgers Global Snow Lab — moncov.nhland.txt"],
+        "outputs": {
+            "monthly": "List of {year, month, extent_mkm2}",
+            "latest": "Most recent month's extent",
+        },
+        "code": "app/fetchers/snow_cover.py",
+    },
+    {
         "id": "ssp_scenarios",
         "name": "IPCC SSP scenario matching",
         "summary": "Compares the dashboard's current temperature anomaly and CO₂ concentration against the IPCC AR6 SSP1-2.6 / SSP2-4.5 / SSP3-7.0 / SSP5-8.5 trajectories and reports the closest match for each metric. Trajectories are linearly interpolated between IPCC anchor years (2020, 2030, 2050, 2075, 2100). Temperature uses the IPCC 1850-1900 baseline; dashboard readings (GISTEMP 1951-1980 baseline) are offset by +0.2°C before comparison.",

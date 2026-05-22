@@ -23,8 +23,10 @@ from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
+from app.fetchers import ocean_heat as ocean_heat_src
 from app.fetchers import oni as oni_src
 from app.fetchers import owid_emissions as emissions_src
+from app.fetchers import snow_cover as snow_cover_src
 from app.fetchers import polymarket as polymarket_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sf6 as sf6_src
@@ -203,6 +205,28 @@ def api_sf6():
     proj = sf6_model.projection(s)
     return jsonify({**s, "projection": proj,
                     "thresholds": sf6_model.threshold_probs(proj)})
+
+
+@app.route("/api/ocean-heat")
+def api_ocean_heat():
+    """NOAA NCEI 0-2000m ocean heat content anomaly, yearly (10^22 J)."""
+    o = ocean_heat_src.fetch()
+    if not o:
+        return jsonify({"error": "Ocean heat content fetch failed",
+                        "url": ocean_heat_src.URL,
+                        "hint": "Likely an upstream URL change at NCEI — see methodology"}), 503
+    return jsonify(o)
+
+
+@app.route("/api/snow-cover")
+def api_snow_cover():
+    """Rutgers Global Snow Lab — NH land snow cover, monthly (million km²)."""
+    s = snow_cover_src.fetch()
+    if not s:
+        return jsonify({"error": "Snow cover fetch failed",
+                        "url": snow_cover_src.URL,
+                        "hint": "Likely an upstream URL change at Rutgers"}), 503
+    return jsonify(s)
 
 
 @app.route("/api/scenarios")
