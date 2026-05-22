@@ -33,6 +33,7 @@ from analysis import arbitrage as arb_mod
 from analysis import carry as carry_mod
 from analysis import dca_simulator
 from analysis import dex_cex_premium
+from analysis import position_sizer
 from analysis import funding as funding_mod
 from analysis import liquidations_agg
 from analysis import lp_il
@@ -86,6 +87,7 @@ app = FastAPI(title="Crypto Trackers Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
 COIN_HTML_PATH = Path(__file__).parent / "coin.html"
+COMPARE_HTML_PATH = Path(__file__).parent / "compare.html"
 GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -156,6 +158,11 @@ async def index() -> HTMLResponse:
 @app.get("/coin", response_class=HTMLResponse)
 async def coin_page() -> HTMLResponse:
     return HTMLResponse(COIN_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/compare", response_class=HTMLResponse)
+async def compare_page() -> HTMLResponse:
+    return HTMLResponse(COMPARE_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/guide/pump-and-dump", response_class=HTMLResponse)
@@ -543,6 +550,59 @@ async def api_tools_dca(
     )
     out["symbol"] = symbol
     return JSONResponse(out)
+
+
+@app.get("/api/tools/backtest")
+async def api_tools_backtest(
+    symbol: str = "BTCUSDT",
+    strategy: str = "sma_crossover",
+    lookback_days: int = 365,
+    starting_usd: float = 10_000,
+    fee_pct: float = 0.1,
+    fast: int = 50,
+    slow: int = 200,
+    rsi_period: int = 14,
+    rsi_oversold: float = 30,
+    rsi_overbought: float = 70,
+    breakout_lookback: int = 20,
+) -> JSONResponse:
+    lookback_days = max(30, min(lookback_days, 1000))
+    kl = binance.klines(symbol=symbol, interval="1d", limit=lookback_days)
+    if kl.get("error"):
+        return JSONResponse({"error": kl["error"], "symbol": symbol}, status_code=502)
+    bars = kl.get("bars") or []
+    if strategy == "sma_crossover":
+        out = dca_simulator.sma_crossover(bars, fast=fast, slow=slow,
+                                           starting_usd=starting_usd, fee_pct=fee_pct)
+    elif strategy == "rsi_mean_reversion":
+        out = dca_simulator.rsi_mean_reversion(bars, period=rsi_period,
+                                                oversold=rsi_oversold, overbought=rsi_overbought,
+                                                starting_usd=starting_usd, fee_pct=fee_pct)
+    elif strategy == "breakout":
+        out = dca_simulator.breakout(bars, lookback=breakout_lookback,
+                                      starting_usd=starting_usd, fee_pct=fee_pct)
+    else:
+        return JSONResponse({"error": f"unknown strategy {strategy}",
+                              "supported": ["sma_crossover", "rsi_mean_reversion", "breakout"]},
+                             status_code=400)
+    out["symbol"] = symbol
+    return JSONResponse(out)
+
+
+@app.get("/api/tools/size")
+async def api_tools_size(
+    account_usd: float = 10_000.0,
+    risk_pct: float = 1.0,
+    entry: float = 0.0,
+    stop: float = 0.0,
+    target: Optional[float] = None,
+    leverage: float = 1.0,
+    fee_pct: float = 0.1,
+) -> JSONResponse:
+    return JSONResponse(position_sizer.size(
+        account_usd=account_usd, risk_pct=risk_pct, entry=entry, stop=stop,
+        target=target, leverage=leverage, fee_pct=fee_pct,
+    ))
 
 
 # ─── L2 sequencer revenue + restaking ─────────────────────────────────────────

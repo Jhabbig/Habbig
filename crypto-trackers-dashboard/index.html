@@ -128,7 +128,7 @@
   <div class="row">
     <div>
       <h1>Crypto Trackers</h1>
-      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; data-fidelity-first &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
+      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; data-fidelity-first &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a> &middot; <a href="/compare" style="color:var(--accent)">compare coins</a></div>
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
     <div class="updated" id="ws-status" style="margin-left:14px"><span class="dot" style="background:var(--text-3)"></span><span id="ws-status-text">ws idle</span></div>
@@ -312,8 +312,18 @@
   </section>
 
   <section>
-    <h2>Tools <small>impermanent-loss calculator + DCA backtest simulator</small></h2>
+    <h2>Tools <small>IL calc + DCA + strategy backtester + position sizer</small></h2>
     <div id="tools-card"></div>
+  </section>
+
+  <section>
+    <h2>Trade journal <small>localStorage-only &middot; log trades, see win-rate + total P&amp;L</small></h2>
+    <div id="journal-card"></div>
+  </section>
+
+  <section>
+    <h2>Alert templates <small>one-click presets: market-stress, funding extremes, BTC fees, F&amp;G regime</small></h2>
+    <div id="alert-templates-card"></div>
   </section>
 
   <section>
@@ -1292,7 +1302,7 @@
     }
   }
 
-  // ─── Tools: IL + DCA ───────────────────────────────────────────────────────
+  // ─── Tools: IL + DCA + backtester + position sizer ────────────────────────
   async function renderToolsCard() {
     document.getElementById("tools-card").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="card">
@@ -1325,6 +1335,48 @@
         </div>
         <div id="dca-result" class="muted" style="font-size:13px">runs a buy-$X-every-N-days strategy against Binance daily klines</div>
       </div>
+      <div class="card">
+        <div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Strategy backtester</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;color:var(--text-3)">Symbol
+            <input id="bt-symbol" type="text" value="BTCUSDT" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:100px;text-transform:uppercase"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Strategy
+            <select id="bt-strategy" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;font-family:inherit">
+              <option value="sma_crossover">SMA cross (50/200)</option>
+              <option value="rsi_mean_reversion">RSI mean-reversion (14, 30/70)</option>
+              <option value="breakout">N-bar breakout (20)</option>
+            </select>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Lookback
+            <input id="bt-lookback" type="number" value="365" min="30" max="1000" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:80px"/>
+          </label>
+          <button onclick="window._runBacktest()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Backtest</button>
+        </div>
+        <div id="bt-result" class="muted" style="font-size:13px">tests systematic strategies against historical Binance klines</div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Position sizer / risk calc</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;color:var(--text-3)">Account $
+            <input id="ps-acct" type="number" value="10000" min="1" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:90px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Risk %
+            <input id="ps-risk" type="number" value="1" min="0.01" step="0.01" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:70px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Entry
+            <input id="ps-entry" type="number" placeholder="70000" step="any" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:90px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Stop
+            <input id="ps-stop" type="number" placeholder="68000" step="any" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:90px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Target
+            <input id="ps-target" type="number" placeholder="78000 (opt)" step="any" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:110px"/>
+          </label>
+          <button onclick="window._runSize()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Calculate</button>
+        </div>
+        <div id="ps-result" class="muted" style="font-size:13px">computes position size so a stop-out loses exactly your risk %</div>
+      </div>
     </div>`;
     // Pre-render the V2 scenario grid
     try {
@@ -1349,6 +1401,49 @@
       <div class="muted" style="font-size:11px;flex:1">If you'd just held both halves equally instead of LPing in a V2 pool, you'd be ${Math.abs(data.il_v2_pct).toFixed(2)}% richer.</div>
     </div>`;
   };
+  window._runBacktest = async () => {
+    const sym = document.getElementById("bt-symbol").value.trim().toUpperCase();
+    const strat = document.getElementById("bt-strategy").value;
+    const lookback = parseInt(document.getElementById("bt-lookback").value, 10);
+    document.getElementById("bt-result").textContent = "running…";
+    try {
+      const data = await fetchJson(`/api/tools/backtest?symbol=${encodeURIComponent(sym)}&strategy=${strat}&lookback_days=${lookback}`);
+      if (data.error) { document.getElementById("bt-result").innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`; return; }
+      const roiCls = data.roi_pct >= 0 ? "up" : "down";
+      const alphaCls = data.alpha_pct >= 0 ? "up" : "down";
+      document.getElementById("bt-result").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-variant-numeric:tabular-nums">
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Strategy ROI</div><div style="font-size:16px;font-weight:600" class="${roiCls}">${pct(data.roi_pct, 1)}</div><div class="muted" style="font-size:11px">$${fmt(data.final_value_usd, 0)} on $${fmt(data.starting_usd, 0)}</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Buy &amp; hold</div><div style="font-size:16px;font-weight:600">${pct(data.buy_hold_roi_pct, 1)}</div><div class="muted" style="font-size:11px">passive baseline</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Alpha vs B&amp;H</div><div style="font-size:16px;font-weight:600" class="${alphaCls}">${pct(data.alpha_pct, 1)}</div><div class="muted" style="font-size:11px">${data.round_trip_count} round-trips · win-rate ${fmt(data.win_rate_pct, 0)}%</div></div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("bt-result").innerHTML = `<div class="err">Backtest failed: ${escapeHtml(e.message)}</div>`;
+    }
+  };
+  window._runSize = async () => {
+    const acct = parseFloat(document.getElementById("ps-acct").value);
+    const risk = parseFloat(document.getElementById("ps-risk").value);
+    const entry = parseFloat(document.getElementById("ps-entry").value);
+    const stop = parseFloat(document.getElementById("ps-stop").value);
+    const target = parseFloat(document.getElementById("ps-target").value);
+    if (!entry || !stop) { document.getElementById("ps-result").innerHTML = '<div class="err">Entry + stop required</div>'; return; }
+    try {
+      const params = new URLSearchParams({ account_usd: acct, risk_pct: risk, entry: entry, stop: stop });
+      if (target) params.set("target", target);
+      const data = await fetchJson(`/api/tools/size?${params}`);
+      if (data.error) { document.getElementById("ps-result").innerHTML = `<div class="err">${escapeHtml(data.error)}</div>`; return; }
+      const rrLine = data.rr_ratio ? `<div><div class="muted" style="font-size:10px;text-transform:uppercase">R:R</div><div style="font-size:16px;font-weight:600" class="${data.rr_ratio >= 2 ? 'up' : data.rr_ratio >= 1 ? '' : 'down'}">${fmt(data.rr_ratio, 2)}</div><div class="muted" style="font-size:11px">reward $${fmt(data.max_gain_usd, 0)} · EV@50% $${fmt(data.expected_value_at_50pct_winrate_usd, 0)}</div></div>` : '';
+      document.getElementById("ps-result").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;font-variant-numeric:tabular-nums">
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Side</div><div style="font-size:16px;font-weight:600" class="${data.side === 'LONG' ? 'up' : 'down'}">${escapeHtml(data.side)}</div><div class="muted" style="font-size:11px">stop ${fmt(data.stop_distance_pct, 2)}% away</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Position</div><div style="font-size:16px;font-weight:600">$${fmt(data.position_size_usd, 0)}</div><div class="muted" style="font-size:11px">${fmt(data.position_size_tokens, 4)} tokens · ${fmt(data.position_pct_of_account, 2)}% of acct</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Max loss</div><div style="font-size:16px;font-weight:600 down">$${fmt(data.max_loss_usd, 2)}</div><div class="muted" style="font-size:11px">fee drag $${fmt(data.fee_drag_usd, 2)}</div></div>
+        ${rrLine}
+      </div>`;
+    } catch (e) {
+      document.getElementById("ps-result").innerHTML = `<div class="err">Sizer failed: ${escapeHtml(e.message)}</div>`;
+    }
+  };
+
   window._runDCA = async () => {
     const sym = document.getElementById("dca-symbol").value.trim().toUpperCase();
     const amt = parseFloat(document.getElementById("dca-amount").value);
@@ -1367,6 +1462,161 @@
     } catch (e) {
       document.getElementById("dca-result").innerHTML = `<div class="err">DCA failed: ${escapeHtml(e.message)}</div>`;
     }
+  };
+
+  // ─── Trade journal (localStorage) ─────────────────────────────────────────
+  const JOURNAL_KEY = "ct_journal_v1";
+  function loadJournal() {
+    try { return JSON.parse(localStorage.getItem(JOURNAL_KEY) || "[]"); } catch { return []; }
+  }
+  function saveJournal(rows) {
+    try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(rows)); } catch {}
+  }
+
+  function renderJournal() {
+    const trades = loadJournal();
+    const closed = trades.filter(t => t.exit != null);
+    const open = trades.filter(t => t.exit == null);
+    let totalPnl = 0;
+    let wins = 0, losses = 0;
+    closed.forEach(t => {
+      const sideMult = t.side === "LONG" ? 1 : -1;
+      const pnl = (t.exit - t.entry) * (t.size || 0) * sideMult;
+      t._pnl = pnl;
+      totalPnl += pnl;
+      if (pnl > 0) wins++; else if (pnl < 0) losses++;
+    });
+    const winRate = closed.length ? (wins / closed.length) * 100 : 0;
+    const target = document.getElementById("journal-card");
+    const rows = trades.length ? trades.map((t, i) => {
+      const closedRow = t.exit != null;
+      const pnlCls = !closedRow ? "muted" : t._pnl >= 0 ? "up" : "down";
+      const pnlStr = !closedRow ? "—" : `${t._pnl >= 0 ? "+" : ""}$${fmt(t._pnl, 2)}`;
+      return `<tr>
+        <td class="muted" style="font-size:11px">${escapeHtml(t.date)}</td>
+        <td><strong>${escapeHtml(t.coin)}</strong></td>
+        <td>${pill(t.side, t.side === "LONG" ? "up" : "down")}</td>
+        <td class="num">${fmt(t.entry, 6)}</td>
+        <td class="num">${closedRow ? fmt(t.exit, 6) : '<span class="muted">open</span>'}</td>
+        <td class="num muted">${fmt(t.size, 4)}</td>
+        <td class="num ${pnlCls}" style="font-weight:600">${pnlStr}</td>
+        <td class="muted" style="font-size:11px">${escapeHtml((t.notes || "").slice(0, 40))}</td>
+        <td>
+          ${!closedRow ? `<button onclick="window._closeTrade(${i})" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer">close</button>` : ""}
+          <button onclick="window._delTrade(${i})" style="background:var(--bg-2);border:1px solid rgba(239,68,68,0.4);color:var(--accent-2);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;margin-left:4px">×</button>
+        </td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="9" class="muted" style="text-align:center;padding:18px">No trades logged yet.</td></tr>`;
+    target.innerHTML = `<div class="card">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Closed P&amp;L</div><div style="font-size:18px;font-weight:600" class="${totalPnl >= 0 ? 'up' : 'down'}">${totalPnl >= 0 ? "+" : ""}$${fmt(totalPnl, 2)}</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Win rate</div><div style="font-size:18px;font-weight:600">${fmt(winRate, 1)}%</div><div class="muted" style="font-size:11px">${wins}W / ${losses}L</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Open positions</div><div style="font-size:18px;font-weight:600">${open.length}</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Total trades</div><div style="font-size:18px;font-weight:600">${trades.length}</div></div>
+      </div>
+      <table><thead><tr>
+        <th>Date</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&amp;L</th><th>Notes</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Log new trade</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="j-coin" placeholder="BTC" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:80px;text-transform:uppercase"/>
+          <select id="j-side" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;font-size:12px;font-family:inherit">
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+          <input id="j-entry" type="number" step="any" placeholder="entry price" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:120px"/>
+          <input id="j-size" type="number" step="any" placeholder="size (tokens)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:120px"/>
+          <input id="j-notes" placeholder="notes (optional)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:200px"/>
+          <button onclick="window._addTrade()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">+ Add</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  window._addTrade = () => {
+    const coin = document.getElementById("j-coin").value.trim().toUpperCase();
+    const side = document.getElementById("j-side").value;
+    const entry = parseFloat(document.getElementById("j-entry").value);
+    const size = parseFloat(document.getElementById("j-size").value);
+    const notes = document.getElementById("j-notes").value.trim();
+    if (!coin || !entry || !size) { alert("coin / entry / size required"); return; }
+    const trades = loadJournal();
+    trades.unshift({
+      date: new Date().toISOString().slice(0, 10),
+      coin, side, entry, size, notes, exit: null,
+    });
+    saveJournal(trades);
+    ["j-coin","j-entry","j-size","j-notes"].forEach(id => document.getElementById(id).value = "");
+    renderJournal();
+  };
+  window._closeTrade = (idx) => {
+    const exit = parseFloat(prompt("Exit price?"));
+    if (!exit) return;
+    const trades = loadJournal();
+    if (trades[idx]) trades[idx].exit = exit;
+    saveJournal(trades);
+    renderJournal();
+  };
+  window._delTrade = (idx) => {
+    if (!confirm("Delete trade?")) return;
+    const trades = loadJournal();
+    trades.splice(idx, 1);
+    saveJournal(trades);
+    renderJournal();
+  };
+
+  // ─── Alert templates marketplace ──────────────────────────────────────────
+  const ALERT_TEMPLATES = [
+    { name: "BTC funding cools off", type: "funding_below", target: "BTC", threshold: -0.0001,
+      label: "BTC funding flips negative (shorts pay)", hint: "Crowded shorts = rip risk" },
+    { name: "BTC funding heats up",  type: "funding_above", target: "BTC", threshold: 0.0005,
+      label: "BTC funding > 0.05% (longs paying ~55% APR)", hint: "Crowded longs = squeeze risk" },
+    { name: "F&G regime: Extreme Greed", type: "fng_above", target: "", threshold: 80,
+      label: "F&G > 80 (Extreme Greed)", hint: "Historical local-top zone" },
+    { name: "F&G regime: Extreme Fear",  type: "fng_below", target: "", threshold: 20,
+      label: "F&G < 20 (Extreme Fear)", hint: "Historical local-bottom zone" },
+    { name: "BTC mempool jam", type: "btc_fee_above", target: "", threshold: 100,
+      label: "BTC fastest fee > 100 sat/vB", hint: "Network stress / fee spike" },
+    { name: "ETH gas spike", type: "eth_gas_above", target: "", threshold: 80,
+      label: "ETH fast gas > 80 gwei", hint: "On-chain activity spike (DeFi or NFT)" },
+    { name: "BTC > $100k milestone", type: "price_above", target: "BTC", threshold: 100000,
+      label: "BTC crosses $100k", hint: "Round-number psychological level" },
+    { name: "ETH > $5k", type: "price_above", target: "ETH", threshold: 5000,
+      label: "ETH crosses $5k", hint: "Round-number psychological level" },
+    { name: "SOL > $300", type: "price_above", target: "SOL", threshold: 300,
+      label: "SOL crosses $300", hint: "Round-number psychological level" },
+    { name: "DOGE > $1", type: "price_above", target: "DOGE", threshold: 1,
+      label: "DOGE crosses $1", hint: "Memecoin milestone" },
+  ];
+
+  function renderAlertTemplates() {
+    const target = document.getElementById("alert-templates-card");
+    target.innerHTML = `<div class="card">
+      <div class="muted" style="font-size:11px;margin-bottom:10px">Common pre-baked alerts. Click "Add" — webhook URL stays empty so it just fires server-side; edit it via the Custom Alerts section below to add Slack/Discord/generic delivery.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px">
+        ${ALERT_TEMPLATES.map((t, i) => `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+          <div style="display:flex;gap:6px;align-items:baseline;margin-bottom:4px">
+            <strong style="font-size:13px">${escapeHtml(t.name)}</strong>
+            <span class="pill info" style="margin-left:auto">${escapeHtml(t.type)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-2)">${escapeHtml(t.label)}</div>
+          <div class="muted" style="font-size:11px;margin-top:4px">${escapeHtml(t.hint)}</div>
+          <button onclick="window._addTemplate(${i})" style="margin-top:8px;background:var(--accent);border:none;color:black;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;font-weight:600">+ Add alert</button>
+        </div>`).join("")}
+      </div>
+    </div>`;
+  }
+  window._addTemplate = async (idx) => {
+    const t = ALERT_TEMPLATES[idx];
+    if (!t) return;
+    try {
+      const r = await fetch("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: t.type, target: t.target, threshold: t.threshold, label: t.label }) });
+      if (!r.ok) { alert("Failed: " + r.status); return; }
+      alert(`Added "${t.name}" alert. Wire up a webhook URL in Custom Alerts for delivery.`);
+      loadAlerts();
+    } catch (e) { alert("Failed: " + e.message); }
   };
 
   // ─── Custom alerts ─────────────────────────────────────────────────────────
@@ -1559,6 +1809,8 @@
   loadUnlocks();
   loadPumpfun();
   renderToolsCard();
+  renderJournal();
+  renderAlertTemplates();
   loadAlerts();
   loadSources();
 

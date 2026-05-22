@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Compare coins · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header input, header select, header button {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+    padding: 5px 10px; border-radius: 6px; font-size: 12px; font-family: inherit;
+  }
+  header button { cursor: pointer; }
+  header button.primary { background: var(--accent); color: black; border-color: var(--accent); font-weight: 600; }
+  main { padding: 18px 24px 80px; max-width: 1400px; margin: 0 auto; }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .up { color: var(--accent-3); }
+  .down { color: var(--accent-2); }
+  .muted { color: var(--text-3); }
+  .sym { color: var(--text-3); font-size: 11px; text-transform: uppercase; }
+  .chart-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  svg { display: block; width: 100%; background: #060c1a; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 14px; font-size: 12px; }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; vertical-align: middle; margin-right: 6px; }
+  section { margin: 22px 0; }
+  section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-2); font-weight: 600; }
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 10px 14px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Compare coins</h1>
+  <input id="symbols" placeholder="e.g. BTC,ETH,SOL,DOGE" style="width:300px;text-transform:uppercase"/>
+  <select id="interval">
+    <option value="1h">1h</option>
+    <option value="4h">4h</option>
+    <option value="1d" selected>1d</option>
+    <option value="1w">1w</option>
+  </select>
+  <select id="lookback">
+    <option value="30">30</option>
+    <option value="90">90</option>
+    <option value="180" selected>180</option>
+    <option value="365">365</option>
+  </select>
+  <span class="muted" style="font-size:11px">bars</span>
+  <button class="primary" onclick="window._loadCompare()">Compare</button>
+</header>
+
+<main>
+  <section>
+    <h2>Normalized returns <small style="font-size:10px;color:var(--text-3);text-transform:none;font-style:italic">% change from start of window — best performer green, worst red</small></h2>
+    <div class="chart-card">
+      <svg id="cmp-svg" viewBox="0 0 1200 460" preserveAspectRatio="none"></svg>
+      <div class="legend" id="cmp-legend"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Performance ranking</h2>
+    <div id="rank-card" class="card"></div>
+  </section>
+
+  <section>
+    <h2>Pairwise correlation matrix</h2>
+    <div id="corr-card" class="card"></div>
+  </section>
+</main>
+
+<script>
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("ids")) {
+    document.getElementById("symbols").value = params.get("ids").toUpperCase();
+  } else {
+    document.getElementById("symbols").value = "BTC,ETH,SOL,DOGE,XRP";
+  }
+  if (params.get("interval")) document.getElementById("interval").value = params.get("interval");
+  if (params.get("lookback")) document.getElementById("lookback").value = params.get("lookback");
+
+  const COLORS = ["#34d399", "#38bdf8", "#f59e0b", "#c084fc", "#ef4444",
+                   "#fbbf24", "#22d3ee", "#a78bfa", "#f472b6", "#a3e635"];
+
+  const fmt = (n, d = 2) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const pct = (n, d = 2) => n == null ? "-" : (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  function pearson(xs, ys) {
+    const n = Math.min(xs.length, ys.length);
+    if (n < 5) return null;
+    const mx = xs.reduce((a, b) => a + b, 0) / n;
+    const my = ys.reduce((a, b) => a + b, 0) / n;
+    let num = 0, dx = 0, dy = 0;
+    for (let i = 0; i < n; i++) {
+      num += (xs[i] - mx) * (ys[i] - my);
+      dx += (xs[i] - mx) ** 2;
+      dy += (ys[i] - my) ** 2;
+    }
+    if (dx <= 0 || dy <= 0) return null;
+    return num / Math.sqrt(dx * dy);
+  }
+
+  function renderChart(series) {
+    const svg = document.getElementById("cmp-svg");
+    svg.innerHTML = "";
+    if (!series.length) {
+      svg.innerHTML = '<text x="20" y="40" fill="#ef4444" font-size="14">No data.</text>';
+      return;
+    }
+    const W = 1200, H = 460, PAD_L = 50, PAD_R = 70, PAD_T = 14, PAD_B = 26;
+    const CW = W - PAD_L - PAD_R, CH = H - PAD_T - PAD_B;
+    // Time axis: pad each series to common length using the shortest series
+    const n = Math.min(...series.map(s => s.returns.length));
+    const allPct = series.flatMap(s => s.returns.slice(0, n));
+    const hi = Math.max(...allPct), lo = Math.min(...allPct);
+    const pad = (hi - lo) * 0.06 || 1;
+    const yHi = hi + pad, yLo = lo - pad;
+    const xStep = CW / Math.max(n - 1, 1);
+    const yScale = (v) => PAD_T + CH - ((v - yLo) / (yHi - yLo)) * CH;
+
+    // Grid + Y axis labels
+    let grid = "";
+    const steps = 6;
+    for (let i = 0; i <= steps; i++) {
+      const p = yLo + ((yHi - yLo) / steps) * i;
+      const y = yScale(p);
+      grid += `<line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="rgba(148,163,184,0.10)" stroke-width="0.5"/>
+        <text x="${PAD_L - 6}" y="${y + 3}" fill="rgba(148,163,184,0.6)" font-size="10" font-family="monospace" text-anchor="end">${pct(p, 1)}</text>`;
+    }
+    // Zero line
+    if (yLo <= 0 && yHi >= 0) {
+      const y0 = yScale(0);
+      grid += `<line x1="${PAD_L}" y1="${y0}" x2="${W - PAD_R}" y2="${y0}" stroke="rgba(148,163,184,0.4)" stroke-width="0.6" stroke-dasharray="3 3"/>`;
+    }
+    // Time labels (use first series' open_ms)
+    const refTimes = series[0].times.slice(0, n);
+    const tickCount = 6;
+    let timeLabels = "";
+    for (let i = 0; i < tickCount; i++) {
+      const idx = Math.min(Math.floor((i / (tickCount - 1)) * (n - 1)), n - 1);
+      const x = PAD_L + idx * xStep;
+      const dt = new Date(refTimes[idx]);
+      timeLabels += `<text x="${x}" y="${H - 8}" fill="rgba(148,163,184,0.6)" font-size="10" font-family="monospace" text-anchor="middle">${dt.getUTCMonth()+1}/${dt.getUTCDate()}</text>`;
+    }
+
+    // Lines + final-label price tags
+    let lines = "";
+    let labels = "";
+    series.forEach((s, idx) => {
+      const color = COLORS[idx % COLORS.length];
+      const path = s.returns.slice(0, n).map((v, i) =>
+        `${i === 0 ? "M" : "L"}${PAD_L + i * xStep} ${yScale(v)}`).join(" ");
+      lines += `<path d="${path}" fill="none" stroke="${color}" stroke-width="1.6" stroke-opacity="0.95"/>`;
+      const finalY = yScale(s.returns[n - 1]);
+      labels += `<text x="${W - PAD_R + 4}" y="${finalY + 4}" fill="${color}" font-size="11" font-family="monospace" font-weight="600">${pct(s.returns[n - 1], 1)}</text>`;
+    });
+
+    svg.innerHTML = `${grid}${timeLabels}${lines}${labels}`;
+
+    // Legend
+    document.getElementById("cmp-legend").innerHTML = series.map((s, idx) => {
+      const color = COLORS[idx % COLORS.length];
+      return `<div><span class="dot" style="background:${color}"></span><strong>${escapeHtml(s.symbol)}</strong> <span class="muted">${pct(s.returns[n - 1], 2)}</span></div>`;
+    }).join("");
+  }
+
+  function renderRanking(series) {
+    const n = Math.min(...series.map(s => s.returns.length));
+    const rows = series.map(s => ({
+      symbol: s.symbol,
+      final_pct: s.returns[n - 1],
+      max_dd: minMaxDrawdown(s.returns.slice(0, n)).maxDD,
+      vol_pct: stddev(s.returns.slice(0, n)),
+      lastPx: s.closes[n - 1],
+    })).sort((a, b) => b.final_pct - a.final_pct);
+    const tbody = rows.map((r, i) => `<tr>
+      <td><strong>#${i + 1}</strong> ${escapeHtml(r.symbol)}</td>
+      <td class="num">${fmt(r.lastPx, 4)}</td>
+      <td class="num ${r.final_pct >= 0 ? 'up' : 'down'}">${pct(r.final_pct, 2)}</td>
+      <td class="num down">${pct(r.max_dd, 2)}</td>
+      <td class="num muted">${fmt(r.vol_pct, 2)}%</td>
+    </tr>`).join("");
+    document.getElementById("rank-card").innerHTML = `<table><thead><tr>
+      <th>Rank</th><th>Last price</th><th>Window return</th><th>Max drawdown</th><th>Stdev (returns)</th>
+    </tr></thead><tbody>${tbody}</tbody></table>`;
+  }
+
+  function renderCorrelation(series) {
+    const n = Math.min(...series.map(s => s.returns.length));
+    // Use daily returns for correlation, not cumulative
+    const dailyRets = series.map(s => {
+      const closes = s.closes.slice(0, n);
+      const r = [];
+      for (let i = 1; i < closes.length; i++) r.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+      return r;
+    });
+    const k = series.length;
+    let head = `<thead><tr><th></th>${series.map(s => `<th>${escapeHtml(s.symbol)}</th>`).join("")}</tr></thead>`;
+    let body = `<tbody>`;
+    for (let i = 0; i < k; i++) {
+      body += `<tr><td><strong>${escapeHtml(series[i].symbol)}</strong></td>`;
+      for (let j = 0; j < k; j++) {
+        if (i === j) { body += `<td class="num muted">1.00</td>`; continue; }
+        const c = pearson(dailyRets[i], dailyRets[j]);
+        const cls = c == null ? "muted" : Math.abs(c) > 0.5 ? (c > 0 ? "up" : "down") : "";
+        body += `<td class="num ${cls}">${c != null ? c.toFixed(2) : "-"}</td>`;
+      }
+      body += `</tr>`;
+    }
+    body += `</tbody>`;
+    document.getElementById("corr-card").innerHTML = `<table>${head}${body}</table>
+      <div class="muted" style="font-size:11px;margin-top:8px">Pearson on daily returns. Values close to +1 = move together; close to -1 = inverse; near 0 = independent.</div>`;
+  }
+
+  function minMaxDrawdown(returns) {
+    let peak = -Infinity, maxDD = 0;
+    for (const r of returns) {
+      if (r > peak) peak = r;
+      const dd = r - peak;
+      if (dd < maxDD) maxDD = dd;
+    }
+    return { maxDD };
+  }
+
+  function stddev(values) {
+    if (values.length < 2) return 0;
+    const m = values.reduce((a, b) => a + b, 0) / values.length;
+    const v = values.reduce((a, b) => a + (b - m) ** 2, 0) / values.length;
+    return Math.sqrt(v);
+  }
+
+  window._loadCompare = async () => {
+    const symsRaw = document.getElementById("symbols").value.trim().toUpperCase();
+    const symbols = symsRaw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 10);
+    const interval = document.getElementById("interval").value;
+    const lookback = parseInt(document.getElementById("lookback").value, 10);
+    if (!symbols.length) return;
+    // Update URL for shareable link
+    const url = new URL(window.location.href);
+    url.searchParams.set("ids", symbols.join(","));
+    url.searchParams.set("interval", interval);
+    url.searchParams.set("lookback", lookback);
+    window.history.replaceState({}, "", url.toString());
+
+    const svg = document.getElementById("cmp-svg");
+    svg.innerHTML = `<text x="20" y="40" fill="#94a3b8" font-size="14">loading…</text>`;
+
+    try {
+      const results = await Promise.allSettled(symbols.map(s =>
+        fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(s + "USDT")}&interval=${encodeURIComponent(interval)}&limit=${lookback}`)
+          .then(d => ({ symbol: s, bars: d.bars || [] }))
+      ));
+      const series = [];
+      for (const r of results) {
+        if (r.status !== "fulfilled") continue;
+        const { symbol, bars } = r.value;
+        if (!bars.length) continue;
+        const start = bars[0].close;
+        const returns = bars.map(b => (b.close / start - 1) * 100);
+        series.push({
+          symbol,
+          times: bars.map(b => b.open_ms),
+          closes: bars.map(b => b.close),
+          returns,
+        });
+      }
+      if (!series.length) {
+        svg.innerHTML = `<text x="20" y="40" fill="#ef4444" font-size="14">No data returned for any symbol.</text>`;
+        return;
+      }
+      renderChart(series);
+      renderRanking(series);
+      renderCorrelation(series);
+    } catch (e) {
+      svg.innerHTML = `<text x="20" y="40" fill="#ef4444" font-size="14">Fetch failed: ${escapeHtml(e.message)}</text>`;
+    }
+  };
+
+  _loadCompare();
+})();
+</script>
+</body>
+</html>
