@@ -28,6 +28,20 @@ jobs:
           sports-dashboard/
           world-state-dashboard/
           climate-dashboard/
+          voter-pulse-dashboard/
+
+  voter-pulse-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install voter-pulse deps
+        run: pip install -r voter-pulse-dashboard/requirements.txt
+      - name: Run voter-pulse tests
+        working-directory: voter-pulse-dashboard
+        run: python -m unittest discover tests -v
 
   docker-build:
     runs-on: ubuntu-latest

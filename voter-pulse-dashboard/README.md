@@ -145,6 +145,23 @@ DEV_MODE=1 python3 server.py
 # → http://localhost:7062
 ```
 
+## Tests
+
+Stdlib `unittest`, no external test deps:
+
+```bash
+cd voter-pulse-dashboard && python3 -m unittest discover tests -v
+```
+
+Covers every analysis + ingestion module: the composite mood-index
+math, era slicing, election backtest helpers, the Clark–Fisher
+classifier and ternary geometry, state and regional mood, the release
+feed compose + human-ago bucketing, historical-mood truncation, the
+subscriber SQLite DAO + signed unsubscribe tokens, the alert dispatch
+state machine (threshold + rate-limit + force), and the shareable-card
+PNG smoke. The CI workflow runs the suite on every PR alongside the
+existing `ruff` lint.
+
 ## Endpoints
 
 - `GET /` — the dashboard page

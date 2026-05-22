@@ -134,6 +134,24 @@
   .ind .yoy.down.good { color: var(--bad); }
   .ind .yoy.flat { color: var(--muted); }
 
+  /* ── Skeleton states + per-section error ─────────────────────────────── */
+  @keyframes shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+  .skel {
+    background: linear-gradient(90deg, #1c232c 0%, #2a323c 50%, #1c232c 100%);
+    background-size: 400px 100%;
+    animation: shimmer 1.3s linear infinite;
+    border-radius: 4px; color: transparent;
+  }
+  .skel-line { height: 12px; margin: 6px 0; }
+  .panel-error {
+    color: var(--bad); font-size: 12px; padding: 8px 10px;
+    background: rgba(248, 81, 73, 0.08); border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 4px;
+  }
+  .panel-error .retry {
+    color: var(--accent); cursor: pointer; margin-left: 8px; text-decoration: underline;
+  }
+
   /* ── Markets table ────────────────────────────────────────────────────── */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--grid); }
@@ -459,8 +477,8 @@
   </section>
 
   <!-- AI NARRATIVE -->
-  <section class="narrative-panel" id="narrativePanel">
-    <span class="badge">TODAY</span>
+  <section class="narrative-panel" id="narrativePanel" aria-live="polite" aria-atomic="true">
+    <span class="badge" aria-hidden="true">TODAY</span>
     <div>
       <div class="body skeleton" id="narrativeBody">Generating today's read…</div>
       <div class="meta" id="narrativeMeta"></div>
@@ -473,23 +491,28 @@
     <h2>National mood</h2>
     <p class="desc">Composite of pocketbook, jobs, and consumer-sentiment signals. 0 = bleak, 100 = good.</p>
     <div class="hero">
-      <div class="gauge">
-        <svg viewBox="0 0 100 100">
-          <circle class="track" cx="50" cy="50" r="42" stroke-width="10" fill="none" />
-          <circle class="fill"  cx="50" cy="50" r="42" stroke-width="10" fill="none"
-                  stroke="url(#g)" stroke-dasharray="263.89" stroke-dashoffset="263.89" id="gaugeFill" />
-          <defs>
-            <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"  stop-color="#f85149"/>
-              <stop offset="50%" stop-color="#d29922"/>
-              <stop offset="100%" stop-color="#56d364"/>
-            </linearGradient>
-          </defs>
-        </svg>
-        <div class="gauge-label">
-          <div class="num" id="moodNum">—</div>
-          <div class="word" id="moodWord">loading</div>
+      <div>
+        <div class="gauge" role="img" aria-label="National mood gauge" id="gauge">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="track" cx="50" cy="50" r="42" stroke-width="10" fill="none" />
+            <circle class="fill"  cx="50" cy="50" r="42" stroke-width="10" fill="none"
+                    stroke="url(#g)" stroke-dasharray="263.89" stroke-dashoffset="263.89" id="gaugeFill" />
+            <defs>
+              <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%"  stop-color="#f85149"/>
+                <stop offset="50%" stop-color="#d29922"/>
+                <stop offset="100%" stop-color="#56d364"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="gauge-label">
+            <div class="num" id="moodNum">—</div>
+            <div class="word" id="moodWord">loading</div>
+          </div>
         </div>
+        <svg id="moodTrend" width="100%" height="48" viewBox="0 0 240 48"
+             preserveAspectRatio="none" role="img" aria-label="Mood index over the last 5 years"></svg>
+        <div style="font-size: 10px; color: var(--muted); text-align: center; margin-top: -4px;" id="moodTrendCap"></div>
       </div>
       <div class="subscore-row" id="subscores"></div>
     </div>
@@ -703,6 +726,13 @@ function setMood(mood) {
   const word = document.getElementById("moodWord");
   num.textContent = v == null ? "—" : Math.round(v);
   word.textContent = (mood && mood.label) || "—";
+  const gauge = document.getElementById("gauge");
+  if (gauge) {
+    gauge.setAttribute("aria-label",
+      v == null
+        ? "National mood gauge — no data"
+        : `National mood gauge — ${Math.round(v)} out of 100, ${mood.label || ""}`);
+  }
   const fill = document.getElementById("gaugeFill");
   const C = 2 * Math.PI * 42;
   const off = v == null ? C : C * (1 - Math.max(0, Math.min(100, v)) / 100);
@@ -989,12 +1019,16 @@ function renderStates(payload) {
     cells[s.tile.row * COLS + s.tile.col] = s;
   }
   grid.innerHTML = cells.map((s, i) => {
-    if (!s) return `<div class="tile empty"></div>`;
+    if (!s) return `<div class="tile empty" aria-hidden="true"></div>`;
     const v = s.latest ? s.latest.value : null;
     const bg = colorForUnrate(v);
     const noData = v == null;
+    const aria = noData
+      ? `${s.name}: no data`
+      : `${s.name}: unemployment ${v.toFixed(1)} percent`;
     return `
       <div class="tile ${noData ? "nodata" : ""}" data-postal="${escapeAttr(s.postal)}"
+           role="button" tabindex="0" aria-label="${escapeAttr(aria)}"
            style="${noData ? "" : `background:${bg}`}">
         <div class="code">${escapeHtml(s.postal)}</div>
         <div class="val">${v == null ? "—" : v.toFixed(1)}</div>
@@ -1002,10 +1036,14 @@ function renderStates(payload) {
   }).join("");
 
   grid.querySelectorAll(".tile[data-postal]").forEach(el => {
-    el.addEventListener("click", () => {
+    const activate = () => {
       grid.querySelectorAll(".tile.selected").forEach(t => t.classList.remove("selected"));
       el.classList.add("selected");
       showStateDetail(el.dataset.postal);
+    };
+    el.addEventListener("click", activate);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
     });
   });
 
@@ -1213,6 +1251,14 @@ function renderWorld(payload) {
       renderCountryTable();
     };
   });
+  // Update headers with a current sort-direction indicator
+  document.querySelectorAll("#countryTbl thead th[data-sort]").forEach(th => {
+    if (!th.dataset.label) th.dataset.label = th.textContent.trim();
+    const active = WORLD_STATE.sort.key === th.dataset.sort;
+    const arrow = active ? (WORLD_STATE.sort.asc ? " ↑" : " ↓") : "";
+    th.textContent = th.dataset.label + arrow;
+    th.setAttribute("aria-sort", active ? (WORLD_STATE.sort.asc ? "ascending" : "descending") : "none");
+  });
   renderCountryTable();
 
   // Footnote meta
@@ -1225,6 +1271,14 @@ function renderWorld(payload) {
 }
 
 function renderCountryTable() {
+  // Refresh the sort-direction arrows in the header on every render too.
+  document.querySelectorAll("#countryTbl thead th[data-sort]").forEach(th => {
+    if (!th.dataset.label) th.dataset.label = th.textContent.replace(/[ ↑↓]+$/, "").trim();
+    const active = WORLD_STATE.sort.key === th.dataset.sort;
+    const arrow = active ? (WORLD_STATE.sort.asc ? " ↑" : " ↓") : "";
+    th.textContent = th.dataset.label + arrow;
+    th.setAttribute("aria-sort", active ? (WORLD_STATE.sort.asc ? "ascending" : "descending") : "none");
+  });
   const stageColor = Object.fromEntries(WORLD_STATE.stages.map(s => [s.bucket, s.color]));
   const f = WORLD_STATE.filter;
   let rows = WORLD_STATE.countries.filter(c =>
@@ -1261,6 +1315,12 @@ function flagEmoji(iso2) {
 
 async function showCountryDetail(iso3) {
   if (!iso3) return;
+  // Reflect selection in the URL so deep links survive copy-paste / refresh.
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("country", iso3);
+    window.history.replaceState({}, "", url);
+  } catch (_) { /* old browsers */ }
   const card = document.getElementById("countryDetail");
   card.style.display = "block";
   card.innerHTML = `<div class="hdr"><span class="nm">Loading ${escapeHtml(iso3)}…</span><button class="closeBtn" onclick="document.getElementById('countryDetail').style.display='none';clearTrail();">✕</button></div>`;
@@ -1592,29 +1652,86 @@ function renderBacktest(payload) {
     <tbody>${rows}</tbody>`;
 }
 
+function renderMoodTrend(history) {
+  const svg = document.getElementById("moodTrend");
+  const cap = document.getElementById("moodTrendCap");
+  if (!svg) return;
+  const pts = (history || []).filter(p => p.overall != null).slice(-60);
+  if (pts.length < 2) {
+    svg.innerHTML = "";
+    if (cap) cap.textContent = "";
+    return;
+  }
+  const W = 240, H = 48, PAD = 4;
+  const xs = (i) => PAD + (i / (pts.length - 1)) * (W - 2 * PAD);
+  const yMin = 20, yMax = 80;
+  const ys = (v) => H - PAD - ((Math.max(yMin, Math.min(yMax, v)) - yMin) / (yMax - yMin)) * (H - 2 * PAD);
+  const path = pts.map((p, i) => (i ? "L" : "M") + xs(i).toFixed(1) + "," + ys(p.overall).toFixed(1)).join(" ");
+  const last = pts[pts.length - 1];
+  svg.innerHTML =
+    `<line x1="${PAD}" x2="${W - PAD}" y1="${ys(50).toFixed(1)}" y2="${ys(50).toFixed(1)}" stroke="#30363d" stroke-dasharray="2,3"/>` +
+    `<path d="${path}" fill="none" stroke="#ec4899" stroke-width="1.5"/>` +
+    `<circle cx="${xs(pts.length - 1).toFixed(1)}" cy="${ys(last.overall).toFixed(1)}" r="2.5" fill="#ec4899"/>`;
+  if (cap) cap.textContent = `mood since ${pts[0].date.slice(0, 7)}`;
+}
+
+function panelError(elId, message) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const safe = escapeHtml(String(message || "data unavailable"));
+  el.innerHTML = `<div class="panel-error">${safe}<span class="retry" onclick="window.__retryLoad && window.__retryLoad();">retry</span></div>`;
+}
+
+function safe(label, fn) {
+  try { fn(); }
+  catch (err) {
+    console.error(`[voter-pulse] ${label} failed:`, err);
+    if (label === "narrative") panelError("narrativeBody", err.message);
+    if (label === "markets")   panelError("markets",      err.message);
+    if (label === "world")     {
+      const c = document.querySelector("#countryTbl tbody");
+      if (c) c.innerHTML = `<tr><td colspan="5"><div class="panel-error">${escapeHtml(err.message)}</div></td></tr>`;
+    }
+  }
+}
+
 async function load() {
+  let data;
   try {
     const r = await fetch("/api/summary", { credentials: "same-origin" });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    const data = await r.json();
-    setMood(data.mood);
-    renderIndicators((data.life && data.life.series) || []);
-    renderPolls(data.polls);
-    renderEras(data.eras);
-    renderStates(data.states);
-    renderWorld(data.world);
-    renderBacktest(data.backtest);
-    renderNarrative(data.narrative);
-    renderReleases(data.releases);
-    renderRegions(data.regions);
-    renderMarkets(data.markets);
-    const fetchedAt = data.life && data.life.fetched_at;
-    document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
+    data = await r.json();
   } catch (err) {
     document.getElementById("updated").textContent = "load failed";
-    document.getElementById("markets").innerHTML = `<div class="err">Could not load: ${escapeHtml(err.message)}</div>`;
+    panelError("narrativeBody", `Could not reach /api/summary: ${err.message}`);
+    return;
+  }
+  // Each render is independent: one panel's failure shouldn't dark-screen others.
+  safe("mood",       () => setMood(data.mood));
+  safe("trend",      () => renderMoodTrend((data.backtest && data.backtest.history) || []));
+  safe("indicators", () => renderIndicators((data.life && data.life.series) || []));
+  safe("polls",      () => renderPolls(data.polls));
+  safe("eras",       () => renderEras(data.eras));
+  safe("states",     () => renderStates(data.states));
+  safe("world",      () => renderWorld(data.world));
+  safe("backtest",   () => renderBacktest(data.backtest));
+  safe("narrative",  () => renderNarrative(data.narrative));
+  safe("releases",   () => renderReleases(data.releases));
+  safe("regions",    () => renderRegions(data.regions));
+  safe("markets",    () => renderMarkets(data.markets));
+  const fetchedAt = data.life && data.life.fetched_at;
+  if (fetchedAt) {
+    document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
+  }
+  // Deep-link: open country detail from ?country=ISO3 on first load.
+  if (!window.__deepLinkApplied) {
+    window.__deepLinkApplied = true;
+    const qs = new URLSearchParams(window.location.search);
+    const iso3 = qs.get("country");
+    if (iso3 && /^[A-Za-z]{3}$/.test(iso3)) showCountryDetail(iso3.toUpperCase());
   }
 }
+window.__retryLoad = load;
 load();
 setInterval(load, 5 * 60 * 1000);
 
