@@ -59,6 +59,7 @@ FEATURE_TIERS = {
     "strategy_publish":       "pro",     # set visibility=public
     "extra_strategy_subs":    "wealth",  # past the first 3 subscriptions
     "multi_exchange":         "wealth",  # link both Coinbase AND Kraken
+    "covered_call_calc":      "wealth",  # Deribit live-quote calculator
     "priority_support":       "wealth",
 }
 

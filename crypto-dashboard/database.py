@@ -655,6 +655,12 @@ CREATE TABLE IF NOT EXISTS crypto_options_term_structure (
     max_pain_strike   REAL,
     open_interest_usd REAL DEFAULT 0,
     contract_count    INTEGER DEFAULT 0,
+    -- IV surface points (added in Phase 2 of options module). NULL on
+    -- existing rows; new rows backfill all five.
+    iv_put_10         REAL,
+    iv_put_25         REAL,
+    iv_call_25        REAL,
+    iv_call_10        REAL,
     PRIMARY KEY (asset, scraped_at, expiration_date)
 );
 CREATE INDEX IF NOT EXISTS idx_opts_latest ON crypto_options_term_structure(asset, scraped_at DESC);
@@ -734,10 +740,33 @@ def _conn():
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Called on startup."""
+    """Create tables if they don't exist + run idempotent column-add
+    migrations for tables that grew columns after first deploy. Called
+    on startup."""
     with _conn() as c:
         c.executescript(SCHEMA)
+        _run_migrations(c)
     log.info("SQLite database initialized at %s", DB_PATH)
+
+
+def _run_migrations(c: sqlite3.Connection) -> None:
+    """Add columns that may be missing on existing deployments. SQLite has
+    no ADD COLUMN IF NOT EXISTS, so we catch the duplicate-column error
+    and ignore it. Cheap and idempotent."""
+    pending = [
+        ("crypto_options_term_structure", "iv_put_10  REAL"),
+        ("crypto_options_term_structure", "iv_put_25  REAL"),
+        ("crypto_options_term_structure", "iv_call_25 REAL"),
+        ("crypto_options_term_structure", "iv_call_10 REAL"),
+    ]
+    for table, coldef in pending:
+        try:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+        except sqlite3.OperationalError as e:
+            # "duplicate column name" → already migrated. Anything else is
+            # actionable, so let it propagate so we don't silently break.
+            if "duplicate column name" not in str(e).lower():
+                raise
 
 
 # ── Helper: Row wrapper ─────────────────────────────────────────────────────
@@ -2901,7 +2930,8 @@ def upsert_options_term_structure(rows: list[tuple]) -> None:
     """Insert term-structure rows. PK enforces (asset, scraped_at, expiration_date)
     so re-refresh is idempotent. rows: (asset, scraped_at, expiration_date,
     days_to_expiry, bucket_days, atm_iv, skew_25d, max_pain_strike,
-    open_interest_usd, contract_count)."""
+    open_interest_usd, contract_count, iv_put_10, iv_put_25, iv_call_25,
+    iv_call_10)."""
     if not rows:
         return
     with _conn() as c:
@@ -2909,14 +2939,16 @@ def upsert_options_term_structure(rows: list[tuple]) -> None:
             """INSERT OR REPLACE INTO crypto_options_term_structure
                  (asset, scraped_at, expiration_date, days_to_expiry,
                   bucket_days, atm_iv, skew_25d, max_pain_strike,
-                  open_interest_usd, contract_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  open_interest_usd, contract_count,
+                  iv_put_10, iv_put_25, iv_call_25, iv_call_10)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
 
 
 def get_latest_options_term_structure(asset: str) -> list[Row]:
-    """Return the most recent snapshot's term structure for one asset."""
+    """Return the most recent snapshot's term structure for one asset,
+    including the IV-surface columns."""
     with _conn() as c:
         latest = c.execute(
             "SELECT MAX(scraped_at) AS ts FROM crypto_options_term_structure "
@@ -2927,7 +2959,8 @@ def get_latest_options_term_structure(asset: str) -> list[Row]:
         rows = c.execute(
             """SELECT expiration_date, days_to_expiry, bucket_days, atm_iv,
                       skew_25d, max_pain_strike, open_interest_usd,
-                      contract_count
+                      contract_count, iv_put_10, iv_put_25, iv_call_25,
+                      iv_call_10
                FROM crypto_options_term_structure
                WHERE asset = ? AND scraped_at = ?
                ORDER BY days_to_expiry ASC""",

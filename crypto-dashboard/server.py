@@ -7115,6 +7115,33 @@ async def options_force_refresh(request: Request):
     return await asyncio.to_thread(opt_mod.refresh)
 
 
+@app.get("/api/options/covered-call")
+async def covered_call_api(request: Request, asset: str = "BTC",
+                           qty: float = 1.0, otm_pct: float = 0.10,
+                           days_to_expiry: int = 30):
+    """Wealth-tier: quote a covered-call premium. Live fetch from Deribit
+    (the term-structure cache only stores aggregates, not individual
+    strikes). Cap inputs aggressively to prevent the user from accidentally
+    asking for a calculation against a 5-year option."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "covered_call_calc")
+    asset = asset.upper()
+    if asset not in opt_mod.ASSETS:
+        raise HTTPException(status_code=400, detail="asset must be BTC or ETH")
+    if qty <= 0 or qty > 10000:
+        raise HTTPException(status_code=400, detail="qty must be 0 < q <= 10000")
+    if otm_pct < 0 or otm_pct > 0.5:
+        raise HTTPException(status_code=400, detail="otm_pct must be 0..0.5")
+    days_to_expiry = max(7, min(int(days_to_expiry), 180))
+    result = await asyncio.to_thread(
+        opt_mod.covered_call_quote, asset, float(qty),
+        float(otm_pct), int(days_to_expiry),
+    )
+    return result
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -7472,9 +7499,45 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div class="note">25-delta skew is the cleanest forward-looking risk indicator. Positive skew = puts more expensive than equidistant calls = smart money paying up for downside protection. Sustained positive skew preceded the May 2021 + November 2022 + March 2024 drawdowns by weeks.</div>
   <div id="opts-headlines" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap"></div>
   <div id="opts-chart" style="margin-top:14px"></div>
+
+  <h3 style="margin-top:18px;font-size:.95em">IV surface heatmap</h3>
+  <div class="note" style="font-size:.85em">Columns = delta points (10Δ put → ATM → 10Δ call). Rows = expiration buckets. Colour = IV value (cooler = lower IV, warmer = higher). The slope from put-side to call-side at each row tells you the skew shape at that tenor.</div>
+  <div id="opts-heatmap" style="margin-top:6px"></div>
+
   <table id="opts-table" style="margin-top:14px"><thead><tr>
     <th>Asset</th><th>Expiry</th><th>DTE</th><th>Bucket</th><th>ATM IV</th><th>25Δ skew</th><th>Max pain</th><th>OI (USD)</th><th>#</th>
   </tr></thead><tbody></tbody></table>
+
+  <h3 style="margin-top:24px;font-size:.95em">Covered-call calculator <span class="tier-pill wealth">Wealth</span></h3>
+  <div data-feature="covered_call_calc">
+    <div class="note" style="font-size:.85em">Sell a call against your BTC/ETH holdings to earn premium. Quote is a live Deribit fetch — strikes and IV are real, not interpolated.</div>
+    <div class="actionrow" style="margin-top:6px">
+      <div class="field"><label>Asset</label>
+        <select id="cc-asset"><option>BTC</option><option>ETH</option></select>
+      </div>
+      <div class="field"><label>Qty held</label><input id="cc-qty" type="number" step="0.01" min="0.01" value="1.0"></div>
+      <div class="field"><label>Strike OTM %</label>
+        <select id="cc-otm">
+          <option value="0.05">+5%</option>
+          <option value="0.10" selected>+10%</option>
+          <option value="0.15">+15%</option>
+          <option value="0.20">+20%</option>
+          <option value="0.25">+25%</option>
+        </select>
+      </div>
+      <div class="field"><label>Days to expiry</label>
+        <select id="cc-dte">
+          <option value="7">7d</option>
+          <option value="14">14d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+          <option value="90">90d</option>
+        </select>
+      </div>
+      <button id="cc-go">Quote</button>
+    </div>
+    <div id="cc-result" style="margin-top:10px"></div>
+  </div>
 </section>
 
 <section data-section="macro" hidden>
@@ -8084,8 +8147,110 @@ async function loadOptions(){
 
     // Term-structure overlay chart (ATM IV by bucket, both assets).
     chart.innerHTML = renderTermStructureChart(d.assets || {});
+    // IV surface heatmap.
+    document.getElementById('opts-heatmap').innerHTML = renderIvSurfaceHeatmap(d.assets || {});
   } catch(e) { tbody.innerHTML = '<tr><td colspan="9" class="err">' + esc(e.message) + '</td></tr>'; }
 }
+
+// Heatmap colour scale: IV value → CSS colour. Cool/blue at low IV, warm
+// red at high IV. The scale auto-adjusts to the min/max across both
+// assets so the contrast is meaningful regardless of the absolute regime.
+function _ivColor(v, lo, hi) {
+  if (v == null) return '#1a2029';  // empty cell
+  if (hi <= lo) return '#3b82f6';
+  const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  // Interpolate blue → yellow → red.
+  if (t < 0.5) {
+    // blue → yellow
+    const k = t * 2;
+    const r = Math.round(59 + (234 - 59) * k);
+    const g = Math.round(130 + (179 - 130) * k);
+    const b = Math.round(246 + (8 - 246) * k);
+    return `rgb(${r},${g},${b})`;
+  } else {
+    // yellow → red
+    const k = (t - 0.5) * 2;
+    const r = Math.round(234 + (239 - 234) * k);
+    const g = Math.round(179 + (68 - 179) * k);
+    const b = Math.round(8 + (68 - 8) * k);
+    return `rgb(${r},${g},${b})`;
+  }
+}
+
+function renderIvSurfaceHeatmap(byAsset) {
+  const cols = ['iv_put_10', 'iv_put_25', 'atm_iv', 'iv_call_25', 'iv_call_10'];
+  const labels = ['10Δ put', '25Δ put', 'ATM', '25Δ call', '10Δ call'];
+  let html = '';
+  for (const asset of ['BTC', 'ETH']) {
+    const ts = (byAsset[asset] || {}).term_structure || [];
+    if (!ts.length) continue;
+    // Find min/max IV across ALL cells of this asset's grid for the colour scale.
+    let lo = Infinity, hi = -Infinity;
+    for (const r of ts) {
+      for (const c of cols) {
+        const v = r[c];
+        if (v == null) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (!isFinite(lo) || !isFinite(hi)) continue;
+
+    html += `<div style="margin-top:14px"><div style="font-size:.85em;color:var(--muted);margin-bottom:4px"><b style="color:${asset === 'BTC' ? '#f7931a' : '#3b82f6'}">${esc(asset)}</b> · IV range ${lo.toFixed(1)}–${hi.toFixed(1)}%</div>`;
+    html += '<table style="width:100%;border-collapse:separate;border-spacing:2px;font-size:.85em"><thead><tr>';
+    html += '<th style="text-align:left;padding:3px 6px;color:var(--muted);font-weight:500">Expiry</th>';
+    for (const l of labels) {
+      html += `<th style="padding:3px 6px;color:var(--muted);font-weight:500">${esc(l)}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+    for (const r of ts) {
+      html += `<tr><td style="padding:4px 6px;color:var(--muted)">${esc(r.expiration_date)} <span style="font-size:.75em">(${r.days_to_expiry}d)</span></td>`;
+      for (const c of cols) {
+        const v = r[c];
+        const bg = _ivColor(v, lo, hi);
+        // Pick text colour that's readable against the cell's background.
+        const t = v == null ? 0 : Math.max(0, Math.min(1, (v - lo) / (hi - lo || 1)));
+        const txt = (t > 0.3 && t < 0.8) ? '#0a0d12' : '#fff';
+        html += `<td style="padding:6px 8px;background:${bg};color:${txt};text-align:center;border-radius:3px;font-variant-numeric:tabular-nums">${v == null ? '—' : v.toFixed(1) + '%'}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+  return html || '<div class="note">No surface data yet — wait for the first refresh cycle.</div>';
+}
+
+// Covered-call calculator — live fetch from Deribit on user click.
+document.getElementById('cc-go').addEventListener('click', async () => {
+  const out = document.getElementById('cc-result');
+  out.innerHTML = '<div style="color:var(--muted)">Fetching from Deribit…</div>';
+  const asset = document.getElementById('cc-asset').value;
+  const qty = document.getElementById('cc-qty').value;
+  const otm = document.getElementById('cc-otm').value;
+  const dte = document.getElementById('cc-dte').value;
+  try {
+    const r = await api(`/api/options/covered-call?asset=${asset}&qty=${encodeURIComponent(qty)}&otm_pct=${encodeURIComponent(otm)}&days_to_expiry=${dte}`);
+    if (r.error) {
+      out.innerHTML = '<div class="note">' + esc(r.error) + '</div>';
+      return;
+    }
+    const yieldColor = r.annualised_yield_pct >= 15 ? 'var(--green)'
+                     : r.annualised_yield_pct >= 5 ? 'var(--yellow)' : 'var(--muted)';
+    out.innerHTML = `
+      <div class="card" style="margin-top:8px">
+        <div class="row"><span class="l">Position</span><span class="v">${fmt(r.qty, 4)} ${esc(r.asset)} @ ${usd(r.underlying_price)} = ${usd(r.position_value_usd)}</span></div>
+        <div class="row"><span class="l">Call</span><span class="v">${esc(r.instrument)}</span></div>
+        <div class="row"><span class="l">Strike</span><span class="v">${usd(r.strike)} <span style="color:var(--muted);font-size:.85em">(+${r.strike_otm_pct.toFixed(1)}% OTM)</span></span></div>
+        <div class="row"><span class="l">Expiration</span><span class="v">${esc(r.expiration_date)} <span style="color:var(--muted);font-size:.85em">(${r.days_to_expiry}d)</span></span></div>
+        <div class="row"><span class="l">Mark IV / delta</span><span class="v">${r.mark_iv.toFixed(1)}% / ${r.delta.toFixed(2)}</span></div>
+        <hr>
+        <div class="row"><span class="l">Premium received</span><span class="v" style="color:var(--green);font-weight:600">${usd(r.premium_total_usd)}</span></div>
+        <div class="row"><span class="l"><b>Annualised yield</b></span><span class="v" style="color:${yieldColor};font-weight:700;font-size:1.1em">${r.annualised_yield_pct.toFixed(2)}%</span></div>
+        <div class="row"><span class="l">Assignment probability</span><span class="v">${r.assignment_probability_pct.toFixed(1)}%</span></div>
+        <div class="note" style="margin-top:10px;font-size:.8em">${esc(r.note)}</div>
+      </div>`;
+  } catch(e) { out.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+});
 
 function renderTermStructureChart(byAsset){
   // Collect (bucket_days, atm_iv) per asset.
@@ -9677,12 +9842,14 @@ const FEATURE_NAMES = {
   strategy_publish: 'Publish strategies to the marketplace',
   extra_strategy_subs: 'Subscribe to more than 3 strategies',
   multi_exchange: 'Link both Coinbase and Kraken at once',
+  covered_call_calc: 'Covered-call premium calculator',
 };
 
 const FEATURE_TIER = {
   exchange_connect: 'Pro', live_execution: 'Pro', tax_harvest_execute: 'Pro',
   tax_form_8949: 'Pro', strategy_publish: 'Pro',
   extra_strategy_subs: 'Wealth', multi_exchange: 'Wealth',
+  covered_call_calc: 'Wealth',
 };
 
 function showUpgradeModal(feature){

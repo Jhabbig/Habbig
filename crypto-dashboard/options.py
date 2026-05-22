@@ -236,6 +236,33 @@ def _delta_skew(options: list[OptionInfo], target_delta: float = 0.25) -> Option
     return float(put_25.mark_iv - call_25.mark_iv)
 
 
+def _iv_at_delta(options: list[OptionInfo], target_delta: float,
+                 is_call: bool) -> Optional[float]:
+    """Find the option of the requested side with delta closest to
+    target_delta (signed: positive for calls, negative for puts).
+    Returns its mark IV, or None if no options of that side exist."""
+    side = [o for o in options if o.is_call == is_call]
+    if not side:
+        return None
+    best = min(side, key=lambda o: abs(o.delta - target_delta))
+    # Reject if even the best fit is way off — better to omit than mislead.
+    if abs(best.delta - target_delta) > 0.15:
+        return None
+    return float(best.mark_iv)
+
+
+def iv_surface_row(options: list[OptionInfo]) -> dict:
+    """For one expiration bucket, return IV at 5 standard delta points.
+    The UI renders this as a 5-column heatmap row."""
+    return {
+        "iv_put_10":  _iv_at_delta(options, -0.10, is_call=False),
+        "iv_put_25":  _iv_at_delta(options, -0.25, is_call=False),
+        "iv_atm":     _atm_iv(options),
+        "iv_call_25": _iv_at_delta(options,  0.25, is_call=True),
+        "iv_call_10": _iv_at_delta(options,  0.10, is_call=True),
+    }
+
+
 def _max_pain(options: list[OptionInfo]) -> Optional[float]:
     """Strike that minimises total option-holder payout if expiry was now.
     Walks every unique strike as a candidate settlement price."""
@@ -275,6 +302,11 @@ class TermRow:
     max_pain_strike: Optional[float]
     open_interest_usd: float
     contract_count: int
+    # IV surface: 5 standard delta points. Used by the heatmap.
+    iv_put_10: Optional[float] = None
+    iv_put_25: Optional[float] = None
+    iv_call_25: Optional[float] = None
+    iv_call_10: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -282,7 +314,7 @@ class TermRow:
 
 def term_structure(options: list[OptionInfo]) -> list[TermRow]:
     """Group options by expiration date; compute ATM IV, 25d skew,
-    max pain, total OI per group."""
+    max pain, total OI, and the full IV surface row per group."""
     by_expiry: dict[datetime, list[OptionInfo]] = {}
     for o in options:
         by_expiry.setdefault(o.expiration, []).append(o)
@@ -294,14 +326,19 @@ def term_structure(options: list[OptionInfo]) -> list[TermRow]:
         bucket = _bucket_days(dte)
         if bucket is None:
             continue
+        surface = iv_surface_row(opts)
         out.append(TermRow(
             expiration_date=expiry.date().isoformat(),
             days_to_expiry=dte, bucket_days=bucket,
-            atm_iv=_atm_iv(opts),
+            atm_iv=surface["iv_atm"],
             skew_25d=_delta_skew(opts),
             max_pain_strike=_max_pain(opts),
             open_interest_usd=_total_oi_usd(opts),
             contract_count=len(opts),
+            iv_put_10=surface["iv_put_10"],
+            iv_put_25=surface["iv_put_25"],
+            iv_call_25=surface["iv_call_25"],
+            iv_call_10=surface["iv_call_10"],
         ))
     return out
 
@@ -327,6 +364,7 @@ def refresh() -> dict:
             asset, ts, r.expiration_date, r.days_to_expiry, r.bucket_days,
             r.atm_iv, r.skew_25d, r.max_pain_strike,
             r.open_interest_usd, r.contract_count,
+            r.iv_put_10, r.iv_put_25, r.iv_call_25, r.iv_call_10,
         ) for r in rows]
         if persist_rows:
             db.upsert_options_term_structure(persist_rows)
@@ -400,4 +438,95 @@ def dvol_series(asset: str, days: int = 180) -> dict:
         "asset": asset,
         "dates": [r["date"] for r in rows],
         "values": [float(r["dvol"]) for r in rows],
+    }
+
+
+# ─── Covered-call yield calculator (Wealth tier) ────────────────────────────
+
+def covered_call_quote(asset: str, qty: float, otm_pct: float,
+                       days_to_expiry: int) -> dict:
+    """Given the user's qty held + a target OTM percentage + days to expiry,
+    find the matching Deribit call and compute the premium they could earn
+    by selling it.
+
+    Returns:
+      - strike: the call strike (underlying × (1 + otm_pct))
+      - premium_per_contract_usd: mark_price × underlying (Deribit prices
+        in base currency; 0.05 BTC × $100k = $5k premium per contract)
+      - premium_total_usd: per_contract × qty (1 Deribit contract = 1 unit
+        of the underlying for both BTC and ETH)
+      - annualised_yield_pct: (premium / position_value) × (365 / dte)
+      - assignment_probability: heuristic ≈ delta of the call
+      - underlying_price, expiration_date, instrument
+    """
+    asset = asset.upper()
+    if asset not in ASSETS:
+        return {"error": f"asset must be one of {ASSETS}"}
+    if qty <= 0:
+        return {"error": "qty must be positive"}
+    if otm_pct < 0 or otm_pct > 1.0:
+        return {"error": "otm_pct must be in [0, 1.0]"}
+    if days_to_expiry < 1 or days_to_expiry > 365:
+        return {"error": "days_to_expiry must be 1..365"}
+
+    book = fetch_book_summary(asset)
+    options = parse_book(book)
+    calls = [o for o in options if o.is_call]
+    if not calls:
+        return {"error": "no calls available on Deribit for this asset"}
+
+    underlying = calls[0].underlying_price
+    target_strike = underlying * (1 + otm_pct)
+    target_expiry_days = days_to_expiry
+
+    # Find the call closest to the (strike, dte) target. Use a combined
+    # score: 60% weight on dte match, 40% on strike match.
+    def _score(o: OptionInfo) -> float:
+        if o.days_to_expiry == 0 or target_strike == 0:
+            return float("inf")
+        dte_err = abs(o.days_to_expiry - target_expiry_days) / target_expiry_days
+        strike_err = abs(o.strike - target_strike) / target_strike
+        return 0.60 * dte_err + 0.40 * strike_err
+
+    best = min(calls, key=_score)
+    # Reject if either dimension is more than 50% off the target — better to
+    # tell the user "no good fit" than to mislead them about the premium.
+    dte_err = abs(best.days_to_expiry - target_expiry_days) / target_expiry_days
+    strike_err = abs(best.strike - target_strike) / target_strike
+    if dte_err > 0.50 or strike_err > 0.30:
+        return {
+            "error": "no listed Deribit call close enough to the target "
+                     "strike + expiry combination — try different inputs",
+            "best_available_strike": best.strike,
+            "best_available_dte": best.days_to_expiry,
+        }
+
+    premium_per_contract_usd = float(best.mark_price * underlying)
+    premium_total_usd = premium_per_contract_usd * float(qty)
+    position_value = underlying * float(qty)
+    annualised_yield = (
+        (premium_total_usd / position_value) * (365.0 / best.days_to_expiry)
+        if position_value > 0 and best.days_to_expiry > 0 else 0.0
+    )
+    return {
+        "asset": asset,
+        "qty": float(qty),
+        "underlying_price": round(underlying, 2),
+        "position_value_usd": round(position_value, 2),
+        "instrument": best.instrument,
+        "expiration_date": best.expiration.date().isoformat(),
+        "days_to_expiry": best.days_to_expiry,
+        "strike": round(best.strike, 2),
+        "strike_otm_pct": round((best.strike / underlying - 1.0) * 100, 2),
+        "mark_iv": round(best.mark_iv, 1),
+        "delta": round(best.delta, 3),
+        "premium_per_contract_usd": round(premium_per_contract_usd, 2),
+        "premium_total_usd": round(premium_total_usd, 2),
+        "annualised_yield_pct": round(annualised_yield * 100, 2),
+        "assignment_probability_pct": round(best.delta * 100, 1),
+        "note": "Premium received upfront if you sell to open this call. "
+                "Assignment probability ≈ option delta. Annualised yield "
+                "assumes you repeat this trade every expiration; that "
+                "yield is realisable only if the price stays below "
+                f"${best.strike:,.0f}.",
     }
