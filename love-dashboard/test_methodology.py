@@ -6,6 +6,7 @@ Run: python3 test_methodology.py
 """
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import patch
 
@@ -685,6 +686,92 @@ def test_backfill_layer_builder():
     ok("Connection + Activity are time-static overlays (single CSV honestly applied)")
 
 
+def test_narrative_module_uses_haiku_with_prompt_caching():
+    print("test: narrative.py calls Claude Haiku 4.5 with the methodology preamble cached")
+    import narrative as narrative_module
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    # Force a fresh client build using a stub.
+    narrative_module._client = None
+    fake_response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="Alpha sits at 62.1. Connection is the dominant driver.\n\nSecond paragraph here.")],
+        usage=SimpleNamespace(
+            input_tokens=120,
+            output_tokens=85,
+            cache_creation_input_tokens=4800,
+            cache_read_input_tokens=0,
+        ),
+    )
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = fake_response
+
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    with patch.object(narrative_module, "anthropic", SimpleNamespace(
+        Anthropic=lambda **kw: fake_client,
+        APIError=Exception,
+        APIStatusError=Exception,
+        APIConnectionError=Exception,
+        RateLimitError=Exception,
+    )):
+        narrative_module._client = None  # force rebuild with our patched anthropic
+        result = narrative_module.country_narrative(
+            country={"iso3": "AAA", "name": "Alpha", "income_tier": "H",
+                     "composite": 62.1, "subscores": {"connection": 75},
+                     "used": ["connection", "partnership", "stability"]},
+            history=[{"date": "2026-04-01", "composite": 60.0}],
+            insights=[{"kind": "peer_leader", "title": "Alpha leads", "body": "..."}],
+        )
+
+    if "Alpha sits at 62.1" not in result["text"]:
+        fail(f"narrative text not surfaced: {result['text']}")
+    ok("narrative text returned and parsed")
+
+    if result["model"] != "claude-haiku-4-5":
+        fail(f"model mismatch: {result['model']} (expected claude-haiku-4-5)")
+    ok("model is claude-haiku-4-5 (user-specified)")
+
+    call_kwargs = fake_client.messages.create.call_args.kwargs
+    if call_kwargs.get("model") != "claude-haiku-4-5":
+        fail(f"create() called with wrong model: {call_kwargs.get('model')}")
+    sys_block = call_kwargs["system"][0]
+    if "cache_control" not in sys_block or sys_block["cache_control"].get("type") != "ephemeral":
+        fail(f"system block missing cache_control: {sys_block}")
+    ok("system block carries cache_control: ephemeral (prompt caching wired)")
+
+    # User message must contain the country payload (not the methodology preamble — that's
+    # in `system`).
+    user_content = call_kwargs["messages"][0]["content"]
+    if "AAA" not in user_content or "Alpha" not in user_content:
+        fail(f"user message missing country payload: {user_content[:200]}")
+    ok("user message carries the country payload (volatile bytes, not in cache)")
+
+    # The methodology preamble must clear the Haiku 4.5 cacheable-prefix
+    # minimum (4096 tokens — roughly 12000 chars at typical token ratios).
+    preamble_len = len(narrative_module.SYSTEM_PROMPT)
+    if preamble_len < 12000:
+        fail(f"methodology preamble is too short to cache on Haiku 4.5 ({preamble_len} chars; need ~12000+ for 4096 tokens)")
+    ok(f"methodology preamble is {preamble_len} chars (clears Haiku 4.5 4096-token min)")
+
+
+def test_narrative_module_handles_missing_api_key():
+    print("test: narrative.py raises NarrativeError when ANTHROPIC_API_KEY is unset")
+    import narrative as narrative_module
+    narrative_module._client = None
+    api_key_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        try:
+            narrative_module.get_client()
+        except narrative_module.NarrativeError:
+            ok("missing key produces NarrativeError (route returns clean 503)")
+            return
+        fail("expected NarrativeError when ANTHROPIC_API_KEY is unset")
+    finally:
+        if api_key_backup is not None:
+            os.environ["ANTHROPIC_API_KEY"] = api_key_backup
+        narrative_module._client = None
+
+
 def test_event_overlay_rule():
     print("test: rule_event_overlay fires when composite moves across event date")
     from datetime import date, timedelta
@@ -776,6 +863,8 @@ def main():
     test_backfill_layer_builder()
     test_rainbow_csv_parser()
     test_context_layer_surfaces_on_country()
+    test_narrative_module_uses_haiku_with_prompt_caching()
+    test_narrative_module_handles_missing_api_key()
     test_event_overlay_rule()
     print("\nall tests passed.")
 

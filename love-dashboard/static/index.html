@@ -363,6 +363,28 @@
   .sparkline-card .legend .swatch.partnership{ background: var(--good); }
   .sparkline-card .legend .swatch.stability  { background: var(--warn); }
   .sparkline-card .legend .swatch.activity   { background: var(--text-2); }
+
+  .narrative-card {
+    margin-top: 18px;
+    padding: 14px 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    font-size: 13px;
+    color: var(--text-1);
+  }
+  .narrative-card.loading { color: var(--text-3); font-style: italic; }
+  .narrative-card.error { border-left-color: var(--accent-2); color: var(--text-2); }
+  .narrative-card .header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 8px;
+    font-size: 11px; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .narrative-card .header .meta { text-transform: none; letter-spacing: 0; color: var(--text-3); font-size: 10px; }
+  .narrative-card p { margin: 0 0 10px; color: var(--text-1); line-height: 1.55; }
+  .narrative-card p:last-child { margin-bottom: 0; }
   .sparkline-card .empty { font-size: 12px; color: var(--text-3); padding: 12px 0 4px; }
 
   table.rankings td.compare, table.rankings th:first-child { width: 26px; padding-left: 14px; padding-right: 0; }
@@ -1254,6 +1276,44 @@ async function loadSources() {
 }
 
 // ---- country drill-down modal ----
+async function loadNarrative(iso3) {
+  const mount = document.getElementById("narrative-mount");
+  if (!mount) return;
+  mount.innerHTML = `
+    <div class="narrative-card loading">
+      <div class="header"><span>Analyst note</span></div>
+      Generating narrative…
+    </div>`;
+  let d;
+  try { d = await fetchJSON(`/api/narrative/${encodeURIComponent(iso3)}`); }
+  catch (err) {
+    mount.innerHTML = `
+      <div class="narrative-card error">
+        <div class="header"><span>Analyst note</span></div>
+        ${esc(err.message)}
+      </div>`;
+    return;
+  }
+  if (d.error) {
+    mount.innerHTML = `
+      <div class="narrative-card error">
+        <div class="header"><span>Analyst note</span></div>
+        ${esc(d.error)}
+      </div>`;
+    return;
+  }
+  const paragraphs = String(d.text || "").split(/\n\s*\n/).filter(Boolean);
+  const stamp = (d.generated_at || "").split("T")[0];
+  mount.innerHTML = `
+    <div class="narrative-card">
+      <div class="header">
+        <span>Analyst note</span>
+        <span class="meta">${esc(d.model || "")}${stamp ? " · " + esc(stamp) : ""}</span>
+      </div>
+      ${paragraphs.map(p => `<p>${esc(p)}</p>`).join("")}
+    </div>`;
+}
+
 async function openCountry(iso3) {
   const modal = document.getElementById("modal");
   const content = document.getElementById("modal-content");
@@ -1423,7 +1483,9 @@ function renderCountryDetail(c, root) {
       ${SUBSCORES.map(subRow).join("")}
     </div>
     ${rawEntries ? `<div class="raw"><h4>Raw indicators</h4><dl>${rawEntries}</dl></div>` : ""}
-    ${contextEntries ? `<div class="raw"><h4>Context (outside the composite)</h4><dl>${contextEntries}</dl></div>` : ""}`;
+    ${contextEntries ? `<div class="raw"><h4>Context (outside the composite)</h4><dl>${contextEntries}</dl></div>` : ""}
+    <div id="narrative-mount"></div>`;
+  loadNarrative(c.iso3);
 }
 
 function closeModal() {

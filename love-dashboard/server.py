@@ -34,6 +34,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 import insights as insights_module
+import narrative as narrative_module
 import og as og_module
 import sensitivity as sensitivity_module
 import snapshots as snapshots_module
@@ -89,6 +90,18 @@ _TTL = {
     "subscore_layers":      60 * 60,
     "sensitivity":          60 * 60,
 }
+# Narrative entries are keyed `narrative:<iso>:<utc-date>`. `_ttl_for()`
+# picks this up via the `narrative:` prefix so we don't have to add a new
+# entry per (country, day) pair.
+_TTL_NARRATIVE = 24 * 3600
+
+
+def _ttl_for(key: str) -> int:
+    if key in _TTL:
+        return _TTL[key]
+    if key.startswith("narrative:"):
+        return _TTL_NARRATIVE
+    return _TTL_DEFAULT
 
 
 def cache_get(key: str):
@@ -96,7 +109,7 @@ def cache_get(key: str):
         entry = _cache.get(key)
         if not entry:
             return None
-        ttl = _TTL.get(key, _TTL_DEFAULT)
+        ttl = _ttl_for(key)
         if time.time() - entry["t"] > ttl:
             _cache.pop(key, None)
             return None
@@ -1240,6 +1253,47 @@ def history_global():
         "points": snapshots_module.get_global_history(SNAPSHOTS_DB, days=days),
         "store":  snapshots_module.n_snapshots(SNAPSHOTS_DB),
     })
+
+
+@app.get("/api/narrative/<iso>")
+def narrative_route(iso: str):
+    """LLM-generated analyst note for a single country. Cached per (iso, UTC
+    date) — at most one Claude call per country per day."""
+    iso = iso.upper()
+    countries = cached("index_map", lambda: compute_subscores())
+    if iso not in countries:
+        return jsonify({"error": f"country {iso} has no Love Index (insufficient data)"}), 404
+
+    today = snapshots_module.today_utc()
+    cache_key = f"narrative:{iso}:{today}"
+
+    def build():
+        country = dict(countries[iso])
+        # Enrich with peer_compare + sensitivity (same as /api/country/<iso>)
+        country["peer_compare"] = _peer_compare(country, list(countries.values()))
+        sens_payload = cached("sensitivity", _sensitivity_payload)
+        sens = (sens_payload.get("countries") or {}).get(iso)
+        if sens:
+            country["sensitivity"] = sens
+        history = snapshots_module.get_country_history(iso, SNAPSHOTS_DB, days=365)
+        # All insights, filtered to ones about this country.
+        layers = cached("subscore_layers", _build_subscore_layers)
+        partnership_uncapped = (layers.get("extras") or {}).get("partnership_uncapped") or {}
+        all_insights = insights_module.generate_insights(
+            list(countries.values()),
+            layers["meta"],
+            partnership_uncapped=partnership_uncapped,
+            history_accessor=lambda iso3: snapshots_module.get_country_history(iso3, SNAPSHOTS_DB),
+            events=insights_module.STARTER_EVENTS,
+        )
+        country_insights = [i for i in all_insights if i.get("iso3") == iso]
+        return narrative_module.country_narrative(country, history, country_insights)
+
+    try:
+        payload = cached(cache_key, build)
+    except narrative_module.NarrativeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    return jsonify(payload)
 
 
 @app.get("/api/og/global.svg")

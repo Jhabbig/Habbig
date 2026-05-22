@@ -1,7 +1,26 @@
-# State of Love Dashboard (v3.6)
+# State of Love Dashboard (v3.7)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.7 adds (data + LLM):**
+
+- **Six trustworthy context indicators** per country (Tier A) — World Bank
+  fertility rate, female labour-force participation, GDP per capita,
+  life expectancy; UN WPP age at first marriage (women); ILGA / Equaldex
+  Rainbow Index (operator CSV at `data/rainbow.csv`). These do not feed
+  the composite — they surface in the drill-down and are the raw
+  material the LLM narrative summarizes.
+- **LLM analyst note per country** — `GET /api/narrative/<iso3>` asks
+  Claude Haiku 4.5 to write a 2–3 paragraph analyst note grounded in the
+  country's snapshot, history, insights, and the six new context
+  indicators. Cached per (iso3, UTC date) — at most one Claude call per
+  country per day. Set `ANTHROPIC_API_KEY` on the process; without it the
+  endpoint returns 503 and the dashboard renders an explanatory placeholder.
+- **Prompt caching wired** — the ~12KB methodology preamble is sent as a
+  cached `system` block, so per-country calls read it at ~0.1× input
+  cost. Verify in production via the `cache_read_input_tokens` field on
+  the response.
 
 **v3.6 adds (credibility + distribution):**
 
@@ -380,6 +399,7 @@ missing.
 | `data/loneliness.csv` | `country`, `loneliness` (0-100 or 0-1) | Connection (combined with WHR) |
 | `data/un_marriage.csv` | `country`, `marriage_rate`, `divorce_rate` (per 1000) | Partnership + Stability globally (UN DESA Demographic Yearbook) |
 | `data/activity.csv` | `country`, `activity` (any scale) | Activity (Tier C — indicative) |
+| `data/rainbow.csv` | `country`, `rainbow_score` (0-100 or 0-1) | Rainbow Index context indicator (ILGA / Equaldex) |
 
 Country names are matched case-insensitively against World Bank metadata
 plus a small overrides table for common informal names (`Russia`/`RUS`,
