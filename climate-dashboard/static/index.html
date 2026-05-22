@@ -401,6 +401,52 @@
   }
   .emitters-summary b { color: var(--text-1); }
 
+  .scenario-metric {
+    display: inline-flex;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    margin-left: 10px;
+    gap: 2px;
+    vertical-align: middle;
+  }
+  .scenario-metric button {
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+  .scenario-metric button.on {
+    background: var(--bg-1);
+    color: var(--text-1);
+  }
+  .scenario-chart { width: 100%; height: 280px; }
+  .scenario-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .scenario-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .scenario-legend i {
+    display: inline-block; width: 18px; height: 2px;
+    background: currentColor; border-radius: 1px;
+  }
+  .scenario-legend .obs i { height: 3px; }
+  .scenario-legend .dash i {
+    background: linear-gradient(to right, currentColor 50%, transparent 50%);
+    background-size: 8px 100%;
+  }
+
   @media (max-width: 600px) {
     main { padding: 14px 14px 60px; }
     .grid { grid-template-columns: 1fr; }
@@ -535,6 +581,20 @@
 
 <div class="section-title">Top CO₂ emitters <a class="export-link" id="export-emitters" role="button" tabindex="0">↓ CSV</a></div>
 <div id="emitters-card" class="card"><div class="empty">Loading country emissions…</div></div>
+
+<div class="section-title">
+  Long-term outlook (IPCC SSPs)
+  <span class="scenario-metric" role="group" aria-label="Scenario metric">
+    <button id="scenario-metric-temp" class="on" type="button">Temperature</button>
+    <button id="scenario-metric-co2" type="button">CO₂</button>
+  </span>
+  <a class="export-link" id="export-scenarios" role="button" tabindex="0">↓ CSV</a>
+</div>
+<div class="overlay-card">
+  <div class="sub" style="color:var(--text-2);font-size:12px;margin-bottom:10px">Solid: observed history. Dashed: IPCC AR6 SSP trajectories (anchor years 2020/2030/2050/2075/2100, linearly interpolated). Temperature shown vs 1850-1900 baseline.</div>
+  <div class="scenario-chart" id="scenarios-chart"></div>
+  <div class="scenario-legend" id="scenarios-legend"></div>
+</div>
 
 <div class="section-title">Indicator overlay <a class="export-link" id="export-overlay" role="button" tabindex="0">↓ CSV</a></div>
 <div class="overlay-card">
@@ -848,6 +908,9 @@ async function loadOverlay() {
   }
   renderOverlay();
   renderOverlayToggles();
+  // Scenarios chart depends on _overlay.raw for the historical observed
+  // series — rerender now that the data is loaded.
+  renderScenariosChart();
 }
 
 let _overlayChart = null;
@@ -991,7 +1054,14 @@ window.addEventListener("resize", () => {
     const el = document.getElementById("overlay");
     if (el && el.clientWidth) _overlayChart.setSize({ width: el.clientWidth, height: 360 });
   }
+  if (_scenariosChart) {
+    const el = document.getElementById("scenarios-chart");
+    if (el && el.clientWidth) _scenariosChart.setSize({ width: el.clientWidth, height: 280 });
+  }
 });
+
+document.getElementById("scenario-metric-temp").addEventListener("click", () => setScenarioMetric("temp"));
+document.getElementById("scenario-metric-co2").addEventListener("click", () => setScenarioMetric("co2"));
 
 // ─── CSV export ──────────────────────────────────────────────────────────────
 //
@@ -1060,6 +1130,122 @@ async function loadEmitters() {
     </div>
     ${summaryHtml}
   `;
+}
+
+// ─── IPCC SSP scenario chart ────────────────────────────────────────────────
+//
+// Real-units chart (not z-scored) showing historical observed temperature or
+// CO₂ alongside the four SSP trajectories projected to 2100. Toggleable
+// metric. The dashed style + colour pick reads as "this is a future model
+// projection, not data."
+
+const SCENARIO_COLORS = {
+  "SSP1-2.6": "#34d399",  // optimistic / cool
+  "SSP2-4.5": "#fbbf24",  // middle of the road
+  "SSP3-7.0": "#fb923c",  // regional rivalry
+  "SSP5-8.5": "#f87171",  // fossil-fueled
+};
+
+let _scenariosData = null;
+let _scenarioMetric = "temp";  // "temp" or "co2"
+let _scenariosChart = null;
+
+async function loadScenarios() {
+  _scenariosData = await getJSON("/api/scenarios");
+  renderScenariosChart();
+}
+
+function renderScenariosChart() {
+  if (typeof uPlot === "undefined") return;
+  if (!_scenariosData) return;
+  const el = document.getElementById("scenarios-chart");
+  if (!el) return;
+
+  const isTemp = _scenarioMetric === "temp";
+  const trajectories = isTemp
+    ? _scenariosData.trajectories.temperature_c_vs_1850_1900
+    : _scenariosData.trajectories.co2_ppm;
+
+  // Build a union year axis from min observation to 2100
+  const allYears = new Set();
+  Object.values(trajectories).forEach(arr => arr.forEach(p => allYears.add(p.year)));
+  const xs = Array.from(allYears).sort((a, b) => a - b);
+
+  // We need observed history from /api/temperature or /api/co2. For
+  // temperature we already have annual values; for CO2 we annualise the
+  // monthly series client-side.
+  // Use the cached payloads from the overlay loader if available, otherwise
+  // fall back to empty.
+  let observed = {};
+  if (isTemp && _overlay) {
+    observed = _overlay.raw.temp;  // year → °C anomaly (GISTEMP baseline)
+  } else if (!isTemp && _overlay) {
+    observed = _overlay.raw.co2;   // year → ppm annual mean
+  }
+
+  // For temperature, shift GISTEMP values (1951-1980 baseline) to the IPCC
+  // 1850-1900 baseline by adding 0.2°C so they're comparable to the
+  // scenario lines on the same axis.
+  const offset = isTemp ? 0.2 : 0;
+
+  // Construct the data tuple for uPlot
+  const xData = xs.map(y => ymdToUnix(y, 6, 15));
+  const obsSeries = xs.map(y => {
+    const v = observed[y];
+    return v != null ? v + offset : null;
+  });
+  const sspSeries = ["SSP1-2.6", "SSP2-4.5", "SSP3-7.0", "SSP5-8.5"].map(name => {
+    const byYear = Object.fromEntries((trajectories[name] || []).map(p => [p.year, p.value]));
+    return xs.map(y => byYear[y] ?? null);
+  });
+
+  const data = [xData, obsSeries, ...sspSeries];
+  const unit = isTemp ? "°C" : "ppm";
+  const fmt = isTemp ? (v => (v >= 0 ? "+" : "") + v.toFixed(2) + " °C") : (v => v.toFixed(1) + " ppm");
+
+  if (_scenariosChart) { try { _scenariosChart.destroy(); } catch (_) {} _scenariosChart = null; }
+  el.innerHTML = "";
+
+  _scenariosChart = new uPlot({
+    width: el.clientWidth || 800,
+    height: 280,
+    legend: { show: false },
+    cursor: { focus: { prox: 30 } },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" } },
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" },
+        label: isTemp ? "°C vs 1850-1900" : "ppm",
+        labelSize: 28, size: 50, gap: 4 },
+    ],
+    series: [
+      {},
+      { label: "Observed", stroke: "#f1f5f9", width: 2.2, points: { show: false } },
+      { label: "SSP1-2.6", stroke: SCENARIO_COLORS["SSP1-2.6"], width: 1.5, dash: [5, 4], points: { show: false } },
+      { label: "SSP2-4.5", stroke: SCENARIO_COLORS["SSP2-4.5"], width: 1.5, dash: [5, 4], points: { show: false } },
+      { label: "SSP3-7.0", stroke: SCENARIO_COLORS["SSP3-7.0"], width: 1.5, dash: [5, 4], points: { show: false } },
+      { label: "SSP5-8.5", stroke: SCENARIO_COLORS["SSP5-8.5"], width: 1.5, dash: [5, 4], points: { show: false } },
+    ],
+  }, data, el);
+
+  // Build the legend below the chart
+  const legend = document.getElementById("scenarios-legend");
+  if (legend) {
+    legend.innerHTML = `
+      <span class="obs" style="color:#f1f5f9"><i></i>Observed${isTemp ? " (GISTEMP +0.2°C → 1850-1900)" : " (Mauna Loa)"}</span>
+      ${["SSP1-2.6","SSP2-4.5","SSP3-7.0","SSP5-8.5"].map(n =>
+        `<span class="dash" style="color:${SCENARIO_COLORS[n]}"><i></i>${n}</span>`,
+      ).join("")}
+    `;
+  }
+}
+
+function setScenarioMetric(metric) {
+  if (metric === _scenarioMetric) return;
+  _scenarioMetric = metric;
+  document.getElementById("scenario-metric-temp").classList.toggle("on", metric === "temp");
+  document.getElementById("scenario-metric-co2").classList.toggle("on", metric === "co2");
+  renderScenariosChart();
 }
 
 async function loadHighlights() {
@@ -1886,9 +2072,27 @@ function _wireKeyboardActivate(el) {
     }
   });
 }
-["export-markets", "export-overlay", "export-backtest", "export-emitters"].forEach(id => {
+["export-markets", "export-overlay", "export-backtest", "export-emitters", "export-scenarios"].forEach(id => {
   const el = document.getElementById(id);
   if (el) _wireKeyboardActivate(el);
+});
+
+document.getElementById("export-scenarios").addEventListener("click", () => {
+  if (!_scenariosData) return;
+  const isTemp = _scenarioMetric === "temp";
+  const trajectories = isTemp
+    ? _scenariosData.trajectories.temperature_c_vs_1850_1900
+    : _scenariosData.trajectories.co2_ppm;
+  const names = Object.keys(trajectories);
+  const allYears = new Set();
+  names.forEach(n => trajectories[n].forEach(p => allYears.add(p.year)));
+  const xs = Array.from(allYears).sort((a, b) => a - b);
+  const header = ["Year", ...names];
+  const rows = xs.map(y => [y, ...names.map(n => {
+    const pt = trajectories[n].find(p => p.year === y);
+    return pt ? pt.value : "";
+  })]);
+  downloadCSV(`climate-scenarios-${isTemp ? "temperature" : "co2"}-${_today()}.csv`, header, rows);
 });
 
 document.getElementById("export-emitters").addEventListener("click", () => {
@@ -1948,6 +2152,7 @@ loadRegime();
 loadHighlights();
 loadCards();
 loadEmitters();
+loadScenarios();
 loadOverlay();
 loadMarkets();
 loadBacktest();
