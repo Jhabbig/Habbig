@@ -74,7 +74,32 @@ from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+# ---------------------------------------------------------------------------
+# Layered env loading
+# ---------------------------------------------------------------------------
+# Search order (later files override earlier values that are still empty):
+#   1. ~/.gateway_env                                  — platform-shared secrets
+#   2. ~/Polymarket/gateway/.env.production            — gateway / shared API keys
+#   3. <this dashboard>/.env.production                — per-dashboard overrides
+#   4. <this dashboard>/.env                           — local dev fallback
+#
+# Each file is optional; missing files are silently skipped. Using
+# `override=False` means the **first** file that defines a key wins, so
+# narrower files can sit on top of platform defaults without being clobbered
+# (we walk from broadest → narrowest below). Loud startup logging lets us
+# stop debugging silent "ODDS_API_KEY not set" failures by reading the log.
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_ENV_SEARCH = [
+    Path.home() / ".gateway_env",
+    _DASHBOARD_DIR.parent / "gateway" / ".env.production",
+    _DASHBOARD_DIR / ".env.production",
+    _DASHBOARD_DIR / ".env",
+]
+_loaded_from = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        load_dotenv(_f, override=False)
+        _loaded_from.append(str(_f))
 
 # ---------------------------------------------------------------------------
 # Config
@@ -690,9 +715,65 @@ OUTRIGHT_SPORT_KEYS = {
 }
 
 
+# Throttle the "ODDS_API_KEY missing" warning to once per hour so the log
+# isn't swamped, but ensure it appears (every 12 polls = once per ~hour).
+_ODDS_KEY_WARN_LAST = 0.0
+_ODDS_KEY_WARN_INTERVAL = 3600  # seconds
+
+
+def _warn_odds_key_missing(caller: str) -> None:
+    global _ODDS_KEY_WARN_LAST
+    now = time.time()
+    if now - _ODDS_KEY_WARN_LAST >= _ODDS_KEY_WARN_INTERVAL:
+        _ODDS_KEY_WARN_LAST = now
+        print(f"⚠ {caller}: ODDS_API_KEY is empty — bookmaker odds will be empty. "
+              f"Set it in gateway/.env.production and restart polymarket-sports.",
+              flush=True)
+
+
+# ── the-odds-api quota circuit breaker ───────────────────────────────────
+# the-odds-api free tier is 500 requests/month. Once exhausted, the API
+# returns HTTP 401 with body {"error_code": "OUT_OF_USAGE_CREDITS"} on
+# every subsequent call.
+#
+# Without a breaker, the polling loop keeps hitting the API every 5 min,
+# producing log noise AND — critically — burning through the next month's
+# allowance the instant the quota resets (8,640 calls/month at 5-min poll
+# vs 500 free quota → exhausted within 42h of reset).
+#
+# The breaker:
+#   - Trips when we see 401 with OUT_OF_USAGE_CREDITS
+#   - Stays open for 6h, then makes one probe to detect quota reset
+#   - On subsequent 200 responses, closes again
+# So during quota-exhausted periods we make ~4 calls/day instead of 288,
+# which means a fresh 500-quota actually lasts a couple weeks instead of
+# a couple days.
+_ODDS_BREAKER_OPEN_UNTIL = 0.0
+_ODDS_BREAKER_PROBE_INTERVAL_S = 6 * 3600
+_ODDS_BREAKER_LAST_REASON = ""
+
+
+def _is_odds_quota_error(resp: requests.Response) -> bool:
+    if resp.status_code != 401:
+        return False
+    try:
+        body = resp.json()
+        return body.get("error_code") == "OUT_OF_USAGE_CREDITS"
+    except Exception:
+        return False
+
+
 def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[list[dict], str | None]:
     """Fetch match odds from The Odds API. Returns (events, requests_remaining)."""
+    global _ODDS_BREAKER_OPEN_UNTIL, _ODDS_BREAKER_LAST_REASON
+
     if not ODDS_API_KEY:
+        _warn_odds_key_missing("fetch_odds")
+        return [], None
+
+    if time.time() < _ODDS_BREAKER_OPEN_UNTIL:
+        # Breaker still open — degrade silently, dashboard falls back to
+        # Polymarket↔Kalshi cross-venue arbitrage as the primary signal.
         return [], None
 
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
@@ -703,6 +784,17 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
         "oddsFormat": "decimal",
     }
     resp = requests.get(url, params=params, timeout=30)
+    if _is_odds_quota_error(resp):
+        _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
+        _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+        print(
+            f"⚠ the-odds-api quota exhausted (HTTP 401, OUT_OF_USAGE_CREDITS). "
+            f"Suspending bookmaker fetch for 6h. Dashboard will fall back to "
+            f"Polymarket↔Kalshi cross-venue arbitrage. To restore: upgrade "
+            f"plan at https://the-odds-api.com or rotate ODDS_API_KEY.",
+            flush=True,
+        )
+        return [], None
     resp.raise_for_status()
     remaining = resp.headers.get("x-requests-remaining")
     return resp.json(), remaining
@@ -710,7 +802,13 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
 
 def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
     """Fetch outright/futures odds for a sport (e.g. league winner)."""
+    global _ODDS_BREAKER_OPEN_UNTIL, _ODDS_BREAKER_LAST_REASON
+
     if not ODDS_API_KEY:
+        _warn_odds_key_missing("fetch_outright_odds")
+        return [], None
+
+    if time.time() < _ODDS_BREAKER_OPEN_UNTIL:
         return [], None
 
     outright_key = OUTRIGHT_SPORT_KEYS.get(sport_key)
@@ -726,6 +824,10 @@ def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
     }
     try:
         resp = requests.get(url, params=params, timeout=30)
+        if _is_odds_quota_error(resp):
+            _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
+            _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+            return [], None
         resp.raise_for_status()
         remaining = resp.headers.get("x-requests-remaining")
         return resp.json(), remaining
@@ -1028,10 +1130,33 @@ _kalshi_cache: list[dict] = []
 _kalshi_cache_time: float = 0
 
 
+# ── Kalshi rate-limit circuit breaker ────────────────────────────────────────
+# Without authenticated keys (KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY) we get
+# the IP-based unauth quota, which the previous fetcher blew through ~2400
+# times/hour. The breaker tracks consecutive 429s in this poll cycle and
+# stops calling Kalshi for the rest of the cycle once we've hit a wall — so
+# we degrade gracefully instead of looping retries.
+_KALSHI_429_LAST_HIT = 0.0
+_KALSHI_BREAKER_OPEN_UNTIL = 0.0
+_KALSHI_REQ_DELAY_S = 0.15  # ~6 req/s; well under documented unauth limits
+_KALSHI_BREAKER_COOLDOWN_S = 120
+
+
 def fetch_kalshi_markets(sport_key: str) -> list[dict]:
-    """Fetch markets from Kalshi for the given sport across all its series."""
+    """Fetch markets from Kalshi for the given sport across all its series.
+
+    With no auth keys we throttle to ~6 req/s, honor ``Retry-After`` on 429,
+    and trip a circuit breaker that suppresses Kalshi traffic for 2 min after
+    a rate-limit wall is hit. Once Kalshi auth keys are wired up the breaker
+    becomes a no-op (auth quotas are far higher than what we need)."""
+    global _KALSHI_429_LAST_HIT, _KALSHI_BREAKER_OPEN_UNTIL
+
     series_list = KALSHI_SERIES.get(sport_key, [])
     if not series_list:
+        return []
+
+    # Skip the fetch entirely while breaker is open.
+    if time.time() < _KALSHI_BREAKER_OPEN_UNTIL:
         return []
 
     session = _make_http_session()
@@ -1044,6 +1169,17 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
                 params["cursor"] = cursor
             try:
                 resp = session.get(f"{KALSHI_API_HOST}/markets", params=params, timeout=30)
+                if resp.status_code == 429:
+                    retry_after = float(resp.headers.get("Retry-After", "60"))
+                    _KALSHI_429_LAST_HIT = time.time()
+                    _KALSHI_BREAKER_OPEN_UNTIL = time.time() + max(retry_after, _KALSHI_BREAKER_COOLDOWN_S)
+                    print(
+                        f"⚠ Kalshi rate-limited (429) on {series}; opening breaker for "
+                        f"{int(_KALSHI_BREAKER_OPEN_UNTIL - time.time())}s. "
+                        f"Set KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY for higher quotas.",
+                        flush=True,
+                    )
+                    return all_markets  # bail out of *all* series for this sport
                 resp.raise_for_status()
                 body = resp.json()
             except Exception as e:
@@ -1057,6 +1193,9 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
             cursor = body.get("cursor")
             if not cursor:
                 break
+            time.sleep(_KALSHI_REQ_DELAY_S)
+        # Stagger between series too, especially when there are many tickers
+        time.sleep(_KALSHI_REQ_DELAY_S)
 
     return all_markets
 
@@ -4377,8 +4516,37 @@ async def startup():
     _spawn_bg(_top_traders_periodic_refresh())
 
     print(f"Sports Dashboard started. Polling {dashboard_data.get('active_sport', 'unknown')} every {POLL_INTERVAL}s")
-    if not ODDS_API_KEY:
-        print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
+
+    # ── Loud, single-pass key-status banner ────────────────────────────────
+    # If any third-party API key is missing, the corresponding feature will
+    # silently degrade. Surface that here so misconfiguration is immediately
+    # visible in the log instead of producing 564 cycles of "0 odds".
+    print("─── env files loaded ───")
+    if _loaded_from:
+        for _p in _loaded_from:
+            print(f"  ✓ {_p}")
+    else:
+        print("  (none — using process environment only)")
+
+    print("─── third-party API keys ───")
+    _key_status = [
+        ("ODDS_API_KEY", ODDS_API_KEY, "the-odds-api.com — bookmaker odds (CRITICAL)"),
+        ("KALSHI_API_KEY_ID", os.getenv("KALSHI_API_KEY_ID", ""), "Kalshi authenticated requests (optional)"),
+        ("KALSHI_PRIVATE_KEY", os.getenv("KALSHI_PRIVATE_KEY", ""), "Kalshi key-pair signing (optional)"),
+        ("GATEWAY_SSO_SECRET", os.getenv("GATEWAY_SSO_SECRET", ""), "Gateway SSO header verification"),
+    ]
+    _missing_critical = []
+    for _name, _value, _desc in _key_status:
+        if _value:
+            print(f"  ✓ {_name:25s} set ({len(_value)} chars) — {_desc}")
+        else:
+            print(f"  ✗ {_name:25s} MISSING — {_desc}")
+            if "CRITICAL" in _desc:
+                _missing_critical.append(_name)
+    if _missing_critical:
+        print(f"⚠ CRITICAL keys missing: {', '.join(_missing_critical)} — core features will silently return empty.")
+        print("  → add them to /home/julianhabbig/Polymarket/gateway/.env.production and restart polymarket-sports.")
+    print("────────────────────────")
 
 
 # ---------------------------------------------------------------------------
@@ -4390,6 +4558,42 @@ async def startup():
 @app.get("/login")
 async def login_page():
     return RedirectResponse("https://narve.ai/login", status_code=302)
+
+
+@app.get("/api/health")
+async def health():
+    """Liveness + key-status. Returns 200 if alive, 'degraded' if a critical
+    third-party key is missing (i.e. the dashboard is up but core feature is
+    silently empty). Use this from monitoring to catch the silent-failure
+    mode that bit us with ODDS_API_KEY."""
+    keys = {
+        "ODDS_API_KEY":       {"set": bool(ODDS_API_KEY),                   "critical": True},
+        "KALSHI_API_KEY_ID":  {"set": bool(os.getenv("KALSHI_API_KEY_ID")), "critical": False},
+        "KALSHI_PRIVATE_KEY": {"set": bool(os.getenv("KALSHI_PRIVATE_KEY")), "critical": False},
+        "GATEWAY_SSO_SECRET": {"set": bool(os.getenv("GATEWAY_SSO_SECRET")), "critical": False},
+    }
+    missing_critical = [k for k, v in keys.items() if v["critical"] and not v["set"]]
+    odds_breaker_open = time.time() < _ODDS_BREAKER_OPEN_UNTIL
+    status = "healthy"
+    if missing_critical:
+        status = "degraded"
+    elif odds_breaker_open:
+        # Still healthy operationally, just on the cross-venue-only fallback
+        status = "degraded-quota-exhausted"
+    return JSONResponse({
+        "ok": True,
+        "service": "sports-dashboard",
+        "status": status,
+        "missing_critical_keys": missing_critical,
+        "keys": keys,
+        "odds_breaker": {
+            "open": odds_breaker_open,
+            "reopen_in_s": max(0, int(_ODDS_BREAKER_OPEN_UNTIL - time.time())),
+            "last_reason": _ODDS_BREAKER_LAST_REASON or None,
+        },
+        "env_files_loaded": _loaded_from,
+        "ts": time.time(),
+    })
 
 
 @app.get("/api/logout")
@@ -4556,6 +4760,13 @@ async def api_data(request: Request):
     # current data is for a different sport, return a 202 with a hint so
     # the client knows it needs to wait for the data_updater to catch up.
     requested_sport = request.query_params.get("sport")
+    # Optional ?min_liquidity=N filter — hides markets with Polymarket
+    # liquidity below the threshold. Defaults to 0 (no filter) so existing
+    # callers behave the same. Recommended UI default: $1000.
+    try:
+        min_liquidity = float(request.query_params.get("min_liquidity") or 0)
+    except (ValueError, TypeError):
+        min_liquidity = 0.0
     # Snapshot dashboard_data under the lock so we never serialize a half-
     # updated dict (the data_updater mutates this dict in-place).
     async with _data_lock:
@@ -4567,6 +4778,14 @@ async def api_data(request: Request):
              "requested_sport": requested_sport},
             status_code=202,
         )
+    if min_liquidity > 0:
+        # Filter the per-game signals list. Each event carries
+        # poly_liquidity (USD); markets below the threshold drop.
+        events = snapshot.get("events", []) or []
+        filtered = [e for e in events if (e.get("poly_liquidity") or 0) >= min_liquidity]
+        snapshot["events"] = filtered
+        snapshot["_min_liquidity_filter"] = min_liquidity
+        snapshot["_filtered_out"] = len(events) - len(filtered)
     return JSONResponse(snapshot)
 
 
@@ -5651,9 +5870,15 @@ async def dashboard(request: Request):
         user_threshold = DIVERGENCE_THRESHOLD
     user_sport = settings.get("default_sport", "basketball_nba")
     import html as _html_mod
+    # Server-side state for the bookmaker-quota banner. Avoids needing
+    # /api/health to be accessible without auth (which would leak status).
+    quota_banner_display = "block" if (time.time() < _ODDS_BREAKER_OPEN_UNTIL) else "none"
+    quota_banner_reopen_hrs = max(0, int((_ODDS_BREAKER_OPEN_UNTIL - time.time()) / 3600))
     html = DASHBOARD_HTML.replace("__USER_THRESHOLD__", str(user_threshold))
     html = html.replace("__USER_SPORT__", _html_mod.escape(user_sport).replace("\\", "\\\\").replace("'", "\\'"))
     html = html.replace("__USERNAME__", _html_mod.escape(user["username"]).replace("\\", "\\\\").replace("'", "\\'"))
+    html = html.replace("__QUOTA_BANNER_DISPLAY__", quota_banner_display)
+    html = html.replace("__QUOTA_BANNER_HOURS__", str(quota_banner_reopen_hrs))
     return HTMLResponse(html)
 
 
@@ -6571,9 +6796,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .perf-grid { grid-template-columns: 1fr; }
     .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
   }
+  /* Quota-exhausted banner — only shown when /api/health flags
+     degraded-quota-exhausted, otherwise stays display:none. Sits above the
+     nav so the bookmaker-odds gap is acknowledged before users see empty
+     edge cards. Polymarket + Kalshi cross-venue signals continue working. */
+  .quota-banner {
+    display: none;
+    background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
+    border-bottom: 1px solid rgba(251,191,36,0.4);
+    color: #fbbf24;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .quota-banner b { color: #fde68a; }
+  .quota-banner .quota-banner-detail {
+    color: rgba(253,230,138,0.7);
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
+
+<!-- ===== QUOTA BANNER (server-rendered: shown only when breaker is open) ===== -->
+<div class="quota-banner" id="quotaBanner" style="display:__QUOTA_BANNER_DISPLAY__;">
+  <b>Bookmaker odds temporarily unavailable</b> — the-odds-api monthly quota exhausted; falling back to Polymarket↔Kalshi cross-venue signals below.
+  <div class="quota-banner-detail">Auto-probes again in ~__QUOTA_BANNER_HOURS__h, or restored instantly when ODDS_API_KEY is rotated/upgraded.</div>
+</div>
 
 <!-- ===== NAV ===== -->
 <nav class="nav">

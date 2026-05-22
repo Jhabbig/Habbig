@@ -1,9 +1,15 @@
-"""Polymarket CLOB client — trade execution via py-clob-client."""
+"""Polymarket CLOB client — trade execution via py-clob-client.
+
+Also routes Kalshi-platform signals to the Kalshi REST API when live mode is on.
+"""
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
+
+import aiohttp
 
 from config import Config
 from edge_calculator import Signal
@@ -20,6 +26,30 @@ class TradingClient:
         self.paper_mode = self.config.PAPER_MODE
         self._client = None
         self._initialized = False
+        self._kalshi_client = None
+        self._kalshi_initialized = False
+
+    def _init_kalshi_client(self) -> bool:
+        if self._kalshi_initialized:
+            return self._kalshi_client is not None
+        self._kalshi_initialized = True
+        if not self.config.KALSHI_ENABLED:
+            logger.error("Kalshi live trading attempted but KALSHI_ENABLED=false")
+            return False
+        if not self.config.KALSHI_API_KEY_ID or not self.config.KALSHI_PRIVATE_KEY_PATH:
+            logger.error("KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH required for live Kalshi trading")
+            return False
+        try:
+            from kalshi_client import KalshiClient
+            self._kalshi_client = KalshiClient(
+                self.config.KALSHI_API_KEY_ID,
+                self.config.KALSHI_PRIVATE_KEY_PATH,
+            )
+            logger.info("Live Kalshi client initialized")
+            return True
+        except Exception as e:
+            logger.error("Failed to initialize Kalshi client: %s", e)
+            return False
 
     def _init_client(self) -> bool:
         if self._initialized:
@@ -75,11 +105,8 @@ class TradingClient:
         if self.paper_mode:
             return self._paper_trade(signal, position, side, price, shares)
 
-        # Live Kalshi trading not yet implemented — paper only for now
         if platform == "kalshi":
-            logger.warning("[KALSHI] Live trading not implemented — use PAPER_MODE=true")
-            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
-                    "error": "Kalshi live trading not yet implemented"}
+            return await self._live_kalshi_trade(signal, position, side, price)
 
         return await self._live_trade(signal, position, side, price, shares, token_id)
 
@@ -139,3 +166,87 @@ class TradingClient:
         except Exception as e:
             logger.error("[LIVE] Trade execution error: %s", e)
             return {"order_id": "", "status": "error", "error": str(e), "amount": 0}
+
+    async def _live_kalshi_trade(self, signal: Signal, position: PositionSize,
+                                 side: str, price: float) -> dict:
+        """Place a real-money Kalshi limit order.
+
+        Kalshi prices are integer cents (1-99), contracts are integer counts,
+        each contract pays $1 if it resolves favorably. We cross the spread by
+        1¢ as the limit cap so the order is marketable but bounded.
+        """
+        if not self._init_kalshi_client():
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
+                    "error": "Kalshi client not initialized"}
+
+        capped_amount = min(position.amount, self.config.KALSHI_MAX_TRADE_SIZE)
+        if capped_amount < position.amount:
+            logger.info("[LIVE/KALSHI] Capped trade size $%.2f -> $%.2f (KALSHI_MAX_TRADE_SIZE)",
+                        position.amount, capped_amount)
+
+        price_cents = int(round(price * 100))
+        if price_cents < 1 or price_cents > 99:
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
+                    "error": f"Invalid Kalshi price: {price_cents}c"}
+
+        limit_cents = min(price_cents + 1, 99)
+        unit_cost = limit_cents / 100.0
+        count = int(capped_amount // unit_cost)
+        if count < 1:
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
+                    "error": f"Position too small for Kalshi: ${capped_amount:.2f} at {limit_cents}c needs >=1 contract"}
+
+        ticker = signal.market.condition_id
+        kalshi_side = "yes" if side == "YES" else "no"
+        coid = f"wbot_{ticker}_{int(time.time())}"[:64]
+
+        logger.info(
+            "[LIVE/KALSHI] %s %s | %d contracts @ %dc (cap %dc) | Budget: $%.2f | Edge: %+.1f%% | %s",
+            signal.action, ticker, count, price_cents, limit_cents,
+            capped_amount, signal.edge * 100, signal.market.city,
+        )
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                resp = await self._kalshi_client.place_order(
+                    session,
+                    ticker=ticker,
+                    side=kalshi_side,
+                    action="buy",
+                    count=count,
+                    yes_price_cents=limit_cents if kalshi_side == "yes" else None,
+                    no_price_cents=limit_cents if kalshi_side == "no" else None,
+                    client_order_id=coid,
+                )
+        except Exception as e:
+            logger.error("[LIVE/KALSHI] HTTP error: %s", e)
+            return {"order_id": "", "status": "error", "error": str(e), "amount": 0}
+
+        if "error" in resp:
+            err = resp.get("error")
+            logger.error("[LIVE/KALSHI] Order rejected: %s", err)
+            return {"order_id": "", "status": "error",
+                    "error": str(err), "amount": 0, "fill_price": 0}
+
+        order = resp.get("order") or {}
+        order_id = order.get("order_id", "")
+        kalshi_status = order.get("status", "pending")
+        # Kalshi returns "executed" for fully-filled, "resting" for unfilled, "canceled" if rejected
+        normalized = "filled" if kalshi_status == "executed" else \
+                     "error" if kalshi_status == "canceled" else "pending"
+        fill_price = unit_cost
+        actual_amount = count * unit_cost
+
+        logger.info("[LIVE/KALSHI] Order %s: status=%s order_id=%s",
+                    normalized, kalshi_status, order_id)
+
+        return {
+            "order_id": order_id,
+            "status": normalized,
+            "fill_price": fill_price,
+            "amount": actual_amount,
+            "shares": float(count),
+            "side": side,
+            "paper": False,
+            "platform": "kalshi",
+        }
