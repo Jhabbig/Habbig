@@ -237,6 +237,37 @@
     outcome and let readers downgrade the "call" themselves if they disagree.
   </p>
 
+  <h2>By region — the "for-you" cut</h2>
+  <p>
+    Each US Census region (Northeast / Midwest / South / West) gets its
+    own mood score using the same formula the national gauge uses, but
+    with regional inputs:
+  </p>
+  <ul>
+    <li><strong>Pocketbook</strong>: regional CPI YoY from the BLS
+        "all items by region" series (<code>CUUR0100SA0</code> /
+        <code>CUUR0200SA0</code> / <code>CUUR0300SA0</code> /
+        <code>CUUR0400SA0</code>) via FRED. Same 0% → 100, 4% → 50,
+        8%+ → 0 band as the national pocketbook score.</li>
+    <li><strong>Jobs</strong>: simple mean of the latest seasonally-
+        adjusted unemployment rate across every state we tag in that
+        region (the <code>STATES[].region</code> table in
+        <code>ingestion/states_client.py</code>). Same 3% → 100,
+        6% → 50, 9%+ → 0 band.</li>
+    <li><strong>Sentiment</strong>: UMich Consumer Sentiment is only
+        published nationally, so we use the same UMCSENT value for every
+        region. The "for-you" cut is therefore strongest for the
+        pocketbook and jobs sub-scores.</li>
+  </ul>
+  <p class="note">
+    The "vs national" delta on each card compares the region's overall
+    score to a baseline computed the same way using the unweighted mean
+    of the four regions for CPI and the unweighted mean of all 51
+    states for unemployment. It's a quick sanity-check, not a
+    population-weighted aggregate — for rigorous national figures use
+    the main mood panel.
+  </p>
+
   <h2>The "What changed" release feed</h2>
   <p>
     A horizontal strip near the top of the dashboard surfaces the most

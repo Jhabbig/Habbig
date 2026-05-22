@@ -60,6 +60,12 @@ to capture the "fear gap" that often drives sentiment.
 The misery index (UNRATE + CPI YoY) is shown as a footnote — the single
 backwards-looking number that tracks "how it feels" most reliably.
 
+A **"By region" panel** breaks the national mood into Northeast,
+Midwest, South, and West — same formula, regional CPI + the average
+state unemployment for states in that region. Each card surfaces the
+local drivers and a "vs national" delta so readers can see at a glance
+which region is bearing the heaviest pocketbook and jobs strain.
+
 A **"What changed" release feed** at the top of the page surfaces every
 series' latest observation with period-over-period delta and a human-
 readable "how long ago" — built entirely from the existing FRED cache,
@@ -143,6 +149,7 @@ DEV_MODE=1 python3 server.py
 - `GET /api/eras` — per-administration averages of selected indicators
 - `GET /api/backtest` — election backtest (history, per-election calls, per-horizon accuracy + correlation)
 - `GET /api/states` — state-level unemployment, mood proxy, tile layout, rankings
+- `GET /api/regions` — per-Census-region mood (Northeast/Midwest/South/West) using regional CPI + region's average state unemployment
 - `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
 - `GET /api/country/{iso3}` — full per-country profile: latest inflation, unemployment, GDP growth, life expectancy, population + annual sector trajectory on the Clark–Fisher arc
 - `GET /api/narrative` — 3-sentence AI summary of the current snapshot

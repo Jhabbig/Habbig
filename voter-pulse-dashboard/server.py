@@ -28,10 +28,11 @@ from analysis import elections as election_analysis
 from analysis import eras as era_analysis
 from analysis import mood_index
 from analysis import narrative as narrative_analysis
+from analysis import regional_mood as regional_mood_analysis
 from analysis import release_feed as release_feed_analysis
 from analysis import shareable
 from analysis import state_mood as state_mood_analysis
-from ingestion import fred_client, polls_client, polymarket_client, states_client, worldbank_client
+from ingestion import fred_client, polls_client, polymarket_client, regional_cpi_client, states_client, worldbank_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -186,6 +187,26 @@ async def api_releases(force: bool = False) -> JSONResponse:
     return JSONResponse(release_feed_analysis.compose(life))
 
 
+def _national_umich(life: dict) -> float | None:
+    for s in life.get("series") or []:
+        if s.get("series_id") == "UMCSENT" and s.get("latest"):
+            return s["latest"]["value"]
+    return None
+
+
+@app.get("/api/regions")
+async def api_regions(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=force)
+    regional_cpi = regional_cpi_client.get_cached(force=force)
+    state_payload = states_client.get_cached(force=force)
+    payload = regional_mood_analysis.compose(
+        regional_cpi["regions"],
+        state_payload,
+        _national_umich(life),
+    )
+    return JSONResponse({**payload, "fetched_at": regional_cpi.get("fetched_at")})
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
@@ -209,6 +230,11 @@ async def api_summary(force: bool = False) -> JSONResponse:
     world = {**world_analysis.summarise(raw_world["countries"]), "fetched_at": raw_world.get("fetched_at")}
     narrative = narrative_analysis.generate(composed, life, polls, backtest, force=False)
     releases = release_feed_analysis.compose(life)
+    regional_cpi = regional_cpi_client.get_cached(force=force)
+    regions = {
+        **regional_mood_analysis.compose(regional_cpi["regions"], raw_states, _national_umich(life)),
+        "fetched_at": regional_cpi.get("fetched_at"),
+    }
     return JSONResponse({
         "mood": composed,
         "life": life,
@@ -220,6 +246,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
         "world": world,
         "narrative": narrative,
         "releases": releases,
+        "regions": regions,
     })
 
 

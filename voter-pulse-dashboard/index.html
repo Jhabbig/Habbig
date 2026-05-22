@@ -178,6 +178,40 @@
   table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
   table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
 
+  /* ── Region cards ────────────────────────────────────────────────────── */
+  .region-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+  }
+  @media (max-width: 820px) { .region-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 460px) { .region-grid { grid-template-columns: 1fr; } }
+  .region {
+    background: var(--panel-2); border: 1px solid var(--grid); border-radius: 8px;
+    padding: 14px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .region .name {
+    font-weight: 600; font-size: 13px; color: var(--muted);
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .region .num { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .region .num.good { color: var(--good); }
+  .region .num.warn { color: var(--warn); }
+  .region .num.bad  { color: var(--bad); }
+  .region .lbl  { font-size: 11px; color: var(--accent); font-weight: 600;
+                  letter-spacing: 0.05em; text-transform: uppercase; }
+  .region .vs-natl {
+    font-size: 10px; color: var(--muted); margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .region .vs-natl.up.bad   { color: var(--bad); }
+  .region .vs-natl.down.bad { color: var(--good); }
+  .region .vs-natl.up.good  { color: var(--good); }
+  .region .vs-natl.down.good { color: var(--bad); }
+  .region .drivers {
+    margin-top: 6px; display: grid; gap: 4px; font-size: 11px; color: var(--muted);
+  }
+  .region .drivers .row { display: flex; justify-content: space-between; }
+  .region .drivers .v { color: var(--fg); font-variant-numeric: tabular-nums; }
+
   /* ── Release feed ────────────────────────────────────────────────────── */
   .release-strip {
     display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
@@ -444,6 +478,15 @@
       <br>Inflation-expectations gap (UMich 1y minus realised CPI YoY):
       <span id="expgap">—</span>. Positive = voters expect more pain than has hit.
     </p>
+  </section>
+
+  <!-- BY REGION -->
+  <section class="panel">
+    <h2>By region — your slice</h2>
+    <p class="desc">Same mood formula, computed for each Census region using regional CPI and the average state-unemployment rate inside that region. National sentiment is constant across regions.</p>
+    <div class="region-grid" id="regionGrid">
+      <div class="region"><span class="name">loading…</span></div>
+    </div>
   </section>
 
   <!-- POCKETBOOK -->
@@ -1304,6 +1347,50 @@ function drawTrail(traj) {
   document.getElementById("ternarySvg").appendChild(g);
 }
 
+function renderRegions(payload) {
+  const grid = document.getElementById("regionGrid");
+  const regions = (payload && payload.regions) || [];
+  const baseline = (payload && payload.national_baseline) || {};
+  if (!regions.length) {
+    grid.innerHTML = '<div class="region"><span class="name">no regional data yet</span></div>';
+    return;
+  }
+  function cls(v) {
+    if (v == null) return "";
+    if (v >= 70) return "good";
+    if (v >= 55) return "warn";
+    if (v >= 40) return "warn";
+    return "bad";
+  }
+  grid.innerHTML = regions.map(r => {
+    const overall = r.overall;
+    const numStr = overall == null ? "—" : Math.round(overall);
+    const numCls = cls(overall);
+    let vsNat = "";
+    if (overall != null && baseline.overall != null) {
+      const delta = overall - baseline.overall;
+      const dir = Math.abs(delta) < 0.5 ? "" : (delta > 0 ? "up good" : "down bad");
+      const sign = delta >= 0 ? "+" : "";
+      vsNat = `<div class="vs-natl ${dir}">${sign}${delta.toFixed(1)} vs national</div>`;
+    }
+    const pb = r.pocketbook || {};
+    const jb = r.jobs || {};
+    const pbCpi = pb.cpi_yoy_pct == null ? "—" : `${pb.cpi_yoy_pct >= 0 ? "+" : ""}${pb.cpi_yoy_pct.toFixed(1)}% YoY`;
+    const jbUR  = jb.avg_state_unrate_pct == null ? "—" : `${jb.avg_state_unrate_pct.toFixed(1)}% avg`;
+    return `
+      <div class="region">
+        <span class="name">${escapeHtml(r.region)}</span>
+        <span class="num ${numCls}">${numStr}</span>
+        <span class="lbl">${escapeHtml(r.label || "—")}</span>
+        ${vsNat}
+        <div class="drivers">
+          <div class="row"><span>CPI</span><span class="v">${escapeHtml(pbCpi)}</span></div>
+          <div class="row"><span>Unemployment</span><span class="v">${escapeHtml(jbUR)}</span></div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
 function renderReleases(payload) {
   const strip = document.getElementById("releaseStrip");
   const rs = (payload && payload.releases) || [];
@@ -1488,6 +1575,7 @@ async function load() {
     renderBacktest(data.backtest);
     renderNarrative(data.narrative);
     renderReleases(data.releases);
+    renderRegions(data.regions);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;
     document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
