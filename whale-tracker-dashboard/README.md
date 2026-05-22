@@ -200,7 +200,7 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     pass sends unresolved CUSIPs to OpenFIGI and backfills tickers into
     `fund_holding`. Lifts 13F ticker coverage from ~70% (big-cap names)
     to ~95%+.
-- Phase 6 shipped (this version):
+- Phase 6 shipped:
   - Synthesis backtest engine + `Backtest` tab (commit f958f5f).
   - Local-LLM extraction layer for 13D/G activist intent + 8-K M&A deal
     terms. Talks any OpenAI-compatible local server (Ollama, LM Studio,
@@ -209,8 +209,28 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     `POST /api/admin/llm-extract` for manual runs. UI: Activist tab
     shows extracted intent pill + summary; M&A Feed shows target ←
     acquirer, deal type, consideration, expected close, implied premium.
-- Phase 7 candidates: foreign-equivalent filings (UK Companies House
-  PSC notices, EU Transparency Directive 5% notifications); WebSocket
-  push from unusual_whales for true real-time alerting; volume-weighted
-  fund-skill (today's binary win/loss treats a $1B and a $1M position
-  equally).
+- Phase 7 shipped (this version):
+  - Synthesis score explainability — every score now carries a
+    `synthesis_breakdown` per-signal contribution dict (`insider`,
+    `activist`, `ma`, `congress`, `fund`, `options`, `dark_pool`).
+    Surfaced in tooltips on Hot Now + the Synthesis card.
+  - Watchlists + alert rules + delivery to webhook / Slack / Discord /
+    email (SMTP). Three condition types: `synthesis_threshold`,
+    `new_signal`, `high_skill_filer`. Per-rule cooldown. UI tab for
+    create / manage / view recent fires.
+  - SEC quarterly bulk backfill — `POST /api/admin/bulk-backfill?year=&
+    quarter=&forms=&max_per_form=` pulls a whole quarter from one
+    `form.idx` file. Multi-year history in minutes instead of months.
+  - Manager / filer identity graph (`filer_profile` table). Composed
+    automatically from existing filings + LLM-extracted fund_type.
+    Manual tags via `POST /api/admin/filer-tag` for famous-fund seeding.
+  - UK Companies House PSC integration. Watchlist of UK company numbers;
+    PSC fetched every 6h (`UK_INTERVAL_S`) when `UK_COMPANIES_HOUSE_API_KEY`
+    is set. UK tab with company watchlist + PSC notices.
+- Phase 8 candidates: more foreign filings (EU Transparency Directive 5%
+  notifications, HKEx, ASX); WebSocket push from unusual_whales for true
+  real-time alerting; volume-weighted fund-skill (today's binary win/loss
+  treats a $1B and a $1M position equally); LLM-driven manager bio
+  enrichment from proxy DEF 14A filings; alert delivery to SMS / PagerDuty;
+  backtest extension to portfolio-level constraints (position sizing,
+  max concurrent positions, stop-loss).

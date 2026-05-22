@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 
+import alerts
 import cik_ticker
 import congress
 import db
@@ -24,11 +25,13 @@ import filings8k
 import filings13d
 import form4
 import form13f
+import identity
 import llm_client
 import llm_extract
 import openfigi
 import options_flow
 import skill as skill_mod
+import uk as uk_mod
 
 log = logging.getLogger("ingest")
 
@@ -65,10 +68,22 @@ LLM_EXTRACT_INTERVAL_S = int(os.environ.get("LLM_EXTRACT_INTERVAL_S", "600"))
 LLM_EXTRACT_PER_PASS   = int(os.environ.get("LLM_EXTRACT_PER_PASS", "10"))
 _last_llm_extract_run = 0.0
 
+# Alert evaluation cadence — fast enough that watchlist rules feel real-time.
+ALERT_INTERVAL_S = int(os.environ.get("ALERT_INTERVAL_S", "60"))
+_last_alert_run = 0.0
+
+# Identity-graph rebuild: cheap, runs once an hour. Companies House:
+# slow, runs once per 6h (rate-limited free API).
+IDENTITY_INTERVAL_S = int(os.environ.get("IDENTITY_INTERVAL_S", "3600"))
+_last_identity_run = 0.0
+UK_INTERVAL_S = int(os.environ.get("UK_INTERVAL_S", "21600"))
+_last_uk_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
-    global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run, _last_llm_extract_run
+    global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run
+    global _last_llm_extract_run, _last_alert_run, _last_identity_run, _last_uk_run
     results = {
         "form4": 0, "13d": 0, "13g": 0, "8k": 0,
         "13f_filings": 0, "13f_holdings": 0,
@@ -76,6 +91,8 @@ async def run_once() -> dict[str, int]:
         "options_flow": 0, "dark_pool": 0,
         "cusips_resolved": 0,
         "llm_activist": 0, "llm_ma": 0,
+        "alerts_fired": 0,
+        "profiles_rebuilt": 0, "uk_psc": 0,
     }
 
     # Refresh CIK→ticker map (no-op if already current).
@@ -161,6 +178,33 @@ async def run_once() -> dict[str, int]:
             _last_skill_run = now
         except Exception as e:
             log.exception("skill labeling failed: %s", e)
+
+    # Alert evaluation — runs on every pass since cadence is short.
+    if now - _last_alert_run >= ALERT_INTERVAL_S:
+        try:
+            res = await alerts.evaluate_all()
+            results["alerts_fired"] = res.get("fired", 0)
+            _last_alert_run = now
+        except Exception as e:
+            log.exception("alert evaluation failed: %s", e)
+
+    # Identity graph rebuild
+    if now - _last_identity_run >= IDENTITY_INTERVAL_S:
+        try:
+            res = await identity.rebuild_from_filings()
+            results["profiles_rebuilt"] = sum(res.values())
+            _last_identity_run = now
+        except Exception as e:
+            log.exception("identity rebuild failed: %s", e)
+
+    # UK Companies House
+    if uk_mod.is_configured() and now - _last_uk_run >= UK_INTERVAL_S:
+        try:
+            res = await uk_mod.refresh_all()
+            results["uk_psc"] = res.get("psc_rows", 0)
+            _last_uk_run = now
+        except Exception as e:
+            log.exception("uk refresh failed: %s", e)
 
     if any(results.values()):
         events.broadcast("ingest", {"inserted": results, "counts": db.counts()})
@@ -647,6 +691,112 @@ async def _backfill_cusip_tickers_into_holdings(cusips: list[str]) -> int:
             )
             updated += cur.rowcount
     return updated
+
+
+async def bulk_backfill_quarter(year: int, quarter: int,
+                                form_types: list[str],
+                                max_per_form: int = 1000) -> dict[str, int]:
+    """Pull one quarter of filings from the SEC quarterly full-index file.
+
+    Much faster than the full-text-search route: a single ~6MB index file
+    enumerates every filing in the quarter, we filter to the form types
+    we want, and route them through the same per-form handlers as the
+    live ingest.
+    """
+    await cik_ticker.ensure_loaded()
+    try:
+        body = await edgar.fetch_full_index(year, quarter)
+    except Exception as e:
+        log.warning("full-index fetch failed for %s/Q%s: %s", year, quarter, e)
+        return {f: 0 for f in form_types}
+
+    forms_set = set(form_types)
+    entries = edgar.parse_form_idx(body, forms_set)
+    log.info("bulk backfill: %d entries in %s Q%s matching %s", len(entries), year, quarter, form_types)
+
+    results: dict[str, int] = {f: 0 for f in form_types}
+    per_form_count: dict[str, int] = {f: 0 for f in form_types}
+
+    # Bucket by form so we can cap per_form.
+    buckets: dict[str, list[dict]] = {f: [] for f in form_types}
+    for e in entries:
+        if per_form_count[e["form_type"]] >= max_per_form:
+            continue
+        buckets[e["form_type"]].append(e)
+        per_form_count[e["form_type"]] += 1
+
+    for form, items in buckets.items():
+        if not items:
+            continue
+        try:
+            if form == "4":
+                todo = [e for e in items if e.get("accession")
+                        and not db.have_accession("insider_txn", e["accession"])]
+                sem = asyncio.Semaphore(4)
+                async def hf(e):
+                    async with sem:
+                        rows = await _fetch_form4_rows(e)
+                        if rows:
+                            return db.upsert_insider_txns(rows)
+                        return 0
+                counts = await asyncio.gather(*(hf(e) for e in todo))
+                results[form] = sum(counts)
+            elif form in ("SC 13D", "SC 13G"):
+                sem = asyncio.Semaphore(4)
+                async def h13(e):
+                    async with sem:
+                        if not e.get("accession") or db.have_accession("activist_stake", e["accession"]):
+                            return 0
+                        row = await _build_13_row(e, form)
+                        return 1 if (row and db.upsert_activist_stake(row)) else 0
+                counts = await asyncio.gather(*(h13(e) for e in items))
+                results[form] = sum(counts)
+            elif form == "8-K":
+                for e in items:
+                    accession = e.get("accession") or ""
+                    if not accession or db.have_accession("ma_event", accession):
+                        continue
+                    items_codes = filings8k.parse_items_from_summary(e.get("summary", ""))
+                    score = filings8k.score_8k(items_codes, headline=e.get("title", ""),
+                                                body_excerpt=e.get("summary", ""))
+                    if score < 2.0:
+                        # No item codes in full-index summary; we still create
+                        # a thin row so the LLM extractor can fill it in later.
+                        continue
+                    cik = e.get("filer_cik", "")
+                    ticker = cik_ticker.lookup_ticker(cik) if cik else None
+                    row = {
+                        "accession":     accession,
+                        "filed_at":      e.get("filed_at", ""),
+                        "issuer_name":   e.get("filer_name", ""),
+                        "issuer_ticker": ticker,
+                        "issuer_cik":    cik,
+                        "items":         ",".join(items_codes),
+                        "headline":      e.get("title", "")[:300],
+                        "ma_score":      score,
+                        "filing_url":    e.get("link", ""),
+                    }
+                    if db.upsert_ma_event(row):
+                        results[form] += 1
+            elif form == "13F-HR":
+                todo = [e for e in items if e.get("accession")
+                        and not db.have_accession("fund_filing", e["accession"])]
+                sem = asyncio.Semaphore(2)
+                async def h13f(e):
+                    async with sem:
+                        try:
+                            nf, _ = await _process_13f(e)
+                            return nf
+                        except Exception:
+                            return 0
+                counts = await asyncio.gather(*(h13f(e) for e in todo))
+                results[form] = sum(counts)
+            else:
+                log.info("bulk backfill: skipping unsupported form %r", form)
+        except Exception as e:
+            log.exception("bulk backfill %s failed: %s", form, e)
+
+    return results
 
 
 async def backfill_filings(form_types: list[str], *, start_date: str, end_date: str,

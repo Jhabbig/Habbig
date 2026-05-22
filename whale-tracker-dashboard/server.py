@@ -26,13 +26,16 @@ from typing import Any
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+import alerts as alerts_mod
 import backtest as backtest_mod
 import cik_ticker
 import db
 import events
+import identity as identity_mod
 import ingest
 import signals as signals_mod
 import skill as skill_mod
+import uk as uk_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("whale")
@@ -331,6 +334,160 @@ async def api_dark_pool_by_ticker(
         f"dp_t:{t}:{days}:{limit}",
         lambda: signals_mod.dark_pool_by_ticker(t, days=days, limit=limit),
     )
+
+
+# ─── Watchlists + alerts ────────────────────────────────────────────
+
+@app.get("/api/watchlists")
+async def api_list_watchlists():
+    return alerts_mod.list_watchlists()
+
+
+@app.post("/api/watchlists")
+async def api_create_watchlist(name: str = Query(..., min_length=1, max_length=80)):
+    try:
+        return alerts_mod.create_watchlist(name)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.delete("/api/watchlists/{wid}")
+async def api_delete_watchlist(wid: int):
+    alerts_mod.delete_watchlist(wid)
+    return {"ok": True}
+
+
+@app.post("/api/watchlists/{wid}/tickers")
+async def api_add_ticker(wid: int, ticker: str = Query(..., min_length=1, max_length=10)):
+    alerts_mod.add_ticker(wid, ticker)
+    return {"ok": True}
+
+
+@app.delete("/api/watchlists/{wid}/tickers/{ticker}")
+async def api_remove_ticker(wid: int, ticker: str):
+    alerts_mod.remove_ticker(wid, ticker)
+    return {"ok": True}
+
+
+@app.post("/api/watchlists/{wid}/rules")
+async def api_create_rule(wid: int, body: dict):
+    try:
+        return alerts_mod.create_rule(
+            wid,
+            name=body.get("name"),
+            condition_type=body["condition_type"],
+            condition_config=body.get("condition_config") or {},
+            channel=body["channel"],
+            channel_config=body.get("channel_config") or {},
+            cooldown_minutes=int(body.get("cooldown_minutes") or 60),
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.delete("/api/alert-rules/{rid}")
+async def api_delete_rule(rid: int):
+    alerts_mod.delete_rule(rid)
+    return {"ok": True}
+
+
+@app.get("/api/alert-events")
+async def api_alert_events(limit: int = Query(100, ge=1, le=1000)):
+    return alerts_mod.recent_events(limit=limit)
+
+
+@app.post("/api/admin/evaluate-alerts")
+async def api_admin_evaluate_alerts():
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    return await alerts_mod.evaluate_all()
+
+
+# ─── Filer identity graph ───────────────────────────────────────────
+
+@app.get("/api/filer-profile")
+async def api_filer_profile(cik: str = Query(..., min_length=1, max_length=20)):
+    p = identity_mod.lookup(cik)
+    return p or {"cik": cik, "error": "not found"}
+
+
+@app.post("/api/admin/rebuild-profiles")
+async def api_admin_rebuild_profiles():
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    res = await identity_mod.rebuild_from_filings()
+    return {"upserted": res}
+
+
+@app.post("/api/admin/filer-tag")
+async def api_admin_filer_tag(cik: str = Query(...), body: dict | None = None):
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    tags = (body or {}).get("tags") or []
+    res = identity_mod.tag(cik, list(tags))
+    return res or {"error": "not found"}
+
+
+# ─── UK Companies House ─────────────────────────────────────────────
+
+@app.get("/api/uk/companies")
+async def api_uk_companies():
+    return uk_mod.list_companies()
+
+
+@app.post("/api/uk/companies")
+async def api_uk_add_company(
+    company_number: str = Query(..., min_length=1, max_length=20),
+    name: str | None = Query(None, max_length=200),
+):
+    uk_mod.add_company(company_number, name=name)
+    return {"ok": True, "configured": uk_mod.is_configured()}
+
+
+@app.delete("/api/uk/companies/{company_number}")
+async def api_uk_remove_company(company_number: str):
+    uk_mod.remove_company(company_number)
+    return {"ok": True}
+
+
+@app.get("/api/uk/psc")
+async def api_uk_psc(
+    days: int = Query(180, ge=1, le=3650),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    return uk_mod.recent_psc(days=days, limit=limit)
+
+
+@app.get("/api/uk/psc/{company_number}")
+async def api_uk_psc_by_company(company_number: str):
+    return uk_mod.psc_by_company(company_number)
+
+
+@app.post("/api/admin/uk-refresh")
+async def api_admin_uk_refresh():
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    return await uk_mod.refresh_all()
+
+
+# ─── Bulk backfill ──────────────────────────────────────────────────
+
+@app.post("/api/admin/bulk-backfill")
+async def api_admin_bulk_backfill(
+    year: int = Query(..., ge=2000, le=2100),
+    quarter: int = Query(..., ge=1, le=4),
+    forms: str = Query("4,SC 13D,SC 13G,8-K,13F-HR"),
+    max_per_form: int = Query(1000, ge=1, le=10000),
+):
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    form_list = [f.strip() for f in forms.split(",") if f.strip()]
+    res = await ingest.bulk_backfill_quarter(
+        year=year, quarter=quarter,
+        form_types=form_list, max_per_form=max_per_form,
+    )
+    _cache.clear()
+    return {"inserted": res, "counts": db.counts()}
 
 
 @app.post("/api/admin/llm-extract")

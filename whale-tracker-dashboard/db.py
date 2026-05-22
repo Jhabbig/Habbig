@@ -194,6 +194,79 @@ CREATE TABLE IF NOT EXISTS cusip_ticker (
     resolved_at TEXT
 );
 
+-- Watchlists + alert rules + per-fire events.
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watchlist_ticker (
+    watchlist_id INTEGER NOT NULL,
+    ticker       TEXT NOT NULL,
+    added_at     TEXT NOT NULL,
+    PRIMARY KEY (watchlist_id, ticker)
+);
+
+CREATE TABLE IF NOT EXISTS alert_rule (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    watchlist_id    INTEGER NOT NULL,
+    name            TEXT,
+    condition_type  TEXT NOT NULL,   -- 'synthesis_threshold' | 'new_signal' | 'high_skill_filer'
+    condition_config TEXT,           -- JSON
+    channel         TEXT NOT NULL,   -- 'webhook' | 'slack' | 'discord' | 'email'
+    channel_config  TEXT,            -- JSON {url|email|...}
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    cooldown_minutes INTEGER NOT NULL DEFAULT 60,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_rule_watchlist ON alert_rule(watchlist_id, enabled);
+
+CREATE TABLE IF NOT EXISTS alert_event (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id      INTEGER NOT NULL,
+    fired_at     TEXT NOT NULL,
+    ticker       TEXT,
+    payload      TEXT,                -- JSON
+    delivered    INTEGER NOT NULL DEFAULT 0,
+    delivery_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alert_event_rule ON alert_event(rule_id, fired_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_event_fired ON alert_event(fired_at DESC);
+
+-- Filer enrichment / manager-identity graph.
+CREATE TABLE IF NOT EXISTS filer_profile (
+    cik           TEXT PRIMARY KEY,
+    kind          TEXT,        -- 'fund' | 'insider' | 'activist' | 'congress' | 'other'
+    display_name  TEXT NOT NULL,
+    primary_person TEXT,
+    fund_type     TEXT,
+    tags          TEXT,        -- JSON array
+    aum_usd       REAL,
+    source        TEXT,        -- 'auto' | 'llm' | 'manual'
+    confidence    REAL,
+    updated_at    TEXT
+);
+
+-- UK Companies House: a watchlist of UK company numbers + their PSC notices.
+CREATE TABLE IF NOT EXISTS uk_company (
+    company_number TEXT PRIMARY KEY,
+    name           TEXT,
+    last_pulled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS uk_psc (
+    company_number    TEXT NOT NULL,
+    psc_id            TEXT NOT NULL,
+    name              TEXT,
+    kind              TEXT,
+    notified_at       TEXT,
+    nature_of_control TEXT,    -- JSON array
+    nationality       TEXT,
+    PRIMARY KEY (company_number, psc_id)
+);
+CREATE INDEX IF NOT EXISTS idx_uk_psc_company ON uk_psc(company_number, notified_at DESC);
+
 -- LLM-extracted structured fields per 13D/G filing.
 CREATE TABLE IF NOT EXISTS activist_intent (
     accession              TEXT PRIMARY KEY,
@@ -378,6 +451,13 @@ def counts() -> dict[str, int]:
             "cusip_ticker":       cx.execute("SELECT COUNT(*) FROM cusip_ticker").fetchone()[0],
             "activist_intent":    cx.execute("SELECT COUNT(*) FROM activist_intent").fetchone()[0],
             "ma_deal_terms":      cx.execute("SELECT COUNT(*) FROM ma_deal_terms").fetchone()[0],
+            "watchlist":          cx.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0],
+            "watchlist_ticker":   cx.execute("SELECT COUNT(*) FROM watchlist_ticker").fetchone()[0],
+            "alert_rule":         cx.execute("SELECT COUNT(*) FROM alert_rule").fetchone()[0],
+            "alert_event":        cx.execute("SELECT COUNT(*) FROM alert_event").fetchone()[0],
+            "filer_profile":      cx.execute("SELECT COUNT(*) FROM filer_profile").fetchone()[0],
+            "uk_company":         cx.execute("SELECT COUNT(*) FROM uk_company").fetchone()[0],
+            "uk_psc":             cx.execute("SELECT COUNT(*) FROM uk_psc").fetchone()[0],
         }
 
 

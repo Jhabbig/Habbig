@@ -345,16 +345,22 @@ def ticker_synthesis(ticker: str, window_days: int = 90) -> dict:
     # Dark pool premium suggests institutional accumulation when sustained.
     dp_prem = sum(float(d.get("premium") or 0) for d in dark)
     dark_pool_score = round(min(2.0, dp_prem / 5_000_000), 2)
-    synthesis_score = round(
-        insider_score + activist_score + ma_score_sum + congress_score
-        + fund_score + options_score + dark_pool_score,
-        2,
-    )
+    breakdown = {
+        "insider":   round(insider_score, 2),
+        "activist":  round(activist_score, 2),
+        "ma":        round(ma_score_sum, 2),
+        "congress":  round(congress_score, 2),
+        "fund":      round(fund_score, 2),
+        "options":   options_score,
+        "dark_pool": dark_pool_score,
+    }
+    synthesis_score = round(sum(breakdown.values()), 2)
 
     return {
         "ticker":           t,
         "window_days":      window_days,
         "synthesis_score":  synthesis_score,
+        "synthesis_breakdown": breakdown,
         "insider_buy_count":  len(insider_buys),
         "insider_sell_count": len(insider_sells),
         "activist_count":     len(activist_rows),
@@ -420,6 +426,7 @@ def hot_leaderboard(window_days: int = 30, limit: int = 50) -> list[dict]:
         out.append({
             "ticker":              t,
             "score":               s["synthesis_score"],
+            "breakdown":           s.get("synthesis_breakdown", {}),
             "insider_buy_count":   s["insider_buy_count"],
             "insider_sell_count":  s["insider_sell_count"],
             "activist_count":      s["activist_count"],

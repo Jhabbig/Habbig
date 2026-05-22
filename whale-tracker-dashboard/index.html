@@ -150,6 +150,8 @@
   <button data-tab="darkpool">Dark Pool</button>
   <button data-tab="skill">Skill</button>
   <button data-tab="backtest">Backtest</button>
+  <button data-tab="watchlist">Watchlist</button>
+  <button data-tab="uk">UK</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
 </nav>
@@ -414,6 +416,47 @@
     </table>
   </section>
 
+  <!-- ── Watchlist + alerts ───────────────────────────────────── -->
+  <section id="tab-watchlist" hidden>
+    <div class="controls">
+      <input type="text" id="wl-new" placeholder="New watchlist name">
+      <button id="wl-create">Create</button>
+      <button id="wl-refresh">Refresh</button>
+      <span class="live">Watchlists + rules. Fires to Slack/Discord/webhook/email. Cooldown prevents spam.</span>
+    </div>
+    <div id="wl-list"></div>
+    <div style="margin-top:18px">
+      <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Recent fires</h3>
+      <table id="wl-events">
+        <thead><tr><th>When</th><th>Rule</th><th>Channel</th><th>Ticker</th><th>Delivered</th><th>Payload</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty">No fires yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── UK Companies House ──────────────────────────────────── -->
+  <section id="tab-uk" hidden>
+    <div class="controls">
+      <input type="text" id="uk-num" placeholder="UK company number (e.g. 00445790)">
+      <input type="text" id="uk-name" placeholder="(optional) display name">
+      <button id="uk-add">Add</button>
+      <button id="uk-refresh">Refresh PSC</button>
+      <span class="live">Set <code>UK_COMPANIES_HOUSE_API_KEY</code> in .env to enable.</span>
+    </div>
+    <div style="display:grid;grid-template-columns:380px 1fr;gap:14px">
+      <table id="uk-co-table">
+        <thead><tr><th>Company #</th><th>Name</th><th>Last pulled</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty">No companies watched.</td></tr></tbody>
+      </table>
+      <table id="uk-psc-table">
+        <thead><tr>
+          <th>Notified</th><th>Company #</th><th>Name</th><th>Kind</th><th>Nature of control</th>
+        </tr></thead>
+        <tbody><tr><td colspan="5" class="empty">No PSC data yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ── Ticker Synthesis ─────────────────────────────────────── -->
   <section id="tab-synthesis" hidden>
     <div class="controls">
@@ -497,17 +540,22 @@ async function loadHot() {
       $("#hot-meta").textContent = `0 tickers · ${days}d window`;
       return;
     }
-    tb.innerHTML = rows.map(r => `
+    tb.innerHTML = rows.map(r => {
+      const bd = r.breakdown || {};
+      const tooltip = Object.entries(bd).filter(([_,v])=>v>0)
+                       .map(([k,v])=>`${k}: ${v}`).join(" · ");
+      return `
       <tr>
         <td><span class="ticker">${esc(r.ticker)}</span></td>
-        <td class="num">${r.score}</td>
+        <td class="num" title="${esc(tooltip)}">${r.score}</td>
         <td class="num pos">${r.insider_buy_count}${r.insider_sell_count?` <span class="neg">(${r.insider_sell_count}S)</span>`:""}</td>
         <td class="num">${r.activist_count?`<span class="pill activist">${r.activist_count}</span>`:"—"}</td>
         <td class="num">${r.ma_event_count?`<span class="pill ma">${r.ma_event_count}</span>`:"—"}</td>
         <td class="num">${r.fund_holder_count||0}</td>
         <td class="num">${(r.congress_buy_count||0)?`<span class="pos">${r.congress_buy_count}</span>`:"0"}/${(r.congress_sell_count||0)?`<span class="neg">${r.congress_sell_count}</span>`:"0"}</td>
         <td>${r.sample_url?`<a href="${esc(r.sample_url)}" target="_blank" rel="noopener">link</a>`:""}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
     $("#hot-meta").textContent = `${rows.length} ticker${rows.length===1?"":"s"} · ${days}d window · ranked by combined signal`;
   } catch(e) {
     tb.innerHTML = `<tr><td colspan="6" class="err">${esc(e.message)}</td></tr>`;
@@ -968,6 +1016,171 @@ function renderEquityCurve(points) {
     </div>`;
 }
 
+// ── Watchlist + alerts ──
+async function loadWatchlists() {
+  const list = $("#wl-list");
+  const tb   = $("#wl-events tbody");
+  list.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const wls = await fetchJSON("/api/watchlists");
+    if (!wls.length) {
+      list.innerHTML = `<div class="empty">No watchlists yet — create one above.</div>`;
+    } else {
+      list.innerHTML = wls.map(w => `
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <h3 style="margin:0;font-size:14px">${esc(w.name)} <span class="live">#${w.id}</span></h3>
+            <button data-wl-del="${w.id}" class="live" style="background:transparent;color:var(--sell);border:none;cursor:pointer;font-size:12px">delete</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            ${(w.tickers||[]).map(t=>`<span class="pill">${esc(t)} <a href="#" data-wl-rmtick="${w.id}|${esc(t)}" style="margin-left:4px;color:var(--muted)">×</a></span>`).join("")}
+            <input type="text" data-wl-addtick="${w.id}" placeholder="add ticker" style="background:var(--panel-2);color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:3px;font-family:var(--mono);font-size:12px;width:80px">
+          </div>
+          <div style="margin-bottom:8px">
+            <strong style="font-size:12px;color:var(--muted)">Rules:</strong>
+            ${(w.rules||[]).length ? (w.rules.map(r => `
+              <div class="live" style="font-size:12px;margin:4px 0">
+                <span class="pill ${r.enabled?'buy':''}">${esc(r.condition_type)}</span>
+                → <span class="pill">${esc(r.channel)}</span>
+                ${r.name?` ${esc(r.name)}`:""}
+                <a href="#" data-rule-del="${r.id}" style="margin-left:8px;color:var(--sell)">delete</a>
+              </div>`).join("")) : '<div class="live" style="font-size:12px">none</div>'}
+          </div>
+          <details>
+            <summary>Add rule</summary>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px;font-size:12px">
+              <label>Condition
+                <select data-rule-cond="${w.id}">
+                  <option value="synthesis_threshold">synthesis_threshold</option>
+                  <option value="new_signal">new_signal</option>
+                  <option value="high_skill_filer">high_skill_filer</option>
+                </select>
+              </label>
+              <label>Threshold / cfg JSON
+                <input type="text" data-rule-cfg="${w.id}" placeholder='{"threshold":5,"window_days":90}' value='{"threshold":5}'>
+              </label>
+              <label>Channel
+                <select data-rule-chan="${w.id}">
+                  <option value="webhook">webhook</option>
+                  <option value="slack">slack</option>
+                  <option value="discord">discord</option>
+                  <option value="email">email</option>
+                </select>
+              </label>
+              <label>Channel cfg JSON
+                <input type="text" data-rule-chcfg="${w.id}" placeholder='{"url":"https://..."}' value='{"url":""}'>
+              </label>
+              <label>Name (optional)
+                <input type="text" data-rule-name="${w.id}">
+              </label>
+              <label>Cooldown (min)
+                <input type="number" data-rule-cool="${w.id}" value="60" min="1">
+              </label>
+              <button data-rule-add="${w.id}" style="grid-column:span 2">Add rule</button>
+            </div>
+          </details>
+        </div>`).join("");
+
+      $$("[data-wl-del]").forEach(b=>b.addEventListener("click", async () => {
+        if (!confirm("delete watchlist?")) return;
+        await fetch(`/api/watchlists/${b.dataset.wlDel}`, {method:"DELETE"});
+        loadWatchlists();
+      }));
+      $$("[data-rule-del]").forEach(a=>a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        await fetch(`/api/alert-rules/${a.dataset.ruleDel}`, {method:"DELETE"});
+        loadWatchlists();
+      }));
+      $$("[data-wl-rmtick]").forEach(a=>a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const [wid, tk] = a.dataset.wlRmtick.split("|");
+        await fetch(`/api/watchlists/${wid}/tickers/${encodeURIComponent(tk)}`, {method:"DELETE"});
+        loadWatchlists();
+      }));
+      $$("[data-wl-addtick]").forEach(inp=>inp.addEventListener("keydown", async (e) => {
+        if (e.key !== "Enter") return;
+        const tk = inp.value.trim();
+        if (!tk) return;
+        await fetch(`/api/watchlists/${inp.dataset.wlAddtick}/tickers?ticker=${encodeURIComponent(tk)}`, {method:"POST"});
+        loadWatchlists();
+      }));
+      $$("[data-rule-add]").forEach(b=>b.addEventListener("click", async () => {
+        const wid = b.dataset.ruleAdd;
+        const cond = $(`[data-rule-cond="${wid}"]`).value;
+        const cfg = $(`[data-rule-cfg="${wid}"]`).value;
+        const chan = $(`[data-rule-chan="${wid}"]`).value;
+        const chcfg = $(`[data-rule-chcfg="${wid}"]`).value;
+        const name = $(`[data-rule-name="${wid}"]`).value;
+        const cool = +$(`[data-rule-cool="${wid}"]`).value || 60;
+        let condCfg, chanCfg;
+        try { condCfg = JSON.parse(cfg || "{}"); } catch(e) { alert("condition cfg JSON invalid"); return; }
+        try { chanCfg = JSON.parse(chcfg || "{}"); } catch(e) { alert("channel cfg JSON invalid"); return; }
+        const r = await fetch(`/api/watchlists/${wid}/rules`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({name: name||null, condition_type: cond, condition_config: condCfg,
+                                channel: chan, channel_config: chanCfg, cooldown_minutes: cool}),
+        });
+        if (!r.ok) { alert("rule create failed"); return; }
+        loadWatchlists();
+      }));
+    }
+
+    const evts = await fetchJSON("/api/alert-events?limit=50");
+    if (!evts.length) {
+      tb.innerHTML = `<tr><td colspan="6" class="empty">No fires yet.</td></tr>`;
+    } else {
+      tb.innerHTML = evts.map(e => `
+        <tr>
+          <td>${esc(fmtDate(e.fired_at))}</td>
+          <td>${esc(e.rule_name||"")}<div class="live" style="font-size:11px">#${e.rule_id}</div></td>
+          <td><span class="pill">${esc(e.channel)}</span></td>
+          <td><span class="ticker">${esc(e.ticker||"")}</span></td>
+          <td>${e.delivered?'<span class="pill buy">delivered</span>':`<span class="pill ma">error</span> ${esc(e.delivery_error||"")}`}</td>
+          <td><code style="font-size:11px">${esc((e.payload||"").slice(0,200))}</code></td>
+        </tr>`).join("");
+    }
+  } catch(e) {
+    list.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+// ── UK ──
+async function loadUK() {
+  const ctb = $("#uk-co-table tbody");
+  const ptb = $("#uk-psc-table tbody");
+  ctb.innerHTML = `<tr><td colspan="3" class="empty">Loading…</td></tr>`;
+  ptb.innerHTML = `<tr><td colspan="5" class="empty">Loading…</td></tr>`;
+  try {
+    const cos = await fetchJSON("/api/uk/companies");
+    if (!cos.length) {
+      ctb.innerHTML = `<tr><td colspan="3" class="empty">No companies watched.</td></tr>`;
+    } else {
+      ctb.innerHTML = cos.map(c => `
+        <tr>
+          <td><span class="ticker">${esc(c.company_number)}</span></td>
+          <td>${esc(c.name||"—")}</td>
+          <td>${esc(fmtDate(c.last_pulled_at))}</td>
+        </tr>`).join("");
+    }
+    const psc = await fetchJSON("/api/uk/psc?days=720&limit=200");
+    if (!psc.length) {
+      ptb.innerHTML = `<tr><td colspan="5" class="empty">No PSC data. Set UK_COMPANIES_HOUSE_API_KEY and refresh.</td></tr>`;
+    } else {
+      ptb.innerHTML = psc.map(p => `
+        <tr>
+          <td>${esc(fmtDate(p.notified_at))}</td>
+          <td><span class="ticker">${esc(p.company_number)}</span></td>
+          <td>${esc(p.name||"—")}</td>
+          <td><span class="pill">${esc(p.kind||"—")}</span></td>
+          <td>${esc(p.nature_of_control||"—")}</td>
+        </tr>`).join("");
+    }
+  } catch(e) {
+    ctb.innerHTML = `<tr><td colspan="3" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
 // ── Ticker Synthesis ──
 async function loadSynthesis() {
   const t = $("#sy-ticker").value.trim().toUpperCase();
@@ -979,7 +1192,7 @@ async function loadSynthesis() {
     const r = await fetchJSON(`/api/synthesis?ticker=${encodeURIComponent(t)}&days=${days}`);
     out.innerHTML = `
       <div class="syn-grid">
-        <div class="syn-card"><h4>Synthesis Score</h4><div class="v">${r.synthesis_score}</div></div>
+        <div class="syn-card" title="${esc(Object.entries(r.synthesis_breakdown||{}).filter(([_,v])=>v>0).map(([k,v])=>`${k}: ${v}`).join(' · '))}"><h4>Synthesis Score</h4><div class="v">${r.synthesis_score}</div><div class="live" style="font-size:10px">${Object.entries(r.synthesis_breakdown||{}).filter(([_,v])=>v>0).map(([k,v])=>esc(k)+":"+v).join(" ")}</div></div>
         <div class="syn-card"><h4>Insider Buys</h4><div class="v pos">${r.insider_buy_count}</div></div>
         <div class="syn-card"><h4>Activist</h4><div class="v">${r.activist_count}</div></div>
         <div class="syn-card"><h4>M&amp;A</h4><div class="v">${r.ma_event_count}</div></div>
@@ -1116,6 +1329,8 @@ const loaders = {
   darkpool:    loadDarkPool,
   skill:       loadSkill,
   backtest:    () => { /* manual run only */ },
+  watchlist:   loadWatchlists,
+  uk:          loadUK,
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
 };
@@ -1132,6 +1347,29 @@ $("#of-go").addEventListener("click", loadOptionsFlow);
 $("#dp-go").addEventListener("click", loadDarkPool);
 $("#sk-go").addEventListener("click", loadSkill);
 $("#bt-go").addEventListener("click", loadBacktest);
+$("#wl-create").addEventListener("click", async () => {
+  const name = $("#wl-new").value.trim();
+  if (!name) return;
+  const r = await fetch(`/api/watchlists?name=${encodeURIComponent(name)}`, {method:"POST"});
+  if (!r.ok) { alert("create failed"); return; }
+  $("#wl-new").value = "";
+  loadWatchlists();
+});
+$("#wl-refresh").addEventListener("click", loadWatchlists);
+$("#uk-add").addEventListener("click", async () => {
+  const cn = $("#uk-num").value.trim();
+  if (!cn) return;
+  const name = $("#uk-name").value.trim();
+  const q = new URLSearchParams({company_number: cn});
+  if (name) q.set("name", name);
+  await fetch(`/api/uk/companies?${q.toString()}`, {method:"POST"});
+  $("#uk-num").value = ""; $("#uk-name").value = "";
+  loadUK();
+});
+$("#uk-refresh").addEventListener("click", async () => {
+  await fetch("/api/admin/uk-refresh", {method:"POST"});
+  loadUK();
+});
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
 $("#sy-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") loadSynthesis(); });

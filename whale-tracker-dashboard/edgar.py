@@ -82,6 +82,80 @@ async def fetch_json(url: str) -> Any:
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 
+# Quarterly index files — much faster than paginating full-text search.
+# Format (fixed-width):
+#   "Form Type", "Company Name", "CIK", "Date Filed", "Filename"
+# Each line is ~150 chars, file is a few MB per quarter.
+FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/form.idx"
+
+
+async def fetch_full_index(year: int, quarter: int) -> str:
+    """Return the raw form.idx body for one quarter."""
+    if quarter not in (1, 2, 3, 4):
+        raise ValueError(f"bad quarter: {quarter}")
+    url = FULL_INDEX_URL.format(year=int(year), quarter=int(quarter))
+    return await fetch(url)
+
+
+def parse_form_idx(body: str, forms: set[str]) -> list[dict]:
+    """Parse a form.idx body, return entries matching `forms`.
+
+    The file is fixed-width with a `Form Type    Company Name ... Filename`
+    header followed by `----` separators. We split by `\\s{2,}` on each
+    line which is robust against the trailing-space padding.
+    """
+    out: list[dict] = []
+    if not body:
+        return out
+    lines = body.splitlines()
+    started = False
+    for ln in lines:
+        if not started:
+            if ln.startswith("---"):
+                started = True
+            continue
+        # Form Type | Company Name | CIK | Date Filed | Filename
+        # Split conservatively: filename has no spaces, CIK is digits.
+        # Easiest: use the header column positions.
+        parts = ln.rstrip().split()
+        if len(parts) < 5:
+            continue
+        form_type = parts[0]
+        if form_type not in forms:
+            # Multi-token form types ("SC 13D", "SC 13G", "13F-HR") — rejoin first 2 if needed.
+            two = " ".join(parts[:2])
+            if two in forms:
+                form_type = two
+                parts = [two] + parts[2:]
+            else:
+                continue
+        # The last token is the filename, second-last is date, third-last is CIK.
+        try:
+            filename = parts[-1]
+            date_filed = parts[-2]
+            cik = parts[-3]
+            company = " ".join(parts[1:-3]) if form_type == parts[0] else " ".join(parts[2:-3])
+        except (ValueError, IndexError):
+            continue
+        if not cik.isdigit():
+            continue
+        # Filename like edgar/data/123456/0001234567-24-001234.txt → accession.
+        accession = ""
+        m = re.search(r"(\d{10}-\d{2}-\d{6})", filename)
+        if m:
+            accession = m.group(1)
+        out.append({
+            "form_type":  form_type,
+            "accession":  accession,
+            "filer_cik":  cik,
+            "filer_name": company.strip(),
+            "filed_at":   date_filed,
+            "link":       f"{EDGAR_BASE}/{filename.lstrip('/')}",
+            "title":      f"{form_type} - {company.strip()} ({cik})",
+            "summary":    "",
+        })
+    return out
+
 
 async def search_filings(form_type: str, *, start_date: str, end_date: str,
                          offset: int = 0, size: int = 100) -> list[dict]:
