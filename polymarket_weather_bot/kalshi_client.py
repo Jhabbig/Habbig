@@ -7,6 +7,7 @@ Uses aiohttp to match the existing bot's HTTP library.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import time
 from pathlib import Path
@@ -99,3 +100,77 @@ class KalshiClient:
     async def get_balance(self, session: aiohttp.ClientSession) -> dict:
         """Get portfolio balance (useful for auth test)."""
         return await self.get(session, "/portfolio/balance")
+
+    async def post(
+        self,
+        session: aiohttp.ClientSession,
+        path: str,
+        body: Dict[str, Any],
+    ) -> dict:
+        """Authenticated POST request to Kalshi API.
+
+        Kalshi signs only `<timestamp_ms><METHOD><path>` (no body, no query).
+        """
+        full_path = f"/trade-api/v2{path}"
+        url = f"{BASE_URL}{path}"
+        headers = self._sign_request("POST", full_path)
+        async with session.post(
+            url,
+            headers=headers,
+            data=json.dumps(body),
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            text = await resp.text()
+            try:
+                payload = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                payload = {"raw": text[:500]}
+            if resp.status >= 400:
+                return {"error": payload, "status": resp.status}
+            return payload
+
+    async def place_order(
+        self,
+        session: aiohttp.ClientSession,
+        ticker: str,
+        side: str,
+        action: str,
+        count: int,
+        yes_price_cents: Optional[int] = None,
+        no_price_cents: Optional[int] = None,
+        client_order_id: Optional[str] = None,
+    ) -> dict:
+        """Place a limit order on Kalshi.
+
+        Args:
+            ticker: Market ticker (e.g. "KXHIGHNY-26MAR01-B45.5").
+            side: "yes" or "no".
+            action: "buy" or "sell".
+            count: Integer number of contracts.
+            yes_price_cents: Limit price in cents (1-99) for yes-side orders.
+            no_price_cents: Limit price in cents (1-99) for no-side orders.
+            client_order_id: Idempotency key — Kalshi rejects duplicates.
+
+        Limit orders only — no market orders, to keep execution price predictable.
+        """
+        side_l = side.lower()
+        body: Dict[str, Any] = {
+            "ticker": ticker,
+            "side": side_l,
+            "action": action.lower(),
+            "count": int(count),
+            "type": "limit",
+        }
+        if side_l == "yes":
+            if yes_price_cents is None:
+                return {"error": "yes_price_cents required for yes-side limit order"}
+            body["yes_price"] = int(yes_price_cents)
+        elif side_l == "no":
+            if no_price_cents is None:
+                return {"error": "no_price_cents required for no-side limit order"}
+            body["no_price"] = int(no_price_cents)
+        else:
+            return {"error": f"Invalid side: {side}"}
+        if client_order_id:
+            body["client_order_id"] = client_order_id
+        return await self.post(session, "/portfolio/orders", body)
