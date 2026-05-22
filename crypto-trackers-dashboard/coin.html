@@ -120,6 +120,11 @@
       <button data-ind="sma50" title="SMA 50">SMA50</button>
       <button data-ind="sma200" title="SMA 200">SMA200</button>
       <button data-ind="vwap" title="VWAP (session)">VWAP</button>
+      <button data-ind="ich" title="Ichimoku Cloud (9, 26, 52)">ICH</button>
+      <button data-ind="vp" title="Volume Profile (POC + Value Area)">VP</button>
+      <button data-ind="pp" title="Pivot Points (classic, prior period)">PP</button>
+      <input id="cmp-coin" placeholder="compare vs (e.g. ETH)" title="Type a coin symbol to overlay its % return on this chart"
+             style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:3px 6px;border-radius:4px;font-size:11px;width:120px;text-transform:uppercase;font-family:inherit"/>
       <button data-ind="rsi" class="active" title="RSI(14) subplot">RSI</button>
       <button data-ind="macd" class="active" title="MACD(12,26,9) subplot">MACD</button>
     </div>
@@ -253,9 +258,12 @@
   // ─── Candlestick chart (inline SVG) ──────────────────────────────────────
   let _chartInterval = "1h";
   let _chartType = "candle"; // "candle" | "heikin" | "line" | "area" | "bars"
-  const _indicators = { bb: true, rsi: true, macd: true, sma50: false, sma200: false, vwap: false };
+  const _indicators = { bb: true, rsi: true, macd: true, sma50: false, sma200: false,
+                         vwap: false, ich: false, vp: false, pp: false };
   let _bars = [];
   let _chartGeometry = null;  // saved after every render so drawings can re-map data-coords to px
+  let _compareSymbol = "";     // e.g. "ETH" — when set, overlays compare-coin % returns
+  let _compareBars = [];       // klines for the compare coin
 
   // ─── Drawings state ────────────────────────────────────────────────────────
   // Drawings stored in DATA coordinates (price + bar index) so they survive
@@ -395,6 +403,95 @@
     return out;
   }
 
+  // ─── Ichimoku Cloud (9, 26, 52, 26) ───────────────────────────────────────
+  function ichimoku(bars, tenkanP = 9, kijunP = 26, senkouBp = 52, displ = 26) {
+    const n = bars.length;
+    const highs = bars.map(b => b.high), lows = bars.map(b => b.low), closes = bars.map(b => b.close);
+    const hiloAvg = (start, len) => {
+      if (start < len - 1) return null;
+      let hi = -Infinity, lo = Infinity;
+      for (let i = start - len + 1; i <= start; i++) {
+        if (highs[i] > hi) hi = highs[i];
+        if (lows[i]  < lo) lo = lows[i];
+      }
+      return (hi + lo) / 2;
+    };
+    const tenkan = []; const kijun = []; const senkouA = []; const senkouB = []; const chikou = [];
+    for (let i = 0; i < n; i++) {
+      tenkan.push(hiloAvg(i, tenkanP));
+      kijun.push(hiloAvg(i, kijunP));
+    }
+    // Senkou A/B are PLOTTED displ periods ahead — we render them shifted
+    for (let i = 0; i < n; i++) {
+      senkouA.push(tenkan[i] != null && kijun[i] != null ? (tenkan[i] + kijun[i]) / 2 : null);
+      senkouB.push(hiloAvg(i, senkouBp));
+    }
+    // Chikou (lagging) is the close plotted 26 periods back
+    for (let i = 0; i < n; i++) chikou.push(closes[i]);
+    return { tenkan, kijun, senkouA, senkouB, chikou, displ };
+  }
+
+  // ─── Volume Profile ───────────────────────────────────────────────────────
+  // Builds N price bins, sums volume in each, identifies POC + Value Area
+  // (smallest contiguous bin set containing 70% of volume around POC).
+  function volumeProfile(bars, nBins = 24, valueAreaPct = 0.70) {
+    if (!bars.length) return null;
+    const highs = bars.map(b => b.high), lows = bars.map(b => b.low);
+    const hi = Math.max(...highs), lo = Math.min(...lows);
+    if (hi <= lo) return null;
+    const binSize = (hi - lo) / nBins;
+    const bins = Array.from({ length: nBins }, (_, i) => ({
+      pLow: lo + i * binSize, pHigh: lo + (i + 1) * binSize, volume: 0,
+    }));
+    bars.forEach(b => {
+      // Distribute the bar's volume across the bins it spans (linear approx)
+      const v = b.volume || 0;
+      if (v === 0) return;
+      const blo = Math.max(b.low, lo), bhi = Math.min(b.high, hi);
+      if (bhi <= blo) return;
+      const startBin = Math.max(0, Math.floor((blo - lo) / binSize));
+      const endBin = Math.min(nBins - 1, Math.floor((bhi - lo) / binSize));
+      const span = endBin - startBin + 1;
+      const vPerBin = v / span;
+      for (let i = startBin; i <= endBin; i++) bins[i].volume += vPerBin;
+    });
+    const totalV = bins.reduce((s, b) => s + b.volume, 0);
+    if (totalV === 0) return { bins, total: 0 };
+    // POC = bin with max volume
+    let pocIdx = 0, maxV = -1;
+    bins.forEach((b, i) => { if (b.volume > maxV) { maxV = b.volume; pocIdx = i; } });
+    // Value Area: expand outward from POC until cumulative ≥ valueAreaPct
+    let cum = bins[pocIdx].volume;
+    let vahIdx = pocIdx, valIdx = pocIdx;
+    const targetV = totalV * valueAreaPct;
+    while (cum < targetV) {
+      const upV = vahIdx + 1 < nBins ? bins[vahIdx + 1].volume : -1;
+      const dnV = valIdx - 1 >= 0   ? bins[valIdx - 1].volume : -1;
+      if (upV < 0 && dnV < 0) break;
+      if (upV >= dnV) { vahIdx++; cum += upV; }
+      else            { valIdx--; cum += dnV; }
+    }
+    return {
+      bins, total: totalV,
+      poc_price: (bins[pocIdx].pLow + bins[pocIdx].pHigh) / 2,
+      vah_price: bins[vahIdx].pHigh,
+      val_price: bins[valIdx].pLow,
+    };
+  }
+
+  // ─── Pivot Points (classic) ───────────────────────────────────────────────
+  // Uses the prior bar's H/L/C as the "prior period" anchor.
+  function pivotPoints(bars) {
+    if (bars.length < 2) return null;
+    const prev = bars[bars.length - 2];
+    const H = prev.high, L = prev.low, C = prev.close;
+    const P = (H + L + C) / 3;
+    const R1 = 2 * P - L, S1 = 2 * P - H;
+    const R2 = P + (H - L), S2 = P - (H - L);
+    const R3 = H + 2 * (P - L), S3 = L - 2 * (H - P);
+    return { P, R1, R2, R3, S1, S2, S3 };
+  }
+
   function renderCandles(bars) {
     _bars = bars || [];
     const svg = document.getElementById("chart-svg");
@@ -507,6 +604,130 @@
       const v = vwap(renderBars);
       const p = pathFromValues(v, PAD_LEFT, xStep, candleW / 2, yScale);
       extraOverlays += `<path d="${p}" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4 2" stroke-opacity="0.9"/>`;
+    }
+    if (_indicators.ich) {
+      const ich = ichimoku(renderBars);
+      const displ = ich.displ;
+      const tenkanPath = pathFromValues(ich.tenkan, PAD_LEFT, xStep, candleW / 2, yScale);
+      const kijunPath  = pathFromValues(ich.kijun,  PAD_LEFT, xStep, candleW / 2, yScale);
+      // Senkou A & B are plotted displ bars ahead; we shift the path x-coords
+      const senkouPath = (vals) => {
+        let path = ""; let started = false;
+        vals.forEach((v, i) => {
+          if (v == null || !isFinite(v)) { started = false; return; }
+          const xi = i + displ;
+          if (xi >= n) return;
+          const x = PAD_LEFT + xi * xStep + candleW / 2;
+          const y = yScale(v);
+          path += (started ? " L" : "M") + x + " " + y;
+          started = true;
+        });
+        return path;
+      };
+      const aPath = senkouPath(ich.senkouA);
+      const bPath = senkouPath(ich.senkouB);
+      // Build a cloud polygon: forward path of A, then reverse path of B
+      let cloudPath = "";
+      let started = false;
+      ich.senkouA.forEach((v, i) => {
+        const xi = i + displ;
+        if (xi >= n || v == null || ich.senkouB[i] == null) return;
+        const x = PAD_LEFT + xi * xStep + candleW / 2;
+        cloudPath += (started ? " L" : "M") + x + " " + yScale(v);
+        started = true;
+      });
+      for (let i = ich.senkouB.length - 1; i >= 0; i--) {
+        const v = ich.senkouB[i];
+        const xi = i + displ;
+        if (xi >= n || v == null) continue;
+        const x = PAD_LEFT + xi * xStep + candleW / 2;
+        cloudPath += " L" + x + " " + yScale(v);
+      }
+      cloudPath += " Z";
+      // Chikou: close plotted 26 bars back
+      const chikouPath = (() => {
+        let path = ""; let started = false;
+        ich.chikou.forEach((v, i) => {
+          const xi = i - displ;
+          if (xi < 0 || v == null) { started = false; return; }
+          const x = PAD_LEFT + xi * xStep + candleW / 2;
+          path += (started ? " L" : "M") + x + " " + yScale(v);
+          started = true;
+        });
+        return path;
+      })();
+      extraOverlays += `<path d="${cloudPath}" fill="rgba(192,132,252,0.10)" stroke="none"/>
+        <path d="${aPath}" fill="none" stroke="#34d399" stroke-width="0.8" stroke-opacity="0.8"/>
+        <path d="${bPath}" fill="none" stroke="#ef4444" stroke-width="0.8" stroke-opacity="0.8"/>
+        <path d="${tenkanPath}" fill="none" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.9"/>
+        <path d="${kijunPath}"  fill="none" stroke="#fbbf24" stroke-width="1" stroke-opacity="0.9"/>
+        <path d="${chikouPath}" fill="none" stroke="#c084fc" stroke-width="0.8" stroke-opacity="0.7" stroke-dasharray="3 2"/>
+        <text x="${PAD_LEFT + 4}" y="${chartTop + 24}" fill="var(--text-3)" font-size="9" font-family="monospace">Ichimoku · tenkan/kijun/spanA/spanB/chikou</text>`;
+    }
+    if (_indicators.pp) {
+      const pp = pivotPoints(renderBars);
+      if (pp) {
+        const levels = [
+          ["R3", pp.R3, "#ef4444"], ["R2", pp.R2, "#ef4444"], ["R1", pp.R1, "#ef4444"],
+          ["P",  pp.P,  "#f59e0b"],
+          ["S1", pp.S1, "#34d399"], ["S2", pp.S2, "#34d399"], ["S3", pp.S3, "#34d399"],
+        ];
+        extraOverlays += levels.filter(([, p]) => p >= yLow && p <= yHigh).map(([lbl, p, color]) => {
+          const y = yScale(p);
+          return `<line x1="${PAD_LEFT}" y1="${y}" x2="${W - PAD_RIGHT}" y2="${y}" stroke="${color}" stroke-width="0.6" stroke-dasharray="2 3" stroke-opacity="0.7"/>
+            <text x="${PAD_LEFT + 4}" y="${y - 2}" fill="${color}" font-size="9" font-family="monospace">${lbl} ${fmtPrice(p)}</text>`;
+        }).join("");
+      }
+    }
+    if (_indicators.vp) {
+      const vp = volumeProfile(renderBars, 24);
+      if (vp && vp.bins) {
+        // Render horizontal bars on the right edge of the chart, scaled by volume
+        const profileWidth = 80;
+        const xRight = W - PAD_RIGHT;
+        const xLeft = xRight - profileWidth;
+        const maxBinV = Math.max(...vp.bins.map(b => b.volume), 1);
+        const vpBars = vp.bins.map(b => {
+          const y0 = yScale(b.pHigh);
+          const y1 = yScale(b.pLow);
+          const w = (b.volume / maxBinV) * profileWidth;
+          const inVA = b.pHigh >= vp.val_price && b.pLow <= vp.vah_price;
+          return `<rect x="${xRight - w}" y="${y0}" width="${w}" height="${Math.max(y1 - y0, 0.5)}"
+                    fill="${inVA ? 'rgba(245,158,11,0.40)' : 'rgba(245,158,11,0.18)'}" stroke="none"/>`;
+        }).join("");
+        const pocY = yScale(vp.poc_price);
+        const vahY = yScale(vp.vah_price);
+        const valY = yScale(vp.val_price);
+        extraOverlays += `<g>
+          ${vpBars}
+          <line x1="${xLeft}" y1="${pocY}" x2="${xRight}" y2="${pocY}" stroke="#f59e0b" stroke-width="1.4"/>
+          <line x1="${xLeft}" y1="${vahY}" x2="${xRight}" y2="${vahY}" stroke="#f59e0b" stroke-width="0.6" stroke-dasharray="3 2"/>
+          <line x1="${xLeft}" y1="${valY}" x2="${xRight}" y2="${valY}" stroke="#f59e0b" stroke-width="0.6" stroke-dasharray="3 2"/>
+          <text x="${xLeft + 4}" y="${pocY - 3}" fill="#f59e0b" font-size="9" font-family="monospace">POC ${fmtPrice(vp.poc_price)}</text>
+          <text x="${xLeft + 4}" y="${vahY - 3}" fill="#f59e0b" font-size="9" font-family="monospace">VAH ${fmtPrice(vp.vah_price)}</text>
+          <text x="${xLeft + 4}" y="${valY + 11}" fill="#f59e0b" font-size="9" font-family="monospace">VAL ${fmtPrice(vp.val_price)}</text>
+        </g>`;
+      }
+    }
+    // Compare-coin overlay: render second-coin %-return on a secondary axis
+    if (_compareSymbol && _compareBars.length) {
+      const baseStart = renderBars[0].close;
+      const cmpStart = _compareBars[0].close;
+      const basePct = renderBars.map(b => (b.close / baseStart - 1) * 100);
+      const cmpPct  = _compareBars.map(b => (b.close / cmpStart - 1) * 100);
+      const combinedMax = Math.max(...basePct, ...cmpPct);
+      const combinedMin = Math.min(...basePct, ...cmpPct);
+      const pad2 = (combinedMax - combinedMin) * 0.05 || 1;
+      const pctHigh = combinedMax + pad2, pctLow = combinedMin - pad2;
+      const pctScale = (v) => chartBottom - ((v - pctLow) / (pctHigh - pctLow)) * CHART_H;
+      const cmpN = Math.min(cmpPct.length, n);
+      const cmpPath = cmpPct.slice(0, cmpN).map((v, i) =>
+        `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${pctScale(v)}`).join(" ");
+      extraOverlays += `<path d="${cmpPath}" fill="none" stroke="#38bdf8" stroke-width="1.4"
+                              stroke-opacity="0.9" stroke-dasharray="2 0"/>
+        <text x="${PAD_LEFT + 4}" y="${chartTop + 36}" fill="#38bdf8" font-size="11" font-weight="600">
+          vs ${escapeHtml(_compareSymbol)} · ${cmpPct[cmpN-1] >= basePct[n-1] ? "+" : ""}${(cmpPct[cmpN-1] - basePct[n-1]).toFixed(2)}pp diff
+        </text>`;
     }
 
     // Bollinger bands (20, 2σ)
@@ -887,6 +1108,15 @@
       const symbol = _coinSymbol + "USDT";
       const limit = interval === "15m" ? 96 : interval === "1h" ? 168 : interval === "4h" ? 180 : interval === "1d" ? 200 : 100;
       const data = await fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`);
+      // If a compare coin is set, fetch its klines too (same interval + limit)
+      if (_compareSymbol) {
+        try {
+          const cmp = await fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(_compareSymbol + "USDT")}&interval=${encodeURIComponent(interval)}&limit=${limit}`);
+          _compareBars = cmp.bars || [];
+        } catch { _compareBars = []; }
+      } else {
+        _compareBars = [];
+      }
       renderCandles(data.bars || []);
       _attachChartHandlers();
     } catch (e) {
@@ -1130,6 +1360,19 @@
   document.querySelectorAll("#draw-controls button[data-tool]").forEach(b => {
     b.addEventListener("click", () => _switchTool(b.dataset.tool));
   });
+  // Compare-coin input: debounce on change, then reload chart
+  const cmpEl = document.getElementById("cmp-coin");
+  let _cmpDebounce = null;
+  if (cmpEl) {
+    cmpEl.addEventListener("input", () => {
+      clearTimeout(_cmpDebounce);
+      _cmpDebounce = setTimeout(() => {
+        const v = cmpEl.value.trim().toUpperCase();
+        _compareSymbol = (v && v !== _coinSymbol) ? v : "";
+        loadChart(_chartInterval);
+      }, 400);
+    });
+  }
 
   loadCoin().then(() => {
     loadChart("1h");
