@@ -7083,6 +7083,99 @@ def save_signals(signals: list[dict]):
 # Startup
 # ---------------------------------------------------------------------------
 
+def _config_check() -> list[dict]:
+    """Inventory of every important env var / config knob, returned as a
+    structured list of {key, status, effect, remediation} dicts.
+
+    status:
+      "ok"   — configured
+      "warn" — missing but the service still works (degraded feature)
+      "fail" — missing in a way that breaks core functionality
+
+    Single source of truth for both the startup-log warning summary
+    and the /api/diagnostics/config-check endpoint, so the two never
+    drift apart.
+    """
+    items: list[dict] = []
+
+    def _ok(key, effect=""):
+        items.append({"key": key, "status": "ok", "effect": effect, "remediation": ""})
+
+    def _warn(key, effect, remediation):
+        items.append({"key": key, "status": "warn", "effect": effect,
+                       "remediation": remediation})
+
+    def _fail(key, effect, remediation):
+        items.append({"key": key, "status": "fail", "effect": effect,
+                       "remediation": remediation})
+
+    # Core auth — fail closed in production
+    if _BEHIND_GATEWAY:
+        _ok("GATEWAY_SSO_SECRET", "gateway SSO middleware active")
+    elif _DEV_MODE:
+        _warn("DEV_MODE", "auth bypassed for local dev",
+                "set GATEWAY_SSO_SECRET in production")
+    else:
+        _fail("GATEWAY_SSO_SECRET",
+                "no auth and DEV_MODE not set — every request will 503",
+                "set GATEWAY_SSO_SECRET to match gateway/.env, OR DEV_MODE=1")
+
+    # Odds API — needed for h2h + spreads + totals + player props
+    if ODDS_API_KEY:
+        _ok("ODDS_API_KEY", "bookmaker odds available")
+    else:
+        _warn("ODDS_API_KEY",
+                "bookmaker odds will be unavailable — only Polymarket + Kalshi feeds will work",
+                "get a key at https://the-odds-api.com (free tier 500 req/mo)")
+
+    # Anthropic — needed for /api/signals/explain
+    if ANTHROPIC_API_KEY:
+        _ok("ANTHROPIC_API_KEY", "AI signal explanations enabled")
+    else:
+        _warn("ANTHROPIC_API_KEY",
+                "/api/signals/explain returns 503; everything else works",
+                "set ANTHROPIC_API_KEY to enable explanations")
+
+    # Web Push / VAPID
+    if VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY:
+        if _PUSH_AVAILABLE:
+            _ok("VAPID_PUBLIC_KEY/PRIVATE_KEY", "Web Push delivery enabled")
+        else:
+            _warn("pywebpush",
+                    "VAPID keys set but pywebpush not installed",
+                    "pip install pywebpush==2.0.0")
+    else:
+        _warn("VAPID_PUBLIC_KEY/PRIVATE_KEY",
+                "Web Push subscriptions stored but no notifications are delivered",
+                "generate keys with `pywebpush vapid_key` and set both env vars")
+
+    # Polymarket WS — implicit; flag if connection has been failing
+    if _pm_ws_failure_count >= PM_WS_CIRCUIT_THRESHOLD:
+        _fail("polymarket_ws",
+                f"WS circuit breaker OPEN after {_pm_ws_failure_count} failures",
+                "check Polymarket status; check outbound network to "
+                "wss://ws-subscriptions-clob.polymarket.com")
+    else:
+        _ok("polymarket_ws", "WS subscriber healthy")
+
+    return items
+
+
+def _print_config_check() -> None:
+    """Pretty-print the config check at startup. One line per issue;
+    silent on `ok` entries to keep the boot log clean."""
+    issues = [i for i in _config_check() if i["status"] != "ok"]
+    if not issues:
+        print("Config check: all systems nominal")
+        return
+    print(f"Config check: {len(issues)} issue(s) — see below")
+    for i in issues:
+        marker = "FAIL" if i["status"] == "fail" else "WARN"
+        print(f"  [{marker}] {i['key']}: {i['effect']}")
+        if i.get("remediation"):
+            print(f"         → {i['remediation']}")
+
+
 async def _run_startup_tasks():
     """Body of the original startup hook. Kept as a plain async function
     so it's easy to call from a lifespan context manager OR from a test
@@ -7203,8 +7296,7 @@ async def _run_startup_tasks():
     _spawn_bg(_top_traders_periodic_refresh())
 
     print(f"Sports Dashboard started. Polling {dashboard_data.get('active_sport', 'unknown')} every {POLL_INTERVAL}s")
-    if not ODDS_API_KEY:
-        print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
+    _print_config_check()
 
 
 @asynccontextmanager
@@ -9237,6 +9329,26 @@ async def api_odds_quota(request: Request):
     if not user or not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
     return JSONResponse(dict(_ODDS_QUOTA))
+
+
+@app.get("/api/diagnostics/config-check")
+async def api_config_check(request: Request):
+    """Structured config-check report. Surfaces every important env var
+    and configuration knob with status + remediation. Admin-only —
+    the report names env vars that an attacker would want to
+    fingerprint."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    items = _config_check()
+    n_fail = sum(1 for i in items if i["status"] == "fail")
+    n_warn = sum(1 for i in items if i["status"] == "warn")
+    return JSONResponse({
+        "n_total": len(items),
+        "n_fail": n_fail,
+        "n_warn": n_warn,
+        "items": items,
+    })
 
 
 @app.get("/metrics")
