@@ -42,7 +42,10 @@ EXCLUDES=(
     ".git"
     ".snapshots"
     "*.log"
-    ".env"
+    # IMPORTANT: pattern is .env* (with glob), not bare .env. Otherwise rsync
+    # --delete wipes server-side .env.production (which is intentionally not
+    # in the local checkout) on every deploy. Lost ODDS_API_KEY twice this way.
+    ".env*"
     "*.db"
     "*.db-wal"
     "*.db-shm"

@@ -1,0 +1,179 @@
+# Search keywords used to match countries to Polymarket and Kalshi markets.
+#
+# `must_any` — markets matching ANY of these strings are candidates.
+# `must_not` — markets matching ANY of these are excluded (false positives).
+# `boost`    — phrases that, if present, push a market higher in ranking.
+#
+# Lowercase, substring match against the market's question + slug + tags.
+# Order roughly by election date (closest first).
+
+USA:
+  must_any: ["us house", "us senate", "us midterm", "us election", "us president", "midterm 2026", "2026 election", "control of congress", "republican", "democrat"]
+  must_not: ["jr", "high school", "soccer"]
+  boost:   ["midterm", "house majority", "senate majority"]
+
+BRA:
+  must_any: ["brazil", "brasil", "lula", "bolsonaro", "tarcisio", "tarcísio"]
+  must_not: ["argentina"]
+  boost:   ["brazil 2026", "brazilian president", "lula reelection"]
+
+ISR:
+  must_any: ["israel", "knesset", "netanyahu", "lapid", "gantz", "bennett"]
+  must_not: ["israel-iran"]
+  boost:   ["next israeli", "israeli election", "israeli pm"]
+
+ARG:
+  must_any: ["argentina", "milei", "argentine"]
+  must_not: ["argentina football", "argentina soccer"]
+  boost:   ["milei approval", "argentina 2027", "argentina dollar"]
+
+NGA:
+  must_any: ["nigeria", "tinubu", "atiku", "obi"]
+  boost:   ["nigeria 2027", "nigerian president"]
+
+FRA:
+  must_any: ["france", "french", "le pen", "bardella", "macron", "melenchon", "mélenchon"]
+  must_not: ["french open"]
+  boost:   ["france 2027", "french president", "rn"]
+
+MEX:
+  must_any: ["mexico", "sheinbaum", "morena", "amlo"]
+  must_not: ["new mexico"]
+  boost:   ["sheinbaum approval", "mexico 2027"]
+
+ITA:
+  must_any: ["italy", "italian", "meloni", "fdi"]
+  must_not: ["italian open"]
+  boost:   ["italy 2027", "meloni"]
+
+POL:
+  must_any: ["poland", "polish", "tusk", "pis", "kaczynski"]
+  boost:   ["poland 2027", "polish parliamentary"]
+
+DEU:
+  must_any: ["germany", "german", "merz", "afd", "weidel", "scholz"]
+  must_not: ["german shepherd"]
+  boost:   ["germany 2029", "german chancellor"]
+
+GBR:
+  must_any: ["uk election", "britain", "british", "starmer", "farage", "reform uk", "labour", "tory", "conservative", "westminster"]
+  must_not: ["british open", "uk pop"]
+  boost:   ["next uk pm", "next prime minister", "uk general"]
+
+IND:
+  must_any: ["india", "modi", "rahul gandhi", "bjp", "congress party"]
+  must_not: ["west indies", "indiana"]
+  boost:   ["modi approval", "india 2029", "lok sabha"]
+
+JPN:
+  must_any: ["japan", "japanese", "ishiba", "ldp", "japan pm", "kishida"]
+  boost:   ["japan election", "japanese pm"]
+
+KOR:
+  must_any: ["south korea", "korean", "yoon", "lee jae", "dpk", "ppp"]
+  must_not: ["north korea"]
+  boost:   ["south korea election"]
+
+IDN:
+  must_any: ["indonesia", "indonesian", "prabowo", "jokowi"]
+  boost:   ["indonesia 2029", "indonesian president"]
+
+TUR:
+  must_any: ["turkey", "turkish", "erdogan", "erdoğan", "imamoglu", "imamoğlu", "chp"]
+  boost:   ["turkey election", "turkish president"]
+
+CAN:
+  must_any: ["canada", "canadian", "carney", "poilievre", "trudeau", "liberal canada"]
+  must_not: ["canada soccer"]
+  boost:   ["next canadian pm", "canada 2029"]
+
+AUS:
+  must_any: ["australia", "australian", "albanese", "dutton", "labor australia"]
+  must_not: ["australian open"]
+  boost:   ["next australian pm", "australia federal"]
+
+PHL:
+  must_any: ["philippines", "philippine", "marcos", "duterte", "sara duterte"]
+  boost:   ["philippines 2028"]
+
+ZAF:
+  must_any: ["south africa", "anc", "ramaphosa", "da south africa", "eff"]
+  must_not: ["south africa cricket"]
+  boost:   ["south africa election"]
+
+PAK:
+  must_any: ["pakistan", "imran khan", "pml-n", "pti", "shehbaz"]
+  boost:   ["pakistan election"]
+
+UKR:
+  must_any: ["ukraine election", "zelensky", "zelenskyy", "ukrainian president"]
+  must_not: ["ukraine war", "ukraine ceasefire"]  # those are different chains; we want election-specific
+  boost:   ["ukraine post-war election"]
+
+TWN:
+  must_any: ["taiwan", "taiwanese", "lai", "kmt", "dpp"]
+  boost:   ["taiwan 2028", "taiwan president"]
+
+IRN:
+  must_any: ["iran", "iranian", "khamenei", "raisi", "pezeshkian"]
+  must_not: ["iran nuclear deal", "iran strike"]
+  boost:   ["iran election", "khamenei successor"]
+
+ESP:
+  must_any: ["spain", "spanish", "sanchez", "feijoo", "feijóo", "abascal", "psoe", "vox", "puigdemont"]
+  must_not: ["spanish league", "la liga"]
+  boost:   ["spain election", "spanish pm", "next spanish prime minister"]
+
+SWE:
+  must_any: ["sweden", "swedish", "kristersson", "akesson", "åkesson", "magdalena andersson", "sverigedemokraterna"]
+  boost:   ["sweden election", "swedish pm", "swedish riksdag"]
+
+HUN:
+  must_any: ["hungary", "hungarian", "orban", "orbán", "magyar", "fidesz", "tisza"]
+  boost:   ["hungary 2026", "hungarian election", "next hungarian pm"]
+
+COL:
+  must_any: ["colombia", "colombian", "petro", "uribe", "duque"]
+  must_not: ["british columbia"]
+  boost:   ["colombia 2026", "colombian president", "petro successor"]
+
+CHL:
+  must_any: ["chile", "chilean", "kast", "boric", "jara"]
+  must_not: ["chile pepper"]
+  boost:   ["chile 2025", "chilean president", "next chilean president"]
+
+BGD:
+  must_any: ["bangladesh", "bangladeshi", "yunus", "hasina", "khaleda zia", "tarique rahman"]
+  boost:   ["bangladesh election", "bangladesh 2026"]
+
+VNM:
+  must_any: ["vietnam", "vietnamese", "to lam", "tô lâm", "communist party of vietnam"]
+  boost:   ["vietnam 14th congress", "vietnam politburo"]
+
+ETH:
+  must_any: ["ethiopia", "ethiopian", "abiy", "tplf", "amhara"]
+  boost:   ["ethiopia election", "ethiopian pm"]
+
+SAU:
+  must_any: ["saudi arabia", "saudi king", "mbs", "mohammed bin salman", "vision 2030"]
+  must_not: ["saudi arabia football"]
+  boost:   ["saudi succession", "saudi king salman"]
+
+ARE:
+  must_any: ["united arab emirates", "uae president", "mbz", "mohammed bin zayed", "abu dhabi"]
+  must_not: ["dubai marathon", "dubai open"]
+  boost:   ["uae succession", "uae president"]
+
+EGY:
+  must_any: ["egypt", "egyptian", "sisi", "el-sisi", "egyptian president"]
+  must_not: ["egypt football", "egyptian league"]
+  boost:   ["egypt election", "sisi successor"]
+
+THA:
+  must_any: ["thailand", "thai", "paetongtarn", "thaksin", "shinawatra", "pheu thai", "move forward"]
+  must_not: ["thailand open"]
+  boost:   ["thai election", "thai pm"]
+
+VEN:
+  must_any: ["venezuela", "venezuelan", "maduro", "machado", "edmundo gonzález", "edmundo gonzalez"]
+  boost:   ["venezuela 2024", "venezuelan president", "maduro successor"]
