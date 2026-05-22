@@ -48,6 +48,7 @@ import digest as digest_mod
 import referrals as ref_mod
 import news as news_mod
 import econ_calendar as econ_mod
+import etf_flows as etf_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -504,6 +505,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(news_refresher()))
     _bg_tasks.add(asyncio.create_task(econ_refresher()))
     _bg_tasks.add(asyncio.create_task(econ_alert_ticker()))
+    _bg_tasks.add(asyncio.create_task(etf_flows_refresher()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -596,6 +598,21 @@ async def econ_alert_ticker():
         except Exception as e:
             print(f"[econ-alert] error: {type(e).__name__}: {e}")
         await asyncio.sleep(5 * 60)
+
+
+async def etf_flows_refresher():
+    """Pull daily ETF OHLCV from Stooq every 4 hours. Markets are closed
+    16:00-09:30 ET so we don't need real-time, but a 4-h cadence catches
+    any same-day post-close updates and weekend-data fills."""
+    await asyncio.sleep(110)
+    while True:
+        try:
+            summary = await asyncio.to_thread(etf_mod.refresh)
+            if summary.get("new"):
+                print(f"[etf] {summary}")
+        except Exception as e:
+            print(f"[etf] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(4 * 3600)
 
 
 async def digest_cron_task():
@@ -6735,6 +6752,37 @@ async def econ_force_refresh(request: Request):
     return await asyncio.to_thread(econ_mod.refresh)
 
 
+# ===================================================================
+# ETF FLOWS — spot BTC + ETH ETF AUM + dollar volume + flow signal
+# ===================================================================
+
+@app.get("/api/etf/overview")
+async def etf_overview(request: Request):
+    """Headline tiles for BTC ETFs + ETH ETFs plus the per-ETF table.
+    Public read — no auth needed (this is institutional-demand data
+    every visitor wants to see)."""
+    return await asyncio.to_thread(etf_mod.overview)
+
+
+@app.get("/api/etf/by-asset/{asset}")
+async def etf_by_asset(asset: str, request: Request):
+    asset = asset.upper()
+    if asset not in ("BTC", "ETH"):
+        raise HTTPException(status_code=400, detail="asset must be BTC or ETH")
+    return await asyncio.to_thread(etf_mod.asset_summary, asset)
+
+
+@app.post("/api/etf/refresh")
+async def etf_force_refresh(request: Request):
+    """Admin / localhost only — pulls Stooq for 19 tickers, takes ~30s."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    is_local = client_host in ("127.0.0.1", "::1", "localhost")
+    if not is_local and not (user and user["tier"] == "admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await asyncio.to_thread(etf_mod.refresh)
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -7086,6 +7134,12 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   </div>
   <div id="econ-headline" style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap"></div>
   <div id="econ-list" style="margin-top:8px"></div>
+
+  <h2 style="margin-top:24px">Spot ETF flows <span style="font-size:.7em;color:var(--muted);font-weight:400">(institutional demand signal)</span></h2>
+  <div class="note">Estimated AUM = close × current shares outstanding (shares table updated periodically). Dollar volume is the proven proxy for daily institutional interest. <b>Bullish</b> flow signal = AUM trending up AND volume above 7d average.</div>
+  <div id="etf-headlines" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap"></div>
+  <table id="etf-table" style="margin-top:10px"><thead><tr>
+    <th>Asset</th><th>Ticker</th><th>Issuer</th><th>Close</th><th>AUM</th><th>$ Vol (today)</th><th>vs 7d avg</th><th>7d AUM Δ</th><th>Signal</th></tr></thead><tbody></tbody></table>
 
   <h2 style="margin-top:24px">Macro overlay</h2>
   <div id="macro-note" class="note"></div>
@@ -7572,6 +7626,7 @@ async function loadDerivatives(){
 
 async function loadMacro(){
   loadEconCalendar();
+  loadEtfFlows();
   const tbody = document.querySelector('#macro-table tbody');
   tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
   try {
@@ -7662,6 +7717,83 @@ async function loadEconCalendar(){
     html += '</tbody></table>';
     out.innerHTML = html;
   } catch(e) { out.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+}
+
+function fmtBigUsd(v){
+  if (v == null) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'K';
+  return '$' + v.toFixed(0);
+}
+
+async function loadEtfFlows(){
+  const tbody = document.querySelector('#etf-table tbody');
+  const head = document.getElementById('etf-headlines');
+  tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading…</td></tr>';
+  head.innerHTML = '';
+  try {
+    const r = await api('/api/etf/overview');
+    // Headline tiles for BTC + ETH
+    for (const asset of ['BTC', 'ETH']) {
+      const s = r[asset];
+      if (!s || !s.ready) continue;
+      const sigColor = s.signal === 'bullish' ? 'var(--green)'
+                     : s.signal === 'bearish' ? 'var(--red)' : 'var(--muted)';
+      const aumChg = s.aum_change_7d_pct;
+      const chgColor = aumChg == null ? 'var(--muted)'
+                     : aumChg >= 0 ? 'var(--green)' : 'var(--red)';
+      head.insertAdjacentHTML('beforeend', `
+        <div class="card" style="min-width:200px;padding:12px 16px">
+          <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">${esc(asset)} ETFs (${s.etf_count})</div>
+          <div style="font-size:1.4em;font-weight:600">${fmtBigUsd(s.total_aum_usd)}</div>
+          <div style="font-size:.85em;margin-top:2px">
+            <span style="color:${chgColor}">7d AUM ${aumChg == null ? '—' : (aumChg*100).toFixed(2)+'%'}</span>
+            · <span style="color:${sigColor}"><b>${esc(s.signal)}</b></span>
+          </div>
+          <div style="font-size:.75em;color:var(--muted);margin-top:4px">
+            Today $vol: ${fmtBigUsd(s.dollar_volume_today_usd)} (7d avg ${fmtBigUsd(s.dollar_volume_7d_avg_usd)})
+          </div>
+          <div style="font-size:.7em;color:var(--muted);margin-top:2px">Top: ${(s.top_3_by_aum || []).map(esc).join(' · ')}</div>
+        </div>`);
+    }
+
+    const rows = r.per_etf || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">No ETF data yet — refresher runs every 4 h on startup.</td></tr>';
+      return;
+    }
+    // Sort BTC first then by AUM desc within each asset.
+    rows.sort((a, b) => {
+      if (a.asset !== b.asset) return a.asset === 'BTC' ? -1 : 1;
+      return (b.aum_estimate_usd || 0) - (a.aum_estimate_usd || 0);
+    });
+    tbody.innerHTML = '';
+    for (const r2 of rows) {
+      const sigColor = r2.flow_signal === 'bullish' ? 'var(--green)'
+                     : r2.flow_signal === 'bearish' ? 'var(--red)' : 'var(--muted)';
+      const aumChg = r2.aum_change_7d_pct;
+      const chgColor = aumChg == null ? '' : aumChg >= 0 ? 'gain' : 'loss';
+      const volRatio = r2.dollar_volume_7d_avg_usd > 0
+                       ? r2.dollar_volume_today_usd / r2.dollar_volume_7d_avg_usd
+                       : null;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${esc(r2.asset)}</td>
+        <td><b>${esc(r2.ticker)}</b></td>
+        <td style="font-size:.85em;color:var(--muted)">${esc(r2.issuer)}</td>
+        <td>${usd(r2.last_close)}</td>
+        <td>${fmtBigUsd(r2.aum_estimate_usd)}</td>
+        <td>${fmtBigUsd(r2.dollar_volume_today_usd)}</td>
+        <td>${volRatio == null ? '—' : volRatio.toFixed(2) + 'x'}</td>
+        <td class="${chgColor}">${aumChg == null ? '—' : (aumChg*100).toFixed(2)+'%'}</td>
+        <td style="color:${sigColor}"><b>${esc(r2.flow_signal)}</b></td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="9" class="err">' + esc(e.message) + '</td></tr>';
+  }
 }
 
 async function loadBacktests(){

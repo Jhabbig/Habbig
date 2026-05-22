@@ -613,6 +613,19 @@ CREATE TABLE IF NOT EXISTS crypto_econ_events (
 CREATE INDEX IF NOT EXISTS idx_econ_datetime ON crypto_econ_events(datetime_utc);
 CREATE INDEX IF NOT EXISTS idx_econ_impact_date ON crypto_econ_events(impact, datetime_utc);
 
+-- ── ETF daily bars (spot BTC + ETH ETFs) ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_etf_bars (
+    ticker     TEXT NOT NULL,
+    date       TEXT NOT NULL,           -- ISO YYYY-MM-DD
+    open       REAL NOT NULL,
+    high       REAL NOT NULL,
+    low        REAL NOT NULL,
+    close      REAL NOT NULL,
+    volume     REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_etf_bars_date ON crypto_etf_bars(date);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2771,6 +2784,40 @@ def get_users_with_push_subscriptions() -> list[str]:
             "SELECT DISTINCT user_id FROM crypto_push_subscriptions"
         ).fetchall()
     return [r["user_id"] for r in rows]
+
+
+# ── ETF flows ───────────────────────────────────────────────────────────────
+
+def upsert_etf_bars(rows: list[tuple]) -> dict:
+    """Insert bars. rows: (ticker, date, open, high, low, close, volume).
+    Returns {new: N}. Idempotent — PK(ticker, date) handles dedup."""
+    if not rows:
+        return {"new": 0}
+    new_n = 0
+    with _conn() as c:
+        for r in rows:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO crypto_etf_bars
+                     (ticker, date, open, high, low, close, volume)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                r,
+            )
+            if cur.rowcount > 0:
+                new_n += 1
+    return {"new": new_n}
+
+
+def get_etf_bars(ticker: str, days: int = 30) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT date, open, high, low, close, volume
+               FROM crypto_etf_bars
+               WHERE ticker = ? AND date >= ?
+               ORDER BY date ASC""",
+            (ticker, cutoff),
+        ).fetchall()
+    return _rows(rows)
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────
