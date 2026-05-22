@@ -9,14 +9,21 @@ import json
 import logging
 import os
 import re
-from typing import Set, Dict
+import secrets
+from typing import Set, Dict, Optional
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response
 
 from tier1_adapters import get_facade, RealtimeFacade
 from backtest_engine import SimpleBacktestEngine, BacktestResult
@@ -44,6 +51,7 @@ ALLOWED_ORIGINS = [
 # Global state
 facade: RealtimeFacade = None
 connected_clients: Dict[str, Set[WebSocket]] = {}  # ticker -> set of WebSockets
+session_tokens: Set[str] = set()  # Valid session tokens for WebSocket auth
 
 
 # ============================================================================
@@ -230,6 +238,21 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================================================
+# Security Headers Middleware
+# ============================================================================
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+        return response
+
+
+# ============================================================================
 # FastAPI App
 # ============================================================================
 
@@ -243,6 +266,17 @@ app = FastAPI(
     redoc_url="/redoc" if IS_DEV else None,
     openapi_url="/openapi.json" if IS_DEV else None,
 )
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda r, e: JSONResponse(
+    status_code=429,
+    content={"detail": "Rate limit exceeded"},
+))
+
+# Security headers
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS — explicit origin list, never the wildcard. If ALLOWED_ORIGINS is empty
 # in a non-dev environment, CORS is effectively closed.
@@ -280,6 +314,20 @@ async def health():
         "timestamp": datetime.now().timestamp(),
         "facade_connected": facade is not None,
     }
+
+
+class SessionTokenResponse(BaseModel):
+    """Session token for WebSocket authentication."""
+    token: str
+
+
+@app.get("/api/session-token", response_model=SessionTokenResponse)
+@limiter.limit("10/minute")
+async def get_session_token(request: Request):
+    """Generate a session token for WebSocket authentication."""
+    token = secrets.token_urlsafe(32)
+    session_tokens.add(token)
+    return {"token": token}
 
 
 TICKER_PATTERN = r"^[A-Z0-9.\-]{1,10}$"
@@ -410,7 +458,8 @@ async def generate_signal(request: SignalRequest):
 # ============================================================================
 
 @app.post("/api/scan/options", response_model=list[ScanResultResponse])
-async def scan_options(request: ScanRequest):
+@limiter.limit("30/minute")
+async def scan_options(request_obj: Request, request: ScanRequest):
     """
     Scan options chain for unusual activity.
     Detects: volume spikes, IV spikes, skew shifts, implied earnings moves.
@@ -459,9 +508,10 @@ async def scan_options(request: ScanRequest):
 # ============================================================================
 
 @app.websocket("/ws/{ticker}")
-async def websocket_endpoint(websocket: WebSocket, ticker: str):
+async def websocket_endpoint(websocket: WebSocket, ticker: str, token: str = Query(...)):
     """
     WebSocket endpoint for real-time bar + indicator streaming.
+    Requires valid session token for authentication.
 
     Sends JSON messages:
     {
@@ -471,6 +521,17 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str):
         "indicators": {...}
     }
     """
+    # Validate token
+    if token not in session_tokens:
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
+
+    # CSWSH protection: check Origin header matches allowed origins
+    origin = websocket.headers.get("origin", "")
+    if ALLOWED_ORIGINS and origin not in ALLOWED_ORIGINS:
+        await websocket.close(code=1008, reason="Forbidden origin")
+        return
+
     await websocket.accept()
     log.info(f"Client connected to {ticker}")
 
@@ -546,7 +607,8 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str):
 # ============================================================================
 
 @app.post("/api/backtest", response_model=BacktestResponse)
-async def run_backtest(request: BacktestRequest):
+@limiter.limit("20/minute")
+async def run_backtest(request_obj: Request, request: BacktestRequest):
     """
     Run a backtest with specified strategy and parameters.
 

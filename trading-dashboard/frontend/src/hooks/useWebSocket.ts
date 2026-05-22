@@ -22,6 +22,7 @@ export function useWebSocket(ticker: string): UseWebSocketReturn {
   // refs so the effect cleanup can stop in-flight reconnect attempts.
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,12 +38,33 @@ export function useWebSocket(ticker: string): UseWebSocketReturn {
       }
     };
 
-    const connect = () => {
+    const fetchToken = async (): Promise<string | null> => {
+      try {
+        const response = await fetch('/api/session-token');
+        if (!response.ok) throw new Error('Failed to fetch token');
+        const data = await response.json();
+        return data.token;
+      } catch (e) {
+        console.error('Failed to get session token:', e);
+        return null;
+      }
+    };
+
+    const connect = async () => {
       if (cancelled) return;
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
+      // Get a fresh token if we don't have one
+      if (!tokenRef.current) {
+        tokenRef.current = await fetchToken();
+        if (!tokenRef.current) {
+          if (!cancelled) setError('Failed to authenticate');
+          return;
+        }
+      }
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/${ticker}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws/${ticker}?token=${encodeURIComponent(tokenRef.current)}`;
 
       let ws: WebSocket;
       try {
@@ -104,7 +126,7 @@ export function useWebSocket(ticker: string): UseWebSocketReturn {
         if (attempts < MAX_RECONNECT_ATTEMPTS) {
           const delay = 1000 * Math.pow(2, attempts);
           attempts += 1;
-          reconnectTimer.current = setTimeout(connect, delay);
+          reconnectTimer.current = setTimeout(() => connect(), delay);
         } else {
           setError('Max reconnect attempts reached');
         }
