@@ -3117,6 +3117,81 @@ async def admin_disable_superuser_key(request: Request, key_id: int):
     return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
 
 
+@app.get("/admin/api/available-dashboards")
+async def admin_get_available_dashboards(request: Request):
+    user = _require_admin_user(request)
+    dashboards = [
+        {"key": key, "display_name": cfg.get("display_name", key)}
+        for key, cfg in DASHBOARDS.items()
+    ]
+    return JSONResponse({"dashboards": dashboards})
+
+
+@app.post("/admin/api/templates")
+async def admin_create_template(
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    dashboards: str = Form(""),
+    aspects: str = Form(""),
+):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return JSONResponse({"error": "CSRF token invalid"}, status_code=403)
+
+    dashboards_list = [d.strip() for d in dashboards.split(",") if d.strip()]
+    aspects_list = [a.strip() for a in aspects.split(",") if a.strip()]
+
+    template_id = db.create_superuser_key_template(
+        name=name.strip() or "New Template",
+        description=description.strip(),
+        dashboards=dashboards_list or None,
+        aspects=aspects_list or None,
+    )
+    log.info("Admin %s created template id=%d: %s", user["email"], template_id, name)
+    return JSONResponse({"id": template_id, "success": True})
+
+
+@app.get("/admin/api/templates")
+async def admin_list_templates(request: Request):
+    user = _require_admin_user(request)
+    templates = db.list_superuser_key_templates()
+    return JSONResponse({"templates": templates})
+
+
+@app.get("/admin/api/templates/{template_id}")
+async def admin_get_template(request: Request, template_id: int):
+    user = _require_admin_user(request)
+    template = db.get_superuser_key_template(template_id)
+    if template is None:
+        return JSONResponse({"error": "Template not found"}, status_code=404)
+    return JSONResponse(template)
+
+
+@app.post("/admin/api/templates/{template_id}/delete")
+async def admin_delete_template(request: Request, template_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return JSONResponse({"error": "CSRF token invalid"}, status_code=403)
+
+    success = db.delete_superuser_key_template(template_id)
+    if success:
+        log.info("Admin %s deleted template id=%d", user["email"], template_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"error": "Template not found"}, status_code=404)
+
+
+@app.get("/admin/api/usage-stats")
+async def admin_get_usage_stats(request: Request, days: int = 30):
+    user = _require_admin_user(request)
+    stats = db.get_all_usage_stats(days=days)
+    return JSONResponse(stats)
+
+
 def _verify_admin_password(request: Request, admin: dict, password: str) -> bool:
     """Verify the admin's password for destructive actions. Returns True if valid."""
     return db.verify_user_password(admin["email"], password)
