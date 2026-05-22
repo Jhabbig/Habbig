@@ -62,6 +62,8 @@ def _fake_http_get(url: str, *, timeout=20, params=None):
         return FakeResponse(text=_load("ocean_heat_sample.csv"))
     if "moncov.nhland" in url:
         return FakeResponse(text=_load("snow_cover_sample.txt"))
+    if "LSA_SLR_timeseries_global" in url or "sea_level" in url.lower():
+        return FakeResponse(text=_load("sea_level_sample.csv"))
     if "gamma-api.polymarket.com" in url:
         # Polymarket events — empty list is a valid response shape
         return FakeResponse(json_data=[])
@@ -269,6 +271,23 @@ def test_rss_feed_endpoint(client):
     body = r.data.decode("utf-8")
     assert "<rss" in body and "</rss>" in body
     assert "<channel>" in body and "</channel>" in body
+
+
+def test_opportunities_feed_endpoint(client):
+    r = client.get("/feed.xml?kind=opportunities&min_edge=3")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8")
+    assert "<rss" in body
+    assert "Opportunities" in body
+    assert "3.0pp" in body  # min_edge echoed in channel title
+
+
+def test_sea_level_endpoint(client):
+    r = client.get("/api/sea-level")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["units"] == "mm"
+    assert len(body["series"]) > 0
 
 
 def test_index_has_expected_sections(client):

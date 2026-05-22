@@ -20,6 +20,7 @@ from app.fetchers import ocean_heat as ocean_heat_src
 from app.fetchers import oni as oni_src
 from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import sea_ice as sea_ice_src
+from app.fetchers import sea_level as sea_level_src
 from app.fetchers import sf6 as sf6_src
 from app.fetchers import snow_cover as snow_cover_src
 from app.models import calibration as calibration_model
@@ -513,6 +514,30 @@ def test_global_summary_computes_decade_change():
     assert g["decade_ago_co2_mt"] == 35043.0
     # +6.0% over the decade
     assert 5 < g["decade_change_pct"] < 7
+
+
+def test_sea_level_parser_sniffs_columns():
+    series = sea_level_src.parse(_load("sea_level_sample.csv"))
+    assert len(series) == 15
+    assert series[0]["decimal_year"] == 2020.04
+    assert series[0]["sea_level_mm"] == 84.0
+    # Sea level rises ~3.3 mm/yr — check the series is monotone-ish increasing
+    assert series[-1]["sea_level_mm"] > series[0]["sea_level_mm"] + 20
+
+
+def test_sea_level_parser_handles_no_header():
+    # If the upstream is just bare decimal_year,value pairs without a header
+    text = "2020.04,84.0\n2020.13,84.6\n2024.04,103.4"
+    series = sea_level_src.parse(text)
+    assert len(series) == 3
+
+
+def test_sea_level_parser_rejects_out_of_range_dates():
+    text = "Date,GMSL\n1700.0,5.0\n2025.0,110.0\n3000.0,500.0"
+    series = sea_level_src.parse(text)
+    # Only 2025 falls in 1990-2100
+    assert len(series) == 1
+    assert series[0]["decimal_year"] == 2025.0
 
 
 def test_ocean_heat_parser_picks_first_numeric_after_year():

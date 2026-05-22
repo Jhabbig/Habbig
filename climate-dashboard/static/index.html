@@ -569,7 +569,7 @@
 <body>
 <header>
   <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
-  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O · NSIDC sea ice · OISST · ENSO · backtest · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a></div>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O + SF₆ · NSIDC sea ice · NOAA NCEI OHC · NOAA STAR sea level · OWID emissions · ENSO · IPCC SSPs · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a> · <a href="/feed.xml" style="color:var(--accent);text-decoration:none">RSS</a></div>
 </header>
 <main>
 
@@ -1291,6 +1291,7 @@ async function loadCards() {
   const scenariosData = await getJSON("/api/scenarios");
   const ohcData = await getJSON("/api/ocean-heat");
   const snowData = await getJSON("/api/snow-cover");
+  const seaLevelData = await getJSON("/api/sea-level");
 
   const cards = [];
   // Each entry: {id, history, forecast, color} — wired to fan-chart containers
@@ -1555,6 +1556,41 @@ async function loadCards() {
       <div class="card" style="opacity:0.7">
         <h3>NH snow cover extent</h3>
         <div class="big" style="font-size:14px;color:var(--text-3);font-weight:500;line-height:1.4">Data unavailable — Rutgers URL not reachable.<br/>See <a href="/methodology#snow_cover">methodology</a>.</div>
+      </div>
+    `);
+  }
+
+  // Global mean sea level (NOAA STAR satellite altimetry)
+  if (seaLevelData && seaLevelData.series && seaLevelData.series.length) {
+    const latest = seaLevelData.latest;
+    const sparkVals = seaLevelData.series.slice(-200).map(r => r.sea_level_mm);
+    // Estimate annual trend from the last 5 years if we have enough points
+    const recent = seaLevelData.series.filter(r => r.decimal_year >= (latest.decimal_year - 5));
+    let trend = null;
+    if (recent.length >= 10) {
+      const n = recent.length;
+      const xs = recent.map(r => r.decimal_year);
+      const ys = recent.map(r => r.sea_level_mm);
+      const mx = xs.reduce((a, b) => a + b) / n;
+      const my = ys.reduce((a, b) => a + b) / n;
+      const num = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0);
+      const den = xs.reduce((s, x) => s + (x - mx) ** 2, 0);
+      if (den > 0) trend = num / den;  // mm/yr
+    }
+    cards.push(`
+      <div class="card">
+        <h3>Global mean sea level</h3>
+        <div class="big">+${fmt(latest.sea_level_mm, 1)} <span style="font-size:14px;color:var(--text-2)">mm</span></div>
+        <div class="sub">${fmt(latest.decimal_year, 2)} · ${trend != null ? `rising +${fmt(trend, 1)} mm/yr` : "trend pending"} · NOAA STAR</div>
+        <div class="sub" style="margin-top:6px;color:var(--text-3)">Satellite altimetry — vs the start of the satellite record.</div>
+        ${sparkline(sparkVals, 260, 56, "#0ea5e9")}
+      </div>
+    `);
+  } else if (seaLevelData === null) {
+    cards.push(`
+      <div class="card" style="opacity:0.7">
+        <h3>Global mean sea level</h3>
+        <div class="big" style="font-size:14px;color:var(--text-3);font-weight:500;line-height:1.4">Data unavailable — NOAA STAR URL not reachable.<br/>See <a href="/methodology#sea_level">methodology</a>.</div>
       </div>
     `);
   }

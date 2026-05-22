@@ -28,6 +28,7 @@ TTL: dict[str, int] = {
     "owid_emissions": 60 * 60 * 24,  # country emissions update annually
     "ocean_heat": 60 * 60 * 24,      # NCEI publishes seasonal/yearly
     "snow_cover": 60 * 60 * 12,      # Rutgers updates monthly
+    "sea_level": 60 * 60 * 12,       # NOAA STAR updates monthly-ish
     "sea_ice": 60 * 60 * 6,
     "sst": 60 * 60 * 3,
     "oni": 60 * 60 * 12,

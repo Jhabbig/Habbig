@@ -107,3 +107,56 @@ def rss_feed(highlights: list[dict], *, base_url: str = "https://climate.narve.a
 {chr(10).join(items)}
   </channel>
 </rss>"""
+
+
+def opportunities_rss(markets: list[dict], *, min_edge_pp: float = 5.0,
+                     min_liquidity: float = 500.0,
+                     base_url: str = "https://climate.narve.ai") -> str:
+    """RSS feed of climate-market opportunities with a meaningful edge.
+
+    Defaults: ≥5pp absolute edge and ≥$500 liquidity. Both are query-string
+    overridable from the /feed.xml?kind=opportunities&min_edge=N&min_liq=N
+    route so users can dial sensitivity.
+    """
+    now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    candidates = [
+        m for m in (markets or [])
+        if m.get("_edge_pp") is not None
+        and abs(m["_edge_pp"]) >= min_edge_pp
+        and float(m.get("liquidity") or 0) >= min_liquidity
+    ]
+    # Order by absolute edge descending so the strongest signals are at the top
+    candidates.sort(key=lambda m: abs(m["_edge_pp"]), reverse=True)
+
+    items = []
+    for m in candidates[:30]:
+        edge = m["_edge_pp"]
+        side = "YES" if edge > 0 else "NO"
+        sign = "+" if edge > 0 else ""
+        slug = m.get("slug") or ""
+        url = f"https://polymarket.com/market/{slug}" if slug else base_url
+        question = m.get("question", "")
+        rationale = m.get("_rationale", "")
+        liquidity = float(m.get("liquidity") or 0)
+        title = f"{sign}{edge:.1f}pp {side}: {question}"
+        desc = f"Model {m.get('_model_p', 0):.0%} vs implied {m.get('_implied_p', 0):.0%} · liquidity ${liquidity:,.0f}"
+        if rationale:
+            desc += f" · {rationale}"
+        items.append(f"""    <item>
+      <title>{_esc(title)}</title>
+      <description>{_esc(desc)}</description>
+      <link>{_esc(url)}</link>
+      <guid isPermaLink="false">{_esc(m.get('conditionId') or m.get('id') or slug or title)}</guid>
+      <pubDate>{now}</pubDate>
+    </item>""")
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Climate Dashboard — Opportunities (≥{min_edge_pp:.1f}pp edge)</title>
+    <link>{_esc(base_url)}</link>
+    <description>Polymarket climate markets where the model and the market disagree by at least {min_edge_pp:.1f} percentage points.</description>
+    <language>en</language>
+    <lastBuildDate>{now}</lastBuildDate>
+{chr(10).join(items)}
+  </channel>
+</rss>"""

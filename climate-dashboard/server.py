@@ -17,7 +17,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, Response, jsonify, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
@@ -29,6 +29,7 @@ from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import snow_cover as snow_cover_src
 from app.fetchers import polymarket as polymarket_src
 from app.fetchers import sea_ice as sea_ice_src
+from app.fetchers import sea_level as sea_level_src
 from app.fetchers import sf6 as sf6_src
 from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
@@ -129,7 +130,39 @@ def api_snapshot_text():
 
 @app.route("/feed.xml")
 def feed_xml():
-    """RSS 2.0 feed of the highlights chips. Subscribe in any reader."""
+    """RSS 2.0 feed. Default kind=highlights; ?kind=opportunities returns a
+    feed of high-edge climate markets with optional &min_edge= and
+    &min_liq= overrides for sensitivity tuning."""
+    kind = (request.args.get("kind") or "highlights").lower()
+    if kind == "opportunities":
+        try:
+            min_edge = float(request.args.get("min_edge") or 5.0)
+        except ValueError:
+            min_edge = 5.0
+        try:
+            min_liq = float(request.args.get("min_liq") or 500.0)
+        except ValueError:
+            min_liq = 500.0
+        # Reuse the markets fetch + scoring from /api/markets
+        markets = polymarket_src.fetch()
+        g = gistemp_src.fetch()
+        c = co2_src.fetch()
+        ch4 = methane_src.fetch()
+        n2o = n2o_src.fetch()
+        sea = sea_ice_src.fetch()
+        enriched = markets_model.edges_for_markets(
+            markets,
+            temperature_model.projection(g) if g else None,
+            co2_model.projection(c) if c else None,
+            sea_ice_model.arctic_min_projection(sea) if sea else None,
+            sea_ice_model.antarctic_min_projection(sea) if sea else None,
+            methane_model.projection(ch4) if ch4 else None,
+            n2o_model.projection(n2o) if n2o else None,
+        )
+        xml = snapshot_module.opportunities_rss(enriched,
+                                                 min_edge_pp=min_edge,
+                                                 min_liquidity=min_liq)
+        return Response(xml, mimetype="application/rss+xml; charset=utf-8")
     hl = highlights_model.compute(
         gistemp=gistemp_src.fetch(),
         co2=co2_src.fetch(),
@@ -216,6 +249,17 @@ def api_ocean_heat():
                         "url": ocean_heat_src.URL,
                         "hint": "Likely an upstream URL change at NCEI — see methodology"}), 503
     return jsonify(o)
+
+
+@app.route("/api/sea-level")
+def api_sea_level():
+    """NOAA STAR satellite altimetry — global mean sea level in mm."""
+    s = sea_level_src.fetch()
+    if not s:
+        return jsonify({"error": "Sea level fetch failed",
+                        "url": sea_level_src.URL,
+                        "hint": "Likely an upstream URL change at NESDIS"}), 503
+    return jsonify(s)
 
 
 @app.route("/api/snow-cover")

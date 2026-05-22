@@ -133,6 +133,11 @@ const MOCK_RESPONSES = {
     yearly: Array.from({ length: 10 }, (_, i) => ({ year: 2015 + i, ohc_1e22_J: 12 + i * 1.8 })),
     latest: { year: 2024, ohc_1e22_J: 29.2 },
   },
+  "/api/sea-level": {
+    source: "NOAA STAR", units: "mm",
+    series: Array.from({ length: 60 }, (_, i) => ({ decimal_year: 2020 + i / 12, sea_level_mm: 84 + i * 0.4 })),
+    latest: { decimal_year: 2024.99, sea_level_mm: 107.6 },
+  },
   "/api/snow-cover": {
     source: "Rutgers", units: "million km²",
     monthly: Array.from({ length: 24 }, (_, i) => ({ year: 2023 + Math.floor(i / 12), month: (i % 12) + 1, extent_mkm2: 25 + Math.sin(i / 12 * Math.PI * 2) * 20 })),

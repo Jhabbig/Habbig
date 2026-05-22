@@ -68,6 +68,17 @@ MODELS = [
         "code": "app/models/sf6.py",
     },
     {
+        "id": "sea_level",
+        "name": "Global mean sea level",
+        "summary": "NOAA STAR Laboratory for Satellite Altimetry — global mean sea level rise in millimeters since the start of the satellite record (1993). Best-effort URL: if NESDIS restructures we render an explicit unavailable state. Parser sniffs the date and value columns from the CSV header so format drift in either direction is tolerated.",
+        "inputs": ["NOAA STAR LSA_SLR_timeseries_global.csv"],
+        "outputs": {
+            "series": "List of {decimal_year, sea_level_mm}",
+            "latest": "Most recent point",
+        },
+        "code": "app/fetchers/sea_level.py",
+    },
+    {
         "id": "ocean_heat_content",
         "name": "Ocean heat content (0-2000 m)",
         "summary": "NOAA NCEI yearly anomaly in 10^22 J. Ocean heat content is the integrator climate scientists trust most — atmospheric noise averages out and the underlying energy accumulation shows up cleanly. URL is the canonical /data/oceans/woa/DATA_ANALYSIS/3M_HEAT_CONTENT/... path; if NCEI restructures their data hosting the dashboard's card will explicitly show 'data unavailable' rather than disappearing silently.",
