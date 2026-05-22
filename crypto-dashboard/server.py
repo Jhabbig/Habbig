@@ -47,6 +47,7 @@ import billing as billing_mod
 import digest as digest_mod
 import referrals as ref_mod
 import news as news_mod
+import econ_calendar as econ_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -501,6 +502,8 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(fill_poller_task()))
     _bg_tasks.add(asyncio.create_task(digest_cron_task()))
     _bg_tasks.add(asyncio.create_task(news_refresher()))
+    _bg_tasks.add(asyncio.create_task(econ_refresher()))
+    _bg_tasks.add(asyncio.create_task(econ_alert_ticker()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -564,6 +567,35 @@ async def news_refresher():
         except Exception as e:
             print(f"[news] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(7 * 60)
+
+
+async def econ_refresher():
+    """Pull the economic event calendar from FRED every 6 hours. Idempotent
+    — UNIQUE(source, external_id, datetime_utc) handles dedup."""
+    await asyncio.sleep(75)
+    while True:
+        try:
+            summary = await asyncio.to_thread(econ_mod.refresh)
+            if summary.get("new"):
+                print(f"[econ] {summary}")
+        except Exception as e:
+            print(f"[econ] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(6 * 3600)
+
+
+async def econ_alert_ticker():
+    """Scan for high-impact events landing in the next 60 minutes; fire a
+    pre-event push to all subscribed users. Runs every 5 min so we hit the
+    notification window for any event."""
+    await asyncio.sleep(150)
+    while True:
+        try:
+            summary = await asyncio.to_thread(econ_mod.fire_pre_event_alerts)
+            if summary.get("alerted"):
+                print(f"[econ-alert] {summary}")
+        except Exception as e:
+            print(f"[econ-alert] error: {type(e).__name__}: {e}")
+        await asyncio.sleep(5 * 60)
 
 
 async def digest_cron_task():
@@ -6660,6 +6692,49 @@ async def delete_news_rule(rule_id: int, request: Request):
     return {"ok": True}
 
 
+# ===================================================================
+# ECON CALENDAR — upcoming macro events with crypto-impact tagging
+# ===================================================================
+
+@app.get("/api/econ/upcoming")
+async def econ_upcoming(request: Request, days: int = 14,
+                         min_impact: str = "medium",
+                         category: str | None = None):
+    """Events in the next `days`. min_impact ∈ {low, medium, high}.
+    category ∈ {rates, inflation, growth, labor, other} or None."""
+    if min_impact not in ("low", "medium", "high"):
+        min_impact = "medium"
+    if category and category not in ("rates", "inflation", "growth", "labor", "other"):
+        category = None
+    events = await asyncio.to_thread(
+        econ_mod.list_upcoming, min(max(1, days), 90), min_impact, category,
+    )
+    return {"events": events,
+            "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/econ/next")
+async def econ_next(request: Request, pattern: str):
+    """Next event whose name matches `pattern` (case-insensitive substring).
+    Used by the UI for 'Next FOMC: 2d 4h' tile."""
+    if not pattern or len(pattern) > 80:
+        raise HTTPException(status_code=400, detail="invalid pattern")
+    ev = await asyncio.to_thread(econ_mod.next_event, pattern)
+    return ev or {}
+
+
+@app.post("/api/econ/refresh")
+async def econ_force_refresh(request: Request):
+    """Admin / localhost only — full refresh hits FRED for ~120 days of
+    events; we don't want public abuse."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    is_local = client_host in ("127.0.0.1", "::1", "localhost")
+    if not is_local and not (user and user["tier"] == "admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await asyncio.to_thread(econ_mod.refresh)
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -6998,7 +7073,21 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 </section>
 
 <section data-section="macro" hidden>
-  <h2>Macro overlay</h2>
+  <h2>Upcoming events</h2>
+  <div class="note">Macro releases drop at known times — FOMC at 18:00 UTC, CPI / NFP / PCE / GDP at 12:30 UTC. High-impact events trigger a push notification ~60 min before drop. Updated every 6 h from FRED.</div>
+  <div class="actionrow" style="margin-top:6px">
+    <div class="field"><label>Window</label>
+      <select id="ev-days"><option value="7">7d</option><option value="14" selected>14d</option><option value="30">30d</option></select>
+    </div>
+    <div class="field"><label>Min impact</label>
+      <select id="ev-impact"><option value="high">High</option><option value="medium" selected>Medium+</option><option value="low">All</option></select>
+    </div>
+    <button id="ev-apply" class="ghost">Apply</button>
+  </div>
+  <div id="econ-headline" style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap"></div>
+  <div id="econ-list" style="margin-top:8px"></div>
+
+  <h2 style="margin-top:24px">Macro overlay</h2>
   <div id="macro-note" class="note"></div>
   <div id="macro-regime" style="margin:12px 0"></div>
   <table id="macro-table"><thead><tr>
@@ -7482,6 +7571,7 @@ async function loadDerivatives(){
 }
 
 async function loadMacro(){
+  loadEconCalendar();
   const tbody = document.querySelector('#macro-table tbody');
   tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
   try {
@@ -7511,6 +7601,67 @@ async function loadMacro(){
         `<b>Macro regime:</b> <span class="${cls}">${r.label}</span> (${fmt(r.score,2)})`;
     }
   } catch(e) { tbody.innerHTML = `<tr><td colspan="7" class="err">${e.message}</td></tr>`; }
+}
+
+// Format a "T-minus 2d 4h" countdown from a seconds_until value.
+function fmtCountdown(secs){
+  if (secs == null) return '—';
+  const abs = Math.abs(secs);
+  const days = Math.floor(abs / 86400);
+  const hours = Math.floor((abs % 86400) / 3600);
+  const mins = Math.floor((abs % 3600) / 60);
+  const prefix = secs < 0 ? '−' : '';
+  if (days) return prefix + days + 'd ' + hours + 'h';
+  if (hours) return prefix + hours + 'h ' + mins + 'm';
+  return prefix + mins + 'm';
+}
+
+document.getElementById('ev-apply').addEventListener('click', loadEconCalendar);
+
+async function loadEconCalendar(){
+  const out = document.getElementById('econ-list');
+  const head = document.getElementById('econ-headline');
+  const days = parseInt(document.getElementById('ev-days').value || 14);
+  const minImpact = document.getElementById('ev-impact').value || 'medium';
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  head.innerHTML = '';
+  try {
+    const r = await api('/api/econ/upcoming?days=' + days + '&min_impact=' + encodeURIComponent(minImpact));
+    if (!r.events.length) {
+      out.innerHTML = '<div class="note">No events scheduled in this window. Either FRED_API_KEY isn\\'t set or no high-impact prints land in the next ' + days + ' days.</div>';
+      return;
+    }
+    // Highlight the next FOMC + next CPI as headline tiles.
+    const findNext = (pat) => r.events.find(e => (e.name || '').toLowerCase().includes(pat));
+    const fomc = findNext('fomc') || findNext('federal open market');
+    const cpi = findNext('consumer price') || findNext('cpi');
+    [['Next FOMC', fomc], ['Next CPI', cpi]].forEach(([label, ev]) => {
+      if (!ev) return;
+      head.insertAdjacentHTML('beforeend',
+        `<div class="card" style="min-width:160px;padding:10px 14px">
+          <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">${esc(label)}</div>
+          <div style="font-size:1.3em;font-weight:600">${fmtCountdown(ev.seconds_until)}</div>
+          <div style="font-size:.8em;color:var(--muted)">${esc(ev.datetime_utc).slice(0,16)} UTC</div>
+        </div>`);
+    });
+    // Render the list.
+    let html = '<table style="width:100%"><thead><tr><th>When</th><th>Event</th><th>Cat.</th><th>Impact</th><th>Crypto wt</th></tr></thead><tbody>';
+    for (const ev of r.events) {
+      const dt = (ev.datetime_utc || '').slice(0, 16).replace('T', ' ');
+      const impactColor = ev.impact === 'high' ? 'var(--red)'
+                        : ev.impact === 'medium' ? 'var(--yellow)' : 'var(--muted)';
+      const wt = ev.crypto_impact != null ? (ev.crypto_impact).toFixed(2) : '—';
+      html += `<tr>
+        <td>${esc(dt)} <span style="color:var(--muted);font-size:.85em">(${fmtCountdown(ev.seconds_until)})</span></td>
+        <td>${esc(ev.name)}</td>
+        <td><span class="pill p-neutral">${esc(ev.category || 'other')}</span></td>
+        <td style="color:${impactColor}"><b>${esc(ev.impact)}</b></td>
+        <td>${wt}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
 }
 
 async function loadBacktests(){

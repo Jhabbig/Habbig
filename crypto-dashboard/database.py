@@ -590,6 +590,29 @@ CREATE TABLE IF NOT EXISTS crypto_news_alert_history (
 );
 CREATE INDEX IF NOT EXISTS idx_news_history_user ON crypto_news_alert_history(user_id, fired_at DESC);
 
+-- ── Economic events calendar ────────────────────────────────────────────────
+-- FRED + (later) Treasury auctions + Fed governor speeches. Dedupe on
+-- (source, external_id, datetime_utc) so re-pulls are idempotent.
+CREATE TABLE IF NOT EXISTS crypto_econ_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    external_id     TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    country         TEXT DEFAULT 'US',
+    datetime_utc    TEXT NOT NULL,
+    impact          TEXT NOT NULL DEFAULT 'low',     -- low | medium | high
+    category        TEXT DEFAULT 'other',            -- rates | inflation | growth | labor | other
+    crypto_impact   REAL DEFAULT 0,                  -- 0..1
+    actual_value    TEXT,
+    expected_value  TEXT,
+    previous_value  TEXT,
+    alerted_at      TEXT,
+    scraped_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, external_id, datetime_utc)
+);
+CREATE INDEX IF NOT EXISTS idx_econ_datetime ON crypto_econ_events(datetime_utc);
+CREATE INDEX IF NOT EXISTS idx_econ_impact_date ON crypto_econ_events(impact, datetime_utc);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2676,6 +2699,78 @@ def count_user_news_alert_rules(user_id: str) -> int:
             (user_id,),
         ).fetchone()
     return int(row["n"]) if row else 0
+
+
+# ── Economic events calendar ────────────────────────────────────────────────
+
+def upsert_econ_events(rows: list[tuple]) -> dict:
+    """Insert events. rows: (source, external_id, name, country, datetime_utc,
+    impact, category, crypto_impact). Returns {new: N}."""
+    if not rows:
+        return {"new": 0}
+    new_n = 0
+    with _conn() as c:
+        for r in rows:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO crypto_econ_events
+                     (source, external_id, name, country, datetime_utc,
+                      impact, category, crypto_impact)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                r,
+            )
+            if cur.rowcount > 0:
+                new_n += 1
+    return {"new": new_n}
+
+
+def list_econ_events(since: str, until: str, impact_in: list[str],
+                     category: str | None = None) -> list[Row]:
+    if not impact_in:
+        impact_in = ["low", "medium", "high"]
+    placeholders = ",".join("?" * len(impact_in))
+    sql = (f"SELECT * FROM crypto_econ_events "
+           f"WHERE datetime_utc >= ? AND datetime_utc <= ? "
+           f"AND impact IN ({placeholders})")
+    params: list = [since, until] + list(impact_in)
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    sql += " ORDER BY datetime_utc ASC LIMIT 500"
+    with _conn() as c:
+        rows = c.execute(sql, params).fetchall()
+    return _rows(rows)
+
+
+def get_econ_events_due_for_alert(now_iso: str, cutoff_iso: str) -> list[Row]:
+    """Events between now and cutoff that haven't been alerted yet."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM crypto_econ_events
+               WHERE datetime_utc >= ? AND datetime_utc <= ?
+                 AND alerted_at IS NULL
+               ORDER BY datetime_utc ASC""",
+            (now_iso, cutoff_iso),
+        ).fetchall()
+    return _rows(rows)
+
+
+def mark_econ_event_alerted(event_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE crypto_econ_events SET alerted_at = datetime('now') "
+            "WHERE id = ?",
+            (event_id,),
+        )
+
+
+def get_users_with_push_subscriptions() -> list[str]:
+    """Distinct user_ids that have at least one active push subscription.
+    Used by the econ-event fan-out alerter."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT user_id FROM crypto_push_subscriptions"
+        ).fetchall()
+    return [r["user_id"] for r in rows]
 
 
 # ── Stubs for removed functions (gateway handles auth now) ──────────────────
