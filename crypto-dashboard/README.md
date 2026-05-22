@@ -100,3 +100,65 @@ See `.env.example` for the full list.
 
 - `polymarket-bot/polymarket_bot.py` imports `ml_predictor` from this package — don't move it without updating that import path.
 - Models in `cache/` are HMAC-signed. Set `PICKLE_HMAC_SECRET` consistently across deploys or saved models will be rejected on load.
+
+## Email deliverability (SPF / DKIM / DMARC)
+
+The weekly digest sends from whatever address you configure in `SMTP_USER`.
+Without proper DNS records, those emails land in Gmail / Outlook spam at a
+~60% rate. Three records to add on the sending domain (e.g. `narve.ai`):
+
+### 1. SPF — authorise the sending IPs
+
+```
+narve.ai.  IN  TXT  "v=spf1 include:_spf.example-relay.com ~all"
+```
+
+Replace `_spf.example-relay.com` with your relay's published SPF include.
+Common values:
+- SendGrid: `include:sendgrid.net`
+- Postmark: `include:spf.mtasv.net`
+- Amazon SES: `include:amazonses.com`
+- Self-hosted: replace with `ip4:<your IP>` or `mx`.
+
+The `~all` (soft-fail) is the safe choice — switch to `-all` only after
+verifying inbox delivery for at least a week.
+
+### 2. DKIM — sign each message
+
+DKIM signing happens at the SMTP relay, not in our code. With SendGrid /
+Postmark / SES, you create a sender identity in their dashboard, they
+generate the keypair, and they give you a CNAME / TXT record to publish.
+Typical shape:
+
+```
+s1._domainkey.narve.ai.  IN  CNAME  s1.domainkey.<provider-id>.<provider>.com.
+s2._domainkey.narve.ai.  IN  CNAME  s2.domainkey.<provider-id>.<provider>.com.
+```
+
+After publishing the records, mark the sender as "verified" in the relay's
+dashboard. The relay starts signing outbound mail with the matching
+private key.
+
+### 3. DMARC — tell receivers what to do with failures
+
+```
+_dmarc.narve.ai.  IN  TXT  "v=DMARC1; p=quarantine; rua=mailto:dmarc@narve.ai; ruf=mailto:dmarc@narve.ai; pct=100; aspf=s; adkim=s"
+```
+
+`p=quarantine` (soft-fail) is the right starting policy. After 30 days of
+clean reports — meaning your legitimate mail passes both SPF and DKIM —
+upgrade to `p=reject`. The `rua` address receives daily aggregate
+reports; `ruf` receives forensic reports.
+
+### Verifying
+
+After publishing all three records:
+
+```bash
+dig +short txt narve.ai
+dig +short txt _dmarc.narve.ai
+dig +short cname s1._domainkey.narve.ai
+```
+
+And test deliverability via [mail-tester.com](https://www.mail-tester.com) —
+score should be 9.5+ before you launch.

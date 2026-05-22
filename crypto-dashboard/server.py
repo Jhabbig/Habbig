@@ -6292,6 +6292,233 @@ async def pricing_page(request: Request):
     return HTMLResponse(_pricing_html(tier, billing_mod.billing_configured(), badge))
 
 
+# ── Legal pages ─────────────────────────────────────────────────────────────
+# These are boilerplate skeletons — the legal team should review + update
+# before going live. The content here covers the standard ground: what we do,
+# what data we collect, how it's used, retention, user rights, no investment
+# advice disclaimer, dispute resolution.
+
+_LEGAL_CSS = """
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0d12;color:#e6edf5;line-height:1.6}
+.wrap{max-width:760px;margin:0 auto;padding:40px 24px}
+h1{font-size:1.8em;margin:0 0 6px}
+h2{font-size:1.2em;margin:28px 0 8px;color:#3b82f6}
+h3{font-size:1em;margin:16px 0 4px;color:#7d8a99}
+p,li{color:#cdd5e0}
+.sub{color:#7d8a99;margin-bottom:24px}
+a{color:#3b82f6;text-decoration:none}
+a:hover{text-decoration:underline}
+ul{padding-left:20px}
+.note{background:#131820;border:1px solid #222a36;border-radius:8px;padding:14px;margin:16px 0;color:#cdd5e0}
+.muted{color:#7d8a99;font-size:.85em}
+"""
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page(request: Request):
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms of Service — CryptoEdge</title><style>{_LEGAL_CSS}</style>
+</head><body><div class="wrap">
+<div class="sub"><a href="/long-term">← CryptoEdge</a></div>
+<h1>Terms of Service</h1>
+<div class="sub">Last updated: {datetime.now(timezone.utc).date().isoformat()}</div>
+
+<div class="note">
+<b>Plain-English summary</b>: CryptoEdge is software for tracking and
+analysing your crypto holdings. It is not a custodian, broker-dealer,
+investment adviser, or money transmitter. All trading happens on your own
+exchange accounts via the API keys you provide. Nothing in the product is
+investment advice. Past performance never predicts future returns.
+</div>
+
+<h2>1. What CryptoEdge is</h2>
+<p>CryptoEdge (the "Service") is a software tool that helps you track,
+analyse, and optionally automate decisions about cryptocurrency holdings.
+It connects to exchanges (Coinbase, Kraken) using API keys you supply, and
+to public data providers. We never take custody of your funds.</p>
+
+<h2>2. Who we are</h2>
+<p>The Service is operated by [LEGAL ENTITY] ("we", "us", "Narve"). For
+questions: <a href="mailto:legal@narve.ai">legal@narve.ai</a>.</p>
+
+<h2>3. Accounts</h2>
+<p>You must be at least 18 years old and legally permitted to use
+cryptocurrency services in your jurisdiction. You are responsible for the
+security of your account and the API keys you authorize. We recommend keys
+with view-and-trade permissions only — <b>never enable withdraw</b>.</p>
+
+<h2>4. No investment advice</h2>
+<p>Every signal, indicator, recommendation, backtest, and strategy in the
+Service is for informational purposes only. We do not provide investment,
+tax, or legal advice. Backtest results are historical simulations and do
+not guarantee future performance. Cycle indicators and on-chain metrics
+are heuristics, not predictions.</p>
+
+<h2>5. Automated execution</h2>
+<p>If you enable live execution by disabling dry-run mode, the Service
+will place orders on the exchange API key(s) you provide, subject to the
+safety limits you configure (max-order, max-daily, circuit breaker).
+<b>You are solely responsible for trades placed via the Service.</b> We
+recommend running in dry-run mode for at least 30 days before enabling
+real orders.</p>
+
+<h2>6. Subscription billing</h2>
+<p>Paid tiers (Pro, Wealth) are billed monthly via Stripe. You may cancel
+at any time via the Customer Portal. Cancellations take effect at the end
+of the current billing period; we do not pro-rate refunds for partial
+months unless required by applicable law.</p>
+
+<h2>7. Service availability</h2>
+<p>The Service is provided "as is" without warranty of any kind. We do
+not guarantee uninterrupted access, accuracy of data, timely delivery of
+notifications, or successful execution of orders. Markets move during
+outages; we are not liable for losses arising from Service downtime or
+data delays.</p>
+
+<h2>8. Limitation of liability</h2>
+<p>To the maximum extent permitted by law, our total aggregate liability
+for any claim arising from your use of the Service is limited to the
+greater of (a) the fees you paid us in the 12 months preceding the claim,
+or (b) USD $100. We are not liable for indirect, consequential, or
+incidental damages, including lost profits.</p>
+
+<h2>9. Termination</h2>
+<p>You may delete your account at any time. We may suspend or terminate
+your access for material breach of these Terms or for activity that risks
+the Service or its users. On termination, exchange credentials and
+personal data are deleted within 30 days, subject to legal retention
+requirements.</p>
+
+<h2>10. Changes to these Terms</h2>
+<p>We may update these Terms; material changes will be announced via email
+or in-app notification at least 14 days before they take effect.</p>
+
+<h2>11. Governing law</h2>
+<p>These Terms are governed by the laws of [JURISDICTION], without regard
+to conflict-of-laws principles. Disputes will be resolved in the courts of
+[JURISDICTION].</p>
+
+<p class="muted">This is a skeleton intended for a legal-team review
+before launch. The placeholder fields ([LEGAL ENTITY], [JURISDICTION])
+must be filled in.</p>
+</div></body></html>""")
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page(request: Request):
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — CryptoEdge</title><style>{_LEGAL_CSS}</style>
+</head><body><div class="wrap">
+<div class="sub"><a href="/long-term">← CryptoEdge</a></div>
+<h1>Privacy Policy</h1>
+<div class="sub">Last updated: {datetime.now(timezone.utc).date().isoformat()}</div>
+
+<div class="note">
+<b>Plain-English summary</b>: We collect what we need to run the product
+— your account email, the API keys you give us (encrypted), what
+strategies you've configured, what trades the executor placed. We do not
+sell data. We do not use third-party analytics inside the dashboard. If
+you delete your account, we delete your data.
+</div>
+
+<h2>1. What we collect</h2>
+<h3>Account data</h3>
+<p>Email address, hashed password (or OAuth identity provider linkage),
+sign-up timestamp, IP address of recent sessions, browser user-agent.</p>
+
+<h3>Configuration data</h3>
+<p>Tax jurisdiction, lot-method preference, target portfolio weights, DCA
+schedule, strategy subscriptions, alert rules, notification
+preferences.</p>
+
+<h3>Exchange credentials</h3>
+<p>API keys + secrets you enter are encrypted at rest using a Fernet key
+held only on our server. We <b>never</b> log decrypted credentials.</p>
+
+<h3>Trading + tax data</h3>
+<p>Every order placed by the executor (whether dry-run or live), every
+disposition you record manually, and the lot-consumption breakdown of
+each disposition. This is the data Form 8949 export reads from.</p>
+
+<h3>Browser data</h3>
+<p>The dashboard sets a session cookie (gateway-managed), a long-lived
+anonymous ID cookie used only for referral attribution
+(<code>narve_aid</code>, 90-day max age), and (optionally) push
+notification subscription endpoints + keys.</p>
+
+<h2>2. What we don't collect</h2>
+<ul>
+<li>Third-party analytics inside the dashboard. No Google Analytics, no
+    Segment, no Mixpanel.</li>
+<li>Your wallet seeds or private keys. We never see them.</li>
+<li>Personal information beyond what's required for the account
+    (no SSN, no national ID, no government documents).</li>
+</ul>
+
+<h2>3. How we use it</h2>
+<ul>
+<li>To run the Service — execute your DCA schedule, generate your
+    portfolio + tax + indicator views, send your alerts.</li>
+<li>To bill you (via Stripe — see their privacy policy at
+    <a href="https://stripe.com/privacy">stripe.com/privacy</a>).</li>
+<li>To send the weekly digest if you opted in.</li>
+<li>To respond to support requests.</li>
+</ul>
+
+<h2>4. Who else sees it</h2>
+<ul>
+<li><b>Stripe</b> handles payment processing — they see your email, IP,
+    card details (we never do).</li>
+<li><b>Your exchanges</b> (Coinbase / Kraken) see orders we place on
+    your behalf via your own API keys.</li>
+<li><b>Email provider</b> (SMTP relay) — sees the digest emails we send
+    to your address.</li>
+<li><b>Push notification services</b> (FCM / Apple Push) — sees the
+    fact that you have notifications enabled, but the payloads we send
+    are content-free (the service worker fetches the actual notification
+    text from us).</li>
+<li>That's it. We don't sell, share, or rent data to anyone else.</li>
+</ul>
+
+<h2>5. How long we keep it</h2>
+<p>While your account is active, we retain everything needed to render
+your history. After account deletion: exchange credentials wiped within
+24 hours; personal data within 30 days; aggregate non-identifying records
+(strategy backtests, market data) may persist as anonymised analytics.</p>
+
+<h2>6. Your rights</h2>
+<p>Wherever you are: you can export your data, request its deletion, or
+correct it. Email <a href="mailto:privacy@narve.ai">privacy@narve.ai</a>.
+EU / UK (GDPR) and California (CCPA / CPRA) users have additional
+statutory rights including the right to lodge complaints with a
+supervisory authority.</p>
+
+<h2>7. Security</h2>
+<p>Credentials encrypted at rest (Fernet/AES-128). Webhook signatures
+verified (Stripe HMAC-SHA256). User-input sanitised against XSS + CSV
+injection at write time + render time. Cross-asset and exchange API keys
+require explicit user opt-out of dry-run to actually trade. Push
+notifications are payload-less (the content is fetched by the service
+worker after the push arrives, so it doesn't sit in any
+intermediate cache).</p>
+
+<h2>8. Cookies + similar</h2>
+<p>The Service uses the minimum cookies required to operate: an HTTP-only
+session cookie set by our auth gateway, an anonymous ID cookie for
+referral attribution, and (optionally) browser-storage entries for the
+PWA service worker. We do not use third-party tracking cookies.</p>
+
+<h2>9. Changes</h2>
+<p>We may update this policy; material changes will be announced in-app
+at least 14 days before they take effect.</p>
+
+<p class="muted">This is a skeleton intended for a legal-team review
+before launch.</p>
+</div></body></html>""")
+
+
 def _pricing_html(current_tier: str, billing_on: bool, badge_html: str) -> str:
     pro_btn = ('<button id="buy-pro">Upgrade to Pro</button>' if billing_on
                else '<button disabled title="Billing not configured">Pro</button>')
@@ -6365,6 +6592,10 @@ a{color:#3b82f6}
 
 <div style="margin-top:30px;text-align:center;color:#7d8a99;font-size:.9em">
   <a href="#" id="portal-btn">Manage existing subscription →</a>
+</div>
+<div style="margin-top:18px;text-align:center;color:#7d8a99;font-size:.8em">
+  <a href="/terms" style="color:#7d8a99">Terms</a> ·
+  <a href="/privacy" style="color:#7d8a99">Privacy</a>
 </div>
 
 <script>
@@ -7131,19 +7362,36 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 @supports (padding-bottom: env(safe-area-inset-bottom)){
   body{padding-bottom: env(safe-area-inset-bottom)}
 }
-.locked{position:relative}
-.locked button, .locked input, .locked select, .locked textarea{
-  pointer-events:none;opacity:.55;filter:grayscale(.5);
+/* Locked sections — wrap form/grid elements with a subtle overlay that
+   makes them look gated but not broken. Click-through is intercepted at
+   the JS level and redirected to the upgrade modal. */
+.locked{position:relative;border-radius:8px;overflow:hidden;cursor:pointer}
+.locked > *:not(.lock-overlay){opacity:.45;filter:grayscale(.5);pointer-events:none;transition:opacity .15s}
+.locked:hover > *:not(.lock-overlay){opacity:.35}
+.locked .lock-overlay{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;
+  background:linear-gradient(180deg,rgba(10,13,18,0) 0%,rgba(10,13,18,.6) 100%);
+  pointer-events:none;opacity:0;transition:opacity .15s;
 }
+.locked:hover .lock-overlay{opacity:1}
+.lock-overlay .lock-cta{
+  display:inline-flex;align-items:center;gap:6px;
+  background:#3b82f6;color:#fff;padding:6px 14px;
+  border-radius:6px;font-size:.85em;font-weight:600;
+  box-shadow:0 4px 12px rgba(59,130,246,.4);
+}
+/* Always-visible tier pill so users know what's gated even without hovering */
 .lock-badge{
   display:inline-flex;align-items:center;gap:4px;
-  background:rgba(59,130,246,.18);color:#3b82f6;
+  background:rgba(59,130,246,.15);color:#3b82f6;
   padding:2px 8px;border-radius:10px;font-size:.7em;
   font-weight:600;letter-spacing:.3px;text-transform:uppercase;
   margin-left:8px;cursor:pointer;border:1px solid rgba(59,130,246,.3);
+  transition:background .15s, transform .15s;
 }
-.lock-badge:hover{background:rgba(59,130,246,.28)}
-.lock-badge svg{width:10px;height:10px}
+.lock-badge:hover{background:rgba(59,130,246,.3);transform:scale(1.04)}
+.lock-badge svg{width:9px;height:9px}
 .tier-pill{display:inline-block;padding:2px 8px;border-radius:10px;
   font-size:.7em;font-weight:600;text-transform:uppercase;letter-spacing:.3px;
   margin-left:6px}
@@ -9389,21 +9637,35 @@ function decorateLocks(){
     const allowed = TIER_FEATURES[feat];
     if (allowed) {
       el.classList.remove('locked');
+      const ov = el.querySelector(':scope > .lock-overlay');
+      if (ov) ov.remove();
       // Hide tier pills inside this element since user already has access.
       el.querySelectorAll('.tier-pill').forEach(p => p.style.display = 'none');
       return;
     }
-    if (!el.classList.contains('locked')) {
-      el.classList.add('locked');
-      // Intercept clicks on the locked region to show the upgrade modal.
-      el.addEventListener('click', (ev) => {
-        if (el.classList.contains('locked')) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          showUpgradeModal(feat);
-        }
-      }, true);  // capture phase: runs before bubbling
-    }
+    if (el.classList.contains('locked')) return;  // already decorated
+    el.classList.add('locked');
+    const tierLabel = FEATURE_TIER[feat] || 'Pro';
+    // Inject hover overlay with a small lock icon + upgrade CTA.
+    const overlay = document.createElement('div');
+    overlay.className = 'lock-overlay';
+    overlay.innerHTML = `
+      <div class="lock-cta">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        Upgrade to ${tierLabel}
+      </div>`;
+    el.appendChild(overlay);
+    // Intercept clicks on the locked region.
+    el.addEventListener('click', (ev) => {
+      if (el.classList.contains('locked')) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showUpgradeModal(feat);
+      }
+    }, true);
   });
 }
 
