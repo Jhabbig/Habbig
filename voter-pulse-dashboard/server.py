@@ -23,6 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from analysis import alerts as alerts_analysis
 from analysis import clark_fisher as world_analysis
 from analysis import elections as election_analysis
 from analysis import eras as era_analysis
@@ -32,7 +33,7 @@ from analysis import regional_mood as regional_mood_analysis
 from analysis import release_feed as release_feed_analysis
 from analysis import shareable
 from analysis import state_mood as state_mood_analysis
-from ingestion import fred_client, polls_client, polymarket_client, regional_cpi_client, states_client, worldbank_client
+from ingestion import fred_client, polls_client, polymarket_client, regional_cpi_client, states_client, subscribers, worldbank_client
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -57,8 +58,10 @@ if not _sso_secret and not _DEV_MODE:
 
 # Paths that bypass the gateway-SSO middleware. /share/* is intentionally
 # public so anyone can unfurl a card on Twitter / Slack / etc; /healthz
-# stays public so the container healthcheck can hit it.
-PUBLIC_PATHS = {"/healthz"}
+# stays public so the container healthcheck can hit it. Email signup +
+# unsubscribe are also public — lead-gen surfaces only work if anonymous
+# visitors can submit them.
+PUBLIC_PATHS = {"/healthz", "/api/subscribe", "/subscribe", "/unsubscribe"}
 PUBLIC_PREFIXES = ("/share/",)
 
 
@@ -367,6 +370,76 @@ async def share_country(iso3: str, request: Request) -> HTMLResponse:
 @app.get("/healthz")
 async def healthz() -> dict:
     return {"ok": True}
+
+
+# ── Email subscriptions (public; bypass SSO) ─────────────────────────────────
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "expected JSON body"}, status_code=400)
+    email = (body.get("email") or "").strip()
+    if not subscribers.is_valid_email(email):
+        return JSONResponse({"error": "invalid email"}, status_code=400)
+    result = subscribers.subscribe(email)
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+    return JSONResponse(result)
+
+
+@app.get("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe(request: Request, email: str = "", token: str = "") -> HTMLResponse:
+    email = (email or "").strip().lower()
+    valid = subscribers.is_valid_email(email) and subscribers.verify_token(email, token)
+    if not valid:
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'><title>Unsubscribe</title>"
+            "<body style='font:14px/1.5 sans-serif;background:#0e1117;color:#e6edf3;"
+            "text-align:center;padding:64px;'>"
+            "<h1>Link expired or invalid.</h1>"
+            "<p style='color:#8b949e'>If you were trying to unsubscribe, please "
+            "reply to the last alert email and we'll remove you manually.</p>"
+            "</body>",
+            status_code=400,
+        )
+    result = subscribers.unsubscribe(email)
+    return HTMLResponse(
+        "<!doctype html><meta charset='utf-8'><title>Unsubscribed</title>"
+        "<body style='font:14px/1.5 sans-serif;background:#0e1117;color:#e6edf3;"
+        "text-align:center;padding:64px;'>"
+        f"<h1>You're unsubscribed.</h1><p style='color:#8b949e'>{email}</p>"
+        "<p><a href='/' style='color:#ec4899;'>Back to the dashboard →</a></p>"
+        "</body>"
+    )
+
+
+# ── Admin: alert dispatch (authed; triggered by gateway cron) ────────────────
+
+
+@app.post("/admin/check-and-send")
+async def admin_check_and_send(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=False)
+    composed = mood_index.compose(life["series"])
+    composed["label"] = mood_index.label_for(composed["overall"])
+    polls = polls_client.get_cached(force=False)
+    backtest = _backtest_payload(force=False)
+    narrative = narrative_analysis.generate(composed, life, polls, backtest, force=False)
+    summary = alerts_analysis.check_and_send(
+        current_mood=composed.get("overall"),
+        narrative_text=(narrative or {}).get("narrative"),
+        force=force,
+    )
+    return JSONResponse(summary)
+
+
+@app.get("/admin/subscriber-count")
+async def admin_subscriber_count() -> JSONResponse:
+    return JSONResponse({"count": subscribers.count_active()})
 
 
 if __name__ == "__main__":

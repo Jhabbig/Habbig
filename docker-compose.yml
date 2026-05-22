@@ -157,6 +157,8 @@ services:
     expose:
       - "7062"
     env_file: ./gateway/.env.production
+    volumes:
+      - voter-pulse-data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7062/healthz',timeout=4).status==200 else 1)"]
@@ -167,3 +169,4 @@ services:
 volumes:
   gateway-data:
   crypto-data:
+  voter-pulse-data:

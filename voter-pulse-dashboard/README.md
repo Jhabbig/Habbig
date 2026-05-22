@@ -60,6 +60,14 @@ to capture the "fear gap" that often drives sentiment.
 The misery index (UNRATE + CPI YoY) is shown as a footnote — the single
 backwards-looking number that tracks "how it feels" most reliably.
 
+A **Get-the-alert** panel takes an email address and signs the reader up
+for mood-move alerts. SQLite-backed (single file on the
+`voter-pulse-data` docker volume), HMAC-signed unsubscribe URLs,
+rate-limited to one email per subscriber every 6 hours, no tracking.
+SMTP credentials come from the gateway env; without them the alert
+pipeline silently runs in dry-run mode and just logs what it would have
+sent. Wire `POST /admin/check-and-send` to a cron to fire alerts.
+
 A **"By region" panel** breaks the national mood into Northeast,
 Midwest, South, and West — same formula, regional CPI + the average
 state unemployment for states in that region. Each card surfaces the
@@ -150,6 +158,10 @@ DEV_MODE=1 python3 server.py
 - `GET /api/backtest` — election backtest (history, per-election calls, per-horizon accuracy + correlation)
 - `GET /api/states` — state-level unemployment, mood proxy, tile layout, rankings
 - `GET /api/regions` — per-Census-region mood (Northeast/Midwest/South/West) using regional CPI + region's average state unemployment
+- `POST /api/subscribe` — public, email-only signup for mood-move alerts (`{"email": "..."}`)
+- `GET /unsubscribe?email=...&token=...` — public, HMAC-signed unsubscribe URL
+- `POST /admin/check-and-send?force=...` — authed; fires alert emails if the mood moved more than the threshold since last send
+- `GET /admin/subscriber-count` — authed; current active-subscriber count
 - `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
 - `GET /api/country/{iso3}` — full per-country profile: latest inflation, unemployment, GDP growth, life expectancy, population + annual sector trajectory on the Clark–Fisher arc
 - `GET /api/narrative` — 3-sentence AI summary of the current snapshot

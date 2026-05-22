@@ -178,6 +178,26 @@
   table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
   table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
 
+  /* ── Subscribe form ──────────────────────────────────────────────────── */
+  .subscribe {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .subscribe input[type="email"] {
+    flex: 1; min-width: 220px; padding: 10px 14px;
+    background: var(--panel-2); color: var(--fg); border: 1px solid var(--grid);
+    border-radius: 6px; font: inherit;
+  }
+  .subscribe input[type="email"]:focus { outline: none; border-color: var(--accent); }
+  .subscribe button {
+    padding: 10px 18px; background: var(--accent); color: #fff; border: 0;
+    border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .subscribe button:hover { filter: brightness(1.1); }
+  .subscribe button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .subscribe-msg { font-size: 12px; color: var(--muted); }
+  .subscribe-msg.ok { color: var(--good); }
+  .subscribe-msg.err { color: var(--bad); }
+
   /* ── Region cards ────────────────────────────────────────────────────── */
   .region-grid {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
@@ -630,6 +650,17 @@
     <svg class="bt-chart" id="btChart" viewBox="0 0 600 200" preserveAspectRatio="none"></svg>
     <div class="era-wrap"><table class="bt" id="btTable"><tbody><tr><td>loading…</td></tr></tbody></table></div>
     <p class="footnote">2000 and 2016 marked with <span class="star">*</span>: incumbent party won the popular vote but lost the electoral college. We score against the EC outcome.</p>
+  </section>
+
+  <!-- SUBSCRIBE -->
+  <section class="panel">
+    <h2>Get the alert</h2>
+    <p class="desc">Drop your email and we'll write when the mood index moves by more than 5 points. No marketing, no daily noise — only when something actually happens. One-click unsubscribe in every email.</p>
+    <form class="subscribe" id="subscribeForm" autocomplete="off">
+      <input type="email" id="subscribeEmail" placeholder="you@example.com" required>
+      <button type="submit" id="subscribeBtn">Subscribe</button>
+      <span class="subscribe-msg" id="subscribeMsg"></span>
+    </form>
   </section>
 
   <!-- POLITICS / MARKETS -->
@@ -1586,6 +1617,51 @@ async function load() {
 }
 load();
 setInterval(load, 5 * 60 * 1000);
+
+// Subscribe form
+(function() {
+  const f   = document.getElementById("subscribeForm");
+  const e   = document.getElementById("subscribeEmail");
+  const b   = document.getElementById("subscribeBtn");
+  const msg = document.getElementById("subscribeMsg");
+  if (!f) return;
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const email = (e.value || "").trim();
+    msg.className = "subscribe-msg";
+    msg.textContent = "";
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      msg.classList.add("err");
+      msg.textContent = "Please enter a valid email.";
+      return;
+    }
+    b.disabled = true; b.textContent = "Subscribing…";
+    try {
+      const r = await fetch("/api/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ email }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.ok) {
+        msg.classList.add("ok");
+        msg.textContent = data.newly_subscribed
+          ? "You're in. Watch your inbox for the next big move."
+          : "Welcome back — you're re-subscribed.";
+        e.value = "";
+      } else {
+        msg.classList.add("err");
+        msg.textContent = data.error || "Subscription failed. Try again.";
+      }
+    } catch (err) {
+      msg.classList.add("err");
+      msg.textContent = "Network error. Try again.";
+    } finally {
+      b.disabled = false; b.textContent = "Subscribe";
+    }
+  });
+})();
 </script>
 </body>
 </html>

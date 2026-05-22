@@ -319,6 +319,31 @@
     tweet doesn't repeatedly hammer the renderer.
   </p>
 
+  <h2>Mood-move email alerts</h2>
+  <p>
+    Subscribe by email and we'll write you when the live mood index moves
+    more than 5 points (configurable via <code>ALERT_THRESHOLD_POINTS</code>)
+    since the last alert we sent you. Rate-limited to one email every
+    6 hours per server (<code>ALERT_MIN_INTERVAL_SECONDS</code>) so a
+    volatile fetch sequence can't spam subscribers.
+  </p>
+  <p>
+    Storage is a small SQLite file at <code>/app/data/voter_pulse.db</code>
+    (mounted as the <code>voter-pulse-data</code> docker volume).
+    Unsubscribe URLs carry a HMAC-SHA256 token derived from
+    <code>ALERT_SIGNING_SECRET</code> + the email address so they
+    can't be forged. SMTP credentials are inherited from the gateway env
+    (<code>SMTP_HOST</code> / <code>SMTP_USER</code> / <code>SMTP_PASS</code>);
+    without them the alert pipeline silently runs in dry-run mode and
+    just logs what it would have sent. Trigger the check externally via
+    <code>POST /admin/check-and-send</code> (typically wired to a cron).
+  </p>
+  <p class="note">
+    We deliberately don't store anything except the email address, the
+    timestamp of subscription, and an unsubscribed flag. No tracking,
+    no opens, no click-through.
+  </p>
+
   <h2>What this dashboard is not</h2>
   <ul>
     <li>It is not a forecasting model. Sub-score band cutoffs were chosen
