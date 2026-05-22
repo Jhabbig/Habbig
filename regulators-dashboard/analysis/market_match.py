@@ -44,10 +44,16 @@ ANCHOR_TOKENS: set[str] = {
     "esma", "eba", "eiopa", "ecb",
     # Continental EU
     "bafin", "finma", "amf", "consob",
+    "cnmv", "afm", "dnb", "fi-se", "ftno", "knf", "cssf", "fsma-be", "oenb",
     # APAC
     "mas", "hkma", "sfc", "asic", "rba", "sebi", "rbi", "jfsa", "fsc",
+    "fsc-kr", "fsc-tw", "sec-th", "bnm",
+    # MENA & Africa
+    "cma-sa", "sca-ae", "dfsa", "isa-il", "fsca",
+    # International / supranational
+    "fatf", "bis", "iosco", "fsb",
     # Americas (non-US)
-    "osc", "cvm",
+    "osc", "cvm", "cnbv", "cmf-cl", "sfc-co",
     # ── Topics ─────────────────────────────────────────────────────────────
     "etf", "etfs", "stablecoin", "stablecoins",
     "bitcoin", "ethereum", "btc", "eth", "solana", "sol", "xrp",
@@ -71,6 +77,8 @@ ANCHOR_TOKENS: set[str] = {
     "lagarde", "schnabel", "panetta", "knot", "ueda",
     # BoE
     "bailey",
+    # New v2.1 personnel anchors
+    "knot", "kamlana", "barr", "marx",
 }
 
 STOPWORDS: set[str] = {

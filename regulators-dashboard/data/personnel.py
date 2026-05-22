@@ -219,4 +219,103 @@ PEOPLE: list[dict] = [
         "source_url": "https://www.boj.or.jp/en/about/organization/policyboard/gv_ueda.htm",
         "notes":      "Appointed April 2023.",
     },
+
+    # ── ES: CNMV ───────────────────────────────────────────────────────────
+    {
+        "regulator":  "CNMV",
+        "role":       "Chair",
+        "name":       "Carlos San Basilio",
+        "term_end":   "",
+        "term_type":  "Chair appointment",
+        "source_url": "https://www.cnmv.es/portal/CNMV/Composicion.aspx?lang=en",
+        "notes":      "Appointed January 2025. Verify dates against the source page.",
+    },
+
+    # ── NL: AFM ────────────────────────────────────────────────────────────
+    {
+        "regulator":  "AFM",
+        "role":       "Chair",
+        "name":       "Laura van Geest",
+        "term_end":   "2026-02-01",
+        "term_type":  "Five-year term end",
+        "source_url": "https://www.afm.nl/en/over-afm/organisatie/bestuur",
+        "notes":      "Appointed February 2021 for a five-year term.",
+    },
+
+    # ── SE: FI ─────────────────────────────────────────────────────────────
+    {
+        "regulator":  "FI-SE",
+        "role":       "Director General",
+        "name":       "Daniel Barr",
+        "term_end":   "",
+        "term_type":  "Director General",
+        "source_url": "https://www.fi.se/en/about-fi/our-organisation/management/",
+        "notes":      "Appointed November 2023. Term length varies by Swedish govt appointment.",
+    },
+
+    # ── LU: CSSF ───────────────────────────────────────────────────────────
+    {
+        "regulator":  "CSSF",
+        "role":       "Director General",
+        "name":       "Claude Marx",
+        "term_end":   "",
+        "term_type":  "Director General",
+        "source_url": "https://www.cssf.lu/en/who-we-are/board-of-directors/",
+        "notes":      "Renewed February 2021 for a five-year term.",
+    },
+
+    # ── KR: FSC ────────────────────────────────────────────────────────────
+    {
+        "regulator":  "FSC-KR",
+        "role":       "Chairperson",
+        "name":       "Kim Byoung-hwan",
+        "term_end":   "",
+        "term_type":  "Govt appointment",
+        "source_url": "https://www.fsc.go.kr/eng/index",
+        "notes":      "Appointed August 2024. Verify against the source page.",
+    },
+
+    # ── SA: CMA ────────────────────────────────────────────────────────────
+    {
+        "regulator":  "CMA-SA",
+        "role":       "Chairman",
+        "name":       "Mohammed Al-Quwaiz",
+        "term_end":   "",
+        "term_type":  "Chair appointment",
+        "source_url": "https://cma.org.sa/en/Pages/default.aspx",
+        "notes":      "Appointed by Royal Decree. Verify current standing on CMA homepage.",
+    },
+
+    # ── ZA: FSCA ───────────────────────────────────────────────────────────
+    {
+        "regulator":  "FSCA",
+        "role":       "Commissioner",
+        "name":       "Unathi Kamlana",
+        "term_end":   "2026-06-01",
+        "term_type":  "Five-year term end",
+        "source_url": "https://www.fsca.co.za/Pages/Executive.aspx",
+        "notes":      "Appointed June 2021 for a five-year term.",
+    },
+
+    # ── MX: CNBV ───────────────────────────────────────────────────────────
+    {
+        "regulator":  "CNBV",
+        "role":       "President",
+        "name":       "Jesús de la Fuente Rodríguez",
+        "term_end":   "",
+        "term_type":  "Presidential appointment",
+        "source_url": "https://www.gob.mx/cnbv/estructura/jesus-de-la-fuente-rodriguez",
+        "notes":      "Appointed January 2023. Verify against source.",
+    },
+
+    # ── International: FSB ─────────────────────────────────────────────────
+    {
+        "regulator":  "FSB",
+        "role":       "Chair",
+        "name":       "Klaas Knot",
+        "term_end":   "2025-12-31",
+        "term_type":  "Term end",
+        "source_url": "https://www.fsb.org/about/leadership/",
+        "notes":      "Chairmanship rotates; verify successor against FSB site.",
+    },
 ]

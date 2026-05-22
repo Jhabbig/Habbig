@@ -205,10 +205,13 @@ async def api_feed(
 
 
 @app.get("/api/heatmap")
-async def api_heatmap(weeks: int = 12, force: bool = False) -> JSONResponse:
+async def api_heatmap(weeks: int = 12, show_empty: bool = False, force: bool = False) -> JSONResponse:
     weeks = max(4, min(weeks, 52))
     data = unified_feed.get_cached(force=force, since_days=max(90, weeks * 7))
-    return JSONResponse(heatmap_aggr.aggregate(data["items"], data["sources"], weeks=weeks))
+    return JSONResponse(heatmap_aggr.aggregate(
+        data["items"], data["sources"],
+        weeks=weeks, hide_empty=not show_empty,
+    ))
 
 
 @app.get("/api/markets")

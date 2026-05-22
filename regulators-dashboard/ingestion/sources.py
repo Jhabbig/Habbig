@@ -218,6 +218,175 @@ SOURCES: list[RssSource] = [
         jurisdiction="BR",
         rss_url="https://www.gov.br/cvm/pt-br/rss/noticias.xml",
     ),
+    RssSource(
+        code="CNBV",
+        name="Comisión Nacional Bancaria y de Valores (MX)",
+        jurisdiction="MX",
+        rss_url="https://www.gob.mx/cnbv/rss",
+    ),
+    RssSource(
+        code="CMF-CL",
+        name="Comisión para el Mercado Financiero (CL)",
+        jurisdiction="CL",
+        rss_url="https://www.cmfchile.cl/rss/feed-novedades.xml",
+    ),
+    RssSource(
+        code="SFC-CO",
+        name="Superintendencia Financiera de Colombia",
+        jurisdiction="CO",
+        rss_url="https://www.superfinanciera.gov.co/jsp/loader.jsf?lServicio=Publicaciones&lFuncion=loadContenidoRSS",
+    ),
+
+    # ── More Europe (national) ─────────────────────────────────────────────
+    RssSource(
+        code="CNMV",
+        name="Comisión Nacional del Mercado de Valores (ES)",
+        jurisdiction="ES",
+        rss_url="https://www.cnmv.es/portal/rss/UltimasNoticiasEn.aspx",
+    ),
+    RssSource(
+        code="AFM",
+        name="Autoriteit Financiële Markten (NL)",
+        jurisdiction="NL",
+        rss_url="https://www.afm.nl/en/over-afm/nieuws/rss",
+    ),
+    RssSource(
+        code="DNB",
+        name="De Nederlandsche Bank (NL)",
+        jurisdiction="NL",
+        rss_url="https://www.dnb.nl/en/general-news/news/rss/",
+    ),
+    RssSource(
+        code="FI-SE",
+        name="Finansinspektionen (SE)",
+        jurisdiction="SE",
+        rss_url="https://www.fi.se/en/rss/all-news/",
+    ),
+    RssSource(
+        code="FTNO",
+        name="Finanstilsynet (NO)",
+        jurisdiction="NO",
+        rss_url="https://www.finanstilsynet.no/en/rss/news/",
+    ),
+    RssSource(
+        code="KNF",
+        name="Komisja Nadzoru Finansowego (PL)",
+        jurisdiction="PL",
+        rss_url="https://www.knf.gov.pl/feed/Komunikaty.xml",
+    ),
+    RssSource(
+        code="CSSF",
+        name="Commission de Surveillance du Secteur Financier (LU)",
+        jurisdiction="LU",
+        rss_url="https://www.cssf.lu/en/news/feed/",
+    ),
+    RssSource(
+        code="FSMA-BE",
+        name="Financial Services and Markets Authority (BE)",
+        jurisdiction="BE",
+        rss_url="https://www.fsma.be/en/rss.xml",
+    ),
+    RssSource(
+        code="OENB",
+        name="Oesterreichische Nationalbank (AT)",
+        jurisdiction="AT",
+        rss_url="https://www.oenb.at/en/rss/news.xml",
+    ),
+
+    # ── More APAC ──────────────────────────────────────────────────────────
+    RssSource(
+        code="FSC-KR",
+        name="Financial Services Commission (KR)",
+        jurisdiction="KR",
+        rss_url="https://www.fsc.go.kr/eng/rss/pr010101.xml",
+    ),
+    RssSource(
+        code="FSC-TW",
+        name="Financial Supervisory Commission (TW)",
+        jurisdiction="TW",
+        rss_url="https://www.fsc.gov.tw/en/rss.xml",
+    ),
+    RssSource(
+        code="SEC-TH",
+        name="Securities and Exchange Commission (TH)",
+        jurisdiction="TH",
+        rss_url="https://www.sec.or.th/EN/Pages/News/RSS.aspx",
+    ),
+    RssSource(
+        code="BNM",
+        name="Bank Negara Malaysia",
+        jurisdiction="MY",
+        rss_url="https://www.bnm.gov.my/web/guest/rss/-/asset_publisher/En4izWLQwR1H/rss",
+    ),
+    RssSource(
+        code="JFSA",
+        name="Financial Services Agency (JP) — news listing",
+        jurisdiction="JP",
+        # JFSA has no public RSS feed as of this writing. The URL below is
+        # the news listing page — RSS parser will fall through to ok=false
+        # until either JFSA publishes a feed or a dedicated HTML scraper
+        # (see deferred roadmap) is written. Leaving the entry so the
+        # source surfaces as known-unavailable rather than silently absent.
+        rss_url="https://www.fsa.go.jp/en/news/index.html",
+    ),
+
+    # ── Middle East & Africa ───────────────────────────────────────────────
+    RssSource(
+        code="CMA-SA",
+        name="Capital Market Authority (SA)",
+        jurisdiction="SA",
+        rss_url="https://cma.org.sa/en/Market/News/Pages/Rss.aspx",
+    ),
+    RssSource(
+        code="SCA-AE",
+        name="Securities and Commodities Authority (AE)",
+        jurisdiction="AE",
+        rss_url="https://www.sca.gov.ae/en/media-center/news/rss.aspx",
+    ),
+    RssSource(
+        code="DFSA",
+        name="Dubai Financial Services Authority",
+        jurisdiction="AE",
+        rss_url="https://www.dfsa.ae/news/rss",
+    ),
+    RssSource(
+        code="ISA-IL",
+        name="Israel Securities Authority",
+        jurisdiction="IL",
+        rss_url="https://www.isa.gov.il/sites/ISAEng/_layouts/15/Lists/Announcements/rss.aspx",
+    ),
+    RssSource(
+        code="FSCA",
+        name="Financial Sector Conduct Authority (ZA)",
+        jurisdiction="ZA",
+        rss_url="https://www.fsca.co.za/News%20Documents/Forms/AllItems.atom",
+    ),
+
+    # ── International / supranational ──────────────────────────────────────
+    RssSource(
+        code="FATF",
+        name="Financial Action Task Force",
+        jurisdiction="INTL",
+        rss_url="https://www.fatf-gafi.org/en/publications/_jcr_content.feed",
+    ),
+    RssSource(
+        code="BIS",
+        name="Bank for International Settlements",
+        jurisdiction="INTL",
+        rss_url="https://www.bis.org/list/press_releases/from_01012020/index.rss",
+    ),
+    RssSource(
+        code="IOSCO",
+        name="International Organization of Securities Commissions",
+        jurisdiction="INTL",
+        rss_url="https://www.iosco.org/news/feed/",
+    ),
+    RssSource(
+        code="FSB",
+        name="Financial Stability Board",
+        jurisdiction="INTL",
+        rss_url="https://www.fsb.org/feed/",
+    ),
 ]
 
 

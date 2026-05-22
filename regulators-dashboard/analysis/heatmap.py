@@ -42,8 +42,14 @@ def _week_start(iso: str) -> str | None:
     return monday.isoformat()
 
 
-def aggregate(items: list[dict], sources_status: list[dict], weeks: int = 12) -> dict:
-    """Build a per-regulator × per-week × per-tag count grid."""
+def aggregate(items: list[dict], sources_status: list[dict],
+              weeks: int = 12, hide_empty: bool = True) -> dict:
+    """Build a per-regulator × per-week × per-tag count grid.
+
+    `hide_empty=True` (default) drops regulators with total=0 across the
+    window — essential once the source list passes ~20 bodies, otherwise
+    the rendered heatmap is mostly blank rows. Pass `hide_empty=False`
+    if a caller wants every registered body in the output."""
     weeks = max(4, min(weeks, 52))
     today = datetime.now(timezone.utc).date()
     this_monday = today - timedelta(days=today.weekday())
@@ -93,7 +99,11 @@ def aggregate(items: list[dict], sources_status: list[dict], weeks: int = 12) ->
 
     return {
         "weeks": week_starts,
-        "regulators": regulators,
+        "regulators": (
+            [r for r in regulators if r["total"] > 0]
+            if hide_empty else regulators
+        ),
+        "total_registered_regulators": len(regulators),
         "global_max": global_max,
         "tags": list(TAG_ORDER),
     }

@@ -30,7 +30,7 @@ per-source status row flips to red; other sources keep working).
 |---|---|---|
 | `GET /` | — | Dashboard UI |
 | `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&topic=&has_market=&q=` | 30 min (feed) + 5 min (markets) | Unified action feed with filters + matched markets |
-| `GET /api/heatmap?weeks=12` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52) |
+| `GET /api/heatmap?weeks=12&show_empty=false` | 30 min (via feed cache) | Per-regulator × per-week × per-tag counts (`weeks` clamped 4..52). `show_empty=true` returns all registered regulators including those with zero activity. |
 | `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
 | `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
 | `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
@@ -515,6 +515,11 @@ real usage shows whether the noise actually hurts. The other panels
 (action feed, personnel, courts) handle the larger source pool fine
 because they're already row-oriented.
 
+**v2.1 addressed this:** `/api/heatmap` now defaults `show_empty=false`
+— regulators with zero items in the window are auto-hidden so the chart
+stays readable at 54 sources. Pass `?show_empty=true` to render every
+registered body, including zeros, when debugging coverage.
+
 **Same URL-verification caveat as every other RSS module:** the seeded
 URLs are best-guess against common regulator RSS conventions. The
 graceful-degradation lane (per-source `ok=false` with a real error
@@ -595,6 +600,7 @@ firings are safe.
 | **v1.5** | ✓ done | RSS alert feed at `/feed.xml` mirroring all `/api/feed` filters; subscriber gate via `RSS_SHARED_TOKEN` |
 | **v1.6** | ✓ done | Managed email digest — SQLite subscriber store, double-opt-in confirmation flow, manual `POST /api/digest/send_now` (external cron drives schedule), DRY_RUN fallback when SMTP_HOST unset. Auto bounce-handling deferred. |
 | **v2.0** | ✓ done | **Global regulator expansion** — 28 sources across 13 jurisdictions (US/UK/EU/DE/CH/FR/IT/SG/HK/AU/IN/CA/BR). New `ingestion/sources.py` master config; new court-cases module (CJEU + UK + SCOTUS); personnel roster grew from 4 to 18; jurisdiction filter chips populated dynamically from `/api/sources`; anchor tokens expanded to 81. |
+| **v2.1** | ✓ done | **Wider international coverage** — 54 sources across 34 jurisdictions. Added 8 European national bodies (CNMV/AFM/DNB/FI-SE/Finanstilsynet/KNF/CSSF/FSMA-BE/OENB), 4 more APAC (FSC-KR/FSC-TW/SEC-TH/BNM, plus JFSA placeholder), 5 MENA/Africa (CMA-SA/SCA-AE/DFSA/ISA-IL/FSCA), 3 more LatAm (CNBV/CMF-CL/SFC-CO), 4 international/supranational (FATF/BIS/IOSCO/FSB). Personnel grew 18→27. Anchor tokens 81→108. New heatmap `hide_empty=true` default so the chart stays readable as the source list grows. |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars
