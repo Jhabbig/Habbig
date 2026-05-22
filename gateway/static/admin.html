@@ -73,6 +73,7 @@
       <button class="admin-tab" onclick="switchTab('keys')">Investor Keys</button>
       <button class="admin-tab" onclick="switchTab('users')">Users</button>
       <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
+      <button class="admin-tab" onclick="switchTab('leads')">Leads</button>
       <button class="admin-tab" onclick="switchTab('revenue')">Revenue</button>
       <button class="admin-tab" onclick="switchTab('stats')">Stats</button>
     </div>
@@ -177,6 +178,11 @@
       </div>
     </div>
 
+    <!-- ======== LEADS ======== -->
+    <div id="panel-leads" class="admin-panel">
+      {{ raw_leads_panel }}
+    </div>
+
     <!-- ======== REVENUE ======== -->
     <div id="panel-revenue" class="admin-panel">
       {{ raw_revenue_content }}
@@ -191,12 +197,23 @@
   </div>
 
 <script>
-function switchTab(name) {
+function switchTab(name, fromEvent) {
   document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
-  event.target.classList.add('active');
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  const target = (fromEvent !== false && typeof event !== 'undefined' && event.target)
+    ? event.target
+    : document.querySelector(`.admin-tab[onclick*="'${name}'"]`);
+  if (target) target.classList.add('active');
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const hash = (window.location.hash || '').replace('#', '');
+  if (hash && document.getElementById('panel-' + hash)) {
+    switchTab(hash, false);
+  }
+});
 
 function filterTokens(status, btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -214,6 +231,16 @@ function copyToken(el) {
 function copyKey(el) {
   const text = el.closest('.new-key-banner').querySelector('.token-mono').textContent;
   navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
+}
+
+function copyDraft(leadId, btn) {
+  const ta = document.getElementById('draft-' + leadId);
+  if (!ta) return;
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  });
 }
 
 function filterKeys(status, btn) {

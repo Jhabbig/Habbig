@@ -159,6 +159,27 @@ CREATE TABLE IF NOT EXISTS user_positions (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS leads (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    source_id       TEXT NOT NULL UNIQUE,
+    url             TEXT NOT NULL,
+    author          TEXT NOT NULL DEFAULT '',
+    title           TEXT NOT NULL DEFAULT '',
+    snippet         TEXT NOT NULL DEFAULT '',
+    dashboard_key   TEXT NOT NULL,
+    score           INTEGER NOT NULL DEFAULT 0,
+    draft           TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'new',
+    status_note     TEXT NOT NULL DEFAULT '',
+    snoozed_until   INTEGER,
+    posted_at       INTEGER NOT NULL DEFAULT 0,
+    discovered_at   INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status, score);
+CREATE INDEX IF NOT EXISTS idx_leads_dashboard ON leads(dashboard_key, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subs_active ON subscriptions(user_id, dashboard_key, status);

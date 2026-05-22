@@ -60,6 +60,12 @@ from sse import event_stream, active_connection_count
 from poller import Poller
 from mark_to_market import MarkToMarketWorker
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from customer_bot import LeadsPoller  # noqa: E402
+from customer_bot import store as leads_store  # noqa: E402
+from customer_bot.config import topic_by_key  # noqa: E402
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BASE_DIR = Path(__file__).parent
@@ -294,6 +300,7 @@ HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 _poller: Optional[Poller] = None
 _mtm_worker: Optional[MarkToMarketWorker] = None
+_leads_poller: Optional[LeadsPoller] = None
 _cleanup_task: Optional[asyncio.Task] = None
 _health_task: Optional[asyncio.Task] = None
 
@@ -343,7 +350,7 @@ async def _periodic_cleanup():
 
 @app.on_event("startup")
 async def _startup():
-    global HTTP_CLIENT, _cleanup_task, _health_task, _poller, _mtm_worker
+    global HTTP_CLIENT, _cleanup_task, _health_task, _poller, _mtm_worker, _leads_poller
     HTTP_CLIENT = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=5.0),
         limits=httpx.Limits(
@@ -367,6 +374,12 @@ async def _startup():
     _mtm_worker = MarkToMarketWorker()
     await _mtm_worker.start()
 
+    # Customer-finding bot — find leads on Reddit / HN / Polymarket.
+    # Opt out by setting CUSTOMER_BOT_DISABLED=1.
+    if not os.environ.get("CUSTOMER_BOT_DISABLED"):
+        _leads_poller = LeadsPoller()
+        await _leads_poller.start()
+
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
     log.info("Dashboards: %s", ", ".join(f"{k}→:{v['target']}" for k, v in DASHBOARDS.items()))
@@ -384,6 +397,8 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _leads_poller:
+        await _leads_poller.stop()
     if _mtm_worker:
         await _mtm_worker.stop()
     if _poller:
@@ -2734,7 +2749,86 @@ def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", c
         "raw_key_rows": _build_key_rows(csrf_token=csrf_token),
         "raw_enquiry_rows": _build_enquiry_rows(csrf_token=csrf_token),
         "raw_revenue_content": _build_revenue_content(),
+        "raw_leads_panel": _build_leads_panel(csrf_token=csrf_token),
     }
+
+
+def _build_leads_panel(csrf_token: str = "") -> str:
+    """Render the customer-finding-bot leads list for the admin Leads tab.
+
+    Every action button is human-driven: open the source URL in a new tab,
+    copy the drafted message to the clipboard, then mark contacted/skip/snooze.
+    Nothing sends autonomously.
+    """
+    import datetime as _dt
+
+    counts = leads_store.counts_by_status()
+    new_n = counts.get("new", 0)
+    contacted_n = counts.get("contacted", 0)
+    skipped_n = counts.get("skipped", 0)
+    snoozed_n = counts.get("snoozed", 0)
+
+    rows = leads_store.list_leads(status="new", limit=200)
+    if not rows:
+        body = (
+            '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">'
+            'No new leads yet. The bot polls Reddit, Hacker News, and Polymarket '
+            'every 30 minutes — fresh ones will appear here.'
+            '</div></div></div>'
+        )
+    else:
+        parts = []
+        for r in rows:
+            topic = topic_by_key(r["dashboard_key"])
+            dash_name = DASHBOARDS.get(r["dashboard_key"], {}).get("display_name", r["dashboard_key"])
+            posted = ""
+            if r["posted_at"]:
+                posted = _dt.datetime.fromtimestamp(r["posted_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            source_badge = html.escape(r["source"])
+            title = html.escape((r["title"] or "(no title)")[:200])
+            snippet = html.escape((r["snippet"] or "")[:400])
+            author = html.escape(r["author"] or "anon")
+            url = html.escape(r["url"] or "")
+            draft = html.escape(r["draft"] or "")
+            score = int(r["score"] or 0)
+            csrf_hidden = (
+                f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
+            )
+            parts.append(
+                f'<div class="admin-row" style="flex-direction:column;align-items:stretch;gap:10px">'
+                f'  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+                f'    <span class="badge" style="background:var(--accent-light);color:var(--accent)">{source_badge}</span>'
+                f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">→ {html.escape(dash_name)}</span>'
+                f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">score {score}</span>'
+                f'    <span style="font-size:12px;color:var(--text-muted);margin-left:auto">{html.escape(author)} · {posted}</span>'
+                f'  </div>'
+                f'  <div style="font-weight:500;color:var(--text-primary)">{title}</div>'
+                f'  <div style="font-size:13px;color:var(--text-secondary);white-space:pre-wrap">{snippet}</div>'
+                f'  <details>'
+                f'    <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">Drafted message</summary>'
+                f'    <textarea readonly id="draft-{r["id"]}" style="width:100%;min-height:90px;margin-top:8px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);padding:8px;font-size:13px;font-family:inherit">{draft}</textarea>'
+                f'  </details>'
+                f'  <div style="display:flex;gap:8px;flex-wrap:wrap">'
+                f'    <a href="{url}" target="_blank" rel="noopener noreferrer" class="btn btn-primary-outline" style="font-size:12px">Open source ↗</a>'
+                f'    <button type="button" class="btn btn-primary-outline" style="font-size:12px" onclick="copyDraft({r["id"]}, this)">Copy draft</button>'
+                f'    <form method="post" action="/admin/leads/{r["id"]}/contacted" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-primary" style="font-size:12px">Mark contacted</button></form>'
+                f'    <form method="post" action="/admin/leads/{r["id"]}/snooze" style="display:inline">{csrf_hidden}<input type="hidden" name="days" value="7"><button type="submit" class="btn btn-primary-outline" style="font-size:12px">Snooze 7d</button></form>'
+                f'    <form method="post" action="/admin/leads/{r["id"]}/skip" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-danger" style="font-size:12px">Skip</button></form>'
+                f'  </div>'
+                f'</div>'
+            )
+        body = "".join(parts)
+
+    header = (
+        f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px;font-size:13px;color:var(--text-secondary)">'
+        f'  <span><strong style="color:var(--text-primary)">{new_n}</strong> new</span>'
+        f'  <span><strong style="color:var(--text-primary)">{contacted_n}</strong> contacted</span>'
+        f'  <span><strong style="color:var(--text-primary)">{snoozed_n}</strong> snoozed</span>'
+        f'  <span><strong style="color:var(--text-primary)">{skipped_n}</strong> skipped</span>'
+        f'  <span style="margin-left:auto;color:var(--text-muted)">Polls every 30 min — read-only across all platforms.</span>'
+        f'</div>'
+    )
+    return header + '<div class="admin-list" style="display:flex;flex-direction:column;gap:12px">' + body + '</div>'
 
 
 def _build_key_rows(csrf_token: str = "") -> str:
@@ -3235,6 +3329,44 @@ async def admin_create_token_from_enquiry(request: Request, enquiry_id: int):
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=admin.get("admin_level", 1), csrf_token=csrf_token)
     return render_page("admin", request=request, email=admin["email"], username=admin.get("username", admin["email"]), raw_dashboard_tabs=_build_tab_html(admin["user_id"], request=request), **ctx)
+
+
+# ── Admin: customer-finding bot leads ────────────────────────────────────────
+
+
+@app.post("/admin/leads/{lead_id}/contacted")
+async def admin_lead_mark_contacted(request: Request, lead_id: int):
+    admin = _require_admin_user(request)
+    form = await request.form()
+    if not _validate_csrf(request, form.get("_csrf_token", "")):
+        return _csrf_error()
+    leads_store.set_status(lead_id, "contacted", note=f"by {admin['email']}")
+    return RedirectResponse(url="/admin#leads", status_code=303)
+
+
+@app.post("/admin/leads/{lead_id}/skip")
+async def admin_lead_skip(request: Request, lead_id: int):
+    admin = _require_admin_user(request)
+    form = await request.form()
+    if not _validate_csrf(request, form.get("_csrf_token", "")):
+        return _csrf_error()
+    leads_store.set_status(lead_id, "skipped", note=f"by {admin['email']}")
+    return RedirectResponse(url="/admin#leads", status_code=303)
+
+
+@app.post("/admin/leads/{lead_id}/snooze")
+async def admin_lead_snooze(request: Request, lead_id: int):
+    _require_admin_user(request)
+    form = await request.form()
+    if not _validate_csrf(request, form.get("_csrf_token", "")):
+        return _csrf_error()
+    try:
+        days = max(1, min(int(form.get("days", "7")), 90))
+    except ValueError:
+        days = 7
+    until = int(time.time()) + days * 86400
+    leads_store.snooze(lead_id, until)
+    return RedirectResponse(url="/admin#leads", status_code=303)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:
