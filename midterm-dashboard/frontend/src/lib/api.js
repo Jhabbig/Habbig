@@ -60,6 +60,21 @@ export const api = {
   sources: () => request('/data/sources'),
   polling: (key) => request(`/data/polling/${key}`),
   recentPolls: () => request('/data/polling/recent'),
+  backtest: (sinceDays = 30) => request(`/data/backtest?since_days=${sinceDays}`),
+  calibration: (sinceDays = 365) => request(`/data/calibration?since_days=${sinceDays}`),
+  forecast: (key) => request(`/data/forecast/${encodeURIComponent(key)}`),
+  forecasts: (filters = {}) => {
+    const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined && v !== '' && v !== null)).toString()
+    return request(`/data/forecasts${q ? '?' + q : ''}`)
+  },
+  smartMoney: (key) => request(`/data/smart-money/${encodeURIComponent(key)}`),
+  newsForRace: (key, limit = 20) => request(`/data/news/race/${encodeURIComponent(key)}?limit=${limit}`),
+  newsRecent: (limit = 30) => request(`/data/news/recent?limit=${limit}`),
+  newsLagCurve: (minDeltaPp = 1.0) => request(`/data/news/lag-curve?min_delta_pp=${minDeltaPp}`),
+  electionNight: () => request('/data/election-night'),
+  forecastConditional: (given) => request(`/data/forecast/conditional?given=${encodeURIComponent(given)}`),
+  forecastJointSummary: () => request('/data/forecast/joint-summary'),
+  forecastWave: (swingPp) => request(`/data/forecast/wave?swing_pp=${encodeURIComponent(swingPp)}`),
 
   // Premium
   watchlist: () => request('/premium/watchlist'),

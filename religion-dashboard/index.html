@@ -1,0 +1,1150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Religion &amp; Cults Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #d29922;
+    --grid: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--grid); display: flex;
+           align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 24px; display: grid; grid-template-columns: 1fr; gap: 24px;
+         max-width: 1280px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+           padding: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel h3 { margin: 16px 0 8px; font-size: 12px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase;
+       letter-spacing: 0.04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                  gap: 12px; }
+  .stat { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 12px; }
+  .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: 0.05em; }
+  .stat .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums;
+                 margin-top: 4px; }
+  .stat .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .religion-bar { display: grid; grid-template-columns: 180px 1fr 80px 70px; gap: 12px;
+                  align-items: center; padding: 6px 0; }
+  .religion-bar .name { font-weight: 600; }
+  .religion-bar .track { background: #0e1117; border: 1px solid var(--grid); height: 18px;
+                         border-radius: 3px; overflow: hidden; }
+  .religion-bar .fill { height: 100%; }
+  .religion-bar .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .religion-bar .growth-pos { color: #56d364; font-weight: 600; }
+  .religion-bar .growth-neg { color: #f85149; font-weight: 600; }
+  .religion-bar .growth-flat { color: var(--muted); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #21262d;
+          color: var(--fg); border: 1px solid var(--grid); }
+  .pill.cpc { background: #5a1d1d; color: #ffb3b0; border-color: #6e2424; }
+  .pill.swl { background: #5a4116; color: #f7c873; border-color: #6e521b; }
+  .pill.epc { background: #2a2640; color: #c8b8ff; border-color: #3a3460; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px;
+           font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .badge.risk-extreme { background: #f85149; color: #fff; }
+  .badge.risk-high    { background: #d29922; color: #0e1117; }
+  .badge.risk-moderate{ background: #58a6ff; color: #0e1117; }
+  .badge.risk-low     { background: #30363d; color: var(--muted); }
+  .badge.status-active { background: #1f6feb; color: #fff; }
+  .badge.status-defunct{ background: #30363d; color: var(--muted); }
+  .badge.status-other  { background: #21262d; color: #8ad47b; }
+  .cult-row { padding: 12px; border-bottom: 1px solid var(--grid); }
+  .cult-row:last-child { border-bottom: 0; }
+  .cult-row .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+                    margin-bottom: 4px; }
+  .cult-row .name { font-weight: 600; font-size: 14px; }
+  .cult-row .meta { color: var(--muted); font-size: 12px; }
+  .cult-row .summary { color: var(--fg); font-size: 13px; margin-top: 4px; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filters button { background: #21262d; color: var(--fg); border: 1px solid var(--grid);
+                    padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer; }
+  .filters button.active { background: var(--accent); color: #0e1117; border-color: var(--accent); }
+  .market-row { display: grid; grid-template-columns: 1fr 80px 100px 90px;
+                gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--grid); }
+  .market-row:last-child { border-bottom: 0; }
+  .market-row .q { color: var(--fg); }
+  .market-row .q a { color: var(--accent); text-decoration: none; }
+  .market-row .q a:hover { text-decoration: underline; }
+  .market-row .yes { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .market-row .vol, .market-row .end { color: var(--muted); font-size: 12px;
+                                       font-variant-numeric: tabular-nums; text-align: right; }
+  .news-item { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .news-item:last-child { border-bottom: 0; }
+  .news-item .title { font-weight: 600; }
+  .news-item .title a { color: var(--accent); text-decoration: none; }
+  .news-item .title a:hover { text-decoration: underline; }
+  .news-item .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .news-item .summary { color: var(--fg); font-size: 12px; margin-top: 4px; }
+  .registry-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .registry-controls input { background: #0e1117; color: var(--fg); border: 1px solid var(--grid);
+                             padding: 6px 10px; border-radius: 4px; font-size: 13px; min-width: 200px; }
+  .registry-controls input:focus { outline: none; border-color: var(--accent); }
+  .registry-controls .count { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .registry-table { width: 100%; font-size: 13px; }
+  .registry-table th { cursor: pointer; user-select: none; }
+  .registry-table th.sorted { color: var(--accent); }
+  .registry-table td.summary { color: var(--muted); font-size: 12px; max-width: 460px; }
+  .fam-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              background: #21262d; color: var(--fg); border: 1px solid var(--grid); }
+  .fam-Christian   { background:#0d3868; color:#9ed1ff; border-color:#1a528f; }
+  .fam-Islamic     { background:#0e3a26; color:#7ee2a8; border-color:#1d5a3d; }
+  .fam-Hindu       { background:#5a3a16; color:#f7b955; border-color:#6e4a1d; }
+  .fam-Buddhist    { background:#3a2660; color:#d2a8ff; border-color:#4a3580; }
+  .fam-Jewish      { background:#243a5c; color:#9bc4ff; border-color:#2c4a73; }
+  .fam-Iranian     { background:#5a1d1d; color:#ffb3b0; border-color:#6e2424; }
+  .fam-East-Asian  { background:#4a4012; color:#f7d76b; border-color:#5e521b; }
+  .fam-Indigenous  { background:#2e4a1c; color:#a8d97e; border-color:#3d6326; }
+  .fam-NRM         { background:#3a1a4a; color:#dba8ff; border-color:#4d2362; }
+  .fam-Sikh--Jain  { background:#5c2e16; color:#f0b58a; border-color:#73391b; }
+  .timeline { position: relative; height: 200px; background: #0e1117; border: 1px solid var(--grid);
+              border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+  .timeline .axis { position: absolute; bottom: 18px; left: 0; right: 0; height: 1px; background: var(--grid); }
+  .timeline .tick { position: absolute; bottom: 0; height: 18px; color: var(--muted); font-size: 10px;
+                    transform: translateX(-50%); white-space: nowrap; }
+  .timeline .tick::before { content: ""; position: absolute; bottom: 18px; left: 50%; width: 1px;
+                            height: 4px; background: var(--grid); }
+  .timeline .dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; transform: translate(-50%, 50%);
+                   cursor: pointer; transition: transform 0.1s; }
+  .timeline .dot:hover { transform: translate(-50%, 50%) scale(2); z-index: 10; }
+  .timeline .dot[data-fam="Christian"]   { background: #58a6ff; }
+  .timeline .dot[data-fam="Islamic"]     { background: #56d364; }
+  .timeline .dot[data-fam="Hindu"]       { background: #f0883e; }
+  .timeline .dot[data-fam="Buddhist"]    { background: #d2a8ff; }
+  .timeline .dot[data-fam="Jewish"]      { background: #79c0ff; }
+  .timeline .dot[data-fam="Iranian"]     { background: #ff8a8a; }
+  .timeline .dot[data-fam="East Asian"]  { background: #f7d76b; }
+  .timeline .dot[data-fam="Indigenous"]  { background: #a8d97e; }
+  .timeline .dot[data-fam="NRM"]         { background: #dba8ff; }
+  .timeline .dot[data-fam="Sikh / Jain"] { background: #f0b58a; }
+  .timeline-tooltip { position: absolute; background: #161b22; border: 1px solid var(--grid);
+                      border-radius: 4px; padding: 6px 10px; font-size: 12px; pointer-events: none;
+                      max-width: 240px; z-index: 20; display: none; }
+  /* ─── Edge panel ─── */
+  .edge-row { display: grid; grid-template-columns: 1fr 70px 70px 80px 60px; gap: 10px; align-items: center;
+              padding: 8px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .edge-row:last-child { border-bottom: 0; }
+  .edge-row .qq { color: var(--fg); }
+  .edge-row .qq a { color: var(--accent); text-decoration: none; }
+  .edge-row .qq a:hover { text-decoration: underline; }
+  .edge-row .qq .basis { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .edge-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .edge-row .market-p { color: var(--muted); }
+  .edge-row .model-p { font-weight: 600; }
+  .edge-pp-pos { color: #56d364; font-weight: 700; }
+  .edge-pp-neg { color: #f85149; font-weight: 700; }
+  .edge-pp-flat { color: var(--muted); }
+  .side-pill { padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; text-align: center; }
+  .side-YES  { background: #1f6feb; color: #fff; }
+  .side-NO   { background: #5a1d1d; color: #ffb3b0; }
+  .side-     { background: #21262d; color: var(--muted); }
+  /* ─── Conclave panel ─── */
+  .conclave-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;
+                   margin-bottom: 16px; }
+  .papabile-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px;
+                   margin-bottom: 16px; }
+  .papabile-row { background: #0e1117; border: 1px solid var(--grid); border-radius: 4px; padding: 8px 10px;
+                  display: grid; grid-template-columns: 50px 1fr; gap: 10px; align-items: center; }
+  .papabile-row .pct { font-weight: 700; font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .papabile-row .who { font-weight: 600; font-size: 13px; }
+  .papabile-row .why { color: var(--muted); font-size: 11px; line-height: 1.35; }
+  .cardinal-row { display: grid; grid-template-columns: 1fr 70px 90px 110px 90px; gap: 10px; align-items: center;
+                  padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .cardinal-row:last-child { border-bottom: 0; }
+  .cardinal-row .who { font-weight: 600; }
+  .cardinal-row .role { color: var(--muted); font-size: 11px; }
+  .cardinal-row .num { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+  .wing-pill { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 10px;
+               font-weight: 600; }
+  .wing-progressive  { background: #1a4a26; color: #7ee2a8; }
+  .wing-moderate     { background: #243a5c; color: #9bc4ff; }
+  .wing-conservative { background: #5a4116; color: #f7c873; }
+  .wing-traditional  { background: #5a1d1d; color: #ffb3b0; }
+  .tier-pill { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }
+  .tier-3 { background: #d29922; color: #0e1117; }
+  .tier-2 { background: #58a6ff; color: #0e1117; }
+  .tier-1 { background: #30363d; color: var(--muted); }
+  .tier-0 { background: transparent; color: var(--muted); }
+  /* ─── Leader cards ─── */
+  .leaders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .leader-card { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 12px; }
+  .leader-card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .leader-card .name { font-weight: 600; font-size: 14px; }
+  .leader-card .age { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .leader-card .role { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .leader-card .summary { color: var(--fg); font-size: 12px; margin-top: 8px; line-height: 1.45; }
+  .leader-card .succession { color: var(--muted); font-size: 11px; margin-top: 6px; font-style: italic; }
+  .actu-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 6px 0; }
+  .actu { background: #161b22; border: 1px solid var(--grid); border-radius: 4px; padding: 6px 8px; text-align: center; }
+  .actu .lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .actu .val { font-weight: 600; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .actu.die-high { background: #5a1d1d; border-color: #8a2424; }
+  .actu.die-high .val { color: #ffb3b0; }
+  .actu.die-mid  { background: #4a3d12; border-color: #6e521b; }
+  .actu.die-mid .val { color: #f7c873; }
+  /* ─── Country table ─── */
+  .country-row { display: grid; grid-template-columns: 220px 90px 1fr; gap: 12px; align-items: center;
+                 padding: 6px 0; border-bottom: 1px solid var(--grid); }
+  .country-row:last-child { border-bottom: 0; }
+  .country-row .name { font-weight: 600; }
+  .country-row .pop { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .stack { display: flex; height: 20px; border-radius: 3px; overflow: hidden; border: 1px solid var(--grid); }
+  .stack .seg { height: 100%; min-width: 1px; }
+  .stack .seg.Christian   { background: #58a6ff; }
+  .stack .seg.Muslim      { background: #56d364; }
+  .stack .seg.Hindu       { background: #f0883e; }
+  .stack .seg.Buddhist    { background: #d2a8ff; }
+  .stack .seg.Jewish      { background: #79c0ff; }
+  .stack .seg.Sikh        { background: #ffb86b; }
+  .stack .seg.Folk        { background: #f7d76b; }
+  .stack .seg.Unaffiliated{ background: #6e7681; }
+  .stack .seg.Jain        { background: #c8b88a; }
+  .stack .seg.Druze       { background: #a8d97e; }
+  .stack .seg.Other       { background: #444c56; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
+                vertical-align: middle; }
+  /* ─── Calendar ─── */
+  .cal-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .cal-event { background: #0e1117; border: 1px solid var(--grid); border-radius: 6px; padding: 10px;
+               border-left: 3px solid var(--accent); }
+  .cal-event .when { color: var(--accent); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cal-event .countdown { color: var(--muted); font-size: 11px; }
+  .cal-event .name { font-weight: 600; margin: 4px 0; }
+  .cal-event .religion { color: var(--muted); font-size: 11px; }
+  .cal-event .summary { color: var(--fg); font-size: 12px; margin-top: 6px; line-height: 1.4; }
+  /* ─── Cult risk axes ─── */
+  .axis-bars { display: grid; grid-template-columns: 130px 1fr 30px; gap: 8px; align-items: center;
+               margin-top: 6px; }
+  .axis-bars .axlbl { color: var(--muted); font-size: 11px; }
+  .axis-bars .axtrk { background: #0e1117; border: 1px solid var(--grid); height: 8px; border-radius: 2px;
+                      overflow: hidden; }
+  .axis-bars .axfill { height: 100%; }
+  .axis-bars .axfill.lvl-extreme { background: #f85149; }
+  .axis-bars .axfill.lvl-high    { background: #d29922; }
+  .axis-bars .axfill.lvl-moderate{ background: #58a6ff; }
+  .axis-bars .axfill.lvl-low     { background: #56d364; }
+  .axis-bars .axval { font-size: 11px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .composite { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700;
+               margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .composite.lvl-extreme { background: #f85149; color: #fff; }
+  .composite.lvl-high    { background: #d29922; color: #0e1117; }
+  .composite.lvl-moderate{ background: #58a6ff; color: #0e1117; }
+  .composite.lvl-low     { background: #30363d; color: var(--muted); }
+  .err { color: #f85149; }
+  .empty { color: var(--muted); font-style: italic; }
+  .footnote { color: var(--muted); font-size: 11px; margin-top: 12px; }
+  @media (max-width: 700px) {
+    .religion-bar { grid-template-columns: 1fr 60px; }
+    .religion-bar .track, .religion-bar .num.growth { display: none; }
+    .market-row { grid-template-columns: 1fr 60px; }
+    .market-row .vol, .market-row .end { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="h-title">Religion &amp; Cults Tracker</h1>
+  <span class="meta" id="meta">loading…</span>
+  <select id="lang-picker" style="margin-left:auto;background:#0e1117;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer">
+    <option value="en">English</option>
+    <option value="es">Español</option>
+    <option value="it">Italiano</option>
+    <option value="fr">Français</option>
+    <option value="pt">Português</option>
+  </select>
+</header>
+<main>
+
+  <section class="panel">
+    <h2 data-i18n="panel.summary">Global snapshot</h2>
+    <div class="summary-grid" id="summary">loading…</div>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.leaders">Religious leaders — actuarial</h2>
+    <div id="pope-health-banner" style="margin-bottom:12px"></div>
+    <div id="leaders">loading…</div>
+    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 32 historical religious leaders (mean age at death 79.2y). Sorted by 1-year mortality probability — most market-relevant first.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.conclave">Conclave model — College of Cardinals + papabile</h2>
+    <div id="conclave-source" style="margin-bottom:12px;font-size:12px;color:var(--muted)">checking Vatican feed…</div>
+    <div id="conclave-hero" class="conclave-hero"></div>
+    <h3>Papabile — Vaticanist consensus priors</h3>
+    <div id="papabile" class="papabile-list">loading…</div>
+    <h3>Cardinal-electors</h3>
+    <div class="registry-controls" style="margin-bottom:8px">
+      <input id="card-search" placeholder="Search name, country, role…" type="search">
+      <span class="count" id="card-count">189</span>
+    </div>
+    <div id="card-filters" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div id="cardinals">loading…</div>
+    <p class="footnote">Sources: Vatican Press Office, the College of Cardinals Report (cardinalsreport.com), Vaticanist English-language press (Allen/Crux, Magister, La Croix, The Pillar). 'Wing' assignments are journalistic shorthand — cardinals don't run on platforms. Priors sum to ~59%; the residual ~41% is the field (historically, the next pope is often not a top-tier papabile — Bergoglio 2013, Wojtyła 1978). Updated at each consistory.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.calendar">Upcoming religious calendar</h2>
+    <div id="calendar-strip">loading…</div>
+    <p class="footnote">Movable feasts pre-computed for 2026. Source: ecclesiastical calendars + Pew religious-calendar reference.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.religions">World religions — adherents (millions)</h2>
+    <div id="religions">loading…</div>
+    <p class="footnote">Source: Pew Research Center, baseline 2020 estimates. Growth = annualised change in share of world population.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.registry">Full registry — 100 traditions, sects &amp; movements</h2>
+    <div class="timeline" id="timeline"></div>
+    <div class="registry-controls">
+      <input id="reg-search" placeholder="Search name, region, summary…" type="search">
+      <div id="reg-families"></div>
+      <span class="count" id="reg-count">100 / 100</span>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="registry-table" id="reg-table">
+        <thead><tr>
+          <th data-sort="name">Name</th>
+          <th data-sort="family">Family</th>
+          <th data-sort="adherents_m" class="num">Adherents (M)</th>
+          <th data-sort="founded">Founded</th>
+          <th data-sort="origin">Origin</th>
+          <th class="summary">Summary</th>
+        </tr></thead>
+        <tbody id="reg-body"></tbody>
+      </table>
+    </div>
+    <p class="footnote">Sources: Pew, World Religion Database, ARDA, Britannica, official censuses. Denominational counts have wide error bars; some categories overlap (e.g., Pentecostal/Evangelical) — do not sum to world total.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.cults">New religious movements &amp; cults — watchlist</h2>
+    <div class="filters" id="cult-filters">
+      <button data-risk="" class="active">All</button>
+      <button data-risk="extreme">Extreme</button>
+      <button data-risk="high">High</button>
+      <button data-risk="moderate">Moderate</button>
+      <button data-risk="low">Low</button>
+    </div>
+    <div id="cults">loading…</div>
+    <p class="footnote">Inclusion criteria: substantial public documentation in academic / journalistic / court sources. Risk reflects publicly documented harm.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.countries">Country religion composition — top 30 by population</h2>
+    <div class="legend" id="country-legend"></div>
+    <div id="countries">loading…</div>
+    <p class="footnote">Source: Pew Research Center "Religious Composition by Country" series. Categories follow Pew's mutually-exclusive top-level taxonomy.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.violence">Religious-violence events — ACLED, last 30 days</h2>
+    <div id="violence-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="violence-rows">loading…</div>
+    <p class="footnote">Filtered from ACLED for events with religious-motivation indicators (actor names, location-type, notes keywords). Requires <code>ACLED_EMAIL</code> + <code>ACLED_API_KEY</code> in production. Source: <a href="https://acleddata.com" target="_blank" rel="noopener" style="color:var(--accent)">acleddata.com</a>.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.sentinel">Cult / NRM emergence sentinel — Reddit</h2>
+    <div id="sentinel-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="sentinel-rows">loading…</div>
+    <p class="footnote">Public read-only Reddit JSON from r/cults, r/cultsurvivors, r/exjw, r/exmormon, r/EXMUSLIM, r/Scientology. Capitalised multi-word phrases extracted from posts; ranked by mention volume. Surfacing here is RECON, not curation — names need investigation before promoting to the watchlist.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.freedom">Religious-freedom designations (USCIRF 2024)</h2>
+    <div id="freedom">loading…</div>
+    <p class="footnote">CPC = Country of Particular Concern · SWL = Special Watch List · EPC = Entity of Particular Concern (non-state actor).</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.markets">Polymarket — religion-tagged markets</h2>
+    <div id="markets">loading…</div>
+    <p class="footnote">Live from Polymarket Gamma API. YES = market-implied probability. Refreshes every 5 minutes.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.edge">Edge — model vs market</h2>
+    <div id="edge-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
+    <div id="edge-rows">loading…</div>
+    <p class="footnote">For each market matched to a leader actuarial or papabile prior, we compute <code>edge = model_p − market_p</code>. Positive edge = buy YES; negative = buy NO. Sorted by |edge|. Actuarial uses SSA 2022 × HR 0.85 (religious-office adjustment); papabile uses Vaticanist-consensus priors. Treat as a screening signal, not a recommendation.</p>
+  </section>
+
+  <section class="panel">
+    <h2 data-i18n="panel.news">Religion news — live feed</h2>
+    <div id="news">loading…</div>
+    <p class="footnote">Aggregated from BBC Religion &amp; Ethics, Religion News Service, AP Religion, Vatican News.</p>
+  </section>
+
+</main>
+
+<script>
+const fmt = {
+  num: n => n.toLocaleString("en-US"),
+  m: n => n >= 1000 ? (n/1000).toFixed(2) + "B" : n.toLocaleString("en-US") + "M",
+  pct: n => (n >= 0 ? "+" : "") + n.toFixed(2) + "%",
+  money: n => "$" + (n >= 1e6 ? (n/1e6).toFixed(1) + "M"
+                   : n >= 1e3 ? (n/1e3).toFixed(1) + "K"
+                   : n.toFixed(0)),
+};
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
+
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " HTTP " + r.status);
+  return r.json();
+}
+
+// ─── i18n bootstrap ───────────────────────────────────────────────────────
+
+let _i18nStrings = {};
+function ti(key) { return _i18nStrings[key] || key; }
+
+async function applyLanguage(lang) {
+  try {
+    const r = await fetch("/api/i18n?lang=" + encodeURIComponent(lang));
+    if (!r.ok) return;
+    const d = await r.json();
+    _i18nStrings = d.strings || {};
+    localStorage.setItem("religion-lang", d.lang);
+    document.documentElement.lang = d.lang;
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      const key = el.getAttribute("data-i18n");
+      const txt = _i18nStrings[key];
+      if (txt) el.textContent = txt;
+    });
+    // Header title
+    const ht = document.getElementById("h-title");
+    if (ht && _i18nStrings["header.title"]) ht.textContent = _i18nStrings["header.title"];
+  } catch (e) {
+    console.warn("i18n load failed:", e);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const stored = localStorage.getItem("religion-lang") || "en";
+  const picker = document.getElementById("lang-picker");
+  if (picker) {
+    picker.value = stored;
+    picker.addEventListener("change", e => applyLanguage(e.target.value));
+  }
+  applyLanguage(stored);
+});
+
+async function load() {
+  const meta = document.getElementById("meta");
+  const [sumR, relR, fullR, ldrR, concR, ctyR, calR, cultR, freeR, mktR, newsR, edgeR, healthR, violR, sentR] = await Promise.allSettled([
+    fetchJson("/api/summary"),
+    fetchJson("/api/religions"),
+    fetchJson("/api/religions-full"),
+    fetchJson("/api/leaders"),
+    fetchJson("/api/conclave/live"),
+    fetchJson("/api/countries"),
+    fetchJson("/api/calendar?upcoming=1&days=365"),
+    fetchJson("/api/cults"),
+    fetchJson("/api/freedom"),
+    fetchJson("/api/markets"),
+    fetchJson("/api/news"),
+    fetchJson("/api/edge"),
+    fetchJson("/api/pope-health"),
+    fetchJson("/api/violence"),
+    fetchJson("/api/cult-sentinel"),
+  ]);
+
+  if (sumR.status === "fulfilled") renderSummary(sumR.value);
+  if (relR.status === "fulfilled") renderReligions(relR.value);
+  if (fullR.status === "fulfilled") {
+    window._registry = fullR.value;
+    renderTimeline(fullR.value.religions);
+    initRegistry(fullR.value);
+  }
+  if (ldrR.status === "fulfilled") renderLeaders(ldrR.value);
+  if (concR.status === "fulfilled") renderConclave(concR.value);
+  if (ctyR.status === "fulfilled") renderCountries(ctyR.value);
+  if (calR.status === "fulfilled") renderCalendar(calR.value);
+  if (cultR.status === "fulfilled") { window._cults = cultR.value; renderCults(""); }
+  if (freeR.status === "fulfilled") renderFreedom(freeR.value);
+  if (mktR.status === "fulfilled") renderMarkets(mktR.value);
+  else document.getElementById("markets").innerHTML = '<div class="err">markets load failed: ' + escapeHtml(mktR.reason.message) + '</div>';
+  if (newsR.status === "fulfilled") renderNews(newsR.value);
+  else document.getElementById("news").innerHTML = '<div class="err">news load failed: ' + escapeHtml(newsR.reason.message) + '</div>';
+
+  if (edgeR.status === "fulfilled") renderEdge(edgeR.value);
+  else document.getElementById("edge-rows").innerHTML = '<div class="err">edge load failed: ' + escapeHtml(edgeR.reason.message) + '</div>';
+
+  if (healthR.status === "fulfilled") renderPopeHealth(healthR.value);
+  if (violR.status === "fulfilled") renderViolence(violR.value);
+  if (sentR.status === "fulfilled") renderSentinel(sentR.value);
+
+  meta.textContent = "loaded " + new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
+
+  document.querySelectorAll("#cult-filters button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#cult-filters button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderCults(btn.dataset.risk);
+    });
+  });
+}
+
+function renderSummary(s) {
+  const root = document.getElementById("summary");
+  const cards = [
+    {label: "Tracked adherents", value: fmt.m(s.world_population_m), sub: s.religions_tracked + " top-level traditions"},
+    {label: "Registry size", value: s.registry_size || "—", sub: "denominations / sects / movements"},
+    {label: "Cults / NRMs tracked", value: s.cults_tracked, sub: s.cults_active + " active · " + s.cults_defunct + " defunct"},
+    {label: "Countries of Particular Concern", value: s.cpc_countries, sub: "USCIRF 2024"},
+    {label: "Special Watch List", value: s.swl_countries, sub: "USCIRF 2024"},
+    {label: "Non-state entities (EPC)", value: s.epc_entities, sub: "USCIRF 2024"},
+  ];
+  root.innerHTML = cards.map(c =>
+    `<div class="stat"><div class="label">${escapeHtml(c.label)}</div>` +
+    `<div class="value">${escapeHtml(String(c.value))}</div>` +
+    `<div class="sub">${escapeHtml(c.sub)}</div></div>`
+  ).join("");
+}
+
+function renderReligions(d) {
+  const root = document.getElementById("religions");
+  const max = d.religions.reduce((m, r) => Math.max(m, r.adherents_m), 0);
+  const rows = d.religions.map(r => {
+    const w = (r.adherents_m / max) * 100;
+    const gCls = r.growth_pct_yr > 0.2 ? "growth-pos" : r.growth_pct_yr < -0.1 ? "growth-neg" : "growth-flat";
+    return `<div class="religion-bar">
+      <div class="name">${escapeHtml(r.name)}</div>
+      <div class="track"><div class="fill" style="width:${w.toFixed(1)}%; background:${escapeHtml(r.color)}"></div></div>
+      <div class="num">${fmt.m(r.adherents_m)}</div>
+      <div class="num growth ${gCls}">${fmt.pct(r.growth_pct_yr)}</div>
+    </div>`;
+  }).join("");
+
+  let subBlocks = "";
+  for (const [name, subs] of Object.entries(d.subgroups || {})) {
+    const total = subs.reduce((s, x) => s + x.adherents_m, 0);
+    subBlocks += `<h3>${escapeHtml(name)} — sub-traditions</h3>`;
+    subBlocks += `<table><thead><tr><th>Tradition</th><th class="num">Adherents</th><th class="num">Share</th></tr></thead><tbody>`;
+    subBlocks += subs.map(s =>
+      `<tr><td>${escapeHtml(s.name)}</td><td class="num">${fmt.m(s.adherents_m)}</td>` +
+      `<td class="num">${(s.adherents_m/total*100).toFixed(1)}%</td></tr>`
+    ).join("");
+    subBlocks += `</tbody></table>`;
+  }
+
+  root.innerHTML = rows + subBlocks;
+}
+
+// ─── Registry (100 traditions) ───────────────────────────────────────────
+
+const REG = { sortKey: "adherents_m", sortDir: -1, family: "", q: "" };
+
+function initRegistry(d) {
+  // Family filter chips
+  const famBox = document.getElementById("reg-families");
+  famBox.innerHTML = '<button data-fam="" class="active" style="background:#21262d;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer;margin-right:4px">All</button>'
+    + d.families.map(f => `<button data-fam="${escapeHtml(f)}" style="background:#21262d;color:var(--fg);border:1px solid var(--grid);padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer;margin-right:4px">${escapeHtml(f)}</button>`).join("");
+  famBox.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      famBox.querySelectorAll("button").forEach(x => x.style.background = "#21262d");
+      b.style.background = "var(--accent)";
+      b.style.color = "#0e1117";
+      REG.family = b.dataset.fam;
+      renderRegistry();
+    });
+  });
+  famBox.querySelectorAll("button")[0].style.background = "var(--accent)";
+  famBox.querySelectorAll("button")[0].style.color = "#0e1117";
+
+  // Search box
+  document.getElementById("reg-search").addEventListener("input", e => {
+    REG.q = e.target.value.toLowerCase().trim();
+    renderRegistry();
+  });
+
+  // Sortable headers
+  document.querySelectorAll("#reg-table th[data-sort]").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      if (REG.sortKey === k) REG.sortDir = -REG.sortDir;
+      else { REG.sortKey = k; REG.sortDir = (k === "adherents_m" ? -1 : 1); }
+      document.querySelectorAll("#reg-table th").forEach(x => x.classList.remove("sorted"));
+      th.classList.add("sorted");
+      renderRegistry();
+    });
+  });
+
+  renderRegistry();
+}
+
+function renderRegistry() {
+  const d = window._registry;
+  if (!d) return;
+  let list = d.religions.slice();
+  if (REG.family) list = list.filter(r => r.family === REG.family);
+  if (REG.q) {
+    list = list.filter(r =>
+      r.name.toLowerCase().includes(REG.q)
+      || (r.origin || "").toLowerCase().includes(REG.q)
+      || (r.summary || "").toLowerCase().includes(REG.q)
+      || (r.family || "").toLowerCase().includes(REG.q)
+    );
+  }
+  const k = REG.sortKey, dir = REG.sortDir;
+  list.sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+
+  document.getElementById("reg-count").textContent = `${list.length} / ${d.total}`;
+  const body = document.getElementById("reg-body");
+  body.innerHTML = list.map(r => {
+    const famCls = "fam-" + r.family.replace(/[\s/]+/g, "-");
+    return `<tr>
+      <td><strong>${escapeHtml(r.name)}</strong></td>
+      <td><span class="fam-pill ${famCls}">${escapeHtml(r.family)}</span></td>
+      <td class="num">${r.adherents_m < 1 ? r.adherents_m.toFixed(3).replace(/\.?0+$/,"") : r.adherents_m.toFixed(1).replace(/\.0$/,"")}</td>
+      <td>${escapeHtml(r.founded)}</td>
+      <td>${escapeHtml(r.origin)}</td>
+      <td class="summary">${escapeHtml(r.summary)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderTimeline(religions) {
+  // Parse "founded" into a numeric year. Negative for BCE, 0 for 'ancient'/'pre-Buddhist'.
+  function parseYear(s) {
+    if (!s) return null;
+    const m1 = s.match(/(\d+)\s*BCE/i);
+    if (m1) return -parseInt(m1[1], 10);
+    const m2 = s.match(/(\d+)/);
+    if (m2) return parseInt(m2[1], 10);
+    if (/ancient|pre-/i.test(s)) return -2000;
+    return null;
+  }
+  const dots = religions
+    .map(r => ({...r, year: parseYear(r.founded)}))
+    .filter(r => r.year !== null);
+
+  const minY = -2000, maxY = 2025;
+  const tl = document.getElementById("timeline");
+  // Use a non-linear scale: cluster ancient/BCE on the left, expand recent centuries.
+  // Power scale: t = ((y - minY) / (maxY - minY)) ^ 1.6 squashes ancient and stretches modern.
+  function xPct(y) {
+    const t = (y - minY) / (maxY - minY);
+    return Math.pow(Math.max(0, Math.min(1, t)), 1.6) * 100;
+  }
+  const ticks = [-2000, -500, 0, 500, 1000, 1500, 1700, 1850, 1950, 2000];
+  let html = '<div class="axis"></div>';
+  for (const y of ticks) {
+    const lbl = y < 0 ? Math.abs(y) + " BCE" : (y === 0 ? "1 CE" : y);
+    html += `<div class="tick" style="left:${xPct(y).toFixed(2)}%">${lbl}</div>`;
+  }
+  // Vertical jitter so dots don't stack
+  const buckets = {};
+  dots.forEach(r => {
+    const bx = Math.floor(xPct(r.year) * 2);
+    buckets[bx] = (buckets[bx] || 0) + 1;
+    r._row = (buckets[bx] - 1) % 10;
+  });
+  for (const r of dots) {
+    const x = xPct(r.year);
+    const yPx = 24 + r._row * 12;
+    html += `<div class="dot" data-fam="${escapeHtml(r.family)}" data-name="${escapeHtml(r.name)}" data-year="${r.year}" data-summary="${escapeHtml(r.summary)}" style="left:${x.toFixed(2)}%; top:${yPx}px"></div>`;
+  }
+  html += '<div class="timeline-tooltip" id="tl-tip"></div>';
+  tl.innerHTML = html;
+
+  const tip = document.getElementById("tl-tip");
+  tl.querySelectorAll(".dot").forEach(dot => {
+    dot.addEventListener("mouseenter", e => {
+      const y = parseInt(dot.dataset.year, 10);
+      const yLbl = y < 0 ? Math.abs(y) + " BCE" : y;
+      tip.innerHTML = `<strong>${escapeHtml(dot.dataset.name)}</strong> — ${yLbl}<br><span style="color:var(--muted)">${escapeHtml(dot.dataset.summary)}</span>`;
+      tip.style.display = "block";
+      const r = dot.getBoundingClientRect();
+      const tlR = tl.getBoundingClientRect();
+      tip.style.left = Math.min(tlR.width - 250, Math.max(0, r.left - tlR.left + 10)) + "px";
+      tip.style.top = Math.max(0, r.top - tlR.top - 60) + "px";
+    });
+    dot.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+}
+
+function renderCults(filter) {
+  const d = window._cults;
+  if (!d) return;
+  const root = document.getElementById("cults");
+  const list = filter ? d.groups.filter(c => (c.risk||"").toLowerCase() === filter) : d.groups;
+  if (!list.length) { root.innerHTML = '<div class="empty">No groups match this filter.</div>'; return; }
+
+  const AXES = [
+    ["financial_opacity", "Financial opacity"],
+    ["leadership_risk",   "Leadership risk"],
+    ["isolation",         "Isolation"],
+    ["criminal_disclosure","Criminal disclosure"],
+  ];
+
+  root.innerHTML = list.map(c => {
+    const status = (c.status || "").toLowerCase();
+    const sCls = status === "defunct" ? "status-defunct"
+               : status.startsWith("active") ? "status-active"
+               : "status-other";
+    const rCls = "risk-" + (c.risk || "low");
+    const lCls = "lvl-" + (c.risk || "low");
+    const span = (c.founded ? c.founded : "?") + "–" + (c.ended || (status === "defunct" ? "?" : "present"));
+    const axes = c.risk_axes || {};
+    const bars = AXES.map(([k, lbl]) => {
+      const v = axes[k] || 0;
+      const fillCls = v >= 8 ? "lvl-extreme" : v >= 6 ? "lvl-high" : v >= 4 ? "lvl-moderate" : "lvl-low";
+      return `<div class="axlbl">${escapeHtml(lbl)}</div>
+        <div class="axtrk"><div class="axfill ${fillCls}" style="width:${v*10}%"></div></div>
+        <div class="axval">${v}/10</div>`;
+    }).join("");
+    return `<div class="cult-row">
+      <div class="head">
+        <span class="name">${escapeHtml(c.name)}</span>
+        <span class="composite ${lCls}">${(c.risk_score ?? 0).toFixed(2)} · ${escapeHtml(c.risk || "")}</span>
+        <span class="badge ${sCls}">${escapeHtml(c.status || "")}</span>
+        <span class="meta">${escapeHtml(c.founder || "")} · ${escapeHtml(c.country || "")} · ${escapeHtml(span)}</span>
+      </div>
+      <div class="meta">${escapeHtml(c.category || "")}${c.members_peak ? " · peak ~" + fmt.num(c.members_peak) + " members" : ""}</div>
+      <div class="summary">${escapeHtml(c.summary || "")}</div>
+      <div class="axis-bars">${bars}</div>
+    </div>`;
+  }).join("");
+}
+
+// ─── Leaders ──────────────────────────────────────────────────────────────
+
+function renderLeaders(d) {
+  const root = document.getElementById("leaders");
+  if (!d.leaders.length) { root.innerHTML = '<div class="empty">No leaders loaded.</div>'; return; }
+  root.innerHTML = '<div class="leaders-grid">' + d.leaders.map(L => {
+    const a = L.actuarial;
+    const dieCls = a && a.p_dies_1y >= 0.10 ? "die-high" : (a && a.p_dies_1y >= 0.04 ? "die-mid" : "");
+    const succession = L.succession ? `<div class="succession">Succession: ${escapeHtml(L.succession)}</div>` : "";
+    const yio = L.years_in_office !== null && L.years_in_office !== undefined
+      ? `· ${L.years_in_office.toFixed(1)} yrs in office` : "";
+    const adj = a && a.p_dies_1y_adj !== undefined
+      ? ` <span style="color:var(--muted);font-size:10px">(adj ${(a.p_dies_1y_adj*100).toFixed(1)}%)</span>` : "";
+    const actuHtml = a ? `
+      <div class="actu-grid">
+        <div class="actu ${dieCls}"><div class="lbl">P(dies 1y)</div><div class="val">${(a.p_dies_1y*100).toFixed(1)}%${adj}</div></div>
+        <div class="actu"><div class="lbl">P(alive 5y)</div><div class="val">${(a.p_alive_5y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_5y_adj*100).toFixed(0)}%</span></div></div>
+        <div class="actu"><div class="lbl">P(alive 10y)</div><div class="val">${(a.p_alive_10y*100).toFixed(0)}%<span style="color:var(--muted);font-size:10px"> · adj ${(a.p_alive_10y_adj*100).toFixed(0)}%</span></div></div>
+      </div>` : "";
+    const newsHtml = (L.news && L.news.length) ? `
+      <div style="margin-top:8px;border-top:1px solid var(--grid);padding-top:6px">
+        <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">Recent news (${L.news_count})</div>
+        ${L.news.slice(0,3).map(n =>
+          `<div style="font-size:11px;margin-top:2px"><a href="${escapeHtml(n.link)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(n.title.substring(0, 80))}${n.title.length > 80 ? "…" : ""}</a> <span style="color:var(--muted)">· ${escapeHtml(n.source)}</span></div>`
+        ).join("")}
+      </div>` : "";
+    return `<div class="leader-card">
+      <div class="head">
+        <span class="name">${escapeHtml(L.name)}</span>
+        <span class="age">${a ? a.age.toFixed(1) + "y" : ""} ${yio}</span>
+      </div>
+      <div class="role">${escapeHtml(L.role)} · ${escapeHtml(L.religion)}</div>
+      ${actuHtml}
+      <div class="summary">${escapeHtml(L.summary || "")}</div>
+      ${succession}
+      ${newsHtml}
+    </div>`;
+  }).join("") + '</div>';
+}
+
+// ─── Conclave ─────────────────────────────────────────────────────────────
+
+function renderConclave(d) {
+  const ag = d.college_aggregates;
+  const sampleElectors = d.cardinals.filter(c => c.elector).length;
+  const verifiedCount = d.cardinals.filter(c => c.verified !== false).length;
+
+  // Source / freshness badge
+  const srcBox = document.getElementById("conclave-source");
+  if (srcBox && d.source) {
+    const ageMin = d.age_seconds !== null && d.age_seconds !== undefined ? Math.round(d.age_seconds / 60) : null;
+    const ageStr = ageMin === null ? "—"
+                 : ageMin < 1 ? "just now"
+                 : ageMin < 60 ? ageMin + " min ago"
+                 : ageMin < 1440 ? Math.round(ageMin / 60) + "h ago"
+                 : Math.round(ageMin / 1440) + "d ago";
+    const colour = d.source === "live" ? "#56d364"
+                 : d.source === "stale-cache" ? "#d29922"
+                 : "#8b949e";
+    let badge = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:6px;vertical-align:middle"></span>`;
+    let label;
+    if (d.source === "live") {
+      label = `<strong style="color:${colour}">live</strong> · ${d.scraped_count} cardinals from Vatican Press Office · fetched ${ageStr}`;
+    } else if (d.source === "stale-cache") {
+      label = `<strong style="color:${colour}">stale cache</strong> · last successful fetch ${ageStr} · ${d.error ? escapeHtml(d.error) : "scrape failed"}`;
+    } else {
+      label = `<strong style="color:${colour}">curated fallback</strong> · Vatican scrape unavailable${d.error ? " (" + escapeHtml(d.error) + ")" : ""}`;
+    }
+    let drift = "";
+    if (d.drift && (d.drift.added_since_curated.length || d.drift.missing_from_scraped.length)) {
+      drift = ` · drift: <strong>+${d.drift.added_since_curated.length}</strong> new, <strong>−${d.drift.missing_from_scraped.length}</strong> missing from Vatican`;
+    }
+    srcBox.innerHTML = badge + label + drift +
+      ` · <a href="${escapeHtml(d.vatican_url || "#")}" target="_blank" rel="noopener" style="color:var(--accent)">source</a>`;
+  }
+
+  const hero = document.getElementById("conclave-hero");
+  hero.innerHTML = [
+    {l: "Total cardinals (college)", v: ag.total_cardinals},
+    {l: "Total electors (<80)",      v: ag.total_electors},
+    {l: "Enumerated here",           v: d.cardinals.length + " (" + verifiedCount + " verified)"},
+    {l: "Electors in sample",        v: sampleElectors},
+    {l: "2/3 majority",              v: ag.two_thirds_threshold + " votes"},
+    {l: "Created by Francis",        v: ag.by_appointer.Francis + " electors"},
+    {l: "Papabile priors sum",       v: (100 - d.rules.field_residual_pct) + "%"},
+    {l: "Field residual",            v: d.rules.field_residual_pct + "%"},
+  ].map(s => `<div class="stat"><div class="label">${escapeHtml(s.l)}</div><div class="value">${escapeHtml(String(s.v))}</div></div>`).join("");
+
+  // Papabile cards
+  const papabileSorted = [...d.papabile_priors].sort((a, b) => b.prior_pct - a.prior_pct);
+  document.getElementById("papabile").innerHTML = papabileSorted.map(p => `
+    <div class="papabile-row">
+      <div class="pct">${p.prior_pct.toFixed(1)}%</div>
+      <div>
+        <div class="who">${escapeHtml(p.name)}</div>
+        <div class="why">${escapeHtml(p.rationale)}</div>
+      </div>
+    </div>`).join("");
+
+  // Cardinal table — wire up search + filters + sortable columns.
+  // Cache the full data for re-rendering on filter change.
+  window._cardData = d.cardinals.slice();
+  initCardinalControls(d);
+  renderCardinalTable();
+}
+
+// ─── Cardinal table: search + filters + sort ──────────────────────────────
+
+const CARD_STATE = {sortKey: "papabile_tier", sortDir: -1, q: "", region: "", appointer: "", electorsOnly: false};
+
+function initCardinalControls(d) {
+  const cards = window._cardData || [];
+
+  // Region filter chips
+  const regions = Array.from(new Set(cards.map(c => c.region))).sort();
+  const appointers = Array.from(new Set(cards.map(c => c.appointed_by))).sort();
+  const fb = document.getElementById("card-filters");
+  function btn(label, key, val) {
+    const active = CARD_STATE[key] === val;
+    const bg = active ? "var(--accent)" : "#21262d";
+    const fg = active ? "#0e1117" : "var(--fg)";
+    return `<button data-key="${key}" data-val="${escapeHtml(String(val))}" style="background:${bg};color:${fg};border:1px solid var(--grid);padding:3px 9px;border-radius:999px;font-size:11px;cursor:pointer">${escapeHtml(label)}</button>`;
+  }
+  let html = `<span style="color:var(--muted);font-size:11px;margin-right:4px">Region:</span>`;
+  html += btn("All", "region", "");
+  for (const r of regions) html += btn(r, "region", r);
+  html += `<span style="color:var(--muted);font-size:11px;margin:0 4px 0 12px">Appointer:</span>`;
+  html += btn("All", "appointer", "");
+  for (const a of appointers) html += btn(a, "appointer", a);
+  html += `<span style="color:var(--muted);font-size:11px;margin:0 4px 0 12px">·</span>`;
+  html += btn(CARD_STATE.electorsOnly ? "✓ Electors only" : "Electors only", "electorsOnly", !CARD_STATE.electorsOnly);
+  fb.innerHTML = html;
+
+  fb.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      const k = b.dataset.key;
+      const v = b.dataset.val;
+      CARD_STATE[k] = k === "electorsOnly" ? (v === "true") : v;
+      initCardinalControls();   // re-render chips (active state changes)
+      renderCardinalTable();
+    });
+  });
+
+  const search = document.getElementById("card-search");
+  if (search && !search._wired) {
+    search.addEventListener("input", e => {
+      CARD_STATE.q = e.target.value.toLowerCase().trim();
+      renderCardinalTable();
+    });
+    search._wired = true;
+  }
+}
+
+function renderCardinalTable() {
+  const data = window._cardData || [];
+  let list = data.slice();
+  if (CARD_STATE.region) list = list.filter(c => c.region === CARD_STATE.region);
+  if (CARD_STATE.appointer) list = list.filter(c => c.appointed_by === CARD_STATE.appointer);
+  if (CARD_STATE.electorsOnly) list = list.filter(c => c.elector);
+  if (CARD_STATE.q) {
+    list = list.filter(c =>
+      (c.name || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.country || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.role || "").toLowerCase().includes(CARD_STATE.q)
+      || (c.summary || "").toLowerCase().includes(CARD_STATE.q)
+    );
+  }
+  const k = CARD_STATE.sortKey, dir = CARD_STATE.sortDir;
+  list.sort((a, b) => {
+    const av = a[k] ?? 0, bv = b[k] ?? 0;
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+
+  document.getElementById("card-count").textContent = `${list.length} / ${data.length}`;
+
+  function th(label, key, extra="") {
+    const arrow = CARD_STATE.sortKey === key ? (CARD_STATE.sortDir > 0 ? " ↑" : " ↓") : "";
+    return `<div ${extra} onclick="cardSort('${key}')" style="cursor:pointer;color:${CARD_STATE.sortKey===key?'var(--accent)':'var(--muted)'}">${label}${arrow}</div>`;
+  }
+  const header = `<div class="cardinal-row" style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
+    ${th("Cardinal / Role", "name")}
+    ${th("Age", "age", 'class="num"')}
+    ${th("Region", "region")}
+    ${th("Appointed by", "appointed_by")}
+    ${th("Wing · Tier", "papabile_tier")}
+  </div>`;
+  document.getElementById("cardinals").innerHTML = header + list.map(c => {
+    const wing = `<span class="wing-pill wing-${c.wing}">${escapeHtml(c.wing)}</span>`;
+    const tier = `<span class="tier-pill tier-${c.papabile_tier}">T${c.papabile_tier}</span>`;
+    const verifyMark = c.verified === false ? ' <span title="approximated" style="color:#d29922">~</span>' : "";
+    return `<div class="cardinal-row">
+      <div>
+        <div class="who">${escapeHtml(c.name)}${verifyMark}${c.elector ? "" : " <span style=\"color:var(--muted);font-size:10px\">(non-elector)</span>"}</div>
+        <div class="role">${escapeHtml(c.role || "")} · ${escapeHtml(c.country)}</div>
+      </div>
+      <div class="num">${c.age}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.region)}</div>
+      <div style="font-size:11px;color:var(--muted)">${escapeHtml(c.appointed_by)}</div>
+      <div>${wing} ${tier}</div>
+    </div>`;
+  }).join("");
+}
+
+function cardSort(key) {
+  if (CARD_STATE.sortKey === key) CARD_STATE.sortDir = -CARD_STATE.sortDir;
+  else { CARD_STATE.sortKey = key; CARD_STATE.sortDir = (key === "age" ? 1 : -1); }
+  renderCardinalTable();
+}
+
+// ─── Country composition ──────────────────────────────────────────────────
+
+function renderCountries(d) {
+  const root = document.getElementById("countries");
+  const legend = document.getElementById("country-legend");
+
+  // Build legend from rollup, sorted by adherents.
+  const order = Object.entries(d.rollup_by_religion || {})
+    .sort((a, b) => b[1].adherents_m - a[1].adherents_m)
+    .map(([k]) => k);
+  legend.innerHTML = order.map(r => {
+    const cls = r.replace(/[\s/]+/g, "");
+    return `<span><span class="sw seg ${cls}"></span>${escapeHtml(r)}</span>`;
+  }).join("");
+
+  root.innerHTML = d.countries.map(c => {
+    const segs = order.map(r => {
+      const pct = (c.religion_pct || {})[r] || 0;
+      if (pct < 0.1) return "";
+      const cls = r.replace(/[\s/]+/g, "");
+      return `<div class="seg ${cls}" style="width:${pct}%" title="${escapeHtml(r)} ${pct.toFixed(1)}%"></div>`;
+    }).join("");
+    return `<div class="country-row">
+      <div class="name">${escapeHtml(c.country)} <span style="color:var(--muted);font-weight:400;font-size:11px">${escapeHtml(c.majority)}</span></div>
+      <div class="pop">${c.pop_m >= 1 ? c.pop_m.toLocaleString() + "M" : (c.pop_m * 1000).toFixed(0) + "K"}</div>
+      <div class="stack">${segs}</div>
+    </div>`;
+  }).join("");
+}
+
+// ─── Calendar ─────────────────────────────────────────────────────────────
+
+function renderCalendar(d) {
+  const root = document.getElementById("calendar-strip");
+  if (!d.events.length) { root.innerHTML = '<div class="empty">No upcoming events in window.</div>'; return; }
+  const today = new Date(d.today);
+  root.innerHTML = '<div class="cal-strip">' + d.events.slice(0, 12).map(e => {
+    const evDate = new Date(e.date);
+    const days = Math.round((evDate - today) / (1000*60*60*24));
+    const cd = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+    return `<div class="cal-event">
+      <div class="when">${escapeHtml(e.date)}</div>
+      <div class="countdown">${escapeHtml(cd)}${e.duration > 1 ? " · " + e.duration + " days" : ""}</div>
+      <div class="name">${escapeHtml(e.name)}</div>
+      <div class="religion">${escapeHtml(e.religion)}</div>
+      <div class="summary">${escapeHtml(e.summary)}</div>
+    </div>`;
+  }).join("") + '</div>';
+}
+
+function renderFreedom(d) {
+  const root = document.getElementById("freedom");
+  const cpc = d.designations.cpc.map(x =>
+    `<span class="pill cpc">${escapeHtml(x.country)} · since ${x.since}</span>`
+  ).join("");
+  const swl = d.designations.swl.map(x =>
+    `<span class="pill swl">${escapeHtml(x.country)} · since ${x.since}</span>`
+  ).join("");
+  const epc = d.designations.epc.map(x =>
+    `<span class="pill epc">${escapeHtml(x.entity)} · ${escapeHtml(x.region)}</span>`
+  ).join("");
+  root.innerHTML =
+    `<h3>Countries of Particular Concern (${d.counts.cpc})</h3><div class="pill-row">${cpc}</div>` +
+    `<h3>Special Watch List (${d.counts.swl})</h3><div class="pill-row">${swl}</div>` +
+    `<h3>Entities of Particular Concern (${d.counts.epc})</h3><div class="pill-row">${epc}</div>`;
+}
+
+function renderMarkets(d) {
+  const root = document.getElementById("markets");
+  if (!d.markets.length) { root.innerHTML = '<div class="empty">No live religion-tagged markets right now.</div>'; return; }
+  const top = d.markets.slice(0, 30);
+  const header = `<div class="market-row" style="font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:0.04em">
+    <div>Market</div><div class="yes">YES</div><div class="vol">Volume</div><div class="end">Ends</div>
+  </div>`;
+  const rows = top.map(m => {
+    const yes = m.yes_price !== null && m.yes_price !== undefined ? (m.yes_price * 100).toFixed(0) + "%" : "—";
+    const vol = m.volume ? fmt.money(m.volume) : "—";
+    const end = m.end_date ? m.end_date.slice(0, 10) : "—";
+    const link = m.url ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${escapeHtml(m.question)}</a>` : escapeHtml(m.question);
+    return `<div class="market-row"><div class="q">${link}</div>` +
+           `<div class="yes">${yes}</div><div class="vol">${vol}</div><div class="end">${end}</div></div>`;
+  }).join("");
+  root.innerHTML = header + rows;
+}
+
+function renderViolence(d) {
+  const sum = document.getElementById("violence-summary");
+  const rows = document.getElementById("violence-rows");
+  if (!d.ok) {
+    sum.innerHTML = `<span style="color:#d29922">●</span> ACLED feed offline: ${escapeHtml(d.error || "")}`;
+    rows.innerHTML = '<div class="empty">No data. Set ACLED_EMAIL + ACLED_API_KEY in production to enable.</div>';
+    return;
+  }
+  const topCountries = Object.entries(d.by_country)
+    .sort((a, b) => b[1].fatalities - a[1].fatalities).slice(0, 8);
+  sum.innerHTML = `<span style="color:#56d364">●</span> ${d.total_events} events in last ${d.days_back} days · top by fatalities: ` +
+    topCountries.map(([c, v]) => `<strong>${escapeHtml(c)}</strong> (${v.fatalities})`).join(" · ");
+  const recent = d.events.slice(0, 15);
+  rows.innerHTML = recent.map(e => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--grid);font-size:12px">
+      <div><strong>${escapeHtml(e.date)}</strong> · ${escapeHtml(e.country)}${e.admin1 ? " / " + escapeHtml(e.admin1) : ""}${e.location ? " · " + escapeHtml(e.location) : ""} · <span style="color:#f85149">${e.fatalities} dead</span></div>
+      <div style="color:var(--muted);font-size:11px">${escapeHtml(e.sub_event_type || e.event_type)} · ${escapeHtml(e.actor1 || "?")} → ${escapeHtml(e.actor2 || "civilians")} · ${escapeHtml(e.match_reason)}</div>
+      <div style="font-size:11px;margin-top:3px">${escapeHtml(e.notes || "").substring(0, 280)}${(e.notes||"").length > 280 ? "…" : ""}</div>
+    </div>`).join("");
+}
+
+function renderSentinel(d) {
+  const sum = document.getElementById("sentinel-summary");
+  const rows = document.getElementById("sentinel-rows");
+  if (!d.ok) {
+    sum.innerHTML = `<span style="color:#d29922">●</span> Reddit sentinel offline: ${escapeHtml(d.error || "")}`;
+    rows.innerHTML = '<div class="empty">No data. Reddit unreachable in this environment.</div>';
+    return;
+  }
+  sum.innerHTML = `<span style="color:#56d364">●</span> ${d.posts_seen} posts seen across ${d.subs_polled.length} subreddits · ${d.top_mentions.length} groups mentioned 2+ times`;
+  if (!d.top_mentions.length) {
+    rows.innerHTML = '<div class="empty">No multi-mention groups in current window.</div>';
+    return;
+  }
+  rows.innerHTML = d.top_mentions.slice(0, 20).map(m => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--grid);display:grid;grid-template-columns:200px 60px 1fr;gap:10px;align-items:center;font-size:12px">
+      <div><strong>${escapeHtml(m.name)}</strong></div>
+      <div style="color:var(--accent);font-weight:600;text-align:center">${m.count}×</div>
+      <div style="color:var(--muted);font-size:11px">
+        ${m.subs.map(s => `<span style="background:#21262d;padding:1px 6px;border-radius:3px;margin-right:3px">r/${escapeHtml(s)}</span>`).join("")}
+        ${m.recent_posts.slice(0, 2).map(p => `<div style="margin-top:3px"><a href="${escapeHtml(p.permalink)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escapeHtml(p.title)}</a></div>`).join("")}
+      </div>
+    </div>`).join("");
+}
+
+function renderPopeHealth(d) {
+  const banner = document.getElementById("pope-health-banner");
+  if (!banner) return;
+  if (d.match_count === 0) {
+    banner.innerHTML = `<div style="background:#0e1117;border:1px solid var(--grid);border-left:3px solid #56d364;border-radius:4px;padding:8px 12px;font-size:12px;color:var(--muted)">
+      <strong style="color:#56d364">●</strong> Pope health signal: <strong>quiet</strong> (score ${d.score}, 0 matches in last ${d.window_days} days)
+    </div>`;
+    return;
+  }
+  const bandColor = d.band === "critical" ? "#f85149"
+                  : d.band === "high"     ? "#d29922"
+                  : d.band === "elevated" ? "#f7d76b"
+                  : "#56d364";
+  const recentChips = d.recent_signals.slice(0, 5).map(s =>
+    `<a href="${escapeHtml(s.link || '#')}" target="_blank" rel="noopener" style="display:inline-block;background:#21262d;border:1px solid var(--grid);padding:2px 8px;border-radius:999px;font-size:11px;color:var(--fg);text-decoration:none;margin-right:4px;margin-top:4px">${escapeHtml(s.phrase)} <span style="color:var(--muted)">${escapeHtml(s.date)}</span></a>`
+  ).join("");
+  banner.innerHTML = `<div style="background:#0e1117;border:1px solid var(--grid);border-left:3px solid ${bandColor};border-radius:4px;padding:8px 12px">
+    <div style="font-size:13px"><strong style="color:${bandColor}">●</strong> Pope health signal: <strong style="color:${bandColor};text-transform:uppercase">${escapeHtml(d.band)}</strong> · score ${d.score}/10 · ${d.match_count} matches in last ${d.window_days} days</div>
+    <div style="margin-top:4px">${recentChips}</div>
+  </div>`;
+}
+
+function renderEdge(d) {
+  const sum = document.getElementById("edge-summary");
+  const root = document.getElementById("edge-rows");
+  sum.textContent = `${d.matched_markets} of ${d.total_markets} markets matched a model · ref ${d.today} · hazard ratio ${d.model_hazard_ratio}`;
+
+  const matched = d.markets.filter(m => m.edge_pp !== null && m.edge_pp !== undefined);
+  if (!matched.length) {
+    root.innerHTML = '<div class="empty">No matchable markets right now. (Markets need to reference a tracked leader or papabile by name and have a future end-date.)</div>';
+    return;
+  }
+
+  const header = `<div class="edge-row" style="font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.04em;border-bottom:1px solid var(--grid)">
+    <div>Market</div><div class="num">Model</div><div class="num">Market</div><div class="num">Edge (pp)</div><div>Side</div>
+  </div>`;
+  root.innerHTML = header + matched.slice(0, 25).map(m => {
+    const edgeCls = m.edge_pp > 1 ? "edge-pp-pos" : m.edge_pp < -1 ? "edge-pp-neg" : "edge-pp-flat";
+    const sign = m.edge_pp > 0 ? "+" : "";
+    const link = m.url ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${escapeHtml(m.question)}</a>` : escapeHtml(m.question);
+    return `<div class="edge-row">
+      <div class="qq">
+        <div>${link}</div>
+        <div class="basis">${escapeHtml(m.model_basis || "")}</div>
+      </div>
+      <div class="num model-p">${(m.model_p*100).toFixed(1)}%</div>
+      <div class="num market-p">${(m.market_p*100).toFixed(1)}%</div>
+      <div class="num ${edgeCls}">${sign}${m.edge_pp.toFixed(1)}</div>
+      <div><span class="side-pill side-${m.side}">${m.side || "—"}</span></div>
+    </div>`;
+  }).join("");
+}
+
+function renderNews(d) {
+  const root = document.getElementById("news");
+  if (!d.items.length) { root.innerHTML = '<div class="empty">No headlines.</div>'; return; }
+  root.innerHTML = d.items.slice(0, 25).map(n =>
+    `<div class="news-item">
+      <div class="title"><a href="${escapeHtml(n.link)}" target="_blank" rel="noopener">${escapeHtml(n.title)}</a></div>
+      <div class="meta">${escapeHtml(n.source)}${n.published ? " · " + escapeHtml(n.published) : ""}</div>
+      ${n.summary ? `<div class="summary">${escapeHtml(n.summary)}</div>` : ""}
+    </div>`
+  ).join("");
+}
+
+load();
+</script>
+</body>
+</html>
