@@ -1,0 +1,14 @@
+{
+  "_comment": "Maps bot keys (used in email subjects: '[<key>] ...') to working directories, relative to this file (gateway/email_relay/). Add a new entry when you spin up a new bot. Keys should match gateway/config.json#dashboards where possible.",
+  "centralbank":  "../../centralbank-dashboard",
+  "climate":      "../../climate-dashboard",
+  "crypto":       "../../crypto-dashboard",
+  "midterm":      "../../midterm-dashboard",
+  "sports":       "../../sports-dashboard",
+  "stock":        "../../stock-dashboard",
+  "top_traders":  "../../top-traders-dashboard",
+  "voters":       "../../voters-dashboard",
+  "weather":      "../../polymarket_weather_dashboard",
+  "world":        "../../world-state-dashboard",
+  "world_health": "../../world-health-dashboard"
+}

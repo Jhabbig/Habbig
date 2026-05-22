@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import sqlite3
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -28,8 +27,23 @@ logger = logging.getLogger(__name__)
 _DB_DIR = Path(__file__).resolve().parent
 DB_PATH = _DB_DIR / "data.db"
 
-_lock = threading.Lock()
+# WAL + busy_timeout (set inside _get_conn) handle concurrency without an
+# explicit Python-side mutex. The previous global threading.Lock serialized
+# every read and write through one mutex, defeating WAL's concurrent-read
+# benefit. _lock is kept as a no-op context manager so the existing call sites
+# (`with _lock: ...`) need no change.
 
+class _NullLock:
+    """No-op context manager. See note above."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+_lock = _NullLock()
 
 @contextmanager
 def _get_conn():
@@ -37,6 +51,12 @@ def _get_conn():
     conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # busy_timeout is in ms — applies when the writer lock is held by another
+    # connection. 30s gives long-running writes plenty of headroom.
+    conn.execute("PRAGMA busy_timeout=30000")
+    # synchronous=NORMAL is safe with WAL and roughly 2× faster on bulk writes
+    # than the default FULL.
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -81,6 +101,49 @@ CREATE TABLE IF NOT EXISTS midterm_price_history (
     prices      TEXT,               -- JSON object stored as TEXT
     volume      REAL
 );
+
+-- Drives both the per-market price chart query and the nightly retention sweep.
+CREATE INDEX IF NOT EXISTS idx_price_history_market_ts
+    ON midterm_price_history(market_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_price_history_ts
+    ON midterm_price_history(timestamp);
+
+-- Political news ingested from curated RSS feeds + tagged to a race key when
+-- the headline mentions a recognised state / candidate.
+CREATE TABLE IF NOT EXISTS midterm_news_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    link            TEXT,
+    description     TEXT,
+    published_at    TEXT NOT NULL,
+    race_key        TEXT,
+    state           TEXT,
+    keywords        TEXT,                    -- JSON array of matched tags
+    UNIQUE(source, link)
+);
+CREATE INDEX IF NOT EXISTS idx_news_race ON midterm_news_events(race_key, published_at);
+CREATE INDEX IF NOT EXISTS idx_news_published ON midterm_news_events(published_at);
+
+-- Observed market reaction for a tagged news event. We snapshot the price
+-- before the news timestamp and at one or more checkpoints after, then store
+-- the inferred lag (seconds until the first snapshot whose price moved more
+-- than ``REACTION_THRESHOLD``).
+CREATE TABLE IF NOT EXISTS midterm_news_reactions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    news_id             INTEGER NOT NULL,
+    source              TEXT NOT NULL,         -- market source: polymarket/kalshi/...
+    market_id           INTEGER,               -- midterm_markets.id (nullable for snapshot-level)
+    race_key            TEXT,
+    baseline_price      REAL,
+    reaction_price      REAL,
+    delta_pp            REAL,                  -- |reaction - baseline| × 100
+    lag_seconds         INTEGER,               -- time from news → first material move
+    computed_at         TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY(news_id) REFERENCES midterm_news_events(id)
+);
+CREATE INDEX IF NOT EXISTS idx_reactions_news ON midterm_news_reactions(news_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_race ON midterm_news_reactions(race_key, lag_seconds);
 
 CREATE TABLE IF NOT EXISTS midterm_polling_data (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -317,8 +380,269 @@ class Database:
                 )
 
     def upsert_markets_batch(self, markets: list[dict]):
+        """Upsert many markets in a single transaction.
+
+        Was previously a Python loop calling ``upsert_market`` once per row,
+        which opened a fresh connection + commit per market. A 5-min refresh
+        with thousands of markets meant thousands of transactions. The batched
+        version commits once for the whole list.
+        """
+        if not markets:
+            return
+        rows = []
         for market in markets:
-            self.upsert_market(market)
+            outcomes = market.get("outcomes", [])
+            if isinstance(outcomes, (list, dict)):
+                outcomes = json.dumps(outcomes)
+            rows.append((
+                market["source"],
+                market["source_id"],
+                market.get("event_id"),
+                market["title"],
+                market.get("event_title"),
+                market.get("slug"),
+                market.get("race_type"),
+                market.get("state"),
+                outcomes,
+                market.get("volume", 0),
+                market.get("liquidity", 0),
+                1 if market.get("active") else 0,
+                1 if market.get("closed") else 0,
+                market.get("end_date"),
+                market.get("last_updated"),
+            ))
+        with _get_conn() as conn:
+            conn.executemany(
+                """INSERT INTO midterm_markets
+                    (source, source_id, event_id, title, event_title, slug,
+                     race_type, state, outcomes, volume, liquidity, active,
+                     closed, end_date, last_updated)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(source, source_id) DO UPDATE SET
+                     event_id=excluded.event_id,
+                     title=excluded.title,
+                     event_title=excluded.event_title,
+                     slug=excluded.slug,
+                     race_type=excluded.race_type,
+                     state=excluded.state,
+                     outcomes=excluded.outcomes,
+                     volume=excluded.volume,
+                     liquidity=excluded.liquidity,
+                     active=excluded.active,
+                     closed=excluded.closed,
+                     end_date=excluded.end_date,
+                     last_updated=excluded.last_updated
+                """,
+                rows,
+            )
+
+    # === News + market reactions ============================================
+
+    def upsert_news_event(
+        self,
+        *,
+        source: str,
+        title: str,
+        link: Optional[str],
+        description: Optional[str],
+        published_at: str,
+        race_key: Optional[str],
+        state: Optional[str],
+        keywords: Optional[list[str]],
+    ) -> Optional[int]:
+        """Insert (or no-op on dup) a news event, return its row id.
+
+        Returns ``None`` if the (source, link) pair was already stored. We
+        rely on the natural-key dedupe instead of hashing the title because
+        sources occasionally tweak titles after publishing.
+        """
+        kw = json.dumps(keywords or [])
+        with _get_conn() as conn:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO midterm_news_events
+                        (source, title, link, description, published_at,
+                         race_key, state, keywords)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (source, title, link, description, published_at,
+                     race_key, state, kw),
+                )
+                return cur.lastrowid
+            except sqlite3.IntegrityError:
+                return None
+
+    def get_recent_news(
+        self,
+        *,
+        race_key: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        sql = "SELECT * FROM midterm_news_events"
+        params: tuple = ()
+        if race_key:
+            sql += " WHERE race_key = ?"
+            params = (race_key,)
+        sql += " ORDER BY published_at DESC LIMIT ?"
+        params = params + (limit,)
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("keywords"), str):
+                try:
+                    d["keywords"] = json.loads(d["keywords"])
+                except (json.JSONDecodeError, TypeError):
+                    d["keywords"] = []
+            out.append(d)
+        return out
+
+    def get_news_needing_reaction(self, *, max_age_hours: int = 24) -> list[dict]:
+        """News events with a race_key but no reaction computed yet.
+
+        Used by the reaction-measurement loop. Only looks at recent news so we
+        don't re-process every old item on every pass.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT n.* FROM midterm_news_events n
+                   LEFT JOIN midterm_news_reactions r ON r.news_id = n.id
+                   WHERE n.race_key IS NOT NULL
+                     AND n.published_at >= ?
+                     AND r.id IS NULL""",
+                (cutoff,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("keywords"), str):
+                try:
+                    d["keywords"] = json.loads(d["keywords"])
+                except (json.JSONDecodeError, TypeError):
+                    d["keywords"] = []
+            out.append(d)
+        return out
+
+    def record_news_reaction(
+        self,
+        *,
+        news_id: int,
+        source: str,
+        market_id: Optional[int],
+        race_key: str,
+        baseline_price: float,
+        reaction_price: float,
+        lag_seconds: Optional[int],
+    ) -> None:
+        delta_pp = abs(reaction_price - baseline_price) * 100.0
+        with _get_conn() as conn:
+            conn.execute(
+                """INSERT INTO midterm_news_reactions
+                    (news_id, source, market_id, race_key, baseline_price,
+                     reaction_price, delta_pp, lag_seconds)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (news_id, source, market_id, race_key, baseline_price,
+                 reaction_price, delta_pp, lag_seconds),
+            )
+
+    def get_news_reactions(
+        self,
+        *,
+        race_key: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        clauses = []
+        params: list = []
+        if race_key:
+            clauses.append("r.race_key = ?")
+            params.append(race_key)
+        if source:
+            clauses.append("r.source = ?")
+            params.append(source)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = (
+            "SELECT r.*, n.title, n.published_at, n.link, n.source AS news_source "
+            "FROM midterm_news_reactions r JOIN midterm_news_events n ON n.id = r.news_id"
+            f"{where} ORDER BY r.computed_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        with _get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def get_price_snapshots_for_market(
+        self,
+        *,
+        market_id: int,
+        start: str,
+        end: str,
+    ) -> list[dict]:
+        """All price snapshots for a market between ``start`` and ``end`` (ISO timestamps)."""
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT timestamp, prices FROM midterm_price_history
+                   WHERE market_id = ? AND timestamp >= ? AND timestamp <= ?
+                   ORDER BY timestamp""",
+                (market_id, start, end),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("prices"), str):
+                try:
+                    d["prices"] = json.loads(d["prices"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            out.append(d)
+        return out
+
+    def prune_news(self, retain_days: int = 60) -> int:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retain_days)).isoformat()
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM midterm_news_events WHERE published_at < ?",
+                (cutoff,),
+            )
+            return cur.rowcount or 0
+
+    # === Retention ==========================================================
+
+    def prune_price_history(self, retain_days: int = 30) -> int:
+        """Delete price-history rows older than ``retain_days``.
+
+        Returns the number of rows deleted. ``midterm_price_history`` is the
+        dominant contributor to DB size (108MB+ in production); without
+        retention it grows unbounded. Should be called from a daily background
+        task.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retain_days)).isoformat()
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM midterm_price_history WHERE timestamp < ?",
+                (cutoff,),
+            )
+            return cur.rowcount or 0
+
+    def prune_divergence_snapshots(self, retain_days: int = 90) -> int:
+        """Delete divergence snapshots older than ``retain_days``."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retain_days)).isoformat()
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM midterm_divergence_snapshots WHERE snapshot_time < ?",
+                (cutoff,),
+            )
+            return cur.rowcount or 0
+
+    def vacuum(self) -> None:
+        """Reclaim space after a large prune. SQLite VACUUM rewrites the file
+        so it must be run outside any transaction."""
+        conn = sqlite3.connect(str(DB_PATH), timeout=60)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
 
     def get_markets(
         self,
@@ -390,6 +714,74 @@ class Database:
                     (market_id, source, ts, prices_json, volume),
                 )
 
+    def record_price_snapshots_for_markets(self, markets: list[dict]) -> int:
+        """Persist a price snapshot per market in one transaction.
+
+        Looks up each market's integer PK by ``(source, source_id)`` from the
+        markets we just upserted, then writes one row per market into
+        ``midterm_price_history`` carrying the current outcomes as a JSON
+        ``{outcome_name: probability}`` map.
+
+        Called from the data-refresh loop after upserts. Without it the
+        price-history table stays empty and the news-reaction measurer has
+        nothing to compare against.
+        """
+        if not markets:
+            return 0
+        ts = datetime.now(timezone.utc).isoformat()
+        with _get_conn() as conn:
+            keys = list({(m["source"], m["source_id"]) for m in markets if m.get("source") and m.get("source_id")})
+            if not keys:
+                return 0
+            # Look up int PKs in batches to stay under SQLite's variable cap.
+            id_by_key: dict[tuple[str, str], int] = {}
+            batch_size = 400  # SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999
+            for i in range(0, len(keys), batch_size):
+                batch = keys[i:i + batch_size]
+                placeholders = ",".join(["(?,?)"] * len(batch))
+                flat: list = []
+                for k in batch:
+                    flat.extend(k)
+                rows = conn.execute(
+                    f"SELECT source, source_id, id FROM midterm_markets "
+                    f"WHERE (source, source_id) IN (VALUES {placeholders})",
+                    flat,
+                ).fetchall()
+                for r in rows:
+                    id_by_key[(r["source"], r["source_id"])] = r["id"]
+
+            payload = []
+            for m in markets:
+                key = (m.get("source"), m.get("source_id"))
+                mid = id_by_key.get(key)
+                if mid is None:
+                    continue
+                outcomes = m.get("outcomes") or []
+                if not outcomes:
+                    continue
+                prices = {}
+                for o in outcomes:
+                    name = o.get("name") or ""
+                    p = o.get("probability")
+                    if name and p is not None:
+                        try:
+                            prices[name] = float(p)
+                        except (TypeError, ValueError):
+                            continue
+                if not prices:
+                    continue
+                payload.append((mid, m.get("source", ""), ts,
+                                json.dumps(prices), m.get("volume")))
+
+            if payload:
+                conn.executemany(
+                    """INSERT INTO midterm_price_history
+                        (market_id, source, timestamp, prices, volume)
+                       VALUES (?,?,?,?,?)""",
+                    payload,
+                )
+            return len(payload)
+
     def get_price_history(self, market_id: int, days: int = 30) -> list[dict]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with _get_conn() as conn:
@@ -435,6 +827,78 @@ class Database:
                         details_json,
                     ),
                 )
+
+    def get_divergence_history(self, since_days: int = 30) -> list[dict]:
+        """All divergence snapshots in the last ``since_days`` days, oldest first."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT race_key, race_type, state, polymarket_prob, kalshi_prob,
+                          predictit_prob, polling_avg, max_divergence, snapshot_time,
+                          divergence_details
+                   FROM midterm_divergence_snapshots
+                   WHERE snapshot_time >= ?
+                   ORDER BY snapshot_time""",
+                (cutoff,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("divergence_details"), str):
+                try:
+                    d["divergence_details"] = json.loads(d["divergence_details"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            out.append(d)
+        return out
+
+    def get_latest_divergence(self, race_key: str) -> Optional[dict]:
+        """Most recent divergence snapshot for a race, or None."""
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT * FROM midterm_divergence_snapshots
+                   WHERE race_key = ?
+                   ORDER BY snapshot_time DESC LIMIT 1""",
+                (race_key,),
+            ).fetchone()
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        if isinstance(d.get("divergence_details"), str):
+            try:
+                d["divergence_details"] = json.loads(d["divergence_details"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return d
+
+    def get_latest_divergence_per_race(self) -> list[dict]:
+        """One row per race_key — the most recent divergence snapshot.
+
+        Used by the forecast summary endpoint so we don't have to fan out a
+        query per race. The window function makes this a single index-driven
+        scan rather than ``N`` separate ``ORDER BY ... LIMIT 1`` queries.
+        """
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """WITH ranked AS (
+                       SELECT *,
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY race_key ORDER BY snapshot_time DESC
+                              ) AS rn
+                       FROM midterm_divergence_snapshots
+                   )
+                   SELECT * FROM ranked WHERE rn = 1"""
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            if isinstance(d.get("divergence_details"), str):
+                try:
+                    d["divergence_details"] = json.loads(d["divergence_details"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            out.append(d)
+        return out
 
     # === Human-review market match flags ====================================
 
@@ -684,6 +1148,53 @@ class Database:
                          enabled=excluded.enabled""",
                     (user_id, race_key, alert_type, threshold),
                 )
+
+    def get_all_active_alerts(self) -> list[dict]:
+        """Every enabled alert joined with its profile email.
+
+        Used by the alert dispatcher background task. Telegram chat id is
+        stored on the profile's ``display_name`` field by convention; if
+        we ever add a dedicated column the query gains another join.
+        """
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """SELECT a.user_id, a.race_key, a.alert_type, a.threshold,
+                          p.email, p.display_name
+                   FROM midterm_alert_settings a
+                   LEFT JOIN profiles p ON p.id = a.user_id
+                   WHERE a.enabled = 1"""
+            ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def record_alert_dispatch(
+        self,
+        user_id: str,
+        race_key: str,
+        alert_type: str,
+        message: str,
+    ) -> None:
+        """Record a sent alert. Used to dedupe re-firing on the same condition."""
+        with _lock:
+            with _get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO midterm_alert_history
+                        (user_id, race_key, alert_type, message)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, race_key, alert_type, message),
+                )
+
+    def last_alert_time(self, user_id: str, race_key: str, alert_type: str) -> Optional[str]:
+        """ISO timestamp of the most recent dispatched alert for this triple."""
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT created_at FROM midterm_alert_history
+                   WHERE user_id = ? AND race_key = ? AND alert_type = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (user_id, race_key, alert_type),
+            ).fetchone()
+        if row:
+            return row["created_at"]
+        return None
 
     # === Audit Log ==========================================================
 
