@@ -17,11 +17,17 @@ def _strip_html(text: str) -> str:
 
 
 class TruthSocialScraper(BaseScraper):
-    def __init__(self) -> None:
-        self._username = settings["TRUTHSOCIAL_USERNAME"]
-        self._password = settings["TRUTHSOCIAL_PASSWORD"]
-        self._token = settings["TRUTHSOCIAL_ACCESS_TOKEN"]
-        self._api_base = settings["TRUTHSOCIAL_API_BASE_URL"]
+    def __init__(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        access_token: str | None = None,
+        api_base_url: str | None = None,
+    ) -> None:
+        self._username = username if username is not None else settings["TRUTHSOCIAL_USERNAME"]
+        self._password = password if password is not None else settings["TRUTHSOCIAL_PASSWORD"]
+        self._token = access_token if access_token is not None else settings["TRUTHSOCIAL_ACCESS_TOKEN"]
+        self._api_base = api_base_url if api_base_url is not None else settings["TRUTHSOCIAL_API_BASE_URL"]
 
     def is_available(self) -> bool:
         return bool(self._username and self._password) or bool(self._token)
@@ -30,14 +36,19 @@ class TruthSocialScraper(BaseScraper):
         if not self.is_available():
             logger.warning("TruthSocial scraper unavailable — no credentials")
             return []
+        # Try truthbrush first; if it returns *any* posts, use them. If it
+        # raised (returned None) OR returned an empty list, try the Mastodon
+        # fallback — empty was previously treated as "succeeded with no
+        # results", which prevented the fallback from ever firing.
         posts = await self._fetch_via_truthbrush(keywords, limit)
-        if posts is not None:
+        if posts:
             return posts
-        posts = await self._fetch_via_mastodon(keywords, limit)
-        if posts is not None:
-            return posts
-        logger.warning("TruthSocial: both methods failed")
-        return []
+        masto_posts = await self._fetch_via_mastodon(keywords, limit)
+        if masto_posts:
+            return masto_posts
+        # Both produced no usable results — return whichever surfaced (possibly
+        # empty) so the caller gets a list, not None.
+        return masto_posts if masto_posts is not None else (posts or [])
 
     async def _fetch_via_truthbrush(self, keywords, limit) -> list[RawPost] | None:
         try:

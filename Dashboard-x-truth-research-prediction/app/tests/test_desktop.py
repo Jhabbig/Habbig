@@ -1,5 +1,14 @@
 from unittest.mock import MagicMock, patch
-import time
+import sys
+
+import pytest
+
+# Desktop tests need rumps + pywebview, which only install on macOS.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="Desktop tests require macOS-only deps (rumps, pywebview)",
+)
+
 
 def test_server_wait_success():
     n = 0
