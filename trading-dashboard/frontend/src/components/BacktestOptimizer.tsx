@@ -53,38 +53,32 @@ export const BacktestOptimizer: React.FC = () => {
     setRunning(true);
     const ranges = paramRanges[strategy as keyof typeof paramRanges];
 
-    // Simulate parameter grid search
+    // Simulate parameter grid search with proper bounds
     const mockResults: OptimizationResult[] = [];
     const paramKeys = Object.keys(ranges);
 
+    // Generate grid values for each parameter
+    const gridPoints = paramKeys.map((key) => {
+      const r = ranges[key as keyof typeof ranges];
+      const steps = Math.max(1, Math.round((r.max - r.min) / r.step) + 1);
+      return Array.from({ length: Math.min(5, steps) }, (_, i) => {
+        return r.min + i * ((r.max - r.min) / Math.max(1, Math.min(5, steps) - 1));
+      });
+    });
+
     let iterations = 0;
-    const maxIterations = 25; // Simulate 5x5 grid
+    const maxIterations = 125; // Allow for 5x5x5 grid if 3 params
 
-    for (const val1 of Array.from(
-      { length: 5 },
-      (_, i) => {
-        const r = ranges[paramKeys[0] as keyof typeof ranges];
-        return r.min + i * ((r.max - r.min) / 4);
-      }
-    )) {
-      for (const val2 of Array.from(
-        { length: 5 },
-        (_, i) => {
-          const r = ranges[paramKeys[1] as keyof typeof ranges];
-          return r.min + i * ((r.max - r.min) / 4);
-        }
-      )) {
-        if (iterations >= maxIterations) break;
-
-        // Simulate backtest result
-        const returnPct = 15 + Math.random() * 35 - (Math.abs(val1 - 30) / 10 + Math.abs(val2 - 30) / 10);
+    // Iterate through all combinations of grid points
+    const recurseParams = (paramIndex: number, currentParams: Record<string, number>) => {
+      if (iterations >= maxIterations) return;
+      if (paramIndex === gridPoints.length) {
+        // All parameters set, create result
+        const returnPct = 15 + Math.random() * 35 - Math.random() * 15;
         const sharpeRatio = 1.2 + Math.random() * 1.5;
 
         mockResults.push({
-          params: {
-            [paramKeys[0]]: parseFloat(val1.toFixed(2)),
-            [paramKeys[1]]: parseFloat(val2.toFixed(2)),
-          },
+          params: { ...currentParams },
           returnPct: Math.max(-20, returnPct),
           sharpeRatio,
           winRate: 50 + Math.random() * 25,
@@ -92,8 +86,18 @@ export const BacktestOptimizer: React.FC = () => {
         });
 
         iterations++;
+        return;
       }
-    }
+
+      // Iterate through values for the current parameter
+      for (const val of gridPoints[paramIndex]) {
+        if (iterations >= maxIterations) return;
+        const params = { ...currentParams, [paramKeys[paramIndex]]: parseFloat(val.toFixed(2)) };
+        recurseParams(paramIndex + 1, params);
+      }
+    };
+
+    recurseParams(0, {});
 
     // Simulate delay
     await new Promise((resolve) => setTimeout(resolve, 2000));

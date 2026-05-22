@@ -18,7 +18,7 @@ interface SignalPanelProps {
 
 export const SignalPanel: React.FC<SignalPanelProps> = ({ ticker, price, indicators }) => {
   const [signal, setSignal] = useState<SignalData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
