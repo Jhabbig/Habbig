@@ -69,7 +69,7 @@ except ImportError:
         return ciphertext
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -7083,8 +7083,10 @@ def save_signals(signals: list[dict]):
 # Startup
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
-async def startup():
+async def _run_startup_tasks():
+    """Body of the original startup hook. Kept as a plain async function
+    so it's easy to call from a lifespan context manager OR from a test
+    that wants to drive the startup path directly."""
     _spawn_bg(data_updater())
     _spawn_bg(_polymarket_ws_loop())
     # Backfill historical markets in background thread (non-blocking)
@@ -7203,6 +7205,24 @@ async def startup():
     print(f"Sports Dashboard started. Polling {dashboard_data.get('active_sport', 'unknown')} every {POLL_INTERVAL}s")
     if not ODDS_API_KEY:
         print("WARNING: ODDS_API_KEY not set — bookmaker odds will be unavailable")
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    """FastAPI lifespan handler. Runs startup tasks, then yields control
+    to the request-handling loop. No shutdown cleanup — background tasks
+    are daemon-style and exit with the process."""
+    await _run_startup_tasks()
+    yield
+
+
+# Attach the lifespan post-construction. We can't pass `lifespan=` to
+# `FastAPI(...)` at construction because that line is hundreds of lines
+# above where the helpers it calls (data_updater, _polymarket_ws_loop,
+# etc.) are defined — reordering would mean moving every @app decorator
+# below the helpers. Setting lifespan_context after the fact has the
+# same effect and is supported by FastAPI >= 0.100.
+app.router.lifespan_context = _app_lifespan
 
 
 # ---------------------------------------------------------------------------
