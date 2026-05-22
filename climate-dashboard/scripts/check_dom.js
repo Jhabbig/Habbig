@@ -128,6 +128,16 @@ const MOCK_RESPONSES = {
     { kind: "record", text: "2024 set a new annual temperature record at +1.29°C (vs 1951-1980)." },
     { kind: "trend", text: "CO₂ rose +2.34 ppm over the last 12 months (now 425.30 ppm)." },
   ] },
+  "/api/scenarios": {
+    trajectories: {
+      temperature_c_vs_1850_1900: { "SSP1-2.6": [{year:2020,value:1.10},{year:2050,value:1.70},{year:2100,value:1.80}] },
+      co2_ppm: { "SSP1-2.6": [{year:2020,value:412},{year:2050,value:445},{year:2100,value:420}] },
+    },
+    current_match: {
+      temperature: { scenario: "SSP2-4.5", distance_c: 0.05, scenario_value_c: 1.45, observed_value_c: 1.50 },
+      co2: { scenario: "SSP3-7.0", distance_ppm: 5.0, scenario_value_ppm: 430.0, observed_value_ppm: 425.0 },
+    },
+  },
   "/api/emissions": {
     latest_year: 2022,
     top_emitters: [

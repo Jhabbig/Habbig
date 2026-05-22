@@ -68,6 +68,20 @@ MODELS = [
         "code": "app/models/sf6.py",
     },
     {
+        "id": "ssp_scenarios",
+        "name": "IPCC SSP scenario matching",
+        "summary": "Compares the dashboard's current temperature anomaly and CO₂ concentration against the IPCC AR6 SSP1-2.6 / SSP2-4.5 / SSP3-7.0 / SSP5-8.5 trajectories and reports the closest match for each metric. Trajectories are linearly interpolated between IPCC anchor years (2020, 2030, 2050, 2075, 2100). Temperature uses the IPCC 1850-1900 baseline; dashboard readings (GISTEMP 1951-1980 baseline) are offset by +0.2°C before comparison.",
+        "inputs": [
+            "Latest GISTEMP annual anomaly + current CO₂ from NOAA Mauna Loa",
+            "Hard-coded IPCC AR6 WG1 Table SPM.1 + SSP-database anchor points",
+        ],
+        "outputs": {
+            "current_match": "{temperature: {scenario, distance_c}, co2: {scenario, distance_ppm}} — which scenario is the dashboard's current pace closest to",
+            "trajectories": "Per-scenario year × value series for plotting",
+        },
+        "code": "app/models/scenarios.py",
+    },
+    {
         "id": "country_emissions",
         "name": "Country-level CO₂ emissions",
         "summary": "Top emitters by total annual CO₂ (million tonnes) for the latest year on record, plus per-capita and share-of-global breakdowns. Filters out regional aggregates (codes starting with 'OWID_') so the leaderboard is real countries only. Includes a global summary showing the 10-year change in worldwide emissions.",

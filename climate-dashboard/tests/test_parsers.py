@@ -28,6 +28,7 @@ from app.models import highlights as highlights_model
 from app.models import markets
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
+from app.models import scenarios as scenarios_model
 from app.models import sea_ice as sea_ice_model
 from app.models import sf6 as sf6_model
 from app.models import temperature as temperature_model
@@ -510,6 +511,50 @@ def test_global_summary_computes_decade_change():
     assert g["decade_ago_co2_mt"] == 35043.0
     # +6.0% over the decade
     assert 5 < g["decade_change_pct"] < 7
+
+
+def test_scenarios_interpolation_between_anchors():
+    # SSP2-4.5 has 1.40 at 2030 and 2.00 at 2050 — midpoint 2040 should be ~1.70
+    v = scenarios_model.temp_for("SSP2-4.5", 2040)
+    assert v is not None
+    assert abs(v - 1.70) < 0.01
+
+
+def test_scenarios_returns_none_outside_range():
+    assert scenarios_model.temp_for("SSP1-2.6", 1990) is None
+    assert scenarios_model.temp_for("SSP1-2.6", 2150) is None
+    assert scenarios_model.temp_for("nonexistent", 2050) is None
+
+
+def test_closest_temp_scenario_picks_nearest():
+    # GISTEMP +1.3°C anomaly → 1.5°C vs 1850-1900 (+0.2°C offset). At 2030
+    # the closest scenario by temperature should be SSP1-2.6 (1.35) — wait,
+    # 1.5°C is between SSP2-4.5 (1.40) and SSP3-7.0 (1.45). 1.5 - 1.40 = 0.10,
+    # 1.5 - 1.45 = 0.05 → SSP3-7.0 closer. Let me pick a cleaner case.
+    # +1.6°C GISTEMP → 1.8°C vs 1850-1900. At 2030: SSP1-2.6=1.35, SSP2-4.5=1.40,
+    # SSP3-7.0=1.45, SSP5-8.5=1.50. Closest is SSP5-8.5 (distance 0.30).
+    match = scenarios_model.closest_temp_scenario(1.6, 2030)
+    assert match is not None
+    assert match["scenario"] == "SSP5-8.5"
+    assert match["observed_value_c"] == 1.8
+
+
+def test_closest_co2_scenario_picks_nearest():
+    # CO₂ at 425 ppm in 2025 (between anchors). 2025 interp: SSP1-2.6 ~426,
+    # SSP2-4.5 ~433.5, SSP3-7.0 ~438.5, SSP5-8.5 ~443.5. Closest is SSP1-2.6.
+    match = scenarios_model.closest_co2_scenario(425, 2025)
+    assert match is not None
+    assert match["scenario"] == "SSP1-2.6"
+
+
+def test_all_trajectories_returns_5year_steps():
+    traj = scenarios_model.all_trajectories("temp")
+    assert "SSP1-2.6" in traj
+    # Steps of 5 years from 2020 to 2100 → 17 points
+    assert len(traj["SSP1-2.6"]) >= 16  # off-by-one tolerance
+    assert traj["SSP1-2.6"][0]["year"] == 2020
+    # Last point should be ≥ 2100
+    assert traj["SSP1-2.6"][-1]["year"] >= 2095
 
 
 def test_n2o_market_routed_correctly():

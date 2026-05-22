@@ -1102,6 +1102,7 @@ async function loadCards() {
   const ch4Data = await getJSON("/api/methane");
   const n2oData = await getJSON("/api/n2o");
   const sf6Data = await getJSON("/api/sf6");
+  const scenariosData = await getJSON("/api/scenarios");
 
   const cards = [];
   // Each entry: {id, history, forecast, color} — wired to fan-chart containers
@@ -1130,6 +1131,10 @@ async function loadCards() {
                   sigma: p.drift_std_c || 0.05 },
       color: "#f87171",
     });
+    const tempMatch = scenariosData?.current_match?.temperature;
+    const sspPill = tempMatch
+      ? `<div class="sub" style="margin-top:6px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${tempMatch.scenario}</a> <span style="color:var(--text-3)">(${tempMatch.observed_value_c.toFixed(2)}°C vs ${tempMatch.scenario_value_c.toFixed(2)}°C; baseline 1850-1900)</span></div>`
+      : "";
     cards.push(`
       <div class="card">
         <h3>Global temperature anomaly</h3>
@@ -1137,6 +1142,7 @@ async function loadCards() {
         <div class="sub">${p.months_observed} mo of ${p.current_year} · projects to <b>+${fmt(p.projected_annual_anomaly_c, 2)}°C</b></div>
         <div class="sub" style="margin-top:6px">Record: +${fmt(rec.anomaly_c, 2)}°C (${rec.year})
           &nbsp; <span class="pill ${cls}">P(new record) ${pct(p.p_breaks_record)}</span></div>
+        ${sspPill}
         ${threshHtml}
         <div class="fanchart" id="temp-fan"></div>
         ${calibBadge(s.gistemp.calibration)}
@@ -1168,12 +1174,17 @@ async function loadCards() {
         color: "#fbbf24",
       });
     }
+    const co2Match = scenariosData?.current_match?.co2;
+    const co2SspPill = co2Match
+      ? `<div class="sub" style="margin-top:4px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${co2Match.scenario}</a> <span style="color:var(--text-3)">(${co2Match.observed_value_ppm} ppm vs ${co2Match.scenario_value_ppm} ppm trajectory)</span></div>`
+      : "";
     cards.push(`
       <div class="card">
         <h3>Atmospheric CO₂ (Mauna Loa)</h3>
         <div class="big">${fmt(l.ppm, 2)} ppm</div>
         <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppm_per_year ?? 0, 2)} ppm/yr · σ=${fmt(p?.residual_std_ppm ?? 0, 2)}</div>
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppm ?? 0, 2)} ppm</b></div>
+        ${co2SspPill}
         ${threshHtml}
         <div class="fanchart" id="co2-fan"></div>
         ${calibBadge(s.co2.calibration)}

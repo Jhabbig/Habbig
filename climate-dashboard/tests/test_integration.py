@@ -128,6 +128,19 @@ def test_sf6_endpoint_with_mocked_upstream(client):
     assert body["projection"]["residual_std_ppt"] >= 0.05
 
 
+def test_scenarios_endpoint(client):
+    r = client.get("/api/scenarios")
+    assert r.status_code == 200
+    body = r.get_json()
+    # All four scenarios present in both metrics
+    for ssp in ("SSP1-2.6", "SSP2-4.5", "SSP3-7.0", "SSP5-8.5"):
+        assert ssp in body["trajectories"]["temperature_c_vs_1850_1900"]
+        assert ssp in body["trajectories"]["co2_ppm"]
+    # Current-match block populated when upstream data is available
+    assert body["current_match"]["temperature"] is not None
+    assert body["current_match"]["co2"] is not None
+
+
 def test_emissions_endpoint_with_mocked_upstream(client):
     r = client.get("/api/emissions")
     assert r.status_code == 200

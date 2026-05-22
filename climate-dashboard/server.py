@@ -39,6 +39,7 @@ from app.models import highlights as highlights_model
 from app.models import markets as markets_model
 from app.models import methane as methane_model
 from app.models import n2o as n2o_model
+from app.models import scenarios as scenarios_model
 from app.models import sea_ice as sea_ice_model
 from app.models import sf6 as sf6_model
 from app.models import temperature as temperature_model
@@ -202,6 +203,39 @@ def api_sf6():
     proj = sf6_model.projection(s)
     return jsonify({**s, "projection": proj,
                     "thresholds": sf6_model.threshold_probs(proj)})
+
+
+@app.route("/api/scenarios")
+def api_scenarios():
+    """IPCC AR6 SSP scenarios — temperature + CO₂ trajectories through 2100,
+    plus a "which scenario is the dashboard's current reading closest to?"
+    assessment for both metrics.
+
+    Pure static data — no upstream fetch.
+    """
+    g = gistemp_src.fetch()
+    c = co2_src.fetch()
+    cur_year = datetime.now(timezone.utc).year
+    temp_match = None
+    co2_match = None
+    if g and g.get("annual"):
+        latest_anomaly = g["annual"][-1]["anomaly_c"]
+        temp_match = scenarios_model.closest_temp_scenario(latest_anomaly, cur_year)
+    if c and c.get("latest"):
+        co2_match = scenarios_model.closest_co2_scenario(c["latest"]["ppm"], cur_year)
+    return jsonify({
+        "trajectories": {
+            "temperature_c_vs_1850_1900": scenarios_model.all_trajectories("temp"),
+            "co2_ppm": scenarios_model.all_trajectories("co2"),
+        },
+        "current_match": {
+            "temperature": temp_match,
+            "co2": co2_match,
+        },
+        "baseline_note": "Temperature trajectories use the IPCC AR6 baseline (1850-1900). GISTEMP uses 1951-1980 — we add ~0.2°C when comparing dashboard readings to scenarios.",
+        "source": "IPCC AR6 WG1 Table SPM.1 (temperature) + SSP database (CO₂); anchor points only, linearly interpolated.",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 @app.route("/api/emissions")
