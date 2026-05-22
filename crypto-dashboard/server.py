@@ -51,6 +51,7 @@ import econ_calendar as econ_mod
 import etf_flows as etf_mod
 import cross_asset as ca_mod
 import options as opt_mod
+import performance as perf_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -5271,6 +5272,34 @@ async def delete_holding(holding_id: int, request: Request):
     return {"ok": True}
 
 
+# ── Performance + benchmarks ────────────────────────────────────────────────
+
+@app.get("/api/long-term/performance/overview")
+async def performance_overview(request: Request):
+    """Headline performance stats: total return, TWRR, Sharpe, max DD,
+    plus same-dollars HODL-BTC and SPY benchmarks for excess-return
+    comparison."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(perf_mod.overview, user["id"])
+
+
+@app.get("/api/long-term/performance/equity-curve")
+async def performance_equity_curve(request: Request, include: str = "HODL_BTC,DCA_BTC,SPY"):
+    """Daily equity curve for the user's portfolio + the named benchmarks.
+    `include` is a CSV of {HODL_BTC, DCA_BTC, SPY}."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    allowed = {"HODL_BTC", "DCA_BTC", "SPY"}
+    selected = [t.strip().upper() for t in include.split(",")
+                if t.strip().upper() in allowed]
+    return await asyncio.to_thread(
+        perf_mod.equity_curve, user["id"], selected or list(allowed),
+    )
+
+
 # ── Target weights ──────────────────────────────────────────────────────────
 
 @app.get("/api/long-term/targets")
@@ -7615,7 +7644,13 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 </section>
 
 <section data-section="portfolio" hidden>
-  <h2>Holdings</h2>
+  <h2>Performance</h2>
+  <div class="note">Time-weighted return strips out deposit timing — it measures pure asset performance, the same way Vanguard / Fidelity report your account return. Benchmarks replay your exact deposit schedule into BTC and SPY so the comparison is apples-to-apples.</div>
+  <div id="perf-headlines" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap"></div>
+  <div id="perf-chart" style="margin-top:14px"></div>
+  <div id="perf-returns" style="margin-top:14px"></div>
+
+  <h2 style="margin-top:24px">Holdings</h2>
   <div class="actionrow">
     <div class="field"><label>Ticker</label>
       <select id="h-ticker"><option>BTC</option><option>ETH</option><option>SOL</option><option>DOGE</option><option>XRP</option></select>
@@ -8865,7 +8900,128 @@ async function loadOverview(){
   } catch(e) { grid.innerHTML = `<div class="err">Failed: ${e.message}</div>`; }
 }
 
+async function loadPerformance(){
+  const head = document.getElementById('perf-headlines');
+  const chart = document.getElementById('perf-chart');
+  const ret = document.getElementById('perf-returns');
+  head.innerHTML = '<div style="color:var(--muted);font-size:.85em">Loading…</div>';
+  chart.innerHTML = '';
+  ret.innerHTML = '';
+  try {
+    const o = await api('/api/long-term/performance/overview');
+    if (!o.ready) {
+      head.innerHTML = '<div class="note">' + esc(o.reason || 'No data yet — add holdings in the table below to populate performance metrics.') + '</div>';
+      return;
+    }
+    head.innerHTML = '';
+    const fmtPct = (v) => v == null ? '—' : (v * 100).toFixed(2) + '%';
+    const sign = (v) => v == null ? '' : v >= 0 ? '+' : '';
+    const cls = (v) => v == null ? '' : v >= 0 ? 'gain' : 'loss';
+
+    // Headline tiles: TWRR, total value, max DD, excess vs BTC HODL
+    head.insertAdjacentHTML('beforeend', `
+      <div class="card" style="min-width:200px;padding:12px 16px">
+        <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">Time-weighted return</div>
+        <div class="${cls(o.twrr_pct)}" style="font-size:1.4em;font-weight:600">${sign(o.twrr_pct)}${fmtPct(o.twrr_pct)}</div>
+        <div style="font-size:.75em;color:var(--muted)">${o.days_invested}d since ${esc(o.inception_date)}</div>
+      </div>
+      <div class="card" style="min-width:200px;padding:12px 16px">
+        <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">Portfolio value</div>
+        <div style="font-size:1.4em;font-weight:600">${usd(o.total_value_usd)}</div>
+        <div style="font-size:.75em;color:var(--muted)">${usd(o.total_deposited_usd)} deposited · ${usd(o.realised_cash_usd)} cash</div>
+      </div>
+      <div class="card" style="min-width:200px;padding:12px 16px">
+        <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">Max drawdown</div>
+        <div class="loss" style="font-size:1.4em;font-weight:600">${fmtPct(o.max_drawdown_pct)}</div>
+        <div style="font-size:.75em;color:var(--muted)">Sharpe ${o.sharpe == null ? '—' : o.sharpe.toFixed(2)} · Sortino ${o.sortino == null ? '—' : o.sortino.toFixed(2)}</div>
+      </div>
+      <div class="card" style="min-width:200px;padding:12px 16px">
+        <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">vs same-$ BTC HODL</div>
+        <div class="${cls(o.excess_vs_hodl_btc_pct)}" style="font-size:1.4em;font-weight:600">${sign(o.excess_vs_hodl_btc_pct)}${fmtPct(o.excess_vs_hodl_btc_pct)}</div>
+        <div style="font-size:.75em;color:var(--muted)">HODL ${fmtPct(o.hodl_btc_pct)} · You ${fmtPct(o.twrr_pct)}</div>
+      </div>`);
+
+    // Returns table by period
+    ret.innerHTML = `
+      <table style="margin-top:6px"><thead><tr>
+        <th>Window</th><th>Portfolio (TWRR)</th><th>HODL BTC</th><th>DCA BTC</th><th>SPY</th>
+      </tr></thead><tbody>
+        <tr><td>7d</td><td class="${cls(o.return_7d_pct)}">${fmtPct(o.return_7d_pct)}</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>30d</td><td class="${cls(o.return_30d_pct)}">${fmtPct(o.return_30d_pct)}</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>YTD</td><td class="${cls(o.return_ytd_pct)}">${fmtPct(o.return_ytd_pct)}</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>1y</td><td class="${cls(o.return_1y_pct)}">${fmtPct(o.return_1y_pct)}</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Inception</td><td class="${cls(o.twrr_pct)}"><b>${fmtPct(o.twrr_pct)}</b></td>
+            <td class="${cls(o.hodl_btc_pct)}">${fmtPct(o.hodl_btc_pct)}</td>
+            <td class="${cls(o.dca_btc_pct)}">${fmtPct(o.dca_btc_pct)}</td>
+            <td class="${cls(o.spy_pct)}">${fmtPct(o.spy_pct)}</td></tr>
+      </tbody></table>
+      <div class="note" style="font-size:.8em;margin-top:6px">Per-window benchmark returns are deferred — they need replaying each window's deposit schedule into the benchmark. The Inception row uses the full deposit history and is the cleanest comparison.</div>`;
+
+    // Equity curve chart
+    const c = await api('/api/long-term/performance/equity-curve');
+    if (c.ready) {
+      chart.innerHTML = renderPerfEquityChart(c);
+    }
+  } catch(e) {
+    head.innerHTML = '<div class="err">' + esc(e.message) + '</div>';
+  }
+}
+
+function renderPerfEquityChart(data) {
+  const dates = data.dates || [];
+  const series = data.series || {};
+  if (!dates.length) return '';
+  const colors = {portfolio: '#3b82f6', HODL_BTC: '#f7931a', DCA_BTC: '#eab308', SPY: '#22c55e'};
+  const labels = {portfolio: 'Your portfolio', HODL_BTC: 'HODL BTC (same $)', DCA_BTC: 'DCA BTC (weekly)', SPY: 'SPY (same $)'};
+  // Find global y bounds.
+  let lo = Infinity, hi = -Infinity;
+  for (const arr of Object.values(series)) {
+    for (const v of arr) {
+      if (v === 0) continue;  // skip pre-inception zeros
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  if (!isFinite(lo) || !isFinite(hi)) return '';
+  const pad = (hi - lo) * 0.05 || 1;
+  lo -= pad; hi += pad;
+  if (lo < 0) lo = 0;
+  const w = 900, h = 320, pL = 60, pR = 12, pT = 20, pB = 26;
+  const xs = (i) => pL + (i / (dates.length - 1 || 1)) * (w - pL - pR);
+  const ys = (v) => h - pB - ((v - lo) / (hi - lo)) * (h - pT - pB);
+
+  let svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="320" style="background:var(--card2);border-radius:8px">';
+  svg += '<text x="' + pL + '" y="' + (pT - 4) + '" fill="#7d8a99" font-size="11">Equity curve · USD</text>';
+  // Y labels
+  svg += '<text x="' + (pL - 6) + '" y="' + (pT + 6) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + (hi >= 1000 ? '$' + (hi/1000).toFixed(1) + 'k' : '$' + hi.toFixed(0)) + '</text>';
+  svg += '<text x="' + (pL - 6) + '" y="' + (h - pB - 2) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + (lo >= 1000 ? '$' + (lo/1000).toFixed(1) + 'k' : '$' + lo.toFixed(0)) + '</text>';
+  // X labels: first, mid, last
+  svg += '<text x="' + pL + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10">' + esc(dates[0]) + '</text>';
+  svg += '<text x="' + (pL + (w - pL - pR) / 2) + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10" text-anchor="middle">' + esc(dates[Math.floor(dates.length / 2)]) + '</text>';
+  svg += '<text x="' + (w - pR) + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + esc(dates[dates.length - 1]) + '</text>';
+  // Lines
+  for (const [name, arr] of Object.entries(series)) {
+    const col = colors[name] || '#e6edf5';
+    const pts = arr.map((v, i) => xs(i).toFixed(1) + ',' + ys(v).toFixed(1)).join(' ');
+    const sw = name === 'portfolio' ? 2.4 : 1.6;
+    const opacity = name === 'portfolio' ? 1.0 : 0.7;
+    svg += '<polyline fill="none" stroke="' + col + '" stroke-width="' + sw + '" stroke-opacity="' + opacity + '" points="' + pts + '"/>';
+  }
+  svg += '</svg>';
+  // Legend
+  let legend = '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:.85em">';
+  for (const [name, arr] of Object.entries(series)) {
+    const col = colors[name] || '#e6edf5';
+    const last = arr[arr.length - 1];
+    legend += '<span><span style="display:inline-block;width:10px;height:10px;background:' + col + ';border-radius:2px;margin-right:4px"></span>' +
+              '<b>' + esc(labels[name] || name) + '</b> · ' + usd(last) + '</span>';
+  }
+  legend += '</div>';
+  return svg + legend;
+}
+
 async function loadPortfolio(){
+  loadPerformance();
   const tbody = document.querySelector('#h-table tbody');
   const lots = document.querySelector('#h-lots tbody');
   tbody.innerHTML = lots.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
