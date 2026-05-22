@@ -292,6 +292,26 @@
   </section>
 
   <section>
+    <h2>L2 sequencer revenue <small>24h fees per L2 chain &middot; DefiLlama</small></h2>
+    <div id="l2-fees-card"></div>
+  </section>
+
+  <section>
+    <h2>Restaking / LST economy <small>EigenLayer + AVS protocols + liquid staking by TVL</small></h2>
+    <div id="restaking-card"></div>
+  </section>
+
+  <section>
+    <h2>Token unlocks <small>upcoming 90-day vesting cliffs &middot; curated 2025-Q3</small></h2>
+    <div id="unlocks-card"></div>
+  </section>
+
+  <section>
+    <h2>Pump.fun trending <small>top Solana memecoins on the launchpad &middot; live</small></h2>
+    <div id="pumpfun-card"></div>
+  </section>
+
+  <section>
     <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
     <div id="alerts-card"></div>
   </section>
@@ -1157,6 +1177,116 @@
     }
   }
 
+  // ─── L2 sequencer revenue ──────────────────────────────────────────────────
+  async function loadL2Fees() {
+    try {
+      const data = await fetchJson("/api/defi/l2_fees");
+      const target = document.getElementById("l2-fees-card");
+      const rows = data.chains || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No L2 fee data.")}</div>`; return; }
+      const tbody = rows.map(c => `<tr>
+        <td><strong>${escapeHtml(c.chain)}</strong></td>
+        <td class="num">$${fmtBig(c.fees_24h_usd)}</td>
+        <td class="num muted">$${fmtBig(c.fees_7d_usd)}</td>
+        <td class="num muted">${fmt(c.protocols)}</td>
+      </tr>`).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>L2</th><th>24h fees</th><th>7d fees</th><th>Protocols</th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">Total L2 24h fees: <strong>$${fmtBig(data.total_l2_fees_24h_usd)}</strong>. Source: DefiLlama daily-fees aggregated by primary chain.</div>`;
+    } catch (e) {
+      document.getElementById("l2-fees-card").innerHTML = `<div class="err">L2 fees failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Restaking / LST ───────────────────────────────────────────────────────
+  async function loadRestaking() {
+    try {
+      const data = await fetchJson("/api/defi/restaking");
+      const target = document.getElementById("restaking-card");
+      const rows = data.protocols || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No restaking data.")}</div>`; return; }
+      const byCat = (data.by_category || []).map(c =>
+        `<div class="stat"><div class="label">${escapeHtml(c.category)}</div><div class="val">$${fmtBig(c.tvl_usd)}</div><div class="sub">${c.protocols} protocols</div></div>`).join("");
+      const tbody = rows.slice(0, 20).map(p => {
+        const cls24 = p.change_24h_pct == null ? "muted" : p.change_24h_pct >= 0 ? "up" : "down";
+        return `<tr>
+          <td><strong>${escapeHtml(p.name)}</strong> ${p.symbol ? `<span class="sym">${escapeHtml(p.symbol)}</span>` : ""}</td>
+          <td>${pill(p.category, "info")}</td>
+          <td class="num">$${fmtBig(p.tvl_usd)}</td>
+          <td class="num ${cls24}">${p.change_24h_pct != null ? pct(p.change_24h_pct, 2) : "-"}</td>
+          <td class="num muted">${p.change_7d_pct != null ? pct(p.change_7d_pct, 2) : "-"}</td>
+          <td>${p.url ? `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">→</a>` : ""}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">${byCat}</div>
+      <table><thead><tr>
+        <th>Protocol</th><th>Category</th><th>TVL</th><th>24h Δ</th><th>7d Δ</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.count} protocols tracked across Restaking + Liquid Restaking + Liquid Staking.</div>`;
+    } catch (e) {
+      document.getElementById("restaking-card").innerHTML = `<div class="err">Restaking failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Token unlocks ─────────────────────────────────────────────────────────
+  async function loadUnlocks() {
+    try {
+      const data = await fetchJson("/api/unlocks?horizon_days=90");
+      const target = document.getElementById("unlocks-card");
+      const rows = data.unlocks || [];
+      if (!rows.length) { target.innerHTML = '<div class="card">No upcoming unlocks in window.</div>'; return; }
+      const tbody = rows.slice(0, 20).map(u => {
+        const urgentCls = u.days_until <= 7 ? "down" : u.days_until <= 30 ? "warn" : "";
+        return `<tr>
+          <td><strong>${escapeHtml(u.project)}</strong> <span class="sym">${escapeHtml(u.symbol)}</span></td>
+          <td class="muted">${escapeHtml(u.date)}</td>
+          <td class="num ${urgentCls}">${u.days_until}d</td>
+          <td class="num down">$${fmtBig(u.amount_usd)}</td>
+          <td class="num">${u.pct_supply.toFixed(2)}%</td>
+          <td class="muted" style="font-size:11px">${escapeHtml(u.recipient)}</td>
+          <td><a href="/coin?id=${encodeURIComponent(u.coingecko_id)}" style="font-size:11px">→ coin</a></td>
+        </tr>`;
+      }).join("");
+      const byProject = (data.by_project || []).slice(0, 5).map(b =>
+        `<strong>${escapeHtml(b.project)}</strong> $${fmtBig(b.amount_usd)}`).join(" &middot; ");
+      target.innerHTML = `<table><thead><tr>
+        <th>Project</th><th>Date</th><th>Until</th><th>USD value</th><th>% supply</th><th>Recipient</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.count} unlocks over next ${data.horizon_days}d &middot; total <strong>$${fmtBig(data.total_unlock_usd)}</strong>. Top by aggregate: ${byProject}.</div>`;
+    } catch (e) {
+      document.getElementById("unlocks-card").innerHTML = `<div class="err">Unlocks failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ─── Pump.fun trending ─────────────────────────────────────────────────────
+  async function loadPumpfun() {
+    try {
+      const data = await fetchJson("/api/pumpfun?limit=30");
+      const target = document.getElementById("pumpfun-card");
+      const rows = data.coins || [];
+      if (!rows.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No Pump.fun data right now.")}</div>`; return; }
+      const tbody = rows.slice(0, 20).map(c => {
+        const ageMs = c.created_timestamp ? (Date.now() - c.created_timestamp) : null;
+        const age = ageMs ? (ageMs < 3600000 ? `${Math.round(ageMs/60000)}m` : ageMs < 86400000 ? `${Math.round(ageMs/3600000)}h` : `${Math.round(ageMs/86400000)}d`) : "-";
+        return `<tr>
+          <td><div class="coin-cell">${c.image_uri ? `<img src="${escapeHtml(c.image_uri)}" alt="" onerror="this.style.display='none'"/>` : ""}<div><div><strong>${escapeHtml(c.symbol)}</strong> ${escapeHtml(c.name || "")}</div><div class="sym">${escapeHtml(c.description || "").slice(0, 50)}</div></div></div></td>
+          <td class="num">$${fmtBig(c.market_cap_usd)}</td>
+          <td class="muted">${age}</td>
+          <td>${c.complete ? pill("on Raydium", "good") : pill("bonding curve", "warn")}</td>
+          <td class="muted" style="font-family:monospace;font-size:10px">${escapeHtml((c.mint || "").slice(0, 12))}…</td>
+          <td><a href="https://pump.fun/coin/${escapeHtml(c.mint || "")}" target="_blank" rel="noopener" style="font-size:11px">→</a></td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<table><thead><tr>
+        <th>Coin</th><th>Mcap</th><th>Age</th><th>State</th><th>Mint</th><th></th>
+      </tr></thead><tbody>${tbody}</tbody></table>
+      <div class="footer" style="margin-top:8px">${data.count} trending coins &middot; ${data.graduated_to_raydium} graduated to Raydium &middot; ${data.still_on_bonding_curve} on bonding curve. <strong>Note:</strong> Pump.fun is a memecoin launchpad — see the pump-and-dump guide for risk context.</div>`;
+    } catch (e) {
+      document.getElementById("pumpfun-card").innerHTML = `<div class="err">Pump.fun failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // ─── Custom alerts ─────────────────────────────────────────────────────────
   async function loadAlerts() {
     try {
@@ -1342,6 +1472,10 @@
   loadBridges();
   loadHacks();
   loadNFT();
+  loadL2Fees();
+  loadRestaking();
+  loadUnlocks();
+  loadPumpfun();
   loadAlerts();
   loadSources();
 
@@ -1362,6 +1496,10 @@
   setInterval(loadNFT,      10 * 60 * 1000);
   setInterval(loadSectors,  3 * 60 * 1000);
   setInterval(renderWatchlist, 60 * 1000);
+  setInterval(loadL2Fees,    30 * 60 * 1000);
+  setInterval(loadRestaking, 15 * 60 * 1000);
+  setInterval(loadUnlocks,   60 * 60 * 1000);
+  setInterval(loadPumpfun,   60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
 })();

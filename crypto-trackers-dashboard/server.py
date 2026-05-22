@@ -43,10 +43,13 @@ from ingestion import (
     alerts as alerts_mod,
     binance,
     defillama_bridges,
+    defillama_fees,
     defillama_yields,
     nft_floors,
+    pumpfun,
     rekt_hacks,
     stablecoin_peg,
+    token_unlocks,
     binance_liquidations,
     btc_treasuries,
     bybit,
@@ -468,6 +471,33 @@ async def api_bridges() -> JSONResponse:
     return JSONResponse(defillama_bridges.overview())
 
 
+# ─── L2 sequencer revenue + restaking ─────────────────────────────────────────
+
+@app.get("/api/defi/l2_fees")
+async def api_l2_fees() -> JSONResponse:
+    return JSONResponse(defillama_fees.l2_sequencer_revenue())
+
+
+@app.get("/api/defi/restaking")
+async def api_restaking() -> JSONResponse:
+    return JSONResponse(defillama_fees.restaking_protocols())
+
+
+# ─── Token unlocks ────────────────────────────────────────────────────────────
+
+@app.get("/api/unlocks")
+async def api_unlocks(horizon_days: int = 90) -> JSONResponse:
+    return JSONResponse(token_unlocks.upcoming(
+        horizon_days=max(7, min(horizon_days, 365))))
+
+
+# ─── Pump.fun memecoin trending ───────────────────────────────────────────────
+
+@app.get("/api/pumpfun")
+async def api_pumpfun(limit: int = 30) -> JSONResponse:
+    return JSONResponse(pumpfun.trending(limit=limit))
+
+
 # ─── Hacks ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/hacks")
@@ -812,6 +842,9 @@ async def _startup() -> None:
         ("defillama_bridges",     lambda: defillama_bridges.overview(),                 900),
         ("rekt_hacks",            lambda: rekt_hacks.hacks_overview(),                  3600),
         ("nft_floors",            lambda: nft_floors.top_collections(30),               600),
+        ("defillama_l2_fees",     lambda: defillama_fees.l2_sequencer_revenue(),        1800),
+        ("defillama_restaking",   lambda: defillama_fees.restaking_protocols(),         900),
+        ("pumpfun_trending",      lambda: pumpfun.trending(50),                         60),
     ])
 
 
