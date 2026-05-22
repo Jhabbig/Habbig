@@ -51,6 +51,27 @@ export const Chart: React.FC<ChartProps> = ({
   const macdSignalSeries = useRef<ISeriesApi<'Line'> | null>(null);
   const macdHistSeries = useRef<ISeriesApi<'Histogram'> | null>(null);
 
+  // Rolling indicator history keyed by ticker, so a ticker switch starts
+  // fresh and series don't carry over.
+  const indicatorHistory = useRef<{
+    ticker: string;
+    sma_20: { time: number; value: number }[];
+    sma_50: { time: number; value: number }[];
+    sma_200: { time: number; value: number }[];
+    ema_12: { time: number; value: number }[];
+    ema_26: { time: number; value: number }[];
+    rsi_14: { time: number; value: number }[];
+    macd_line: { time: number; value: number }[];
+    macd_signal: { time: number; value: number }[];
+    macd_hist: { time: number; value: number; color: string }[];
+  }>({
+    ticker: '',
+    sma_20: [], sma_50: [], sma_200: [],
+    ema_12: [], ema_26: [],
+    rsi_14: [],
+    macd_line: [], macd_signal: [], macd_hist: [],
+  });
+
   // Initialize main chart
   useEffect(() => {
     if (!chartContainer.current) return;
@@ -279,8 +300,12 @@ export const Chart: React.FC<ChartProps> = ({
   useEffect(() => {
     if (!bars.length) return;
 
+    // Bar.timestamp is in milliseconds (per backend `tier1_adapters` and
+    // mock data); lightweight-charts wants Unix seconds.
+    const toSec = (ms: number) => Math.floor(ms / 1000) as any;
+
     const candleData = bars.map((bar) => ({
-      time: Math.floor(bar.timestamp / 1000) as any,
+      time: toSec(bar.timestamp),
       open: bar.open,
       high: bar.high,
       low: bar.low,
@@ -288,7 +313,7 @@ export const Chart: React.FC<ChartProps> = ({
     }));
 
     const volumeData = bars.map((bar) => ({
-      time: Math.floor(bar.timestamp / 1000) as any,
+      time: toSec(bar.timestamp),
       value: bar.volume,
       color: bar.close >= bar.open ? '#10b98166' : '#ef444466',
     }));
@@ -296,32 +321,81 @@ export const Chart: React.FC<ChartProps> = ({
     if (candleSeries.current) candleSeries.current.setData(candleData);
     if (volumeSeries.current) volumeSeries.current.setData(volumeData);
 
-    // Update moving averages
-    if (indicators && showMA) {
-      const smaData = indicators.sma_20 > 0 ? [{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.sma_20 }] : [];
-      const ema12Data = indicators.ema_12 > 0 ? [{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.ema_12 }] : [];
-
-      if (sma20Series.current && indicators.sma_20 > 0) sma20Series.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.sma_20 }]);
-      if (sma50Series.current && indicators.sma_50 > 0) sma50Series.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.sma_50 }]);
-      if (sma200Series.current && indicators.sma_200 > 0) sma200Series.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.sma_200 }]);
-      if (ema12Series.current && indicators.ema_12 > 0) ema12Series.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.ema_12 }]);
-      if (ema26Series.current && indicators.ema_26 > 0) ema26Series.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.ema_26 }]);
+    // If the ticker changed, reset the rolling indicator history so we don't
+    // mix series across tickers.
+    if (indicatorHistory.current.ticker !== ticker) {
+      indicatorHistory.current = {
+        ticker,
+        sma_20: [], sma_50: [], sma_200: [],
+        ema_12: [], ema_26: [],
+        rsi_14: [],
+        macd_line: [], macd_signal: [], macd_hist: [],
+      };
     }
 
-    // Update RSI
-    if (indicators && rsiSeries.current) {
-      rsiSeries.current.setData([{ time: Math.floor(bars[bars.length - 1].timestamp / 1000) as any, value: indicators.rsi_14 }]);
-    }
+    const hist = indicatorHistory.current;
+    const lastTime = toSec(bars[bars.length - 1].timestamp);
 
-    // Update MACD
-    if (indicators) {
-      const lastTime = Math.floor(bars[bars.length - 1].timestamp / 1000) as any;
-      if (macdLineSeries.current) macdLineSeries.current.setData([{ time: lastTime, value: indicators.macd_line }]);
-      if (macdSignalSeries.current) macdSignalSeries.current.setData([{ time: lastTime, value: indicators.macd_signal }]);
-      if (macdHistSeries.current) {
-        const histColor = indicators.macd_histogram > 0 ? '#10b98166' : '#ef444466';
-        macdHistSeries.current.setData([{ time: lastTime, value: indicators.macd_histogram, color: histColor }]);
+    // Helper: append a new (time, value) point; update-in-place if the
+    // newest time matches, so each series stays monotonically ordered.
+    const push = (
+      arr: { time: number; value: number }[],
+      value: number
+    ) => {
+      if (!Number.isFinite(value) || value <= 0) return;
+      if (arr.length > 0 && arr[arr.length - 1].time === lastTime) {
+        arr[arr.length - 1] = { time: lastTime, value };
+      } else {
+        arr.push({ time: lastTime, value });
       }
+      if (arr.length > 500) arr.splice(0, arr.length - 500);
+    };
+
+    if (indicators) {
+      if (showMA) {
+        push(hist.sma_20, indicators.sma_20);
+        push(hist.sma_50, indicators.sma_50);
+        push(hist.sma_200, indicators.sma_200);
+        push(hist.ema_12, indicators.ema_12);
+        push(hist.ema_26, indicators.ema_26);
+
+        if (sma20Series.current)  sma20Series.current.setData(hist.sma_20 as any);
+        if (sma50Series.current)  sma50Series.current.setData(hist.sma_50 as any);
+        if (sma200Series.current) sma200Series.current.setData(hist.sma_200 as any);
+        if (ema12Series.current)  ema12Series.current.setData(hist.ema_12 as any);
+        if (ema26Series.current)  ema26Series.current.setData(hist.ema_26 as any);
+      }
+
+      push(hist.rsi_14, indicators.rsi_14);
+      if (rsiSeries.current) rsiSeries.current.setData(hist.rsi_14 as any);
+
+      // MACD line/signal can be negative — don't filter at zero.
+      const pushSigned = (arr: { time: number; value: number }[], value: number) => {
+        if (!Number.isFinite(value)) return;
+        if (arr.length > 0 && arr[arr.length - 1].time === lastTime) {
+          arr[arr.length - 1] = { time: lastTime, value };
+        } else {
+          arr.push({ time: lastTime, value });
+        }
+        if (arr.length > 500) arr.splice(0, arr.length - 500);
+      };
+      pushSigned(hist.macd_line, indicators.macd_line);
+      pushSigned(hist.macd_signal, indicators.macd_signal);
+
+      const histColor = indicators.macd_histogram >= 0 ? '#10b98166' : '#ef444466';
+      if (Number.isFinite(indicators.macd_histogram)) {
+        const entry = { time: lastTime, value: indicators.macd_histogram, color: histColor };
+        if (hist.macd_hist.length > 0 && hist.macd_hist[hist.macd_hist.length - 1].time === lastTime) {
+          hist.macd_hist[hist.macd_hist.length - 1] = entry;
+        } else {
+          hist.macd_hist.push(entry);
+        }
+        if (hist.macd_hist.length > 500) hist.macd_hist.splice(0, hist.macd_hist.length - 500);
+      }
+
+      if (macdLineSeries.current)   macdLineSeries.current.setData(hist.macd_line as any);
+      if (macdSignalSeries.current) macdSignalSeries.current.setData(hist.macd_signal as any);
+      if (macdHistSeries.current)   macdHistSeries.current.setData(hist.macd_hist as any);
     }
 
     // Fit all charts
@@ -329,7 +403,7 @@ export const Chart: React.FC<ChartProps> = ({
     volumeChart.current?.timeScale().fitContent();
     rsiChart.current?.timeScale().fitContent();
     macdChart.current?.timeScale().fitContent();
-  }, [bars, indicators, showMA, showVolume]);
+  }, [bars, indicators, showMA, showVolume, ticker]);
 
   return (
     <div className="space-y-1">

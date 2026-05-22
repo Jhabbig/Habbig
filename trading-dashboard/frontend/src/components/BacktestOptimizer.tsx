@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Play, BarChart3, Grid3X3, TrendingUp } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Play, Grid3X3, TrendingUp } from 'lucide-react';
 
 interface OptimizationResult {
   params: Record<string, number>;
@@ -9,11 +9,31 @@ interface OptimizationResult {
   maxDrawdown: number;
 }
 
+// Box-Muller transform: two uniforms in [0,1) -> one sample from N(0,1).
+const randn = (): number => {
+  let u1 = Math.random();
+  if (u1 <= Number.EPSILON) u1 = Number.EPSILON;
+  const u2 = Math.random();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+};
+
+const percentile = (sortedAsc: number[], p: number): number => {
+  if (sortedAsc.length === 0) return 0;
+  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.floor(p * (sortedAsc.length - 1))));
+  return sortedAsc[idx];
+};
+
 export const BacktestOptimizer: React.FC = () => {
   const [strategy, setStrategy] = useState('rsi');
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<OptimizationResult[]>([]);
   const [view, setView] = useState<'heatmap' | 'table' | 'monte'>('heatmap');
+
+  // Reset previous results when the strategy changes — the parameter axes
+  // are different per strategy and stale results would mislabel the heatmap.
+  useEffect(() => {
+    setResults([]);
+  }, [strategy]);
 
   // Parameter ranges for optimization
   const paramRanges = {
@@ -84,27 +104,67 @@ export const BacktestOptimizer: React.FC = () => {
   const bestResult = results[0];
   const heatmapData = results.slice(0, 25); // 5x5 grid
 
-  // Monte Carlo simulation
-  const runMonteCarloData = () => {
-    if (!bestResult) return [];
-
-    const simulations = 100;
-    const paths: number[][] = [];
-
-    for (let s = 0; s < simulations; s++) {
-      const path = [100]; // Starting equity
-      for (let day = 0; day < 252; day++) {
-        // 1 year of trading days
-        const dailyReturn = (bestResult.sharpeRatio / Math.sqrt(252)) * Math.random() - 0.001;
-        path.push(path[path.length - 1] * (1 + dailyReturn));
-      }
-      paths.push(path);
+  // Monte Carlo simulation: geometric Brownian-walk on daily returns drawn
+  // from N(μ/252, σ²/252). μ comes from the best result's annualized return,
+  // σ from a target Sharpe-implied vol. Memoized on bestResult so the chart
+  // is stable across unrelated re-renders.
+  const monte = useMemo(() => {
+    if (!bestResult) {
+      return { paths: [] as number[][], avgFinal: 0, p5: 0, p95: 0, winProb: 0, opacities: [] as number[] };
     }
 
-    return paths;
-  };
+    const simulations = 100;
+    const days = 252;
+    const mu = bestResult.returnPct / 100; // annualized mean return
+    // Solve sigma from Sharpe = mu / sigma; clamp Sharpe to avoid divide-by-zero.
+    const sharpe = Math.max(0.1, bestResult.sharpeRatio);
+    const sigma = Math.max(0.05, Math.abs(mu) / sharpe);
+    const dailyMu = mu / days;
+    const dailyVol = sigma / Math.sqrt(days);
 
-  const monteCarloData = runMonteCarloData();
+    const paths: number[][] = [];
+    const finals: number[] = [];
+    let wins = 0;
+    for (let s = 0; s < simulations; s++) {
+      const path: number[] = [100];
+      for (let d = 0; d < days; d++) {
+        const r = dailyMu + dailyVol * randn();
+        path.push(path[path.length - 1] * (1 + r));
+      }
+      paths.push(path);
+      const finalVal = path[path.length - 1];
+      finals.push(finalVal);
+      if (finalVal >= 100) wins += 1;
+    }
+    const sortedFinals = [...finals].sort((a, b) => a - b);
+    const avgFinal = finals.reduce((a, b) => a + b, 0) / finals.length;
+    const p5 = percentile(sortedFinals, 0.05);
+    const p95 = percentile(sortedFinals, 0.95);
+    // Pre-compute per-path opacity once so the chart isn't re-randomized on
+    // every render of the parent.
+    const opacities = paths.map(() => 0.1 + Math.random() * 0.2);
+
+    return { paths, avgFinal, p5, p95, winProb: wins / simulations, opacities };
+  }, [bestResult]);
+
+  // Global y-range across all paths so dispersion is visible, instead of
+  // normalising each path to its own max (which forces every line to end at
+  // the same y-value and hides the fan-out).
+  const monteRange = useMemo(() => {
+    if (monte.paths.length === 0) return { min: 100, max: 100 };
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of monte.paths) {
+      for (const v of p) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
+      return { min: lo === Infinity ? 100 : lo - 1, max: hi === -Infinity ? 100 : hi + 1 };
+    }
+    return { min: lo, max: hi };
+  }, [monte.paths]);
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 space-y-6">
@@ -283,28 +343,28 @@ export const BacktestOptimizer: React.FC = () => {
                 Monte Carlo Simulation (100 paths, 1 year)
               </h3>
 
-              {monteCarloData.length > 0 && (
+              {monte.paths.length > 0 && (
                 <div className="space-y-4">
                   {/* SVG Chart */}
                   <svg viewBox="0 0 800 300" className="w-full border border-gray-700 rounded">
-                    <defs>
-                      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stopColor="rgba(34, 197, 94, 0.3)" />
-                        <stop offset="100%" stopColor="rgba(34, 197, 94, 0)" />
-                      </linearGradient>
-                    </defs>
-
                     {/* Grid */}
                     <line x1="50" y1="250" x2="750" y2="250" stroke="#444" strokeWidth="1" />
                     <line x1="50" y1="50" x2="50" y2="250" stroke="#444" strokeWidth="1" />
 
+                    {/* Starting-equity reference line */}
+                    {(() => {
+                      const yStart = 250 - ((100 - monteRange.min) / (monteRange.max - monteRange.min)) * 200;
+                      return (
+                        <line x1="50" y1={yStart} x2="750" y2={yStart} stroke="#6b7280" strokeWidth="1" strokeDasharray="4" />
+                      );
+                    })()}
+
                     {/* Paths */}
-                    {monteCarloData.slice(0, 100).map((path, idx) => {
+                    {monte.paths.map((path, idx) => {
                       const points = path
                         .map((val, i) => {
-                          const x = 50 + (i / path.length) * 700;
-                          const maxVal = Math.max(...path);
-                          const y = 250 - ((val / maxVal) * 200);
+                          const x = 50 + (i / (path.length - 1)) * 700;
+                          const y = 250 - ((val - monteRange.min) / (monteRange.max - monteRange.min)) * 200;
                           return `${x},${y}`;
                         })
                         .join(' ');
@@ -313,7 +373,7 @@ export const BacktestOptimizer: React.FC = () => {
                           key={idx}
                           points={points}
                           fill="none"
-                          stroke={`rgba(59, 130, 246, ${0.1 + Math.random() * 0.2})`}
+                          stroke={`rgba(59, 130, 246, ${monte.opacities[idx]})`}
                           strokeWidth="1"
                         />
                       );
@@ -328,23 +388,29 @@ export const BacktestOptimizer: React.FC = () => {
                     </text>
                   </svg>
 
-                  {/* Statistics */}
+                  {/* Statistics (derived from simulated paths) */}
                   <div className="grid grid-cols-4 gap-4 text-sm">
                     <div className="bg-gray-800 p-3 rounded">
                       <div className="text-gray-400 text-xs">Avg Path Return</div>
-                      <div className="text-green-400 font-bold">+18.5%</div>
+                      <div className={`font-bold ${monte.avgFinal >= 100 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(monte.avgFinal - 100 >= 0 ? '+' : '') + (monte.avgFinal - 100).toFixed(1)}%
+                      </div>
                     </div>
                     <div className="bg-gray-800 p-3 rounded">
                       <div className="text-gray-400 text-xs">Best Case (95%)</div>
-                      <div className="text-green-400 font-bold">+45.2%</div>
+                      <div className={`font-bold ${monte.p95 >= 100 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(monte.p95 - 100 >= 0 ? '+' : '') + (monte.p95 - 100).toFixed(1)}%
+                      </div>
                     </div>
                     <div className="bg-gray-800 p-3 rounded">
                       <div className="text-gray-400 text-xs">Worst Case (5%)</div>
-                      <div className="text-red-400 font-bold">-12.3%</div>
+                      <div className={`font-bold ${monte.p5 >= 100 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(monte.p5 - 100 >= 0 ? '+' : '') + (monte.p5 - 100).toFixed(1)}%
+                      </div>
                     </div>
                     <div className="bg-gray-800 p-3 rounded">
                       <div className="text-gray-400 text-xs">Win Probability</div>
-                      <div className="text-blue-400 font-bold">73%</div>
+                      <div className="text-blue-400 font-bold">{(monte.winProb * 100).toFixed(0)}%</div>
                     </div>
                   </div>
                 </div>

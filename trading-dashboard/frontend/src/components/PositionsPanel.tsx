@@ -1,14 +1,16 @@
 import React from 'react';
-import { TrendingUp, TrendingDown, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { Trade } from './OrderForm';
 
 interface PositionsPanelProps {
   positions: Trade[];
-  currentPrice: number;
+  priceFor: (ticker: string) => number | null;
   onClosePosition: (id: string) => void;
 }
 
-export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, currentPrice, onClosePosition }) => {
+const sideDirection = (side: Trade['side']) => (side === 'buy' ? 1 : -1);
+
+export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, priceFor, onClosePosition }) => {
   const openPositions = positions.filter((p) => !p.exitPrice);
 
   if (openPositions.length === 0) {
@@ -22,6 +24,11 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, curre
       </div>
     );
   }
+
+  const totalQty = openPositions.reduce((sum, p) => sum + p.quantity, 0);
+  const avgEntry = totalQty > 0
+    ? openPositions.reduce((sum, p) => sum + p.entryPrice * p.quantity, 0) / totalQty
+    : 0;
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
@@ -45,9 +52,12 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, curre
           </thead>
           <tbody>
             {openPositions.map((position) => {
-              const pnl = (currentPrice - position.entryPrice) * position.quantity;
-              const pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
-              const isProfit = pnl >= 0;
+              const mark = priceFor(position.ticker);
+              const dir = sideDirection(position.side);
+              const hasMark = mark !== null;
+              const pnl = hasMark ? (mark! - position.entryPrice) * position.quantity * dir : null;
+              const pnlPct = hasMark ? ((mark! - position.entryPrice) / position.entryPrice) * 100 * dir : null;
+              const isProfit = pnl !== null && pnl >= 0;
 
               return (
                 <tr key={position.id} className="border-b border-gray-700 hover:bg-gray-700/50">
@@ -65,19 +75,21 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, curre
                   </td>
                   <td className="text-right py-3 px-4 text-gray-300">{position.quantity}</td>
                   <td className="text-right py-3 px-4 text-gray-300">${position.entryPrice.toFixed(2)}</td>
-                  <td className="text-right py-3 px-4 text-gray-300">${currentPrice.toFixed(2)}</td>
-                  <td className={`text-right py-3 px-4 font-semibold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                    {isProfit ? '+' : ''} ${pnl.toFixed(2)}
+                  <td className="text-right py-3 px-4 text-gray-300">
+                    {hasMark ? `$${mark!.toFixed(2)}` : <span className="text-gray-500 text-xs">no quote</span>}
                   </td>
-                  <td className={`text-right py-3 px-4 font-semibold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                    {isProfit ? '+' : ''}
-                    {pnlPct.toFixed(2)}%
+                  <td className={`text-right py-3 px-4 font-semibold ${pnl === null ? 'text-gray-500' : isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                    {pnl === null ? '—' : `${isProfit ? '+' : ''}$${pnl.toFixed(2)}`}
+                  </td>
+                  <td className={`text-right py-3 px-4 font-semibold ${pnlPct === null ? 'text-gray-500' : isProfit ? 'text-green-400' : 'text-red-400'}`}>
+                    {pnlPct === null ? '—' : `${isProfit ? '+' : ''}${pnlPct.toFixed(2)}%`}
                   </td>
                   <td className="text-center py-3 px-4">
                     <button
                       onClick={() => onClosePosition(position.id)}
-                      className="text-gray-400 hover:text-red-400 transition"
-                      title="Close position"
+                      disabled={!hasMark}
+                      className="text-gray-400 hover:text-red-400 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={hasMark ? 'Close position' : 'Waiting for quote'}
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -98,19 +110,11 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, curre
           </div>
           <div>
             <div className="text-gray-400 text-xs">Total Quantity</div>
-            <div className="text-gray-100 font-semibold">
-              {openPositions.reduce((sum, p) => sum + p.quantity, 0)}
-            </div>
+            <div className="text-gray-100 font-semibold">{totalQty}</div>
           </div>
           <div>
             <div className="text-gray-400 text-xs">Avg Entry Price</div>
-            <div className="text-gray-100 font-semibold">
-              $
-              {(
-                openPositions.reduce((sum, p) => sum + p.entryPrice * p.quantity, 0) /
-                openPositions.reduce((sum, p) => sum + p.quantity, 0)
-              ).toFixed(2)}
-            </div>
+            <div className="text-gray-100 font-semibold">${avgEntry.toFixed(2)}</div>
           </div>
         </div>
       </div>

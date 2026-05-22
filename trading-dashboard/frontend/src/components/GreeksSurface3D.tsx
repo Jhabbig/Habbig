@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface Greeks3DData {
   strike: number;
@@ -13,45 +12,54 @@ interface Greeks3DData {
 interface GreeksSurface3DProps {
   spotPrice: number;
   selectedGreek?: 'delta' | 'gamma' | 'vega' | 'theta';
+  optionType?: 'call' | 'put';
 }
 
-export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({ spotPrice, selectedGreek = 'delta' }) => {
-  const [greekType, setGreekType] = React.useState<'delta' | 'gamma' | 'vega' | 'theta'>(selectedGreek);
+// Standard normal CDF (Abramowitz & Stegun via tanh approximation) and PDF.
+const normCDF = (x: number) =>
+  0.5 * (1 + Math.tanh(0.7978845608 * (x + 0.044715 * Math.pow(x, 3))));
+const normPDF = (x: number) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 
-  // Generate Greeks surface data
+export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({
+  spotPrice,
+  selectedGreek = 'delta',
+  optionType = 'call',
+}) => {
+  const [greekType, setGreekType] = React.useState<'delta' | 'gamma' | 'vega' | 'theta'>(selectedGreek);
+  const [side, setSide] = React.useState<'call' | 'put'>(optionType);
+
+  // Black-Scholes Greeks across a strike/DTE grid.
+  // d1 = [ln(S/K) + (r + σ²/2)·T] / (σ·√T)
+  // d2 = d1 - σ·√T
   const greeksData = useMemo(() => {
+    const r = 0.05;       // assumed risk-free rate
+    const sigma = 0.2;    // assumed implied vol
     const strikes = Array.from({ length: 13 }, (_, i) => spotPrice - 60 + i * 10);
     const expirations = [7, 14, 30, 60, 90, 180];
     const data: Greeks3DData[] = [];
 
     strikes.forEach((strike) => {
       expirations.forEach((dte) => {
-        const moneyness = strike / spotPrice;
-        const timeValue = Math.sqrt(dte / 365);
+        const T = dte / 365;
+        const sqrtT = Math.sqrt(T);
+        const d1 = (Math.log(spotPrice / strike) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+        const d2 = d1 - sigma * sqrtT;
 
-        // Simplified Black-Scholes Greeks
-        const d1 = (Math.log(moneyness) + 0.05 * dte / 365) / (0.2 * timeValue + 0.01);
-        const normCDF = (x: number) => 0.5 * (1 + Math.tanh(0.7978845608 * (x + 0.044715 * Math.pow(x, 3))));
-        const normPDF = (x: number) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+        const callDelta = normCDF(d1);
+        const delta = side === 'call' ? callDelta : callDelta - 1;
+        const gamma = normPDF(d1) / (spotPrice * sigma * sqrtT);
+        const vega = (spotPrice * normPDF(d1) * sqrtT) / 100; // per 1% vol move
+        const theta =
+          side === 'call'
+            ? (-(spotPrice * normPDF(d1) * sigma) / (2 * sqrtT) - r * strike * Math.exp(-r * T) * normCDF(d2)) / 365
+            : (-(spotPrice * normPDF(d1) * sigma) / (2 * sqrtT) + r * strike * Math.exp(-r * T) * normCDF(-d2)) / 365;
 
-        const delta = normCDF(d1);
-        const gamma = normPDF(d1) / (spotPrice * 0.2 * timeValue + 0.01);
-        const vega = spotPrice * normPDF(d1) * timeValue / 100;
-        const theta = -(spotPrice * normPDF(d1) * 0.2) / (2 * Math.sqrt(dte / 365)) / 365;
-
-        data.push({
-          strike,
-          daysToExpiration: dte,
-          delta,
-          gamma,
-          vega,
-          theta,
-        });
+        data.push({ strike, daysToExpiration: dte, delta, gamma, vega, theta });
       });
     });
 
     return data;
-  }, [spotPrice]);
+  }, [spotPrice, side]);
 
   // Get value range for color mapping
   const getValueRange = (type: string) => {
@@ -83,21 +91,36 @@ export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({ spotPrice, sel
         <p className="text-sm text-gray-400 mb-4">Darker colors = lower values, Brighter colors = higher values</p>
       </div>
 
-      {/* Greek Type Selector */}
-      <div className="flex gap-2">
-        {(['delta', 'gamma', 'vega', 'theta'] as const).map((type) => (
-          <button
-            key={type}
-            onClick={() => setGreekType(type)}
-            className={`px-3 py-2 rounded text-sm font-medium transition ${
-              greekType === type
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {type.toUpperCase()}
-          </button>
-        ))}
+      {/* Greek Type / Call-Put Selector */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex gap-2">
+          {(['delta', 'gamma', 'vega', 'theta'] as const).map((type) => (
+            <button
+              key={type}
+              onClick={() => setGreekType(type)}
+              className={`px-3 py-2 rounded text-sm font-medium transition ${
+                greekType === type
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {type.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex gap-1 bg-gray-700 rounded p-1">
+          {(['call', 'put'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSide(s)}
+              className={`px-3 py-1 text-xs font-semibold rounded transition ${
+                side === s ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              {s.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Heatmap */}

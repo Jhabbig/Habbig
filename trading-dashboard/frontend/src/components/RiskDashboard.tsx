@@ -26,9 +26,10 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
   // Calculate sector exposure
   const sectorExposure = useMemo(() => {
-    const sectors: Record<string, number> = {};
     const totalValue = positions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
+    if (totalValue <= 0) return [];
 
+    const sectors: Record<string, number> = {};
     positions.forEach((p) => {
       if (!sectors[p.sector]) sectors[p.sector] = 0;
       sectors[p.sector] += (p.quantity * p.currentPrice) / totalValue;
@@ -42,8 +43,6 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
   // Calculate Greeks exposure
   const greeksExposure = useMemo(() => {
-    const totalValue = positions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
-
     const delta = positions.reduce((sum, p) => sum + (p.Greeks?.delta || 0) * p.quantity, 0);
     const gamma = positions.reduce((sum, p) => sum + (p.Greeks?.gamma || 0) * p.quantity, 0);
     const vega = positions.reduce((sum, p) => sum + (p.Greeks?.vega || 0) * p.quantity, 0);
@@ -52,21 +51,44 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
     return { delta, gamma, vega, theta };
   }, [positions]);
 
-  // Calculate VaR (simplified 95% confidence)
-  const calculateVaR = () => {
-    const returns = positions.map((p) => (p.currentPrice - p.entryPrice) / p.entryPrice);
-    if (returns.length === 0) return 0;
+  // 1-day parametric Value-at-Risk at 95% confidence, expressed as a NEGATIVE
+  // dollar amount (a "worst expected 1-day loss").
+  //
+  // We don't have a real return time series in this UI, so we approximate
+  // portfolio σ_daily from the dispersion of per-position returns relative to
+  // the portfolio total. This is a rough estimate, not a true historical VaR,
+  // and we annotate it as such in the UI.
+  const var95 = useMemo(() => {
+    if (positions.length === 0) return 0;
+    const totalValue = positions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
+    if (totalValue <= 0) return 0;
 
-    const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length;
+    // Weighted contribution of each position to portfolio total return.
+    const weightedReturns = positions.map((p) => {
+      const weight = (p.quantity * p.currentPrice) / totalValue;
+      const ret = (p.currentPrice - p.entryPrice) / p.entryPrice;
+      return weight * ret;
+    });
+    const mean = weightedReturns.reduce((a, b) => a + b, 0);
+    // Sample variance of position-level returns (treated as the cross-section
+    // of possible 1-period outcomes). Bessel-corrected if n > 1.
+    const denom = Math.max(1, weightedReturns.length - 1);
+    const variance =
+      weightedReturns.reduce((sum, r) => sum + Math.pow(r - mean / weightedReturns.length, 2), 0) / denom;
     const stdDev = Math.sqrt(variance);
 
-    // 95% VaR ≈ mean - 1.645 * stdDev
-    return avgReturn - 1.645 * stdDev;
-  };
+    // 95% one-tailed normal z = 1.645. VaR is expressed as a loss → always ≤ 0.
+    const varReturn = mean - 1.645 * stdDev;
+    const lossReturn = Math.min(0, varReturn);
+    return lossReturn * totalValue;
+  }, [positions]);
 
-  const var95 = calculateVaR();
-  const maxDrawdown = ((currentEquity - startCapital) / startCapital) * 100;
+  const var95Pct = useMemo(() => {
+    const totalValue = positions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
+    return totalValue > 0 ? (var95 / totalValue) * 100 : 0;
+  }, [positions, var95]);
+
+  const maxDrawdown = startCapital > 0 ? ((currentEquity - startCapital) / startCapital) * 100 : 0;
   const isRisk = maxDrawdown < -5;
 
   // Mock sector colors
@@ -123,11 +145,11 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
         </div>
 
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <div className="text-xs text-gray-400 mb-1">95% VaR</div>
-          <div className={`text-2xl font-bold ${var95 > 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {(var95 * 100).toFixed(2)}%
+          <div className="text-xs text-gray-400 mb-1">95% VaR (1-day)</div>
+          <div className="text-2xl font-bold text-red-400">
+            {var95Pct.toFixed(2)}%
           </div>
-          <div className="text-xs text-gray-500 mt-1">Value at Risk</div>
+          <div className="text-xs text-gray-500 mt-1">Worst expected 1-day loss</div>
         </div>
       </div>
 
@@ -242,10 +264,12 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
           <div className="space-y-4">
             <div className="bg-gray-900 p-4 rounded border border-gray-700">
-              <div className="text-gray-400 text-sm mb-2">Value at Risk (95%)</div>
-              <div className="text-3xl font-bold text-red-400">{(var95 * 100).toFixed(2)}%</div>
+              <div className="text-gray-400 text-sm mb-2">Value at Risk (95%, 1-day)</div>
+              <div className="text-3xl font-bold text-red-400">
+                {var95Pct.toFixed(2)}% (${var95.toFixed(0)})
+              </div>
               <div className="text-xs text-gray-500 mt-2">
-                Worst expected loss with 95% confidence over 1 day
+                Parametric estimate; assumes normal returns and uses position-level dispersion as a proxy for σ.
               </div>
             </div>
 
@@ -261,24 +285,22 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
             <div className="bg-gray-900 p-4 rounded border border-gray-700">
               <div className="text-gray-400 text-sm mb-2">Largest Position</div>
-              {positions.length > 0 && (
-                <>
-                  <div className="text-xl font-bold text-gray-100">
-                    {positions.reduce((max, p) => (p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max)).ticker}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-2">
-                    {(
-                      (positions.reduce((max, p) =>
-                        p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max
-                      ).quantity *
-                        positions.reduce((max, p) =>
-                          p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max
-                        ).currentPrice) /
-                      currentEquity
-                    ) * 100).toFixed(1)}% of portfolio
-                  </div>
-                </>
-              )}
+              {(() => {
+                if (positions.length === 0) return <div className="text-gray-500 text-sm">No positions</div>;
+                const largest = positions.reduce((max, p) =>
+                  p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max
+                );
+                const value = largest.quantity * largest.currentPrice;
+                const pct = currentEquity > 0 ? (value / currentEquity) * 100 : 0;
+                return (
+                  <>
+                    <div className="text-xl font-bold text-gray-100">{largest.ticker}</div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      {currentEquity > 0 ? `${pct.toFixed(1)}% of portfolio` : '—'}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="bg-blue-900/20 border border-blue-700/30 rounded p-3 text-xs text-blue-300">

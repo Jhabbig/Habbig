@@ -5,6 +5,7 @@ Monitors options chains for unusual activity.
 Detects: unusual volume, IV spikes, skew shifts
 """
 
+import math
 import sys
 import os
 from typing import List, Dict, Optional
@@ -154,8 +155,8 @@ class OptionsScanEngine:
         results = []
 
         # Calculate ATM skew
-        atm_call_iv = None
-        atm_put_iv = None
+        atm_call_iv: Optional[float] = None
+        atm_put_iv: Optional[float] = None
 
         for call in calls:
             if abs(call.get('strike', 0) - spot_price) < 1:
@@ -167,7 +168,7 @@ class OptionsScanEngine:
                 atm_put_iv = put.get('iv', 0.2)
                 break
 
-        if atm_call_iv and atm_put_iv:
+        if atm_call_iv is not None and atm_put_iv is not None:
             skew = atm_put_iv - atm_call_iv  # Positive = put skew (bearish)
 
             if abs(skew) > skew_threshold:
@@ -192,31 +193,40 @@ class OptionsScanEngine:
         puts: List[Dict],
         spot_price: float,
         timestamp: int,
-        implied_move_threshold: float = 0.03
+        days_to_expiration: float = 30.0,
+        implied_move_threshold: float = 0.03,
     ) -> List[ScanResult]:
         """
         Detect implied earnings move.
-        High straddle IV = big earnings move expected.
+
+        The implied 1-period move of an ATM straddle is approximately:
+            implied_move ≈ IV * sqrt(DTE / 365)
+        where IV is the average of ATM call/put implied volatility.
+
+        High implied move = market expects a large earnings reaction.
         """
         results = []
 
-        # Calculate ATM straddle IV
-        atm_call_iv = None
-        atm_put_iv = None
+        atm_call_iv: Optional[float] = None
+        atm_put_iv: Optional[float] = None
 
         for call in calls:
             if abs(call.get('strike', 0) - spot_price) < 1:
-                atm_call_iv = call.get('iv', 0.2)
+                atm_call_iv = call.get('iv')
+                if atm_call_iv is None:
+                    atm_call_iv = 0.2
                 break
 
         for put in puts:
             if abs(put.get('strike', 0) - spot_price) < 1:
-                atm_put_iv = put.get('iv', 0.2)
+                atm_put_iv = put.get('iv')
+                if atm_put_iv is None:
+                    atm_put_iv = 0.2
                 break
 
-        if atm_call_iv and atm_put_iv:
+        if atm_call_iv is not None and atm_put_iv is not None and days_to_expiration > 0:
             avg_iv = (atm_call_iv + atm_put_iv) / 2
-            implied_move_pct = avg_iv / 10  # Rough approximation
+            implied_move_pct = avg_iv * math.sqrt(days_to_expiration / 365.0)
 
             if implied_move_pct > implied_move_threshold:
                 severity = 'high' if implied_move_pct > 0.08 else 'medium'

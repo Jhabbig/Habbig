@@ -7,13 +7,16 @@ Exposes REST endpoints and WebSocket for real-time market data + indicators.
 import asyncio
 import json
 import logging
+import os
+import re
 from typing import Set, Dict
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from tier1_adapters import get_facade, RealtimeFacade
 from backtest_engine import SimpleBacktestEngine, BacktestResult
@@ -26,6 +29,17 @@ logging.basicConfig(
     format='%(asctime)s [%(name)s] %(levelname)s: %(message)s'
 )
 log = logging.getLogger("api")
+
+# Environment-driven configuration
+ENV = os.environ.get("ENV", "dev").lower()
+IS_DEV = ENV == "dev"
+# Comma-separated list of allowed origins; in dev defaults to localhost.
+_default_dev_origins = "http://localhost:5173,http://127.0.0.1:5173"
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", _default_dev_origins if IS_DEV else "").split(",")
+    if o.strip()
+]
 
 # Global state
 facade: RealtimeFacade = None
@@ -86,20 +100,20 @@ class HealthResponse(BaseModel):
 
 class BacktestRequest(BaseModel):
     """Backtest request."""
-    ticker: str
-    strategy: str  # "rsi", "ma_crossover"
-    days: int = 30
-    initial_capital: float = 100000.0
-    position_size_pct: float = 0.1
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
+    strategy: str = Field(..., pattern=r"^(rsi|ma_crossover)$")
+    days: int = Field(30, ge=1, le=365)
+    initial_capital: float = Field(100000.0, gt=0, le=1_000_000_000)
+    position_size_pct: float = Field(0.1, gt=0, le=1.0)
 
     # RSI strategy params
-    rsi_oversold: float = 30.0
-    rsi_overbought: float = 70.0
-    rsi_period: int = 14
+    rsi_oversold: float = Field(30.0, ge=0, le=100)
+    rsi_overbought: float = Field(70.0, ge=0, le=100)
+    rsi_period: int = Field(14, ge=2, le=200)
 
     # MA crossover params
-    fast_period: int = 12
-    slow_period: int = 26
+    fast_period: int = Field(12, ge=2, le=200)
+    slow_period: int = Field(26, ge=2, le=500)
 
 
 class BacktestResponse(BaseModel):
@@ -130,8 +144,8 @@ class BacktestResponse(BaseModel):
 
 class SignalRequest(BaseModel):
     """AI signal generation request."""
-    ticker: str
-    price: float
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
+    price: float = Field(..., gt=0)
     rsi_14: float
     rsi_7: float
     rsi_21: float
@@ -174,11 +188,14 @@ class OptionChainItem(BaseModel):
 
 class ScanRequest(BaseModel):
     """Options scanner request."""
-    ticker: str
-    calls: list[OptionChainItem]
-    puts: list[OptionChainItem]
-    spot_price: float
-    screening_type: str = "all"  # all, unusual_volume, iv_spike, skew_shifts, earnings_move
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
+    calls: list[OptionChainItem] = Field(..., max_length=500)
+    puts: list[OptionChainItem] = Field(..., max_length=500)
+    spot_price: float = Field(..., gt=0)
+    screening_type: str = Field(
+        "all",
+        pattern=r"^(all|unusual_volume|iv_spike|skew_shifts|earnings_move)$",
+    )
 
 
 class ScanResultResponse(BaseModel):
@@ -220,17 +237,35 @@ app = FastAPI(
     title="Trading Dashboard API",
     description="Real-time market data, indicators, and Greeks",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Disable interactive docs outside dev — they leak the full API surface.
+    docs_url="/docs" if IS_DEV else None,
+    redoc_url="/redoc" if IS_DEV else None,
+    openapi_url="/openapi.json" if IS_DEV else None,
 )
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS — explicit origin list, never the wildcard. If ALLOWED_ORIGINS is empty
+# in a non-dev environment, CORS is effectively closed.
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        max_age=600,
+    )
+else:
+    log.warning("CORS is disabled: ALLOWED_ORIGINS is empty.")
+
+
+# Replace ad-hoc {"error": ...} dicts with proper HTTPException responses,
+# and centralize unexpected errors so internal stack traces / module paths
+# never leak to clients.
+@app.exception_handler(Exception)
+async def _generic_exception_handler(_, exc):
+    log.exception("Unhandled error")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # ============================================================================
@@ -247,67 +282,70 @@ async def health():
     }
 
 
+TICKER_PATTERN = r"^[A-Z0-9.\-]{1,10}$"
+
+
 @app.get("/api/bars", response_model=list[BarResponse])
 async def get_bars(
-    ticker: str = Query(..., example="AAPL"),
-    interval: str = Query("1m", example="1m"),
-    limit: int = Query(100, ge=1, le=1000)
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+    interval: str = Query("1m", pattern=r"^(1m|5m|15m|1h|1d)$"),
+    limit: int = Query(100, ge=1, le=1000),
 ):
     """
     Get historical bars for a ticker.
     Intervals: 1m, 5m, 15m, 1h, 1d
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
         facade.subscribe(ticker)
-        bars = facade.get_bars(ticker, interval, limit)
-        return bars
+        return facade.get_bars(ticker, interval, limit)
     except Exception as e:
-        log.error(f"Error fetching bars: {e}")
-        return {"error": str(e)}
+        log.exception("Error fetching bars")
+        raise HTTPException(status_code=500, detail="Failed to fetch bars") from e
 
 
 @app.get("/api/indicators", response_model=IndicatorResponse)
-async def get_indicators(ticker: str = Query(..., example="AAPL")):
+async def get_indicators(
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+):
     """Get latest indicator values for a ticker."""
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
         indicators = facade.get_indicators(ticker)
         if not indicators:
-            return {"error": f"No indicators for {ticker}"}
+            raise HTTPException(status_code=404, detail="No indicators available")
         return indicators
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Error fetching indicators: {e}")
-        return {"error": str(e)}
+        log.exception("Error fetching indicators")
+        raise HTTPException(status_code=500, detail="Failed to fetch indicators") from e
 
 
 @app.get("/api/greeks", response_model=list[GreeksResponse])
 async def get_greeks(
-    ticker: str = Query(..., example="AAPL"),
-    spot_price: float = Query(..., gt=0, example=150.0),
-    expiration_days: float = Query(30, gt=0, example=30),
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+    spot_price: float = Query(..., gt=0, le=1_000_000, example=150.0),
+    expiration_days: float = Query(30, gt=0, le=3650, example=30),
 ):
     """
     Compute Greeks for an option chain.
     Returns Greeks for ATM ± 5 strikes.
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
-        greeks = facade.compute_greeks_chain(
-            ticker,
-            spot_price=spot_price,
-            expiration_days=expiration_days
+        return facade.compute_greeks_chain(
+            ticker, spot_price=spot_price, expiration_days=expiration_days
         )
-        return greeks
     except Exception as e:
-        log.error(f"Error computing Greeks: {e}")
-        return {"error": str(e)}
+        log.exception("Error computing Greeks")
+        raise HTTPException(status_code=500, detail="Failed to compute Greeks") from e
 
 
 # ============================================================================
@@ -360,11 +398,11 @@ async def generate_signal(request: SignalRequest):
             "signal": signal.signal,
             "confidence": signal.confidence,
             "price": signal.price,
-            "reasoning": signal.reasoning
+            "reasoning": signal.reasoning,
         }
     except Exception as e:
-        log.error(f"Error generating signal: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error generating signal")
+        raise HTTPException(status_code=500, detail="Failed to generate signal") from e
 
 
 # ============================================================================
@@ -412,8 +450,8 @@ async def scan_options(request: ScanRequest):
 
         return response
     except Exception as e:
-        log.error(f"Error scanning options: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error scanning options")
+        raise HTTPException(status_code=500, detail="Failed to scan options") from e
 
 
 # ============================================================================
@@ -517,10 +555,12 @@ async def run_backtest(request: BacktestRequest):
     - ma_crossover: Moving average crossover
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
-        # Fetch historical bars (demo: generate synthetic data)
+        # Fetch historical bars (demo: generate synthetic data).
+        # NOTE: This data is synthetic, not historical. Surface that to clients
+        # so it isn't misrepresented as a real backtest.
         from datetime import datetime, timedelta
         import random
 
@@ -528,6 +568,8 @@ async def run_backtest(request: BacktestRequest):
         price = 150.0
         ts = int((datetime.now() - timedelta(days=request.days)).timestamp())
 
+        # `request.days` is bounded 1..365 by the Pydantic model, so the loop
+        # is bounded to at most 365 * 48 = 17,520 iterations.
         for i in range(request.days * 48):  # Assume ~48 5-min bars per day
             change = random.gauss(0, 0.8)
             price += change
@@ -539,13 +581,13 @@ async def run_backtest(request: BacktestRequest):
                 'high': price + abs(random.gauss(0, 0.5)),
                 'low': price - abs(random.gauss(0, 0.5)),
                 'close': price + random.gauss(0, 0.3),
-                'volume': random.randint(100000, 1000000)
+                'volume': random.randint(100000, 1000000),
             })
 
-        # Run backtest
         engine = SimpleBacktestEngine(initial_capital=request.initial_capital)
 
-        if request.strategy.lower() == "rsi":
+        strategy = request.strategy.lower()
+        if strategy == "rsi":
             result = engine.run_rsi_strategy(
                 bars,
                 rsi_oversold=request.rsi_oversold,
@@ -553,7 +595,7 @@ async def run_backtest(request: BacktestRequest):
                 rsi_period=request.rsi_period,
                 position_size_pct=request.position_size_pct,
             )
-        elif request.strategy.lower() == "ma_crossover":
+        elif strategy == "ma_crossover":
             result = engine.run_ma_crossover_strategy(
                 bars,
                 fast_period=request.fast_period,
@@ -561,9 +603,12 @@ async def run_backtest(request: BacktestRequest):
                 position_size_pct=request.position_size_pct,
             )
         else:
-            return {"error": f"Unknown strategy: {request.strategy}"}
+            # Should be unreachable thanks to the Pydantic pattern.
+            raise HTTPException(status_code=400, detail="Unknown strategy")
 
-        # Convert result to dict
+        if result is None:
+            raise HTTPException(status_code=501, detail=f"Strategy '{strategy}' not implemented")
+
         result_dict = {
             "ticker": request.ticker,
             "strategy": request.strategy,
@@ -590,31 +635,46 @@ async def run_backtest(request: BacktestRequest):
         }
         return result_dict
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Error running backtest: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error running backtest")
+        raise HTTPException(status_code=500, detail="Backtest failed") from e
 
 
 # ============================================================================
 # Demo/Test Endpoint
 # ============================================================================
 
+_demo_task: asyncio.Task | None = None
+
+
 @app.post("/api/demo/start")
 async def demo_start(
-    tickers: list[str] = Query(["AAPL", "TSLA", "MSFT"]),
-    duration_sec: float = Query(300)
+    tickers: list[str] = Query(["AAPL", "TSLA", "MSFT"], max_length=20),
+    duration_sec: float = Query(300, gt=0, le=3600),
 ):
     """Start demo streaming for testing."""
+    global _demo_task
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
+
+    # Reject ticker symbols that don't match the allowed pattern.
+    bad = [t for t in tickers if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", t)]
+    if bad:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+
+    # Refuse to start a second demo task while one is already running —
+    # prevents trivial resource amplification via repeated /demo/start calls.
+    if _demo_task is not None and not _demo_task.done():
+        raise HTTPException(status_code=409, detail="Demo already running")
 
     try:
-        # Start demo in background
-        asyncio.create_task(facade.demo_stream(tickers, duration_sec=duration_sec))
+        _demo_task = asyncio.create_task(facade.demo_stream(tickers, duration_sec=duration_sec))
         return {"status": "demo started", "tickers": tickers, "duration": duration_sec}
     except Exception as e:
-        log.error(f"Error starting demo: {e}")
-        return {"error": str(e)}
+        log.exception("Error starting demo")
+        raise HTTPException(status_code=500, detail="Failed to start demo") from e
 
 
 # ============================================================================
@@ -624,13 +684,20 @@ async def demo_start(
 if __name__ == "__main__":
     import uvicorn
 
-    log.info("Starting Trading Dashboard Backend on http://localhost:8000")
-    log.info("API docs: http://localhost:8000/docs")
+    # Bind to loopback by default. Exposing to all interfaces requires
+    # explicitly setting HOST in the environment, and should only be done
+    # behind a reverse proxy that terminates TLS and adds auth.
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+
+    log.info(f"Starting Trading Dashboard Backend on http://{host}:{port}")
+    if IS_DEV:
+        log.info(f"API docs: http://{host}:{port}/docs")
 
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        host=host,
+        port=port,
+        reload=IS_DEV,
+        log_level="info",
     )

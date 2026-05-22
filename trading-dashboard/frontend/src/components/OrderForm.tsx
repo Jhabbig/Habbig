@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus } from 'lucide-react';
 
 export interface Order {
   id: string;
@@ -26,24 +26,50 @@ export interface Trade {
 }
 
 interface OrderFormProps {
+  selectedTicker: string;
   currentPrice: number;
   onTrade: (trade: Trade) => void;
 }
 
-export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) => {
-  const [ticker, setTicker] = useState('AAPL');
+const newTradeId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+};
+
+export const OrderForm: React.FC<OrderFormProps> = ({ selectedTicker, currentPrice, onTrade }) => {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
-  const [quantity, setQuantity] = useState(100);
-  const [price, setPrice] = useState(currentPrice.toString());
+  const [quantity, setQuantity] = useState<number>(100);
+  const [price, setPrice] = useState<string>('');
   const [orderType, setOrderType] = useState<'market' | 'limit' | 'stop'>('market');
+  const [touchedPrice, setTouchedPrice] = useState(false);
+
+  // Keep the limit/stop input echoing the live price until the user touches it.
+  useEffect(() => {
+    if (touchedPrice) return;
+    if (Number.isFinite(currentPrice) && currentPrice > 0) {
+      setPrice(currentPrice.toFixed(2));
+    }
+  }, [currentPrice, touchedPrice]);
+
+  const hasLivePrice = Number.isFinite(currentPrice) && currentPrice > 0;
+  const parsedLimit = parseFloat(price);
+  const limitValid = Number.isFinite(parsedLimit) && parsedLimit > 0;
+  const canSubmit =
+    selectedTicker.length > 0 &&
+    quantity > 0 &&
+    (orderType === 'market' ? hasLivePrice : limitValid);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canSubmit) return;
 
-    const tradePrice = orderType === 'market' ? currentPrice : parseFloat(price);
+    const tradePrice = orderType === 'market' ? currentPrice : parsedLimit;
+
     const trade: Trade = {
-      id: Math.random().toString(36).substr(2, 9),
-      ticker,
+      id: newTradeId(),
+      ticker: selectedTicker,
       side,
       entryPrice: tradePrice,
       quantity,
@@ -53,9 +79,9 @@ export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) =
 
     onTrade(trade);
 
-    // Reset form
     setQuantity(100);
-    setPrice(currentPrice.toString());
+    setTouchedPrice(false);
+    if (hasLivePrice) setPrice(currentPrice.toFixed(2));
   };
 
   return (
@@ -66,16 +92,18 @@ export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) =
       </h3>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Ticker */}
+        {/* Ticker (read-only, locked to the dashboard's selection) */}
         <div>
           <label className="text-sm text-gray-400 mb-1 block">Ticker</label>
           <input
             type="text"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-            maxLength={5}
-            className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+            value={selectedTicker}
+            readOnly
+            className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 text-sm cursor-not-allowed"
           />
+          <p className="text-xs text-gray-500 mt-1">
+            Switch the dashboard ticker to trade a different symbol.
+          </p>
         </div>
 
         {/* Side */}
@@ -113,9 +141,13 @@ export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) =
           <input
             type="number"
             value={quantity}
-            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-            min="1"
-            step="1"
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setQuantity(Number.isFinite(v) ? v : 0);
+            }}
+            onBlur={() => setQuantity((q) => (q >= 1 ? q : 1))}
+            min={1}
+            step={1}
             className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
           />
         </div>
@@ -125,7 +157,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) =
           <label className="text-sm text-gray-400 mb-1 block">Order Type</label>
           <select
             value={orderType}
-            onChange={(e) => setOrderType(e.target.value as any)}
+            onChange={(e) => setOrderType(e.target.value as 'market' | 'limit' | 'stop')}
             className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
           >
             <option value="market">Market</option>
@@ -141,29 +173,41 @@ export const OrderForm: React.FC<OrderFormProps> = ({ currentPrice, onTrade }) =
             <input
               type="number"
               value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              step="0.01"
+              onChange={(e) => {
+                setTouchedPrice(true);
+                setPrice(e.target.value);
+              }}
+              min={0.01}
+              step={0.01}
               className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
             />
+            {!limitValid && (
+              <p className="text-xs text-red-400 mt-1">Enter a positive price.</p>
+            )}
           </div>
         )}
 
         {/* Current Price Display */}
         <div className="bg-gray-900 p-3 rounded border border-gray-700">
           <div className="text-xs text-gray-400">Current Price</div>
-          <div className="text-lg font-bold text-gray-100">${currentPrice.toFixed(2)}</div>
+          <div className="text-lg font-bold text-gray-100">
+            {hasLivePrice ? `$${currentPrice.toFixed(2)}` : <span className="text-gray-500">waiting for quote…</span>}
+          </div>
         </div>
 
         {/* Submit */}
         <button
           type="submit"
+          disabled={!canSubmit}
           className={`w-full py-2 rounded font-semibold transition ${
-            side === 'buy'
+            !canSubmit
+              ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+              : side === 'buy'
               ? 'bg-green-600 hover:bg-green-700 text-white'
               : 'bg-red-600 hover:bg-red-700 text-white'
           }`}
         >
-          {side === 'buy' ? 'Buy' : 'Sell'} {quantity} {ticker}
+          {side === 'buy' ? 'Buy' : 'Sell'} {quantity} {selectedTicker}
         </button>
       </form>
     </div>
