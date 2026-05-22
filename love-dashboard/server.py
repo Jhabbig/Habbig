@@ -33,6 +33,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 import insights as insights_module
+import og as og_module
 import sensitivity as sensitivity_module
 import snapshots as snapshots_module
 
@@ -215,6 +216,36 @@ def fetch_wb_indicator(indicator: str) -> dict[str, float]:
     return out
 
 
+def fetch_wb_indicator_history(indicator: str) -> dict[str, dict[int, float]]:
+    """ISO3 -> {year: value} for the full historical series of a WB indicator."""
+    out: dict[str, dict[int, float]] = {}
+    page = 1
+    while True:
+        r = requests.get(
+            f"{WB_BASE}/country/all/indicator/{indicator}",
+            params={"format": "json", "per_page": 20000, "page": page},
+            timeout=30,
+        )
+        r.raise_for_status()
+        meta, data = r.json()
+        if not data:
+            break
+        for row in data:
+            iso = row.get("countryiso3code")
+            v = row.get("value")
+            try:
+                year = int(row.get("date"))
+            except (TypeError, ValueError):
+                continue
+            if iso and len(iso) == 3 and v is not None:
+                out.setdefault(iso, {})[year] = float(v)
+        if page >= int(meta.get("pages", 1) or 1):
+            break
+        page += 1
+    log.info("wb %s history: %d countries", indicator, len(out))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Eurostat fetcher (JSON-stat 2.0 dissemination API)
 # ---------------------------------------------------------------------------
@@ -277,6 +308,42 @@ def parse_eurostat_geo_time(js: dict) -> dict[str, dict[str, float]]:
 
 def latest_per_geo(matrix: dict[str, dict[str, float]]) -> dict[str, float]:
     return {g: vs[max(vs)] for g, vs in matrix.items() if vs}
+
+
+def eurostat_history_by_iso3(matrix: dict[str, dict[str, float]]) -> dict[str, dict[int, float]]:
+    """{geo_iso2: {period: value}} -> {iso3: {year: value}} for full history."""
+    lookup = iso2_to_iso3()
+    out: dict[str, dict[int, float]] = {}
+    for code, by_period in matrix.items():
+        iso2 = EUROSTAT_ISO2_FIX.get(code, code)
+        iso3 = lookup.get(iso2)
+        if not iso3:
+            continue
+        for period, value in by_period.items():
+            try:
+                year = int(str(period)[:4])
+            except (TypeError, ValueError):
+                continue
+            out.setdefault(iso3, {})[year] = value
+    return out
+
+
+def fetch_eurostat_crude_rate_history(dataset: str, indic_de: str) -> dict[str, dict[int, float]]:
+    """Full time series of a crude-rate indicator by ISO3 / year."""
+    for params in (
+        {"indic_de": indic_de},
+        {"indic_de": indic_de, "sex": "T", "age": "TOTAL"},
+        {},
+    ):
+        try:
+            js = fetch_eurostat(dataset, params)
+            matrix = parse_eurostat_geo_time(js)
+            hist = eurostat_history_by_iso3(matrix)
+            if hist:
+                return hist
+        except Exception:
+            continue
+    return {}
 
 
 def map_eurostat_to_iso3(geo_values: dict[str, float]) -> dict[str, float]:
@@ -758,8 +825,13 @@ def _normalize_weights(weights: dict[str, float] | None) -> dict[str, float]:
     return {k: v / s for k, v in out.items()}
 
 
-def compute_subscores(weights: dict[str, float] | None = None) -> dict[str, dict]:
-    layers = cached("subscore_layers", _build_subscore_layers)
+def composite_from_layers(layers: dict[str, Any], weights: dict[str, float] | None = None) -> dict[str, dict]:
+    """Pure composite math given an already-built `layers` dict.
+
+    Split out from compute_subscores so the backfill can build layers for a
+    specific historical year (instead of "the latest" baked into
+    _build_subscore_layers) and run the exact same scoring pipeline.
+    """
     meta = layers["meta"]
     subs_layers = layers["subscores"]
     raw_layers = layers["raw"]
@@ -797,6 +869,10 @@ def compute_subscores(weights: dict[str, float] | None = None) -> dict[str, dict
             "raw": {key: layer.get(iso) for key, layer in raw_layers.items()},
         }
     return out
+
+
+def compute_subscores(weights: dict[str, float] | None = None) -> dict[str, dict]:
+    return composite_from_layers(cached("subscore_layers", _build_subscore_layers), weights)
 
 
 def build_summary(weights: dict[str, float] | None = None) -> dict:
@@ -1028,6 +1104,36 @@ def history_global():
         "points": snapshots_module.get_global_history(SNAPSHOTS_DB, days=days),
         "store":  snapshots_module.n_snapshots(SNAPSHOTS_DB),
     })
+
+
+@app.get("/api/og/global.svg")
+@app.get("/api/og/global.png")  # alias so Facebook crawlers attempting .png still get a response
+def og_global():
+    payload = cached("summary", build_summary)
+    svg = og_module.render_global_card(payload)
+    return svg, 200, {"Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=3600"}
+
+
+@app.get("/api/og/<iso>.svg")
+@app.get("/api/og/<iso>.png")
+def og_country(iso: str):
+    iso = iso.upper()
+    countries = cached("index_map", lambda: compute_subscores())
+    if iso not in countries:
+        # Fall back to the global card so social crawlers always get *something*.
+        return og_global()
+    svg = og_module.render_country_card(countries[iso])
+    return svg, 200, {"Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=3600"}
+
+
+@app.get("/methodology.html")
+def methodology_page():
+    return send_from_directory(STATIC_DIR, "methodology.html")
+
+
+@app.get("/docs.html")
+def docs_page():
+    return send_from_directory(STATIC_DIR, "docs.html")
 
 
 @app.get("/api/sources")

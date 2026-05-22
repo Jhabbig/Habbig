@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>API — State of Love</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042; --border-soft: #1b2533;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f472b6; --good: #34d399; --warn: #fbbf24; --info: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  header h1 .heart { color: var(--accent); }
+  nav a { color: var(--text-2); margin-left: 18px; font-size: 13px; }
+  nav a.active { color: var(--text-1); }
+  main { max-width: 880px; margin: 0 auto; padding: 36px 24px 80px; }
+  h1.title { font-size: 32px; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .sub { color: var(--text-2); font-size: 14px; margin-bottom: 28px; }
+  h2 { font-size: 18px; margin: 30px 0 8px; }
+  .endpoint {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; margin: 14px 0;
+  }
+  .endpoint .method-path { display: flex; align-items: baseline; gap: 10px; }
+  .endpoint .method {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+    background: rgba(96, 165, 250, 0.18); color: var(--info);
+  }
+  .endpoint code.path { font-size: 14px; color: var(--text-1); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .endpoint .desc { color: var(--text-2); margin: 6px 0 10px; }
+  .endpoint .params { font-size: 12px; color: var(--text-3); margin: 6px 0; }
+  .endpoint .params code { color: var(--text-2); }
+  .endpoint pre {
+    background: var(--bg-0); border: 1px solid var(--border-soft); border-radius: 6px;
+    padding: 10px 12px; overflow-x: auto; font-size: 12px; color: var(--text-2);
+    margin: 8px 0 0;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .callout { background: var(--bg-1); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 12px 16px; margin: 16px 0; color: var(--text-2); font-size: 13px; }
+  .callout strong { color: var(--text-1); }
+  footer { color: var(--text-3); font-size: 11px; text-align: center; margin-top: 60px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="heart">♥</span> State of Love — narve.ai</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/methodology.html">Methodology</a>
+    <a href="/docs.html" class="active">API</a>
+  </nav>
+</header>
+
+<main>
+
+<h1 class="title">API reference</h1>
+<p class="sub">All endpoints are HTTP GET, return JSON, and respect <code>Access-Control-Allow-Origin: *</code>. No auth, no rate limits beyond what the upstream data sources impose. Public, read-only.</p>
+
+<div class="callout">
+  <strong>Custom weights:</strong> any endpoint that returns scored countries accepts
+  <code>?w_connection=&lt;0..1&gt;&amp;w_partnership=&lt;0..1&gt;&amp;w_stability=&lt;0..1&gt;&amp;w_activity=&lt;0..1&gt;</code>.
+  Weights renormalize to sum to 1; partial sets are merged with defaults.
+</div>
+
+<h2>Health &amp; introspection</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/health</code></div>
+  <div class="desc">Liveness probe. Returns <code>{ok: true, ts: <unix>}</code>.</div>
+  <pre>curl https://love.narve.ai/api/health</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/sources</code></div>
+  <div class="desc">Methodology constants and the live status of every data feed.</div>
+  <pre>curl https://love.narve.ai/api/sources | jq</pre>
+</div>
+
+<h2>Index payloads</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/summary</code></div>
+  <div class="desc">Single-page payload: global mean composite, subscore averages, coverage counts, top/bottom 10, weights, weights_customized flag.</div>
+  <div class="params">Query params: <code>w_*</code> (custom weights)</div>
+  <pre>curl 'https://love.narve.ai/api/summary?w_connection=0.6&w_partnership=0.2&w_stability=0.15&w_activity=0.05'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/index</code></div>
+  <div class="desc">Every ranked country with its subscores, raw indicators, and which subscores were used.</div>
+  <div class="params">Query params: <code>w_*</code> (custom weights)</div>
+  <pre>curl https://love.narve.ai/api/index</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/countries</code></div>
+  <div class="desc">Ranked + unranked rows. Unranked rows include <code>unranked_reason</code> for honest data-gap reporting.</div>
+  <div class="params">Query params: <code>w_*</code> (custom weights)</div>
+  <pre>curl https://love.narve.ai/api/countries</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/country/&lt;iso3&gt;</code></div>
+  <div class="desc">One country's record + <code>peer_compare</code> (income-tier mean and Δ for each subscore) + <code>sensitivity</code> block (default weights only).</div>
+  <div class="params">Path: ISO3 country code. Query: <code>w_*</code>.</div>
+  <pre>curl https://love.narve.ai/api/country/USA</pre>
+</div>
+
+<h2>Insights &amp; sensitivity</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/insights</code></div>
+  <div class="desc">All insight cards generated by the 11 rules. Each has <code>kind</code> (e.g. "outlier"), <code>severity</code>, <code>confidence</code>, <code>title</code>, <code>body</code>, and pointers to the raw values.</div>
+  <div class="params">Query params: <code>w_*</code></div>
+  <pre>curl https://love.narve.ai/api/insights | jq '.[] | {kind, title}'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/sensitivity</code></div>
+  <div class="desc">Per-country rank ranges across 13 weight perturbations. Each country gets a stability label (high / medium / low). Includes most_unstable, most_stable, and stability_distribution.</div>
+  <pre>curl https://love.narve.ai/api/sensitivity | jq '.stability_distribution'</pre>
+</div>
+
+<h2>History</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/history/&lt;iso3&gt;</code></div>
+  <div class="desc">Country composite + subscore time series, oldest first.</div>
+  <div class="params">Path: ISO3. Query: <code>days</code> (default 365, max 3650).</div>
+  <pre>curl 'https://love.narve.ai/api/history/USA?days=730'</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/history/global</code></div>
+  <div class="desc">Daily mean composite across ranked countries plus the sample size, oldest first.</div>
+  <div class="params">Query: <code>days</code> (default 365, max 3650).</div>
+  <pre>curl 'https://love.narve.ai/api/history/global?days=3650'</pre>
+</div>
+
+<h2>Share assets</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/og/&lt;iso3&gt;.png</code></div>
+  <div class="desc">1200×630 Open Graph card for a country. Suitable as a <code>&lt;meta property="og:image"&gt;</code> source for social shares.</div>
+  <pre>curl -o usa.png https://love.narve.ai/api/og/USA.png</pre>
+</div>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/og/global.png</code></div>
+  <div class="desc">1200×630 Open Graph card with the global headline number and subscore averages.</div>
+  <pre>curl -o global.png https://love.narve.ai/api/og/global.png</pre>
+</div>
+
+<h2>Operator tools</h2>
+
+<div class="endpoint">
+  <div class="desc"><strong>Backfill history:</strong> a one-shot CLI that seeds <code>data/snapshots.db</code> with year-end snapshots from Eurostat &amp; World Bank time series, going back to whatever <code>--start-year</code> you pass.</div>
+  <pre>python3 backfill.py --start-year 2010
+python3 backfill.py --start-year 2015 --dry-run</pre>
+</div>
+
+<div class="endpoint">
+  <div class="desc"><strong>Drop-in CSVs:</strong> light up the subscores that require operator data.</div>
+  <pre>data/whr.csv          # country, social support
+data/loneliness.csv   # country, loneliness (0-100 or 0-1)
+data/un_marriage.csv  # country, marriage_rate, divorce_rate
+data/activity.csv     # country, activity</pre>
+</div>
+
+<footer>State of Love — see <a href="/methodology.html">methodology</a> for the math behind the numbers.</footer>
+
+</main>
+</body>
+</html>

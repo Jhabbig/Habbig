@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Methodology — State of Love</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042; --border-soft: #1b2533;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f472b6; --good: #34d399; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  header h1 .heart { color: var(--accent); }
+  nav a { color: var(--text-2); margin-left: 18px; font-size: 13px; }
+  nav a.active { color: var(--text-1); }
+  main { max-width: 760px; margin: 0 auto; padding: 36px 24px 80px; }
+  h1.title { font-size: 32px; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .sub { color: var(--text-2); font-size: 14px; margin-bottom: 32px; }
+  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 36px 0 10px; }
+  h3 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-3); margin: 24px 0 8px; font-weight: 600; }
+  p { color: var(--text-1); margin: 8px 0; }
+  ul, ol { color: var(--text-1); padding-left: 22px; }
+  li { margin: 4px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+    background: var(--bg-2); padding: 2px 5px; border-radius: 4px; color: var(--text-2); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
+  th { color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg-2); color: var(--text-2); }
+  .pill.tier-a { background: rgba(52, 211, 153, 0.15); color: var(--good); }
+  .pill.tier-b { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .pill.tier-c { background: rgba(148, 163, 184, 0.15); color: var(--text-2); }
+  .callout { background: var(--bg-1); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 14px 16px; margin: 18px 0; font-size: 14px; color: var(--text-2); }
+  .callout strong { color: var(--text-1); }
+  footer { color: var(--text-3); font-size: 11px; text-align: center; margin-top: 60px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="heart">♥</span> State of Love — narve.ai</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/methodology.html" class="active">Methodology</a>
+    <a href="/docs.html">API</a>
+  </nav>
+</header>
+
+<main>
+
+<h1 class="title">Methodology</h1>
+<p class="sub">How the Love Index is built, where the data comes from, and which decisions are open to argument. Version <strong>v3</strong>, last revised at the latest commit on this branch.</p>
+
+<h2>What we measure</h2>
+<p>The Love Index is a <strong>population-level prevalence-and-quality measure of close human connection</strong> — how many people in a country have meaningful relationships, and how good those relationships are. It is <em>not</em> an intensity score (we can't measure how much one couple loves each other), and it is not a values judgement on family structure (cohabitation and marriage count equally as "partnership").</p>
+
+<div class="callout">
+  <strong>Falsifiable claim:</strong> a country scoring 80 should, on average, have lonelier people, fewer stable unions, and lower relationship satisfaction than a country scoring 40. If we can't show that across multiple cuts of the data, the methodology is wrong.
+</div>
+
+<h2>Subscores &amp; weights</h2>
+<table>
+  <thead><tr><th>Subscore</th><th>Weight</th><th>Indicators</th><th>Tier</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Connection</strong></td><td>35%</td><td>WHR social support; Meta-Gallup loneliness (inverted)</td><td><span class="pill tier-b">B</span></td></tr>
+    <tr><td><strong>Partnership</strong></td><td>30%</td><td>Crude marriage rate per 1,000 — capped at 80th percentile</td><td><span class="pill tier-a">A</span></td></tr>
+    <tr><td><strong>Stability</strong></td><td>25%</td><td>Crude divorce rate (inverted); adolescent fertility (inverted)</td><td><span class="pill tier-a">A</span></td></tr>
+    <tr><td><strong>Activity</strong></td><td>10%</td><td>Operator CSV (Trends, dating-app penetration)</td><td><span class="pill tier-c">C — indicative</span></td></tr>
+  </tbody>
+</table>
+
+<h3>Direction of each metric</h3>
+<table>
+  <thead><tr><th>Metric</th><th>Direction</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Loneliness rate</td><td>↓ better</td><td>Direct measure of disconnection</td></tr>
+    <tr><td>Social support</td><td>↑ better</td><td>Direct measure of connection</td></tr>
+    <tr><td>Partnership rate</td><td>↑ better, capped at 80th pctile</td><td>Runaway-high rates often reflect coercion or absence of single-life options, not flourishing</td></tr>
+    <tr><td>Divorce rate per population</td><td>↓ better</td><td>Lower turnover within the population of unions</td></tr>
+    <tr><td>Adolescent fertility</td><td>↓ better</td><td>High values flag early/coerced unions</td></tr>
+    <tr><td>Activity (search + app penetration)</td><td>↑ indicative</td><td>Engagement signal; could also signal loneliness — flagged as ambiguous</td></tr>
+  </tbody>
+</table>
+
+<h2>Normalization</h2>
+<ol>
+  <li>Within each subscore, convert each raw indicator to a <strong>percentile rank within income tier</strong> (World Bank: low / lower-mid / upper-mid / high).</li>
+  <li>Average the indicators within a subscore (equal weight) → subscore percentile (0–100).</li>
+  <li>Composite Love Index = weighted average of subscore percentiles using the table above.</li>
+</ol>
+<p>We do <strong>not</strong> z-score then min-max. Z-scoring reshapes skewed distributions, and min-max means the worst country always sits at 0 even if the global state improves. Percentile rank within income tier is harder to game and easier to explain ("compared to peers at similar income").</p>
+
+<h2>Missing-data policy</h2>
+<ul>
+  <li><strong>Subscore present:</strong> at least one of its indicators must be measured. If only one of two, the subscore is shown with a "low-confidence" flag.</li>
+  <li><strong>Country ranked:</strong> at least two of the three Tier-A/B subscores must be present. The Activity subscore alone is never enough.</li>
+  <li><strong>No imputation</strong> of missing values. Missing subscores drop out of the weighted average and the remaining weights renormalize.</li>
+</ul>
+
+<h2>Sensitivity analysis</h2>
+<p>Every ranked country is re-scored under 13 weight perturbations (each subscore weight ±10pp plus leave-one-out). The rank range across all perturbations becomes a stability label — <span class="pill" style="background:rgba(52,211,153,0.15); color:var(--good)">high</span> (range ≤ 3), <span class="pill" style="background:rgba(251,191,36,0.15); color:var(--warn)">medium</span> (≤ 10), <span class="pill" style="background:rgba(248,113,113,0.15); color:#f87171">low</span> (&gt; 10) — visible in the country drill-down and as a dot in the rankings table.</p>
+
+<h2>Contestable decisions</h2>
+<p>The methodology team has explicitly called out five decisions that could reasonably go the other way. Push back via GitHub issue if you disagree.</p>
+<ol>
+  <li><strong>Activity at 10%, badged "indicative only".</strong> Alt: drop it from the index entirely.</li>
+  <li><strong>Partnership rate, not marriage rate.</strong> Alt: marriage rate alone is cleaner Tier-A coverage.</li>
+  <li><strong>Income-tier normalization, not continent.</strong> Alt: continent is more recognizable to readers.</li>
+  <li><strong>Drop births-outside-marriage entirely.</strong> Alt: keep as a stability proxy in countries with clear cultural meaning.</li>
+  <li><strong>Cap partnership rate at 80th percentile.</strong> Alt: don't cap — high rates are good.</li>
+</ol>
+
+<h2>Insight rules</h2>
+<p>11 small rules scan each snapshot. Each insight is provenance-tagged so you can click through to the inputs.</p>
+<ul>
+  <li><strong>peer_leader</strong> — top of income tier, margin ≥ 3 pts</li>
+  <li><strong>outlier</strong> — subscore &gt; 20 pts above tier mean (z-score reported)</li>
+  <li><strong>divergence</strong> — Partnership × Stability gap ≥ 25 pts</li>
+  <li><strong>triple_threat</strong> — all 3 Tier-A/B subscores ≥ 90</li>
+  <li><strong>weakness_flag</strong> — composite ≥ 75 but a subscore ≤ 20</li>
+  <li><strong>cap_impact</strong> — Partnership cap reduced score by ≥ 2pp</li>
+  <li><strong>closest_peer</strong> — cross-tier/region lookalike within 12 subscore-pts</li>
+  <li><strong>coverage_gap</strong> — high-income country missing a Tier-A subscore</li>
+  <li><strong>mover</strong> — composite shifted ≥ 5 pts since a baseline ≥ 30 days old</li>
+  <li><strong>trend_reversal</strong> — 2-leg trend then opposite-direction flip across ~90 days</li>
+  <li><strong>event_overlay</strong> — composite move ≥ 4pp across a registered event date (correlation, not causation)</li>
+</ul>
+
+<h2>Data sources</h2>
+<p>Three tiers, ranked by accuracy. Every number on the dashboard carries a visible tier badge.</p>
+<table>
+  <thead><tr><th>Source</th><th>Tier</th><th>Feeds</th><th>License</th></tr></thead>
+  <tbody>
+    <tr><td>Eurostat <code>demo_nind</code>, <code>demo_ndivind</code></td><td><span class="pill tier-a">A</span></td><td>Partnership, Stability (EU+EFTA)</td><td>CC-BY 4.0</td></tr>
+    <tr><td>World Bank WDI</td><td><span class="pill tier-a">A</span></td><td>Country metadata, Stability (adolescent fertility, ~190 countries)</td><td>CC-BY 4.0</td></tr>
+    <tr><td>UN DESA Demographic Yearbook</td><td><span class="pill tier-a">A</span></td><td>Partnership, Stability (global fallback)</td><td>UN open data</td></tr>
+    <tr><td>World Happiness Report (Gallup)</td><td><span class="pill tier-b">B</span></td><td>Connection (social support)</td><td>report-level open</td></tr>
+    <tr><td>Meta-Gallup Social Connections</td><td><span class="pill tier-b">B</span></td><td>Connection (loneliness, inverted)</td><td>open report</td></tr>
+    <tr><td>Operator CSV</td><td><span class="pill tier-c">C</span></td><td>Activity (dating-app penetration, search interest)</td><td>varies</td></tr>
+  </tbody>
+</table>
+
+<h2>Reproducibility</h2>
+<p>Everything is open. The composite math has <strong>40 offline assertions</strong> covering the percentile-rank, missing-data, custom-weight, insight-rule, and sensitivity-engine logic. Run them via <code>python3 test_methodology.py</code> in the <code>love-dashboard/</code> directory.</p>
+<p>The data pipeline is documented in <a href="/docs.html">the API reference</a>. Historical backfill is a single command: <code>python3 backfill.py --start-year 2010</code>.</p>
+
+<footer>State of Love — methodology lives in <code>love-dashboard/README.md</code> on the repository.</footer>
+
+</main>
+</body>
+</html>

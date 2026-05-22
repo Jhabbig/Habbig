@@ -1,7 +1,32 @@
-# State of Love Dashboard (v3.5)
+# State of Love Dashboard (v3.6)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.6 adds (credibility + distribution):**
+
+- **Historical backfill** — `backfill.py` is a one-shot CLI that pulls full
+  time series from Eurostat (marriage + divorce) and World Bank WDI
+  (adolescent fertility), then writes year-end snapshots back to 2010+
+  into `data/snapshots.db`. The time-aware insight rules (`mover`,
+  `trend_reversal`, `event_overlay`) light up immediately instead of
+  waiting a year of live snapshots to accrue. WHR / UN_DESA / loneliness /
+  activity stay point-in-time overlays (one CSV per source).
+- **Methodology page** — `/methodology.html` documents the falsifiable
+  claim, subscores, weights, direction-of-each-metric, normalization,
+  missing-data policy, sensitivity analysis, the 11 insight rules, and
+  the 5 contestable decisions.
+- **API reference** — `/docs.html` lists every endpoint with method,
+  query params, and a copy-pasteable curl example, including the new OG
+  endpoints and the backfill CLI.
+- **Open Graph share cards** — `GET /api/og/<iso3>.svg` and
+  `/api/og/global.svg` render 1200×630 cards (flag + country name +
+  composite + subscore bars). SVG so the dashboard ships with zero
+  binary-image deps; FB/LinkedIn that need PNG can pipe through an
+  ingress converter. `<meta property="og:image">` already wired into
+  `index.html` pointing at the global card.
+- **Header nav** — Dashboard / Methodology / API tabs at the top of every
+  page.
 
 **v3.5 adds:**
 

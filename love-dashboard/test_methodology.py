@@ -570,6 +570,73 @@ def test_loneliness_inverts_and_combines_with_whr():
         ok("loneliness inverted to connection contribution; 0-1 fractions auto-rescaled to 0-100")
 
 
+def test_og_card_renders():
+    print("test: og.py renders global + country cards with the right primitives")
+    import og as og_module
+    svg = og_module.render_global_card({
+        "global_index": 62.4, "n_countries": 100, "n_meta": 217, "as_of": "2026-05-20",
+        "subscores_avg": {"connection": 65.2, "partnership": 58.0, "stability": 60.1, "activity": 55.3},
+    }).decode("utf-8")
+    if "Global State of Love" not in svg or "62.4" not in svg:
+        fail("global card missing headline / composite")
+    ok("global card renders headline + composite")
+
+    svg = og_module.render_country_card({
+        "iso3": "USA", "iso2": "US", "name": "United States",
+        "income_tier": "H", "region": "Americas", "composite": 71.0,
+        "subscores": {"connection": 80, "partnership": 60, "stability": 70, "activity": 65},
+    }).decode("utf-8")
+    if "United States" not in svg or "71.0" not in svg:
+        fail("country card missing name / composite")
+    if "USA" not in svg or "Americas" not in svg:
+        fail("country card missing ISO / region")
+    ok("country card renders name + composite + flag tags + subscore bars")
+
+    # XML escape: a country named "<script>" would not break the SVG.
+    svg = og_module.render_country_card({
+        "iso3": "XSS", "iso2": "XS", "name": "<script>alert(1)</script>",
+        "income_tier": "H", "region": "", "composite": 50.0,
+        "subscores": {"connection": 50, "partnership": 50, "stability": 50, "activity": 50},
+    }).decode("utf-8")
+    if "<script>" in svg or "</script>" in svg:
+        fail("OG card must escape XML-special chars in country names")
+    ok("XML-special chars in country names are escaped")
+
+
+def test_backfill_layer_builder():
+    print("test: backfill.build_layers_for_year picks year-specific values + uses static overlays")
+    import backfill
+    histories = {
+        "eurostat_marriage": {"USA": {2018: 6.5, 2020: 5.5}, "DEU": {2018: 5.0, 2020: 4.8}},
+        "eurostat_divorce":  {"USA": {2018: 2.9, 2020: 2.3}, "DEU": {2018: 1.9, 2020: 1.7}},
+        "wb_adolescent":     {"USA": {2018: 18.0, 2020: 16.0}, "DEU": {2018: 7.5, 2020: 7.0}},
+    }
+    static_layers = {
+        "meta": META,
+        "un_marriage": {"BRA": 5.0},     # fills in non-EU
+        "un_divorce":  {"BRA": 1.4},
+        "whr_raw":     {"USA": 88.0, "DEU": 70.0, "BRA": 60.0},
+        "connection_pct": {"USA": 95.0, "DEU": 70.0, "BRA": 60.0},
+        "activity_pct":   {},
+    }
+    layers_2018 = backfill.build_layers_for_year(2018, histories, static_layers)
+    layers_2020 = backfill.build_layers_for_year(2020, histories, static_layers)
+
+    raw_2018 = layers_2018["raw"]["marriage_rate_per_1000"]
+    raw_2020 = layers_2020["raw"]["marriage_rate_per_1000"]
+    if raw_2018.get("USA") != 6.5 or raw_2020.get("USA") != 5.5:
+        fail(f"year-specific marriage values not picked up: {raw_2018}, {raw_2020}")
+    ok("year-specific Eurostat values flow through to layers")
+
+    if raw_2018.get("BRA") != 5.0 or raw_2020.get("BRA") != 5.0:
+        fail(f"UN DESA static overlay should fill non-EU country every year: {raw_2018}, {raw_2020}")
+    ok("UN DESA static overlay fills countries without Eurostat history")
+
+    if layers_2018["subscores"]["connection"] is not static_layers["connection_pct"]:
+        fail("Connection subscore should be the same static layer for every year")
+    ok("Connection + Activity are time-static overlays (single CSV honestly applied)")
+
+
 def test_event_overlay_rule():
     print("test: rule_event_overlay fires when composite moves across event date")
     from datetime import date, timedelta
@@ -657,6 +724,8 @@ def main():
     test_un_csv_parser_merges_globally()
     test_activity_csv_parser()
     test_loneliness_inverts_and_combines_with_whr()
+    test_og_card_renders()
+    test_backfill_layer_builder()
     test_event_overlay_rule()
     print("\nall tests passed.")
 
