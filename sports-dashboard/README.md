@@ -33,8 +33,11 @@ docker compose up --build sports
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/                # ~280 tests, runs in <5s
+DEV_MODE=1 python -m pytest tests/   # 308 tests, runs in <5s
 ```
+
+CI runs the same command on every PR to `main` via
+`.github/workflows/ci.yml` (job: `test-sports-dashboard`).
 
 ## Pages
 
