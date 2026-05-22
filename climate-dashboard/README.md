@@ -79,12 +79,13 @@ Major moves:
 
 ### Tests
 
-- **85 pytest cases** + a **jsdom headless-DOM smoke test** in CI.
+- **90 pytest cases** + a **jsdom headless-DOM smoke test** in CI.
   Coverage: parsers (with realistic upstream-format fixtures), math
   helpers, projection models, threshold-prob monotonicity, market regex
   routing, the Kelly formula, the ENSO segmenter, calibration summaries,
-  radiative forcing, IPCC scenarios, country emissions, snow-cover and
-  ocean-heat parsers, the snapshot/feed endpoints, and several
+  radiative forcing, IPCC scenarios (including position-aware matching),
+  country emissions, snow-cover and ocean-heat parsers, the snapshot/feed
+  endpoints (with end-to-end opportunity-filter check), and several
   regressions for bugs found in the v4 code review.
 
 ### What was added in v3
@@ -146,14 +147,15 @@ pip install pytest
 python3 -m pytest tests/
 ```
 
-85 tests cover parsers (with realistic upstream-format fixtures), math
+90 tests cover parsers (with realistic upstream-format fixtures), math
 helpers, projection models, threshold-probability monotonicity, the
 market-scoring regex routing, the Kelly formula, the ENSO segmenter,
 calibration summaries, regressions for the v4 bug-review findings,
 country-emissions parsing, the radiative-forcing math, IPCC scenario
-interpolation + matching, ocean-heat / sea-level / snow-cover parsers,
-the /snapshot.txt and /feed.xml endpoints, and end-to-end integration
-with HTTP-mocked upstream fetchers.
+interpolation + position-aware matching, ocean-heat / sea-level /
+snow-cover parsers, the /snapshot.txt and /feed.xml endpoints
+(including end-to-end opportunity-filter verification), and end-to-end
+integration with HTTP-mocked upstream fetchers.
 
 ## Headless-DOM smoke test
 

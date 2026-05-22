@@ -23,6 +23,7 @@ from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sea_level as sea_level_src
 from app.fetchers import sf6 as sf6_src
 from app.fetchers import snow_cover as snow_cover_src
+from app import snapshot
 from app.models import calibration as calibration_model
 from app.models import co2 as co2_model
 from app.models import emissions as emissions_model
@@ -664,6 +665,40 @@ def test_all_trajectories_returns_5year_steps():
     assert traj["SSP1-2.6"][0]["year"] == 2020
     # Last point should be ≥ 2100
     assert traj["SSP1-2.6"][-1]["year"] >= 2095
+
+
+def test_opportunities_rss_filters_and_sorts():
+    """End-to-end check that /feed.xml?kind=opportunities applies the edge +
+    liquidity thresholds correctly AND sorts by |edge| descending."""
+    import re
+    markets = [
+        {"_edge_pp": 8.0, "liquidity": 5000, "slug": "A", "question": "A",
+         "_model_p": 0.70, "_implied_p": 0.62, "conditionId": "mA"},
+        # below min_edge=5
+        {"_edge_pp": 3.0, "liquidity": 5000, "slug": "B", "question": "B",
+         "_model_p": 0.60, "_implied_p": 0.57, "conditionId": "mB"},
+        # below min_liq=500
+        {"_edge_pp": 10.0, "liquidity": 200, "slug": "C", "question": "C",
+         "_model_p": 0.80, "_implied_p": 0.70, "conditionId": "mC"},
+        # NO side, largest absolute edge
+        {"_edge_pp": -12.0, "liquidity": 3000, "slug": "D", "question": "D",
+         "_model_p": 0.20, "_implied_p": 0.32, "conditionId": "mD"},
+        # no edge → skipped
+        {"_edge_pp": None, "liquidity": 50000, "slug": "E", "question": "E",
+         "conditionId": "mE"},
+    ]
+    xml = snapshot.opportunities_rss(markets, min_edge_pp=5.0, min_liquidity=500.0)
+    items = re.findall(r"<item>.+?</title>(.+?)</description>", xml, re.DOTALL)
+    titles = re.findall(r"<title>(.+?)</title>", xml)
+    # Channel title + 2 item titles. A and D survive; B/C/E are filtered.
+    assert len(titles) == 3
+    item_titles = titles[1:]
+    # Highest |edge| (D, 12pp) first
+    assert "-12.0pp" in item_titles[0]
+    assert "NO" in item_titles[0]
+    # Second is +8.0pp YES (A)
+    assert "+8.0pp" in item_titles[1]
+    assert "YES" in item_titles[1]
 
 
 def test_n2o_market_routed_correctly():
