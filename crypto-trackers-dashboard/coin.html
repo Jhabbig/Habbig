@@ -102,19 +102,44 @@
   <div class="row" id="stats-row"></div>
 
   <section>
-    <h2>Price chart <small>Binance klines &middot; OHLCV candlesticks with 20-period EMA</small></h2>
+    <h2>Price chart <small>Binance klines &middot; multiple chart modes + drawing tools + indicators</small></h2>
     <div class="chart-controls" id="chart-controls">
       <button data-int="15m">15m</button>
       <button data-int="1h" class="active">1h</button>
       <button data-int="4h">4h</button>
       <button data-int="1d">1d</button>
       <button data-int="1w">1w</button>
+      <span style="width:14px"></span>
+      <button data-type="candle" class="active" title="Candlestick">Candle</button>
+      <button data-type="heikin" title="Heikin-Ashi smoothed candles">HA</button>
+      <button data-type="line" title="Line">Line</button>
+      <button data-type="area" title="Area">Area</button>
+      <button data-type="bars" title="OHLC bars">Bars</button>
       <span style="flex:1"></span>
       <button data-ind="bb" class="active" title="Bollinger Bands (20, 2σ)">BB</button>
-      <button data-ind="rsi" class="active" title="Relative Strength Index">RSI</button>
-      <button data-ind="macd" class="active" title="MACD (12,26,9)">MACD</button>
+      <button data-ind="sma50" title="SMA 50">SMA50</button>
+      <button data-ind="sma200" title="SMA 200">SMA200</button>
+      <button data-ind="vwap" title="VWAP (session)">VWAP</button>
+      <button data-ind="rsi" class="active" title="RSI(14) subplot">RSI</button>
+      <button data-ind="macd" class="active" title="MACD(12,26,9) subplot">MACD</button>
     </div>
-    <div class="chart-card"><svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none"></svg></div>
+    <div class="chart-controls" id="draw-controls" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+      <span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-right:6px">Draw</span>
+      <button data-tool="cursor" class="active" title="Hover for crosshair (no drawing)">↖</button>
+      <button data-tool="hline" title="Horizontal line: click once at price level">— H</button>
+      <button data-tool="trend" title="Trend line: click two points">/ Trend</button>
+      <button data-tool="rect" title="Rectangle: click two opposite corners">□ Rect</button>
+      <button data-tool="fib" title="Fibonacci retracement: click low then high (or vice versa)">⋮ Fib</button>
+      <button data-tool="long" title="Long position: click entry, target, stop (in that order)">▲ Long</button>
+      <button data-tool="short" title="Short position: click entry, target, stop">▼ Short</button>
+      <span style="flex:1"></span>
+      <button data-tool="erase" title="Eraser: click near a drawing to remove it">⌫ Erase</button>
+      <button onclick="window._clearDrawings()" title="Clear all drawings on this coin + interval" style="border-color:rgba(239,68,68,0.4);color:var(--accent-2)">Clear all</button>
+    </div>
+    <div class="chart-card" style="position:relative">
+      <svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none" style="cursor:crosshair"></svg>
+      <div id="chart-readout" style="position:absolute;top:8px;right:10px;background:rgba(15,23,42,0.85);padding:4px 8px;border-radius:6px;font-size:11px;font-family:monospace;color:var(--text-2);pointer-events:none;display:none"></div>
+    </div>
   </section>
 
   <section>
@@ -227,7 +252,33 @@
 
   // ─── Candlestick chart (inline SVG) ──────────────────────────────────────
   let _chartInterval = "1h";
-  const _indicators = { bb: true, rsi: true, macd: true };
+  let _chartType = "candle"; // "candle" | "heikin" | "line" | "area" | "bars"
+  const _indicators = { bb: true, rsi: true, macd: true, sma50: false, sma200: false, vwap: false };
+  let _bars = [];
+  let _chartGeometry = null;  // saved after every render so drawings can re-map data-coords to px
+
+  // ─── Drawings state ────────────────────────────────────────────────────────
+  // Drawings stored in DATA coordinates (price + bar index) so they survive
+  // interval changes. Persisted to localStorage keyed by coin+interval.
+  let _activeTool = "cursor"; // "cursor" | "hline" | "trend" | "rect" | "fib" | "long" | "short" | "erase"
+  let _pendingPoints = []; // points clicked so far for the current draw
+  let _hoverPx = null;     // {x, y} for ghost preview
+
+  function _drawingsKey() { return `ct_draw_${coinId}_${_chartInterval}`; }
+  function loadDrawings() {
+    try {
+      const raw = localStorage.getItem(_drawingsKey());
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }
+  function saveDrawings(drawings) {
+    try { localStorage.setItem(_drawingsKey(), JSON.stringify(drawings)); } catch {}
+  }
+  window._clearDrawings = () => {
+    if (!confirm("Clear all drawings on " + _coinSymbol + " " + _chartInterval + "?")) return;
+    saveDrawings([]);
+    renderCandles(_bars);
+  };
 
   function ema(values, period) {
     if (!values.length || period <= 1) return values.slice();
@@ -313,13 +364,47 @@
     return path;
   }
 
+  // ─── Heikin-Ashi smoothing ────────────────────────────────────────────────
+  function heikinAshi(bars) {
+    if (!bars.length) return [];
+    const out = [];
+    let prevO = bars[0].open;
+    let prevC = bars[0].close;
+    bars.forEach((b, i) => {
+      const haClose = (b.open + b.high + b.low + b.close) / 4;
+      const haOpen  = i === 0 ? (b.open + b.close) / 2 : (prevO + prevC) / 2;
+      const haHigh  = Math.max(b.high, haOpen, haClose);
+      const haLow   = Math.min(b.low,  haOpen, haClose);
+      out.push({ ...b, open: haOpen, high: haHigh, low: haLow, close: haClose });
+      prevO = haOpen;
+      prevC = haClose;
+    });
+    return out;
+  }
+
+  // ─── VWAP (session) ───────────────────────────────────────────────────────
+  function vwap(bars) {
+    const out = [];
+    let cumPV = 0, cumV = 0;
+    bars.forEach(b => {
+      const typical = (b.high + b.low + b.close) / 3;
+      cumPV += typical * (b.volume || 0);
+      cumV += (b.volume || 0);
+      out.push(cumV > 0 ? cumPV / cumV : null);
+    });
+    return out;
+  }
+
   function renderCandles(bars) {
+    _bars = bars || [];
     const svg = document.getElementById("chart-svg");
     svg.innerHTML = "";
-    if (!bars || !bars.length) {
+    if (!_bars.length) {
       svg.innerHTML = `<text x="20" y="40" fill="#ef4444" font-size="14">No klines available for ${escapeHtml(_coinSymbol)}USDT.</text>`;
       return;
     }
+    // Apply chart-type transform: candles vs heikin-ashi vs line vs area vs bars
+    const renderBars = _chartType === "heikin" ? heikinAshi(_bars) : _bars;
 
     const W = 1200;
     const CHART_H = 360, VOL_H = 60;
@@ -336,22 +421,30 @@
     const H = macdBottom + AXIS_BOTTOM;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
-    const n = bars.length;
+    const n = renderBars.length;
     const xStep = (W - PAD_LEFT - PAD_RIGHT) / n;
     const candleW = Math.max(1.5, xStep * 0.7);
 
     // Price extents (excluding extreme outliers)
-    const highs = bars.map(b => b.high);
-    const lows = bars.map(b => b.low);
+    const highs = renderBars.map(b => b.high);
+    const lows = renderBars.map(b => b.low);
     const maxP = Math.max(...highs);
     const minP = Math.min(...lows);
     const pad = (maxP - minP) * 0.06;
     const yHigh = maxP + pad;
     const yLow = Math.max(minP - pad, 0);
     const yScale = (p) => chartBottom - ((p - yLow) / (yHigh - yLow)) * CHART_H;
+    const yInv = (y) => yLow + ((chartBottom - y) / CHART_H) * (yHigh - yLow);
+    const xToBarIdx = (x) => Math.max(0, Math.min(n - 1, Math.round((x - PAD_LEFT - candleW / 2) / xStep)));
+    const barIdxToX = (idx) => PAD_LEFT + idx * xStep + candleW / 2;
+
+    // Save geometry for drawing layer + crosshair
+    _chartGeometry = { W, H, PAD_LEFT, PAD_RIGHT, PAD_TOP, CHART_H, chartTop, chartBottom,
+                        xStep, candleW, n, yLow, yHigh, yScale, yInv, xToBarIdx, barIdxToX,
+                        renderBars };
 
     // Volume extents
-    const maxVol = Math.max(...bars.map(b => b.volume || 0)) || 1;
+    const maxVol = Math.max(...renderBars.map(b => b.volume || 0)) || 1;
     const vScale = (v) => volBottom - (v / maxVol) * VOL_H;
 
     // Build grid + axis labels (price)
@@ -370,7 +463,7 @@
     const timeLabels = [];
     for (let i = 0; i < tickCount; i++) {
       const idx = Math.min(Math.floor((i / (tickCount - 1)) * (n - 1)), n - 1);
-      const b = bars[idx];
+      const b = renderBars[idx];
       const dt = new Date(b.open_ms);
       const label = _chartInterval === "1d" || _chartInterval === "1w"
         ? `${dt.getUTCMonth() + 1}/${dt.getUTCDate()}`
@@ -379,31 +472,42 @@
       timeLabels.push(`<text x="${x}" y="${H - 8}" class="axis-label" text-anchor="middle">${label}</text>`);
     }
 
-    // Candles + volume
-    const candles = [];
+    // Price plot: dispatch on chart type
+    const priceSvg = renderPricePlot(renderBars, _chartType, {
+      PAD_LEFT, xStep, candleW, yScale, chartBottom,
+    });
+
+    // Volume bars (always)
     const volBars = [];
-    bars.forEach((b, i) => {
+    renderBars.forEach((b, i) => {
       const x = PAD_LEFT + i * xStep;
-      const cx = x + candleW / 2;
       const up = b.close >= b.open;
-      const cls = up ? "candle-up" : "candle-down";
-      const bodyTop = yScale(Math.max(b.open, b.close));
-      const bodyBottom = yScale(Math.min(b.open, b.close));
-      const bodyH = Math.max(bodyBottom - bodyTop, 1);
-      const wickTop = yScale(b.high);
-      const wickBottom = yScale(b.low);
-      candles.push(`<g class="${cls}">
-        <line class="wick" x1="${cx}" y1="${wickTop}" x2="${cx}" y2="${wickBottom}"/>
-        <rect class="body" x="${x}" y="${bodyTop}" width="${candleW}" height="${bodyH}"/>
-      </g>`);
       const vy = vScale(b.volume || 0);
       volBars.push(`<rect class="${up ? 'vol-up' : 'vol-down'}" x="${x}" y="${vy}" width="${candleW}" height="${volBottom - vy}"/>`);
     });
 
-    // EMA-20 overlay
-    const closes = bars.map(b => b.close);
+    // EMA-20 overlay (always shown for context)
+    const closes = renderBars.map(b => b.close);
     const ema20 = ema(closes, 20);
     const emaPath = ema20.map((v, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${yScale(v)}`).join(" ");
+
+    // SMA-50 / SMA-200 / VWAP overlays
+    let extraOverlays = "";
+    if (_indicators.sma50) {
+      const sma50 = sma(closes, 50);
+      const p = pathFromValues(sma50, PAD_LEFT, xStep, candleW / 2, yScale);
+      extraOverlays += `<path d="${p}" fill="none" stroke="#38bdf8" stroke-width="1" stroke-opacity="0.85"/>`;
+    }
+    if (_indicators.sma200) {
+      const sma200 = sma(closes, 200);
+      const p = pathFromValues(sma200, PAD_LEFT, xStep, candleW / 2, yScale);
+      extraOverlays += `<path d="${p}" fill="none" stroke="#c084fc" stroke-width="1.2" stroke-opacity="0.85"/>`;
+    }
+    if (_indicators.vwap) {
+      const v = vwap(renderBars);
+      const p = pathFromValues(v, PAD_LEFT, xStep, candleW / 2, yScale);
+      extraOverlays += `<path d="${p}" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4 2" stroke-opacity="0.9"/>`;
+    }
 
     // Bollinger bands (20, 2σ)
     let bbSvg = "";
@@ -484,32 +588,299 @@
     }
 
     // Latest price marker on right
-    const last = bars[n - 1];
+    const last = renderBars[n - 1];
     const lastY = yScale(last.close);
-    const lastCls = last.close >= last.open ? "candle-up" : "candle-down";
     const lastColor = last.close >= last.open ? "#34d399" : "#ef4444";
+
+    // Drawings overlay (rendered above candles, below crosshair)
+    const drawingsSvg = renderDrawingsLayer(_chartGeometry);
 
     svg.innerHTML = `
       ${groups.join("")}
       ${timeLabels.join("")}
       ${bbSvg}
-      ${candles.join("")}
+      ${priceSvg}
       ${volBars.join("")}
       ${rsiSvg}
       ${macdSvg}
       <path class="ma" d="${emaPath}"/>
+      ${extraOverlays}
+      ${drawingsSvg}
       <line x1="${PAD_LEFT}" y1="${lastY}" x2="${W - PAD_RIGHT}" y2="${lastY}" stroke="${lastColor}" stroke-width="0.6" stroke-dasharray="3 2"/>
       <rect x="${W - PAD_RIGHT + 2}" y="${lastY - 9}" width="65" height="18" fill="${lastColor}" rx="2"/>
       <text x="${W - PAD_RIGHT + 4}" y="${lastY + 4}" fill="black" font-size="11" font-weight="600" font-family="monospace">${fmtPrice(last.close)}</text>
-      <text x="${PAD_LEFT + 4}" y="${PAD_TOP + 12}" fill="${lastColor}" font-size="13" font-weight="600">${escapeHtml(_coinSymbol)}USDT &middot; ${_chartInterval}</text>
+      <text x="${PAD_LEFT + 4}" y="${PAD_TOP + 12}" fill="${lastColor}" font-size="13" font-weight="600">${escapeHtml(_coinSymbol)}USDT &middot; ${_chartInterval} &middot; ${_chartType}</text>
       <text x="${PAD_LEFT + 4}" y="${volTop + 12}" fill="var(--text-3)" font-size="10" font-family="monospace">Volume</text>
+      <g id="chart-crosshair"></g>
     `;
+  }
+
+  // ─── Price plot dispatcher ─────────────────────────────────────────────────
+  function renderPricePlot(bars, type, ctx) {
+    const { PAD_LEFT, xStep, candleW, yScale, chartBottom } = ctx;
+    if (type === "line" || type === "area") {
+      const path = bars.map((b, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${yScale(b.close)}`).join(" ");
+      const stroke = `<path d="${path}" fill="none" stroke="#f59e0b" stroke-width="1.6"/>`;
+      if (type === "line") return stroke;
+      // Area: close path back to bottom-left
+      const areaPath = path + ` L${PAD_LEFT + (bars.length - 1) * xStep + candleW / 2} ${chartBottom} L${PAD_LEFT + candleW / 2} ${chartBottom} Z`;
+      return `<path d="${areaPath}" fill="rgba(245,158,11,0.18)"/>${stroke}`;
+    }
+    if (type === "bars") {
+      // OHLC bars: vertical line H to L with tick left=open, right=close
+      return bars.map((b, i) => {
+        const cx = PAD_LEFT + i * xStep + candleW / 2;
+        const up = b.close >= b.open;
+        const color = up ? "#34d399" : "#ef4444";
+        const yH = yScale(b.high), yL = yScale(b.low);
+        const yO = yScale(b.open), yC = yScale(b.close);
+        const half = candleW / 2;
+        return `<g stroke="${color}" stroke-width="1.2">
+          <line x1="${cx}" y1="${yH}" x2="${cx}" y2="${yL}"/>
+          <line x1="${cx - half}" y1="${yO}" x2="${cx}" y2="${yO}"/>
+          <line x1="${cx}" y1="${yC}" x2="${cx + half}" y2="${yC}"/>
+        </g>`;
+      }).join("");
+    }
+    // Candle (default) or heikin: same shape
+    return bars.map((b, i) => {
+      const x = PAD_LEFT + i * xStep;
+      const cx = x + candleW / 2;
+      const up = b.close >= b.open;
+      const cls = up ? "candle-up" : "candle-down";
+      const bodyTop = yScale(Math.max(b.open, b.close));
+      const bodyBottom = yScale(Math.min(b.open, b.close));
+      const bodyH = Math.max(bodyBottom - bodyTop, 1);
+      const wickTop = yScale(b.high);
+      const wickBottom = yScale(b.low);
+      return `<g class="${cls}">
+        <line class="wick" x1="${cx}" y1="${wickTop}" x2="${cx}" y2="${wickBottom}"/>
+        <rect class="body" x="${x}" y="${bodyTop}" width="${candleW}" height="${bodyH}"/>
+      </g>`;
+    }).join("");
+  }
+
+  // ─── Drawings rendering ────────────────────────────────────────────────────
+  // Drawings stored in data-coords; convert to px using the current geometry.
+  function _toPx(drawing, geo) {
+    const { barIdxToX, yScale } = geo;
+    return drawing.points.map(p => ({
+      x: barIdxToX(p.idx),
+      y: yScale(p.price),
+    }));
+  }
+
+  function renderDrawingsLayer(geo) {
+    if (!geo) return "";
+    const drawings = loadDrawings();
+    const out = drawings.map(d => {
+      const pts = _toPx(d, geo);
+      if (d.tool === "hline") {
+        const y = pts[0].y;
+        return `<g>
+          <line x1="${geo.PAD_LEFT}" y1="${y}" x2="${geo.W - geo.PAD_RIGHT}" y2="${y}" stroke="${d.color || '#f59e0b'}" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="${geo.PAD_LEFT + 4}" y="${y - 3}" fill="${d.color || '#f59e0b'}" font-size="10" font-family="monospace">${fmtPrice(d.points[0].price)}</text>
+        </g>`;
+      }
+      if (d.tool === "trend") {
+        return `<line x1="${pts[0].x}" y1="${pts[0].y}" x2="${pts[1].x}" y2="${pts[1].y}" stroke="${d.color || '#38bdf8'}" stroke-width="1.4"/>`;
+      }
+      if (d.tool === "rect") {
+        const x0 = Math.min(pts[0].x, pts[1].x), x1 = Math.max(pts[0].x, pts[1].x);
+        const y0 = Math.min(pts[0].y, pts[1].y), y1 = Math.max(pts[0].y, pts[1].y);
+        return `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" fill="rgba(56,189,248,0.12)" stroke="${d.color || '#38bdf8'}" stroke-width="1" stroke-dasharray="3 2"/>`;
+      }
+      if (d.tool === "fib") {
+        // Two anchor points: low and high
+        const p0 = d.points[0].price, p1 = d.points[1].price;
+        const lo = Math.min(p0, p1), hi = Math.max(p0, p1);
+        const range = hi - lo;
+        const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+        const x0 = Math.min(pts[0].x, pts[1].x);
+        const x1 = Math.max(pts[0].x, pts[1].x);
+        return levels.map(lv => {
+          const price = lo + range * lv;
+          const y = geo.yScale(price);
+          const label = `${(lv * 100).toFixed(1)}%  ${fmtPrice(price)}`;
+          return `<g>
+            <line x1="${geo.PAD_LEFT}" y1="${y}" x2="${geo.W - geo.PAD_RIGHT}" y2="${y}" stroke="#fbbf24" stroke-width="0.6" stroke-opacity="0.55"/>
+            <text x="${geo.W - geo.PAD_RIGHT + 4}" y="${y + 3}" fill="#fbbf24" font-size="9" font-family="monospace">${label}</text>
+          </g>`;
+        }).join("") + `<line x1="${x0}" y1="${pts[0].y}" x2="${x1}" y2="${pts[1].y}" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4 2"/>`;
+      }
+      if (d.tool === "long" || d.tool === "short") {
+        // 3 points: entry, target, stop
+        const [pe, pt, ps] = d.points;
+        const entry = pe.price, target = pt.price, stop = ps.price;
+        const reward = Math.abs(target - entry);
+        const risk = Math.abs(entry - stop);
+        const rr = risk > 0 ? reward / risk : 0;
+        const isLong = d.tool === "long";
+        const profitColor = "#34d399", lossColor = "#ef4444";
+        // Fill profit zone between entry and target; loss zone between entry and stop
+        const yE = geo.yScale(entry), yT = geo.yScale(target), yS = geo.yScale(stop);
+        const xL = geo.PAD_LEFT, xR = geo.W - geo.PAD_RIGHT;
+        const profitTop = Math.min(yE, yT), profitH = Math.abs(yT - yE);
+        const lossTop = Math.min(yE, yS), lossH = Math.abs(yS - yE);
+        return `<g>
+          <rect x="${xL}" y="${profitTop}" width="${xR - xL}" height="${profitH}" fill="rgba(52,211,153,0.10)"/>
+          <rect x="${xL}" y="${lossTop}" width="${xR - xL}" height="${lossH}" fill="rgba(239,68,68,0.10)"/>
+          <line x1="${xL}" y1="${yE}" x2="${xR}" y2="${yE}" stroke="${isLong ? profitColor : lossColor}" stroke-width="1.2"/>
+          <line x1="${xL}" y1="${yT}" x2="${xR}" y2="${yT}" stroke="${profitColor}" stroke-width="1" stroke-dasharray="4 2"/>
+          <line x1="${xL}" y1="${yS}" x2="${xR}" y2="${yS}" stroke="${lossColor}" stroke-width="1" stroke-dasharray="4 2"/>
+          <text x="${xR - 70}" y="${yE - 3}" fill="${isLong ? profitColor : lossColor}" font-size="10" font-family="monospace">${isLong ? "LONG" : "SHORT"} ${fmtPrice(entry)}</text>
+          <text x="${xR - 70}" y="${yT - 3}" fill="${profitColor}" font-size="10" font-family="monospace">TP ${fmtPrice(target)}</text>
+          <text x="${xR - 70}" y="${yS + 11}" fill="${lossColor}" font-size="10" font-family="monospace">SL ${fmtPrice(stop)}</text>
+          <text x="${xL + 6}" y="${yE - 3}" fill="${isLong ? profitColor : lossColor}" font-size="11" font-weight="600">R:R ${rr.toFixed(2)} · reward ${((reward / entry) * 100).toFixed(2)}% · risk ${((risk / entry) * 100).toFixed(2)}%</text>
+        </g>`;
+      }
+      return "";
+    }).join("");
+    // Ghost preview while drawing
+    let ghost = "";
+    if (_pendingPoints.length && _hoverPx && _activeTool !== "cursor" && _activeTool !== "erase") {
+      const pts = _pendingPoints.map(p => ({ x: geo.barIdxToX(p.idx), y: geo.yScale(p.price) }));
+      pts.push(_hoverPx);
+      if (_activeTool === "trend") {
+        ghost = `<line x1="${pts[0].x}" y1="${pts[0].y}" x2="${pts[1].x}" y2="${pts[1].y}" stroke="#38bdf8" stroke-width="1" stroke-dasharray="2 2" stroke-opacity="0.6"/>`;
+      } else if (_activeTool === "rect" || _activeTool === "fib") {
+        if (pts.length === 2) {
+          const x0 = Math.min(pts[0].x, pts[1].x), x1 = Math.max(pts[0].x, pts[1].x);
+          const y0 = Math.min(pts[0].y, pts[1].y), y1 = Math.max(pts[0].y, pts[1].y);
+          ghost = `<rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" fill="rgba(56,189,248,0.08)" stroke="#38bdf8" stroke-width="0.6" stroke-dasharray="2 2"/>`;
+        }
+      } else if (_activeTool === "long" || _activeTool === "short") {
+        ghost = pts.map(p => `<circle cx="${p.x}" cy="${p.y}" r="3" fill="#38bdf8" opacity="0.6"/>`).join("");
+      }
+    }
+    return out + ghost;
+  }
+
+  // ─── Mouse interaction (crosshair + drawing) ──────────────────────────────
+  function _mouseToSvg(ev) {
+    const svg = document.getElementById("chart-svg");
+    const rect = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    return {
+      x: ((ev.clientX - rect.left) / rect.width) * vb.width,
+      y: ((ev.clientY - rect.top) / rect.height) * vb.height,
+    };
+  }
+
+  function _attachChartHandlers() {
+    const svg = document.getElementById("chart-svg");
+    const readout = document.getElementById("chart-readout");
+    if (!svg) return;
+    svg.onmousemove = (ev) => {
+      if (!_chartGeometry) return;
+      const p = _mouseToSvg(ev);
+      _hoverPx = p;
+      const g = _chartGeometry;
+      if (p.x < g.PAD_LEFT || p.x > g.W - g.PAD_RIGHT || p.y < g.chartTop || p.y > g.chartBottom) {
+        readout.style.display = "none";
+        const ch = document.getElementById("chart-crosshair");
+        if (ch) ch.innerHTML = "";
+        return;
+      }
+      const price = g.yInv(p.y);
+      const idx = g.xToBarIdx(p.x);
+      const bar = g.renderBars[idx];
+      const dt = bar ? new Date(bar.open_ms) : null;
+      const dtStr = dt ? `${dt.getUTCMonth()+1}/${dt.getUTCDate()} ${String(dt.getUTCHours()).padStart(2,"0")}:${String(dt.getUTCMinutes()).padStart(2,"0")}` : "?";
+      readout.style.display = "block";
+      readout.innerHTML = `<strong>${fmtPrice(price)}</strong> · ${escapeHtml(dtStr)} UTC` +
+        (bar ? ` · O ${fmtPrice(bar.open)} H ${fmtPrice(bar.high)} L ${fmtPrice(bar.low)} C ${fmtPrice(bar.close)}` : "");
+      const ch = document.getElementById("chart-crosshair");
+      if (ch) {
+        ch.innerHTML = `
+          <line x1="${p.x}" y1="${g.chartTop}" x2="${p.x}" y2="${g.chartBottom}" class="cursor-line"/>
+          <line x1="${g.PAD_LEFT}" y1="${p.y}" x2="${g.W - g.PAD_RIGHT}" y2="${p.y}" class="cursor-line"/>`;
+      }
+      // Live update ghost for multi-click tools
+      if (_pendingPoints.length && _activeTool !== "cursor" && _activeTool !== "erase") {
+        renderCandles(_bars);
+      }
+    };
+    svg.onmouseleave = () => {
+      readout.style.display = "none";
+      const ch = document.getElementById("chart-crosshair");
+      if (ch) ch.innerHTML = "";
+      _hoverPx = null;
+    };
+    svg.onclick = (ev) => {
+      if (!_chartGeometry) return;
+      const p = _mouseToSvg(ev);
+      const g = _chartGeometry;
+      if (p.y < g.chartTop || p.y > g.chartBottom) return;
+      const dataPoint = { idx: g.xToBarIdx(p.x), price: g.yInv(p.y) };
+      _handleClick(dataPoint, p);
+    };
+  }
+
+  function _expectedClicks(tool) {
+    return { hline: 1, trend: 2, rect: 2, fib: 2, long: 3, short: 3 }[tool] || 0;
+  }
+
+  function _handleClick(dataPoint, pxPoint) {
+    if (_activeTool === "cursor") return;
+    if (_activeTool === "erase") {
+      // Remove the drawing whose nearest line is closest to the click
+      const drawings = loadDrawings();
+      if (!drawings.length) return;
+      let bestIdx = -1, bestDist = Infinity;
+      drawings.forEach((d, i) => {
+        const pts = _toPx(d, _chartGeometry);
+        // Distance from click to nearest line / anchor
+        let dist = Infinity;
+        if (d.tool === "hline") {
+          dist = Math.abs(pts[0].y - pxPoint.y);
+        } else if (d.tool === "trend" || d.tool === "fib") {
+          dist = _pointLineDistance(pxPoint, pts[0], pts[1]);
+        } else if (d.tool === "rect") {
+          dist = Math.min(
+            Math.abs(pts[0].x - pxPoint.x), Math.abs(pts[1].x - pxPoint.x),
+            Math.abs(pts[0].y - pxPoint.y), Math.abs(pts[1].y - pxPoint.y),
+          );
+        } else if (d.tool === "long" || d.tool === "short") {
+          dist = Math.min(...pts.map(pp => Math.abs(pp.y - pxPoint.y)));
+        }
+        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+      });
+      if (bestIdx >= 0 && bestDist < 12) {
+        drawings.splice(bestIdx, 1);
+        saveDrawings(drawings);
+        renderCandles(_bars);
+      }
+      return;
+    }
+    _pendingPoints.push(dataPoint);
+    const needed = _expectedClicks(_activeTool);
+    if (_pendingPoints.length >= needed) {
+      const drawings = loadDrawings();
+      drawings.push({
+        tool: _activeTool,
+        points: _pendingPoints,
+        created_at: Date.now(),
+      });
+      saveDrawings(drawings);
+      _pendingPoints = [];
+      renderCandles(_bars);
+    } else {
+      renderCandles(_bars);
+    }
+  }
+
+  function _pointLineDistance(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+    const fx = a.x + t * dx, fy = a.y + t * dy;
+    return Math.hypot(p.x - fx, p.y - fy);
   }
 
   async function loadChart(interval) {
     _chartInterval = interval;
-    // Update button states
-    document.querySelectorAll("#chart-controls button").forEach(b => {
+    // Update interval-button states
+    document.querySelectorAll("#chart-controls button[data-int]").forEach(b => {
       b.classList.toggle("active", b.dataset.int === interval);
     });
     try {
@@ -517,10 +888,33 @@
       const limit = interval === "15m" ? 96 : interval === "1h" ? 168 : interval === "4h" ? 180 : interval === "1d" ? 200 : 100;
       const data = await fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`);
       renderCandles(data.bars || []);
+      _attachChartHandlers();
     } catch (e) {
       document.getElementById("chart-svg").innerHTML =
         `<text x="20" y="40" fill="#ef4444" font-size="14">Chart fetch failed: ${escapeHtml(e.message)}</text>`;
     }
+  }
+
+  function _switchChartType(type) {
+    if (!["candle", "heikin", "line", "area", "bars"].includes(type)) return;
+    _chartType = type;
+    document.querySelectorAll("#chart-controls button[data-type]").forEach(b => {
+      b.classList.toggle("active", b.dataset.type === type);
+    });
+    if (_bars.length) { renderCandles(_bars); _attachChartHandlers(); }
+  }
+
+  function _switchTool(tool) {
+    _activeTool = tool;
+    _pendingPoints = [];
+    document.querySelectorAll("#draw-controls button[data-tool]").forEach(b => {
+      b.classList.toggle("active", b.dataset.tool === tool);
+    });
+    // Set svg cursor style based on the tool
+    const svg = document.getElementById("chart-svg");
+    if (svg) svg.style.cursor = (tool === "cursor") ? "crosshair"
+                              : (tool === "erase") ? "not-allowed" : "copy";
+    if (_bars.length) { renderCandles(_bars); _attachChartHandlers(); }
   }
 
   // ─── Order book ──────────────────────────────────────────────────────────
@@ -722,13 +1116,19 @@
   document.querySelectorAll("#chart-controls button[data-int]").forEach(b => {
     b.addEventListener("click", () => loadChart(b.dataset.int));
   });
+  document.querySelectorAll("#chart-controls button[data-type]").forEach(b => {
+    b.addEventListener("click", () => _switchChartType(b.dataset.type));
+  });
   document.querySelectorAll("#chart-controls button[data-ind]").forEach(b => {
     b.addEventListener("click", () => {
       const k = b.dataset.ind;
       _indicators[k] = !_indicators[k];
       b.classList.toggle("active", _indicators[k]);
-      loadChart(_chartInterval);
+      if (_bars.length) { renderCandles(_bars); _attachChartHandlers(); }
     });
+  });
+  document.querySelectorAll("#draw-controls button[data-tool]").forEach(b => {
+    b.addEventListener("click", () => _switchTool(b.dataset.tool));
   });
 
   loadCoin().then(() => {
