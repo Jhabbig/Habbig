@@ -26,6 +26,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from collections import OrderedDict
 from typing import Any, Callable
 
@@ -76,6 +77,12 @@ _TTL = {
     "un_marriage_divorce":  7 * 24 * 3600,   # UN DESA is annual
     "loneliness_csv":       7 * 24 * 3600,   # Meta-Gallup is annual
     "activity_csv":         24 * 3600,
+    "wb_tfr":               24 * 3600,
+    "wb_flfp":              24 * 3600,
+    "wb_gdp_pc":            24 * 3600,
+    "wb_life_exp":          24 * 3600,
+    "un_wpp_smam_w":        7 * 24 * 3600,
+    "ilga_rainbow":         7 * 24 * 3600,
     "summary":              60 * 60,
     "index":                60 * 60,
     "index_map":            60 * 60,
@@ -631,6 +638,118 @@ def fetch_loneliness_data() -> dict[str, float]:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# UN World Population Prospects (Tier A, JSON API)
+#
+# Singulate mean age at marriage — the demographically clean version of the
+# age-at-first-union signal we currently proxy with adolescent fertility.
+# Used as a context indicator (not yet in the composite); the LLM narrative
+# layer picks it up and the country drill-down surfaces it.
+# ---------------------------------------------------------------------------
+
+UN_WPP_BASE = "https://population.un.org/dataportalapi/api/v1"
+# SMAM = Singulate Mean Age at Marriage. Indicator ID 21 is women; 22 is men.
+UN_WPP_INDICATOR_SMAM_WOMEN = 21
+
+
+def fetch_un_wpp_indicator_latest(indicator_id: int, start_year: int = 2015) -> dict[str, float]:
+    """Latest value per ISO3 for a UN WPP indicator. Walks the paginated
+    `/data/indicators/{id}/locations/all/start/{y}/end/{y2}` endpoint."""
+    out: dict[str, dict] = {}
+    page = 1
+    end_year = datetime.utcnow().year
+    while True:
+        try:
+            r = requests.get(
+                f"{UN_WPP_BASE}/data/indicators/{indicator_id}/locations/all/start/{start_year}/end/{end_year}",
+                params={"pageNumber": page, "pageSize": 500},
+                timeout=30,
+            )
+            r.raise_for_status()
+            payload = r.json()
+        except Exception as exc:
+            log.warning("UN WPP indicator %s fetch failed (page %d): %s", indicator_id, page, exc)
+            return {k: v["value"] for k, v in out.items()}
+        rows = payload.get("data") or payload  # API has shifted; tolerate both shapes
+        if not isinstance(rows, list):
+            rows = payload.get("data", [])
+        if not rows:
+            break
+        for row in rows:
+            iso3 = row.get("iso3") or row.get("countryIso3Code")
+            v = row.get("value")
+            year = row.get("timeLabel") or row.get("year") or row.get("time")
+            if not iso3 or v is None:
+                continue
+            try:
+                year_i = int(str(year)[:4])
+            except (TypeError, ValueError):
+                continue
+            cur = out.get(iso3)
+            if cur is None or year_i > cur["year"]:
+                out[iso3] = {"value": float(v), "year": year_i}
+        total_pages = payload.get("pages") or payload.get("totalPages") or 1
+        if page >= int(total_pages):
+            break
+        page += 1
+    log.info("un_wpp %s: %d countries (latest year per country)", indicator_id, len(out))
+    return {k: v["value"] for k, v in out.items()}
+
+
+def fetch_un_wpp_age_at_marriage_women() -> dict[str, float]:
+    return fetch_un_wpp_indicator_latest(UN_WPP_INDICATOR_SMAM_WOMEN)
+
+
+# ---------------------------------------------------------------------------
+# ILGA-Europe / Equaldex Rainbow Index (Freedom dimension — context only)
+#
+# Annual scoring of LGBTI rights per country, 0–100. Operator drops a CSV
+# at data/rainbow.csv (columns: country, rainbow_score). Reported as a
+# context indicator and used as fuel for rule_event_overlay when paired
+# with year-of-change.
+# ---------------------------------------------------------------------------
+
+RAINBOW_LOCAL = Path(__file__).parent / "data" / "rainbow.csv"
+
+
+def _parse_rainbow_csv(text: str) -> dict[str, float]:
+    meta = get_country_meta()
+    name_to_iso3 = _whr_name_to_iso3(meta)
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return {}
+    name_col = next((c for c in reader.fieldnames if "country" in c.lower()), None)
+    val_col = next((c for c in reader.fieldnames if "rainbow" in c.lower() or "score" in c.lower()), None)
+    if not name_col or not val_col:
+        return {}
+    out: dict[str, float] = {}
+    for row in reader:
+        nm = _normalize_country_name(row.get(name_col) or "")
+        iso3 = name_to_iso3.get(nm)
+        if not iso3:
+            continue
+        try:
+            v = float(row[val_col])
+        except (ValueError, TypeError):
+            continue
+        # Some publications use 0-1 fractions; rescale.
+        if 0.0 <= v <= 1.0:
+            v *= 100.0
+        out[iso3] = max(0.0, min(100.0, v))
+    return out
+
+
+def fetch_rainbow_index() -> dict[str, float]:
+    if not RAINBOW_LOCAL.exists():
+        log.info("Rainbow Index: no data file at %s — Freedom context skipped", RAINBOW_LOCAL)
+        return {}
+    try:
+        return _parse_rainbow_csv(RAINBOW_LOCAL.read_text())
+    except Exception as exc:
+        log.warning("Rainbow Index local file %s parse failed: %s", RAINBOW_LOCAL, exc)
+        return {}
+
+
 def _parse_activity_csv(text: str) -> dict[str, float]:
     meta = get_country_meta()
     name_to_iso3 = _whr_name_to_iso3(meta)
@@ -742,6 +861,18 @@ def _build_subscore_layers() -> dict[str, Any]:
     social_support       = _safe_fetch("whr_social_support", fetch_whr_social_support)
     loneliness_inv       = _safe_fetch("loneliness_csv",     fetch_loneliness_data)
 
+    # Context indicators — six trustworthy sources that don't (yet) feed the
+    # composite, but show up in /api/country/<iso>.context and are the raw
+    # material the LLM narrative endpoint summarizes.
+    context_layers: dict[str, dict[str, float]] = {
+        "fertility_rate":            _safe_fetch("wb_tfr",         lambda: fetch_wb_indicator("SP.DYN.TFRT.IN")),
+        "female_labour_force_pct":   _safe_fetch("wb_flfp",        lambda: fetch_wb_indicator("SL.TLF.CACT.FE.ZS")),
+        "gdp_per_capita_usd":        _safe_fetch("wb_gdp_pc",      lambda: fetch_wb_indicator("NY.GDP.PCAP.CD")),
+        "life_expectancy_years":     _safe_fetch("wb_life_exp",    lambda: fetch_wb_indicator("SP.DYN.LE00.IN")),
+        "age_at_first_marriage_w":   _safe_fetch("un_wpp_smam_w",  fetch_un_wpp_age_at_marriage_women),
+        "rainbow_index_0_100":       _safe_fetch("ilga_rainbow",   fetch_rainbow_index),
+    }
+
     # UN DESA covers the world; Eurostat covers EU+EFTA with fresher numbers.
     # Use Eurostat where available, fall back to UN for everyone else.
     try:
@@ -812,6 +943,7 @@ def _build_subscore_layers() -> dict[str, Any]:
             "adolescent_fertility_per_1000":  adolescent_fertility,
             "whr_social_support_pct":         social_support,
         },
+        "context": context_layers,
     }
 
 
@@ -857,6 +989,9 @@ def composite_from_layers(layers: dict[str, Any], weights: dict[str, float] | No
             num += w[k] * v
             den += w[k]
         composite = num / den if den > 0 else None
+        context_layers = layers.get("context") or {}
+        country_context = {key: layer.get(iso) for key, layer in context_layers.items()
+                           if layer.get(iso) is not None}
         out[iso] = {
             "iso3": iso,
             "iso2": country_meta.get("iso2"),
@@ -867,6 +1002,7 @@ def composite_from_layers(layers: dict[str, Any], weights: dict[str, float] | No
             "composite": round(composite, 1) if composite is not None else None,
             "used": [k for k, v in subs.items() if v is not None],
             "raw": {key: layer.get(iso) for key, layer in raw_layers.items()},
+            "context": country_context,
         }
     return out
 
@@ -1150,6 +1286,12 @@ def sources():
             "world_bank_wdi":         {"tier": "A", "covers": "global",         "in_use": True,  "feeds": "stability + meta"},
             "world_happiness_report": {"tier": "B", "covers": "~150 countries", "in_use": bool(layers["subscores"]["connection"]), "feeds": "connection"},
             "meta_gallup_loneliness": {"tier": "B", "covers": "~140 countries", "in_use": LONELINESS_LOCAL.exists(), "feeds": "connection (combined with WHR)"},
+            "wb_fertility_rate":      {"tier": "A", "covers": "global", "in_use": bool((layers.get("context") or {}).get("fertility_rate")),             "feeds": "context"},
+            "wb_female_lfp":          {"tier": "A", "covers": "global", "in_use": bool((layers.get("context") or {}).get("female_labour_force_pct")),    "feeds": "context"},
+            "wb_gdp_per_capita":      {"tier": "A", "covers": "global", "in_use": bool((layers.get("context") or {}).get("gdp_per_capita_usd")),         "feeds": "context"},
+            "wb_life_expectancy":     {"tier": "A", "covers": "global", "in_use": bool((layers.get("context") or {}).get("life_expectancy_years")),      "feeds": "context"},
+            "un_wpp_age_at_marriage": {"tier": "A", "covers": "global", "in_use": bool((layers.get("context") or {}).get("age_at_first_marriage_w")),    "feeds": "context (Stability candidate)"},
+            "ilga_rainbow_index":     {"tier": "A", "covers": "~50 countries", "in_use": RAINBOW_LOCAL.exists(),                                          "feeds": "context (Freedom dimension)"},
             "un_desa":                {"tier": "A", "covers": "global",         "in_use": UN_MARRIAGE_LOCAL.exists(), "feeds": "partnership + stability worldwide (fallback after Eurostat)"},
             "activity_csv":           {"tier": "C", "covers": "operator-supplied", "in_use": bool(layers["subscores"]["activity"]), "feeds": "activity"},
         },

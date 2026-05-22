@@ -603,6 +603,54 @@ def test_og_card_renders():
     ok("XML-special chars in country names are escaped")
 
 
+def test_rainbow_csv_parser():
+    print("test: rainbow CSV parses 0-100 values and auto-rescales fractions")
+    _clear_cache()
+    with patch.object(server, "get_country_meta", return_value=META):
+        csv_in = "country,rainbow_score\nUnited States,68.5\nGermany,0.72\n"
+        out = server._parse_rainbow_csv(csv_in)
+        if abs(out.get("USA", 0) - 68.5) > 1e-6:
+            fail(f"USA value wrong: {out}")
+        # DEU value 0.72 -> auto-rescaled to 72.0
+        if abs(out.get("DEU", 0) - 72.0) > 1e-6:
+            fail(f"DEU fraction auto-rescale wrong: {out}")
+        ok("Rainbow Index parser handles both 0-100 and 0-1 scales")
+
+
+def test_context_layer_surfaces_on_country():
+    print("test: context indicators appear on /api/country records")
+    _clear_cache()
+    fake_meta = {**META}
+    with patch.object(server, "get_country_meta", return_value=fake_meta), \
+         patch.object(server, "_safe_fetch") as fetch:
+        marriage = {"USA": 6.1, "DEU": 4.9, "FRA": 3.5, "GBR": 4.4,
+                    "BRA": 5.0, "ZAF": 4.5, "MEX": 4.0, "TUR": 6.2}
+        divorce  = {"USA": 2.7, "DEU": 1.8, "FRA": 1.9, "GBR": 1.6,
+                    "BRA": 1.4, "ZAF": 0.4, "MEX": 0.9, "TUR": 1.6}
+        fertility = {"USA": 1.6, "DEU": 1.5, "BRA": 1.7}
+        rainbow = {"USA": 68.0, "DEU": 80.0}
+        def fake_fetch(key, _loader):
+            return {
+                "eurostat_marriage": marriage,
+                "eurostat_divorce":  divorce,
+                "wb_tfr":            fertility,
+                "ilga_rainbow":      rainbow,
+            }.get(key, {})
+        fetch.side_effect = fake_fetch
+        out = server.compute_subscores()
+        if "USA" not in out:
+            fail("expected USA to rank with marriage + divorce data")
+        ctx = out["USA"].get("context") or {}
+        if ctx.get("fertility_rate") != 1.6:
+            fail(f"USA fertility_rate missing or wrong in context: {ctx}")
+        if ctx.get("rainbow_index_0_100") != 68.0:
+            fail(f"USA rainbow_index_0_100 missing in context: {ctx}")
+        # Only present indicators should be on the record (no None spam).
+        if any(v is None for v in ctx.values()):
+            fail(f"context dict should drop None values; got {ctx}")
+        ok(f"USA context surfaces {len(ctx)} live indicators (no nulls)")
+
+
 def test_backfill_layer_builder():
     print("test: backfill.build_layers_for_year picks year-specific values + uses static overlays")
     import backfill
@@ -726,6 +774,8 @@ def main():
     test_loneliness_inverts_and_combines_with_whr()
     test_og_card_renders()
     test_backfill_layer_builder()
+    test_rainbow_csv_parser()
+    test_context_layer_surfaces_on_country()
     test_event_overlay_rule()
     print("\nall tests passed.")
 

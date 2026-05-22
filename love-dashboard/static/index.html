@@ -1382,6 +1382,25 @@ function renderCountryDetail(c, root) {
     .filter(([_, v]) => v != null)
     .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === "number" ? v.toFixed(2) : v)}</dd>`)
     .join("");
+  // Context indicators — data sources outside the composite. Labels are
+  // human-friendly; values get unit-aware formatting.
+  const CONTEXT_META = {
+    fertility_rate:           { label: "Fertility rate (births / woman)",     digits: 2 },
+    female_labour_force_pct:  { label: "Female labour-force participation",   digits: 1, suffix: "%" },
+    gdp_per_capita_usd:       { label: "GDP per capita",                       digits: 0, prefix: "$" },
+    life_expectancy_years:    { label: "Life expectancy at birth",             digits: 1, suffix: " yrs" },
+    age_at_first_marriage_w:  { label: "Mean age at first marriage (women)",   digits: 1, suffix: " yrs" },
+    rainbow_index_0_100:      { label: "LGBTI rights (Rainbow Index)",         digits: 1, suffix: "/100" },
+  };
+  const fmtCtx = (k, v) => {
+    const meta = CONTEXT_META[k] || { label: k, digits: 2 };
+    if (typeof v !== "number") return esc(String(v));
+    return esc(`${meta.prefix || ""}${v.toFixed(meta.digits)}${meta.suffix || ""}`);
+  };
+  const contextEntries = Object.entries(c.context || {})
+    .filter(([_, v]) => v != null)
+    .map(([k, v]) => `<dt>${esc((CONTEXT_META[k] || {label: k}).label)}</dt><dd>${fmtCtx(k, v)}</dd>`)
+    .join("");
   root.innerHTML = `
     <h2>${ISO2_FLAG(c.iso2)} ${esc(c.name)}</h2>
     <div class="country-meta">
@@ -1403,7 +1422,8 @@ function renderCountryDetail(c, root) {
     <div class="subscore-rows">
       ${SUBSCORES.map(subRow).join("")}
     </div>
-    ${rawEntries ? `<div class="raw"><h4>Raw indicators</h4><dl>${rawEntries}</dl></div>` : ""}`;
+    ${rawEntries ? `<div class="raw"><h4>Raw indicators</h4><dl>${rawEntries}</dl></div>` : ""}
+    ${contextEntries ? `<div class="raw"><h4>Context (outside the composite)</h4><dl>${contextEntries}</dl></div>` : ""}`;
 }
 
 function closeModal() {
