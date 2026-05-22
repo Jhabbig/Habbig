@@ -111,6 +111,42 @@
       "supports_websocket": false,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
+    },
+    "disasters": {
+      "subdomain": "disasters",
+      "target": 7053,
+      "display_name": "Major Disasters",
+      "description": "Hurricanes · earthquakes · wildfires · severe-weather edges",
+      "accent": "#f97316",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_DISASTERS_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_DISASTERS_STRIPE_ANNUAL"
+    },
+    "crypto_trackers": {
+      "subdomain": "trackers",
+      "target": 7054,
+      "display_name": "Crypto Trackers",
+      "description": "Every coin · cross-exchange · funding · DeFi TVL · F&G · data-fidelity-first",
+      "accent": "#f59e0b",
+      "monthly_cents": 1499,
+      "annual_cents": 14900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_TRACKERS_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_TRACKERS_STRIPE_ANNUAL"
+    },
+    "religion": {
+      "subdomain": "religion",
+      "target": 7062,
+      "display_name": "Religion & Cults Tracker",
+      "description": "World religions, NRM / cult watchlist, USCIRF designations, Polymarket religion markets",
+      "accent": "#d29922",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     }
   }
 }

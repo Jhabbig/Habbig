@@ -948,6 +948,18 @@ def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
     return True
 
 
+def _get_superuser_key_from_request(request: Request) -> Optional[str]:
+    """Extract superuser key from URL query param or Authorization header."""
+    # Check URL query parameter
+    if "superuser_key" in request.query_params:
+        return request.query_params["superuser_key"]
+    # Check Authorization header (Bearer token)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    return None
+
+
 def render_page(name: str, request: Optional[Request] = None, **context) -> HTMLResponse:
     """Tiny templating: load static/<name>.html and do {{ key }} substitution.
 
@@ -2499,7 +2511,7 @@ def _require_admin_user(request: Request) -> dict:
     return user
 
 
-def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_token: str = "") -> dict:
+def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", caller_level: int = 1, csrf_token: str = "") -> dict:
     """Build the template context for the admin page."""
     tokens = db.list_invite_tokens()
     users = db.list_all_users()
@@ -2701,14 +2713,102 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             f'</div></div>'
         )
 
+    # New superuser key banner
+    new_superuser_key_banner = ""
+    if new_superuser_key:
+        new_superuser_key_banner = (
+            f'<div class="new-token-banner" style="border-color:var(--accent)">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between">'
+            f'<div><div style="font-size:12px;color:var(--accent);margin-bottom:4px">New investor key generated:</div>'
+            f'<span class="token-mono">{html.escape(new_superuser_key)}</span></div>'
+            f'<button onclick="copyToken(this)" class="btn btn-primary-outline" style="font-size:11px;color:var(--accent);border-color:var(--accent)">Copy</button>'
+            f'</div></div>'
+        )
+
     return {
         "raw_token_rows": "".join(token_rows) or '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No tokens yet.</div></div></div>',
         "raw_user_rows": "".join(user_rows),
         "raw_stat_cards": stat_cards,
         "raw_new_token_banner": new_token_banner,
+        "raw_new_superuser_key_banner": new_superuser_key_banner,
+        "raw_key_rows": _build_key_rows(csrf_token=csrf_token),
         "raw_enquiry_rows": _build_enquiry_rows(csrf_token=csrf_token),
         "raw_revenue_content": _build_revenue_content(),
     }
+
+
+def _build_key_rows(csrf_token: str = "") -> str:
+    """Generate HTML rows for superuser keys management."""
+    keys = db.list_superuser_keys()
+    if not keys:
+        return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No investor keys yet.</div></div></div>'
+
+    import datetime as _dt
+    rows = []
+    now = int(time.time())
+
+    for k in keys:
+        # Determine status
+        if not k["active"]:
+            status = "disabled"
+            status_text = "Disabled"
+        elif k["expires_at"] and k["expires_at"] <= now:
+            status = "expired"
+            status_text = "Expired"
+        else:
+            status = "active"
+            status_text = "Active"
+
+        # Format metadata
+        dashboards_text = ", ".join(k["dashboards"]) if k["dashboards"] else "All dashboards"
+        aspects_text = ", ".join(k["aspects"]) if k["aspects"] else "None"
+
+        expires_text = ""
+        if k["expires_at"]:
+            expires_dt = _dt.datetime.fromtimestamp(k["expires_at"], tz=_dt.timezone.utc)
+            expires_text = f"Expires: {expires_dt.strftime('%Y-%m-%d')}"
+
+        last_used_text = ""
+        if k["last_used_at"]:
+            used_dt = _dt.datetime.fromtimestamp(k["last_used_at"], tz=_dt.timezone.utc)
+            last_used_text = f"Last used: {used_dt.strftime('%Y-%m-%d %H:%M')}"
+
+        created_dt = _dt.datetime.fromtimestamp(k["created_at"], tz=_dt.timezone.utc)
+        created_text = f"Created: {created_dt.strftime('%Y-%m-%d')}"
+
+        # Status dot and button
+        toggle_btn_text = "Enable" if status == "disabled" else "Disable"
+        toggle_btn_color = "var(--green)" if status == "disabled" else "var(--text-secondary)"
+
+        # Build row
+        rows.append(
+            f'<div class="admin-row key-row" data-status="{status}" data-key-id="{k["id"]}">'
+            f'<div class="admin-row-info">'
+            f'<div class="admin-row-main">'
+            f'<span class="key-status-dot {status}"></span>'
+            f'<strong>{html.escape(k["name"])}</strong>'
+            f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary);font-size:11px">{status_text}</span>'
+            f'</div>'
+            f'<div class="admin-row-meta">'
+            f'<span>Dashboards: {html.escape(dashboards_text)}</span>'
+            f'<span>Aspects: {html.escape(aspects_text)}</span>'
+            f'<span>{created_text}</span>'
+        )
+        if expires_text:
+            rows.append(f'<span>{expires_text}</span>')
+        if last_used_text:
+            rows.append(f'<span>{last_used_text}</span>')
+        rows.append(
+            f'</div>'
+            f'</div>'
+            f'<div class="admin-row-actions" style="display:flex;gap:6px">'
+            f'<button class="btn btn-primary-outline" style="font-size:11px" onclick="toggleKeyStatus({k["id"]}, this)">{toggle_btn_text}</button>'
+            f'<button class="btn btn-danger" style="font-size:11px" onclick="deleteKey({k["id"]})">Delete</button>'
+            f'</div>'
+            f'</div>'
+        )
+
+    return "".join(rows)
 
 
 def _build_enquiry_rows(csrf_token: str = "") -> str:
@@ -2908,6 +3008,188 @@ async def admin_revoke_token(request: Request, token_id: int = Form(0)):
     db.revoke_invite_token(token_id)
     log.info("Admin %s revoked token id=%d", user["email"], token_id)
     return RedirectResponse("/admin", status_code=302)
+
+
+# ── Superuser key endpoints (for investor access) ──────────────────────────────
+
+@app.post("/admin/superuser-keys/generate")
+async def admin_generate_superuser_key(
+    request: Request,
+    name: str = Form(""),
+    dashboards: str = Form(""),
+    expires_in_days: str = Form(""),
+    custom_key: str = Form(""),
+    aspects: str = Form(""),
+):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    dashboards_list = [d.strip() for d in dashboards.split(",") if d.strip()]
+    aspects_list = [a.strip() for a in aspects.split(",") if a.strip()]
+    expires_days = int(expires_in_days) if expires_in_days else None
+    custom_key_str = custom_key.strip() if custom_key else None
+
+    try:
+        key = db.create_superuser_key(
+            name=name.strip() or "Investor Key",
+            dashboards=dashboards_list or None,
+            expires_in_days=expires_days,
+            custom_key=custom_key_str,
+            aspects=aspects_list or None,
+        )
+    except ValueError as e:
+        log.warning("Admin %s failed to create superuser key: %s", user["email"], str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    log.info("Admin %s generated superuser key: %s (name=%s, aspects=%s)", user["email"], key, name, ",".join(aspects_list) if aspects_list else "none")
+    csrf_token = _get_csrf_token(request)
+    ctx = _build_admin_context(new_superuser_key=key, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
+    return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
+
+
+@app.get("/admin/api/superuser-keys")
+async def admin_list_superuser_keys(request: Request):
+    user = _require_admin_user(request)
+    keys = db.list_superuser_keys()
+    return JSONResponse({"keys": keys})
+
+
+@app.post("/admin/superuser-keys/{key_id}/revoke")
+async def admin_revoke_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    success = db.revoke_superuser_key(key_id)
+    if success:
+        log.info("Admin %s revoked superuser key id=%d", user["email"], key_id)
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/superuser-keys/{key_id}/toggle")
+async def admin_toggle_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    key_info = db.toggle_superuser_key(key_id)
+    if key_info:
+        action = "enabled" if key_info["active"] else "disabled"
+        log.info("Admin %s %s superuser key id=%d (%s)", user["email"], action, key_id, key_info["name"])
+        return JSONResponse({"success": True, "key": key_info})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
+@app.post("/admin/superuser-keys/{key_id}/enable")
+async def admin_enable_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    success = db.enable_superuser_key(key_id)
+    if success:
+        log.info("Admin %s enabled superuser key id=%d", user["email"], key_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
+@app.post("/admin/superuser-keys/{key_id}/disable")
+async def admin_disable_superuser_key(request: Request, key_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return _csrf_error()
+
+    success = db.disable_superuser_key(key_id)
+    if success:
+        log.info("Admin %s disabled superuser key id=%d", user["email"], key_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"success": False, "error": "Key not found"}, status_code=404)
+
+
+@app.get("/admin/api/available-dashboards")
+async def admin_get_available_dashboards(request: Request):
+    user = _require_admin_user(request)
+    dashboards = [
+        {"key": key, "display_name": cfg.get("display_name", key)}
+        for key, cfg in DASHBOARDS.items()
+    ]
+    return JSONResponse({"dashboards": dashboards})
+
+
+@app.post("/admin/api/templates")
+async def admin_create_template(
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    dashboards: str = Form(""),
+    aspects: str = Form(""),
+):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return JSONResponse({"error": "CSRF token invalid"}, status_code=403)
+
+    dashboards_list = [d.strip() for d in dashboards.split(",") if d.strip()]
+    aspects_list = [a.strip() for a in aspects.split(",") if a.strip()]
+
+    template_id = db.create_superuser_key_template(
+        name=name.strip() or "New Template",
+        description=description.strip(),
+        dashboards=dashboards_list or None,
+        aspects=aspects_list or None,
+    )
+    log.info("Admin %s created template id=%d: %s", user["email"], template_id, name)
+    return JSONResponse({"id": template_id, "success": True})
+
+
+@app.get("/admin/api/templates")
+async def admin_list_templates(request: Request):
+    user = _require_admin_user(request)
+    templates = db.list_superuser_key_templates()
+    return JSONResponse({"templates": templates})
+
+
+@app.get("/admin/api/templates/{template_id}")
+async def admin_get_template(request: Request, template_id: int):
+    user = _require_admin_user(request)
+    template = db.get_superuser_key_template(template_id)
+    if template is None:
+        return JSONResponse({"error": "Template not found"}, status_code=404)
+    return JSONResponse(template)
+
+
+@app.post("/admin/api/templates/{template_id}/delete")
+async def admin_delete_template(request: Request, template_id: int):
+    user = _require_admin_user(request)
+    form_data = await request.form()
+    csrf_tok = form_data.get("_csrf_token", "")
+    if not _validate_csrf(request, csrf_tok):
+        return JSONResponse({"error": "CSRF token invalid"}, status_code=403)
+
+    success = db.delete_superuser_key_template(template_id)
+    if success:
+        log.info("Admin %s deleted template id=%d", user["email"], template_id)
+        return JSONResponse({"success": True})
+    return JSONResponse({"error": "Template not found"}, status_code=404)
+
+
+@app.get("/admin/api/usage-stats")
+async def admin_get_usage_stats(request: Request, days: int = 30):
+    user = _require_admin_user(request)
+    stats = db.get_all_usage_stats(days=days)
+    return JSONResponse(stats)
 
 
 def _verify_admin_password(request: Request, admin: dict, password: str) -> bool:
@@ -4046,13 +4328,19 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     dash_cfg = DASHBOARDS[key]
 
-    # 1. Require login.
+    # Check for superuser key (investor mode)
+    superuser_key = _get_superuser_key_from_request(request)
+    has_superuser_access = False
+    if superuser_key and db.has_superuser_key_access(superuser_key, key):
+        has_superuser_access = True
+
+    # 1. Require login (unless superuser key is valid).
     user = current_user(request)
-    if not user:
+    if not user and not has_superuser_access:
         return RedirectResponse(f"{apex}/gate", status_code=302)
 
-    # 2. Require active subscription.
-    if not cached_has_subscription(user["user_id"], key):
+    # 2. Require active subscription (or valid superuser key).
+    if user and not has_superuser_access and not cached_has_subscription(user["user_id"], key):
         return RedirectResponse(
             f"{apex}/billing?dashboard={key}",
             status_code=302,
@@ -4103,8 +4391,23 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         k: v for k, v in request.headers.items()
         if k.lower() not in hop_by_hop and not k.lower().startswith("x-gateway-")
     }
-    fwd_headers["X-Gateway-User-Id"] = str(user["user_id"])
-    fwd_headers["X-Gateway-User-Email"] = user["email"]
+
+    # Set user identity headers (if user is logged in or using superuser key)
+    if user:
+        fwd_headers["X-Gateway-User-Id"] = str(user["user_id"])
+        fwd_headers["X-Gateway-User-Email"] = user["email"]
+    elif has_superuser_access:
+        # For superuser/investor access, use a special identifier
+        fwd_headers["X-Gateway-User-Id"] = "superuser"
+        fwd_headers["X-Gateway-User-Email"] = "investor@dashboard"
+
+    # Mark investor/superuser access and include aspects
+    if has_superuser_access:
+        fwd_headers["X-Gateway-Investor-Mode"] = "true"
+        key_info = db.validate_superuser_key(superuser_key)
+        if key_info and key_info.get("aspects"):
+            fwd_headers["X-Gateway-Key-Aspects"] = ",".join(key_info["aspects"])
+
     # Shared secret lets downstream dashboards trust the identity headers
     # without relying on peer-IP checks (uvicorn's default proxy_headers=True
     # rewrites request.client.host from X-Forwarded-For, so IP-based trust

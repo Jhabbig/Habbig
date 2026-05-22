@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+launchd job for the email relay (Mac).
+
+Install:
+  cp com.narve.email-relay.plist ~/Library/LaunchAgents/
+  launchctl load ~/Library/LaunchAgents/com.narve.email-relay.plist
+
+Tail logs:
+  tail -f /tmp/email-relay.log /tmp/email-relay.err
+
+Stop:
+  launchctl unload ~/Library/LaunchAgents/com.narve.email-relay.plist
+
+Edit ProgramArguments / WorkingDirectory paths if your Polymarket dir differs.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.narve.email-relay</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/julianhabbig/Claude Vibecoding /Polymarket/gateway/email_relay/relay.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/julianhabbig/Claude Vibecoding /Polymarket/gateway/email_relay</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/email-relay.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/email-relay.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/julianhabbig/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
