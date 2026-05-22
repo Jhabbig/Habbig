@@ -23,6 +23,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,9 +31,11 @@ from fastapi.staticfiles import StaticFiles
 
 from analysis import arbitrage as arb_mod
 from analysis import carry as carry_mod
+from analysis import dca_simulator
 from analysis import dex_cex_premium
 from analysis import funding as funding_mod
 from analysis import liquidations_agg
+from analysis import lp_il
 from analysis import onchain_lookup
 from analysis import screener as screener_mod
 from analysis import sectors as sectors_mod
@@ -83,12 +86,22 @@ app = FastAPI(title="Crypto Trackers Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
 COIN_HTML_PATH = Path(__file__).parent / "coin.html"
+GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
+
+# Optional API-key tier: when CT_API_KEYS is set (comma-separated list of
+# bearer tokens), any /api/* request carrying Authorization: Bearer <token>
+# matching one of them is accepted **without** requiring the gateway-SSO
+# header. Useful for programmatic external consumers (quants, bots).
+_api_keys: set[str] = set()
+_api_keys_raw = os.environ.get("CT_API_KEYS", "").strip()
+if _api_keys_raw:
+    _api_keys = {k.strip() for k in _api_keys_raw.split(",") if k.strip()}
 if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off - all requests will 503")
 
@@ -96,12 +109,24 @@ if not _sso_secret and not _DEV_MODE:
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
     if request.url.path != "/healthz":
-        if _sso_secret:
-            client_secret = request.headers.get("x-gateway-secret", "")
-            if not hmac.compare_digest(client_secret, _sso_secret):
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        elif not _DEV_MODE:
-            return JSONResponse({"error": "Service misconfigured"}, status_code=503)
+        # API-key tier: bearer token in Authorization header. Checked first
+        # so external consumers don't need to spoof the gateway secret.
+        auth_header = request.headers.get("authorization", "")
+        token_ok = False
+        if _api_keys and auth_header.lower().startswith("bearer "):
+            presented = auth_header.split(" ", 1)[1].strip()
+            for key in _api_keys:
+                if hmac.compare_digest(presented, key):
+                    token_ok = True
+                    break
+
+        if not token_ok:
+            if _sso_secret:
+                client_secret = request.headers.get("x-gateway-secret", "")
+                if not hmac.compare_digest(client_secret, _sso_secret):
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            elif not _DEV_MODE:
+                return JSONResponse({"error": "Service misconfigured"}, status_code=503)
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -131,6 +156,11 @@ async def index() -> HTMLResponse:
 @app.get("/coin", response_class=HTMLResponse)
 async def coin_page() -> HTMLResponse:
     return HTMLResponse(COIN_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/guide/pump-and-dump", response_class=HTMLResponse)
+async def guide_pump_and_dump() -> HTMLResponse:
+    return HTMLResponse(GUIDE_PUMP_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/healthz")
@@ -469,6 +499,50 @@ async def api_sectors() -> JSONResponse:
 @app.get("/api/bridges")
 async def api_bridges() -> JSONResponse:
     return JSONResponse(defillama_bridges.overview())
+
+
+# ─── Trader tools: LP/IL + DCA simulator ──────────────────────────────────────
+
+@app.get("/api/tools/il")
+async def api_tools_il(
+    price_ratio: float = 1.0,
+    v3_range_low: Optional[float] = None,
+    v3_range_high: Optional[float] = None,
+) -> JSONResponse:
+    """Impermanent-loss calculator. V2 always returned; V3 only when range given."""
+    out: dict = {
+        "price_ratio": price_ratio,
+        "price_change_pct": (price_ratio - 1) * 100,
+        "il_v2_pct": round(lp_il.il_pct_v2(price_ratio) or 0, 4),
+        "scenario_grid": lp_il.il_grid(),
+    }
+    if v3_range_low is not None and v3_range_high is not None:
+        out["il_v3_pct"] = round(
+            lp_il.il_pct_v3(price_ratio, v3_range_low, v3_range_high) or 0, 4)
+        out["v3_range_low"] = v3_range_low
+        out["v3_range_high"] = v3_range_high
+    return JSONResponse(out)
+
+
+@app.get("/api/tools/dca")
+async def api_tools_dca(
+    symbol: str = "BTCUSDT",
+    buy_usd: float = 100.0,
+    every_n_days: int = 7,
+    lookback_days: int = 365,
+) -> JSONResponse:
+    lookback_days = max(7, min(lookback_days, 1000))
+    kl = binance.klines(symbol=symbol, interval="1d", limit=lookback_days)
+    if kl.get("error"):
+        return JSONResponse({"error": kl["error"], "symbol": symbol}, status_code=502)
+    out = dca_simulator.simulate(
+        kl.get("bars") or [],
+        buy_usd=buy_usd,
+        every_n_days=every_n_days,
+        lookback_days=lookback_days,
+    )
+    out["symbol"] = symbol
+    return JSONResponse(out)
 
 
 # ─── L2 sequencer revenue + restaking ─────────────────────────────────────────

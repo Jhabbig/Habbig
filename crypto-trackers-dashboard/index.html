@@ -128,7 +128,7 @@
   <div class="row">
     <div>
       <h1>Crypto Trackers</h1>
-      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; data-fidelity-first</div>
+      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; data-fidelity-first &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
     <div class="updated" id="ws-status" style="margin-left:14px"><span class="dot" style="background:var(--text-3)"></span><span id="ws-status-text">ws idle</span></div>
@@ -309,6 +309,11 @@
   <section>
     <h2>Pump.fun trending <small>top Solana memecoins on the launchpad &middot; live</small></h2>
     <div id="pumpfun-card"></div>
+  </section>
+
+  <section>
+    <h2>Tools <small>impermanent-loss calculator + DCA backtest simulator</small></h2>
+    <div id="tools-card"></div>
   </section>
 
   <section>
@@ -1287,6 +1292,83 @@
     }
   }
 
+  // ─── Tools: IL + DCA ───────────────────────────────────────────────────────
+  async function renderToolsCard() {
+    document.getElementById("tools-card").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card">
+        <div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">Impermanent-loss calculator (V2)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;color:var(--text-3)">Price ratio (now/initial):
+            <input id="il-ratio" type="number" step="0.01" value="1.5" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:100px"/>
+          </label>
+          <button onclick="window._runIL()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Calculate</button>
+        </div>
+        <div id="il-result" class="muted" style="font-size:13px">enter a ratio and click calculate</div>
+        <div id="il-grid" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em;margin-bottom:8px">DCA simulator</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;color:var(--text-3)">Symbol
+            <input id="dca-symbol" type="text" value="BTCUSDT" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:100px;text-transform:uppercase"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">$/buy
+            <input id="dca-amount" type="number" value="100" min="1" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:80px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Every (days)
+            <input id="dca-cadence" type="number" value="7" min="1" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:60px"/>
+          </label>
+          <label style="font-size:11px;color:var(--text-3)">Lookback
+            <input id="dca-lookback" type="number" value="365" min="7" max="1000" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:70px"/>
+          </label>
+          <button onclick="window._runDCA()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Backtest</button>
+        </div>
+        <div id="dca-result" class="muted" style="font-size:13px">runs a buy-$X-every-N-days strategy against Binance daily klines</div>
+      </div>
+    </div>`;
+    // Pre-render the V2 scenario grid
+    try {
+      const data = await fetchJson("/api/tools/il?price_ratio=1");
+      const grid = data.scenario_grid || [];
+      document.getElementById("il-grid").innerHTML = `<table><thead><tr>
+        <th>Δ price</th><th>Ratio</th><th>IL (V2)</th>
+      </tr></thead><tbody>${grid.map(g => `<tr>
+        <td class="${g.price_change_pct >= 0 ? 'up' : 'down'}">${pct(g.price_change_pct, 0)}</td>
+        <td class="muted">${g.price_ratio.toFixed(2)}x</td>
+        <td class="down">${g.il_v2_pct.toFixed(3)}%</td>
+      </tr>`).join("")}</tbody></table>`;
+    } catch (e) { /* ignore */ }
+  }
+  window._runIL = async () => {
+    const r = parseFloat(document.getElementById("il-ratio").value);
+    if (!r || r <= 0) return;
+    const data = await fetchJson(`/api/tools/il?price_ratio=${r}`);
+    document.getElementById("il-result").innerHTML = `<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline">
+      <div><div class="muted" style="font-size:10px;text-transform:uppercase">Δ price</div><div style="font-size:18px;font-weight:600" class="${data.price_change_pct >= 0 ? 'up' : 'down'}">${pct(data.price_change_pct, 1)}</div></div>
+      <div><div class="muted" style="font-size:10px;text-transform:uppercase">IL vs holding</div><div style="font-size:18px;font-weight:600" class="down">${data.il_v2_pct.toFixed(3)}%</div></div>
+      <div class="muted" style="font-size:11px;flex:1">If you'd just held both halves equally instead of LPing in a V2 pool, you'd be ${Math.abs(data.il_v2_pct).toFixed(2)}% richer.</div>
+    </div>`;
+  };
+  window._runDCA = async () => {
+    const sym = document.getElementById("dca-symbol").value.trim().toUpperCase();
+    const amt = parseFloat(document.getElementById("dca-amount").value);
+    const cadence = parseInt(document.getElementById("dca-cadence").value, 10);
+    const lookback = parseInt(document.getElementById("dca-lookback").value, 10);
+    document.getElementById("dca-result").textContent = "running…";
+    try {
+      const data = await fetchJson(`/api/tools/dca?symbol=${encodeURIComponent(sym)}&buy_usd=${amt}&every_n_days=${cadence}&lookback_days=${lookback}`);
+      if (data.error) { document.getElementById("dca-result").innerHTML = `<div class="muted">${escapeHtml(data.error)}</div>`; return; }
+      const cls = data.roi_pct >= 0 ? "up" : "down";
+      document.getElementById("dca-result").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-variant-numeric:tabular-nums">
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Invested</div><div style="font-size:16px;font-weight:600">$${fmt(data.total_usd_invested, 0)}</div><div class="muted" style="font-size:11px">${fmt(data.steps)} buys @ $${data.buy_usd_per_step}/each</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">Current value</div><div style="font-size:16px;font-weight:600">$${fmt(data.current_value_usd, 0)}</div><div class="muted" style="font-size:11px">${fmt(data.total_tokens, 4)} ${escapeHtml(sym.replace('USDT',''))}</div></div>
+        <div><div class="muted" style="font-size:10px;text-transform:uppercase">ROI</div><div style="font-size:16px;font-weight:600" class="${cls}">${pct(data.roi_pct, 1)}</div><div class="muted" style="font-size:11px">avg cost ${fmtPrice(data.average_cost_basis)}, max DD ${pct(data.max_drawdown_pct, 1)}</div></div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("dca-result").innerHTML = `<div class="err">DCA failed: ${escapeHtml(e.message)}</div>`;
+    }
+  };
+
   // ─── Custom alerts ─────────────────────────────────────────────────────────
   async function loadAlerts() {
     try {
@@ -1476,6 +1558,7 @@
   loadRestaking();
   loadUnlocks();
   loadPumpfun();
+  renderToolsCard();
   loadAlerts();
   loadSources();
 

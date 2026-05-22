@@ -180,23 +180,79 @@ def _is_triggered(alert: dict, observed: float) -> bool:
     return False
 
 
-def _fire(alert: dict, observed: float) -> bool:
-    """POST to webhook + update last_fired_ts. Returns True on success."""
-    payload = {
+def _detect_webhook_kind(url: str) -> str:
+    """Infer webhook flavour from the host so we can format the payload."""
+    if not url:
+        return "generic"
+    u = url.lower()
+    if "hooks.slack.com" in u:
+        return "slack"
+    if "discord.com/api/webhooks" in u or "discordapp.com/api/webhooks" in u:
+        return "discord"
+    return "generic"
+
+
+def _format_for_webhook(kind: str, alert: dict, observed: float,
+                        message: str) -> dict:
+    """Shape the payload for the destination webhook flavour."""
+    if kind == "slack":
+        return {
+            "text": f":rotating_light: *Narve alert*: {message}",
+            "attachments": [{
+                "color": "#f59e0b",
+                "fields": [
+                    {"title": "Type", "value": alert.get("type"), "short": True},
+                    {"title": "Target", "value": str(alert.get("target") or "—"), "short": True},
+                    {"title": "Threshold", "value": str(alert.get("threshold")), "short": True},
+                    {"title": "Observed", "value": str(observed), "short": True},
+                ],
+                "footer": "Crypto Trackers · narve.ai",
+                "ts": int(datetime.now(timezone.utc).timestamp()),
+            }],
+        }
+    if kind == "discord":
+        return {
+            "username": "Narve Crypto Trackers",
+            "embeds": [{
+                "title": "Alert triggered",
+                "description": message,
+                "color": 0xf59e0b,
+                "fields": [
+                    {"name": "Type", "value": str(alert.get("type")), "inline": True},
+                    {"name": "Target", "value": str(alert.get("target") or "—"), "inline": True},
+                    {"name": "Threshold", "value": str(alert.get("threshold")), "inline": True},
+                    {"name": "Observed", "value": str(observed), "inline": True},
+                ],
+                "footer": {"text": "Crypto Trackers · narve.ai"},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }],
+        }
+    # Generic JSON
+    return {
         "alert": alert,
         "observed_value": observed,
         "threshold": alert.get("threshold"),
         "fired_at_iso": datetime.now(timezone.utc).isoformat(),
-        "message": _format_message(alert, observed),
+        "message": message,
     }
+
+
+def _fire(alert: dict, observed: float) -> bool:
+    """POST to webhook in the right format for Slack / Discord / generic.
+
+    Returns True on success."""
+    message = _format_message(alert, observed)
     webhook = alert.get("webhook_url")
-    if webhook:
-        try:
-            requests.post(webhook, json=payload, timeout=8,
-                          headers={"User-Agent": "narve-crypto-trackers/1.0"})
-        except requests.RequestException as e:
-            log.warning("alert %s webhook failed: %s", alert.get("id"), e)
-            return False
+    if not webhook:
+        return True
+    kind = _detect_webhook_kind(webhook)
+    payload = _format_for_webhook(kind, alert, observed, message)
+    try:
+        requests.post(webhook, json=payload, timeout=8,
+                      headers={"User-Agent": "narve-crypto-trackers/1.0"})
+    except requests.RequestException as e:
+        log.warning("alert %s webhook failed: %s", alert.get("id"), e)
+        return False
     return True
 
 

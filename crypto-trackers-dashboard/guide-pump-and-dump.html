@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pump-and-dump: how they work and how to avoid getting caught · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: baseline; gap: 16px;
+  }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  main { padding: 18px 24px 80px; max-width: 880px; margin: 0 auto; }
+  article p { color: var(--text-2); margin: 12px 0; }
+  article h2 { margin: 32px 0 8px; font-size: 17px; color: var(--text-1); font-weight: 700;
+    border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  article h3 { margin: 22px 0 6px; font-size: 14px; color: var(--text-1); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  article ul, article ol { color: var(--text-2); padding-left: 22px; }
+  article li { margin: 6px 0; }
+  .callout {
+    background: var(--bg-1); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 12px 14px; margin: 14px 0; color: var(--text-2);
+  }
+  .callout.warn  { border-left-color: var(--accent-2); }
+  .callout.info  { border-left-color: var(--accent-4); }
+  .callout.good  { border-left-color: var(--accent-3); }
+  .callout strong { color: var(--text-1); }
+  code { background: var(--bg-2); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--bg-1);
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 12px 0; font-size: 14px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-size: 11px; text-transform: uppercase; color: var(--text-3); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; background: var(--bg-2); color: var(--text-2);
+    margin: 0 6px 4px 0;
+  }
+  .pill.hot { background: rgba(239,68,68,0.15); color: var(--accent-2); }
+  .pill.warn { background: rgba(245,158,11,0.15); color: var(--accent); }
+  .pill.good { background: rgba(52,211,153,0.15); color: var(--accent-3); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Pump-and-dump schemes: anatomy, red flags, and how to avoid them</h1>
+</header>
+
+<main>
+<article>
+<p style="color: var(--text-3); font-size: 13px;">
+  This is a <strong>defensive education guide</strong> — written so the average dashboard user
+  recognises a pump-and-dump in time to walk away. It is <strong>not</strong> a playbook. Organising
+  or participating in a pump-and-dump is securities fraud / market manipulation in most jurisdictions
+  (US: SEC §10(b)-5 and §9(a)(2); EU: MAR Article 12; UK: FCA Market Conduct rules).
+  It harms retail buyers, who almost always lose, and it can result in criminal prosecution. The
+  SEC, DOJ, and CFTC have all brought charges against pump-and-dump operators in crypto markets.
+</p>
+
+<div class="callout warn">
+  <strong>Bottom line for traders.</strong> If somebody is telling you which coin to buy and exactly
+  when, and the same coin starts ripping immediately after — you are not "early." You are the exit
+  liquidity. The people who told you are selling to you. The dashboard's red flags below help you
+  catch this within seconds.
+</div>
+
+<h2>1. What is a pump-and-dump?</h2>
+<p>
+  A pump-and-dump is a coordinated effort to artificially inflate the price of a thinly-traded asset
+  — typically a low-cap memecoin or obscure token — by orchestrated buying ("pump"), then sell the
+  pre-positioned inventory into the price spike ("dump"). The coordinated buyers profit; everyone
+  who bought during or after the pump holds bags as the price collapses, usually to below the
+  starting price.
+</p>
+<p>
+  In crypto the pattern compresses to a few minutes or hours (vs days/weeks in penny-stock pumps).
+  The 24-hour close-to-close print typically retraces the entire pump and then some, because the
+  pump bought volume without any organic demand to anchor it. Below is the canonical four-phase
+  shape.
+</p>
+
+<table>
+  <thead><tr><th>Phase</th><th>What organisers do</th><th>What the chart shows</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Accumulation</strong></td>
+        <td>Insiders/devs/organisers quietly buy or pre-mint the supply over hours/days. Often
+            funded via a fresh wallet that just received from an exchange.</td>
+        <td>Sideways tape at low price, occasional 0.1-0.5% bid lifts, no marketing visible.</td></tr>
+    <tr><td><strong>Marketing & pump</strong></td>
+        <td>Telegram/Discord blast: "Coin X — buy now — target $Y". Often paid CT (crypto Twitter)
+            shillers. Synchronised market-buys to ignite momentum.</td>
+        <td>Vertical move on huge volume; 50-1000% within minutes. Funding flips deeply positive
+            on perps. Order book wallpapered with thin asks getting eaten.</td></tr>
+    <tr><td><strong>Distribution</strong></td>
+        <td>Organisers sell into retail FOMO buys at every level. New buyers think they're in a
+            "real" trend.</td>
+        <td>Bigger candle wicks, lower-highs after the initial spike, volume tapers but stays
+            elevated. Some bounces designed to flush shorts.</td></tr>
+    <tr><td><strong>Dump</strong></td>
+        <td>Organisers finish their sells. Marketing stops. Bag-holders panic.</td>
+        <td>Vertical drop on lighter volume; price often retraces past the pre-pump level. Anyone
+            in the last 80% of the move is in the red within hours.</td></tr>
+  </tbody>
+</table>
+
+<h2>2. Who's involved</h2>
+
+<h3>Organisers (the apex)</h3>
+<p>
+  Usually 1-3 people who own a controlling share of the float (or are the dev team). They line up
+  liquidity, timing, and the marketing channel. They typically pre-position large positions before
+  announcing the "signal" to their inner circle.
+</p>
+
+<h3>Inner ring</h3>
+<p>
+  Paid promoters, allied groups, sometimes liquidity-provider mercenaries. They get the buy signal
+  ~30-300 seconds before the public channel. Often hold the largest positions per-capita after
+  organisers.
+</p>
+
+<h3>Outer ring (paying subscribers)</h3>
+<p>
+  Telegram/Discord groups that advertise "signals." Members pay $30-$500/mo and believe they're
+  getting early information. <strong>They are the second wave of buyers</strong> — they push price
+  high enough for the inner ring to begin selling. Inner ring sells into outer-ring buys.
+</p>
+
+<h3>Public retail (the bagholders)</h3>
+<p>
+  Twitter/X scrollers, screen-watchers, anyone reacting to the "biggest gainer" lists. They buy at
+  the top of the pump or in the bounce after the first dump leg. They are the exit liquidity for
+  the outer ring.
+</p>
+
+<div class="callout">
+  <strong>Why it always works on someone.</strong> The organisers don't need everyone to fall for
+  it — they need the float to clear at a higher average price than they paid. Even if 80% of the
+  marketed audience ignores the call, the 20% that buys is enough.
+</div>
+
+<h2>3. Where they happen in crypto today</h2>
+
+<ul>
+  <li><strong>Telegram pump groups</strong> — Largest "signal" groups have 30k-200k members.
+      Coins announced: usually low-cap (&lt; $50M) on Binance, Bybit, or KuCoin. Public groups
+      <em>announce after</em> the inner ring has bought; "VIP" tiers get advance notice.</li>
+  <li><strong>Discord shilling rooms</strong> — Same dynamic, often focused on a single project's
+      community. Memecoin Discords frequently coordinate "let's all market buy at 14:00 UTC."</li>
+  <li><strong>Pump.fun / Solana launchpads</strong> — The infrastructure makes launching a token
+      and pre-positioning a supply trivially cheap. Many "trending" tokens on memecoin launchpads
+      are pump-and-dump pre-baked: the dev wallet snipes its own launch and dumps once the
+      bonding curve catches FOMO buys.</li>
+  <li><strong>CT (crypto Twitter) shillers</strong> — Paid promotion with affiliate kickbacks
+      from organisers. The "alpha caller" persona is structurally aligned with pump-and-dumps:
+      they get paid more if you buy what they're shilling.</li>
+  <li><strong>YouTube alt-coin channels</strong> — Same model, lower-frequency, often coordinated
+      with Twitter shill rounds.</li>
+</ul>
+
+<h2>4. Red flags — recognise these in seconds</h2>
+
+<h3>Off-platform (Telegram / Discord / Twitter)</h3>
+<ul>
+  <li>Someone is telling you <strong>which coin</strong> and <strong>when</strong> to buy. Especially
+      with a precise time ("we're pumping at 14:00 UTC").</li>
+  <li>The "signal" comes with a price target ("can do 5x today") but no rationale tied to the
+      project's fundamentals or roadmap.</li>
+  <li>A paywalled "VIP tier" gets the call earlier than the public channel. That's not "alpha" —
+      that's a structurally rigged sequence where you are downstream of the people selling to you.</li>
+  <li>Heavy "fear of missing out" framing — "last chance to ape," "moonshot of the week,"
+      "lambo time." The urgency exists to override your reflective judgement.</li>
+</ul>
+
+<h3>On-chart (what to look for on the dashboard)</h3>
+<ul>
+  <li><span class="pill hot">Volume spike</span> 5x+ the prior 24h average, with the price ripping
+      vertically. If you can't explain the catalyst in one sentence, it's coordinated.</li>
+  <li><span class="pill hot">Funding rate</span> spikes to extreme positive ("BTCUSDT funding 0.5%
+      for 8h" = ~550% annualised). The longs are overpaying because shorts know it's fake.</li>
+  <li><span class="pill warn">Cross-venue divergence</span> — coin is up 50% on one exchange and 5%
+      on another. The pump is single-venue because organisers can't simultaneously control five
+      order books.</li>
+  <li><span class="pill warn">Order-book wallpaper</span> — the dashboard's L2 depth view shows
+      paper-thin asks above the pump's current price. Real demand doesn't have $50k bids supporting
+      a token that just moved $5M of fresh volume.</li>
+  <li><span class="pill warn">Holder count vs supply</span> — on-chain card shows 95% of supply
+      held by &lt;20 wallets. That's a single coordinated sell button away from -90%.</li>
+  <li><span class="pill warn">No project fundamentals</span> — the coin has no Github commits,
+      no audited contract, no clear team, just a one-page site and a Telegram. Pump.fun launches
+      are routinely in this category.</li>
+</ul>
+
+<h3>Aftermath</h3>
+<ul>
+  <li>The chart prints a single tall green candle followed by 6+ tall red candles within hours.</li>
+  <li>Twitter mentions disappear within 24-48 hours. The "alpha caller" goes silent or pivots to
+      the next coin without acknowledging the loss.</li>
+  <li>Discord/Telegram becomes either "we'll bounce, hold strong" cope or sudden moderator-led
+      bans on price talk.</li>
+</ul>
+
+<h2>5. How <em>this dashboard</em> helps you spot one</h2>
+
+<table>
+  <thead><tr><th>Signal</th><th>Where on the dashboard</th><th>What it tells you</th></tr></thead>
+  <tbody>
+    <tr><td>Sudden volume spike</td><td><strong>Universe screener</strong> sorted by 24h volume vs
+        mcap-rank, plus the per-coin <strong>candlestick chart</strong></td>
+        <td>Vertical candles on 50x+ volume without news = probable coordinated buy.</td></tr>
+    <tr><td>Extreme positive funding</td><td><strong>Funding rates</strong> + <strong>Funding-carry</strong>
+        sections</td>
+        <td>Funding at &gt;0.1% per 8h is positioning-driven; pre-pump or top-of-pump territory.</td></tr>
+    <tr><td>Cross-venue divergence</td><td><strong>Cross-exchange arbitrage</strong> table</td>
+        <td>Single-venue pumps have wide raw spreads (&gt;1%); broad-market moves stay tight.</td></tr>
+    <tr><td>Thin orderbook</td><td><strong>Per-coin page → Order book</strong></td>
+        <td>If the L2 depth ladder has &lt;$10k between the mid and where the price moved to, the
+            "rally" is wallpaper.</td></tr>
+    <tr><td>Holder concentration</td><td><strong>Per-coin page → On-chain context</strong></td>
+        <td>For ERC-20 / SPL tokens, low holder count + concentrated top-holders = "a few wallets
+            can dump on you" risk.</td></tr>
+    <tr><td>Pump.fun launches</td><td><strong>Pump.fun trending</strong> panel</td>
+        <td>Most coins here have <em>no</em> fundamentals and a dev-wallet that likely holds &gt;15%
+            of supply. Treat every entry as a memecoin with token-launch risk.</td></tr>
+    <tr><td>Open interest spike</td><td><strong>Hyperliquid market</strong> + Binance futures
+        24h ticker rank</td>
+        <td>Long positioning spiking with price is a sign of late-stage pump positioning, not a
+            healthy trend.</td></tr>
+  </tbody>
+</table>
+
+<h2>6. The math of why retail loses</h2>
+
+<p>
+  Imagine a $5M-mcap coin where:
+</p>
+<ul>
+  <li>Organisers hold 40% of supply at an average cost of $0.01</li>
+  <li>The Telegram VIP group (200 paid subscribers) buys $20k worth around $0.02 each.</li>
+  <li>The public Telegram (50k subscribers) sees the call and 2,000 of them buy ~$50 each
+      ($100k total) around $0.05.</li>
+  <li>Retail FOMO from the trending list buys another $200k around $0.08-$0.12.</li>
+</ul>
+<p>
+  Organisers sell their entire stack into the FOMO buys. At an average sell price of $0.09 against
+  a $0.01 cost, they walk away with roughly $200k profit. Inner ring breaks even or makes small
+  gains by selling near the top. Outer ring is roughly -30% to -50% after the price retraces.
+  Public retail is -70% to -90% by next day's close.
+</p>
+
+<div class="callout warn">
+  <strong>Expected value for the bagholder is sharply negative.</strong> Even if you "win" 1 in
+  3 pumps with a small gain, the median loss on losing trades wipes out the wins. The structure
+  of the trade is rigged against anyone arriving after the inner ring.
+</div>
+
+<h2>7. Legal &amp; reporting</h2>
+
+<p>
+  Pump-and-dump in registered securities is straightforwardly illegal in most jurisdictions.
+  Crypto-tokens that meet the Howey test (an investment of money in a common enterprise with a
+  reasonable expectation of profit from the efforts of others) are securities in the US, and the
+  SEC has won most of its enforcement actions on that basis since 2023.
+</p>
+<ul>
+  <li><strong>SEC tipline</strong> (US): <a href="https://www.sec.gov/tcr" target="_blank" rel="noopener">sec.gov/tcr</a>.
+      Whistleblower payouts apply.</li>
+  <li><strong>CFTC tipline</strong> (US, for derivatives manipulation):
+      <a href="https://www.cftc.gov/complaint" target="_blank" rel="noopener">cftc.gov/complaint</a>.</li>
+  <li><strong>FCA</strong> (UK):
+      <a href="https://www.fca.org.uk/contact/report-information-about-suspected-misconduct" target="_blank" rel="noopener">fca.org.uk</a>.</li>
+  <li><strong>ESMA / national regulators</strong> (EU): each member state has its own NCA;
+      ESMA aggregates.</li>
+  <li><strong>Exchange compliance</strong> — Binance, Coinbase, Kraken, Bybit all have abuse-report
+      forms. They have an incentive to investigate because regulators audit them on this.</li>
+</ul>
+
+<div class="callout info">
+  <strong>What to send.</strong> The Telegram/Discord screenshot showing the signal, the time of the
+  signal, the on-chain transactions you've identified, and your own loss (if any). Regulators are
+  far more likely to act when they have specific chat evidence + timestamps tied to executions.
+</div>
+
+<h2>8. Decision rules for the dashboard user</h2>
+
+<ol>
+  <li><strong>Never buy because someone in a chat told you to.</strong> Period. The mere fact that
+      the signal exists and reaches you means there's a multi-layer ring above you that's already
+      positioned.</li>
+  <li><strong>If a coin is up &gt;30% in &lt;30 min, do not buy.</strong> Watch the chart, watch the
+      retrace, watch the dump. You will be glad you watched instead of clicked.</li>
+  <li><strong>Check the per-coin page before clicking buy.</strong> Holder count, on-chain card,
+      L2 depth, cross-venue spread. If any look wallpaper-thin or concentrated, walk away.</li>
+  <li><strong>Pump.fun: treat every coin as a memecoin with token-launch risk.</strong> Position
+      size accordingly (&lt;1% of bankroll per memecoin, max). The few that survive (BONK, WIF,
+      POPCAT) are 0.01% of all launches.</li>
+  <li><strong>Use the dashboard's alerts.</strong> Set price-above alerts on coins you suspect
+      are getting pumped, with cooldowns short enough you see the dump in real time. This
+      converts watching into observing rather than reacting.</li>
+  <li><strong>Don't average down into a dump.</strong> The retrace in a pump-and-dump is to below
+      the pre-pump price. There is no "support" on the way down because the support that existed
+      pre-pump was the organisers' own bids, and they've now sold.</li>
+</ol>
+
+<div class="callout good">
+  <strong>The honest path.</strong> Pick a small number of coins you understand, hold or DCA into
+  them via the dashboard's DCA simulator, and ignore everything happening in the trending charts.
+  Long-term holders of solid projects survive pumps and dumps by definition — they're not even
+  trying to compete with them.
+</div>
+
+<p style="color: var(--text-3); font-size: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border);">
+  Sources used to compile this guide: SEC Investor Bulletin on pump-and-dump (2022 + 2024 updates);
+  Chainalysis 2024 Crypto Crime Report (the chapter on market manipulation); the DOJ's 2023
+  CryptoZoo / Logan Paul indictment; the SEC's HEX / Pulsechain complaint (2023); FTC consumer
+  protection materials; academic papers on Telegram pump-coordination signatures
+  (Kamps &amp; Kleinberg 2018; La Morgia et al. 2023). This guide is informational, not legal advice;
+  consult a licensed attorney if you suspect you've been victimised or are unsure of your
+  jurisdiction's rules.
+</p>
+</article>
+</main>
+</body>
+</html>
