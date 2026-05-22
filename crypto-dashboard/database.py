@@ -626,6 +626,21 @@ CREATE TABLE IF NOT EXISTS crypto_etf_bars (
 );
 CREATE INDEX IF NOT EXISTS idx_etf_bars_date ON crypto_etf_bars(date);
 
+-- ── Cross-asset daily bars (MSTR / COIN / SPY / GLD / etc.) ─────────────────
+-- Same shape as ETF bars; kept in a separate table to keep the dashboard
+-- "asset universe" boundaries clear (crypto / spot crypto ETFs / cross-asset).
+CREATE TABLE IF NOT EXISTS crypto_cross_asset_bars (
+    ticker     TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    open       REAL NOT NULL,
+    high       REAL NOT NULL,
+    low        REAL NOT NULL,
+    close      REAL NOT NULL,
+    volume     REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_cross_bars_date ON crypto_cross_asset_bars(date);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2813,6 +2828,40 @@ def get_etf_bars(ticker: str, days: int = 30) -> list[Row]:
         rows = c.execute(
             """SELECT date, open, high, low, close, volume
                FROM crypto_etf_bars
+               WHERE ticker = ? AND date >= ?
+               ORDER BY date ASC""",
+            (ticker, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Cross-asset bars ────────────────────────────────────────────────────────
+
+def upsert_cross_asset_bars(rows: list[tuple]) -> dict:
+    """Insert bars. rows: (ticker, date, open, high, low, close, volume).
+    Idempotent via PK(ticker, date)."""
+    if not rows:
+        return {"new": 0}
+    new_n = 0
+    with _conn() as c:
+        for r in rows:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO crypto_cross_asset_bars
+                     (ticker, date, open, high, low, close, volume)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                r,
+            )
+            if cur.rowcount > 0:
+                new_n += 1
+    return {"new": new_n}
+
+
+def get_cross_asset_bars(ticker: str, days: int = 90) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT date, open, high, low, close, volume
+               FROM crypto_cross_asset_bars
                WHERE ticker = ? AND date >= ?
                ORDER BY date ASC""",
             (ticker, cutoff),

@@ -49,6 +49,7 @@ import referrals as ref_mod
 import news as news_mod
 import econ_calendar as econ_mod
 import etf_flows as etf_mod
+import cross_asset as ca_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -506,6 +507,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(econ_refresher()))
     _bg_tasks.add(asyncio.create_task(econ_alert_ticker()))
     _bg_tasks.add(asyncio.create_task(etf_flows_refresher()))
+    _bg_tasks.add(asyncio.create_task(cross_asset_refresher()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -612,6 +614,21 @@ async def etf_flows_refresher():
                 print(f"[etf] {summary}")
         except Exception as e:
             print(f"[etf] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(4 * 3600)
+
+
+async def cross_asset_refresher():
+    """Cross-asset bars (MSTR/COIN/SPY/GLD/...) refresh every 4 hours.
+    Same cadence as ETF bars since both pull from Stooq business-day
+    data and only update once per session."""
+    await asyncio.sleep(130)
+    while True:
+        try:
+            summary = await asyncio.to_thread(ca_mod.refresh)
+            if summary.get("new"):
+                print(f"[cross-asset] {summary}")
+        except Exception as e:
+            print(f"[cross-asset] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(4 * 3600)
 
 
@@ -6783,6 +6800,43 @@ async def etf_force_refresh(request: Request):
     return await asyncio.to_thread(etf_mod.refresh)
 
 
+# ===================================================================
+# CROSS-ASSET OVERLAY — BTC vs MSTR/COIN/SPY/GLD/TLT/etc.
+# ===================================================================
+
+@app.get("/api/cross-asset/overview")
+async def cross_asset_overview(request: Request):
+    """One row per tracked asset: last close, 7d/30d/YTD returns,
+    correlation with BTC (30d + 90d), beta vs BTC (90d). Public."""
+    return await asyncio.to_thread(ca_mod.overview)
+
+
+@app.get("/api/cross-asset/series")
+async def cross_asset_series(request: Request, tickers: str = "",
+                              days: int = 90):
+    """Normalised (rebased to 100) series for the comma-separated
+    tickers. Used by the chart overlay. Validates against registry +
+    BTC so an attacker can't smuggle other strings."""
+    raw = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    allowed = set(ca_mod.CROSS_ASSET_REGISTRY.keys()) | {"BTC"}
+    selected = [t for t in raw if t in allowed][:8]  # cap at 8 lines
+    if not selected:
+        selected = ["BTC", "MSTR", "SPY", "GLD"]  # default overlay set
+    days = max(7, min(int(days), 730))
+    return await asyncio.to_thread(ca_mod.normalised_series, selected, days)
+
+
+@app.post("/api/cross-asset/refresh")
+async def cross_asset_force_refresh(request: Request):
+    """Admin / localhost only — pulls Stooq for 9 cross-asset tickers."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    is_local = client_host in ("127.0.0.1", "::1", "localhost")
+    if not is_local and not (user and user["tier"] == "admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await asyncio.to_thread(ca_mod.refresh)
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -7140,6 +7194,41 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
   <div id="etf-headlines" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap"></div>
   <table id="etf-table" style="margin-top:10px"><thead><tr>
     <th>Asset</th><th>Ticker</th><th>Issuer</th><th>Close</th><th>AUM</th><th>$ Vol (today)</th><th>vs 7d avg</th><th>7d AUM Δ</th><th>Signal</th></tr></thead><tbody></tbody></table>
+
+  <h2 style="margin-top:24px">Cross-asset overlay <span style="font-size:.7em;color:var(--muted);font-weight:400">(rotation context)</span></h2>
+  <div class="note">"Is BTC outperforming MSTR right now?" — every crypto-equity holder's weekly question. Series rebased to 100 at window start. Correlation + beta computed on equity-calendar days only (BTC trades weekends, equities don't).</div>
+  <div class="actionrow" style="margin-top:6px">
+    <div class="field"><label>Tickers (max 8)</label>
+      <select id="ca-tickers" multiple style="min-width:260px;height:120px">
+        <option value="BTC" selected>BTC — Bitcoin</option>
+        <option value="MSTR" selected>MSTR — Strategy Inc</option>
+        <option value="COIN">COIN — Coinbase</option>
+        <option value="RIOT">RIOT — Riot Platforms</option>
+        <option value="MARA">MARA — MARA Holdings</option>
+        <option value="CLSK">CLSK — CleanSpark</option>
+        <option value="SPY" selected>SPY — S&amp;P 500</option>
+        <option value="QQQ">QQQ — Nasdaq 100</option>
+        <option value="GLD" selected>GLD — Gold</option>
+        <option value="TLT">TLT — 20Y Treasuries</option>
+      </select>
+    </div>
+    <div class="field"><label>Window</label>
+      <select id="ca-days">
+        <option value="30">30d</option>
+        <option value="90" selected>90d</option>
+        <option value="180">180d</option>
+        <option value="365">1y</option>
+        <option value="730">2y</option>
+      </select>
+    </div>
+    <button id="ca-apply">Apply</button>
+  </div>
+  <div id="ca-chart" style="margin-top:14px"></div>
+  <table id="ca-table" style="margin-top:14px"><thead><tr>
+    <th>Ticker</th><th>Name</th><th>Cat.</th><th>Close</th>
+    <th>7d</th><th>30d</th><th>YTD</th>
+    <th>Corr/BTC 30d</th><th>Corr/BTC 90d</th><th>Beta/BTC 90d</th>
+  </tr></thead><tbody></tbody></table>
 
   <h2 style="margin-top:24px">Macro overlay</h2>
   <div id="macro-note" class="note"></div>
@@ -7627,6 +7716,7 @@ async function loadDerivatives(){
 async function loadMacro(){
   loadEconCalendar();
   loadEtfFlows();
+  loadCrossAsset();
   const tbody = document.querySelector('#macro-table tbody');
   tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>';
   try {
@@ -7794,6 +7884,129 @@ async function loadEtfFlows(){
   } catch(e) {
     tbody.innerHTML = '<tr><td colspan="9" class="err">' + esc(e.message) + '</td></tr>';
   }
+}
+
+// Distinct colour per asset for the cross-asset chart. Picked to be
+// distinguishable on both light and dark backgrounds.
+const CA_COLORS = {
+  BTC:  '#f7931a',  // bitcoin orange
+  MSTR: '#a855f7',  // purple
+  COIN: '#3b82f6',  // blue
+  RIOT: '#ec4899',  // pink
+  MARA: '#f59e0b',  // amber
+  CLSK: '#06b6d4',  // cyan
+  SPY:  '#22c55e',  // green
+  QQQ:  '#84cc16',  // lime
+  GLD:  '#eab308',  // yellow
+  TLT:  '#7d8a99',  // grey
+};
+
+document.getElementById('ca-apply').addEventListener('click', loadCrossAsset);
+
+async function loadCrossAsset(){
+  await loadCrossAssetTable();
+  await loadCrossAssetChart();
+}
+
+async function loadCrossAssetTable(){
+  const tbody = document.querySelector('#ca-table tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await api('/api/cross-asset/overview');
+    if (!d.rows.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted)">No cross-asset data yet — refresher runs every 4h on startup.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    const fmtRet = v => v == null ? '—' : (v*100).toFixed(2) + '%';
+    const cls = v => v == null ? '' : v >= 0 ? 'gain' : 'loss';
+    for (const r of d.rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><b style="color:${CA_COLORS[r.ticker] || 'var(--text)'}">${esc(r.ticker)}</b></td>
+        <td style="font-size:.85em">${esc(r.name)}</td>
+        <td><span class="pill p-neutral" style="font-size:.65em">${esc(r.category)}</span></td>
+        <td>${usd(r.last_close)}</td>
+        <td class="${cls(r.return_7d)}">${fmtRet(r.return_7d)}</td>
+        <td class="${cls(r.return_30d)}">${fmtRet(r.return_30d)}</td>
+        <td class="${cls(r.return_ytd)}">${fmtRet(r.return_ytd)}</td>
+        <td>${r.corr_btc_30d == null ? '—' : r.corr_btc_30d.toFixed(2)}</td>
+        <td>${r.corr_btc_90d == null ? '—' : r.corr_btc_90d.toFixed(2)}</td>
+        <td>${r.beta_btc_90d == null ? '—' : r.beta_btc_90d.toFixed(2)}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch(e) { tbody.innerHTML = '<tr><td colspan="10" class="err">' + esc(e.message) + '</td></tr>'; }
+}
+
+async function loadCrossAssetChart(){
+  const out = document.getElementById('ca-chart');
+  out.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  const sel = Array.from(document.getElementById('ca-tickers').selectedOptions).map(o => o.value);
+  const days = parseInt(document.getElementById('ca-days').value || 90);
+  if (sel.length === 0) { out.innerHTML = '<div class="note">Pick at least one ticker.</div>'; return; }
+  if (sel.length > 8) { out.innerHTML = '<div class="err">Max 8 tickers — too many lines makes the chart unreadable.</div>'; return; }
+  try {
+    const d = await api('/api/cross-asset/series?tickers=' + encodeURIComponent(sel.join(',')) + '&days=' + days);
+    const series = d.series || {};
+    const dates = d.dates || [];
+    if (!dates.length || !Object.keys(series).length) {
+      out.innerHTML = '<div class="note">Not enough overlapping data. Try a longer window or different tickers.</div>';
+      return;
+    }
+    // Compute global min/max across all series for y-scaling.
+    let lo = Infinity, hi = -Infinity;
+    for (const t of Object.keys(series)) {
+      for (const v of series[t]) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    const pad = (hi - lo) * 0.05 || 1;
+    lo -= pad; hi += pad;
+    const w = 900, h = 320, pL = 50, pR = 12, pT = 12, pB = 24;
+    const xs = (i) => pL + (i / (dates.length - 1)) * (w - pL - pR);
+    const ys = (v) => h - pB - ((v - lo) / (hi - lo)) * (h - pT - pB);
+
+    // Build the SVG. Inline so we don't need a chart library.
+    let svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="320" style="background:var(--card2);border-radius:8px">';
+    // Reference line at y=100 (baseline)
+    const y100 = ys(100);
+    svg += '<line x1="' + pL + '" y1="' + y100.toFixed(1) + '" x2="' + (w - pR) + '" y2="' + y100.toFixed(1) + '" stroke="#3a4658" stroke-dasharray="3,3" stroke-width="1"/>';
+    svg += '<text x="' + (pL - 4) + '" y="' + (y100 + 3).toFixed(1) + '" fill="#7d8a99" font-size="10" text-anchor="end">100</text>';
+    // Y axis labels: lo, hi
+    svg += '<text x="' + (pL - 4) + '" y="' + (pT + 8) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + hi.toFixed(0) + '</text>';
+    svg += '<text x="' + (pL - 4) + '" y="' + (h - pB - 2) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + lo.toFixed(0) + '</text>';
+    // X axis date labels (first, mid, last)
+    svg += '<text x="' + pL + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10">' + esc(dates[0]) + '</text>';
+    svg += '<text x="' + (pL + (w - pL - pR) / 2) + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10" text-anchor="middle">' + esc(dates[Math.floor(dates.length/2)]) + '</text>';
+    svg += '<text x="' + (w - pR) + '" y="' + (h - 6) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + esc(dates[dates.length-1]) + '</text>';
+    // Lines
+    const tickersOrdered = Object.keys(series);
+    for (const t of tickersOrdered) {
+      const col = CA_COLORS[t] || '#e6edf5';
+      const pts = series[t].map((v, i) => xs(i).toFixed(1) + ',' + ys(v).toFixed(1)).join(' ');
+      svg += '<polyline fill="none" stroke="' + col + '" stroke-width="1.8" points="' + pts + '"/>';
+      // Endpoint label
+      const lastV = series[t][series[t].length - 1];
+      const lastX = xs(dates.length - 1);
+      const lastY = ys(lastV);
+      svg += '<text x="' + (lastX + 3) + '" y="' + (lastY + 3).toFixed(1) + '" fill="' + col + '" font-size="11" font-weight="600">' + esc(t) + ' ' + lastV.toFixed(0) + '</text>';
+    }
+    svg += '</svg>';
+
+    // Legend
+    let legend = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:.85em">';
+    for (const t of tickersOrdered) {
+      const col = CA_COLORS[t] || '#e6edf5';
+      const lastV = series[t][series[t].length - 1];
+      const ret = (lastV - 100).toFixed(1);
+      const retCls = lastV >= 100 ? 'gain' : 'loss';
+      legend += '<span><span style="display:inline-block;width:10px;height:10px;background:' + col + ';border-radius:2px;margin-right:4px"></span>' +
+                '<b>' + esc(t) + '</b> <span class="' + retCls + '">' + (lastV >= 100 ? '+' : '') + ret + '%</span></span>';
+    }
+    legend += '</div>';
+    out.innerHTML = svg + legend;
+  } catch(e) { out.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
 }
 
 async function loadBacktests(){
