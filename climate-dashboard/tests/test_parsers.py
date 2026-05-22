@@ -611,24 +611,49 @@ def test_scenarios_returns_none_outside_range():
 
 
 def test_closest_temp_scenario_picks_nearest():
-    # GISTEMP +1.3°C anomaly → 1.5°C vs 1850-1900 (+0.2°C offset). At 2030
-    # the closest scenario by temperature should be SSP1-2.6 (1.35) — wait,
-    # 1.5°C is between SSP2-4.5 (1.40) and SSP3-7.0 (1.45). 1.5 - 1.40 = 0.10,
-    # 1.5 - 1.45 = 0.05 → SSP3-7.0 closer. Let me pick a cleaner case.
     # +1.6°C GISTEMP → 1.8°C vs 1850-1900. At 2030: SSP1-2.6=1.35, SSP2-4.5=1.40,
-    # SSP3-7.0=1.45, SSP5-8.5=1.50. Closest is SSP5-8.5 (distance 0.30).
+    # SSP3-7.0=1.45, SSP5-8.5=1.50. Observed exceeds all → position=above_all,
+    # closest scenario is SSP5-8.5 by distance.
     match = scenarios_model.closest_temp_scenario(1.6, 2030)
     assert match is not None
     assert match["scenario"] == "SSP5-8.5"
     assert match["observed_value_c"] == 1.8
+    assert match["position"] == "above_all"
+
+
+def test_closest_temp_scenario_between():
+    # +1.2°C GISTEMP → 1.4°C vs 1850-1900. At 2030 this is in the SSP1-2.6
+    # (1.35) → SSP2-4.5 (1.40) range, so position should be "between".
+    match = scenarios_model.closest_temp_scenario(1.2, 2030)
+    assert match["position"] == "between"
+
+
+def test_closest_temp_scenario_below_all():
+    # +0.5°C GISTEMP → 0.7°C — well below all scenarios at 2030.
+    match = scenarios_model.closest_temp_scenario(0.5, 2030)
+    assert match["position"] == "below_all"
 
 
 def test_closest_co2_scenario_picks_nearest():
-    # CO₂ at 425 ppm in 2025 (between anchors). 2025 interp: SSP1-2.6 ~426,
-    # SSP2-4.5 ~433.5, SSP3-7.0 ~438.5, SSP5-8.5 ~443.5. Closest is SSP1-2.6.
+    # CO₂ at 425 ppm in 2025: at the 2025 interpolation SSP1-2.6 ≈ 426 ppm
+    # (lowest scenario) so 425 is just below — position "below_all", closest
+    # by distance is SSP1-2.6.
     match = scenarios_model.closest_co2_scenario(425, 2025)
     assert match is not None
     assert match["scenario"] == "SSP1-2.6"
+    assert match["position"] == "below_all"
+
+
+def test_closest_co2_scenario_between():
+    # 435 ppm in 2025: SSP1-2.6 ≈ 426, SSP5-8.5 ≈ 443.5 → between.
+    match = scenarios_model.closest_co2_scenario(435, 2025)
+    assert match["position"] == "between"
+
+
+def test_closest_co2_scenario_above_all():
+    # 500 ppm in 2025 — way above all scenarios at that year
+    match = scenarios_model.closest_co2_scenario(500, 2025)
+    assert match["position"] == "above_all"
 
 
 def test_all_trajectories_returns_5year_steps():

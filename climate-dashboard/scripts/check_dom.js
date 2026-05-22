@@ -149,8 +149,8 @@ const MOCK_RESPONSES = {
       co2_ppm: { "SSP1-2.6": [{year:2020,value:412},{year:2050,value:445},{year:2100,value:420}] },
     },
     current_match: {
-      temperature: { scenario: "SSP2-4.5", distance_c: 0.05, scenario_value_c: 1.45, observed_value_c: 1.50 },
-      co2: { scenario: "SSP3-7.0", distance_ppm: 5.0, scenario_value_ppm: 430.0, observed_value_ppm: 425.0 },
+      temperature: { scenario: "SSP5-8.5", distance_c: 0.20, scenario_value_c: 1.30, observed_value_c: 1.50, position: "above_all", year: 2025 },
+      co2: { scenario: "SSP2-4.5", distance_ppm: 5.0, scenario_value_ppm: 430.0, observed_value_ppm: 425.0, position: "between", year: 2025 },
     },
   },
   "/api/emissions": {

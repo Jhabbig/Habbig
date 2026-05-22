@@ -68,46 +68,75 @@ def closest_temp_scenario(gistemp_anomaly_c: Optional[float], year: int) -> Opti
     """Which SSP scenario does the current GISTEMP anomaly most closely match?
     Converts to the 1850-1900 baseline before comparing.
 
-    Returns {scenario, distance_c, scenario_value_c, observed_value_c} or None.
+    Returns a dict with the closest scenario AND a ``position`` field:
+      - ``"above_all"``: observation exceeds every scenario at that year
+        (i.e., we're warming faster than even the highest-emissions pathway)
+      - ``"below_all"``: observation is below every scenario at that year
+      - ``"between"``: observation is bracketed between scenarios
+
+    Without this, naive "closest distance" matching is misleading when
+    observations sit outside the scenario envelope — which is the case for
+    near-term temperature today (observed warming has run ahead of the
+    averaged scenario values).
     """
     if gistemp_anomaly_c is None:
         return None
     pi_anomaly = gistemp_anomaly_c + GISTEMP_TO_PI_OFFSET_C
-    best = None
+    values: dict[str, float] = {}
     for name in SCENARIOS_TEMP:
         v = temp_for(name, year)
-        if v is None:
-            continue
-        d = abs(pi_anomaly - v)
-        if best is None or d < best["distance_c"]:
-            best = {
-                "scenario": name,
-                "distance_c": round(d, 3),
-                "scenario_value_c": round(v, 3),
-                "observed_value_c": round(pi_anomaly, 3),
-            }
-    return best
+        if v is not None:
+            values[name] = v
+    if not values:
+        return None
+    closest = min(values, key=lambda n: abs(pi_anomaly - values[n]))
+    max_v = max(values.values())
+    min_v = min(values.values())
+    if pi_anomaly > max_v:
+        position = "above_all"
+    elif pi_anomaly < min_v:
+        position = "below_all"
+    else:
+        position = "between"
+    return {
+        "scenario": closest,
+        "distance_c": round(abs(pi_anomaly - values[closest]), 3),
+        "scenario_value_c": round(values[closest], 3),
+        "observed_value_c": round(pi_anomaly, 3),
+        "position": position,
+        "year": year,
+    }
 
 
 def closest_co2_scenario(current_ppm: Optional[float], year: int) -> Optional[dict]:
     """Which SSP scenario does the current CO₂ concentration most closely
-    match?"""
+    match? Adds the same ``position`` field as the temperature matcher."""
     if current_ppm is None:
         return None
-    best = None
+    values: dict[str, float] = {}
     for name in SCENARIOS_CO2:
         v = co2_for(name, year)
-        if v is None:
-            continue
-        d = abs(current_ppm - v)
-        if best is None or d < best["distance_ppm"]:
-            best = {
-                "scenario": name,
-                "distance_ppm": round(d, 2),
-                "scenario_value_ppm": round(v, 2),
-                "observed_value_ppm": round(current_ppm, 2),
-            }
-    return best
+        if v is not None:
+            values[name] = v
+    if not values:
+        return None
+    closest = min(values, key=lambda n: abs(current_ppm - values[n]))
+    max_v = max(values.values())
+    min_v = min(values.values())
+    if current_ppm > max_v:
+        position = "above_all"
+    elif current_ppm < min_v:
+        position = "below_all"
+    else:
+        position = "between"
+    return {
+        "scenario": closest,
+        "distance_ppm": round(abs(current_ppm - values[closest]), 2),
+        "scenario_value_ppm": round(values[closest], 2),
+        "observed_value_ppm": round(current_ppm, 2),
+        "position": position,
+        "year": year,
+    }
 
 
 def all_trajectories(metric: str = "temp") -> dict[str, list[dict]]:

@@ -1362,7 +1362,11 @@ async function loadCards() {
     });
     const tempMatch = scenariosData?.current_match?.temperature;
     const sspPill = tempMatch
-      ? `<div class="sub" style="margin-top:6px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${tempMatch.scenario}</a> <span style="color:var(--text-3)">(${tempMatch.observed_value_c.toFixed(2)}°C vs ${tempMatch.scenario_value_c.toFixed(2)}°C; baseline 1850-1900)</span></div>`
+      ? (tempMatch.position === "above_all"
+          ? `<div class="sub" style="margin-top:6px"><span style="color:var(--accent-2)">Tracking <b>above all SSP scenarios</b> for ${tempMatch.year}</span> <span style="color:var(--text-3)">(${tempMatch.observed_value_c.toFixed(2)}°C vs SSP5-8.5's ${tempMatch.scenario_value_c.toFixed(2)}°C; baseline 1850-1900)</span> · <a href="/methodology#ssp_scenarios">methodology</a></div>`
+          : tempMatch.position === "below_all"
+          ? `<div class="sub" style="margin-top:6px"><span style="color:var(--good)">Tracking <b>below all SSP scenarios</b> for ${tempMatch.year}</span> <span style="color:var(--text-3)">(${tempMatch.observed_value_c.toFixed(2)}°C; baseline 1850-1900)</span> · <a href="/methodology#ssp_scenarios">methodology</a></div>`
+          : `<div class="sub" style="margin-top:6px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${tempMatch.scenario}</a> <span style="color:var(--text-3)">(${tempMatch.observed_value_c.toFixed(2)}°C vs ${tempMatch.scenario_value_c.toFixed(2)}°C; baseline 1850-1900)</span></div>`)
       : "";
     cards.push(`
       <div class="card">
@@ -1405,7 +1409,11 @@ async function loadCards() {
     }
     const co2Match = scenariosData?.current_match?.co2;
     const co2SspPill = co2Match
-      ? `<div class="sub" style="margin-top:4px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${co2Match.scenario}</a> <span style="color:var(--text-3)">(${co2Match.observed_value_ppm} ppm vs ${co2Match.scenario_value_ppm} ppm trajectory)</span></div>`
+      ? (co2Match.position === "above_all"
+          ? `<div class="sub" style="margin-top:4px"><span style="color:var(--accent-2)">Tracking <b>above all SSPs</b> for ${co2Match.year}</span> <span style="color:var(--text-3)">(${co2Match.observed_value_ppm} ppm vs SSP5-8.5's ${co2Match.scenario_value_ppm} ppm)</span></div>`
+          : co2Match.position === "below_all"
+          ? `<div class="sub" style="margin-top:4px"><span style="color:var(--good)">Tracking <b>below all SSPs</b> for ${co2Match.year}</span> <span style="color:var(--text-3)">(${co2Match.observed_value_ppm} ppm)</span></div>`
+          : `<div class="sub" style="margin-top:4px">Current pace ≈ <a href="/methodology#ssp_scenarios" style="color:var(--text-1);font-weight:600">${co2Match.scenario}</a> <span style="color:var(--text-3)">(${co2Match.observed_value_ppm} ppm vs ${co2Match.scenario_value_ppm} ppm trajectory)</span></div>`)
       : "";
     cards.push(`
       <div class="card">
