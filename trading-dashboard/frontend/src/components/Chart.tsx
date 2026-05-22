@@ -300,12 +300,12 @@ export const Chart: React.FC<ChartProps> = ({
   useEffect(() => {
     if (!bars.length) return;
 
-    // Bar.timestamp is in milliseconds (per backend `tier1_adapters` and
-    // mock data); lightweight-charts wants Unix seconds.
-    const toSec = (ms: number) => Math.floor(ms / 1000) as any;
+    // Bar.timestamp is in Unix epoch seconds; lightweight-charts expects
+    // the same format.
+    const barTime = (ts: number) => ts as any;
 
     const candleData = bars.map((bar) => ({
-      time: toSec(bar.timestamp),
+      time: barTime(bar.timestamp),
       open: bar.open,
       high: bar.high,
       low: bar.low,
@@ -313,7 +313,7 @@ export const Chart: React.FC<ChartProps> = ({
     }));
 
     const volumeData = bars.map((bar) => ({
-      time: toSec(bar.timestamp),
+      time: barTime(bar.timestamp),
       value: bar.volume,
       color: bar.close >= bar.open ? '#10b98166' : '#ef444466',
     }));
@@ -334,7 +334,7 @@ export const Chart: React.FC<ChartProps> = ({
     }
 
     const hist = indicatorHistory.current;
-    const lastTime = toSec(bars[bars.length - 1].timestamp);
+    const lastTime = barTime(bars[bars.length - 1].timestamp);
 
     // Helper: append a new (time, value) point; update-in-place if the
     // newest time matches, so each series stays monotonically ordered.

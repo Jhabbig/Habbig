@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TrendingUp, TrendingDown, AlertCircle, ChevronDown } from 'lucide-react';
 
 export interface SignalData {
@@ -20,11 +20,16 @@ export const SignalPanel: React.FC<SignalPanelProps> = ({ ticker, price, indicat
   const [signal, setSignal] = useState<SignalData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!indicators) return;
 
-    const fetchSignal = async () => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    debounceTimer.current = setTimeout(async () => {
       setLoading(true);
       try {
         const response = await fetch('/api/signals', {
@@ -65,9 +70,13 @@ export const SignalPanel: React.FC<SignalPanelProps> = ({ ticker, price, indicat
       } finally {
         setLoading(false);
       }
-    };
+    }, 500);
 
-    fetchSignal();
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
   }, [ticker, price, indicators]);
 
   if (!signal) {
