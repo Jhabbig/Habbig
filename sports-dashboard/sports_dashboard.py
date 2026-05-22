@@ -5619,17 +5619,19 @@ def _send_alerts(sport: str, signals: list[dict]):
                 except Exception as e:
                     log.warning("Telegram alert error: %s", e)
 
-        # Send webhook (re-validate at dispatch time to prevent DNS rebinding SSRF)
+        # Send webhook — signed with the user's HMAC key if configured.
+        # _signed_webhook_post re-validates the URL at dispatch (DNS
+        # rebinding SSRF guard) and handles JSON serialization itself.
         webhook_url = cfg.get("webhook_url", "")
-        if webhook_url and _is_safe_webhook_url(webhook_url):
-            try:
-                requests.post(
-                    webhook_url,
-                    json={"text": msg, "signals": user_signals[:5], "sport": sport},
-                    timeout=10,
-                )
-            except Exception as e:
-                log.warning("Webhook alert error: %s", e)
+        if webhook_url:
+            key = _get_webhook_signing_key(cfg["user_id"])
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "broadcast", "signals": user_signals[:5], "sport": sport},
+                signing_key=key,
+            )
+            label = "webhook_signed" if key else "webhook_unsigned"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
 
         # Update last alert time
         with _get_db() as conn:
@@ -5726,22 +5728,18 @@ def _send_watchlist_alerts(sport: str, comparisons: list[dict]) -> None:
                 M_ALERT_SEND.labels(channel="telegram_watchlist", result="error").inc()
                 log.warning("Watchlist Telegram error: %s", e)
 
-        # Webhook
+        # Webhook — signed if user has set a key.
         webhook_url = r["webhook_url"] or ""
-        if webhook_url and _is_safe_webhook_url(webhook_url):
-            try:
-                requests.post(
-                    webhook_url,
-                    json={
-                        "text": msg, "kind": "watchlist", "sport": sport,
-                        "comparison": comp, "threshold_pp": threshold,
-                    },
-                    timeout=10,
-                )
-                M_ALERT_SEND.labels(channel="webhook_watchlist", result="ok").inc()
-            except Exception as e:
-                M_ALERT_SEND.labels(channel="webhook_watchlist", result="error").inc()
-                log.warning("Watchlist webhook error: %s", e)
+        if webhook_url:
+            key = _get_webhook_signing_key(r["user_id"])
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "watchlist", "sport": sport,
+                 "comparison": comp, "threshold_pp": threshold},
+                signing_key=key,
+            )
+            label = "webhook_watchlist_signed" if key else "webhook_watchlist"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
 
         with _get_db() as conn:
             conn.execute(
@@ -5967,18 +5965,15 @@ def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
 
     if channel in ("webhook", "both"):
         webhook_url = cfg.get("webhook_url", "") or ""
-        if webhook_url and _is_safe_webhook_url(webhook_url):
-            try:
-                requests.post(
-                    webhook_url,
-                    json={"text": msg, "kind": "rule", "rule_id": rule.get("id"),
-                          **payload},
-                    timeout=10,
-                )
-                M_ALERT_SEND.labels(channel="webhook_rule", result="ok").inc()
-            except Exception as e:
-                M_ALERT_SEND.labels(channel="webhook_rule", result="error").inc()
-                log.warning("Rule alert (webhook) error: %s", e)
+        if webhook_url:
+            key = _get_webhook_signing_key(user_id)
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "rule", "rule_id": rule.get("id"), **payload},
+                signing_key=key,
+            )
+            label = "webhook_rule_signed" if key else "webhook_rule"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
 
     if channel in ("push", "both"):
         push_payload = {
@@ -10371,6 +10366,82 @@ async def changelog_page(request: Request):
     """What's new in Sharpe. Public — same conversion rationale as
     /features and /track-record."""
     return HTMLResponse(_load_template("changelog"))
+
+
+def _compute_signal_history(sport: str | None, days: int, limit: int,
+                              resolved_only: bool) -> list[dict]:
+    """Pull recent flagged signals from sports_edge_history.
+
+    Per-signal log — distinct from /track-record (aggregate). This is
+    the public receipt: "here's exactly what fired and what happened."
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    where = ["detected_at >= ?"]
+    params: list = [cutoff]
+    if sport:
+        where.append("sport = ?")
+        params.append(sport)
+    if resolved_only:
+        where.append("resolved = 1")
+        where.append("resolution IN ('correct', 'incorrect')")
+
+    sql = (
+        "SELECT sport, home_team, away_team, outcome, "
+        "       sharp_prob, poly_prob, divergence, kelly_pct, "
+        "       resolved, resolution, detected_at, commence_time, market_type "
+        "FROM sports_edge_history "
+        "WHERE " + " AND ".join(where) + " "
+        "ORDER BY detected_at DESC LIMIT ?"
+    )
+    params.append(int(limit))
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return rows
+
+
+@app.get("/api/signal-history")
+async def api_signal_history(request: Request):
+    """Public per-signal ledger.
+
+    Query params:
+      sport: optional sport key
+      days: lookback (default 30, max 365)
+      limit: max rows (default 100, max 500)
+      resolved_only: '1' to only return signals with a final resolution
+    """
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "30"))))
+    except ValueError:
+        days = 30
+    try:
+        limit = max(1, min(500, int(request.query_params.get("limit", "100"))))
+    except ValueError:
+        limit = 100
+    sport = request.query_params.get("sport")
+    resolved_only = request.query_params.get("resolved_only") == "1"
+    rows = await asyncio.to_thread(
+        _compute_signal_history, sport, days, limit, resolved_only,
+    )
+    # Tally for the summary card
+    n_total = len(rows)
+    n_resolved = sum(1 for r in rows if r.get("resolved"))
+    n_correct = sum(1 for r in rows if r.get("resolution") == "correct")
+    win_rate = round(n_correct / n_resolved, 4) if n_resolved else 0.0
+    return JSONResponse({
+        "sport": sport,
+        "days": days,
+        "n_total": n_total,
+        "n_resolved": n_resolved,
+        "n_correct": n_correct,
+        "win_rate": win_rate,
+        "rows": rows,
+    })
+
+
+@app.get("/signal-history", response_class=HTMLResponse)
+async def signal_history_page(request: Request):
+    """Public per-signal ledger page."""
+    return HTMLResponse(_load_template("signal_history"))
 
 
 @app.get("/features", response_class=HTMLResponse)
