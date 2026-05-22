@@ -2981,6 +2981,13 @@ async def admin_page(request: Request):
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
 
 
+@app.get("/admin/analytics", response_class=HTMLResponse)
+async def admin_analytics_page(request: Request):
+    user = _require_admin_user(request)
+    csrf_token = _get_csrf_token(request)
+    return render_page("analytics", request=request, email=user["email"], username=user.get("username", user["email"]), csrf_token=csrf_token)
+
+
 @app.post("/admin/tokens/generate")
 async def admin_generate_token(request: Request, note: str = Form(""), target_email: str = Form("")):
     user = _require_admin_user(request)

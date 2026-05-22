@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Superuser Key Analytics — narve.ai</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+  <style>
+    .analytics-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+    .analytics-period { display: flex; gap: 8px; }
+    .period-btn { padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+    .period-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 8px; }
+    .stat-value { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .stat-change { font-size: 12px; color: var(--text-muted); }
+    .stat-change.positive { color: var(--green); }
+    .stat-change.negative { color: var(--red); }
+    .chart-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+    .chart-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+    .chart-container { position: relative; height: 300px; margin-bottom: 16px; }
+    .list-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+    .list-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; }
+    .key-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-light); }
+    .key-item:last-child { border-bottom: none; }
+    .key-name { font-weight: 500; }
+    .key-metric { font-size: 13px; color: var(--text-muted); }
+    .key-count { font-size: 16px; font-weight: 600; color: var(--accent); }
+    .empty-state { text-align: center; padding: 40px 24px; color: var(--text-muted); }
+    .empty-state-icon { font-size: 48px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <header class="gw-header">
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs"></nav>
+    <div class="gw-spacer"></div>
+    <nav class="gw-nav">
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      <a href="/admin">Admin</a>
+    </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
+  </header>
+
+  <div class="gw-main">
+    <div class="analytics-header">
+      <h1 class="gw-page-title">Superuser Key Analytics</h1>
+      <div class="analytics-period">
+        <button class="period-btn active" onclick="setPeriod(7)">Last 7 days</button>
+        <button class="period-btn" onclick="setPeriod(30)">Last 30 days</button>
+        <button class="period-btn" onclick="setPeriod(90)">Last 90 days</button>
+      </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Usage Events</div>
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-change" id="stat-total-change">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Keys</div>
+        <div class="stat-value" id="stat-active">0</div>
+        <div class="stat-change" id="stat-active-change">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Unused Keys</div>
+        <div class="stat-value" id="stat-unused">0</div>
+        <div class="stat-change" id="stat-unused-change">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Uses Per Key</div>
+        <div class="stat-value" id="stat-avg">0</div>
+        <div class="stat-change" id="stat-avg-change">—</div>
+      </div>
+    </div>
+
+    <!-- Usage Trend Chart -->
+    <div class="chart-section">
+      <h3>Usage Trend</h3>
+      <div class="chart-container">
+        <canvas id="trendChart"></canvas>
+      </div>
+      <div style="font-size: 12px; color: var(--text-muted);">Daily usage events over the selected period</div>
+    </div>
+
+    <!-- Top Keys Chart -->
+    <div class="chart-section">
+      <h3>Top 10 Keys by Usage</h3>
+      <div class="chart-container">
+        <canvas id="topKeysChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Most Used Keys List -->
+    <div class="list-section">
+      <h3>Most Used Keys</h3>
+      <div id="most-used-list">
+        <div class="empty-state">
+          <div class="empty-state-icon">📊</div>
+          <div>No usage data yet</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unused Keys List -->
+    <div class="list-section">
+      <h3>Unused Keys</h3>
+      <div id="unused-list">
+        <div class="empty-state">
+          <div class="empty-state-icon">✨</div>
+          <div>All keys are being used!</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Usage by Dashboard -->
+    <div class="chart-section">
+      <h3>Usage by Dashboard</h3>
+      <div class="chart-container">
+        <canvas id="dashboardChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+<script>
+let currentPeriod = 30;
+let trendChart = null;
+let topKeysChart = null;
+let dashboardChart = null;
+
+function setPeriod(days) {
+  currentPeriod = days;
+  document.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  loadAnalytics();
+}
+
+async function loadAnalytics() {
+  try {
+    const res = await fetch(`/admin/api/usage-stats?days=${currentPeriod}`);
+    const stats = await res.json();
+
+    // Update stat cards
+    document.getElementById('stat-total').textContent = stats.total_usage_events.toLocaleString();
+    document.getElementById('stat-unused').textContent = stats.unused_keys.length;
+
+    // Calculate active keys
+    const allKeysRes = await fetch('/admin/api/superuser-keys');
+    const allKeysData = await allKeysRes.json();
+    const activeCount = allKeysData.keys.filter(k => k.active).length;
+    document.getElementById('stat-active').textContent = activeCount;
+
+    // Calculate average
+    const avgUses = stats.most_used_keys.length > 0
+      ? Math.round(stats.total_usage_events / (activeCount || 1))
+      : 0;
+    document.getElementById('stat-avg').textContent = avgUses;
+
+    // Update most used list
+    updateMostUsedList(stats.most_used_keys);
+
+    // Update unused list
+    updateUnusedList(stats.unused_keys);
+
+    // Update charts
+    updateCharts(stats);
+  } catch (e) {
+    console.error('Failed to load analytics:', e);
+  }
+}
+
+function updateMostUsedList(keys) {
+  const list = document.getElementById('most-used-list');
+  if (keys.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📊</div><div>No usage data yet</div></div>';
+    return;
+  }
+
+  let html = '';
+  for (let i = 0; i < Math.min(keys.length, 10); i++) {
+    const key = keys[i];
+    const pct = Math.round((key.count / keys[0].count) * 100);
+    html += `<div class="key-item">
+      <div>
+        <div class="key-name">${key.name}</div>
+        <div class="key-metric">${key.count} events</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="width: 100px; height: 6px; background: var(--border-light); border-radius: 3px; overflow: hidden;">
+          <div style="width: ${pct}%; height: 100%; background: var(--accent); border-radius: 3px;"></div>
+        </div>
+        <div class="key-count">${pct}%</div>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function updateUnusedList(keys) {
+  const list = document.getElementById('unused-list');
+  if (keys.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✨</div><div>All keys are being used!</div></div>';
+    return;
+  }
+
+  let html = '';
+  for (let i = 0; i < Math.min(keys.length, 10); i++) {
+    const key = keys[i];
+    html += `<div class="key-item">
+      <div class="key-name">${key.name}</div>
+      <div style="font-size: 11px; color: var(--red);">Never used</div>
+    </div>`;
+  }
+
+  if (keys.length > 10) {
+    html += `<div class="key-item" style="justify-content: center; padding: 12px 0; border-bottom: none; color: var(--text-muted); font-size: 12px;">
+      ... and ${keys.length - 10} more unused keys
+    </div>`;
+  }
+
+  list.innerHTML = html;
+}
+
+function updateCharts(stats) {
+  // Trend chart
+  updateTrendChart(stats.daily_trend || []);
+
+  // Top keys chart
+  updateTopKeysChart(stats.most_used_keys || []);
+
+  // Dashboard chart (would need to aggregate usage by dashboard)
+  updateDashboardChart();
+}
+
+function updateTrendChart(data) {
+  const ctx = document.getElementById('trendChart').getContext('2d');
+
+  // Reverse to show oldest first
+  const sortedData = [...data].reverse();
+  const labels = sortedData.map(d => {
+    const date = new Date(d.day + 'T00:00:00Z');
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  });
+  const values = sortedData.map(d => d.count);
+
+  if (trendChart) trendChart.destroy();
+
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Usage Events',
+        data: values,
+        borderColor: 'var(--accent)',
+        backgroundColor: 'rgba(var(--accent-rgb), 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: 'var(--accent)',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border-light)' } },
+        x: { ticks: { color: 'var(--text-muted)' }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+function updateTopKeysChart(keys) {
+  if (keys.length === 0) return;
+
+  const ctx = document.getElementById('topKeysChart').getContext('2d');
+  const topKeys = keys.slice(0, 10);
+  const labels = topKeys.map(k => k.name.substring(0, 20));
+  const values = topKeys.map(k => k.count);
+
+  if (topKeysChart) topKeysChart.destroy();
+
+  topKeysChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Usage Count',
+        data: values,
+        backgroundColor: 'var(--accent)',
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { color: 'var(--text-muted)' }, grid: { color: 'var(--border-light)' } },
+        y: { ticks: { color: 'var(--text-muted)' }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+async function updateDashboardChart() {
+  // Fetch all keys with usage data to aggregate by dashboard
+  try {
+    const res = await fetch('/admin/api/superuser-keys');
+    const data = await res.json();
+
+    // Group usage by dashboard
+    const dashboardUsage = {};
+    for (const key of data.keys) {
+      for (const dashboard of key.dashboards || []) {
+        dashboardUsage[dashboard] = (dashboardUsage[dashboard] || 0) + 1;
+      }
+    }
+
+    // If no dashboard restrictions, show "All Dashboards"
+    const unrestricted = data.keys.filter(k => k.dashboards.length === 0).length;
+    if (unrestricted > 0) {
+      dashboardUsage['All Dashboards'] = unrestricted;
+    }
+
+    const labels = Object.keys(dashboardUsage);
+    const values = Object.values(dashboardUsage);
+
+    if (labels.length === 0) return;
+
+    const ctx = document.getElementById('dashboardChart').getContext('2d');
+    if (dashboardChart) dashboardChart.destroy();
+
+    dashboardChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: values,
+          backgroundColor: [
+            '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+            '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#06b6d4'
+          ],
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: 'var(--text-muted)', padding: 15 }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Failed to load dashboard chart:', e);
+  }
+}
+
+// Load analytics on page load
+document.addEventListener('DOMContentLoaded', loadAnalytics);
+</script>
+</body>
+</html>
