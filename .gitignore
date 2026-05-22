@@ -171,3 +171,5 @@ CLAUDE.md.local
 !poetry.lock
 !Pipfile.lock
 !uv.lock
+*.sqlite-shm
+*.sqlite-wal

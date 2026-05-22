@@ -19,6 +19,45 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# ── Layered .env loader ──────────────────────────────────────────────────────
+# See sports-dashboard for rationale. Walks ~/.gateway_env → gateway/.env.production
+# → dashboard/.env.production → dashboard/.env, in priority order.
+try:
+    from dotenv import load_dotenv as _dotenv_load
+except ImportError:
+    def _dotenv_load(p, override=False):
+        for raw in Path(p).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if not override and k in os.environ:
+                continue
+            os.environ[k] = v
+        return True
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_GATEWAY_ENV = None
+for _p in [_DASHBOARD_DIR, *_DASHBOARD_DIR.parents][:5]:
+    _candidate = _p / "gateway" / ".env.production"
+    if _candidate.is_file():
+        _GATEWAY_ENV = _candidate
+        break
+_ENV_SEARCH = [Path.home() / ".gateway_env"]
+if _GATEWAY_ENV is not None:
+    _ENV_SEARCH.append(_GATEWAY_ENV)
+_ENV_SEARCH.extend([_DASHBOARD_DIR / ".env.production", _DASHBOARD_DIR / ".env"])
+_loaded_env_files: list[str] = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        _dotenv_load(_f, override=False)
+        _loaded_env_files.append(str(_f))
+print(f"[midterm-dashboard] env files loaded: {len(_loaded_env_files)}", flush=True)
+for _f in _loaded_env_files:
+    print(f"  ✓ {_f}", flush=True)
+if not os.getenv("GATEWAY_SSO_SECRET"):
+    print("⚠ [midterm-dashboard] GATEWAY_SSO_SECRET missing — gateway-fronted requests will be rejected", flush=True)
+
 from database import Database
 from aggregators import (
     PolymarketAggregator,
@@ -2549,10 +2588,47 @@ async def premium_detailed_comparison(race_key: str, request: Request):
 
 
 @app.get("/premium/campaign-finance/{state_abbr}")
-async def premium_campaign_finance(state_abbr: str, request: Request):
-    """FEC fundraising data placeholder."""
-    user = await require_tier(request, "premium")
-    return {"state": state_abbr, "finance": [], "note": "FEC integration coming soon"}
+async def premium_campaign_finance(
+    state_abbr: str,
+    request: Request,
+    cycle: int = 2026,
+):
+    """FEC campaign finance totals for a state's federal races (Senate + House)."""
+    await require_tier(request, "premium")
+    from data_sources.fec import fetch_race_financials
+
+    state_upper = state_abbr.upper()
+    senate, house = await asyncio.gather(
+        fetch_race_financials(
+            state.http_session, state_upper, "senate", cycle=cycle, max_results=25
+        ),
+        fetch_race_financials(
+            state.http_session, state_upper, "house", cycle=cycle, max_results=100
+        ),
+    )
+
+    house_by_district: dict[str, list] = {}
+    for cand in house:
+        d = cand.get("district") or "00"
+        try:
+            d_key = f"{int(str(d).lstrip('0') or '0'):02d}"
+        except (ValueError, TypeError):
+            d_key = str(d)
+        house_by_district.setdefault(d_key, []).append(cand)
+    for cands in house_by_district.values():
+        cands.sort(key=lambda c: c.get("receipts") or 0, reverse=True)
+
+    return {
+        "state": state_upper,
+        "cycle": cycle,
+        "senate": senate,
+        "house_by_district": house_by_district,
+        "totals": {
+            "senate_candidates": len(senate),
+            "house_candidates": len(house),
+            "districts": len(house_by_district),
+        },
+    }
 
 
 # ===================================================================
