@@ -641,6 +641,32 @@ CREATE TABLE IF NOT EXISTS crypto_cross_asset_bars (
 );
 CREATE INDEX IF NOT EXISTS idx_cross_bars_date ON crypto_cross_asset_bars(date);
 
+-- ── Options term structure (Deribit snapshots) ──────────────────────────────
+-- One row per (asset, snapshot, expiration). We keep multiple snapshots so
+-- the UI can show "skew was 5.2 last week, now 1.1" if we want trend later.
+CREATE TABLE IF NOT EXISTS crypto_options_term_structure (
+    asset             TEXT NOT NULL,
+    scraped_at        TEXT NOT NULL,
+    expiration_date   TEXT NOT NULL,
+    days_to_expiry    INTEGER NOT NULL,
+    bucket_days       INTEGER NOT NULL,
+    atm_iv            REAL,
+    skew_25d          REAL,
+    max_pain_strike   REAL,
+    open_interest_usd REAL DEFAULT 0,
+    contract_count    INTEGER DEFAULT 0,
+    PRIMARY KEY (asset, scraped_at, expiration_date)
+);
+CREATE INDEX IF NOT EXISTS idx_opts_latest ON crypto_options_term_structure(asset, scraped_at DESC);
+
+-- ── DVOL (Deribit volatility index) ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS crypto_dvol_bars (
+    asset  TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    dvol   REAL NOT NULL,
+    PRIMARY KEY (asset, date)
+);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2865,6 +2891,75 @@ def get_cross_asset_bars(ticker: str, days: int = 90) -> list[Row]:
                WHERE ticker = ? AND date >= ?
                ORDER BY date ASC""",
             (ticker, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Options term structure + DVOL ───────────────────────────────────────────
+
+def upsert_options_term_structure(rows: list[tuple]) -> None:
+    """Insert term-structure rows. PK enforces (asset, scraped_at, expiration_date)
+    so re-refresh is idempotent. rows: (asset, scraped_at, expiration_date,
+    days_to_expiry, bucket_days, atm_iv, skew_25d, max_pain_strike,
+    open_interest_usd, contract_count)."""
+    if not rows:
+        return
+    with _conn() as c:
+        c.executemany(
+            """INSERT OR REPLACE INTO crypto_options_term_structure
+                 (asset, scraped_at, expiration_date, days_to_expiry,
+                  bucket_days, atm_iv, skew_25d, max_pain_strike,
+                  open_interest_usd, contract_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+
+
+def get_latest_options_term_structure(asset: str) -> list[Row]:
+    """Return the most recent snapshot's term structure for one asset."""
+    with _conn() as c:
+        latest = c.execute(
+            "SELECT MAX(scraped_at) AS ts FROM crypto_options_term_structure "
+            "WHERE asset = ?", (asset,),
+        ).fetchone()
+        if not latest or not latest["ts"]:
+            return []
+        rows = c.execute(
+            """SELECT expiration_date, days_to_expiry, bucket_days, atm_iv,
+                      skew_25d, max_pain_strike, open_interest_usd,
+                      contract_count
+               FROM crypto_options_term_structure
+               WHERE asset = ? AND scraped_at = ?
+               ORDER BY days_to_expiry ASC""",
+            (asset, latest["ts"]),
+        ).fetchall()
+    return _rows(rows)
+
+
+def upsert_dvol_bars(rows: list[tuple]) -> dict:
+    """Insert daily DVOL closes. PK(asset, date) dedupes. rows: (asset, date, dvol)."""
+    if not rows:
+        return {"new": 0}
+    new_n = 0
+    with _conn() as c:
+        for r in rows:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO crypto_dvol_bars (asset, date, dvol) "
+                "VALUES (?, ?, ?)",
+                r,
+            )
+            if cur.rowcount > 0:
+                new_n += 1
+    return {"new": new_n}
+
+
+def get_dvol_bars(asset: str, days: int = 180) -> list[Row]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT date, dvol FROM crypto_dvol_bars
+               WHERE asset = ? AND date >= ? ORDER BY date ASC""",
+            (asset, cutoff),
         ).fetchall()
     return _rows(rows)
 

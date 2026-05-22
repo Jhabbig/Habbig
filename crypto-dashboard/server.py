@@ -50,6 +50,7 @@ import news as news_mod
 import econ_calendar as econ_mod
 import etf_flows as etf_mod
 import cross_asset as ca_mod
+import options as opt_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -508,6 +509,7 @@ async def startup():
     _bg_tasks.add(asyncio.create_task(econ_alert_ticker()))
     _bg_tasks.add(asyncio.create_task(etf_flows_refresher()))
     _bg_tasks.add(asyncio.create_task(cross_asset_refresher()))
+    _bg_tasks.add(asyncio.create_task(options_refresher()))
     _bg_tasks.add(asyncio.create_task(strategy_subscription_ticker()))
     # Load data in background so server is available immediately
     _bg_tasks.add(asyncio.create_task(load_all_assets()))
@@ -630,6 +632,20 @@ async def cross_asset_refresher():
         except Exception as e:
             print(f"[cross-asset] refresh error: {type(e).__name__}: {e}")
         await asyncio.sleep(4 * 3600)
+
+
+async def options_refresher():
+    """Pull Deribit options snapshot + DVOL every 30 min. Options data
+    moves continuously during trading hours; 30 min strikes the balance
+    between freshness and not hammering their API."""
+    await asyncio.sleep(160)
+    while True:
+        try:
+            summary = await asyncio.to_thread(opt_mod.refresh)
+            print(f"[options] {summary.get('assets', {})}")
+        except Exception as e:
+            print(f"[options] refresh error: {type(e).__name__}: {e}")
+        await asyncio.sleep(30 * 60)
 
 
 async def digest_cron_task():
@@ -6837,6 +6853,37 @@ async def cross_asset_force_refresh(request: Request):
     return await asyncio.to_thread(ca_mod.refresh)
 
 
+# ===================================================================
+# OPTIONS — Deribit IV term structure + skew + max pain + DVOL
+# ===================================================================
+
+@app.get("/api/options/overview")
+async def options_overview_api(request: Request):
+    """Latest snapshot for BTC + ETH: term structure, headline skew,
+    DVOL trend, signal. Public read."""
+    return await asyncio.to_thread(opt_mod.overview)
+
+
+@app.get("/api/options/dvol/{asset}")
+async def options_dvol(asset: str, request: Request, days: int = 180):
+    asset = asset.upper()
+    if asset not in opt_mod.ASSETS:
+        raise HTTPException(status_code=400, detail="asset must be BTC or ETH")
+    return await asyncio.to_thread(opt_mod.dvol_series, asset, max(7, min(days, 730)))
+
+
+@app.post("/api/options/refresh")
+async def options_force_refresh(request: Request):
+    """Admin / localhost only — Deribit returns ~5k options per asset
+    so we don't want public abuse."""
+    user = _get_session_user(request)
+    client_host = request.client.host if request.client else ""
+    is_local = client_host in ("127.0.0.1", "::1", "localhost")
+    if not is_local and not (user and user["tier"] == "admin"):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return await asyncio.to_thread(opt_mod.refresh)
+
+
 # ── Notification preferences (digest opt-in) ────────────────────────────────
 
 @app.get("/api/preferences")
@@ -7167,11 +7214,19 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
 </section>
 
 <section data-section="derivatives" hidden>
-  <h2>Derivatives</h2>
+  <h2>Perpetual futures</h2>
   <div class="note">Funding rate is the single best risk-off signal in crypto. Sustained funding &gt; +0.05%/8h ≈ 55%/yr — that's leveraged longs paying through the nose to keep their positions open.</div>
   <div id="deriv-composite" style="margin:12px 0"></div>
   <table id="deriv-table"><thead><tr>
     <th>Ticker</th><th>Funding now</th><th>Annualised</th><th>7d avg</th><th>Signal</th><th>OI (USD)</th><th>OI 7d Δ</th><th>OI signal</th></tr></thead><tbody></tbody></table>
+
+  <h2 style="margin-top:28px">Options — IV term structure + skew (Deribit)</h2>
+  <div class="note">25-delta skew is the cleanest forward-looking risk indicator. Positive skew = puts more expensive than equidistant calls = smart money paying up for downside protection. Sustained positive skew preceded the May 2021 + November 2022 + March 2024 drawdowns by weeks.</div>
+  <div id="opts-headlines" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap"></div>
+  <div id="opts-chart" style="margin-top:14px"></div>
+  <table id="opts-table" style="margin-top:14px"><thead><tr>
+    <th>Asset</th><th>Expiry</th><th>DTE</th><th>Bucket</th><th>ATM IV</th><th>25Δ skew</th><th>Max pain</th><th>OI (USD)</th><th>#</th>
+  </tr></thead><tbody></tbody></table>
 </section>
 
 <section data-section="macro" hidden>
@@ -7680,6 +7735,7 @@ async function loadIndicators(){
 }
 
 async function loadDerivatives(){
+  loadOptions();
   const tbody = document.querySelector('#deriv-table tbody');
   tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Loading…</td></tr>';
   try {
@@ -7711,6 +7767,142 @@ async function loadDerivatives(){
       document.getElementById('deriv-composite').innerHTML = '<span class="note">Funding composite unavailable — needs at least one full refresh cycle.</span>';
     }
   } catch(e) { tbody.innerHTML = `<tr><td colspan="8" class="err">${e.message}</td></tr>`; }
+}
+
+async function loadOptions(){
+  const tbody = document.querySelector('#opts-table tbody');
+  const head = document.getElementById('opts-headlines');
+  const chart = document.getElementById('opts-chart');
+  tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">Loading…</td></tr>';
+  head.innerHTML = '';
+  chart.innerHTML = '';
+  try {
+    const d = await api('/api/options/overview');
+    // Headline tiles per asset
+    for (const asset of ['BTC', 'ETH']) {
+      const s = (d.assets || {})[asset];
+      if (!s) continue;
+      const sigColor = s.signal === 'bullish' ? 'var(--green)'
+                     : s.signal === 'bearish' ? 'var(--red)' : 'var(--muted)';
+      const skewColor = s.headline_skew_25d == null ? 'var(--muted)'
+                       : s.headline_skew_25d > 0 ? 'var(--red)' : 'var(--green)';
+      const dvolChg = s.dvol_30d_change_pct;
+      const dvolColor = dvolChg == null ? 'var(--muted)'
+                      : dvolChg >= 0 ? 'var(--red)' : 'var(--green)';
+      head.insertAdjacentHTML('beforeend', `
+        <div class="card" style="min-width:240px;padding:12px 16px">
+          <div style="font-size:.75em;color:var(--muted);text-transform:uppercase">${esc(asset)} options</div>
+          <div style="font-size:1.3em;font-weight:600;margin-top:2px">
+            Skew <span style="color:${skewColor}">${s.headline_skew_25d == null ? '—' : (s.headline_skew_25d > 0 ? '+' : '') + s.headline_skew_25d.toFixed(1)}</span>
+            · <span style="color:${sigColor}"><b>${esc(s.signal)}</b></span>
+          </div>
+          <div style="font-size:.85em;margin-top:6px">
+            Front IV: <b>${s.front_month_atm_iv == null ? '—' : s.front_month_atm_iv.toFixed(1) + '%'}</b>
+            · Term slope (90d-30d): ${s.term_slope_90d_minus_30d == null ? '—' : (s.term_slope_90d_minus_30d > 0 ? '+' : '') + s.term_slope_90d_minus_30d.toFixed(2)}
+          </div>
+          <div style="font-size:.85em;margin-top:2px">
+            DVOL: <b>${s.dvol_now == null ? '—' : s.dvol_now.toFixed(1)}</b>
+            <span style="color:${dvolColor}">(30d ${dvolChg == null ? '—' : (dvolChg >= 0 ? '+' : '') + dvolChg.toFixed(1) + '%'})</span>
+          </div>
+        </div>`);
+    }
+
+    // Term-structure rows for both assets, BTC first.
+    const allRows = [];
+    for (const asset of ['BTC', 'ETH']) {
+      const ts = ((d.assets || {})[asset] || {}).term_structure || [];
+      for (const r of ts) allRows.push({asset, ...r});
+    }
+    if (!allRows.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="color:var(--muted)">No options snapshot yet — refresher runs every 30 min on startup.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    for (const r of allRows) {
+      const skewColor = r.skew_25d == null ? '' : r.skew_25d > 0 ? 'loss' : 'gain';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><b style="color:${r.asset === 'BTC' ? '#f7931a' : '#3b82f6'}">${esc(r.asset)}</b></td>
+        <td>${esc(r.expiration_date)}</td>
+        <td>${r.days_to_expiry}d</td>
+        <td><span class="pill p-neutral">${r.bucket_days}d</span></td>
+        <td>${r.atm_iv == null ? '—' : r.atm_iv.toFixed(1) + '%'}</td>
+        <td class="${skewColor}">${r.skew_25d == null ? '—' : (r.skew_25d > 0 ? '+' : '') + r.skew_25d.toFixed(2)}</td>
+        <td>${r.max_pain_strike == null ? '—' : usd(r.max_pain_strike)}</td>
+        <td>${fmtBigUsd(r.open_interest_usd)}</td>
+        <td style="color:var(--muted)">${r.contract_count}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    // Term-structure overlay chart (ATM IV by bucket, both assets).
+    chart.innerHTML = renderTermStructureChart(d.assets || {});
+  } catch(e) { tbody.innerHTML = '<tr><td colspan="9" class="err">' + esc(e.message) + '</td></tr>'; }
+}
+
+function renderTermStructureChart(byAsset){
+  // Collect (bucket_days, atm_iv) per asset.
+  const series = {};
+  for (const asset of ['BTC', 'ETH']) {
+    const ts = (byAsset[asset] || {}).term_structure || [];
+    const points = [];
+    for (const r of ts) {
+      if (r.atm_iv == null) continue;
+      points.push([r.bucket_days, r.atm_iv]);
+    }
+    // Average per bucket if multiple expiries fall in same bucket.
+    const buckets = {};
+    for (const [b, v] of points) {
+      (buckets[b] = buckets[b] || []).push(v);
+    }
+    const merged = Object.keys(buckets).map(b => [parseInt(b),
+      buckets[b].reduce((a,c)=>a+c,0)/buckets[b].length]).sort((a,b)=>a[0]-b[0]);
+    if (merged.length) series[asset] = merged;
+  }
+  if (!Object.keys(series).length) return '';
+
+  // Find axis bounds.
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  for (const s of Object.values(series)) {
+    for (const [x, y] of s) {
+      if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+      if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+    }
+  }
+  if (xMin === xMax || yMin === yMax) return '';
+  const yPad = (yMax - yMin) * 0.10 || 1;
+  yMin -= yPad; yMax += yPad;
+  const w = 700, h = 240, pL = 50, pR = 12, pT = 12, pB = 28;
+  const xs = (x) => pL + ((x - xMin) / (xMax - xMin)) * (w - pL - pR);
+  const ys = (y) => h - pB - ((y - yMin) / (yMax - yMin)) * (h - pT - pB);
+  const colors = {BTC: '#f7931a', ETH: '#3b82f6'};
+
+  let svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="240" style="background:var(--card2);border-radius:8px">';
+  // Y labels
+  svg += '<text x="' + (pL - 4) + '" y="' + (pT + 8) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + yMax.toFixed(1) + '%</text>';
+  svg += '<text x="' + (pL - 4) + '" y="' + (h - pB - 2) + '" fill="#7d8a99" font-size="10" text-anchor="end">' + yMin.toFixed(1) + '%</text>';
+  // X labels: bucket markers
+  for (const b of [7, 30, 90, 180, 365]) {
+    if (b < xMin || b > xMax) continue;
+    const x = xs(b);
+    svg += '<line x1="' + x.toFixed(1) + '" y1="' + (h - pB) + '" x2="' + x.toFixed(1) + '" y2="' + (h - pB + 3) + '" stroke="#7d8a99" stroke-width="1"/>';
+    svg += '<text x="' + x.toFixed(1) + '" y="' + (h - pB + 14) + '" fill="#7d8a99" font-size="10" text-anchor="middle">' + b + 'd</text>';
+  }
+  // Lines
+  for (const [asset, pts] of Object.entries(series)) {
+    const col = colors[asset] || '#e6edf5';
+    const path = pts.map(([x, y]) => xs(x).toFixed(1) + ',' + ys(y).toFixed(1)).join(' ');
+    svg += '<polyline fill="none" stroke="' + col + '" stroke-width="2" points="' + path + '"/>';
+    // Dot markers
+    for (const [x, y] of pts) {
+      svg += '<circle cx="' + xs(x).toFixed(1) + '" cy="' + ys(y).toFixed(1) + '" r="3" fill="' + col + '"/>';
+    }
+    // Endpoint label
+    const [lastX, lastY] = pts[pts.length - 1];
+    svg += '<text x="' + (xs(lastX) + 6) + '" y="' + (ys(lastY) + 3) + '" fill="' + col + '" font-size="11" font-weight="600">' + asset + '</text>';
+  }
+  svg += '<text x="' + pL + '" y="' + (pT + 16) + '" fill="#7d8a99" font-size="11">ATM IV term structure</text>';
+  svg += '</svg>';
+  return svg;
 }
 
 async function loadMacro(){
