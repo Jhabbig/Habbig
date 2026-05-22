@@ -35,6 +35,14 @@
     .generate-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .new-token-banner { background: var(--green-bg); border: 1px solid var(--green); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
     .new-token-banner .token-mono { font-size: 15px; color: var(--green); user-select: all; }
+    .new-key-banner { background: var(--accent-light); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 14px 18px; margin-bottom: 20px; }
+    .new-key-banner .token-mono { font-size: 15px; color: var(--accent); user-select: all; }
+    .key-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+    .key-status-dot.active { background: var(--green); }
+    .key-status-dot.disabled { background: var(--text-muted); }
+    .key-status-dot.expired { background: var(--red); }
+    .generate-form select { padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary); }
+    .generate-form select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
     .quota-bar { width: 100%; height: 6px; background: var(--border-light); border-radius: 3px; margin-top: 8px; overflow: hidden; }
     .quota-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
   </style>
@@ -62,6 +70,9 @@
 
     <div class="admin-tabs">
       <button class="admin-tab active" onclick="switchTab('tokens')">Tokens</button>
+      <button class="admin-tab" onclick="switchTab('keys')">Investor Keys</button>
+      <button class="admin-tab" onclick="switchTab('templates')">Templates</button>
+      <button class="admin-tab" onclick="switchTab('analytics')">Analytics</button>
       <button class="admin-tab" onclick="switchTab('users')">Users</button>
       <button class="admin-tab" onclick="switchTab('enquiries')">Enquiries</button>
       <button class="admin-tab" onclick="switchTab('revenue')">Revenue</button>
@@ -87,6 +98,123 @@
 
       <div class="admin-list">
         {{ raw_token_rows }}
+      </div>
+    </div>
+
+    <!-- ======== INVESTOR KEYS ======== -->
+    <div id="panel-keys" class="admin-panel">
+      {{ raw_new_key_banner }}
+
+      <div style="margin-bottom: 20px;">
+        <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 8px;">Load from template (optional)</label>
+        <select id="template-select" onchange="loadTemplate()" style="flex: 1 1 250px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary);">
+          <option value="">— Select a template —</option>
+        </select>
+      </div>
+
+      <form class="generate-form" method="post" action="/admin/superuser-keys/generate" style="flex-wrap: wrap;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <input type="text" name="custom_key" id="key-custom_key" placeholder="Custom key (e.g., Julian-habbig)" style="flex: 0 1 200px;">
+        <input type="text" name="name" id="key-name" placeholder="Key name (e.g., Q2 2024 Investors)" style="flex: 1 1 250px;">
+        <input type="text" name="aspects" id="key-aspects" placeholder="Aspects (e.g., read-only,demo-mode)" style="flex: 1 1 250px;">
+        <select name="expires_in_days" id="key-expires" style="flex: 0 1 130px;">
+          <option value="">No expiration</option>
+          <option value="7">Expires in 7 days</option>
+          <option value="30">Expires in 30 days</option>
+          <option value="90">Expires in 90 days</option>
+          <option value="180">Expires in 180 days</option>
+        </select>
+        <button type="submit" class="btn btn-primary" style="white-space:nowrap">+ Create Key</button>
+      </form>
+
+      <div style="margin-bottom: 16px;">
+        <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 8px;">Dashboards (leave empty for all)</label>
+        <div id="dashboard-checkboxes" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;">
+          <!-- Populated by JavaScript -->
+        </div>
+        <input type="hidden" name="dashboards" id="key-dashboards" value="">
+      </div>
+
+      <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterKeys('all',this)">All</button>
+        <button class="filter-btn" onclick="filterKeys('active',this)">Active</button>
+        <button class="filter-btn" onclick="filterKeys('disabled',this)">Disabled</button>
+        <button class="filter-btn" onclick="filterKeys('expired',this)">Expired</button>
+      </div>
+
+      <div class="admin-list" id="keys-list">
+        {{ raw_key_rows }}
+      </div>
+    </div>
+
+    <!-- ======== TEMPLATES ======== -->
+    <div id="panel-templates" class="admin-panel">
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 16px; margin-bottom: 16px;">Create New Template</h3>
+        <form id="template-form" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 20px;">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 6px;">Template Name</label>
+            <input type="text" name="name" id="tpl-name" placeholder="e.g., Demo Mode" required style="width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary);">
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 6px;">Description</label>
+            <input type="text" name="description" id="tpl-description" placeholder="Brief description (optional)" style="width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary);">
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 8px;">Dashboards</label>
+            <div id="tpl-dashboard-checkboxes" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px;">
+              <!-- Populated by JavaScript -->
+            </div>
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 6px;">Aspects (comma-separated)</label>
+            <input type="text" name="aspects" id="tpl-aspects" placeholder="e.g., read-only,demo-mode" style="width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; background: var(--surface); color: var(--text-primary);">
+          </div>
+          <button type="button" onclick="createTemplate()" class="btn btn-primary">+ Create Template</button>
+        </form>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 16px; margin-bottom: 16px;">Existing Templates</h3>
+        <div id="templates-list" class="admin-list">
+          <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading templates...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== ANALYTICS ======== -->
+    <div id="panel-analytics" class="admin-panel">
+      <div style="margin-bottom: 24px;">
+        <h2 style="font-size: 18px; margin-bottom: 16px;">Key Usage Analytics</h2>
+        <div id="analytics-stats" class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Usage Events</div>
+            <div class="stat-value" id="stat-total">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Most Used Key</div>
+            <div class="stat-value" id="stat-most-used">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unused Keys</div>
+            <div class="stat-value" id="stat-unused">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 16px; margin-bottom: 12px;">Most Used Keys (Last 30 days)</h3>
+        <div id="most-used-list" class="admin-list">
+          <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading...</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 16px; margin-bottom: 12px;">Unused Keys</h3>
+        <div id="unused-list" class="admin-list">
+          <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading...</div>
+        </div>
       </div>
     </div>
 
@@ -170,6 +298,57 @@ function copyToken(el) {
   navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
 }
 
+function copyKey(el) {
+  const text = el.closest('.new-key-banner').querySelector('.token-mono').textContent;
+  navigator.clipboard.writeText(text).then(() => { el.textContent = 'Copied!'; setTimeout(() => el.textContent = 'Copy', 2000); });
+}
+
+function filterKeys(status, btn) {
+  document.querySelectorAll('#panel-keys .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.key-row').forEach(row => {
+    const rowStatus = row.dataset.status || 'active';
+    row.style.display = (status === 'all' || rowStatus === status) ? '' : 'none';
+  });
+}
+
+function toggleKeyStatus(keyId, btn) {
+  const csrf = document.querySelector('input[name="_csrf_token"]').value;
+  const newState = btn.textContent.includes('Disable') ? 'disable' : 'enable';
+  const action = newState === 'disable' ? 'disable' : 'enable';
+
+  fetch(`/admin/superuser-keys/${keyId}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `_csrf_token=${encodeURIComponent(csrf)}`
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      const row = btn.closest('.key-row');
+      const newStatus = action === 'disable' ? 'disabled' : 'active';
+      row.dataset.status = newStatus;
+      const dot = row.querySelector('.key-status-dot');
+      dot.className = `key-status-dot ${newStatus}`;
+      btn.textContent = newStatus === 'disabled' ? 'Enable' : 'Disable';
+    }
+  });
+}
+
+function deleteKey(keyId) {
+  if (!confirm('Are you sure? This action cannot be undone.')) return;
+  const csrf = document.querySelector('input[name="_csrf_token"]').value;
+  const row = document.querySelector(`.key-row[data-key-id="${keyId}"]`);
+
+  fetch(`/admin/superuser-keys/${keyId}/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `_csrf_token=${encodeURIComponent(csrf)}`
+  })
+  .then(r => r.ok ? location.reload() : alert('Failed to delete key'))
+  .catch(e => alert('Error: ' + e));
+}
+
 // Enquiry filter
 function filterEnquiries(type, btn) {
   btn.parentElement.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
@@ -225,6 +404,226 @@ function toggleUserDetail(el) {
     if (e.target.classList.contains('user-check')) updateBulkBar();
   });
 })();
+
+// ========== Dashboard Checkboxes ==========
+async function loadDashboardCheckboxes() {
+  try {
+    const res = await fetch('/admin/api/available-dashboards');
+    const data = await res.json();
+    const container = document.getElementById('dashboard-checkboxes');
+    const tplContainer = document.getElementById('tpl-dashboard-checkboxes');
+
+    let html = '';
+    for (const dash of data.dashboards) {
+      html += `<label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer">
+        <input type="checkbox" value="${dash.key}" onchange="updateDashboardSelection()" style="width:16px; height:16px; accent-color:var(--accent); cursor:pointer">
+        ${dash.display_name}
+      </label>`;
+    }
+    container.innerHTML = html;
+    tplContainer.innerHTML = html;
+  } catch (e) {
+    console.error('Failed to load dashboards:', e);
+  }
+}
+
+function updateDashboardSelection() {
+  const checked = Array.from(document.querySelectorAll('#dashboard-checkboxes input:checked')).map(c => c.value);
+  document.getElementById('key-dashboards').value = checked.join(',');
+}
+
+// ========== Templates ==========
+async function loadTemplates() {
+  try {
+    const res = await fetch('/admin/api/templates');
+    const data = await res.json();
+
+    // Update dropdown
+    const select = document.getElementById('template-select');
+    select.innerHTML = '<option value="">— Select a template —</option>';
+    for (const tpl of data.templates) {
+      const opt = document.createElement('option');
+      opt.value = tpl.id;
+      opt.textContent = tpl.name + (tpl.description ? ` — ${tpl.description}` : '');
+      select.appendChild(opt);
+    }
+
+    // Update templates list
+    const list = document.getElementById('templates-list');
+    if (data.templates.length === 0) {
+      list.innerHTML = '<div style="padding:24px; text-align:center; color:var(--text-muted)">No templates created yet</div>';
+      return;
+    }
+
+    let html = '';
+    for (const tpl of data.templates) {
+      html += `<div class="admin-row">
+        <div class="admin-row-info">
+          <div class="admin-row-main" style="font-weight:500">${tpl.name}</div>
+          <div class="admin-row-meta">
+            <span>Dashboards: ${tpl.dashboards.length > 0 ? tpl.dashboards.join(', ') : 'all'}</span>
+            <span>Aspects: ${tpl.aspects.length > 0 ? tpl.aspects.join(', ') : '(none)'}</span>
+          </div>
+          ${tpl.description ? `<div style="font-size:12px; color:var(--text-secondary); margin-top:4px">${tpl.description}</div>` : ''}
+        </div>
+        <div class="admin-row-actions">
+          <button type="button" onclick="deleteTemplate(${tpl.id})" class="btn btn-danger-outline" style="font-size:11px">Delete</button>
+        </div>
+      </div>`;
+    }
+    list.innerHTML = html;
+  } catch (e) {
+    console.error('Failed to load templates:', e);
+  }
+}
+
+async function createTemplate() {
+  const name = document.getElementById('tpl-name').value;
+  const description = document.getElementById('tpl-description').value;
+  const aspects = document.getElementById('tpl-aspects').value;
+  const dashboards = Array.from(document.querySelectorAll('#tpl-dashboard-checkboxes input:checked')).map(c => c.value).join(',');
+
+  if (!name) {
+    alert('Template name is required');
+    return;
+  }
+
+  try {
+    const csrf = document.querySelector('input[name="_csrf_token"]').value;
+    const res = await fetch('/admin/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf_token=${encodeURIComponent(csrf)}&name=${encodeURIComponent(name)}&description=${encodeURIComponent(description)}&aspects=${encodeURIComponent(aspects)}&dashboards=${encodeURIComponent(dashboards)}`
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      document.getElementById('tpl-name').value = '';
+      document.getElementById('tpl-description').value = '';
+      document.getElementById('tpl-aspects').value = '';
+      document.querySelectorAll('#tpl-dashboard-checkboxes input').forEach(c => c.checked = false);
+      loadTemplates();
+    } else {
+      alert('Error: ' + (data.error || 'Failed to create template'));
+    }
+  } catch (e) {
+    alert('Error: ' + e);
+  }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Delete this template?')) return;
+
+  try {
+    const csrf = document.querySelector('input[name="_csrf_token"]').value;
+    const res = await fetch(`/admin/api/templates/${id}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `_csrf_token=${encodeURIComponent(csrf)}`
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      loadTemplates();
+    } else {
+      alert('Error: ' + (data.error || 'Failed to delete template'));
+    }
+  } catch (e) {
+    alert('Error: ' + e);
+  }
+}
+
+async function loadTemplate() {
+  const id = document.getElementById('template-select').value;
+  if (!id) {
+    document.getElementById('key-name').value = '';
+    document.getElementById('key-aspects').value = '';
+    document.querySelectorAll('#dashboard-checkboxes input').forEach(c => c.checked = false);
+    updateDashboardSelection();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/admin/api/templates/${id}`);
+    const tpl = await res.json();
+
+    document.getElementById('key-name').value = tpl.name;
+    document.getElementById('key-aspects').value = tpl.aspects.join(',');
+
+    // Check matching dashboards
+    document.querySelectorAll('#dashboard-checkboxes input').forEach(c => {
+      c.checked = tpl.dashboards.includes(c.value);
+    });
+    updateDashboardSelection();
+  } catch (e) {
+    console.error('Failed to load template:', e);
+  }
+}
+
+// ========== Analytics ==========
+async function loadAnalytics() {
+  try {
+    const res = await fetch('/admin/api/usage-stats?days=30');
+    const stats = await res.json();
+
+    // Update stat cards
+    document.getElementById('stat-total').textContent = stats.total_usage_events.toLocaleString();
+    document.getElementById('stat-most-used').textContent = stats.most_used_keys.length > 0 ? stats.most_used_keys[0].name : '—';
+    document.getElementById('stat-unused').textContent = stats.unused_keys.length;
+
+    // Most used list
+    const mostUsedList = document.getElementById('most-used-list');
+    if (stats.most_used_keys.length === 0) {
+      mostUsedList.innerHTML = '<div style="padding:24px; text-align:center; color:var(--text-muted)">No usage data yet</div>';
+    } else {
+      let html = '';
+      for (const key of stats.most_used_keys) {
+        html += `<div class="admin-row">
+          <div class="admin-row-info">
+            <div class="admin-row-main">${key.name}</div>
+            <div class="admin-row-meta"><span>${key.count} usage events</span></div>
+          </div>
+        </div>`;
+      }
+      mostUsedList.innerHTML = html;
+    }
+
+    // Unused list
+    const unusedList = document.getElementById('unused-list');
+    if (stats.unused_keys.length === 0) {
+      unusedList.innerHTML = '<div style="padding:24px; text-align:center; color:var(--green)">All keys are being used!</div>';
+    } else {
+      let html = '';
+      for (const key of stats.unused_keys.slice(0, 10)) {
+        html += `<div class="admin-row">
+          <div class="admin-row-info">
+            <div class="admin-row-main">${key.name}</div>
+          </div>
+        </div>`;
+      }
+      if (stats.unused_keys.length > 10) {
+        html += `<div style="padding:12px 24px; text-align:center; font-size:12px; color:var(--text-muted)">and ${stats.unused_keys.length - 10} more...</div>`;
+      }
+      unusedList.innerHTML = html;
+    }
+  } catch (e) {
+    console.error('Failed to load analytics:', e);
+  }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+  loadDashboardCheckboxes();
+  loadTemplates();
+
+  // Load analytics when analytics tab is opened
+  const analyticsTab = document.querySelector('[onclick="switchTab(\'analytics\')"]');
+  if (analyticsTab) {
+    analyticsTab.addEventListener('click', function() {
+      setTimeout(loadAnalytics, 100);
+    });
+  }
+});
 </script>
 </body>
 </html>

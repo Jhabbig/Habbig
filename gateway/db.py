@@ -124,6 +124,35 @@ CREATE TABLE IF NOT EXISTS stripe_events (
     processed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS superuser_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT UNIQUE NOT NULL,
+    name            TEXT NOT NULL,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER,
+    last_used_at    INTEGER,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_templates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_usage_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id          INTEGER NOT NULL,
+    accessed_at     INTEGER NOT NULL,
+    dashboard_key   TEXT,
+    FOREIGN KEY (key_id) REFERENCES superuser_keys(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_positions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL,
@@ -159,6 +188,11 @@ CREATE INDEX IF NOT EXISTS idx_stripe_events_processed ON stripe_events(processe
 CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_positions_platform ON user_positions(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_superuser_keys ON superuser_keys(key);
+CREATE INDEX IF NOT EXISTS idx_superuser_active ON superuser_keys(active);
+CREATE INDEX IF NOT EXISTS idx_templates_created ON superuser_key_templates(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_key ON superuser_key_usage_logs(key_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_accessed ON superuser_key_usage_logs(accessed_at);
 """
 
 
@@ -1168,3 +1202,375 @@ def rebuild_positions_for_user(user_id: int) -> int:
         )
         count += 1
     return count
+
+
+# ── Superuser key operations ─────────────────────────────────────────────────
+
+def generate_superuser_key() -> str:
+    """Generate a 32-character URL-safe random superuser key."""
+    return secrets.token_urlsafe(24)
+
+
+def create_superuser_key(name: str, dashboards: list[str] | None = None, expires_in_days: int | None = None, custom_key: str | None = None, aspects: list[str] | None = None) -> str:
+    """Create a new superuser key.
+
+    Args:
+        name: Human-readable name for the key
+        dashboards: List of dashboard keys this superuser can access (empty = all)
+        expires_in_days: Number of days until key expires (None = never expires)
+        custom_key: Optional custom key string (e.g., "Julian-habbig"). If not provided, generates random.
+        aspects: List of aspect strings (e.g., ["read-only", "no-trading", "demo-mode"])
+
+    Returns:
+        The generated superuser key
+    """
+    key = custom_key if custom_key else generate_superuser_key()
+
+    # Validate custom key if provided
+    if custom_key:
+        if not custom_key.strip():
+            raise ValueError("Custom key cannot be empty")
+        if len(custom_key) < 3:
+            raise ValueError("Custom key must be at least 3 characters")
+        # Allow alphanumeric, hyphens, underscores
+        if not all(c.isalnum() or c in ('-', '_') for c in custom_key):
+            raise ValueError("Custom key can only contain alphanumeric characters, hyphens, and underscores")
+
+    now = int(time.time())
+    expires_at = None
+    if expires_in_days is not None:
+        expires_at = now + (expires_in_days * 86400)
+
+    dashboards_str = ",".join(dashboards) if dashboards else ""
+    aspects_str = ",".join(aspects) if aspects else ""
+
+    with conn() as c:
+        c.execute(
+            """INSERT INTO superuser_keys (key, name, dashboards, aspects, created_at, expires_at, active)
+               VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            (key, name, dashboards_str, aspects_str, now, expires_at),
+        )
+    return key
+
+
+def validate_superuser_key(key: str) -> dict | None:
+    """Check if a superuser key is valid and active.
+
+    Returns:
+        dict with key info if valid, None otherwise
+    """
+    now = int(time.time())
+    with conn() as c:
+        row = c.execute(
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at
+               FROM superuser_keys
+               WHERE key = ? AND active = 1
+               AND (expires_at IS NULL OR expires_at > ?)""",
+            (key, now),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    # Update last_used_at and log usage
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET last_used_at = ? WHERE key = ?", (now, key))
+        log_key_usage(row["id"])
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+        "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "last_used_at": row["last_used_at"],
+    }
+
+
+def has_superuser_key_access(key: str, dashboard_key: str) -> bool:
+    """Check if a superuser key grants access to a specific dashboard."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return False
+
+    # Empty dashboards list means access to all dashboards
+    if not key_info["dashboards"]:
+        return True
+
+    return dashboard_key in key_info["dashboards"]
+
+
+def key_has_aspect(key: str, aspect: str) -> bool:
+    """Check if a superuser key has a specific aspect."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return False
+    return aspect.lower().strip() in [a.lower() for a in key_info["aspects"]]
+
+
+def get_key_aspects(key: str) -> list[str]:
+    """Get all aspects for a superuser key."""
+    key_info = validate_superuser_key(key)
+    if key_info is None:
+        return []
+    return key_info["aspects"]
+
+
+def list_superuser_keys() -> list[dict]:
+    """List all superuser keys (excluding the actual key values)."""
+    with conn() as c:
+        rows = c.execute(
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at, active
+               FROM superuser_keys
+               ORDER BY created_at DESC"""
+        ).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+            "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "last_used_at": row["last_used_at"],
+            "active": bool(row["active"]),
+        }
+        for row in rows
+    ]
+
+
+def revoke_superuser_key(key_id: int) -> bool:
+    """Revoke a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
+        return c.total_changes > 0
+
+
+def toggle_superuser_key(key_id: int) -> dict | None:
+    """Toggle a superuser key's active status. Returns updated key info or None if not found."""
+    with conn() as c:
+        # Get current status
+        row = c.execute(
+            "SELECT id, active FROM superuser_keys WHERE id = ?",
+            (key_id,),
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        # Toggle status
+        new_active = 1 if not row["active"] else 0
+        c.execute(
+            "UPDATE superuser_keys SET active = ? WHERE id = ?",
+            (new_active, key_id),
+        )
+
+        # Return updated info
+        updated = c.execute(
+            """SELECT id, name, dashboards, aspects, created_at, expires_at, last_used_at, active
+               FROM superuser_keys WHERE id = ?""",
+            (key_id,),
+        ).fetchone()
+
+        return {
+            "id": updated["id"],
+            "name": updated["name"],
+            "dashboards": [d.strip() for d in updated["dashboards"].split(",") if d.strip()],
+            "aspects": [a.strip() for a in updated["aspects"].split(",") if a.strip()],
+            "created_at": updated["created_at"],
+            "expires_at": updated["expires_at"],
+            "last_used_at": updated["last_used_at"],
+            "active": bool(updated["active"]),
+        }
+
+
+def enable_superuser_key(key_id: int) -> bool:
+    """Enable a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 1 WHERE id = ?", (key_id,))
+        return c.total_changes > 0
+
+
+def disable_superuser_key(key_id: int) -> bool:
+    """Disable a superuser key by ID. Returns True if successful."""
+    with conn() as c:
+        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
+        return c.total_changes > 0
+
+
+# ── Template functions ──────────────────────────────────────────────────────
+
+def create_superuser_key_template(name: str, description: str = "", dashboards: list[str] | None = None, aspects: list[str] | None = None) -> int:
+    """Create a reusable key template. Returns template ID."""
+    dashboards_str = ",".join(dashboards) if dashboards else ""
+    aspects_str = ",".join(aspects) if aspects else ""
+    now = int(time.time())
+
+    with conn() as c:
+        c.execute(
+            """INSERT INTO superuser_key_templates (name, description, dashboards, aspects, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (name, description, dashboards_str, aspects_str, now),
+        )
+        return c.lastrowid
+
+
+def list_superuser_key_templates() -> list[dict]:
+    """List all key templates."""
+    with conn() as c:
+        rows = c.execute(
+            """SELECT id, name, description, dashboards, aspects, created_at
+               FROM superuser_key_templates
+               ORDER BY created_at DESC"""
+        ).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+            "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_superuser_key_template(template_id: int) -> dict | None:
+    """Get a specific template by ID."""
+    with conn() as c:
+        row = c.execute(
+            """SELECT id, name, description, dashboards, aspects, created_at
+               FROM superuser_key_templates WHERE id = ?""",
+            (template_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "dashboards": [d.strip() for d in row["dashboards"].split(",") if d.strip()],
+        "aspects": [a.strip() for a in row["aspects"].split(",") if a.strip()],
+        "created_at": row["created_at"],
+    }
+
+
+def delete_superuser_key_template(template_id: int) -> bool:
+    """Delete a template. Returns True if successful."""
+    with conn() as c:
+        c.execute("DELETE FROM superuser_key_templates WHERE id = ?", (template_id,))
+        return c.total_changes > 0
+
+
+# ── Usage analytics functions ──────────────────────────────────────────────
+
+def log_key_usage(key_id: int, dashboard_key: str | None = None) -> None:
+    """Log a key usage event."""
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            """INSERT INTO superuser_key_usage_logs (key_id, accessed_at, dashboard_key)
+               VALUES (?, ?, ?)""",
+            (key_id, now, dashboard_key),
+        )
+
+
+def get_key_usage_stats(key_id: int, days: int = 30) -> dict:
+    """Get usage stats for a specific key (last N days)."""
+    cutoff_time = int(time.time()) - (days * 86400)
+    with conn() as c:
+        # Total uses
+        total = c.execute(
+            "SELECT COUNT(*) as cnt FROM superuser_key_usage_logs WHERE key_id = ? AND accessed_at > ?",
+            (key_id, cutoff_time),
+        ).fetchone()
+
+        # Uses by dashboard
+        by_dashboard = c.execute(
+            """SELECT dashboard_key, COUNT(*) as cnt FROM superuser_key_usage_logs
+               WHERE key_id = ? AND accessed_at > ?
+               GROUP BY dashboard_key ORDER BY cnt DESC""",
+            (key_id, cutoff_time),
+        ).fetchall()
+
+        # Last used
+        last_use = c.execute(
+            "SELECT accessed_at FROM superuser_key_usage_logs WHERE key_id = ? ORDER BY accessed_at DESC LIMIT 1",
+            (key_id,),
+        ).fetchone()
+
+    return {
+        "total_uses": total["cnt"] if total else 0,
+        "uses_by_dashboard": [
+            {"dashboard": row["dashboard_key"], "count": row["cnt"]}
+            for row in by_dashboard
+        ],
+        "last_used": last_use["accessed_at"] if last_use else None,
+        "period_days": days,
+    }
+
+
+def get_all_usage_stats(days: int = 30) -> dict:
+    """Get usage analytics for all keys."""
+    cutoff_time = int(time.time()) - (days * 86400)
+    with conn() as c:
+        # Overall stats
+        overall = c.execute(
+            "SELECT COUNT(*) as total_logs FROM superuser_key_usage_logs WHERE accessed_at > ?",
+            (cutoff_time,),
+        ).fetchone()
+
+        # Most used keys
+        most_used = c.execute(
+            """SELECT sk.id, sk.name, COUNT(*) as cnt
+               FROM superuser_key_usage_logs ul
+               JOIN superuser_keys sk ON ul.key_id = sk.id
+               WHERE ul.accessed_at > ?
+               GROUP BY ul.key_id
+               ORDER BY cnt DESC LIMIT 10""",
+            (cutoff_time,),
+        ).fetchall()
+
+        # Unused keys (never used or not used in period)
+        unused = c.execute(
+            """SELECT id, name FROM superuser_keys
+               WHERE id NOT IN (
+                   SELECT DISTINCT key_id FROM superuser_key_usage_logs WHERE accessed_at > ?
+               )
+               ORDER BY created_at DESC""",
+            (cutoff_time,),
+        ).fetchall()
+
+        # Usage trend (daily)
+        trend = c.execute(
+            """SELECT DATE(accessed_at, 'unixepoch') as day, COUNT(*) as cnt
+               FROM superuser_key_usage_logs
+               WHERE accessed_at > ?
+               GROUP BY day
+               ORDER BY day DESC
+               LIMIT 30""",
+            (cutoff_time,),
+        ).fetchall()
+
+    return {
+        "total_usage_events": overall["total_logs"] if overall else 0,
+        "most_used_keys": [
+            {"id": row["id"], "name": row["name"], "count": row["cnt"]}
+            for row in most_used
+        ],
+        "unused_keys": [
+            {"id": row["id"], "name": row["name"]}
+            for row in unused
+        ],
+        "daily_trend": [
+            {"day": row["day"], "count": row["cnt"]}
+            for row in trend
+        ],
+        "period_days": days,
+    }
