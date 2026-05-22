@@ -28,6 +28,7 @@ from analysis import elections as election_analysis
 from analysis import eras as era_analysis
 from analysis import mood_index
 from analysis import narrative as narrative_analysis
+from analysis import release_feed as release_feed_analysis
 from analysis import shareable
 from analysis import state_mood as state_mood_analysis
 from ingestion import fred_client, polls_client, polymarket_client, states_client, worldbank_client
@@ -179,6 +180,12 @@ async def api_narrative(force: bool = False) -> JSONResponse:
     return JSONResponse(_narrative_payload(force=force))
 
 
+@app.get("/api/releases")
+async def api_releases(force: bool = False) -> JSONResponse:
+    life = fred_client.get_cached(force=force)
+    return JSONResponse(release_feed_analysis.compose(life))
+
+
 @app.get("/api/mood")
 async def api_mood(force: bool = False) -> JSONResponse:
     life = fred_client.get_cached(force=force)
@@ -201,6 +208,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
     raw_world = worldbank_client.get_cached(force=force)
     world = {**world_analysis.summarise(raw_world["countries"]), "fetched_at": raw_world.get("fetched_at")}
     narrative = narrative_analysis.generate(composed, life, polls, backtest, force=False)
+    releases = release_feed_analysis.compose(life)
     return JSONResponse({
         "mood": composed,
         "life": life,
@@ -211,6 +219,7 @@ async def api_summary(force: bool = False) -> JSONResponse:
         "states": states,
         "world": world,
         "narrative": narrative,
+        "releases": releases,
     })
 
 

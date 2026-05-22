@@ -60,6 +60,12 @@ to capture the "fear gap" that often drives sentiment.
 The misery index (UNRATE + CPI YoY) is shown as a footnote — the single
 backwards-looking number that tracks "how it feels" most reliably.
 
+A **"What changed" release feed** at the top of the page surfaces every
+series' latest observation with period-over-period delta and a human-
+readable "how long ago" — built entirely from the existing FRED cache,
+no new fetching. Gives returning readers a one-glance answer to "has
+anything moved since I last looked?".
+
 A linked **methodology page** at `/methodology` documents every source,
 the mood-index formula, and the four-year-delta computation.
 
@@ -140,6 +146,7 @@ DEV_MODE=1 python3 server.py
 - `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
 - `GET /api/country/{iso3}` — full per-country profile: latest inflation, unemployment, GDP growth, life expectancy, population + annual sector trajectory on the Clark–Fisher arc
 - `GET /api/narrative` — 3-sentence AI summary of the current snapshot
+- `GET /api/releases` — recent-release feed (every series' latest observation, newest first)
 - `GET /share/mood`, `/share/mood.png` — public OG card for the national mood
 - `GET /share/backtest`, `/share/backtest.png` — public OG card for the election backtest
 - `GET /share/country/{iso3}`, `/share/country/{iso3}.png` — public OG card per country

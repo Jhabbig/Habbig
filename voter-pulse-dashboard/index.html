@@ -43,6 +43,27 @@
   header a.metholink { color: var(--accent); text-decoration: none; font-size: 12px; }
   header a.metholink:hover { text-decoration: underline; }
 
+  /* ── Mobile pass ──────────────────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    header { padding: 14px 16px; gap: 10px; }
+    header h1 { font-size: 16px; flex: 1 1 auto; }
+    header .meta { font-size: 11px; }
+    header .meta.right { flex-basis: 100%; margin-left: 0; }
+    main { padding: 16px; gap: 16px; }
+    .panel { padding: 16px; border-radius: 8px; }
+    .panel h2 { font-size: 11px; }
+    .bt-horizons { grid-template-columns: repeat(2, 1fr); }
+    .bt-headline .num { font-size: 44px; }
+    .tile-grid { grid-auto-rows: minmax(34px, auto); gap: 3px; }
+    .tile { padding: 4px 2px; font-size: 10px; }
+    .tile .val { font-size: 9px; }
+    .gauge { width: 200px; height: 200px; }
+    .gauge-label .num { font-size: 44px; }
+    .release { min-width: 168px; }
+    table.era th, table.era td { padding: 4px 6px; font-size: 11px; }
+    table.bt td, table.bt th { padding: 6px 6px; font-size: 11px; }
+  }
+
   main {
     padding: 24px;
     display: grid; grid-template-columns: 1fr; gap: 24px;
@@ -156,6 +177,31 @@
   table.era .party-R { color: #ff8a80; font-size: 10px; margin-left: 6px; letter-spacing: 0.05em; }
   table.era td.cell { text-align: right; font-variant-numeric: tabular-nums; }
   table.era tr.now td { background: rgba(236, 72, 153, 0.08); }
+
+  /* ── Release feed ────────────────────────────────────────────────────── */
+  .release-strip {
+    display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+  .release-strip::-webkit-scrollbar { height: 6px; }
+  .release-strip::-webkit-scrollbar-thumb { background: var(--grid); border-radius: 3px; }
+  .release {
+    flex: 0 0 auto; min-width: 200px; max-width: 260px;
+    background: var(--panel-2); border: 1px solid var(--grid); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px;
+  }
+  .release .hdr { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .release .lbl { font-weight: 600; color: var(--fg); }
+  .release .ago { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .release .row { display: flex; justify-content: space-between; margin-top: 6px; align-items: baseline; }
+  .release .v   { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .release .d   { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 1px 6px; border-radius: 3px; background: #21262d; color: var(--muted); }
+  .release .d.up   { color: var(--bad); }
+  .release .d.down { color: var(--good); }
+  .release .d.up.good   { color: var(--good); }
+  .release .d.down.good { color: var(--bad); }
+  .release .obs { color: var(--muted); font-size: 10px; margin-top: 4px; }
+  .release-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
 
   /* ── Narrative ───────────────────────────────────────────────────────── */
   .narrative-panel {
@@ -351,6 +397,13 @@
 </header>
 
 <main>
+  <!-- RECENT RELEASES -->
+  <section class="panel">
+    <h2>What changed</h2>
+    <p class="desc">Most recent observation from every series we track, newest first. Quick scan for "anything new since I last looked?".</p>
+    <div class="release-strip" id="releaseStrip"><span class="release-empty">loading…</span></div>
+  </section>
+
   <!-- AI NARRATIVE -->
   <section class="narrative-panel" id="narrativePanel">
     <span class="badge">TODAY</span>
@@ -1251,6 +1304,55 @@ function drawTrail(traj) {
   document.getElementById("ternarySvg").appendChild(g);
 }
 
+function renderReleases(payload) {
+  const strip = document.getElementById("releaseStrip");
+  const rs = (payload && payload.releases) || [];
+  if (!rs.length) {
+    strip.innerHTML = '<span class="release-empty">No recent releases available.</span>';
+    return;
+  }
+  function fmtValue(r) {
+    if (r.units === "$/gal") return "$" + r.value.toFixed(2);
+    if (r.units === "%")     return r.value.toFixed(2) + "%";
+    if (Math.abs(r.value) >= 1000) return r.value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    return r.value.toFixed(1);
+  }
+  function deltaChip(r) {
+    if (r.pop_change == null) return "";
+    const u = r.units;
+    let txt;
+    if (u === "%" || u === "$/gal") {
+      const sign = r.pop_change >= 0 ? "+" : "";
+      txt = `${sign}${r.pop_change.toFixed(2)}${u === "%" ? "pp" : ""}`;
+    } else if (r.pop_change_pct != null) {
+      const sign = r.pop_change_pct >= 0 ? "+" : "";
+      txt = `${sign}${r.pop_change_pct.toFixed(1)}%`;
+    } else {
+      const sign = r.pop_change >= 0 ? "+" : "";
+      txt = `${sign}${r.pop_change.toFixed(1)}`;
+    }
+    let cls = "";
+    if (r.higher_is_better != null && r.pop_change != null && Math.abs(r.pop_change) > 0.001) {
+      const dir = r.pop_change > 0 ? "up" : "down";
+      const bad = r.higher_is_better ? (r.pop_change < 0) : (r.pop_change > 0);
+      cls = `${dir} ${bad ? "" : "good"}`;
+    }
+    return `<span class="d ${cls}">${escapeHtml(txt)}</span>`;
+  }
+  strip.innerHTML = rs.slice(0, 12).map(r => `
+    <div class="release">
+      <div class="hdr">
+        <span class="lbl">${escapeHtml(r.label)}</span>
+        <span class="ago">${escapeHtml(r.ago_text)}</span>
+      </div>
+      <div class="row">
+        <span class="v">${escapeHtml(fmtValue(r))}</span>
+        ${deltaChip(r)}
+      </div>
+      <div class="obs">${escapeHtml(r.observation_date)} · FRED ${escapeHtml(r.series_id)}</div>
+    </div>`).join("");
+}
+
 function renderNarrative(payload) {
   const body = document.getElementById("narrativeBody");
   const meta = document.getElementById("narrativeMeta");
@@ -1385,6 +1487,7 @@ async function load() {
     renderWorld(data.world);
     renderBacktest(data.backtest);
     renderNarrative(data.narrative);
+    renderReleases(data.releases);
     renderMarkets(data.markets);
     const fetchedAt = data.life && data.life.fetched_at;
     document.getElementById("updated").textContent = "updated " + fmt.date(new Date(fetchedAt * 1000).toISOString());
