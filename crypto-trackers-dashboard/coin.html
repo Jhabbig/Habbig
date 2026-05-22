@@ -123,8 +123,14 @@
       <button data-ind="ich" title="Ichimoku Cloud (9, 26, 52)">ICH</button>
       <button data-ind="vp" title="Volume Profile (POC + Value Area)">VP</button>
       <button data-ind="pp" title="Pivot Points (classic, prior period)">PP</button>
+      <button data-ind="reg" title="Linear-regression channel + ±1σ / ±2σ bands">REG</button>
+      <button id="axis-toggle" title="Toggle linear / log Y-axis">LIN</button>
+      <input id="ma-periods" placeholder="MA periods (e.g. 20,50,100)"
+             title="Comma-separated extra simple-moving-average periods to overlay"
+             style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:3px 6px;border-radius:4px;font-size:11px;width:140px;font-family:inherit"/>
       <input id="cmp-coin" placeholder="compare vs (e.g. ETH)" title="Type a coin symbol to overlay its % return on this chart"
              style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:3px 6px;border-radius:4px;font-size:11px;width:120px;text-transform:uppercase;font-family:inherit"/>
+      <button id="chart-export" title="Download current chart as SVG">💾</button>
       <button data-ind="rsi" class="active" title="RSI(14) subplot">RSI</button>
       <button data-ind="macd" class="active" title="MACD(12,26,9) subplot">MACD</button>
     </div>
@@ -137,6 +143,7 @@
       <button data-tool="fib" title="Fibonacci retracement: click low then high (or vice versa)">⋮ Fib</button>
       <button data-tool="long" title="Long position: click entry, target, stop (in that order)">▲ Long</button>
       <button data-tool="short" title="Short position: click entry, target, stop">▼ Short</button>
+      <button data-tool="avwap" title="Anchored VWAP: click any bar to anchor a VWAP from that point">A-VWAP</button>
       <span style="flex:1"></span>
       <button data-tool="erase" title="Eraser: click near a drawing to remove it">⌫ Erase</button>
       <button onclick="window._clearDrawings()" title="Clear all drawings on this coin + interval" style="border-color:rgba(239,68,68,0.4);color:var(--accent-2)">Clear all</button>
@@ -259,11 +266,13 @@
   let _chartInterval = "1h";
   let _chartType = "candle"; // "candle" | "heikin" | "line" | "area" | "bars"
   const _indicators = { bb: true, rsi: true, macd: true, sma50: false, sma200: false,
-                         vwap: false, ich: false, vp: false, pp: false };
+                         vwap: false, ich: false, vp: false, pp: false, reg: false };
   let _bars = [];
   let _chartGeometry = null;  // saved after every render so drawings can re-map data-coords to px
   let _compareSymbol = "";     // e.g. "ETH" — when set, overlays compare-coin % returns
   let _compareBars = [];       // klines for the compare coin
+  let _logScale = false;       // toggle linear / log Y-axis
+  let _customMAs = [];          // user-typed extra MA periods, e.g. [20, 100]
 
   // ─── Drawings state ────────────────────────────────────────────────────────
   // Drawings stored in DATA coordinates (price + bar index) so they survive
@@ -492,6 +501,47 @@
     return { P, R1, R2, R3, S1, S2, S3 };
   }
 
+  // ─── Linear regression channel (slope + std-dev bands) ───────────────────
+  function regressionChannel(closes) {
+    const n = closes.length;
+    if (n < 5) return null;
+    const xs = Array.from({ length: n }, (_, i) => i);
+    const meanX = (n - 1) / 2;
+    const meanY = closes.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) {
+      num += (xs[i] - meanX) * (closes[i] - meanY);
+      den += (xs[i] - meanX) ** 2;
+    }
+    const slope = den > 0 ? num / den : 0;
+    const intercept = meanY - slope * meanX;
+    const fit = xs.map(x => intercept + slope * x);
+    const resid = closes.map((y, i) => y - fit[i]);
+    const sd = Math.sqrt(resid.reduce((s, r) => s + r * r, 0) / n);
+    return {
+      slope, intercept, sd,
+      mid: fit,
+      upper1: fit.map(v => v + sd),
+      lower1: fit.map(v => v - sd),
+      upper2: fit.map(v => v + 2 * sd),
+      lower2: fit.map(v => v - 2 * sd),
+    };
+  }
+
+  // ─── Anchored VWAP (from a chosen bar index forward) ─────────────────────
+  function anchoredVWAP(bars, anchorIdx) {
+    const out = new Array(bars.length).fill(null);
+    let cumPV = 0, cumV = 0;
+    for (let i = anchorIdx; i < bars.length; i++) {
+      const b = bars[i];
+      const typical = (b.high + b.low + b.close) / 3;
+      cumPV += typical * (b.volume || 0);
+      cumV += (b.volume || 0);
+      out[i] = cumV > 0 ? cumPV / cumV : null;
+    }
+    return out;
+  }
+
   function renderCandles(bars) {
     _bars = bars || [];
     const svg = document.getElementById("chart-svg");
@@ -530,8 +580,24 @@
     const pad = (maxP - minP) * 0.06;
     const yHigh = maxP + pad;
     const yLow = Math.max(minP - pad, 0);
-    const yScale = (p) => chartBottom - ((p - yLow) / (yHigh - yLow)) * CHART_H;
-    const yInv = (y) => yLow + ((chartBottom - y) / CHART_H) * (yHigh - yLow);
+    const yScale = (p) => {
+      if (_logScale) {
+        const lp = Math.log10(Math.max(p, 1e-12));
+        const lLow = Math.log10(Math.max(yLow, 1e-12));
+        const lHigh = Math.log10(yHigh);
+        return chartBottom - ((lp - lLow) / (lHigh - lLow)) * CHART_H;
+      }
+      return chartBottom - ((p - yLow) / (yHigh - yLow)) * CHART_H;
+    };
+    const yInv = (y) => {
+      if (_logScale) {
+        const lLow = Math.log10(Math.max(yLow, 1e-12));
+        const lHigh = Math.log10(yHigh);
+        const lp = lLow + ((chartBottom - y) / CHART_H) * (lHigh - lLow);
+        return Math.pow(10, lp);
+      }
+      return yLow + ((chartBottom - y) / CHART_H) * (yHigh - yLow);
+    };
     const xToBarIdx = (x) => Math.max(0, Math.min(n - 1, Math.round((x - PAD_LEFT - candleW / 2) / xStep)));
     const barIdxToX = (idx) => PAD_LEFT + idx * xStep + candleW / 2;
 
@@ -604,6 +670,45 @@
       const v = vwap(renderBars);
       const p = pathFromValues(v, PAD_LEFT, xStep, candleW / 2, yScale);
       extraOverlays += `<path d="${p}" fill="none" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4 2" stroke-opacity="0.9"/>`;
+    }
+    // Custom MA periods (typed in the toolbar input)
+    const MA_COLORS = ["#60a5fa", "#a78bfa", "#fb7185", "#f472b6", "#34d399"];
+    _customMAs.forEach((period, idx) => {
+      if (!period || period < 2) return;
+      const vals = sma(closes, period);
+      const p = pathFromValues(vals, PAD_LEFT, xStep, candleW / 2, yScale);
+      const color = MA_COLORS[idx % MA_COLORS.length];
+      extraOverlays += `<path d="${p}" fill="none" stroke="${color}" stroke-width="1.1" stroke-opacity="0.85"/>
+        <text x="${PAD_LEFT + 4}" y="${chartTop + 24 + idx * 12}" fill="${color}" font-size="9" font-family="monospace">SMA(${period})</text>`;
+    });
+    if (_indicators.reg) {
+      const reg = regressionChannel(closes);
+      if (reg) {
+        const mPath = pathFromValues(reg.mid,    PAD_LEFT, xStep, candleW / 2, yScale);
+        const u1   = pathFromValues(reg.upper1, PAD_LEFT, xStep, candleW / 2, yScale);
+        const l1   = pathFromValues(reg.lower1, PAD_LEFT, xStep, candleW / 2, yScale);
+        const u2   = pathFromValues(reg.upper2, PAD_LEFT, xStep, candleW / 2, yScale);
+        const l2   = pathFromValues(reg.lower2, PAD_LEFT, xStep, candleW / 2, yScale);
+        // Build 2σ filled band by combining upper2 forward + lower2 reverse
+        let band = ""; let started = false;
+        reg.upper2.forEach((v, i) => {
+          const x = PAD_LEFT + i * xStep + candleW / 2;
+          band += (started ? " L" : "M") + x + " " + yScale(v);
+          started = true;
+        });
+        for (let i = reg.lower2.length - 1; i >= 0; i--) {
+          const x = PAD_LEFT + i * xStep + candleW / 2;
+          band += " L" + x + " " + yScale(reg.lower2[i]);
+        }
+        band += " Z";
+        extraOverlays += `<path d="${band}" fill="rgba(192,132,252,0.06)"/>
+          <path d="${u2}" fill="none" stroke="#c084fc" stroke-width="0.6" stroke-dasharray="3 2" stroke-opacity="0.7"/>
+          <path d="${l2}" fill="none" stroke="#c084fc" stroke-width="0.6" stroke-dasharray="3 2" stroke-opacity="0.7"/>
+          <path d="${u1}" fill="none" stroke="#c084fc" stroke-width="0.7" stroke-opacity="0.85"/>
+          <path d="${l1}" fill="none" stroke="#c084fc" stroke-width="0.7" stroke-opacity="0.85"/>
+          <path d="${mPath}" fill="none" stroke="#c084fc" stroke-width="1.2"/>
+          <text x="${PAD_LEFT + 4}" y="${chartBottom - 6}" fill="#c084fc" font-size="9" font-family="monospace">Regression channel · slope ${(reg.slope * 100 / Math.max(reg.mid[0],0.01)).toFixed(3)}%/bar · σ ${reg.sd.toFixed(4)}</text>`;
+      }
     }
     if (_indicators.ich) {
       const ich = ichimoku(renderBars);
@@ -929,6 +1034,16 @@
           </g>`;
         }).join("") + `<line x1="${x0}" y1="${pts[0].y}" x2="${x1}" y2="${pts[1].y}" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4 2"/>`;
       }
+      if (d.tool === "avwap") {
+        // Anchored VWAP: compute from the anchor bar forward, render as line
+        const anchorIdx = d.points[0].idx;
+        const avals = anchoredVWAP(geo.renderBars, anchorIdx);
+        const p = pathFromValues(avals, geo.PAD_LEFT, geo.xStep, geo.candleW / 2, geo.yScale);
+        const anchorX = geo.barIdxToX(anchorIdx);
+        return `<line x1="${anchorX}" y1="${geo.chartTop}" x2="${anchorX}" y2="${geo.chartBottom}" stroke="#fbbf24" stroke-width="0.6" stroke-dasharray="2 2" stroke-opacity="0.7"/>
+          <path d="${p}" fill="none" stroke="#fbbf24" stroke-width="1.3" stroke-opacity="0.9" stroke-dasharray="4 2"/>
+          <text x="${anchorX + 3}" y="${geo.chartTop + 11}" fill="#fbbf24" font-size="9" font-family="monospace">A-VWAP</text>`;
+      }
       if (d.tool === "long" || d.tool === "short") {
         // 3 points: entry, target, stop
         const [pe, pt, ps] = d.points;
@@ -1039,7 +1154,7 @@
   }
 
   function _expectedClicks(tool) {
-    return { hline: 1, trend: 2, rect: 2, fib: 2, long: 3, short: 3 }[tool] || 0;
+    return { hline: 1, trend: 2, rect: 2, fib: 2, long: 3, short: 3, avwap: 1 }[tool] || 0;
   }
 
   function _handleClick(dataPoint, pxPoint) {
@@ -1064,6 +1179,8 @@
           );
         } else if (d.tool === "long" || d.tool === "short") {
           dist = Math.min(...pts.map(pp => Math.abs(pp.y - pxPoint.y)));
+        } else if (d.tool === "avwap") {
+          dist = Math.abs(pts[0].x - pxPoint.x);
         }
         if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       });
@@ -1371,6 +1488,79 @@
         _compareSymbol = (v && v !== _coinSymbol) ? v : "";
         loadChart(_chartInterval);
       }, 400);
+    });
+  }
+  // Linear/log axis toggle
+  const axisEl = document.getElementById("axis-toggle");
+  if (axisEl) {
+    axisEl.addEventListener("click", () => {
+      _logScale = !_logScale;
+      axisEl.textContent = _logScale ? "LOG" : "LIN";
+      axisEl.classList.toggle("active", _logScale);
+      if (_bars.length) { renderCandles(_bars); _attachChartHandlers(); }
+    });
+  }
+  // Custom MA periods input
+  const maEl = document.getElementById("ma-periods");
+  let _maDebounce = null;
+  if (maEl) {
+    maEl.addEventListener("input", () => {
+      clearTimeout(_maDebounce);
+      _maDebounce = setTimeout(() => {
+        _customMAs = maEl.value.split(",").map(s => parseInt(s.trim(), 10))
+                                          .filter(n => n && n >= 2 && n <= 1000);
+        if (_bars.length) { renderCandles(_bars); _attachChartHandlers(); }
+      }, 400);
+    });
+  }
+  // Chart export (SVG download)
+  const exportEl = document.getElementById("chart-export");
+  if (exportEl) {
+    exportEl.addEventListener("click", () => {
+      const svg = document.getElementById("chart-svg");
+      if (!svg) return;
+      const clone = svg.cloneNode(true);
+      // Embed minimal styles inline so the standalone file renders correctly
+      const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+      style.textContent = `
+        text { font-family: monospace; }
+        .grid line { stroke: rgba(148,163,184,0.10); stroke-width: 0.5; }
+        .axis-label { fill: rgba(148,163,184,0.6); font-size: 10px; }
+        .candle-up .body { fill: #34d399; stroke: #34d399; }
+        .candle-down .body { fill: #ef4444; stroke: #ef4444; }
+        .candle-up .wick  { stroke: #34d399; }
+        .candle-down .wick { stroke: #ef4444; }
+        .vol-up { fill: rgba(52,211,153,0.35); }
+        .vol-down { fill: rgba(239,68,68,0.35); }
+        .ma { fill: none; stroke: #f59e0b; stroke-width: 1.2; }
+        .bb-band { fill: rgba(56,189,248,0.06); }
+        .bb-line { fill: none; stroke: rgba(56,189,248,0.6); stroke-width: 0.8; }
+        .rsi-line { fill: none; stroke: #c084fc; stroke-width: 1.2; }
+        .rsi-tick { stroke: rgba(192,132,252,0.4); stroke-width: 0.3; stroke-dasharray: 2 2; }
+        .macd-line { fill: none; stroke: #38bdf8; stroke-width: 1.2; }
+        .macd-sig { fill: none; stroke: #f59e0b; stroke-width: 1.2; }
+        .macd-hist-up { fill: rgba(52,211,153,0.6); }
+        .macd-hist-dn { fill: rgba(239,68,68,0.6); }
+        .indicator-label { fill: rgba(148,163,184,0.6); font-size: 9px; }
+        .cursor-line { stroke: rgba(255,255,255,0.2); stroke-width: 0.5; stroke-dasharray: 2 2; }`;
+      clone.insertBefore(style, clone.firstChild);
+      // Dark background rect
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", "0"); rect.setAttribute("y", "0");
+      rect.setAttribute("width", "100%"); rect.setAttribute("height", "100%");
+      rect.setAttribute("fill", "#060c1a");
+      clone.insertBefore(rect, style.nextSibling);
+      const xml = new XMLSerializer().serializeToString(clone);
+      const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n', xml], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+      a.href = url;
+      a.download = `${_coinSymbol}-${_chartInterval}-${ts}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     });
   }
 
