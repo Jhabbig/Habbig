@@ -447,6 +447,36 @@
     background-size: 8px 100%;
   }
 
+  .quicknav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .quicknav a {
+    color: var(--text-3);
+    text-decoration: none;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+    transition: background 0.1s, color 0.1s;
+  }
+  .quicknav a:hover { background: var(--bg-2); color: var(--accent); text-decoration: none; }
+
+  .freshness {
+    font-size: 10px;
+    color: var(--text-3);
+    margin-left: 10px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
   @media (max-width: 600px) {
     main { padding: 14px 14px 60px; }
     .grid { grid-template-columns: 1fr; }
@@ -568,8 +598,18 @@
 </head>
 <body>
 <header>
-  <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v3</span></h1>
-  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O + SF₆ · NSIDC sea ice · NOAA NCEI OHC · NOAA STAR sea level · OWID emissions · ENSO · IPCC SSPs · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a> · <a href="/feed.xml" style="color:var(--accent);text-decoration:none">RSS</a></div>
+  <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v4</span></h1>
+  <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O + SF₆ · NSIDC sea ice · NOAA NCEI OHC · NOAA STAR sea level · OWID emissions · ENSO · IPCC SSPs · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a> · <a href="/feed.xml" style="color:var(--accent);text-decoration:none">RSS</a> · <a href="/snapshot.txt" style="color:var(--accent);text-decoration:none">text snapshot</a></div>
+  <nav class="quicknav" aria-label="Page navigation">
+    <a href="#highlights">Highlights</a>
+    <a href="#cards">Indicators</a>
+    <a href="#emitters-card">Emitters</a>
+    <a href="#scenarios-chart">SSP scenarios</a>
+    <a href="#overlay">Overlay</a>
+    <a href="#opps">Opportunities</a>
+    <a href="#markets">Markets</a>
+    <a href="#backtest">Backtest</a>
+  </nav>
 </header>
 <main>
 

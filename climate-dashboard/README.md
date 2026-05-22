@@ -7,48 +7,85 @@ Listens on `:7052`. Subdomain: `climate.narve.ai` (registered in `gateway/config
 ## What's new in v4
 
 The dashboard has been turned from "neat hobby site" into a forecast-honest,
-multi-indicator, polished tool. Highlights:
+multi-indicator, polished tool with 12+ indicator cards, IPCC scenario
+matching, top-opportunities ranking, and an RSS feed of high-edge markets.
+Major moves:
 
-- **Modular backend** — the 1300-line `server.py` was split into a clean
-  `app/` package: `app/fetchers/<source>.py` (one per data source, each
-  exposing a pure `parse(text)` and a cached `fetch()`) and
-  `app/models/<indicator>.py`. `server.py` is now ~250 lines of routes.
-- **Atmospheric N₂O** — third long-lived GHG card, mirrors the CH₄ pattern
-  (NOAA GML globally-averaged, 24-month regression, σ floor 0.3 ppb,
-  threshold pills, June-cutoff backtest, `/api/n2o`).
+### Backend
+
+- **Modular `app/` package** — the 1300-line `server.py` was split into
+  `app/fetchers/<source>.py` (one per data source, each exposing a pure
+  `parse(text)` and a cached `fetch()`) and `app/models/<indicator>.py`.
+  `server.py` is now ~250 lines of routes.
+- **Six more atmospheric species and indicators**: SF₆ (electrical-tracer
+  GHG, NOAA GML); N₂O (NOAA GML); ocean heat content 0-2000 m (NOAA NCEI);
+  global mean sea level (NOAA STAR); NH snow cover extent (Rutgers Global
+  Snow Lab); country-level CO₂ emissions (Our World in Data).
+- **Derived radiative-forcing model** — composes CO₂/CH₄/N₂O/SF₆ atmospheric
+  concentrations into total W/m² above pre-industrial via the IPCC AR5 /
+  Myhre 1998 formulas (including the CH₄ ↔ N₂O absorption-band overlap
+  term). Includes "effective CO₂ ppm" framing.
+- **IPCC SSP scenarios** — hard-coded AR6 anchor points for SSP1-2.6 /
+  SSP2-4.5 / SSP3-7.0 / SSP5-8.5 trajectories of CO₂ and temperature out
+  to 2100, with linear interpolation between anchors and a current-pace
+  matching function that picks the closest scenario to today's reading.
+- **HTTP-mocked integration tests** — patches `app.http.get` with fixture
+  responses and exercises every `/api/*` endpoint, so future upstream URL
+  changes surface in CI rather than silently in production.
+
+### Frontend
+
 - **Indicator overlay chart** — z-score-normalized multi-series chart with
-  toggle pills (temperature, CO₂, CH₄, N₂O, Arctic sea-ice min, ONI). Click
-  any pill to add/remove its series; hover for raw-unit values; ENSO
-  El Niño / La Niña years shaded behind the data.
-- **Fan charts + calibration badges** on the projection cards — historical
-  monthly observations plus a forecast cone widening to (μ ± 1.28·σ) at
-  year-end. Each card shows "Model error ±X over last N yrs" sourced from
-  the existing backtest.
-- **`/methodology` page** — plain-English description of every model,
-  inputs, outputs, code path, and recent calibration error. Served at
-  `/methodology`; raw payload at `/api/methodology`.
-- **"Today's highlights" panel** — auto-derived chips at the top of the
-  page: temperature record streaks, 12-month CO₂/CH₄/N₂O changes,
-  Arctic sea-ice rank for this DOY, ENSO state and streak.
+  toggle pills. Click pills to add/remove series; hover for raw-unit values;
+  ENSO El Niño / La Niña years shaded behind the data.
+- **Long-term outlook chart** — observed history + all four SSP trajectories
+  on the same real-units axis (temperature or CO₂). Toggle between metrics.
+- **Fan charts + calibration badges** on the projection cards — last 60
+  months of observations plus a forecast cone widening to (μ ± 1.28·σ) at
+  year-end. Each card shows "Model error ±X over last N yrs" from the
+  existing backtest.
+- **"Current pace ≈ SSP X" pills** on the temperature and CO₂ cards.
+- **"Today's highlights" panel** — auto-derived chips: temperature record
+  streaks, 12-month GHG changes, Arctic sea-ice DOY rank, ENSO state +
+  streak length.
+- **Top-emitters table** — top-10 CO₂ emitting countries with per-capita,
+  share-of-global, and decade-comparison summary.
 - **Markets table 2.0** — filterable (topic / min-edge / min-liquidity /
-  scored-only), sortable (largest |edge|, best long edge, liquidity, end
-  date), with a **top-opportunities ribbon** above showing the 3 best
-  edges weighted by liquidity. URL hash captures filter/sort state so
-  views are shareable.
+  scored-only), sortable, with a top-opportunities ribbon above showing
+  the 3 best edges weighted by liquidity. URL hash captures filter/sort
+  state for shareable views.
 - **Kelly position sizing** — every market row shows the recommended
-  fraction of bankroll (¼K / ½K / fullK) for the +EV side; with a
-  bankroll set, displayed as $-amounts. Click any row to expand a detail
-  panel with Kelly breakdowns at $1k / $10k / $100k. Bankroll stays in
-  localStorage only — never sent to the server.
-- **CSV export** for the markets, backtest, and overlay sections.
-- **Accessibility + mobile** — ARIA labels on every form control,
-  `aria-pressed` on toggle pills, `aria-live` on the filter count,
-  keyboard-activatable buttons, and a `@media (max-width: 600px)`
-  layout that stacks cleanly on phones.
-- **Test suite** — 39 pytest cases covering parsers, math helpers,
-  projections, threshold-prob monotonicity, market regex routing, Kelly
-  math, the ENSO segmenter, calibration summaries, and several
-  regressions for bugs found in the v4 review.
+  fraction (¼K / ½K / fullK) for the +EV side; with a bankroll set,
+  displayed as $-amounts. Click any row to expand a detail panel with
+  Kelly breakdowns at $1k / $10k / $100k. Bankroll stays in localStorage.
+- **Quick-nav** in the header for jumping between sections on a long page.
+- **Graceful unavailable state** for the best-effort upstream sources
+  (sea level, OHC, snow cover) — if a URL has shifted, the card explicitly
+  says so instead of silently disappearing.
+- **CSV export** for markets, backtest, overlay, scenarios, and emitters.
+- **Accessibility + mobile** — ARIA labels, `aria-pressed`, `aria-live`,
+  keyboard-activatable buttons, and a `@media (max-width: 600px)` layout.
+
+### Shareability
+
+- **`/snapshot.txt`** — plain-text one-pager (highlights → temperature →
+  GHGs → forcing → sea ice → ENSO → top emitters → methodology link).
+  Suitable for posting, piping, or scheduling.
+- **`/feed.xml`** — RSS 2.0 feed of today's highlights.
+- **`/feed.xml?kind=opportunities&min_edge=N&min_liq=N`** — RSS feed of
+  Polymarket climate markets where the model and the market disagree by
+  at least N percentage points, ranked by |edge|.
+- **`/methodology` page** — plain-English description of every model.
+
+### Tests
+
+- **85 pytest cases** + a **jsdom headless-DOM smoke test** in CI.
+  Coverage: parsers (with realistic upstream-format fixtures), math
+  helpers, projection models, threshold-prob monotonicity, market regex
+  routing, the Kelly formula, the ENSO segmenter, calibration summaries,
+  radiative forcing, IPCC scenarios, country emissions, snow-cover and
+  ocean-heat parsers, the snapshot/feed endpoints, and several
+  regressions for bugs found in the v4 code review.
 
 ### What was added in v3
 
@@ -72,10 +109,16 @@ multi-indicator, polished tool. Highlights:
 | Atmospheric CO₂ | NOAA GML Mauna Loa (`co2_mm_mlo.csv`) | monthly |
 | Atmospheric CH₄ | NOAA GML globally-averaged (`ch4_mm_gl.csv`) | monthly |
 | Atmospheric N₂O | NOAA GML globally-averaged (`n2o_mm_gl.csv`) | monthly |
+| Atmospheric SF₆ | NOAA GML globally-averaged (`sf6_mm_gl.csv`) | monthly |
 | Arctic + Antarctic sea ice extent | NSIDC Sea Ice Index G02135 v4.0 | daily |
 | Global SST 60°S–60°N | NOAA OISST 2.1 via Climate Reanalyzer JSON | daily |
+| Ocean heat content (0-2000 m) | NOAA NCEI yearly anomaly | annual |
+| Global mean sea level | NOAA STAR satellite altimetry | monthly |
+| NH snow cover extent | Rutgers Global Snow Lab | monthly |
 | ENSO state | NOAA CPC Oceanic Niño Index (`oni.data`) | monthly |
+| Country-level CO₂ emissions | Our World in Data (`owid-co2-data.csv`) | annual |
 | Markets | Polymarket Gamma `tag_slug=climate-change` (+ siblings) | live |
+| IPCC SSP trajectories | Hard-coded AR6 anchor points | static |
 
 All upstream sources are free and require no API key. Each fetcher has its
 own TTL (12h for monthly series, 3–6h for daily, 5min for markets).
@@ -103,12 +146,14 @@ pip install pytest
 python3 -m pytest tests/
 ```
 
-65 tests cover parsers (with realistic upstream-format fixtures), math
+85 tests cover parsers (with realistic upstream-format fixtures), math
 helpers, projection models, threshold-probability monotonicity, the
 market-scoring regex routing, the Kelly formula, the ENSO segmenter,
 calibration summaries, regressions for the v4 bug-review findings,
-country-emissions parsing, the radiative-forcing math, and end-to-end
-integration with mocked HTTP fetchers.
+country-emissions parsing, the radiative-forcing math, IPCC scenario
+interpolation + matching, ocean-heat / sea-level / snow-cover parsers,
+the /snapshot.txt and /feed.xml endpoints, and end-to-end integration
+with HTTP-mocked upstream fetchers.
 
 ## Headless-DOM smoke test
 
@@ -140,6 +185,16 @@ job — failures there mean the dashboard would have errored in a browser.
 - `GET /api/sst` — Climate Reanalyzer JSON (whole multi-year structure)
 - `GET /api/regime` — ONI + ENSO state
 - `GET /api/backtest` — last 5 completed years, projection-vs-actual for temperature / CO₂ / CH₄ / N₂O models, with per-series calibration summary (MAE, RMSE, bias)
+- `GET /api/sf6` — full NOAA GML SF₆ series + projection
+- `GET /api/forcing` — combined radiative forcing in W/m² + effective CO₂ ppm + per-gas breakdown
+- `GET /api/scenarios` — IPCC SSP trajectories + "current pace ≈ SSP X" match
+- `GET /api/emissions` — country-level CO₂ emissions (top emitters + global decade-change)
+- `GET /api/ocean-heat` — NOAA NCEI 0-2000m heat content yearly anomaly
+- `GET /api/sea-level` — NOAA STAR global mean sea level
+- `GET /api/snow-cover` — Rutgers NH snow cover extent
+- `GET /snapshot.txt` — plain-text dashboard snapshot
+- `GET /feed.xml` — RSS feed of today's highlights
+- `GET /feed.xml?kind=opportunities&min_edge=N&min_liq=N` — RSS of high-edge climate markets
 - `GET /api/health` — liveness + running git commit
 
 Static pages: `/` (dashboard), `/methodology` (model docs).
