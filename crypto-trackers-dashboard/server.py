@@ -74,6 +74,7 @@ from ingestion import (
     news,
     okx,
     okx_liquidations,
+    portfolio,
     solana,
     solscan,
     whales,
@@ -90,6 +91,10 @@ COIN_HTML_PATH = Path(__file__).parent / "coin.html"
 COMPARE_HTML_PATH = Path(__file__).parent / "compare.html"
 MULTIPANE_HTML_PATH = Path(__file__).parent / "multipane.html"
 PRICING_HTML_PATH = Path(__file__).parent / "pricing.html"
+WELCOME_HTML_PATH = Path(__file__).parent / "welcome.html"
+PORTFOLIO_HTML_PATH = Path(__file__).parent / "portfolio.html"
+DIGEST_HTML_PATH = Path(__file__).parent / "digest.html"
+CHANGELOG_HTML_PATH = Path(__file__).parent / "changelog.html"
 GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -175,6 +180,26 @@ async def multipane_page() -> HTMLResponse:
 @app.get("/pricing", response_class=HTMLResponse)
 async def pricing_page() -> HTMLResponse:
     return HTMLResponse(PRICING_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/welcome", response_class=HTMLResponse)
+async def welcome_page() -> HTMLResponse:
+    return HTMLResponse(WELCOME_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_page() -> HTMLResponse:
+    return HTMLResponse(PORTFOLIO_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/digest", response_class=HTMLResponse)
+async def digest_page() -> HTMLResponse:
+    return HTMLResponse(DIGEST_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/changelog", response_class=HTMLResponse)
+async def changelog_page() -> HTMLResponse:
+    return HTMLResponse(CHANGELOG_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/guide/pump-and-dump", response_class=HTMLResponse)
@@ -416,6 +441,28 @@ async def api_liq_aggregate() -> JSONResponse:
 @app.get("/api/hyperliquid/market")
 async def api_hyperliquid() -> JSONResponse:
     return JSONResponse(hyperliquid.market_state())
+
+
+@app.get("/api/portfolio")
+async def api_portfolio(addresses: str = "") -> JSONResponse:
+    """Aggregate holdings across multiple BTC/ETH/SOL wallets.
+
+    ``addresses`` is a comma-separated list.  Each address auto-detected
+    by prefix heuristic; unknown formats are noted in the response."""
+    addrs = [a.strip() for a in addresses.split(",") if a.strip()]
+    if not addrs:
+        return JSONResponse({"error": "no addresses supplied",
+                             "hint": "?addresses=0x...,bc1...,..."}, status_code=400)
+    if len(addrs) > 20:
+        return JSONResponse({"error": "max 20 addresses per request"},
+                            status_code=400)
+    return JSONResponse(portfolio.aggregate(addrs))
+
+
+@app.get("/api/portfolio/detect")
+async def api_portfolio_detect(address: str = "") -> JSONResponse:
+    """Quick chain-detection probe for client-side validation."""
+    return JSONResponse({"address": address, "chain": portfolio.detect_chain(address)})
 
 
 # ─── On-chain context per coin ────────────────────────────────────────────────

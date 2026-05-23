@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Crypto Trackers · narve.ai · Every coin. Every tracker. Every chart.</title>
+<meta name="description" content="One dashboard for every coin: multi-exchange spot+perps, cross-venue arb, funding rates, DeFi TVL, Fear &amp; Greed, derivatives, on-chain, news, alerts, and pro charting. Data fidelity first." />
+<meta property="og:title" content="Crypto Trackers · narve.ai" />
+<meta property="og:description" content="Every coin. Every tracker. Every chart. Data fidelity first." />
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header nav { margin-left: auto; display: flex; gap: 16px; }
+  header nav a { color: var(--text-2); font-size: 13px; text-decoration: none; }
+  header nav a:hover { color: var(--text-1); }
+  header .cta { background: var(--accent); color: black; padding: 7px 14px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+
+  main { padding: 0; }
+  .hero { padding: 72px 24px 56px; text-align: center; max-width: 980px; margin: 0 auto; }
+  .hero .badge {
+    display: inline-block; padding: 4px 12px; border-radius: 999px;
+    background: rgba(245,158,11,0.10); border: 1px solid rgba(245,158,11,0.30);
+    color: var(--accent); font-size: 12px; font-weight: 600; margin-bottom: 18px;
+  }
+  .hero h1 { font-size: 52px; line-height: 1.05; margin: 0 0 14px; letter-spacing: -0.025em;
+    background: linear-gradient(180deg, var(--text-1) 0%, #94a3b8 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .sub { color: var(--text-2); font-size: 18px; max-width: 720px; margin: 0 auto 22px; }
+  .hero .ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .hero .ctas a {
+    padding: 12px 22px; border-radius: 8px; font-weight: 600; font-size: 15px;
+    text-decoration: none;
+  }
+  .hero .ctas a.primary { background: var(--accent); color: black; }
+  .hero .ctas a.secondary { background: var(--bg-1); border: 1px solid var(--border); color: var(--text-1); }
+  .hero .stats {
+    display: flex; gap: 28px; justify-content: center; margin-top: 32px;
+    flex-wrap: wrap; color: var(--text-3); font-size: 13px;
+  }
+  .hero .stats strong { color: var(--text-1); font-size: 18px; display: block; }
+
+  section { padding: 48px 24px; max-width: 1200px; margin: 0 auto; }
+  section h2 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.015em; }
+  section .lead { color: var(--text-2); font-size: 15px; margin: 0 0 28px; max-width: 720px; }
+
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 20px;
+  }
+  .card .icon {
+    width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center;
+    justify-content: center; font-size: 18px; margin-bottom: 14px;
+    background: rgba(245,158,11,0.12); color: var(--accent);
+  }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.5; }
+
+  .pillars {
+    background: var(--bg-1); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    padding: 36px 24px;
+  }
+  .pillars-inner { max-width: 1200px; margin: 0 auto; }
+  .pillar-row {
+    display: grid; grid-template-columns: 1fr 1.6fr; gap: 32px;
+    padding: 28px 0; border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .pillar-row:last-child { border-bottom: 0; }
+  .pillar-row h3 { font-size: 22px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .pillar-row p { color: var(--text-2); font-size: 14px; margin: 0; }
+  .pillar-row .features {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
+  }
+  .pillar-row .features ul { padding: 0; margin: 0; list-style: none; columns: 2; }
+  .pillar-row .features li { padding: 4px 0; font-size: 13px; color: var(--text-2); }
+  .pillar-row .features li::before { content: "→ "; color: var(--accent); }
+
+  .quote {
+    text-align: center; padding: 48px 24px; max-width: 720px; margin: 0 auto;
+    border-top: 1px solid var(--border);
+  }
+  .quote blockquote { font-size: 22px; font-style: italic; color: var(--text-1);
+    margin: 0 0 14px; letter-spacing: -0.005em; }
+  .quote cite { color: var(--text-3); font-size: 13px; }
+
+  footer {
+    background: var(--bg-1); border-top: 1px solid var(--border);
+    padding: 40px 24px; color: var(--text-3); font-size: 13px;
+  }
+  footer .inner {
+    max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 32px;
+  }
+  footer a { color: var(--text-2); text-decoration: none; display: block; padding: 3px 0; }
+  footer a:hover { color: var(--text-1); }
+  footer h4 { color: var(--text-1); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Narve Crypto Trackers</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/compare">Compare</a>
+    <a href="/multipane">Multipane</a>
+    <a href="/portfolio">Portfolio</a>
+    <a href="/digest">Digest</a>
+    <a href="/pricing">Pricing</a>
+    <a class="cta" href="/">Open dashboard →</a>
+  </nav>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="badge">v0.21 · 70 API routes · 6 HTML pages · WebSocket live</div>
+    <h1>Every coin. Every tracker.<br/>Every chart you'd want.</h1>
+    <p class="sub">
+      One dashboard for the data the pros pay $200/mo to aggregate themselves —
+      multi-exchange spot &amp; perps, cross-venue arb, funding rates, DeFi TVL,
+      Fear &amp; Greed, derivatives, on-chain context, news, alerts, and
+      institutional charting. <strong>Data fidelity first.</strong>
+    </p>
+    <div class="ctas">
+      <a class="primary" href="/">Open dashboard →</a>
+      <a class="secondary" href="/pricing">See pricing</a>
+    </div>
+    <div class="stats">
+      <div><strong>500</strong>coins tracked</div>
+      <div><strong>6</strong>exchanges</div>
+      <div><strong>30+</strong>data feeds</div>
+      <div><strong>12</strong>indicators</div>
+      <div><strong>8</strong>drawing tools</div>
+      <div><strong>0</strong>signups required</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>What you get</h2>
+    <p class="lead">All free tier; Pro unlocks the heavy charts, custom alerts, and trader tools; Quant unlocks API access.</p>
+    <div class="grid-3">
+      <div class="card">
+        <div class="icon">📊</div>
+        <h3>Universe screener</h3>
+        <p>Top 500 coins from CoinGecko with sortable columns, market-cap filters, search, and one-click drill-down into per-coin pages.</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚡</div>
+        <h3>Cross-exchange arbitrage</h3>
+        <p>5-venue spot-price scanner (Binance / Coinbase / Kraken / Bybit / OKX) with normalised base-symbol matching and net-of-fee spreads.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📈</div>
+        <h3>Pro charting</h3>
+        <p>5 chart modes (Candle / HA / Line / Area / Bars), 12+ indicators (BB / Ichimoku / VP / Pivots / Reg / VWAP / MAs / RSI / MACD), 8 drawing tools, log axis, SVG export.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔔</div>
+        <h3>Custom alerts</h3>
+        <p>Price / funding / F&amp;G / fee thresholds with cooldown. 10 baked-in templates. Slack, Discord, generic webhook delivery.</p>
+      </div>
+      <div class="card">
+        <div class="icon">💼</div>
+        <h3>Portfolio aggregator</h3>
+        <p>Paste BTC / ETH / SOL wallet addresses and see aggregate USD value priced at live exchange rates, with per-chain breakdown.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🌊</div>
+        <h3>Funding-rate carry</h3>
+        <p>Delta-neutral cash-and-carry yields across 3 perp venues. Annualised, sorted by absolute carry, with direction labels (short-perp vs long-perp).</p>
+      </div>
+      <div class="card">
+        <div class="icon">🐋</div>
+        <h3>Whale + tape</h3>
+        <p>Exchange-wallet ETH balance deltas, 100 BTC+ mempool transactions, live Binance tape (last 200 trades) with $50k+ highlights.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🏛️</div>
+        <h3>DeFi + macro</h3>
+        <p>DeFi yields scanner, stablecoin peg watch, L2 sequencer revenue, restaking ecosystem, bridges, token unlocks, Pump.fun trending, plus cross-asset (S&amp;P, DXY, 10y, VIX, gold).</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔥</div>
+        <h3>Liquidations + options</h3>
+        <p>Multi-venue Coinglass-lite liquidation aggregator (Binance + OKX + Bybit proxy). Deribit options: OI, P/C ratio, ATM IV, 25Δ skew.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="pillars">
+    <div class="pillars-inner">
+      <div class="pillar-row">
+        <div>
+          <h3>Built for traders who want to make their own judgements.</h3>
+          <p>
+            The dashboard doesn't tell you when to buy. It gives you the data
+            and the tools to decide for yourself: cross-venue spreads,
+            funding extremes, on-chain context, technical indicators,
+            backtests, and a position sizer that lives next to the chart.
+          </p>
+        </div>
+        <div class="features">
+          <ul>
+            <li>5 chart modes</li>
+            <li>12+ indicators</li>
+            <li>8 drawing tools</li>
+            <li>Anchored VWAP</li>
+            <li>Fib retracements</li>
+            <li>Linear / log axis</li>
+            <li>Multi-coin compare</li>
+            <li>Multipane grid</li>
+            <li>SVG export</li>
+            <li>Custom MAs</li>
+            <li>Persistent drawings</li>
+            <li>Crosshair readout</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="pillar-row">
+        <div>
+          <h3>Data fidelity first. Predictions never.</h3>
+          <p>
+            Every datapoint is mirrored from a canonical source-of-truth
+            API. Per-source latency stamps and a health monitor mean you
+            always know how fresh each panel is. 100% data accuracy is
+            achievable; 100% prediction accuracy never is on stochastic
+            markets, so we don't claim it.
+          </p>
+        </div>
+        <div class="features">
+          <ul>
+            <li>CoinGecko universe</li>
+            <li>Binance spot+perps</li>
+            <li>Coinbase Exchange</li>
+            <li>Kraken</li>
+            <li>Bybit V5</li>
+            <li>OKX V5</li>
+            <li>Hyperliquid</li>
+            <li>DefiLlama suite</li>
+            <li>Etherscan V2</li>
+            <li>Solscan + Solana RPC</li>
+            <li>mempool.space</li>
+            <li>Deribit options</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="pillar-row">
+        <div>
+          <h3>Free tier never expires. No signup required.</h3>
+          <p>
+            Open the dashboard, no card, no account. Drawings, watchlists,
+            and trade journal save to your browser's localStorage. Upgrade
+            to Pro when you want server-side persistence + alerts + the
+            advanced indicators. Quant tier gets you API-key access for
+            your bot.
+          </p>
+        </div>
+        <div class="features">
+          <ul>
+            <li>Free: universe + crit strip + cross-venue + news</li>
+            <li>Pro: full charts + alerts + all trackers</li>
+            <li>Quant: bearer-auth API + higher rate limits</li>
+            <li>7-day Pro trial</li>
+            <li>14-day refund window</li>
+            <li>Cancel anytime</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="quote">
+    <blockquote>
+      "What used to take 4 tabs and 3 paid subscriptions
+      now lives in one URL."
+    </blockquote>
+    <cite>— A trader who exists in the design brief</cite>
+  </div>
+</main>
+
+<footer>
+  <div class="inner">
+    <div>
+      <h4>Narve</h4>
+      <p style="color:var(--text-3);font-size:12px;margin:0 0 8px">
+        Data infrastructure for traders who want to make their own judgements.
+      </p>
+    </div>
+    <div>
+      <h4>Product</h4>
+      <a href="/">Dashboard</a>
+      <a href="/compare">Compare coins</a>
+      <a href="/multipane">Multipane</a>
+      <a href="/portfolio">Portfolio</a>
+      <a href="/digest">Daily digest</a>
+      <a href="/pricing">Pricing</a>
+    </div>
+    <div>
+      <h4>Resources</h4>
+      <a href="/guide/pump-and-dump">P&amp;D guide</a>
+      <a href="/changelog">Changelog</a>
+      <a href="/status">Source health</a>
+      <a href="/api/sources">API health</a>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <p style="color:var(--text-3);font-size:12px;margin:0">
+        Informational only · not investment advice · cryptocurrency trading
+        carries substantial risk of loss
+      </p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

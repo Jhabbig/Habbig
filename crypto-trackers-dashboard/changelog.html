@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Changelog · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  main { padding: 24px; max-width: 880px; margin: 0 auto 60px; }
+  .lede { color: var(--text-3); font-size: 14px; margin: 0 0 24px; }
+  .release {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 14px;
+  }
+  .release .ver-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+  .release .ver { font-size: 18px; font-weight: 700; color: var(--accent); font-family: monospace; }
+  .release .title { font-size: 16px; font-weight: 600; }
+  .release .sha { color: var(--text-3); font-size: 11px; font-family: monospace; margin-left: auto; }
+  .release ul { margin: 4px 0 0; padding-left: 22px; color: var(--text-2); }
+  .release li { padding: 2px 0; font-size: 14px; }
+  .release .scope { color: var(--accent-4); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-right: 6px; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Changelog</h1>
+</header>
+
+<main>
+  <p class="lede">Every shipped version since v0. Newest first.</p>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.21</span><span class="title">Portfolio aggregator · landing page · daily digest · changelog · chart-share URLs</span></div>
+    <ul>
+      <li><span class="scope">tool</span> Portfolio aggregator — paste BTC/ETH/SOL wallet addresses, aggregate USD value with per-chain breakdown, browser-local storage</li>
+      <li><span class="scope">page</span> Marketing landing page at /welcome with feature highlights, social proof, and CTAs</li>
+      <li><span class="scope">page</span> Daily digest at /digest — morning-brief view (macro snapshot, top movers, funding extremes, network, stablecoin peg, news)</li>
+      <li><span class="scope">page</span> Changelog page (this one!) at /changelog</li>
+      <li><span class="scope">chart</span> Public chart sharing: drawings + indicators + interval encoded in coin-page URL</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.20</span><span class="title">Tape reader · multipane charts · pricing page</span></div>
+    <ul>
+      <li><span class="scope">chart</span> Live tape reader (last 200 Binance trades) below order book; whales ≥$50k highlighted with side colour</li>
+      <li><span class="scope">page</span> Multipane charts at /multipane (up to 12 coins, 1/2/3 columns, 3 chart types)</li>
+      <li><span class="scope">page</span> Pricing page with 3 tiers, billing toggle, 23-row feature comparison, 8-item FAQ</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.19</span><span class="title">Strategy backtester · position sizer · compare page · alert templates · trade journal</span></div>
+    <ul>
+      <li><span class="scope">tool</span> 3-strategy backtester: SMA crossover, RSI mean-reversion, N-bar breakout</li>
+      <li><span class="scope">tool</span> Position sizer (account / risk% / entry / stop / target → size + R:R + EV)</li>
+      <li><span class="scope">page</span> /compare for normalised-returns chart + ranking + Pearson correlation matrix</li>
+      <li><span class="scope">tool</span> Trade journal (browser-local) with auto-computed P&L + win rate</li>
+      <li><span class="scope">alerts</span> 10 baked-in alert templates (funding hot/cold, F&G regimes, BTC fees, ETH gas, price milestones)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.18</span><span class="title">Regression channel · log-axis · anchored VWAP · custom MAs · SVG export</span></div>
+    <ul>
+      <li><span class="scope">chart</span> Linear-regression channel with ±1σ and ±2σ bands</li>
+      <li><span class="scope">chart</span> Linear / log Y-axis toggle</li>
+      <li><span class="scope">chart</span> Anchored VWAP as a drawing tool (click any bar to anchor)</li>
+      <li><span class="scope">chart</span> Custom MA periods (type "20,50,100" for any combo)</li>
+      <li><span class="scope">chart</span> One-click SVG download of the current chart</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.17</span><span class="title">Ichimoku · Volume Profile · Pivot Points · Compare overlay</span></div>
+    <ul>
+      <li><span class="scope">chart</span> Ichimoku Cloud (Tenkan/Kijun/Senkou A/B + Chikou)</li>
+      <li><span class="scope">chart</span> Volume Profile with POC + Value Area High/Low</li>
+      <li><span class="scope">chart</span> Classic pivot points (R3/R2/R1/P/S1/S2/S3)</li>
+      <li><span class="scope">chart</span> Compare-coin overlay (input box overlays a second coin's % return)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.16</span><span class="title">Interactive chart with drawing tools</span></div>
+    <ul>
+      <li><span class="scope">chart</span> 5 chart modes (Candle / Heikin-Ashi / Line / Area / OHLC bars)</li>
+      <li><span class="scope">chart</span> 7 drawing tools (Horizontal / Trend / Rect / Fib / Long / Short / Eraser)</li>
+      <li><span class="scope">chart</span> 3 more indicators (SMA-50, SMA-200, VWAP)</li>
+      <li><span class="scope">chart</span> Mouse-hover crosshair with price/time/OHLC readout</li>
+      <li><span class="scope">chart</span> Drawings persist per (coin, interval) in localStorage</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.15</span><span class="title">LP/IL calc · DCA simulator · API-key tier · Slack/Discord · P&D guide</span></div>
+    <ul>
+      <li><span class="scope">tool</span> Impermanent-loss calculator (V2 + V3 with range bounds)</li>
+      <li><span class="scope">tool</span> DCA simulator against Binance daily klines</li>
+      <li><span class="scope">platform</span> API-key bearer-auth tier (Quant tier)</li>
+      <li><span class="scope">alerts</span> Slack + Discord webhook shaping (auto-detect from URL host)</li>
+      <li><span class="scope">guide</span> /guide/pump-and-dump defensive education page</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.14</span><span class="title">L2 sequencer revenue · restaking · token unlocks · Pump.fun</span></div>
+    <ul>
+      <li><span class="scope">defi</span> L2 sequencer fees per chain (11 L2s)</li>
+      <li><span class="scope">defi</span> Restaking + LST ecosystem (EigenLayer + AVS)</li>
+      <li><span class="scope">data</span> Token-unlocks calendar (90-day horizon)</li>
+      <li><span class="scope">memes</span> Pump.fun trending Solana memecoins feed</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.13</span><span class="title">Watchlists · sectors · PWA · service worker</span></div>
+    <ul>
+      <li><span class="scope">ux</span> Watchlist with star-toggle on every universe row</li>
+      <li><span class="scope">ux</span> Sectors grouping (L1 / L2 / DeFi / Meme / AI / Stable / etc)</li>
+      <li><span class="scope">platform</span> PWA manifest + service worker (offline shell + push hook)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.12</span><span class="title">Bridges · hacks tracker · NFT floors</span></div>
+    <ul>
+      <li><span class="scope">defi</span> Cross-chain bridge volumes (Wormhole, Stargate, Across, etc.)</li>
+      <li><span class="scope">data</span> Major hacks tracker (curated 2022-2025 + Rekt News RSS)</li>
+      <li><span class="scope">nft</span> Top NFT collections by 24h volume (Reservoir aggregator)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.11</span><span class="title">DeFi yields · stablecoin peg · DEX-vs-CEX premium</span></div>
+    <ul>
+      <li><span class="scope">defi</span> DefiLlama yields scanner with filters (TVL, stablecoin-only, no-IL)</li>
+      <li><span class="scope">defi</span> 15-stablecoin peg monitor with bps deviation</li>
+      <li><span class="scope">defi</span> DEX-vs-CEX premium scanner for 17 tracked tokens</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.10</span><span class="title">Derivatives (Deribit) · macro · funding carry</span></div>
+    <ul>
+      <li><span class="scope">deriv</span> Deribit options overview (OI, P/C ratio, ATM IV, 25Δ skew)</li>
+      <li><span class="scope">macro</span> Cross-asset snapshot (S&P, Nasdaq, DXY, 10y, VIX, gold, BTC)</li>
+      <li><span class="scope">deriv</span> Funding-rate annualised carry calculator</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.9</span><span class="title">WebSocket push for live ticks</span></div>
+    <ul>
+      <li><span class="scope">platform</span> /ws/prices broadcast loop pushing every 5s</li>
+      <li><span class="scope">ux</span> Header indicator (live / reconnecting / error)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.8</span><span class="title">Custom alerts + webhook delivery</span></div>
+    <ul>
+      <li><span class="scope">alerts</span> 8 alert types (price / funding / F&G / fees)</li>
+      <li><span class="scope">alerts</span> Persistent storage + cooldown + manual check</li>
+      <li><span class="scope">alerts</span> Webhook delivery on threshold cross</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.7</span><span class="title">RSI / MACD / Bollinger on per-coin chart</span></div>
+    <ul>
+      <li><span class="scope">chart</span> Bollinger Bands (20, 2σ)</li>
+      <li><span class="scope">chart</span> RSI (14) subplot with overbought/oversold zones</li>
+      <li><span class="scope">chart</span> MACD (12, 26, 9) subplot with histogram</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.6</span><span class="title">Solana validator stake + Jito tips</span></div>
+    <ul>
+      <li><span class="scope">sol</span> Validator summary + Nakamoto coefficients</li>
+      <li><span class="scope">sol</span> Jito MEV tip-floor percentile feed</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.5</span><span class="title">Hyperliquid + Bybit liquidation proxy</span></div>
+    <ul>
+      <li><span class="scope">deriv</span> Hyperliquid market state (funding + OI + mark price per asset)</li>
+      <li><span class="scope">deriv</span> Bybit liquidation proxy (recent trades ≥$1M)</li>
+      <li><span class="scope">deriv</span> 3-venue liquidation aggregator</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.4</span><span class="title">On-chain context per coin</span></div>
+    <ul>
+      <li><span class="scope">onchain</span> Etherscan V2 multichain (ETH/BSC/Polygon/Base/Arbitrum/Optimism/Avalanche)</li>
+      <li><span class="scope">onchain</span> Solscan SPL token meta</li>
+      <li><span class="scope">onchain</span> Resolves CoinGecko platforms → contracts → holder counts</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.3</span><span class="title">Whale tracker (ETH exchange flows + BTC mempool whales)</span></div>
+    <ul>
+      <li><span class="scope">whales</span> Etherscan exchange-wallet ETH balances + delta detection</li>
+      <li><span class="scope">whales</span> mempool.space 100 BTC+ unconfirmed-tx feed</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.2</span><span class="title">Per-coin detail page · multi-venue liquidations · Solana RPC</span></div>
+    <ul>
+      <li><span class="scope">page</span> /coin?id= with SVG candlestick + depth + cross-venue + news + funding</li>
+      <li><span class="scope">deriv</span> Multi-venue liquidations (Binance + OKX)</li>
+      <li><span class="scope">sol</span> Solana RPC metrics (TPS + epoch + priority fees)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.1</span><span class="title">News aggregator · BTC/ETH network metrics · liquidations · DEX prices · treasuries</span></div>
+    <ul>
+      <li><span class="scope">data</span> 7-outlet RSS news aggregator</li>
+      <li><span class="scope">btc</span> mempool.space network metrics (fees, mempool, hashrate)</li>
+      <li><span class="scope">eth</span> Etherscan gas oracle</li>
+      <li><span class="scope">deriv</span> Binance USDT-perp liquidations</li>
+      <li><span class="scope">defi</span> Cross-DEX spot prices (17 tokens, 6 chains)</li>
+      <li><span class="scope">data</span> BTC treasuries (ETFs + public co's + govts)</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0</span><span class="title">Initial release — universe + 5 exchanges + cross-arb + funding + DeFi + F&amp;G</span></div>
+    <ul>
+      <li><span class="scope">data</span> CoinGecko universe (top 500)</li>
+      <li><span class="scope">data</span> Binance, Coinbase, Kraken, Bybit, OKX live tickers</li>
+      <li><span class="scope">analysis</span> Cross-exchange arbitrage scanner</li>
+      <li><span class="scope">analysis</span> Funding-rate aggregator</li>
+      <li><span class="scope">defi</span> DefiLlama chains + protocols + stablecoins + DEX overview</li>
+      <li><span class="scope">data</span> Alternative.me Fear &amp; Greed Index</li>
+      <li><span class="scope">platform</span> Per-source health monitor + disk-persisted cache + background pre-fetch</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

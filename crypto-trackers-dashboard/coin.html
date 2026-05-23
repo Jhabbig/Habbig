@@ -147,6 +147,7 @@
       <span style="flex:1"></span>
       <button data-tool="erase" title="Eraser: click near a drawing to remove it">⌫ Erase</button>
       <button onclick="window._clearDrawings()" title="Clear all drawings on this coin + interval" style="border-color:rgba(239,68,68,0.4);color:var(--accent-2)">Clear all</button>
+      <button onclick="window._shareChart()" title="Copy a URL that recreates this exact chart (interval + drawings + indicators) for sharing">🔗 Share</button>
     </div>
     <div class="chart-card" style="position:relative">
       <svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none" style="cursor:crosshair"></svg>
@@ -301,6 +302,53 @@
     saveDrawings([]);
     renderCandles(_bars);
   };
+
+  // ─── Public chart sharing (URL state encoding) ─────────────────────────────
+  window._shareChart = async () => {
+    const drawings = loadDrawings();
+    const state = {
+      interval: _chartInterval,
+      type: _chartType,
+      log: _logScale,
+      cmp: _compareSymbol || undefined,
+      mas: _customMAs.length ? _customMAs.join(",") : undefined,
+      ind: Object.entries(_indicators).filter(([, v]) => v).map(([k]) => k).join(","),
+      d: drawings.length ? btoa(unescape(encodeURIComponent(JSON.stringify(drawings)))) : undefined,
+    };
+    const url = new URL(window.location.href);
+    Object.entries(state).forEach(([k, v]) => {
+      if (v != null && v !== false && v !== "") url.searchParams.set(k, v);
+      else url.searchParams.delete(k);
+    });
+    const link = url.toString();
+    try {
+      await navigator.clipboard.writeText(link);
+      alert("Chart URL copied to clipboard. Paste it anywhere — anyone who opens it sees this exact chart setup.");
+    } catch {
+      prompt("Copy this share-link:", link);
+    }
+  };
+
+  function _loadShareState() {
+    const u = new URLSearchParams(window.location.search);
+    const int_ = u.get("interval"); if (int_) _chartInterval = int_;
+    const type = u.get("type"); if (type) _chartType = type;
+    if (u.get("log") === "true") _logScale = true;
+    const cmp = u.get("cmp"); if (cmp) _compareSymbol = cmp.toUpperCase();
+    const mas = u.get("mas"); if (mas) _customMAs = mas.split(",").map(n => parseInt(n, 10)).filter(Boolean);
+    const ind = u.get("ind");
+    if (ind) {
+      Object.keys(_indicators).forEach(k => { _indicators[k] = ind.split(",").includes(k); });
+    }
+    const d = u.get("d");
+    if (d) {
+      try {
+        const drawings = JSON.parse(decodeURIComponent(escape(atob(d))));
+        if (Array.isArray(drawings) && drawings.length) saveDrawings(drawings);
+      } catch (e) { /* ignore bad share-link */ }
+    }
+  }
+  _loadShareState();
 
   function ema(values, period) {
     if (!values.length || period <= 1) return values.slice();

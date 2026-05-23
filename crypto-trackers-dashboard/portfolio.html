@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Portfolio aggregator · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  main { padding: 18px 24px 80px; max-width: 1200px; margin: 0 auto; }
+  .card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  textarea { background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+    border-radius: 6px; padding: 8px 10px; width: 100%; font-family: monospace; font-size: 12px;
+    min-height: 70px; resize: vertical; }
+  button { background: var(--accent); border: none; color: black; padding: 8px 18px; border-radius: 6px;
+    font-size: 13px; cursor: pointer; font-weight: 600; }
+  button.secondary { background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1); font-weight: 500; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-size: 10px; text-transform: uppercase; color: var(--text-3); letter-spacing: 0.06em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .muted { color: var(--text-3); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600;
+    background: var(--bg-2); color: var(--text-2); }
+  .pill.eth { background: rgba(56,189,248,0.15); color: var(--accent-4); }
+  .pill.btc { background: rgba(245,158,11,0.15); color: var(--accent); }
+  .pill.sol { background: rgba(192,132,252,0.15); color: #c084fc; }
+  .pill.err { background: rgba(239,68,68,0.15); color: var(--accent-2); }
+  section { margin: 18px 0; }
+  section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-2); font-weight: 600; }
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2);
+    padding: 10px 14px; border-radius: 8px; font-size: 12px; }
+  .stat { display: inline-block; margin-right: 24px; }
+  .stat .label { font-size: 10px; text-transform: uppercase; color: var(--text-3); letter-spacing: 0.06em; }
+  .stat .val { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .donut-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .donut-row .seg {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Portfolio aggregator</h1>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        Paste up to 20 wallet addresses, one per line or comma-separated.
+        Auto-detected: <span class="pill eth">ETH</span> <span class="pill btc">BTC</span> <span class="pill sol">SOL</span>.
+        Addresses stay in your browser's localStorage; no signup, no server-side state.
+        <br/><strong>Note:</strong> ETH wallets show native ETH only without a paid
+        <code>ETHERSCAN_API_KEY</code> — token-balance enumeration is a Pro endpoint.
+      </div>
+      <textarea id="addr-input" placeholder="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button onclick="window._loadPort()">Aggregate</button>
+        <button class="secondary" onclick="window._loadSample()">Load sample (vitalik.eth + DOJ BTC + Jito)</button>
+        <button class="secondary" onclick="window._clearPort()">Clear</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Holdings summary</h2>
+    <div id="summary-card" class="card"><div class="muted">No addresses loaded yet.</div></div>
+  </section>
+
+  <section>
+    <h2>Per-chain breakdown</h2>
+    <div id="chain-card" class="card"><div class="muted">—</div></div>
+  </section>
+
+  <section>
+    <h2>Detailed holdings</h2>
+    <div id="holdings-card" class="card"><div class="muted">—</div></div>
+  </section>
+
+  <section>
+    <h2>Resolved addresses</h2>
+    <div id="addrs-card" class="card"><div class="muted">—</div></div>
+  </section>
+</main>
+
+<script>
+(function() {
+  const STORAGE_KEY = "ct_portfolio_addrs_v1";
+  const fmt = (n, d = 2) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null) return "-";
+    if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + "B";
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return fmt(n);
+  };
+  const fmtPrice = (n) => {
+    if (n == null) return "-";
+    if (n >= 1) return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+    if (n >= 0.01) return "$" + n.toFixed(4);
+    return "$" + n.toFixed(6);
+  };
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  function loadSaved() {
+    try { return localStorage.getItem(STORAGE_KEY) || ""; } catch { return ""; }
+  }
+  function save(txt) {
+    try { localStorage.setItem(STORAGE_KEY, txt); } catch {}
+  }
+
+  // Pre-fill from localStorage
+  document.getElementById("addr-input").value = loadSaved();
+
+  window._loadSample = () => {
+    document.getElementById("addr-input").value = [
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",   // vitalik.eth
+      "bc1qjasf9z3h7w3jspkhtgatgpyvvzgpa2wwd2lr0eh5tx44reyn2k7sfc27a4",  // Mt Gox cold (example)
+      "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy", // Jito tip
+    ].join("\n");
+  };
+  window._clearPort = () => {
+    document.getElementById("addr-input").value = "";
+    save("");
+    document.getElementById("summary-card").innerHTML = '<div class="muted">No addresses loaded yet.</div>';
+    document.getElementById("chain-card").innerHTML = '<div class="muted">—</div>';
+    document.getElementById("holdings-card").innerHTML = '<div class="muted">—</div>';
+    document.getElementById("addrs-card").innerHTML = '<div class="muted">—</div>';
+  };
+
+  function renderSummary(data) {
+    const total = data.total_value_usd || 0;
+    document.getElementById("summary-card").innerHTML = `
+      <div class="stat"><div class="label">Total value (USD)</div><div class="val">$${fmt(total, 2)}</div></div>
+      <div class="stat"><div class="label">Addresses</div><div class="val">${data.addresses_resolved} / ${data.address_count}</div></div>
+      <div class="stat"><div class="label">Holdings</div><div class="val">${(data.holdings || []).length}</div></div>
+      <div class="muted" style="font-size:11px;margin-top:8px">Source: ${escapeHtml(data.source)} · refreshed ${new Date(data.fetched_at).toLocaleString()}</div>`;
+  }
+  function renderChainBreakdown(data) {
+    const rows = data.chain_breakdown || [];
+    if (!rows.length) { document.getElementById("chain-card").innerHTML = '<div class="muted">No resolved holdings.</div>'; return; }
+    const total = rows.reduce((s, r) => s + (r.value_usd || 0), 0) || 1;
+    document.getElementById("chain-card").innerHTML = `<div class="donut-row">${rows.map(r => {
+      const pct = (r.value_usd / total) * 100;
+      const cls = r.chain === "ethereum" ? "eth" : r.chain === "bitcoin" ? "btc" : r.chain === "solana" ? "sol" : "";
+      return `<div class="seg"><span class="pill ${cls}">${escapeHtml(r.chain)}</span> <strong>$${fmt(r.value_usd, 0)}</strong> <span class="muted">(${pct.toFixed(1)}% · ${r.holdings} holdings)</span></div>`;
+    }).join("")}</div>`;
+  }
+  function renderHoldings(data) {
+    const rows = data.holdings || [];
+    if (!rows.length) { document.getElementById("holdings-card").innerHTML = '<div class="muted">No holdings detected.</div>'; return; }
+    const tbody = rows.map(h => {
+      const cls = h.chain === "ethereum" ? "eth" : h.chain === "bitcoin" ? "btc" : h.chain === "solana" ? "sol" : "";
+      return `<tr>
+        <td><strong>${escapeHtml(h.symbol)}</strong></td>
+        <td><span class="pill ${cls}">${escapeHtml(h.chain)}</span></td>
+        <td class="num">${fmt(h.balance, 8)}</td>
+        <td class="num">${fmtPrice(h.price_usd)}</td>
+        <td class="num" style="font-weight:600">${h.value_usd != null ? "$" + fmt(h.value_usd, 2) : '<span class="muted">no price</span>'}</td>
+        <td class="muted" style="font-family:monospace;font-size:10px">${escapeHtml((h.address || "").slice(0, 14))}…</td>
+      </tr>`;
+    }).join("");
+    document.getElementById("holdings-card").innerHTML = `<table><thead><tr>
+      <th>Token</th><th>Chain</th><th>Balance</th><th>Price</th><th>Value</th><th>Address</th>
+    </tr></thead><tbody>${tbody}</tbody></table>`;
+  }
+  function renderAddresses(data) {
+    const rows = data.fetched || [];
+    if (!rows.length) { document.getElementById("addrs-card").innerHTML = '<div class="muted">No addresses.</div>'; return; }
+    document.getElementById("addrs-card").innerHTML = `<table><thead><tr>
+      <th>Address</th><th>Chain</th><th>Holdings</th>
+    </tr></thead><tbody>${rows.map(r => `<tr>
+      <td style="font-family:monospace;font-size:11px">${escapeHtml(r.address)}</td>
+      <td>${r.error ? `<span class="pill err">${escapeHtml(r.error)}</span>` : `<span class="pill ${r.chain === "ethereum" ? "eth" : r.chain === "bitcoin" ? "btc" : "sol"}">${escapeHtml(r.chain || "?")}</span>`}</td>
+      <td class="num">${r.error ? "—" : (r.count ?? "0")}</td>
+    </tr>`).join("")}</tbody></table>`;
+  }
+
+  window._loadPort = async () => {
+    const raw = document.getElementById("addr-input").value;
+    save(raw);
+    const addrs = raw.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    if (!addrs.length) { alert("No addresses to load."); return; }
+    if (addrs.length > 20) { alert("Maximum 20 addresses per request."); return; }
+    document.getElementById("summary-card").innerHTML = '<div class="muted">loading…</div>';
+    try {
+      const data = await fetchJson("/api/portfolio?addresses=" + encodeURIComponent(addrs.join(",")));
+      if (data.error) {
+        document.getElementById("summary-card").innerHTML = `<div class="err">${escapeHtml(data.error)}${data.hint ? ` (${escapeHtml(data.hint)})` : ""}</div>`;
+        return;
+      }
+      renderSummary(data);
+      renderChainBreakdown(data);
+      renderHoldings(data);
+      renderAddresses(data);
+    } catch (e) {
+      document.getElementById("summary-card").innerHTML = `<div class="err">Fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  };
+
+  // Auto-load if there's stored addresses
+  if (loadSaved().trim()) _loadPort();
+})();
+</script>
+</body>
+</html>

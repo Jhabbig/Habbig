@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Daily digest · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header .right { margin-left: auto; color: var(--text-3); font-size: 12px; }
+  main { padding: 24px; max-width: 880px; margin: 0 auto; }
+  .lede {
+    font-size: 14px; color: var(--text-3); margin: 0 0 22px;
+    border-left: 3px solid var(--accent); padding: 4px 12px;
+  }
+  section { margin: 0 0 28px; }
+  section h2 {
+    font-size: 16px; margin: 0 0 8px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .crit-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .tile { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tile .label { font-size: 10px; text-transform: uppercase; color: var(--text-3); letter-spacing: 0.06em; }
+  .tile .val { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  .tile .sub { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+  .up { color: var(--accent-3); } .down { color: var(--accent-2); }
+  ul { list-style: none; padding: 0; margin: 0; }
+  .item { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: baseline; }
+  .item:last-child { border-bottom: 0; }
+  .item .sym { font-weight: 700; min-width: 70px; }
+  .item .change { font-weight: 600; min-width: 80px; text-align: right; font-variant-numeric: tabular-nums; }
+  .item .name { color: var(--text-2); flex: 1; }
+  .item .meta { color: var(--text-3); font-size: 12px; }
+  a { color: var(--accent); }
+  .footer-note {
+    margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--border);
+    color: var(--text-3); font-size: 12px;
+  }
+  .empty { color: var(--text-3); font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Daily digest</h1>
+  <span class="right" id="updated">loading…</span>
+</header>
+
+<main>
+  <div class="lede">
+    A morning-brief snapshot of the market: the most recent moves, the on-chain conditions, the macro tide, and any news headlines from the last 24 hours.
+    Refresh anytime; auto-updates every 10 minutes. Built for that 8am coffee scroll.
+  </div>
+
+  <section>
+    <h2>Macro snapshot</h2>
+    <div class="crit-strip" id="macro-strip"></div>
+  </section>
+
+  <section>
+    <h2>Top movers · last 24h</h2>
+    <div id="movers-card"></div>
+  </section>
+
+  <section>
+    <h2>Funding extremes · perp positioning</h2>
+    <div id="funding-card"></div>
+  </section>
+
+  <section>
+    <h2>Network conditions</h2>
+    <div id="network-strip" class="crit-strip"></div>
+  </section>
+
+  <section>
+    <h2>Stablecoin peg</h2>
+    <div id="peg-card"></div>
+  </section>
+
+  <section>
+    <h2>Latest news</h2>
+    <div id="news-card"></div>
+  </section>
+
+  <div class="footer-note">
+    Generated server-side from /api/summary + sub-feed endpoints. Source: every panel of the live dashboard. To get this as a daily email, set up an alert with the dashboard's webhook to your inbox provider (Slack, Discord, or any URL).
+  </div>
+</main>
+
+<script>
+(function() {
+  const fmt = (n, d = 2) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null) return "-";
+    if (Math.abs(n) >= 1e12) return (n / 1e12).toFixed(2) + "T";
+    if (Math.abs(n) >= 1e9)  return (n / 1e9).toFixed(2)  + "B";
+    if (Math.abs(n) >= 1e6)  return (n / 1e6).toFixed(2)  + "M";
+    if (Math.abs(n) >= 1e3)  return (n / 1e3).toFixed(1)  + "k";
+    return fmt(n);
+  };
+  const pct = (n, d = 2) => n == null ? "-" : (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  function tile(label, val, sub = "") {
+    return `<div class="tile"><div class="label">${escapeHtml(label)}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`;
+  }
+
+  async function load() {
+    try {
+      const [summary, peg, funding, news] = await Promise.all([
+        fetchJson("/api/summary").catch(() => ({})),
+        fetchJson("/api/stablecoins/peg").catch(() => ({})),
+        fetchJson("/api/funding/rates").catch(() => ({})),
+        fetchJson("/api/news?limit=15").catch(() => ({})),
+      ]);
+
+      // Macro strip
+      const g = summary.global || {};
+      const fng = summary.fear_greed_latest || {};
+      document.getElementById("macro-strip").innerHTML = [
+        tile("Total mcap", "$" + fmtBig(g.total_market_cap_usd), `BTC dom ${fmt(g.btc_dominance_pct, 1)}%`),
+        tile("Mcap Δ24h", pct(g.market_cap_change_24h_pct, 2), "across all markets"),
+        tile("F&amp;G", fmt(fng.value, 0), escapeHtml(fng.classification || "")),
+        tile("DEX 24h vol", "$" + fmtBig((summary.defi || {}).dex_24h_usd), "on-chain swaps"),
+        tile("Stablecoin supply", "$" + fmtBig((summary.defi || {}).stablecoin_total_usd), "circulating"),
+        tile("Active fires", fmt((summary.active || {}).us_active_fires), "US wildfires"),
+      ].join("");
+
+      // Top movers
+      const gainers = (summary.top_gainers_24h || []).slice(0, 5);
+      const losers  = (summary.top_losers_24h || []).slice(0, 5);
+      let moversHtml = "";
+      if (gainers.length) {
+        moversHtml += `<div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 4px">Top gainers</div><ul>` +
+          gainers.map(c => `<li class="item">
+            <span class="sym">${escapeHtml(c.symbol)}</span>
+            <span class="name">${escapeHtml(c.name || "")}</span>
+            <span class="change up">${pct(c.change_24h, 1)}</span>
+            <span class="meta">$${fmtBig(c.market_cap || 0)} mcap</span>
+          </li>`).join("") + `</ul>`;
+      }
+      if (losers.length) {
+        moversHtml += `<div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">Top losers</div><ul>` +
+          losers.map(c => `<li class="item">
+            <span class="sym">${escapeHtml(c.symbol)}</span>
+            <span class="name">${escapeHtml(c.name || "")}</span>
+            <span class="change down">${pct(c.change_24h, 1)}</span>
+            <span class="meta">$${fmtBig(c.market_cap || 0)} mcap</span>
+          </li>`).join("") + `</ul>`;
+      }
+      document.getElementById("movers-card").innerHTML = moversHtml || '<div class="empty">no movers data</div>';
+
+      // Funding extremes
+      const long = (summary.top_funding_long || []).slice(0, 5);
+      const short = (summary.top_funding_short || []).slice(0, 5);
+      let fHtml = "";
+      if (long.length) {
+        fHtml += `<div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 4px">Longs pay highest</div><ul>` +
+          long.map(r => `<li class="item">
+            <span class="sym">${escapeHtml(r.symbol)}</span>
+            <span class="change down">${(r.funding_rate * 100).toFixed(4)}%</span>
+            <span class="meta">8h rate · crowded longs</span>
+          </li>`).join("") + `</ul>`;
+      }
+      if (short.length) {
+        fHtml += `<div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">Shorts pay highest</div><ul>` +
+          short.map(r => `<li class="item">
+            <span class="sym">${escapeHtml(r.symbol)}</span>
+            <span class="change up">${(r.funding_rate * 100).toFixed(4)}%</span>
+            <span class="meta">8h rate · crowded shorts</span>
+          </li>`).join("") + `</ul>`;
+      }
+      document.getElementById("funding-card").innerHTML = fHtml || '<div class="empty">no funding data</div>';
+
+      // Network conditions
+      const net = summary.network || {};
+      const btc = net.btc || {};
+      const fees = btc.fees_sat_per_vb || {};
+      const gas = net.eth_gas || {};
+      const sol = net.sol || {};
+      document.getElementById("network-strip").innerHTML = [
+        tile("BTC fees", `${fmt(fees.fastest, 0)} sat/vB`, `30m ${fmt(fees['30min'], 0)} · 1h ${fmt(fees['60min'], 0)}`),
+        tile("BTC mempool", fmtBig((btc.mempool || {}).count || 0), "pending tx"),
+        tile("ETH gas (fast)", `${fmt(gas.fast_gwei, 1)} gwei`, gas.error ? escapeHtml(gas.error) : `safe ${fmt(gas.safe_gwei, 1)}`),
+        tile("SOL TPS", fmt(sol.tps_recent_avg, 0), `peak ${fmt(sol.tps_recent_peak, 0)} · epoch ${fmt(sol.epoch)}`),
+      ].join("");
+
+      // Stablecoin peg
+      const pegRows = (peg.rows || []).slice(0, 6);
+      document.getElementById("peg-card").innerHTML = pegRows.length ? `<ul>${pegRows.map(r => `<li class="item">
+          <span class="sym">${escapeHtml(r.symbol)}</span>
+          <span class="name">$${r.price.toFixed(4)}</span>
+          <span class="change ${Math.abs(r.deviation_bps) > 50 ? (r.deviation_bps > 0 ? 'down' : 'up') : 'meta'}">${r.deviation_bps >= 0 ? "+" : ""}${r.deviation_bps.toFixed(1)} bps</span>
+          <span class="meta">$${fmtBig(r.market_cap_usd)} mcap</span>
+        </li>`).join("")}</ul>` : '<div class="empty">no peg data</div>';
+
+      // News
+      const items = (news.headlines || []).slice(0, 8);
+      document.getElementById("news-card").innerHTML = items.length ? `<ul>${items.map(n => {
+        const ago = n._epoch ? (() => {
+          const dt = Math.round((Date.now()/1000) - n._epoch);
+          if (dt < 3600) return `${Math.round(dt/60)}m`;
+          if (dt < 86400) return `${Math.round(dt/3600)}h`;
+          return `${Math.round(dt/86400)}d`;
+        })() : "-";
+        return `<li class="item" style="flex-wrap:wrap">
+          <span class="meta">${escapeHtml(n.source)} · ${ago}</span>
+          <span style="flex:1 0 100%"><a href="${escapeHtml(n.url || '#')}" target="_blank" rel="noopener" style="color:var(--text-1);font-weight:500">${escapeHtml(n.title)}</a></span>
+        </li>`;
+      }).join("")}</ul>` : '<div class="empty">no headlines</div>';
+
+      document.getElementById("updated").textContent = "refreshed " + new Date(summary.fetched_at || Date.now()).toLocaleTimeString();
+    } catch (e) {
+      document.getElementById("macro-strip").innerHTML = `<div style="color:var(--accent-2)">Digest fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  load();
+  setInterval(load, 10 * 60 * 1000);
+})();
+</script>
+</body>
+</html>
