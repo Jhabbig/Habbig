@@ -214,6 +214,75 @@ def klines(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 168) -> d
     return out
 
 
+def recent_trades(symbol: str = "BTCUSDT", limit: int = 200) -> dict:
+    """Last N spot trades for a symbol (no auth). Each row has price, qty,
+    quoteQty, time, side hint via isBuyerMaker (true => taker sold = market
+    sell). Used for the tape reader."""
+    sym = symbol.upper()
+    limit = max(10, min(limit, 1000))
+    hit = _cache.get(f"binance_trades_{sym}_{limit}", ttl_s=3)
+    if hit is not None:
+        return hit
+    r = http_get(f"{SPOT_BASE}/api/v3/trades",
+                 params={"symbol": sym, "limit": str(limit)}, timeout=10)
+    if not r:
+        return {"error": "Binance trades fetch failed", "symbol": sym, "trades": []}
+    try:
+        rows = r.json()
+    except ValueError:
+        return {"error": "Binance trades parse failed", "symbol": sym, "trades": []}
+    parsed = []
+    big_buy_usd = 0.0
+    big_sell_usd = 0.0
+    buy_count = 0
+    sell_count = 0
+    for t in rows:
+        if not isinstance(t, dict):
+            continue
+        try:
+            price = float(t.get("price"))
+            qty = float(t.get("qty"))
+            quote = float(t.get("quoteQty") or price * qty)
+        except (TypeError, ValueError):
+            continue
+        is_buyer_maker = bool(t.get("isBuyerMaker"))
+        side = "SELL" if is_buyer_maker else "BUY"
+        parsed.append({
+            "id": t.get("id"),
+            "price": price,
+            "qty": qty,
+            "quote_usd": quote,
+            "ts_ms": t.get("time"),
+            "side": side,
+        })
+        if side == "BUY":
+            buy_count += 1
+            if quote >= 50_000:
+                big_buy_usd += quote
+        else:
+            sell_count += 1
+            if quote >= 50_000:
+                big_sell_usd += quote
+    parsed.sort(key=lambda x: x.get("ts_ms") or 0, reverse=True)
+    out = {
+        "source": "Binance /api/v3/trades",
+        "symbol": sym,
+        "count": len(parsed),
+        "trades": parsed,
+        "rollup": {
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "big_buy_usd": round(big_buy_usd, 2),
+            "big_sell_usd": round(big_sell_usd, 2),
+            "delta_count": buy_count - sell_count,
+            "big_delta_usd": round(big_buy_usd - big_sell_usd, 2),
+        },
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _cache.put(f"binance_trades_{sym}_{limit}", out)
+    return out
+
+
 def _f(v) -> Optional[float]:
     if v is None:
         return None

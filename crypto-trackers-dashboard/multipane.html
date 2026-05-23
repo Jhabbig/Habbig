@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Multi-pane charts · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header input, header select, header button {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+    padding: 5px 10px; border-radius: 6px; font-size: 12px; font-family: inherit;
+  }
+  header button { cursor: pointer; }
+  header button.primary { background: var(--accent); color: black; border-color: var(--accent); font-weight: 600; }
+  main { padding: 18px 24px 80px; max-width: 1400px; margin: 0 auto; }
+  .panes { display: grid; gap: 12px; }
+  .panes.cols-1 { grid-template-columns: 1fr; }
+  .panes.cols-2 { grid-template-columns: 1fr 1fr; }
+  .panes.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .pane {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 12px; min-height: 280px;
+  }
+  .pane-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .pane-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+  .pane-head .sym { color: var(--text-3); font-size: 11px; text-transform: uppercase; }
+  .pane-head a { color: var(--accent); font-size: 11px; text-decoration: none; margin-left: auto; }
+  .pane svg { display: block; width: 100%; background: #060c1a; border-radius: 6px; }
+  .pane .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--text-2); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .up { color: var(--accent-3); }
+  .down { color: var(--accent-2); }
+  .muted { color: var(--text-3); }
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 10px 14px; border-radius: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Multi-pane charts</h1>
+  <input id="symbols" placeholder="BTC,ETH,SOL,DOGE" style="width:260px;text-transform:uppercase"/>
+  <select id="interval">
+    <option value="15m">15m</option>
+    <option value="1h" selected>1h</option>
+    <option value="4h">4h</option>
+    <option value="1d">1d</option>
+    <option value="1w">1w</option>
+  </select>
+  <select id="columns">
+    <option value="1">1 col</option>
+    <option value="2" selected>2 col</option>
+    <option value="3">3 col</option>
+  </select>
+  <select id="ptype">
+    <option value="candle" selected>Candle</option>
+    <option value="line">Line</option>
+    <option value="area">Area</option>
+  </select>
+  <button class="primary" onclick="window._load()">Render</button>
+  <span class="muted" style="font-size:11px;margin-left:auto">Auto-refresh every 60s</span>
+</header>
+
+<main>
+  <div id="panes" class="panes cols-2"></div>
+</main>
+
+<script>
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  document.getElementById("symbols").value = (params.get("coins") || "BTC,ETH,SOL,DOGE").toUpperCase();
+  if (params.get("interval")) document.getElementById("interval").value = params.get("interval");
+  if (params.get("cols")) document.getElementById("columns").value = params.get("cols");
+  if (params.get("type")) document.getElementById("ptype").value = params.get("type");
+
+  const fmt = (n, d = 2) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtBig = (n) => {
+    if (n == null) return "-";
+    if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + "B";
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return fmt(n);
+  };
+  const fmtPrice = (n) => {
+    if (n == null) return "-";
+    if (n >= 1) return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+    if (n >= 0.01) return "$" + n.toFixed(4);
+    if (n >= 1e-6) return "$" + n.toFixed(6);
+    return "$" + n.toExponential(2);
+  };
+  const pct = (n, d = 2) => n == null ? "-" : (n >= 0 ? "+" : "") + n.toFixed(d) + "%";
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function fetchJson(path) {
+    const r = await fetch(path, { credentials: "include" });
+    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    return r.json();
+  }
+
+  function renderPane(sym, bars, ptype) {
+    if (!bars.length) return `<svg viewBox="0 0 400 240"><text x="20" y="40" fill="#ef4444" font-size="14">No data for ${escapeHtml(sym)}</text></svg>`;
+    const W = 400, H = 240, PAD = 6, PAD_R = 50, PAD_T = 6, PAD_B = 16;
+    const CW = W - PAD - PAD_R, CH = H - PAD_T - PAD_B;
+    const n = bars.length;
+    const xs = CW / Math.max(n - 1, 1);
+    const cw = Math.max(1, xs * 0.7);
+    const highs = bars.map(b => b.high), lows = bars.map(b => b.low);
+    const yMax = Math.max(...highs);
+    const yMin = Math.min(...lows);
+    const pad = (yMax - yMin) * 0.06 || 1;
+    const yH = yMax + pad, yL = yMin - pad;
+    const yScale = (p) => PAD_T + CH - ((p - yL) / (yH - yL)) * CH;
+    let body = "";
+    if (ptype === "line" || ptype === "area") {
+      const path = bars.map((b, i) => `${i === 0 ? "M" : "L"}${PAD + i * xs} ${yScale(b.close)}`).join(" ");
+      body = `<path d="${path}" fill="none" stroke="#f59e0b" stroke-width="1.4"/>`;
+      if (ptype === "area") {
+        body = `<path d="${path} L${PAD + (n - 1) * xs} ${PAD_T + CH} L${PAD} ${PAD_T + CH} Z" fill="rgba(245,158,11,0.18)"/>` + body;
+      }
+    } else {
+      body = bars.map((b, i) => {
+        const x = PAD + i * xs;
+        const cx = x + cw / 2;
+        const up = b.close >= b.open;
+        const color = up ? "#34d399" : "#ef4444";
+        const bodyTop = yScale(Math.max(b.open, b.close));
+        const bodyBottom = yScale(Math.min(b.open, b.close));
+        const wickTop = yScale(b.high), wickBottom = yScale(b.low);
+        return `<line x1="${cx}" y1="${wickTop}" x2="${cx}" y2="${wickBottom}" stroke="${color}" stroke-width="0.8"/>
+                <rect x="${x}" y="${bodyTop}" width="${cw}" height="${Math.max(bodyBottom - bodyTop, 1)}" fill="${color}"/>`;
+      }).join("");
+    }
+    const last = bars[n - 1];
+    const start = bars[0].close;
+    const changePct = (last.close / start - 1) * 100;
+    const lastY = yScale(last.close);
+    const lastColor = changePct >= 0 ? "#34d399" : "#ef4444";
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <line x1="${PAD}" y1="${lastY}" x2="${W - PAD_R}" y2="${lastY}" stroke="${lastColor}" stroke-width="0.6" stroke-dasharray="3 2"/>
+      ${body}
+      <rect x="${W - PAD_R + 2}" y="${lastY - 9}" width="46" height="18" fill="${lastColor}" rx="2"/>
+      <text x="${W - PAD_R + 4}" y="${lastY + 4}" fill="black" font-size="11" font-weight="600" font-family="monospace">${fmtPrice(last.close)}</text>
+    </svg>`;
+  }
+
+  function renderStats(sym, bars) {
+    if (!bars.length) return "";
+    const last = bars[bars.length - 1];
+    const start = bars[0].close;
+    const changePct = (last.close / start - 1) * 100;
+    const high = Math.max(...bars.map(b => b.high));
+    const low = Math.min(...bars.map(b => b.low));
+    const totalVol = bars.reduce((s, b) => s + (b.volume || 0), 0);
+    const cls = changePct >= 0 ? "up" : "down";
+    return `<div class="stats">
+      <div><span class="muted">window:</span> <span class="${cls}">${pct(changePct, 2)}</span></div>
+      <div><span class="muted">high:</span> ${fmtPrice(high)}</div>
+      <div><span class="muted">low:</span> ${fmtPrice(low)}</div>
+      <div><span class="muted">vol:</span> ${fmtBig(totalVol)}</div>
+    </div>`;
+  }
+
+  window._load = async () => {
+    const symsRaw = document.getElementById("symbols").value.trim().toUpperCase();
+    const symbols = symsRaw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 12);
+    const interval = document.getElementById("interval").value;
+    const cols = document.getElementById("columns").value;
+    const ptype = document.getElementById("ptype").value;
+    if (!symbols.length) return;
+    // Update URL for shareable link
+    const url = new URL(window.location.href);
+    url.searchParams.set("coins", symbols.join(","));
+    url.searchParams.set("interval", interval);
+    url.searchParams.set("cols", cols);
+    url.searchParams.set("type", ptype);
+    window.history.replaceState({}, "", url.toString());
+
+    const panes = document.getElementById("panes");
+    panes.className = `panes cols-${cols}`;
+    panes.innerHTML = symbols.map(s => `<div class="pane" id="pane-${s}">
+      <div class="pane-head"><h3>${escapeHtml(s)}</h3><span class="sym">USDT &middot; ${escapeHtml(interval)}</span><a href="/coin?id=${encodeURIComponent(s.toLowerCase())}">detail →</a></div>
+      <svg viewBox="0 0 400 240"><text x="20" y="40" fill="#94a3b8" font-size="12">loading…</text></svg>
+    </div>`).join("");
+
+    const limit = interval === "15m" ? 96 : interval === "1h" ? 120 : interval === "4h" ? 90 : interval === "1d" ? 90 : 60;
+    await Promise.allSettled(symbols.map(async sym => {
+      try {
+        const data = await fetchJson(`/api/binance/klines?symbol=${encodeURIComponent(sym + "USDT")}&interval=${encodeURIComponent(interval)}&limit=${limit}`);
+        const bars = data.bars || [];
+        const target = document.getElementById(`pane-${sym}`);
+        target.innerHTML = `<div class="pane-head"><h3>${escapeHtml(sym)}</h3><span class="sym">USDT &middot; ${escapeHtml(interval)}</span><a href="/coin?id=${encodeURIComponent(sym.toLowerCase())}">detail →</a></div>
+          ${renderPane(sym, bars, ptype)}
+          ${renderStats(sym, bars)}`;
+      } catch (e) {
+        const target = document.getElementById(`pane-${sym}`);
+        target.innerHTML = `<div class="pane-head"><h3>${escapeHtml(sym)}</h3></div><div class="err">${escapeHtml(e.message)}</div>`;
+      }
+    }));
+  };
+
+  _load();
+  setInterval(_load, 60 * 1000);
+})();
+</script>
+</body>
+</html>

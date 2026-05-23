@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pricing · Crypto Trackers · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  main { padding: 36px 24px 80px; max-width: 1200px; margin: 0 auto; }
+  .hero { text-align: center; margin-bottom: 36px; }
+  .hero h1 { font-size: 36px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .hero .sub { color: var(--text-2); font-size: 16px; max-width: 720px; margin: 0 auto; }
+  .billing-toggle { display: inline-flex; background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 2px; margin-top: 18px; }
+  .billing-toggle button { background: transparent; border: none; color: var(--text-2); padding: 6px 16px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 13px; }
+  .billing-toggle button.active { background: var(--accent); color: black; font-weight: 600; }
+  .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin: 32px 0; }
+  .tier {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 16px;
+    padding: 24px 22px; display: flex; flex-direction: column;
+  }
+  .tier.pro { border-color: var(--accent); position: relative; }
+  .tier.pro::before {
+    content: "Most popular"; position: absolute; top: -10px; right: 18px;
+    background: var(--accent); color: black; font-size: 11px; font-weight: 700;
+    padding: 4px 10px; border-radius: 999px; letter-spacing: 0.04em;
+  }
+  .tier h2 { margin: 0 0 4px; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+  .tier .who { color: var(--text-3); font-size: 12px; margin-bottom: 18px; min-height: 32px; }
+  .tier .price { font-size: 38px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+  .tier .price .currency { font-size: 18px; vertical-align: top; color: var(--text-3); }
+  .tier .price .cadence { font-size: 14px; color: var(--text-3); font-weight: 500; }
+  .tier .price-sub { color: var(--text-3); font-size: 12px; min-height: 18px; margin-top: 4px; }
+  .tier ul { list-style: none; padding: 0; margin: 18px 0 0; flex: 1; }
+  .tier ul li { padding: 6px 0; font-size: 13px; color: var(--text-2); display: flex; align-items: baseline; gap: 8px; }
+  .tier ul li::before { content: "✓"; color: var(--accent-3); font-weight: 700; }
+  .tier ul li.no { color: var(--text-3); }
+  .tier ul li.no::before { content: "—"; color: var(--text-3); }
+  .tier .cta {
+    margin-top: 20px; display: block; text-align: center;
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+    padding: 12px; border-radius: 8px; font-weight: 600; font-size: 14px;
+    cursor: pointer; text-decoration: none;
+  }
+  .tier.pro .cta { background: var(--accent); color: black; border-color: var(--accent); }
+  .tier .cta:hover { filter: brightness(1.12); }
+
+  table.compare { width: 100%; border-collapse: collapse; background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 36px; }
+  table.compare th, table.compare td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+  table.compare th { background: var(--bg-2); text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; color: var(--text-3); font-weight: 600; }
+  table.compare th:not(:first-child), table.compare td:not(:first-child) { text-align: center; }
+  table.compare td.yes { color: var(--accent-3); font-weight: 600; }
+  table.compare td.no  { color: var(--text-3); }
+  table.compare tr:last-child td { border-bottom: 0; }
+  table.compare tr.section td { background: rgba(245,158,11,0.04); font-weight: 700; color: var(--text-1); }
+
+  .faq { margin: 48px 0; }
+  .faq h2 { font-size: 22px; margin: 0 0 16px; }
+  .faq-item { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
+  .faq-item h3 { margin: 0 0 6px; font-size: 14px; color: var(--text-1); }
+  .faq-item p { margin: 0; color: var(--text-2); font-size: 13px; }
+
+  .footer-note { margin-top: 56px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>Pricing</h1>
+</header>
+
+<main>
+  <div class="hero">
+    <h1>Pricing that matches how serious you trade.</h1>
+    <p class="sub">
+      One dashboard, every coin, every tracker. Data fidelity first — no
+      neural-net guesses, just the data the pros pay $200/mo to aggregate
+      themselves. Start free, upgrade only when you need the API, alerts,
+      or pro indicators.
+    </p>
+    <div class="billing-toggle">
+      <button id="bill-monthly" class="active" onclick="window._toggleBilling('monthly')">Monthly</button>
+      <button id="bill-annual" onclick="window._toggleBilling('annual')">Annual <span style="color:var(--accent-3);font-size:11px">−17%</span></button>
+    </div>
+  </div>
+
+  <div class="tiers">
+    <!-- FREE -->
+    <div class="tier">
+      <h2>Free</h2>
+      <div class="who">Casual price-checker. Universe + crit strip + per-coin basics.</div>
+      <div class="price"><span class="currency">$</span>0<span class="cadence">/mo forever</span></div>
+      <div class="price-sub">No card. No signup required.</div>
+      <ul>
+        <li>Universe screener (top 500 coins)</li>
+        <li>Per-coin price + 1d candle chart</li>
+        <li>F&amp;G index + 24h gainers/losers</li>
+        <li>Cross-exchange spot price comparison</li>
+        <li>News aggregator (7 RSS sources)</li>
+        <li class="no">Drawing tools + advanced indicators</li>
+        <li class="no">Funding rates + liquidations</li>
+        <li class="no">Custom alerts + webhooks</li>
+        <li class="no">API access</li>
+      </ul>
+      <a class="cta" href="/">Use it now →</a>
+    </div>
+
+    <!-- PRO -->
+    <div class="tier pro">
+      <h2>Pro</h2>
+      <div class="who">Active retail trader. All trackers, all charts, all alerts.</div>
+      <div class="price"><span class="currency">$</span><span id="price-pro">14.99</span><span class="cadence">/mo</span></div>
+      <div class="price-sub" id="sub-pro">Cancel anytime · 7-day free trial</div>
+      <ul>
+        <li>Everything in Free</li>
+        <li>Per-coin page with all 5 chart modes</li>
+        <li>8 drawing tools (trend, fib, long/short, AVWAP, ...)</li>
+        <li>12+ indicators (BB, RSI, MACD, Ichimoku, VP, Pivot, Reg, MAs)</li>
+        <li>Multi-pane charts + compare-coins page</li>
+        <li>Funding rates + multi-venue liquidations</li>
+        <li>Custom alerts (10 templates + Slack/Discord/webhook)</li>
+        <li>Tape reader + L2 order book + cross-DEX premiums</li>
+        <li>Trade journal + DCA + backtester + position sizer</li>
+        <li>On-chain context per coin + treasuries + unlocks</li>
+        <li>Live WebSocket price ticks</li>
+        <li class="no">API access for external consumers</li>
+      </ul>
+      <a class="cta" href="/subscribe?dashboard=crypto-trackers&tier=pro" id="cta-pro">Start free trial →</a>
+    </div>
+
+    <!-- QUANT -->
+    <div class="tier">
+      <h2>Quant</h2>
+      <div class="who">Bot or fund running automated strategies on our data.</div>
+      <div class="price"><span class="currency">$</span><span id="price-quant">99</span><span class="cadence">/mo</span></div>
+      <div class="price-sub" id="sub-quant">Per-seat pricing · invoice on request</div>
+      <ul>
+        <li>Everything in Pro</li>
+        <li>API key bearer-auth (no SSO required)</li>
+        <li>Higher rate limits + priority queue</li>
+        <li>All 69 REST endpoints + WebSocket</li>
+        <li>Slack/Discord/webhook integration unlimited</li>
+        <li>Email alerts (in addition to webhooks)</li>
+        <li>30-day disk-cache persistence</li>
+        <li>Calibration + backtest API for strategy R&amp;D</li>
+        <li>Custom-MA periods unlocked (1-1000 range)</li>
+        <li>SVG chart export → embedded reports</li>
+        <li>Priority support &amp; feature-request triage</li>
+      </ul>
+      <a class="cta" href="/subscribe?dashboard=crypto-trackers&tier=quant" id="cta-quant">Talk to us →</a>
+    </div>
+  </div>
+
+  <h2 style="font-size:18px;margin:48px 0 14px;text-align:center;color:var(--text-2);text-transform:uppercase;letter-spacing:0.08em">Feature comparison</h2>
+  <table class="compare">
+    <thead>
+      <tr><th>Feature</th><th>Free</th><th>Pro</th><th>Quant</th></tr>
+    </thead>
+    <tbody>
+      <tr class="section"><td colspan="4">Market data</td></tr>
+      <tr><td>Universe screener (top 500)</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Cross-exchange spot prices (5 venues)</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Funding rates + carry calc</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Multi-venue liquidations (Binance + OKX)</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Order book + tape reader</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Live WebSocket price ticks</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+      <tr class="section"><td colspan="4">Per-coin charting</td></tr>
+      <tr><td>Chart modes (5: Candle / HA / Line / Area / Bars)</td><td class="no">Candle only</td><td class="yes">All 5</td><td class="yes">All 5</td></tr>
+      <tr><td>Drawing tools (HLine / Trend / Rect / Fib / Long / Short / AVWAP / Eraser)</td><td class="no">—</td><td class="yes">All 8</td><td class="yes">All 8</td></tr>
+      <tr><td>Indicators (BB, MA, EMA, VWAP, Ichimoku, VP, Pivots, RSI, MACD, Reg)</td><td class="no">EMA-20 only</td><td class="yes">All</td><td class="yes">All</td></tr>
+      <tr><td>Compare-coin overlay + multipane page</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>SVG chart export</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+      <tr class="section"><td colspan="4">Alerts</td></tr>
+      <tr><td>Alert templates (10 presets)</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Custom alerts (price / funding / F&amp;G / fees)</td><td class="no">—</td><td class="yes">Unlimited</td><td class="yes">Unlimited</td></tr>
+      <tr><td>Webhook delivery (Slack / Discord / generic)</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+      <tr class="section"><td colspan="4">Trader tools</td></tr>
+      <tr><td>IL calculator + DCA simulator</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Strategy backtester (SMA cross / RSI / breakout)</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Position sizer / risk calculator</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Trade journal (P&amp;L + win-rate)</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+      <tr class="section"><td colspan="4">Data depth</td></tr>
+      <tr><td>News (7 sources, deduped)</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>BTC + ETH + SOL network metrics</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>DeFi yields + stablecoin peg + DEX-vs-CEX premium</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Whales + L2 fees + Restaking + Unlocks + Hacks + NFT floors + Pump.fun</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>On-chain per coin (holder count, supply, contract)</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+      <tr><td>Deribit options + macro cross-asset</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+      <tr class="section"><td colspan="4">Platform</td></tr>
+      <tr><td>API key bearer-auth</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+      <tr><td>Rate limit (req/min)</td><td>30</td><td>120</td><td>600</td></tr>
+      <tr><td>Disk-cache persistence (days)</td><td>1</td><td>7</td><td>30</td></tr>
+      <tr><td>Priority support</td><td class="no">—</td><td>Email</td><td class="yes">Slack DM</td></tr>
+    </tbody>
+  </table>
+
+  <div class="faq">
+    <h2>FAQ</h2>
+
+    <div class="faq-item">
+      <h3>Why not just use TradingView or CoinMarketCap?</h3>
+      <p>
+        TradingView is a chart product; CMC is a price table. Neither
+        aggregates funding rates across 4 perp venues, joins them with
+        liquidations, plots a Fear-Greed regime overlay, and lets you
+        click an arbitrage spread into a trade. The dashboard is built
+        for people who want one place to make trading decisions, not
+        five tabs.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>What does "data fidelity first" mean?</h3>
+      <p>
+        Every datapoint is mirrored from a canonical source-of-truth API
+        (CoinGecko, Binance, Coinbase, Kraken, Bybit, OKX, Hyperliquid,
+        DefiLlama, Etherscan, USGS-grade public feeds for the disaster
+        suite). We don't model what the price will be — we make sure
+        the price you see is exactly what the exchange reported, with a
+        timestamp and per-source latency. The trackers are 100%
+        accurate; predictions never can be on stochastic markets.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>Do you have a free trial?</h3>
+      <p>
+        Pro has a 7-day no-card trial. Quant has a 14-day trial for
+        teams; reach out via the "Talk to us" button. Free tier never
+        expires.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>Will my trade journal / watchlist / drawings sync across devices?</h3>
+      <p>
+        On Pro / Quant, yes — they sync to your account. On Free, they
+        stay in your browser's localStorage (which means: clear cookies
+        = lose them). The free dashboard is fully usable without an
+        account precisely because there's no server-side user data.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>How do alerts get delivered?</h3>
+      <p>
+        Generic JSON webhook, Slack incoming webhook (auto-formatted as
+        a Slack attachment with field tags), Discord webhook
+        (auto-formatted as an embed). The dashboard auto-detects the
+        kind from the URL host. Quant tier also includes email + SMS.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>Can I use the API for my trading bot?</h3>
+      <p>
+        Yes — that's Quant tier. We give you a bearer token; you hit
+        any of the 69 REST endpoints with <code>Authorization: Bearer
+        &lt;key&gt;</code>. Rate limits are higher (600 req/min vs Pro's
+        120). All endpoints are documented at <code>/openapi.json</code>.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>What happens if a data source goes down?</h3>
+      <p>
+        The dashboard's per-source health monitor flags any feed with
+        no successful response in the last 15 minutes. Single-feed
+        failures degrade gracefully — the dashboard keeps rendering
+        with cached values + an inline error on the affected panel.
+        It never bricks the page.
+      </p>
+    </div>
+
+    <div class="faq-item">
+      <h3>What about refunds?</h3>
+      <p>
+        Within 14 days of first payment, full refund, no questions.
+        After that, we cancel future renewals immediately on request
+        but don't pro-rate the current period.
+      </p>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    Prices are USD. EU / UK customers see VAT-inclusive prices at
+    checkout. We use Stripe for billing — your card details never touch
+    our servers. No on-chain payment yet; we'll add USDC checkout when
+    Stripe's crypto rails GA.
+  </div>
+</main>
+
+<script>
+(function() {
+  const MONTHLY = { pro: 14.99, quant: 99 };
+  const ANNUAL  = { pro: 12.49, quant: 79 };  // ~17% off
+
+  window._toggleBilling = (period) => {
+    const isMonthly = period === "monthly";
+    document.getElementById("bill-monthly").classList.toggle("active", isMonthly);
+    document.getElementById("bill-annual").classList.toggle("active", !isMonthly);
+    const prices = isMonthly ? MONTHLY : ANNUAL;
+    document.getElementById("price-pro").textContent = prices.pro.toFixed(2);
+    document.getElementById("price-quant").textContent = prices.quant.toFixed(0);
+    document.getElementById("sub-pro").textContent = isMonthly
+      ? "Cancel anytime · 7-day free trial"
+      : "Billed annually $" + (prices.pro * 12).toFixed(0) + " · 17% saving";
+    document.getElementById("sub-quant").textContent = isMonthly
+      ? "Per-seat pricing · invoice on request"
+      : "Billed annually $" + (prices.quant * 12).toFixed(0) + " · invoice on request";
+    document.getElementById("cta-pro").href = `/subscribe?dashboard=crypto-trackers&tier=pro&billing=${period}`;
+    document.getElementById("cta-quant").href = `/subscribe?dashboard=crypto-trackers&tier=quant&billing=${period}`;
+  };
+})();
+</script>
+</body>
+</html>

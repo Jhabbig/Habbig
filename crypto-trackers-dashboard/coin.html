@@ -160,6 +160,11 @@
   </section>
 
   <section>
+    <h2>Tape reader <small>last 200 Binance trades &middot; whales &ge; $50k highlighted &middot; live every 3s</small></h2>
+    <div id="tape-card"></div>
+  </section>
+
+  <section>
     <h2>Cross-venue spot prices <small>Binance / Coinbase / Kraken / Bybit / OKX</small></h2>
     <div id="crossex-table"></div>
   </section>
@@ -1296,6 +1301,52 @@
     }
   }
 
+  // ─── Tape reader ────────────────────────────────────────────────────────
+  async function loadTape() {
+    try {
+      const symbol = _coinSymbol + "USDT";
+      const data = await fetchJson(`/api/binance/trades?symbol=${encodeURIComponent(symbol)}&limit=200`);
+      const target = document.getElementById("tape-card");
+      const trades = (data.trades || []);
+      if (!trades.length) { target.innerHTML = `<div class="card">${escapeHtml(data.error || "No tape data.")}</div>`; return; }
+      const rollup = data.rollup || {};
+      const deltaCls = rollup.delta_count > 0 ? "up" : rollup.delta_count < 0 ? "down" : "muted";
+      const bigDeltaCls = rollup.big_delta_usd > 0 ? "up" : rollup.big_delta_usd < 0 ? "down" : "muted";
+      const tbody = trades.slice(0, 60).map(t => {
+        const big = (t.quote_usd || 0) >= 50_000;
+        const veryBig = (t.quote_usd || 0) >= 250_000;
+        const sideCls = t.side === "BUY" ? "up" : "down";
+        const bg = veryBig ? (t.side === "BUY" ? "rgba(52,211,153,0.20)" : "rgba(239,68,68,0.20)")
+                  : big    ? (t.side === "BUY" ? "rgba(52,211,153,0.10)" : "rgba(239,68,68,0.10)")
+                  : "transparent";
+        const dt = t.ts_ms ? new Date(t.ts_ms) : null;
+        const ts = dt ? `${String(dt.getUTCHours()).padStart(2,"0")}:${String(dt.getUTCMinutes()).padStart(2,"0")}:${String(dt.getUTCSeconds()).padStart(2,"0")}` : "";
+        return `<tr style="background:${bg}">
+          <td class="muted" style="font-size:11px;font-family:monospace">${ts}</td>
+          <td class="${sideCls}" style="font-weight:600">${t.side}</td>
+          <td class="num">${fmtPrice(t.price)}</td>
+          <td class="num muted">${fmt(t.qty, 4)}</td>
+          <td class="num ${big ? sideCls : 'muted'}" style="font-weight:${big ? '600' : 'normal'}">$${fmt(t.quote_usd, 0)}${veryBig ? " 🐋" : big ? " 🐟" : ""}</td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `<div class="card">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">
+          <div><div class="muted" style="font-size:10px;text-transform:uppercase">Buy / Sell count</div><div style="font-size:14px;font-weight:600"><span class="up">${rollup.buy_count}</span> / <span class="down">${rollup.sell_count}</span></div></div>
+          <div><div class="muted" style="font-size:10px;text-transform:uppercase">Count delta</div><div style="font-size:14px;font-weight:600" class="${deltaCls}">${rollup.delta_count > 0 ? "+" : ""}${rollup.delta_count}</div></div>
+          <div><div class="muted" style="font-size:10px;text-transform:uppercase">Big-trade buy</div><div style="font-size:14px;font-weight:600" class="up">$${fmtBig(rollup.big_buy_usd)}</div></div>
+          <div><div class="muted" style="font-size:10px;text-transform:uppercase">Big-trade sell</div><div style="font-size:14px;font-weight:600" class="down">$${fmtBig(rollup.big_sell_usd)}</div></div>
+          <div><div class="muted" style="font-size:10px;text-transform:uppercase">Big-delta USD</div><div style="font-size:14px;font-weight:600" class="${bigDeltaCls}">${rollup.big_delta_usd > 0 ? "+" : ""}$${fmtBig(Math.abs(rollup.big_delta_usd))}</div></div>
+        </div>
+        <table><thead><tr>
+          <th>Time</th><th>Side</th><th>Price</th><th>Qty</th><th>Notional</th>
+        </tr></thead><tbody>${tbody}</tbody></table>
+        <div class="muted" style="font-size:11px;margin-top:8px">🐟 ≥ $50k · 🐋 ≥ $250k · refreshes every 3 seconds</div>
+      </div>`;
+    } catch (e) {
+      document.getElementById("tape-card").innerHTML = `<div class="err">Tape fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
   // ─── Cross-venue prices ─────────────────────────────────────────────────
   async function loadCrossEx() {
     try {
@@ -1569,6 +1620,7 @@
     loadDepth();
     loadCrossEx();
     loadFunding();
+    loadTape();
     loadOnchain();
     loadNews();
   });
@@ -1578,6 +1630,7 @@
   setInterval(loadDepth, 30 * 1000);
   setInterval(loadCrossEx, 60 * 1000);
   setInterval(loadFunding, 60 * 1000);
+  setInterval(loadTape, 3 * 1000);
   setInterval(loadOnchain, 10 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
 })();

@@ -88,6 +88,8 @@ app = FastAPI(title="Crypto Trackers Dashboard")
 HTML_PATH = Path(__file__).parent / "index.html"
 COIN_HTML_PATH = Path(__file__).parent / "coin.html"
 COMPARE_HTML_PATH = Path(__file__).parent / "compare.html"
+MULTIPANE_HTML_PATH = Path(__file__).parent / "multipane.html"
+PRICING_HTML_PATH = Path(__file__).parent / "pricing.html"
 GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -163,6 +165,16 @@ async def coin_page() -> HTMLResponse:
 @app.get("/compare", response_class=HTMLResponse)
 async def compare_page() -> HTMLResponse:
     return HTMLResponse(COMPARE_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/multipane", response_class=HTMLResponse)
+async def multipane_page() -> HTMLResponse:
+    return HTMLResponse(MULTIPANE_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+async def pricing_page() -> HTMLResponse:
+    return HTMLResponse(PRICING_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/guide/pump-and-dump", response_class=HTMLResponse)
@@ -258,6 +270,11 @@ async def api_binance_klines(symbol: str = "BTCUSDT",
                               interval: str = "1h",
                               limit: int = 168) -> JSONResponse:
     return JSONResponse(binance.klines(symbol=symbol, interval=interval, limit=limit))
+
+
+@app.get("/api/binance/trades")
+async def api_binance_trades(symbol: str = "BTCUSDT", limit: int = 200) -> JSONResponse:
+    return JSONResponse(binance.recent_trades(symbol=symbol, limit=limit))
 
 
 @app.get("/api/coinbase/{product_id}/ticker")
