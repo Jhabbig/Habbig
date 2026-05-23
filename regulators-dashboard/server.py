@@ -42,6 +42,7 @@ from ingestion import (
     email_send,
     kalshi_client,
     ofac_sdn,
+    parliament_hearings,
     polymarket_client,
     unified_feed,
 )
@@ -205,12 +206,15 @@ async def api_feed(
 
 
 @app.get("/api/heatmap")
-async def api_heatmap(weeks: int = 12, show_empty: bool = False, force: bool = False) -> JSONResponse:
+async def api_heatmap(weeks: int = 12, show_empty: bool = False,
+                     group_by: str = "source", force: bool = False) -> JSONResponse:
     weeks = max(4, min(weeks, 52))
+    if group_by not in ("source", "jurisdiction"):
+        group_by = "source"
     data = unified_feed.get_cached(force=force, since_days=max(90, weeks * 7))
     return JSONResponse(heatmap_aggr.aggregate(
         data["items"], data["sources"],
-        weeks=weeks, hide_empty=not show_empty,
+        weeks=weeks, hide_empty=not show_empty, group_by=group_by,
     ))
 
 
@@ -236,6 +240,13 @@ async def api_diff(force: bool = False) -> JSONResponse:
         "fetched_at": data["fetched_at"],
         "diffs": diff_module.compute_all(data["items"]),
     })
+
+
+@app.get("/api/parliament_hearings")
+async def api_parliament_hearings(force: bool = False) -> JSONResponse:
+    """v2.2 — non-US parliament committee hearings (UK Treasury + PAC,
+    EU ECON + JURI), filtered to financial-regulator relevance."""
+    return JSONResponse(parliament_hearings.get_cached(force=force))
 
 
 @app.get("/api/courts")

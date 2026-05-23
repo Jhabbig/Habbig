@@ -249,6 +249,11 @@
 <main>
   <section class="panel heatmap" id="heatmap-panel">
     <h2>Activity heatmap — last 12 weeks</h2>
+    <div class="filters" style="margin-bottom: 8px">
+      <span class="hint">Group by:</span>
+      <span class="chip active" data-group="source">Regulator</span>
+      <span class="chip" data-group="jurisdiction">Jurisdiction</span>
+    </div>
     <div class="heatmap-legend" id="heatmap-legend"></div>
     <div id="heatmap-body"><div class="heatmap-empty">loading…</div></div>
   </section>
@@ -259,6 +264,10 @@
   <section class="panel" id="hearings-panel">
     <h2>Confirmation hearings — Senate Banking + House FS</h2>
     <div id="hearings-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
+  <section class="panel" id="parliament-panel">
+    <h2>Parliament hearings — UK Treasury / Public Accounts + EU ECON / JURI</h2>
+    <div id="parliament-body"><div class="heatmap-empty">loading…</div></div>
   </section>
   <section class="panel" id="courts-panel">
     <h2>Court cases — financial-relevant decisions (CJEU / UK / SCOTUS)</h2>
@@ -806,6 +815,44 @@ async function loadHearings() {
   }
 }
 
+function renderParliament(data) {
+  const body = document.getElementById("parliament-body");
+  const items = data.items || [];
+  const okSources = (data.sources || []).filter(s => s.ok).length;
+  if (!items.length) {
+    if (okSources === 0) {
+      body.innerHTML = '<div class="heatmap-empty">All parliament feeds unavailable — verify URLs in <code>ingestion/parliament_hearings.py</code>.</div>';
+    } else {
+      body.innerHTML = '<div class="heatmap-empty">No regulator-relevant parliament hearings in the feed window.</div>';
+    }
+    return;
+  }
+  body.innerHTML = items.slice(0, 20).map(h => {
+    const dt = (h.published || "").slice(0, 10);
+    const link = h.link
+      ? `<a href="${escapeHtml(h.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(h.title)}</a>`
+      : escapeHtml(h.title);
+    return `
+      <div class="hearing-row">
+        <div class="hearing-date">${escapeHtml(dt)}</div>
+        <div class="hearing-cmte">${escapeHtml(h.committee)}</div>
+        <div class="hearing-title">${link}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadParliament() {
+  try {
+    const r = await fetch("/api/parliament_hearings");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderParliament(data);
+  } catch (e) {
+    document.getElementById("parliament-body").innerHTML =
+      `<div class="heatmap-empty err">parliament load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 function renderCourts(data) {
   const body = document.getElementById("courts-body");
   const items = data.items || [];
@@ -888,9 +935,11 @@ function updateRssLink() {
   if (el) el.innerHTML = `· <a href="${escapeHtml(url)}" target="_blank">Subscribe via RSS ↗</a>`;
 }
 
+let heatmapGroupBy = "source";  // 'source' | 'jurisdiction'
+
 async function loadHeatmap() {
   try {
-    const r = await fetch("/api/heatmap?weeks=12");
+    const r = await fetch(`/api/heatmap?weeks=12&group_by=${encodeURIComponent(heatmapGroupBy)}`);
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     renderHeatmap(data);
@@ -899,6 +948,15 @@ async function loadHeatmap() {
       `<div class="heatmap-empty err">heatmap load failed: ${escapeHtml(e.message)}</div>`;
   }
 }
+
+document.querySelectorAll(".chip[data-group]").forEach(el => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".chip[data-group]").forEach(c => c.classList.remove("active"));
+    el.classList.add("active");
+    heatmapGroupBy = el.dataset.group;
+    loadHeatmap();
+  });
+});
 
 async function load() {
   const meta = document.getElementById("meta");
@@ -1115,12 +1173,13 @@ loadHeatmap();
 loadTopics();
 loadPeople();
 loadHearings();
+loadParliament();
 loadCourts();
 loadStance();
 loadDiff();
 loadSdn();
 updateRssLink();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadCourts(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadParliament(); loadCourts(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
 setInterval(loadSdn, 30 * 60 * 1000);
 </script>
 </body>

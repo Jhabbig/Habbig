@@ -318,17 +318,8 @@ SOURCES: list[RssSource] = [
         jurisdiction="MY",
         rss_url="https://www.bnm.gov.my/web/guest/rss/-/asset_publisher/En4izWLQwR1H/rss",
     ),
-    RssSource(
-        code="JFSA",
-        name="Financial Services Agency (JP) — news listing",
-        jurisdiction="JP",
-        # JFSA has no public RSS feed as of this writing. The URL below is
-        # the news listing page — RSS parser will fall through to ok=false
-        # until either JFSA publishes a feed or a dedicated HTML scraper
-        # (see deferred roadmap) is written. Leaving the entry so the
-        # source surfaces as known-unavailable rather than silently absent.
-        rss_url="https://www.fsa.go.jp/en/news/index.html",
-    ),
+    # JFSA (Japan) is non-RSS — see `ingestion/jfsa_scraper.py`. It's not
+    # in this list; `unified_feed` iterates the scraped sources separately.
 
     # ── Middle East & Africa ───────────────────────────────────────────────
     RssSource(

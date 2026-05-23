@@ -43,13 +43,21 @@ def _week_start(iso: str) -> str | None:
 
 
 def aggregate(items: list[dict], sources_status: list[dict],
-              weeks: int = 12, hide_empty: bool = True) -> dict:
-    """Build a per-regulator × per-week × per-tag count grid.
+              weeks: int = 12, hide_empty: bool = True,
+              group_by: str = "source") -> dict:
+    """Build a per-{source|jurisdiction} × per-week × per-tag count grid.
 
-    `hide_empty=True` (default) drops regulators with total=0 across the
+    `group_by` ∈ {"source", "jurisdiction"}:
+      - "source"       — one row per regulator code (default; 54 rows at v2.1)
+      - "jurisdiction" — one row per ISO jurisdiction (collapses to ~13-34
+                         rows; useful at scale for at-a-glance regional view)
+
+    `hide_empty=True` (default) drops rows with total=0 across the
     window — essential once the source list passes ~20 bodies, otherwise
     the rendered heatmap is mostly blank rows. Pass `hide_empty=False`
-    if a caller wants every registered body in the output."""
+    if a caller wants every row in the output."""
+    if group_by not in ("source", "jurisdiction"):
+        group_by = "source"
     weeks = max(4, min(weeks, 52))
     today = datetime.now(timezone.utc).date()
     this_monday = today - timedelta(days=today.weekday())
@@ -64,9 +72,21 @@ def aggregate(items: list[dict], sources_status: list[dict],
         lambda: {w: {t: 0 for t in TAG_ORDER} for w in week_starts}
     )
 
-    for it in items:
-        src = it.get("source")
+    # Build a code → jurisdiction lookup from sources_status so items with
+    # source codes get bucketed correctly when group_by="jurisdiction".
+    code_to_jx = {s["code"]: s["jurisdiction"] for s in sources_status}
+
+    def bucket_key(item: dict) -> str:
+        src = item.get("source")
         if not src:
+            return ""
+        if group_by == "jurisdiction":
+            return code_to_jx.get(src, item.get("jurisdiction") or "OTHER")
+        return src
+
+    for it in items:
+        key = bucket_key(it)
+        if not key:
             continue
         wk = _week_start(it.get("published", ""))
         if wk is None or wk not in week_set:
@@ -74,13 +94,31 @@ def aggregate(items: list[dict], sources_status: list[dict],
         tag = it.get("primary_tag") or "other"
         if tag not in TAG_ORDER:
             tag = "other"
-        counts[src][wk][tag] += 1
+        counts[key][wk][tag] += 1
+
+    # Build the response in the order of `sources_status` so row order is
+    # stable across calls. For jurisdiction grouping, collapse to distinct
+    # jurisdictions in first-appearance order.
+    if group_by == "jurisdiction":
+        ordered_keys: list[str] = []
+        seen: set[str] = set()
+        jx_to_codes: dict[str, list[str]] = defaultdict(list)
+        for s in sources_status:
+            jx = s["jurisdiction"]
+            jx_to_codes[jx].append(s["code"])
+            if jx not in seen:
+                ordered_keys.append(jx)
+                seen.add(jx)
+        row_meta = {k: {"name": k, "jurisdiction": k, "sources": jx_to_codes[k]} for k in ordered_keys}
+    else:
+        ordered_keys = [s["code"] for s in sources_status]
+        row_meta = {s["code"]: {"name": s["name"], "jurisdiction": s["jurisdiction"], "sources": [s["code"]]}
+                    for s in sources_status}
 
     regulators: list[dict] = []
     global_max = 0
-    for s in sources_status:
-        code = s["code"]
-        per_week = counts.get(code, {w: {t: 0 for t in TAG_ORDER} for w in week_starts})
+    for key in ordered_keys:
+        per_week = counts.get(key, {w: {t: 0 for t in TAG_ORDER} for w in week_starts})
         by_week: list[dict] = []
         total = 0
         for w in week_starts:
@@ -89,10 +127,12 @@ def aggregate(items: list[dict], sources_status: list[dict],
             global_max = max(global_max, wk_total)
             total += wk_total
             by_week.append({"week": w, "total": wk_total, "by_tag": tags})
+        meta = row_meta[key]
         regulators.append({
-            "code": code,
-            "name": s["name"],
-            "jurisdiction": s["jurisdiction"],
+            "code": key,
+            "name": meta["name"],
+            "jurisdiction": meta["jurisdiction"],
+            "member_sources": meta["sources"],
             "total": total,
             "by_week": by_week,
         })
@@ -103,6 +143,7 @@ def aggregate(items: list[dict], sources_status: list[dict],
             [r for r in regulators if r["total"] > 0]
             if hide_empty else regulators
         ),
+        "group_by": group_by,
         "total_registered_regulators": len(regulators),
         "global_max": global_max,
         "tags": list(TAG_ORDER),
@@ -120,6 +161,8 @@ if __name__ == "__main__":
         {"source": "SEC", "primary_tag": "enforcement", "published": (now - timedelta(days=3)).isoformat()},
         {"source": "SEC", "primary_tag": "rulemaking",  "published": (now - timedelta(days=10)).isoformat()},
         {"source": "SEC", "primary_tag": "speech",      "published": (now - timedelta(days=11)).isoformat()},
+        # CFTC: also US, used to verify jurisdiction grouping collapses both
+        {"source": "CFTC", "primary_tag": "enforcement", "published": (now - timedelta(days=4)).isoformat()},
         # FCA: just two items
         {"source": "FCA", "primary_tag": "enforcement", "published": (now - timedelta(days=1)).isoformat()},
         {"source": "FCA", "primary_tag": "guidance",    "published": (now - timedelta(days=20)).isoformat()},
@@ -132,16 +175,19 @@ if __name__ == "__main__":
     ]
     fake_sources = [
         {"code": "SEC", "name": "SEC", "jurisdiction": "US"},
+        {"code": "CFTC", "name": "CFTC", "jurisdiction": "US"},
         {"code": "FCA", "name": "FCA", "jurisdiction": "UK"},
         {"code": "ESMA","name": "ESMA","jurisdiction": "EU"},
     ]
-    out = aggregate(fake_items, fake_sources, weeks=8)
-    print(f"weeks={len(out['weeks'])}  global_max={out['global_max']}")
-    for r in out["regulators"]:
-        print(f"  {r['code']:5s} total={r['total']}  "
-              f"per_week_totals={[wk['total'] for wk in r['by_week']]}")
-    # Spot-check: SEC total should be 4 (the 400-day-old item + missing + None-source are dropped)
-    assert out["regulators"][0]["total"] == 4, out["regulators"][0]
-    assert out["regulators"][1]["total"] == 2
-    assert out["regulators"][2]["total"] == 0
+    print("--- group_by=source ---")
+    out_src = aggregate(fake_items, fake_sources, weeks=8, group_by="source")
+    print(f"  visible regulators: {[(r['code'], r['total']) for r in out_src['regulators']]}")
+    assert out_src["regulators"][0]["code"] == "SEC"
+    assert out_src["regulators"][0]["total"] == 4
+    print("--- group_by=jurisdiction ---")
+    out_jx = aggregate(fake_items, fake_sources, weeks=8, group_by="jurisdiction")
+    print(f"  visible jurisdictions: {[(r['code'], r['total'], r['member_sources']) for r in out_jx['regulators']]}")
+    us = next(r for r in out_jx["regulators"] if r["code"] == "US")
+    assert us["total"] == 5  # SEC (4) + CFTC (1)
+    assert set(us["member_sources"]) == {"SEC", "CFTC"}
     print("smoke OK")
