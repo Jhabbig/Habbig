@@ -4,8 +4,9 @@ from __future__ import annotations
 from typing import Optional
 
 
-# OWID puts continents and political groupings in the same CSV with prefix
-# "OWID_" or non-ISO codes. We exclude them when listing real countries.
+# OWID puts continents and political groupings in the same CSV. Real
+# countries have ISO-3166-1 alpha-3 codes (3 letters, no OWID_ prefix);
+# aggregates either prefix with "OWID_" or omit the iso_code entirely.
 def _is_country(iso: str) -> bool:
     return bool(iso) and len(iso) == 3 and not iso.startswith("OWID_")
 
@@ -34,10 +35,20 @@ def top_emitters(parsed: Optional[dict], *, n: int = 10, year: Optional[int] = N
 
 
 def global_summary(parsed: Optional[dict]) -> Optional[dict]:
-    """World CO₂ emissions for the latest year + 10-year-ago comparison."""
+    """World CO₂ emissions for the latest year + 10-year-ago comparison.
+
+    OWID's CSV may key the World row under iso_code "OWID_WRL" (older
+    versions) or with an empty iso_code and country="World" (current as of
+    late 2025). The parser stashes whichever bucket it found in
+    ``parsed["world_key"]``; we use that.
+    """
     if not parsed or not parsed.get("countries"):
         return None
-    world = parsed["countries"].get("OWID_WRL")
+    world_key = parsed.get("world_key")
+    world = parsed["countries"].get(world_key) if world_key else None
+    # Fallback for older parsed dicts that didn't include world_key
+    if not world:
+        world = parsed["countries"].get("OWID_WRL") or parsed["countries"].get("__nocode_World")
     if not world or not world.get("data"):
         return None
     years = sorted(world["data"].keys())

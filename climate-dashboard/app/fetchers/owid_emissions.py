@@ -33,11 +33,11 @@ def _f(s: str) -> Optional[float]:
 
 
 def parse(text: str) -> dict:
-    """Parse the OWID CSV. Returns {countries, latest_year, world_co2_latest}."""
+    """Parse the OWID CSV. Returns {countries, latest_year, world_key}."""
     rdr = csv.DictReader(io.StringIO(text))
     countries: dict[str, dict] = {}
     latest_year = 0
-    world_latest_co2 = None
+    world_key: Optional[str] = None
     for row in rdr:
         iso = (row.get("iso_code") or "").strip()
         country = (row.get("country") or "").strip()
@@ -49,7 +49,8 @@ def parse(text: str) -> dict:
         if co2 is None:
             continue
         latest_year = max(latest_year, year)
-        bucket = countries.setdefault(iso or f"__nocode_{country}",
+        key = iso or f"__nocode_{country}"
+        bucket = countries.setdefault(key,
                                        {"name": country, "iso": iso, "data": {}})
         bucket["data"][year] = {
             "co2_mt": round(co2, 2),
@@ -58,13 +59,14 @@ def parse(text: str) -> dict:
             "gdp": _f(row.get("gdp")),
             "population": _f(row.get("population")),
         }
-        # World aggregate is "World" with iso_code "OWID_WRL"
-        if iso == "OWID_WRL":
-            world_latest_co2 = (year, co2)
+        # World may have iso "OWID_WRL" in some versions of the CSV, or empty
+        # iso with country="World" in others. Track whichever we see.
+        if country == "World" or iso == "OWID_WRL":
+            world_key = key
     return {
         "countries": countries,
         "latest_year": latest_year,
-        "world_latest": world_latest_co2,
+        "world_key": world_key,
     }
 
 

@@ -478,13 +478,27 @@ def test_owid_emissions_parser_buckets_by_country():
     # ISO-3 keys for real countries
     assert "CHN" in parsed["countries"]
     assert "USA" in parsed["countries"]
-    # World aggregate has the OWID_ prefix
-    assert "OWID_WRL" in parsed["countries"]
+    # World aggregate is tracked via world_key regardless of how it's
+    # encoded in the CSV (empty iso_code in current OWID, OWID_WRL in old).
+    assert parsed["world_key"] is not None
+    assert parsed["countries"][parsed["world_key"]]["name"] == "World"
     # Per-country, year-keyed data with CO2 and per-capita
     chn_2022 = parsed["countries"]["CHN"]["data"][2022]
     assert chn_2022["co2_mt"] == 11396.0
     assert chn_2022["co2_per_capita_t"] == 8.0
     assert chn_2022["share_global"] == 30.7
+
+
+def test_owid_parser_handles_owid_wrl_iso_legacy():
+    # Older versions of the CSV may use iso_code="OWID_WRL" for World.
+    # The parser should still detect it and set world_key.
+    text = ("country,iso_code,year,co2,co2_per_capita,share_global_co2,gdp,population\n"
+            "World,OWID_WRL,2022,37154.0,4.7,100.0,,7950000000\n"
+            "China,CHN,2022,11396.0,8.0,30.7,17963000000000,1412000000\n")
+    parsed = emissions_src.parse(text)
+    assert parsed["world_key"] == "OWID_WRL"
+    g = emissions_model.global_summary(parsed)
+    assert g["global_co2_mt"] == 37154.0
 
 
 def test_top_emitters_excludes_regional_aggregates():
