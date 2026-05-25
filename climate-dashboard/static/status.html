@@ -114,7 +114,7 @@
 <header>
   <h1>Upstream status</h1>
   <div class="sub">Per-source health of every dataset the dashboard fetches. Updated when this page loads.</div>
-  <div style="margin-top:6px"><a href="/">← Back to dashboard</a> · <a href="/methodology">methodology</a></div>
+  <div style="margin-top:6px"><a href="/">← Back to dashboard</a> · <a href="/methodology">methodology</a> · <span id="last-load" style="color:var(--text-3);font-size:11px">Loading…</span></div>
 </header>
 <main>
 <div class="summary" id="summary">
@@ -155,16 +155,28 @@ async function load() {
       const ttlMin = s.cache_ttl_s ? Math.round(s.cache_ttl_s / 60) : null;
       cacheInfo = `<span style="color:var(--text-3);font-size:11px;margin-left:8px">· cache ${s.cache_age}${ttlMin ? ` (TTL ${ttlMin}m)` : ""}</span>`;
     }
+    // Derive a stable slug for deep-linking — operator can share
+    // /status#sea-level-noaa-star and the page scrolls to that source.
+    const slug = s.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     return `
-      <div class="src ${s.status}">
+      <div class="src ${s.status}" id="src-${slug}">
         <div class="name">${s.name}<span class="badge">${badge}</span></div>
         <div class="summary-line">${summary}${cacheInfo}</div>
         <div class="url">${urlLink}</div>
       </div>
     `;
   }).join("");
+  document.getElementById("last-load").textContent =
+    "Last updated " + new Date().toLocaleTimeString() + " · auto-refreshing every 60s";
+  // Honour any hash that was set before the data loaded
+  if (window.location.hash) {
+    const el = document.querySelector(window.location.hash);
+    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 }
 load();
+// Auto-refresh so this works as a monitoring screen — every 60s.
+setInterval(load, 60 * 1000);
 </script>
 </body>
 </html>
