@@ -14,6 +14,7 @@ from pathlib import Path
 from app import math_utils
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
+from app.fetchers import gistemp_zonal as gistemp_zonal_src
 from app.fetchers import kalshi as kalshi_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
@@ -769,6 +770,49 @@ def test_carbon_budget_handles_exhausted_target():
 def test_carbon_budget_returns_none_without_world_data():
     assert carbon_budget_model.compute(None) is None
     assert carbon_budget_model.compute({"countries": {}}) is None
+
+
+def test_zonal_parser_extracts_interesting_bands():
+    parsed = gistemp_zonal_src.parse(_load("gistemp_zonal_sample.csv"))
+    assert parsed is not None
+    # We requested 6 bands; all should be present in this fixture
+    for name in ("Glob", "NHem", "SHem", "64N-90N", "24S-24N", "90S-64S"):
+        assert name in parsed["bands"]
+    # 2024 should be the latest
+    glob = parsed["bands"]["Glob"]
+    assert max(glob.keys()) == 2024
+    assert glob[2024] == 1.29
+    # Arctic warmer than global (well-known)
+    assert parsed["bands"]["64N-90N"][2024] > glob[2024]
+
+
+def test_zonal_warming_ratios_arctic_amplification():
+    # The famous 3-4× ratio should fall out of the live + fixture data alike.
+    parsed = gistemp_zonal_src.parse(_load("gistemp_zonal_sample.csv"))
+    z = {"bands": parsed["bands"], "latest_year": 2024}
+    ratios = gistemp_zonal_src.warming_ratios(z, baseline_start=1880, baseline_end=1910)
+    assert ratios is not None
+    arctic = ratios["bands"]["64N-90N"]
+    globe = ratios["bands"]["Glob"]
+    # Arctic should be warmer than global since the baseline
+    assert arctic["anomaly_c"] > globe["anomaly_c"]
+    # Ratio should be in the 3-4× range (the canonical climate fact)
+    assert 2.5 < arctic["ratio_vs_global"] < 5.0
+
+
+def test_zonal_warming_ratios_returns_none_for_thin_baseline():
+    # No baseline data → can't compute
+    z = {"bands": {"Glob": {2024: 1.29}}, "latest_year": 2024}
+    assert gistemp_zonal_src.warming_ratios(z) is None
+
+
+def test_highlights_arctic_amplification_chip():
+    """Verify the Arctic-warms-faster chip fires when zonal data is supplied."""
+    parsed = gistemp_zonal_src.parse(_load("gistemp_zonal_sample.csv"))
+    zonal = {"bands": parsed["bands"], "latest_year": 2024}
+    items = highlights_model.compute(zonal=zonal)
+    texts = [i["text"] for i in items]
+    assert any("Arctic" in t and ("×" in t or "x " in t.lower()) for t in texts), texts
 
 
 def test_opportunities_rss_filters_and_sorts():

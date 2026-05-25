@@ -36,6 +36,8 @@ def _load(name: str) -> str:
 
 def _fake_http_get(url: str, *, timeout=20, params=None):
     """Route by URL substring to the right fixture or stub."""
+    if "ZonAnn.Ts+dSST" in url:
+        return FakeResponse(text=_load("gistemp_zonal_sample.csv"))
     if "GLB.Ts+dSST" in url:
         return FakeResponse(text=_load("gistemp_sample.csv"))
     if "co2_mm_mlo" in url:
@@ -177,6 +179,15 @@ def test_scenarios_endpoint(client):
     # Current-match block populated when upstream data is available
     assert body["current_match"]["temperature"] is not None
     assert body["current_match"]["co2"] is not None
+
+
+def test_zonal_endpoint(client):
+    r = client.get("/api/zonal")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert "bands" in body
+    assert "64N-90N" in body["bands"]
+    assert body["warming_ratios"] is not None
 
 
 def test_carbon_budget_endpoint(client):

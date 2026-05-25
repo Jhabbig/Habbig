@@ -21,6 +21,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
+from app.fetchers import gistemp_zonal as gistemp_zonal_src
 from app.fetchers import kalshi as kalshi_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
@@ -101,6 +102,7 @@ def status_page():
 # fetchers as we add new ones.
 _STATUS_SOURCES = {
     "GISTEMP (NASA temperature)":           (gistemp_src.URL, gistemp_src.fetch, "gistemp"),
+    "GISTEMP zonal (NASA, by latitude)":    (gistemp_zonal_src.URL, gistemp_zonal_src.fetch, "gistemp_zonal"),
     "CO₂ (NOAA Mauna Loa)":                 (co2_src.URL, co2_src.fetch, "co2"),
     "CH₄ (NOAA GML)":                       (methane_src.URL, methane_src.fetch, "methane"),
     "N₂O (NOAA GML)":                       (n2o_src.URL, n2o_src.fetch, "n2o"),
@@ -222,6 +224,7 @@ def api_highlights():
             n2o=n2o_src.fetch(),
             sea_ice=sea_ice_src.fetch(),
             oni=oni_src.fetch(),
+            zonal=gistemp_zonal_src.fetch(),
         ),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -235,6 +238,18 @@ def api_temperature():
     if not g:
         return jsonify({"error": "GISTEMP fetch failed"}), 503
     return jsonify({**g, "projection": temperature_model.projection(g)})
+
+
+@app.route("/api/zonal")
+def api_zonal():
+    """NASA GISTEMP zonal annual temperature — warming by latitude band."""
+    z = gistemp_zonal_src.fetch()
+    if not z:
+        return jsonify({"error": "GISTEMP zonal fetch failed",
+                        "url": gistemp_zonal_src.URL,
+                        "hint": "Likely an upstream URL change at NASA GISS"}), 503
+    return jsonify({**z,
+                    "warming_ratios": gistemp_zonal_src.warming_ratios(z)})
 
 
 @app.route("/api/co2")

@@ -49,7 +49,8 @@ def compute(*, gistemp: Optional[dict] = None,
             methane: Optional[dict] = None,
             n2o: Optional[dict] = None,
             sea_ice: Optional[dict] = None,
-            oni: Optional[dict] = None) -> list[dict]:
+            oni: Optional[dict] = None,
+            zonal: Optional[dict] = None) -> list[dict]:
     """Build a list of {kind, text} chips. Order matters — most important
     first since the frontend may only show the top few."""
     out: list[dict] = []
@@ -106,6 +107,24 @@ def compute(*, gistemp: Optional[dict] = None,
                 out.append({
                     "kind": "alert",
                     "text": f"Arctic sea-ice extent today is the #{r} lowest on record for {rec['date'][5:]} (across {rec['history_years']} years).",
+                })
+
+    # 3b) Arctic-warms-faster framing. Pulls from GISTEMP zonal: warming of
+    # the 64N-90N band relative to global mean. The 3-4× ratio is one of
+    # the most-cited climate facts; surfacing it makes the dashboard's
+    # framing match scientific consensus.
+    if zonal:
+        from ..fetchers.gistemp_zonal import warming_ratios
+        ratios = warming_ratios(zonal)
+        if ratios and "64N-90N" in ratios["bands"]:
+            arctic = ratios["bands"]["64N-90N"]
+            globe = ratios["bands"].get("Glob")
+            if globe and arctic["ratio_vs_global"] >= 1.5:
+                out.append({
+                    "kind": "alert",
+                    "text": (f"Arctic (64°N-90°N) has warmed +{arctic['anomaly_c']:.2f}°C "
+                             f"since {ratios['baseline']} — {arctic['ratio_vs_global']:.1f}× the "
+                             f"global rate (+{globe['anomaly_c']:.2f}°C)."),
                 })
 
     # 4) ENSO state + streak.

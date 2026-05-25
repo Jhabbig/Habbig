@@ -132,6 +132,7 @@ const MOCK_RESPONSES = {
   "/api/highlights": { items: [
     { kind: "record", text: "2024 set a new annual temperature record at +1.29°C (vs 1951-1980)." },
     { kind: "trend", text: "CO₂ rose +2.34 ppm over the last 12 months (now 425.30 ppm)." },
+    { kind: "alert", text: "Arctic (64°N-90°N) has warmed +3.50°C since 1880-1909 — 2.7× the global rate (+1.29°C)." },
   ] },
   "/api/ocean-heat": {
     source: "NOAA NCEI", units: "10^22 J",

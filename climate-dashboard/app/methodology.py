@@ -115,6 +115,17 @@ MODELS = [
         "code": "app/models/scenarios.py",
     },
     {
+        "id": "gistemp_zonal",
+        "name": "Per-latitude warming (Arctic amplification)",
+        "summary": "NASA GISTEMP zonal annual file — same publisher as the global series, just one row per year × one column per latitude band. We pick six bands (Glob / NHem / SHem / 64°N-90°N / 24°S-24°N / 90°S-64°S) and compute warming since the 1880-1909 baseline. The 64°N-90°N vs Glob ratio is the canonical Arctic-amplification number (~3-4×) and gets surfaced as a highlight chip.",
+        "inputs": ["NASA GISS ZonAnn.Ts+dSST.csv"],
+        "outputs": {
+            "bands": "Per-band {year: anomaly_c} dictionaries",
+            "warming_ratios": "Per-band {anomaly_c, ratio_vs_global} since 1880-1909",
+        },
+        "code": "app/fetchers/gistemp_zonal.py",
+    },
+    {
         "id": "carbon_budget",
         "name": "Remaining carbon budget for 1.5°C / 2°C",
         "summary": "IPCC AR6 WG1 Table 5.8 anchor budgets (start of 2020): 500 / 400 / 1150 GtCO₂ for 1.5°C-50% / 1.5°C-67% / 2°C-67%. Subtract cumulative world CO₂ emissions from OWID since 2020 to get the remaining budget today. Years-at-current-rate divides by the latest annual emission. Pure derivative — no new URLs.",

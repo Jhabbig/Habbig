@@ -21,6 +21,7 @@ _MAX_ENTRIES = 64
 # fetcher's `fetch()`.
 TTL: dict[str, int] = {
     "gistemp": 60 * 60 * 12,
+    "gistemp_zonal": 60 * 60 * 12,
     "co2": 60 * 60 * 12,
     "methane": 60 * 60 * 12,
     "n2o": 60 * 60 * 12,
