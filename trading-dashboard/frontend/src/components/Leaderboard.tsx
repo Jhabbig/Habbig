@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Trophy, Copy, TrendingUp } from 'lucide-react';
 
 export interface LeaderboardEntry {
@@ -16,11 +16,7 @@ interface LeaderboardProps {
   onCopy?: (username: string) => void;
 }
 
-export const Leaderboard: React.FC<LeaderboardProps> = ({ onCopy }) => {
-  const [timeframe, setTimeframe] = useState<'week' | 'month' | 'all'>('month');
-
-  // Mock data
-  const leaders: LeaderboardEntry[] = [
+const mockLeaders: LeaderboardEntry[] = [
     {
       rank: 1,
       username: 'TrendKing',
@@ -123,6 +119,11 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ onCopy }) => {
     },
   ];
 
+const LeaderboardComponent: React.FC<LeaderboardProps> = ({ onCopy }) => {
+  const [timeframe, setTimeframe] = useState<'week' | 'month' | 'all'>('month');
+
+  const leaders = useMemo(() => mockLeaders, []);
+
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
       {/* Header */}
@@ -222,3 +223,5 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ onCopy }) => {
     </div>
   );
 };
+
+export const Leaderboard = React.memo(LeaderboardComponent);
