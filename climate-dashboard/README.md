@@ -77,16 +77,35 @@ Major moves:
   at least N percentage points, ranked by |edge|.
 - **`/methodology` page** — plain-English description of every model.
 
+### Operations
+
+- **`/status` page** — per-source upstream health dashboard with OK /
+  Down / Error counts at the top and a per-card view showing the actual
+  URL, last data value, and cache age + TTL. Auto-refreshes every 60s.
+- **Carbon budget panel** — IPCC AR6 remaining budgets (1.5°C / 2°C)
+  minus OWID's cumulative emissions, color-coded by years left at the
+  current emission rate.
+- **Cross-venue markets** — Polymarket + Kalshi merged in `/api/markets`
+  with `_venue` field, venue filter in the toolbar, coloured badges.
+- **Arctic amplification chip** in highlights: pulled from NASA GISTEMP
+  zonal companion file.
+- **Graceful-degradation cards** — every best-effort upstream source
+  (OHC, sea level, snow cover, GISTEMP zonal) renders an explicit
+  "data unavailable" placeholder linking to methodology if the URL fails.
+
 ### Tests
 
-- **90 pytest cases** + a **jsdom headless-DOM smoke test** in CI.
+- **105 pytest cases** + a **jsdom headless-DOM smoke test** in CI.
   Coverage: parsers (with realistic upstream-format fixtures), math
   helpers, projection models, threshold-prob monotonicity, market regex
   routing, the Kelly formula, the ENSO segmenter, calibration summaries,
   radiative forcing, IPCC scenarios (including position-aware matching),
-  country emissions, snow-cover and ocean-heat parsers, the snapshot/feed
-  endpoints (with end-to-end opportunity-filter check), and several
-  regressions for bugs found in the v4 code review.
+  country emissions (fixture matches live OWID format), Kalshi
+  cents-to-probability, carbon-budget arithmetic, GISTEMP zonal +
+  Arctic-amplification ratio, snow-cover and ocean-heat and sea-level
+  parsers, the snapshot/feed/status endpoints (with end-to-end
+  opportunity-filter check and an "every upstream down" regression),
+  and several regressions for bugs found in the v4 code review.
 
 ### What was added in v3
 
@@ -107,6 +126,7 @@ Major moves:
 | What | Source | Cadence |
 | --- | --- | --- |
 | Global temperature anomaly | NASA GISTEMP v4 (`GLB.Ts+dSST.csv`) | monthly |
+| Per-latitude warming (zonal) | NASA GISTEMP v4 (`ZonAnn.Ts+dSST.csv`) | annual |
 | Atmospheric CO₂ | NOAA GML Mauna Loa (`co2_mm_mlo.csv`) | monthly |
 | Atmospheric CH₄ | NOAA GML globally-averaged (`ch4_mm_gl.csv`) | monthly |
 | Atmospheric N₂O | NOAA GML globally-averaged (`n2o_mm_gl.csv`) | monthly |
@@ -118,8 +138,10 @@ Major moves:
 | NH snow cover extent | Rutgers Global Snow Lab | monthly |
 | ENSO state | NOAA CPC Oceanic Niño Index (`oni.data`) | monthly |
 | Country-level CO₂ emissions | Our World in Data (`owid-co2-data.csv`) | annual |
-| Markets | Polymarket Gamma `tag_slug=climate-change` (+ siblings) | live |
+| Markets (Polymarket) | Polymarket Gamma `tag_slug=climate-change` (+ siblings) | live |
+| Markets (Kalshi) | Kalshi `/events` API | live |
 | IPCC SSP trajectories | Hard-coded AR6 anchor points | static |
+| Carbon budgets (1.5°C / 2°C) | IPCC AR6 anchors + cumulative OWID emissions | derived |
 
 All upstream sources are free and require no API key. Each fetcher has its
 own TTL (12h for monthly series, 3–6h for daily, 5min for markets).
@@ -147,15 +169,19 @@ pip install pytest
 python3 -m pytest tests/
 ```
 
-90 tests cover parsers (with realistic upstream-format fixtures), math
+105 tests cover parsers (with realistic upstream-format fixtures), math
 helpers, projection models, threshold-probability monotonicity, the
 market-scoring regex routing, the Kelly formula, the ENSO segmenter,
 calibration summaries, regressions for the v4 bug-review findings,
-country-emissions parsing, the radiative-forcing math, IPCC scenario
-interpolation + position-aware matching, ocean-heat / sea-level /
-snow-cover parsers, the /snapshot.txt and /feed.xml endpoints
-(including end-to-end opportunity-filter verification), and end-to-end
-integration with HTTP-mocked upstream fetchers.
+country-emissions parsing (with fixture matching live OWID format),
+the radiative-forcing math, IPCC scenario interpolation + position-aware
+matching, ocean-heat / sea-level / snow-cover parsers, the GISTEMP
+zonal parser + Arctic-amplification ratio, carbon-budget arithmetic,
+Kalshi cents-to-probability normalisation, the /snapshot.txt and
+/feed.xml endpoints (including end-to-end opportunity-filter
+verification), the /status endpoint (including a "every upstream
+down → status correctly reports down" regression), and end-to-end
+integration with HTTP-mocked upstream fetchers covering every endpoint.
 
 ## Headless-DOM smoke test
 
@@ -189,17 +215,20 @@ job — failures there mean the dashboard would have errored in a browser.
 - `GET /api/backtest` — last 5 completed years, projection-vs-actual for temperature / CO₂ / CH₄ / N₂O models, with per-series calibration summary (MAE, RMSE, bias)
 - `GET /api/sf6` — full NOAA GML SF₆ series + projection
 - `GET /api/forcing` — combined radiative forcing in W/m² + effective CO₂ ppm + per-gas breakdown
-- `GET /api/scenarios` — IPCC SSP trajectories + "current pace ≈ SSP X" match
+- `GET /api/scenarios` — IPCC SSP trajectories + "current pace ≈ SSP X" match (with above/below/between framing)
 - `GET /api/emissions` — country-level CO₂ emissions (top emitters + global decade-change)
+- `GET /api/carbon-budget` — remaining GtCO₂ + years left for 1.5°C / 2°C targets
 - `GET /api/ocean-heat` — NOAA NCEI 0-2000m heat content yearly anomaly
 - `GET /api/sea-level` — NOAA STAR global mean sea level
 - `GET /api/snow-cover` — Rutgers NH snow cover extent
+- `GET /api/zonal` — NASA GISTEMP zonal warming by latitude band
+- `GET /api/status` — per-source upstream health (OK / Down / Error counts + URLs)
 - `GET /snapshot.txt` — plain-text dashboard snapshot
 - `GET /feed.xml` — RSS feed of today's highlights
 - `GET /feed.xml?kind=opportunities&min_edge=N&min_liq=N` — RSS of high-edge climate markets
 - `GET /api/health` — liveness + running git commit
 
-Static pages: `/` (dashboard), `/methodology` (model docs).
+Static pages: `/` (dashboard), `/methodology` (model docs), `/status` (upstream health).
 
 ## Container
 
