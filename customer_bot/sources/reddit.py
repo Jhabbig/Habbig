@@ -8,7 +8,8 @@ hard. Use a distinctive UA so requests stay above the bot-blanket threshold.
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+import time
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -17,6 +18,76 @@ from customer_bot.lead import RawLead
 log = logging.getLogger("customer_bot.reddit")
 
 USER_AGENT = "narve.ai-leadfinder/0.1 (contact: julian.habbig@icloud.com)"
+
+# Quality thresholds for author filtering. Tuned to drop fresh throwaway
+# and karma-farming accounts without catching active hobbyists.
+MIN_AUTHOR_KARMA = 50
+MIN_AUTHOR_AGE_DAYS = 14
+
+# Per-cycle author cache so we don't fetch the same profile 20 times.
+_author_cache: dict[str, dict] = {}
+_author_cache_at: float = 0.0
+_AUTHOR_CACHE_TTL_SEC = 30 * 60   # one full poll cycle
+
+
+def _cache_get(username: str) -> Optional[dict]:
+    global _author_cache, _author_cache_at
+    if time.time() - _author_cache_at > _AUTHOR_CACHE_TTL_SEC:
+        _author_cache = {}
+        _author_cache_at = time.time()
+    return _author_cache.get(username)
+
+
+def _cache_put(username: str, info: dict) -> None:
+    _author_cache[username] = info
+
+
+async def fetch_author(client: httpx.AsyncClient, username: str) -> Optional[dict]:
+    """Return {karma, age_days} for a Reddit user, or None on failure.
+
+    Anonymous / deleted users are filtered upstream — don't call with [deleted].
+    """
+    if not username or username in ("[deleted]", "AutoModerator"):
+        return None
+    cached = _cache_get(username)
+    if cached is not None:
+        return cached
+    url = f"https://www.reddit.com/user/{username}/about.json"
+    try:
+        r = await client.get(url, headers={"User-Agent": USER_AGENT}, timeout=10.0)
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        d = (r.json() or {}).get("data") or {}
+    except ValueError:
+        return None
+    created = d.get("created_utc") or 0
+    info = {
+        "karma": int((d.get("total_karma") or 0)
+                     or (d.get("link_karma", 0) + d.get("comment_karma", 0))),
+        "age_days": int((time.time() - created) // 86400) if created else 0,
+        "verified": bool(d.get("verified")),
+    }
+    _cache_put(username, info)
+    return info
+
+
+def is_quality_author(info: Optional[dict]) -> bool:
+    """True if the author clears the karma + age threshold.
+
+    Conservative: missing info means "let it through" — we only block when
+    we have evidence the account is too fresh / too low-karma to be a real
+    prospect.
+    """
+    if info is None:
+        return True
+    if info["karma"] < MIN_AUTHOR_KARMA:
+        return False
+    if info["age_days"] < MIN_AUTHOR_AGE_DAYS:
+        return False
+    return True
 
 
 async def fetch(client: httpx.AsyncClient, subreddit: str, limit: int = 25) -> AsyncIterator[RawLead]:

@@ -15,8 +15,8 @@ import time
 
 import httpx
 
-from customer_bot import store
-from customer_bot.config import ALL_SUBREDDITS, TOPICS, topic_for_text
+from customer_bot import llm, store
+from customer_bot.config import ALL_SUBREDDITS, TOPICS, topic_for_text, topic_by_key
 from customer_bot.drafter import draft_for, ref_code, score_for
 from customer_bot.lead import RawLead
 from customer_bot.sources import hn as hn_source
@@ -80,41 +80,45 @@ class LeadsPoller:
 
     async def _cycle(self) -> None:
         assert self._client is not None
-        inserted = rejected = 0
+        inserted = rejected = low_quality = 0
+
+        # Per-cycle conversion lift map — self-tuning from past outcomes.
+        lift_map = store.signed_up_lift()
+        if lift_map:
+            log.info("Conversion lift active for %d (source,dashboard) pairs", len(lift_map))
 
         # 1. Reddit posts + comments — comments are where prospects actually
         #    ask for tools, so we poll both endpoints per sub.
         for sub in ALL_SUBREDDITS:
             async for raw in reddit_source.fetch(self._client, sub, limit=25):
-                got = self._ingest(raw)
-                inserted += 1 if got == "ok" else 0
-                rejected += 1 if got == "reject" else 0
+                got = await self._ingest(raw, lift_map=lift_map)
+                inserted += int(got == "ok"); rejected += int(got == "reject"); low_quality += int(got == "low_quality")
             await asyncio.sleep(1.0)
             async for raw in reddit_source.fetch_comments(self._client, sub, limit=50):
-                got = self._ingest(raw)
-                inserted += 1 if got == "ok" else 0
-                rejected += 1 if got == "reject" else 0
+                got = await self._ingest(raw, lift_map=lift_map)
+                inserted += int(got == "ok"); rejected += int(got == "reject"); low_quality += int(got == "low_quality")
             await asyncio.sleep(1.0)
 
         # 2. HN — one query per topic.
         for topic in TOPICS:
             async for raw in hn_source.fetch(self._client, topic.hn_query, limit=15):
-                got = self._ingest(raw, hinted_topic=topic)
-                inserted += 1 if got == "ok" else 0
-                rejected += 1 if got == "reject" else 0
+                got = await self._ingest(raw, hinted_topic=topic, lift_map=lift_map)
+                inserted += int(got == "ok"); rejected += int(got == "reject"); low_quality += int(got == "low_quality")
             await asyncio.sleep(0.5)
 
         # 3. Polymarket — pooled keywords across all topics.
         all_keywords: tuple[str, ...] = tuple({kw for t in TOPICS for kw in t.keywords})
         async for raw in pm_source.fetch(self._client, all_keywords, limit=30):
-            got = self._ingest(raw)
-            inserted += 1 if got == "ok" else 0
-            rejected += 1 if got == "reject" else 0
+            got = await self._ingest(raw, lift_map=lift_map)
+            inserted += int(got == "ok"); rejected += int(got == "reject"); low_quality += int(got == "low_quality")
 
-        log.info("LeadsPoller cycle complete — %d new leads, %d rejected", inserted, rejected)
+        log.info(
+            "LeadsPoller cycle complete — %d new, %d rejected (filter), %d dropped (low-quality author)",
+            inserted, rejected, low_quality,
+        )
 
-    def _ingest(self, raw: RawLead, hinted_topic=None) -> str:
-        """Return 'ok' if inserted, 'reject' if filtered, 'skip' otherwise."""
+    async def _ingest(self, raw: RawLead, hinted_topic=None, lift_map: dict | None = None) -> str:
+        """Return 'ok' / 'reject' / 'low_quality' / 'skip'."""
         text = f"{raw.title}\n{raw.body}"
         topic = hinted_topic or topic_for_text(text)
         if topic is None:
@@ -122,9 +126,26 @@ class LeadsPoller:
         score = score_for(raw, topic)
         if score < 0:
             return "reject"
+
+        # Apply self-tuning lift from historical outcomes before threshold check.
+        if lift_map:
+            score = max(0, min(100, score + lift_map.get((raw.source, topic.key), 0)))
         if score < MIN_SCORE:
             return "skip"
+
+        # Reddit author quality gate — drops fresh / low-karma accounts that
+        # are almost always bots or karma farmers. Skips for non-Reddit sources.
+        if raw.source in ("reddit", "reddit_comment") and raw.author:
+            assert self._client is not None
+            info = await reddit_source.fetch_author(self._client, raw.author)
+            if not reddit_source.is_quality_author(info):
+                return "low_quality"
+
         draft = draft_for(raw, topic)
+        # LLM polish if available — falls back to template internally on any error.
+        if llm.is_available():
+            draft = await llm.polish_draft(draft, raw, topic)
+
         snippet = (raw.body or raw.title)[:400]
         ok = store.upsert_lead(
             source=raw.source,

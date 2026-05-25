@@ -246,7 +246,6 @@ function copyDraft(leadId, btn) {
 const _leadsFilter = { source: 'all', dashboard: 'all' };
 function leadsFilter(dim, value, btn) {
   _leadsFilter[dim] = value;
-  // Mark the clicked chip active among siblings.
   if (btn && btn.parentElement) {
     btn.parentElement.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
@@ -254,8 +253,36 @@ function leadsFilter(dim, value, btn) {
   document.querySelectorAll('.lead-row').forEach(row => {
     const okSrc = _leadsFilter.source === 'all' || row.dataset.source === _leadsFilter.source;
     const okDash = _leadsFilter.dashboard === 'all' || row.dataset.dashboard === _leadsFilter.dashboard;
-    row.style.display = (okSrc && okDash) ? '' : 'none';
+    const show = okSrc && okDash;
+    row.style.display = show ? '' : 'none';
+    // Hidden rows shouldn't stay selected — bulk action would silently
+    // hit leads the user can't see.
+    if (!show) {
+      const cb = row.querySelector('.lead-cb');
+      if (cb && cb.checked) cb.checked = false;
+    }
   });
+  updateLeadBulkBar();
+}
+
+function updateLeadBulkBar() {
+  const cbs = document.querySelectorAll('.lead-cb');
+  let selected = 0;
+  cbs.forEach(cb => { if (cb.checked) selected++; });
+  const bar = document.getElementById('leads-bulk-bar');
+  const count = document.getElementById('leads-bulk-count');
+  if (!bar || !count) return;
+  bar.style.display = selected > 0 ? 'flex' : 'none';
+  count.textContent = selected + ' selected';
+}
+
+function leadsSelectAll(checked) {
+  document.querySelectorAll('.lead-row').forEach(row => {
+    if (row.style.display === 'none') return;
+    const cb = row.querySelector('.lead-cb');
+    if (cb) cb.checked = checked;
+  });
+  updateLeadBulkBar();
 }
 
 function filterKeys(status, btn) {

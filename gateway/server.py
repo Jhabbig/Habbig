@@ -2836,6 +2836,7 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
             'The bot polls Reddit (posts + comments), Hacker News, and Polymarket every 30 minutes.'
             '</div></div></div>'
         )
+        bulk_bar = ""
     else:
         parts = []
         for r in rows:
@@ -2856,7 +2857,6 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
 
             csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{csrf_esc}">'
 
-            # Actions vary by current status.
             actions: list[str] = []
             actions.append(
                 f'<a href="{url}" target="_blank" rel="noopener noreferrer" class="btn btn-primary-outline" style="font-size:12px">Open source ↗</a>'
@@ -2875,7 +2875,6 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
                     f'<form method="post" action="/admin/leads/{r["id"]}/skip" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-danger" style="font-size:12px">Skip</button></form>'
                 )
             elif status_view == "contacted":
-                # Outcome buttons — closes the feedback loop.
                 actions.append(
                     f'<form method="post" action="/admin/leads/{r["id"]}/outcome" style="display:inline">{csrf_hidden}<input type="hidden" name="outcome" value="signed_up"><button type="submit" class="btn btn-primary" style="font-size:12px;background:var(--green);border-color:var(--green)">Signed up</button></form>'
                 )
@@ -2899,6 +2898,7 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
             parts.append(
                 f'<div class="admin-row lead-row" data-source="{source_esc}" data-dashboard="{html.escape(r["dashboard_key"])}" style="flex-direction:column;align-items:stretch;gap:10px">'
                 f'  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+                f'    <input type="checkbox" name="lead_ids" form="leads-bulk-form" value="{r["id"]}" class="lead-cb" onchange="updateLeadBulkBar()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer">'
                 f'    <span class="badge" style="background:var(--accent-light);color:var(--accent)">{source_esc}</span>'
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">→ {html.escape(dash_name)}</span>'
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">score {score}</span>'
@@ -2917,8 +2917,26 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
             )
         body = "".join(parts)
 
+        bulk_bar = (
+            f'<form id="leads-bulk-form" method="post" action="/admin/leads/bulk" style="margin-bottom:12px">'
+            f'  <input type="hidden" name="_csrf_token" value="{csrf_esc}">'
+            f'  <input type="hidden" name="return_to" value="{html.escape(status_view)}">'
+            f'  <div id="leads-bulk-bar" style="display:none;padding:10px 14px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-sm);align-items:center;gap:10px;flex-wrap:wrap">'
+            f'    <span id="leads-bulk-count" style="font-size:13px;font-weight:500">0 selected</span>'
+            f'    <label style="font-size:12px;color:var(--text-muted);cursor:pointer;display:inline-flex;align-items:center;gap:6px">'
+            f'      <input type="checkbox" id="leads-select-all" onchange="leadsSelectAll(this.checked)" style="width:16px;height:16px;accent-color:var(--accent)"> Select all visible'
+            f'    </label>'
+            f'    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">'
+            f'      <button type="submit" name="bulk_action" value="contacted" class="btn btn-primary" style="font-size:12px" onclick="return confirm(\'Mark selected leads as contacted?\')">Mark contacted</button>'
+            f'      <button type="submit" name="bulk_action" value="skip" class="btn btn-danger" style="font-size:12px" onclick="return confirm(\'Skip selected leads?\')">Skip</button>'
+            f'      <button type="submit" name="bulk_action" value="archive" class="btn btn-primary-outline" style="font-size:12px" onclick="return confirm(\'Archive selected leads?\')">Archive</button>'
+            f'    </div>'
+            f'  </div>'
+            f'</form>'
+        )
+
     return (
-        status_bar + metrics + chips +
+        status_bar + metrics + chips + bulk_bar +
         '<div class="admin-list lead-list" style="display:flex;flex-direction:column;gap:12px">' + body + '</div>'
     )
 
@@ -3475,6 +3493,32 @@ async def admin_lead_outcome(request: Request, lead_id: int):
         raise HTTPException(status_code=400, detail="Invalid outcome")
     leads_store.set_outcome(lead_id, outcome)
     return RedirectResponse(url="/admin?leads_status=contacted#leads", status_code=303)
+
+
+@app.post("/admin/leads/bulk")
+async def admin_leads_bulk(request: Request):
+    admin = _require_admin_user(request)
+    form = await request.form()
+    if not _validate_csrf(request, form.get("_csrf_token", "")):
+        return _csrf_error()
+    action = (form.get("bulk_action") or "").strip()
+    if action not in ("skip", "contacted", "archive"):
+        raise HTTPException(status_code=400, detail="Invalid bulk action")
+    lead_ids: list[int] = []
+    for raw_id in form.getlist("lead_ids"):
+        try:
+            lead_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if not lead_ids:
+        return RedirectResponse(url="/admin?leads_status=new#leads", status_code=303)
+    status_map = {"skip": "skipped", "contacted": "contacted", "archive": "archived"}
+    n = leads_store.bulk_set_status(lead_ids, status_map[action], note=f"bulk by {admin['email']}")
+    log.info("Admin %s bulk-%s %d leads", admin["email"], action, n)
+    return_to = (form.get("return_to") or "new").strip()
+    if return_to not in ("new", "contacted", "snoozed", "skipped", "archived"):
+        return_to = "new"
+    return RedirectResponse(url=f"/admin?leads_status={return_to}#leads", status_code=303)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:

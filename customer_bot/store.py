@@ -121,6 +121,63 @@ def conversion_stats() -> dict[str, int]:
     return {r["outcome"]: r["n"] for r in rows}
 
 
+def signed_up_lift() -> dict[tuple[str, str], int]:
+    """Per-(source, dashboard) historical lift to apply to fresh leads.
+
+    Returns a -10..+10 nudge for each combination that has enough history
+    to mean anything (n >= 5 leads with recorded outcomes). Patterns that
+    convert above 20% get +10, above 10% get +5; patterns where >50% of
+    outcomes were no_reply get -10. Sparse history → 0 (no change).
+
+    This is the self-tuning bit: once you've marked a few outcomes, the
+    bot quietly upranks leads from the corner of the world that's actually
+    paid off, and downranks the corner that hasn't.
+    """
+    out: dict[tuple[str, str], int] = {}
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT source, dashboard_key,
+                   SUM(CASE WHEN outcome = 'signed_up' THEN 1 ELSE 0 END) AS signed,
+                   SUM(CASE WHEN outcome = 'no_reply'  THEN 1 ELSE 0 END) AS noreply,
+                   SUM(CASE WHEN outcome != '' THEN 1 ELSE 0 END)         AS total
+            FROM leads
+            GROUP BY source, dashboard_key
+            HAVING total >= 5
+            """
+        ).fetchall()
+    for r in rows:
+        n = r["total"] or 0
+        if n < 5:
+            continue
+        signed_rate = (r["signed"] or 0) / n
+        noreply_rate = (r["noreply"] or 0) / n
+        if signed_rate >= 0.20:
+            lift = 10
+        elif signed_rate >= 0.10:
+            lift = 5
+        elif noreply_rate >= 0.50:
+            lift = -10
+        else:
+            lift = 0
+        out[(r["source"], r["dashboard_key"])] = lift
+    return out
+
+
+def bulk_set_status(lead_ids: list[int], status: str, note: str = "") -> int:
+    """Apply set_status to many leads in one transaction. Returns rowcount."""
+    if not lead_ids:
+        return 0
+    now = int(time.time())
+    placeholders = ",".join("?" * len(lead_ids))
+    with _conn() as c:
+        cur = c.execute(
+            f"UPDATE leads SET status = ?, status_note = ?, updated_at = ? WHERE id IN ({placeholders})",
+            [status, note, now, *lead_ids],
+        )
+        return cur.rowcount
+
+
 def set_status(lead_id: int, status: str, note: str = "") -> bool:
     now = int(time.time())
     with _conn() as c:
