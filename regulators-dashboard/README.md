@@ -32,6 +32,8 @@ per-source status row flips to red; other sources keep working).
 | `GET /api/feed?days=90&jurisdiction=&source=&tag=&severity=&topic=&has_market=&q=` | 30 min (feed) + 5 min (markets) | Unified action feed with filters + matched markets |
 | `GET /api/heatmap?weeks=12&show_empty=false&group_by=source` | 30 min (via feed cache) | Per-{source|jurisdiction} × per-week × per-tag counts. `group_by=jurisdiction` collapses sources by ISO code. `weeks` clamped 4..52. `show_empty=true` returns rows with zero activity. |
 | `GET /api/parliament_hearings` | 1 h | v2.2 — UK Treasury + PAC + EU ECON + JURI committees, filtered to financial-regulator-relevant items |
+| `GET /api/bills` | 1 h | v2.3 — US Congress + UK Parliament + EU legislative procedures, filtered by verb×topic match |
+| `GET /api/feed.csv?…` | 30 min (via feed cache) | v2.3 — CSV export of the filtered action feed; same filters as `/api/feed` |
 | `GET /api/topics?days=90` | 30 min (via feed cache) | Per-topic counts across the window — drives the topic-filter chip badges |
 | `GET /api/markets` | 5 min | Raw normalized Polymarket + Kalshi market list (debug-friendly) |
 | `GET /api/people` | — (data is a Python literal; markets cached) | Personnel watch with `days_until` + matched markets |
@@ -66,6 +68,12 @@ cp .env.example .env       # DEV_MODE=1 lets you skip gateway auth
 pip install -r requirements.txt
 python3 server.py
 # http://localhost:7080
+```
+
+Run the full fixture suite (17 self-tests) in one command:
+
+```bash
+bash run_tests.sh
 ```
 
 Or via Docker from the repo root:
@@ -603,6 +611,7 @@ firings are safe.
 | **v2.0** | ✓ done | **Global regulator expansion** — 28 sources across 13 jurisdictions (US/UK/EU/DE/CH/FR/IT/SG/HK/AU/IN/CA/BR). New `ingestion/sources.py` master config; new court-cases module (CJEU + UK + SCOTUS); personnel roster grew from 4 to 18; jurisdiction filter chips populated dynamically from `/api/sources`; anchor tokens expanded to 81. |
 | **v2.1** | ✓ done | **Wider international coverage** — 54 sources across 34 jurisdictions. Added 8 European national bodies (CNMV/AFM/DNB/FI-SE/Finanstilsynet/KNF/CSSF/FSMA-BE/OENB), 4 more APAC (FSC-KR/FSC-TW/SEC-TH/BNM, plus JFSA placeholder), 5 MENA/Africa (CMA-SA/SCA-AE/DFSA/ISA-IL/FSCA), 3 more LatAm (CNBV/CMF-CL/SFC-CO), 4 international/supranational (FATF/BIS/IOSCO/FSB). Personnel grew 18→27. Anchor tokens 81→108. New heatmap `hide_empty=true` default so the chart stays readable as the source list grows. |
 | **v2.2** | ✓ done | **Heatmap jurisdiction-grouping + parliament hearings + JFSA HTML scraper.** Heatmap gains `?group_by=jurisdiction` (collapses 54 sources → 34 country rows, useful at this scale). UK Treasury/PAC + EU ECON/JURI committees wired as `parliament_hearings.py` with a verb×topic regex filter (10/10 fixtures pass). JFSA placeholder replaced with a real HTML scraper (`jfsa_scraper.py`) that integrates as a non-RSS source alongside the RSS pipeline — proves the pattern for any future HTML-only jurisdiction. |
+| **v2.3** | ✓ done | **Legislative-bills tracker + CSV export + test runner.** `legislative_bills.py` adds US Congress + UK Parliament + EU legislative-procedure feeds with the same verb×topic filter (10/10 fixtures pass). `/api/feed.csv` exports any filtered slice for analyst pipelines. `run_tests.sh` runs all 17 fixture suites in one shell command — green/red exit code for CI. |
 | later | open  | Extend source list (CFTC, FinCEN, OFAC, BaFin, FINMA, MAS, HKMA, JFSA, ASIC) |
 
 ## Env vars

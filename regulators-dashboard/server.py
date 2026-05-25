@@ -12,7 +12,10 @@ Routes:
   - GET /api/diff               → latest-vs-prior speech diff per regulator
   - GET /api/sdn                → OFAC SDN delta — today vs prior snapshot (12h cache)
   - GET /api/hearings           → Senate Banking + House FS confirmation hearings (1h cache)
+  - GET /api/parliament_hearings → UK Treasury/PAC + EU ECON/JURI (1h cache, v2.2)
   - GET /api/courts             → CJEU + UK + SCOTUS financial-relevant case feed (1h cache)
+  - GET /api/bills              → US Congress + UK Parliament + EU legislative bills (1h cache, v2.3)
+  - GET /api/feed.csv?…         → v2.3 CSV export of the filtered action feed
   - GET /api/sources            → Master list of every registered RSS source
   - GET /feed.xml?…             → RSS 2.0 alert feed with the same filter params as /api/feed
   - POST /api/subscribe         → v1.6 — accept email + filter; send confirmation email
@@ -30,6 +33,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -41,6 +45,7 @@ from ingestion import (
     digest_subscribers,
     email_send,
     kalshi_client,
+    legislative_bills,
     ofac_sdn,
     parliament_hearings,
     polymarket_client,
@@ -247,6 +252,69 @@ async def api_parliament_hearings(force: bool = False) -> JSONResponse:
     """v2.2 — non-US parliament committee hearings (UK Treasury + PAC,
     EU ECON + JURI), filtered to financial-regulator relevance."""
     return JSONResponse(parliament_hearings.get_cached(force=force))
+
+
+@app.get("/api/bills")
+async def api_bills(force: bool = False) -> JSONResponse:
+    """v2.3 — legislative bill tracker. US Congress + UK Parliament + EU
+    legislative procedures, filtered to bill-action × financial-regulator
+    relevance via the verb×topic conjunction in `legislative_bills.py`."""
+    return JSONResponse(legislative_bills.get_cached(force=force))
+
+
+@app.get("/api/feed.csv")
+async def api_feed_csv(
+    days: int = 90,
+    jurisdiction: str = "",
+    source: str = "",
+    tag: str = "",
+    severity: str = "",
+    topic: str = "",
+    q: str = "",
+) -> Response:
+    """v2.3 — same filter semantics as /api/feed, but the response body is
+    CSV. Useful for analyst pipelines (Excel, pandas, BI tools). Gated
+    by the same gateway-SSO as /api/feed."""
+    import csv
+    import io
+    days = max(1, min(days, 365))
+    data = unified_feed.get_cached(since_days=days)
+    items = _apply_item_filters(
+        data["items"],
+        jurisdiction=jurisdiction, source=source, tag=tag,
+        severity=severity, topic=topic, q=q,
+    )
+
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow([
+        "published", "source", "jurisdiction", "primary_tag",
+        "severity_bucket", "severity_amount_native", "severity_currency",
+        "severity_amount_usd", "topics", "title", "link", "summary",
+    ])
+    for it in items:
+        sev = it.get("severity") or {}
+        w.writerow([
+            it.get("published", ""),
+            it.get("source", ""),
+            it.get("jurisdiction", ""),
+            it.get("primary_tag", ""),
+            sev.get("bucket", ""),
+            sev.get("amount_native", ""),
+            sev.get("currency", ""),
+            sev.get("amount_usd", ""),
+            ",".join(it.get("topics") or []),
+            it.get("title", ""),
+            it.get("link", ""),
+            it.get("summary", ""),
+        ])
+
+    filename = f"regulator-feed-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/courts")

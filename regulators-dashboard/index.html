@@ -269,6 +269,10 @@
     <h2>Parliament hearings — UK Treasury / Public Accounts + EU ECON / JURI</h2>
     <div id="parliament-body"><div class="heatmap-empty">loading…</div></div>
   </section>
+  <section class="panel" id="bills-panel">
+    <h2>Legislative bills — US Congress + UK Parliament + EU procedures</h2>
+    <div id="bills-body"><div class="heatmap-empty">loading…</div></div>
+  </section>
   <section class="panel" id="courts-panel">
     <h2>Court cases — financial-relevant decisions (CJEU / UK / SCOTUS)</h2>
     <div id="courts-body"><div class="heatmap-empty">loading…</div></div>
@@ -815,6 +819,44 @@ async function loadHearings() {
   }
 }
 
+function renderBills(data) {
+  const body = document.getElementById("bills-body");
+  const items = data.items || [];
+  const okSources = (data.sources || []).filter(s => s.ok).length;
+  if (!items.length) {
+    if (okSources === 0) {
+      body.innerHTML = '<div class="heatmap-empty">All bill feeds unavailable — verify URLs in <code>ingestion/legislative_bills.py</code>.</div>';
+    } else {
+      body.innerHTML = '<div class="heatmap-empty">No regulator-relevant bills in the feed window.</div>';
+    }
+    return;
+  }
+  body.innerHTML = items.slice(0, 20).map(b => {
+    const dt = (b.published || "").slice(0, 10);
+    const link = b.link
+      ? `<a href="${escapeHtml(b.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(b.title)}</a>`
+      : escapeHtml(b.title);
+    return `
+      <div class="hearing-row">
+        <div class="hearing-date">${escapeHtml(dt)}</div>
+        <div class="hearing-cmte">${escapeHtml(b.chamber)}</div>
+        <div class="hearing-title">${link}</div>
+      </div>`;
+  }).join("");
+}
+
+async function loadBills() {
+  try {
+    const r = await fetch("/api/bills");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    renderBills(data);
+  } catch (e) {
+    document.getElementById("bills-body").innerHTML =
+      `<div class="heatmap-empty err">bills load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 function renderParliament(data) {
   const body = document.getElementById("parliament-body");
   const items = data.items || [];
@@ -930,9 +972,13 @@ function updateRssLink() {
   if (state.topic) params.set("topic", state.topic);
   if (state.q) params.set("q", state.q);
   const qs = params.toString();
-  const url = "/feed.xml" + (qs ? "?" + qs : "");
+  const rssUrl = "/feed.xml" + (qs ? "?" + qs : "");
+  const csvUrl = "/api/feed.csv" + (qs ? "?" + qs : "");
   const el = document.getElementById("rss-link");
-  if (el) el.innerHTML = `· <a href="${escapeHtml(url)}" target="_blank">Subscribe via RSS ↗</a>`;
+  if (el) {
+    el.innerHTML = `· <a href="${escapeHtml(rssUrl)}" target="_blank">Subscribe via RSS ↗</a>` +
+                   ` · <a href="${escapeHtml(csvUrl)}" target="_blank">Download CSV ↓</a>`;
+  }
 }
 
 let heatmapGroupBy = "source";  // 'source' | 'jurisdiction'
@@ -1174,12 +1220,13 @@ loadTopics();
 loadPeople();
 loadHearings();
 loadParliament();
+loadBills();
 loadCourts();
 loadStance();
 loadDiff();
 loadSdn();
 updateRssLink();
-setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadParliament(); loadCourts(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
+setInterval(() => { load(); loadHeatmap(); loadTopics(); loadPeople(); loadHearings(); loadParliament(); loadBills(); loadCourts(); loadStance(); loadDiff(); }, 5 * 60 * 1000);
 setInterval(loadSdn, 30 * 60 * 1000);
 </script>
 </body>
