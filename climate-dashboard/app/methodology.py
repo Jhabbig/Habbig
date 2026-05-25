@@ -126,6 +126,18 @@ MODELS = [
         "code": "app/fetchers/gistemp_zonal.py",
     },
     {
+        "id": "dashboard_firehose",
+        "name": "Single-payload firehose (/api/dashboard.json)",
+        "summary": "Composes every individual /api/* endpoint into one large JSON response. Intended for third-party API consumers, programmatic monitoring, periodic archiving, or building external tools on top of the dataset. Carries a schema_version field for forward compatibility and the running git commit so consumers can reproduce a specific dashboard state. Adds no new HTTP fetches — purely composes cached data.",
+        "inputs": ["Every upstream fetcher (all cached)"],
+        "outputs": {
+            "schema_version": "Increments if response shape changes incompatibly",
+            "commit": "Running git commit so archived payloads are reproducible",
+            "<all dashboard blocks>": "gistemp, co2, methane, n2o, sf6, sea_ice, ocean_heat, sea_level, snow_cover, zonal, regime, forcing, scenarios, carbon_budget, emissions_summary, highlights",
+        },
+        "code": "server.py api_dashboard_firehose",
+    },
+    {
         "id": "carbon_budget",
         "name": "Remaining carbon budget for 1.5°C / 2°C",
         "summary": "IPCC AR6 WG1 Table 5.8 anchor budgets (start of 2020): 500 / 400 / 1150 GtCO₂ for 1.5°C-50% / 1.5°C-67% / 2°C-67%. Subtract cumulative world CO₂ emissions from OWID since 2020 to get the remaining budget today. Years-at-current-rate divides by the latest annual emission. Pure derivative — no new URLs.",

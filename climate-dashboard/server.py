@@ -323,6 +323,93 @@ def api_snow_cover():
     return jsonify(s)
 
 
+@app.route("/api/dashboard.json")
+def api_dashboard_firehose():
+    """Single-payload superset — everything the dashboard shows, in one
+    JSON response. Intended for API consumers, periodic archiving, or
+    third-party tools building on top of the dataset.
+
+    Larger than /api/summary (which is optimized for the front page load).
+    Anything missing here is still available via the individual /api/*
+    endpoints.
+    """
+    g = gistemp_src.fetch()
+    c = co2_src.fetch()
+    ch4 = methane_src.fetch()
+    n2o = n2o_src.fetch()
+    sf6 = sf6_src.fetch()
+    s = sea_ice_src.fetch()
+    o = oni_src.fetch()
+    em = emissions_src.fetch()
+    ohc = ocean_heat_src.fetch()
+    snow = snow_cover_src.fetch()
+    sl = sea_level_src.fetch()
+    zonal = gistemp_zonal_src.fetch()
+
+    gp = temperature_model.projection(g) if g else None
+    cp = co2_model.projection(c) if c else None
+    mp = methane_model.projection(ch4) if ch4 else None
+    np_ = n2o_model.projection(n2o) if n2o else None
+    sp = sf6_model.projection(sf6) if sf6 else None
+    ap = sea_ice_model.arctic_min_projection(s) if s else None
+    aap = sea_ice_model.antarctic_min_projection(s) if s else None
+    forcing = forcing_model.compute(co2=c, methane=ch4, n2o=n2o, sf6=sf6)
+    cur_year = datetime.now(timezone.utc).year
+
+    return jsonify({
+        "schema_version": "1",
+        "commit": _COMMIT,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "gistemp": {
+            "latest_annual": g["annual"][-1] if g and g.get("annual") else None,
+            "annual_recent": (g["annual"][-30:] if g and g.get("annual") else None),
+            "projection": gp,
+            "thresholds": temperature_model.threshold_probs(gp),
+            "calibration": calibration.summary(
+                temperature_model.backtest(g) if g else [], "error_c", "°C"),
+        },
+        "co2": {"latest": c["latest"] if c else None, "projection": cp,
+                "thresholds": co2_model.threshold_probs(cp)},
+        "methane": {"latest": ch4["latest"] if ch4 else None, "projection": mp,
+                    "thresholds": methane_model.threshold_probs(mp)},
+        "n2o": {"latest": n2o["latest"] if n2o else None, "projection": np_,
+                "thresholds": n2o_model.threshold_probs(np_)},
+        "sf6": {"latest": sf6["latest"] if sf6 else None, "projection": sp,
+                "thresholds": sf6_model.threshold_probs(sp)},
+        "sea_ice": {
+            "record_check": sea_ice_model.daily_record_check(s) if s else None,
+            "arctic_projection": ap,
+            "antarctic_projection": aap,
+        },
+        "ocean_heat": {"latest": ohc["latest"] if ohc else None} if ohc else None,
+        "sea_level": {"latest": sl["latest"] if sl else None} if sl else None,
+        "snow_cover": {"latest": snow["latest"] if snow else None} if snow else None,
+        "zonal": {
+            "latest_year": zonal["latest_year"] if zonal else None,
+            "warming_ratios": gistemp_zonal_src.warming_ratios(zonal) if zonal else None,
+        } if zonal else None,
+        "regime": {"latest": o["latest"] if o else None,
+                   "state": o["state"] if o else None},
+        "forcing": forcing,
+        "scenarios": {
+            "temperature_match": scenarios_model.closest_temp_scenario(
+                g["annual"][-1]["anomaly_c"] if g and g.get("annual") else None, cur_year),
+            "co2_match": scenarios_model.closest_co2_scenario(
+                c["latest"]["ppm"] if c and c.get("latest") else None, cur_year),
+        },
+        "carbon_budget": carbon_budget_model.compute(em),
+        "emissions_summary": {
+            "latest_year": em["latest_year"] if em else None,
+            "top_emitters": emissions_model.top_emitters(em, n=10) if em else [],
+            "global": emissions_model.global_summary(em) if em else None,
+        } if em else None,
+        "highlights": highlights_model.compute(
+            gistemp=g, co2=c, methane=ch4, n2o=n2o,
+            sea_ice=s, oni=o, zonal=zonal,
+        ),
+    })
+
+
 @app.route("/api/scenarios")
 def api_scenarios():
     """IPCC AR6 SSP scenarios — temperature + CO₂ trajectories through 2100,

@@ -218,6 +218,7 @@ job — failures there mean the dashboard would have errored in a browser.
 - `GET /api/scenarios` — IPCC SSP trajectories + "current pace ≈ SSP X" match (with above/below/between framing)
 - `GET /api/emissions` — country-level CO₂ emissions (top emitters + global decade-change)
 - `GET /api/carbon-budget` — remaining GtCO₂ + years left for 1.5°C / 2°C targets
+- `GET /api/dashboard.json` — single-payload firehose: every data block + projections + scenarios + emissions + highlights in one response (intended for API consumers / archiving)
 - `GET /api/ocean-heat` — NOAA NCEI 0-2000m heat content yearly anomaly
 - `GET /api/sea-level` — NOAA STAR global mean sea level
 - `GET /api/snow-cover` — Rutgers NH snow cover extent

@@ -181,6 +181,26 @@ def test_scenarios_endpoint(client):
     assert body["current_match"]["co2"] is not None
 
 
+def test_dashboard_firehose_endpoint(client):
+    """The firehose should include every major data block in one shot."""
+    r = client.get("/api/dashboard.json")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["schema_version"] == "1"
+    # Required structural keys
+    for key in ("gistemp", "co2", "methane", "n2o", "sf6", "sea_ice",
+                "regime", "forcing", "scenarios", "carbon_budget",
+                "emissions_summary", "highlights"):
+        assert key in body, f"firehose missing: {key}"
+    # Best-effort sources may be None (data unavailable) but the key still
+    # has to exist for consumers' schemas
+    for key in ("ocean_heat", "sea_level", "snow_cover", "zonal"):
+        assert key in body
+    # Schema reproducibility: commit field present (may be None in dev)
+    assert "commit" in body
+    assert "fetched_at" in body
+
+
 def test_zonal_endpoint(client):
     r = client.get("/api/zonal")
     assert r.status_code == 200
