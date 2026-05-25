@@ -673,6 +673,29 @@ CREATE TABLE IF NOT EXISTS crypto_dvol_bars (
     PRIMARY KEY (asset, date)
 );
 
+-- ── Exchange-side fill imports (auto-import history) ────────────────────────
+-- Ledger row per imported fill. UNIQUE(exchange, external_id) is the
+-- idempotency boundary — re-running import is always safe.
+CREATE TABLE IF NOT EXISTS crypto_exchange_imports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    exchange        TEXT NOT NULL,
+    external_id     TEXT NOT NULL,
+    ticker          TEXT NOT NULL,
+    side            TEXT NOT NULL,           -- buy | sell
+    qty             REAL NOT NULL,
+    price           REAL NOT NULL,
+    fee_usd         REAL DEFAULT 0,
+    filled_at       TEXT NOT NULL,
+    holding_id      INTEGER,                 -- FK into crypto_holdings (NULL on sells / no-lots sells)
+    disposition_id  INTEGER,                 -- FK into crypto_dispositions
+    raw_json        TEXT DEFAULT '{}',
+    imported_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(exchange, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_imports_user_exchange ON crypto_exchange_imports(user_id, exchange);
+CREATE INDEX IF NOT EXISTS idx_imports_user_filled_at ON crypto_exchange_imports(user_id, filled_at DESC);
+
 -- ── User preferences (digest, email) ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crypto_user_preferences (
     user_id              TEXT PRIMARY KEY,
@@ -2993,6 +3016,93 @@ def get_dvol_bars(asset: str, days: int = 180) -> list[Row]:
             """SELECT date, dvol FROM crypto_dvol_bars
                WHERE asset = ? AND date >= ? ORDER BY date ASC""",
             (asset, cutoff),
+        ).fetchall()
+    return _rows(rows)
+
+
+# ── Exchange-side fill imports ──────────────────────────────────────────────
+
+def insert_exchange_import(user_id: str, exchange: str, external_id: str,
+                            ticker: str, side: str, qty: float, price: float,
+                            fee_usd: float, filled_at: str,
+                            holding_id: int | None, disposition_id: int | None,
+                            raw_json: str = "{}") -> bool:
+    """Insert OR IGNORE on (exchange, external_id). Returns True iff a
+    new row was added (i.e. this fill wasn't already imported)."""
+    with _conn() as c:
+        try:
+            cur = c.execute(
+                """INSERT INTO crypto_exchange_imports
+                     (user_id, exchange, external_id, ticker, side, qty,
+                      price, fee_usd, filled_at, holding_id, disposition_id,
+                      raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, exchange, external_id, ticker, side, qty, price,
+                 fee_usd, filled_at, holding_id, disposition_id, raw_json),
+            )
+            return cur.rowcount > 0
+        except sqlite3.IntegrityError:
+            return False
+
+
+def exchange_import_exists(exchange: str, external_id: str) -> bool:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM crypto_exchange_imports "
+            "WHERE exchange = ? AND external_id = ? LIMIT 1",
+            (exchange, external_id),
+        ).fetchone()
+    return row is not None
+
+
+def get_latest_exchange_import_at(user_id: str, exchange: str) -> Optional[str]:
+    """ISO timestamp of the most recent fill we've imported for this
+    exchange. Used to bound incremental refetches."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(filled_at) AS m FROM crypto_exchange_imports "
+            "WHERE user_id = ? AND exchange = ?",
+            (user_id, exchange),
+        ).fetchone()
+    return row["m"] if row and row["m"] else None
+
+
+def get_exchange_import_status(user_id: str, exchange: str) -> Optional[dict]:
+    """Per-exchange summary for the UI."""
+    with _conn() as c:
+        row = c.execute(
+            """SELECT
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN side='buy'  THEN 1 ELSE 0 END) AS buys,
+                 SUM(CASE WHEN side='sell' THEN 1 ELSE 0 END) AS sells,
+                 MAX(filled_at) AS latest_filled_at,
+                 MAX(imported_at) AS latest_imported_at
+               FROM crypto_exchange_imports
+               WHERE user_id = ? AND exchange = ?""",
+            (user_id, exchange),
+        ).fetchone()
+    if not row or not row["total"]:
+        return None
+    return {
+        "total": int(row["total"]),
+        "buys": int(row["buys"] or 0),
+        "sells": int(row["sells"] or 0),
+        "latest_filled_at": row["latest_filled_at"],
+        "latest_imported_at": row["latest_imported_at"],
+    }
+
+
+def list_exchange_imports(user_id: str, limit: int = 100) -> list[Row]:
+    """Recent import-ledger rows for an audit view."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT id, exchange, external_id, ticker, side, qty, price,
+                      fee_usd, filled_at, holding_id, disposition_id,
+                      imported_at
+               FROM crypto_exchange_imports
+               WHERE user_id = ?
+               ORDER BY filled_at DESC LIMIT ?""",
+            (user_id, limit),
         ).fetchall()
     return _rows(rows)
 

@@ -52,6 +52,7 @@ import etf_flows as etf_mod
 import cross_asset as ca_mod
 import options as opt_mod
 import performance as perf_mod
+import exchange_import as imp_mod
 
 app = FastAPI(title="CryptoEdge", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
@@ -5553,6 +5554,55 @@ async def test_exchange_connection(exchange: str, request: Request):
     return {"ok": ok, "message": msg}
 
 
+# ── Historical-fill auto-import ─────────────────────────────────────────────
+
+@app.post("/api/exchanges/import/{exchange}")
+async def import_exchange_fills(exchange: str, request: Request):
+    """Pull every new fill from the named exchange and turn buys into
+    holdings + sells into dispositions. Pro-tier gated since it consumes
+    exchange credentials + writes to holdings/dispositions. Idempotent."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "exchange_connect")
+    exchange = exchange.lower()
+    if exchange not in ("coinbase", "kraken"):
+        raise HTTPException(status_code=400, detail="exchange must be coinbase or kraken")
+    result = await asyncio.to_thread(imp_mod.import_fills, user["id"], exchange)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.post("/api/exchanges/import-all")
+async def import_all_exchanges(request: Request):
+    """Run import for every connected exchange in sequence."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(user, "exchange_connect")
+    return await asyncio.to_thread(imp_mod.import_all, user["id"])
+
+
+@app.get("/api/exchanges/import/status")
+async def exchange_import_status(request: Request):
+    """Per-exchange totals + last-imported timestamp for the UI."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await asyncio.to_thread(imp_mod.import_status, user["id"])
+
+
+@app.get("/api/exchanges/import/log")
+async def exchange_import_log(request: Request, limit: int = 100):
+    """Recent rows from the import audit ledger."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    rows = db.list_exchange_imports(user["id"], limit=min(max(1, limit), 500))
+    return {"imports": [dict(r) for r in rows]}
+
+
 @app.get("/api/exchanges/balances")
 async def get_exchange_balances(request: Request):
     user = _get_session_user(request)
@@ -7752,6 +7802,18 @@ hr{border:0;border-top:1px solid var(--border);margin:16px 0}
     </div>
   </div>
 
+  <h2>Import historical fills</h2>
+  <div class="note">Pull every buy / sell you've ever done on your connected exchanges. Buys become lots (cost basis adjusted for fees), sells become dispositions allocated via your tax lot method. Idempotent — re-running is always safe.</div>
+  <div data-feature="exchange_connect" style="margin-top:8px">
+    <div class="actionrow">
+      <button id="imp-all">Import all connected exchanges</button>
+      <button id="imp-coinbase" class="ghost">Coinbase only</button>
+      <button id="imp-kraken" class="ghost">Kraken only</button>
+      <span id="imp-msg"></span>
+    </div>
+    <div id="imp-status" style="margin-top:8px"></div>
+  </div>
+
   <h2>Safety limits</h2>
   <div id="safety-form" class="grid"></div>
   <div class="actionrow" style="margin-top:8px">
@@ -8703,7 +8765,71 @@ async function loadExecution(){
   await loadBalances();
   await loadPreview();
   await loadExecLog();
+  await loadImportStatus();
 }
+
+async function loadImportStatus(){
+  const out = document.getElementById('imp-status');
+  if (!out) return;
+  try {
+    const r = await api('/api/exchanges/import/status');
+    let html = '';
+    for (const [ex, info] of Object.entries(r.exchanges || {})) {
+      if (!info || info.configured === false || !info.total) {
+        html += `<div style="font-size:.85em;color:var(--muted)">${esc(ex)}: nothing imported yet</div>`;
+        continue;
+      }
+      html += `<div style="font-size:.85em">
+        <b>${esc(ex)}</b>: ${info.total} fills (${info.buys} buys, ${info.sells} sells) ·
+        latest fill ${esc(info.latest_filled_at || '—')} ·
+        last imported ${esc(info.latest_imported_at || '—')}
+      </div>`;
+    }
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; }
+}
+
+async function runImport(path, label){
+  const msg = document.getElementById('imp-msg');
+  msg.innerHTML = ' importing ' + esc(label) + '…';
+  try {
+    const r = await api(path, {method:'POST'});
+    if (r.error) { msg.innerHTML = '<span class="err">' + esc(r.error) + '</span>'; return; }
+    // Aggregate counts across exchanges if import-all, else use the single result.
+    let buys = 0, sells = 0, skipped = 0, no_lots = 0, errors = 0;
+    if (r.exchanges) {
+      for (const v of Object.values(r.exchanges)) {
+        if (v && !v.error) {
+          buys += v.new_buys || 0;
+          sells += v.new_sells || 0;
+          skipped += v.skipped || 0;
+          no_lots += v.sells_no_lots || 0;
+          errors += v.errors || 0;
+        }
+      }
+    } else {
+      buys = r.new_buys || 0;
+      sells = r.new_sells || 0;
+      skipped = r.skipped || 0;
+      no_lots = r.sells_no_lots || 0;
+      errors = r.errors || 0;
+    }
+    msg.innerHTML = '<span class="ok">' + buys + ' new buys, ' + sells + ' new sells'
+                  + (no_lots ? ' (' + no_lots + ' sells had no lots to match)' : '')
+                  + (skipped ? ', ' + skipped + ' already-imported' : '')
+                  + (errors ? ', ' + errors + ' errors' : '')
+                  + '</span>';
+    loadImportStatus();
+    loadPortfolio();  // refresh holdings table
+  } catch(e) { msg.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+}
+
+document.getElementById('imp-all').addEventListener('click',
+  () => runImport('/api/exchanges/import-all', 'all'));
+document.getElementById('imp-coinbase').addEventListener('click',
+  () => runImport('/api/exchanges/import/coinbase', 'coinbase'));
+document.getElementById('imp-kraken').addEventListener('click',
+  () => runImport('/api/exchanges/import/kraken', 'kraken'));
 
 async function loadSafetyForm(){
   const form = document.getElementById('safety-form');

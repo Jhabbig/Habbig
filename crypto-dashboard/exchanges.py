@@ -53,6 +53,24 @@ class Balance:
 
 
 @dataclass
+class Fill:
+    """A normalised view of one historical fill, returned by
+    `get_filled_orders()`. Asset codes are already mapped to our
+    canonical BTC/ETH/SOL/DOGE/XRP keys."""
+    external_id: str          # exchange-side unique trade id
+    ticker: str               # base asset (BTC, ETH, ...)
+    side: str                 # buy | sell
+    qty: float                # base-asset quantity
+    price: float              # USD per unit at fill
+    fee_usd: float            # commission in USD (signed positive)
+    filled_at: str            # ISO datetime
+    raw: dict                 # original payload for debugging
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class OrderResponse:
     ok: bool
     order_id: Optional[str]
@@ -84,6 +102,7 @@ class ExchangeAdapter(Protocol):
     ) -> OrderResponse: ...
     def cancel_order(self, order_id: str) -> OrderResponse: ...
     def get_order_status(self, order_id: str) -> dict: ...
+    def get_filled_orders(self, since_iso: str | None = None) -> list[Fill]: ...
 
 
 # ─── Credential storage ─────────────────────────────────────────────────────
@@ -361,6 +380,52 @@ class CoinbaseAdapter:
     def get_order_status(self, order_id: str) -> dict:
         return self._request("GET", f"/orders/historical/{order_id}")
 
+    def get_filled_orders(self, since_iso: str | None = None) -> list[Fill]:
+        """Paginated historical fills. Coinbase paginates with a `cursor`
+        token. `since_iso` filters server-side via `start_sequence_timestamp`.
+        Hard cap at 50 pages (~12,500 fills) so a runaway loop can't burn
+        through their rate limit."""
+        out: list[Fill] = []
+        cursor: str | None = None
+        for _ in range(50):
+            params: dict = {"limit": 250}
+            if cursor:
+                params["cursor"] = cursor
+            if since_iso:
+                params["start_sequence_timestamp"] = since_iso
+            r = self._request("GET", "/orders/historical/fills", params=params)
+            if "_error" in r:
+                break
+            fills_raw = r.get("fills", []) or []
+            for f in fills_raw:
+                try:
+                    product = f.get("product_id", "")
+                    base = product.split("-", 1)[0] if "-" in product else product
+                    base = base.upper()
+                    if base not in COINBASE_PRODUCTS:
+                        continue   # we only track BTC/ETH/SOL/DOGE/XRP
+                    qty = float(f.get("size") or 0)
+                    price = float(f.get("price") or 0)
+                    if qty <= 0 or price <= 0:
+                        continue
+                    side = (f.get("side") or "").upper()
+                    if side not in ("BUY", "SELL"):
+                        continue
+                    out.append(Fill(
+                        external_id=str(f.get("trade_id") or f.get("entry_id") or ""),
+                        ticker=base, side=side.lower(),
+                        qty=qty, price=price,
+                        fee_usd=float(f.get("commission") or 0),
+                        filled_at=str(f.get("trade_time") or f.get("sequence_timestamp") or ""),
+                        raw=f,
+                    ))
+                except (TypeError, ValueError, KeyError):
+                    continue
+            cursor = r.get("cursor")
+            if not cursor:
+                break
+        return out
+
 
 # ─── Kraken ─────────────────────────────────────────────────────────────────
 
@@ -567,6 +632,75 @@ class KrakenAdapter:
 
     def get_order_status(self, order_id: str) -> dict:
         return self._private("QueryOrders", {"txid": order_id, "trades": True})
+
+    def get_filled_orders(self, since_iso: str | None = None) -> list[Fill]:
+        """Paginated historical trades. Kraken uses `ofs` (offset). Caps at
+        50 pages × 50 trades = 2,500 — fine for first-time imports too;
+        the call is fast."""
+        # Pair → ticker normaliser. Kraken returns pairs as XXBTZUSD,
+        # XETHZUSD, etc. We strip the Z-prefixed quote currency.
+        pair_to_ticker = {
+            "XBTUSD": "BTC", "XXBTZUSD": "BTC", "XBTZUSD": "BTC",
+            "ETHUSD": "ETH", "XETHZUSD": "ETH",
+            "SOLUSD": "SOL",
+            "XDGUSD": "DOGE", "XXDGZUSD": "DOGE",
+            "XRPUSD": "XRP", "XXRPZUSD": "XRP",
+        }
+        since_ts = None
+        if since_iso:
+            try:
+                since_ts = int(datetime.fromisoformat(since_iso).timestamp())
+            except (ValueError, TypeError):
+                since_ts = None
+
+        out: list[Fill] = []
+        offset = 0
+        for _ in range(50):
+            body: dict = {"ofs": offset, "trades": True}
+            if since_ts is not None:
+                body["start"] = since_ts
+            r = self._private("TradesHistory", body)
+            if "_error" in r:
+                break
+            trades = r.get("trades", {}) or {}
+            if not trades:
+                break
+            for tid, t in trades.items():
+                try:
+                    pair = (t.get("pair") or "").upper()
+                    ticker = pair_to_ticker.get(pair)
+                    if not ticker:
+                        continue
+                    qty = float(t.get("vol") or 0)
+                    price = float(t.get("price") or 0)
+                    if qty <= 0 or price <= 0:
+                        continue
+                    side = (t.get("type") or "").lower()
+                    if side not in ("buy", "sell"):
+                        continue
+                    ts_unix = float(t.get("time") or 0)
+                    if ts_unix <= 0:
+                        continue
+                    filled_at = datetime.fromtimestamp(
+                        ts_unix, tz=timezone.utc,
+                    ).isoformat()
+                    out.append(Fill(
+                        external_id=str(tid),
+                        ticker=ticker, side=side,
+                        qty=qty, price=price,
+                        fee_usd=float(t.get("fee") or 0),
+                        filled_at=filled_at,
+                        raw=dict(t),
+                    ))
+                except (TypeError, ValueError, KeyError):
+                    continue
+            # Kraken returns `count` = total available; break when offset
+            # exceeds it. Also break if we got fewer than the page size.
+            offset += len(trades)
+            count = int(r.get("count") or 0)
+            if offset >= count or len(trades) == 0:
+                break
+        return out
 
 
 def _clip_userref(client_order_id: str) -> int:
