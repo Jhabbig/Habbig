@@ -150,10 +150,15 @@ async function load() {
     const badge = s.status.toUpperCase();
     const summary = s.summary || (s.status === "ok" ? "(no recent value)" : "—");
     const urlLink = s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${s.url}</a>` : "(no URL)";
+    let cacheInfo = "";
+    if (s.cache_age) {
+      const ttlMin = s.cache_ttl_s ? Math.round(s.cache_ttl_s / 60) : null;
+      cacheInfo = `<span style="color:var(--text-3);font-size:11px;margin-left:8px">· cache ${s.cache_age}${ttlMin ? ` (TTL ${ttlMin}m)` : ""}</span>`;
+    }
     return `
       <div class="src ${s.status}">
         <div class="name">${s.name}<span class="badge">${badge}</span></div>
-        <div class="summary-line">${summary}</div>
+        <div class="summary-line">${summary}${cacheInfo}</div>
         <div class="url">${urlLink}</div>
       </div>
     `;

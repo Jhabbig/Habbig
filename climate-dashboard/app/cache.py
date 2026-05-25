@@ -60,3 +60,18 @@ def clear() -> None:
     """Test helper — drop everything."""
     with _lock:
         _cache.clear()
+
+
+def age_seconds(key: str) -> Optional[float]:
+    """How long since this key was last set, in seconds. None if never set
+    or already evicted. Used by /api/status to surface cache freshness."""
+    with _lock:
+        entry = _cache.get(key)
+        if not entry:
+            return None
+        return time.time() - entry["t"]
+
+
+def ttl_seconds(key: str) -> int:
+    """The configured TTL for a cache key (or the default)."""
+    return TTL.get(key, _DEFAULT_TTL_S)

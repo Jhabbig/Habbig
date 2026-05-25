@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from . import cache
+
 
 def _last_value_summary(payload: Optional[dict]) -> Optional[str]:
     """Pick a short human-readable summary of the most recent data point."""
@@ -38,33 +40,61 @@ def _last_value_summary(payload: Optional[dict]) -> Optional[str]:
     return None
 
 
-def _check(name: str, url: Optional[str], fetcher: Callable[[], Any]) -> dict:
-    """Run one fetcher and produce a {name, status, url, summary, fetched_at}."""
+def _fmt_age(seconds: Optional[float]) -> Optional[str]:
+    if seconds is None:
+        return None
+    if seconds < 60:
+        return f"{seconds:.0f}s ago"
+    if seconds < 3600:
+        return f"{seconds/60:.0f}m ago"
+    if seconds < 86400:
+        return f"{seconds/3600:.0f}h ago"
+    return f"{seconds/86400:.1f}d ago"
+
+
+def _check(name: str, url: Optional[str], fetcher: Callable[[], Any],
+           cache_key: Optional[str] = None) -> dict:
+    """Run one fetcher and produce a status record."""
     try:
         data = fetcher()
     except Exception as e:
         return {"name": name, "status": "error", "url": url,
-                "summary": f"{type(e).__name__}: {e}", "fetched_at": None}
+                "summary": f"{type(e).__name__}: {e}", "fetched_at": None,
+                "cache_age": None, "cache_ttl_s": None}
+    cache_age = cache.age_seconds(cache_key) if cache_key else None
+    cache_ttl = cache.ttl_seconds(cache_key) if cache_key else None
     if not data:
         return {"name": name, "status": "down", "url": url,
                 "summary": "upstream returned no data — URL may be wrong or service down",
-                "fetched_at": None}
+                "fetched_at": None,
+                "cache_age": _fmt_age(cache_age),
+                "cache_ttl_s": cache_ttl}
     return {
         "name": name,
         "status": "ok",
         "url": url,
         "summary": _last_value_summary(data),
         "fetched_at": data.get("fetched_at"),
+        "cache_age": _fmt_age(cache_age),
+        "cache_ttl_s": cache_ttl,
     }
 
 
 def compute(*, fetchers: dict) -> dict:
     """Build a {sources: [...], counts: {...}} payload.
 
-    ``fetchers`` is a dict of {label: (url, callable)} so we don't import the
-    server's module graph here — that'd create a circular dep.
+    ``fetchers`` is a dict of {label: (url, callable, cache_key)} — cache_key
+    is optional and lets the status page show how stale each cached value
+    is. Backwards-compatible with the older (url, callable) 2-tuple form.
     """
-    sources = [_check(name, url, fn) for name, (url, fn) in fetchers.items()]
+    sources = []
+    for name, val in fetchers.items():
+        if len(val) == 3:
+            url, fn, cache_key = val
+        else:
+            url, fn = val
+            cache_key = None
+        sources.append(_check(name, url, fn, cache_key))
     counts = {"ok": 0, "down": 0, "error": 0}
     for s in sources:
         counts[s["status"]] = counts.get(s["status"], 0) + 1

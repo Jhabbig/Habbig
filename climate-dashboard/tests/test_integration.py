@@ -329,10 +329,18 @@ def test_status_endpoint_classifies_sources(client):
         assert k in body["counts"]
     # Total sources matches list length
     assert sum(body["counts"].values()) == len(body["sources"])
-    # Every source has the expected fields
+    # Every source has the expected fields including cache info
     for s in body["sources"]:
         assert "name" in s and "status" in s and "url" in s
         assert s["status"] in ("ok", "down", "error")
+        # cache_age may be None for sources we haven't yet hit, but the key
+        # should always be present
+        assert "cache_age" in s
+        assert "cache_ttl_s" in s
+    # Sources that successfully fetched should have a non-None cache_age
+    ok_sources = [s for s in body["sources"] if s["status"] == "ok"]
+    assert any(s.get("cache_age") is not None for s in ok_sources), \
+        "at least one OK source should report a cache age"
 
 
 def test_status_endpoint_marks_down_when_upstream_fails():

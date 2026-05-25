@@ -98,19 +98,19 @@ def status_page():
 # health-dashboard. Defined once so /api/status doesn't drift from the actual
 # fetchers as we add new ones.
 _STATUS_SOURCES = {
-    "GISTEMP (NASA temperature)":           (gistemp_src.URL, gistemp_src.fetch),
-    "CO₂ (NOAA Mauna Loa)":                 (co2_src.URL, co2_src.fetch),
-    "CH₄ (NOAA GML)":                       (methane_src.URL, methane_src.fetch),
-    "N₂O (NOAA GML)":                       (n2o_src.URL, n2o_src.fetch),
-    "SF₆ (NOAA GML)":                       (sf6_src.URL, sf6_src.fetch),
-    "Sea ice (NSIDC, both hemispheres)":    (sea_ice_src.URL_NORTH, sea_ice_src.fetch),
-    "SST (Climate Reanalyzer / OISST)":     (sst_src.URL, sst_src.fetch),
-    "ONI (NOAA CPC ENSO)":                  (oni_src.URL, oni_src.fetch),
-    "Ocean heat content (NOAA NCEI)":       (ocean_heat_src.URL, ocean_heat_src.fetch),
-    "Sea level (NOAA STAR)":                (sea_level_src.URL, sea_level_src.fetch),
-    "NH snow cover (Rutgers)":              (snow_cover_src.URL, snow_cover_src.fetch),
-    "Country emissions (OWID)":             (emissions_src.URL, emissions_src.fetch),
-    "Polymarket climate markets":           ("https://gamma-api.polymarket.com/events", polymarket_src.fetch),
+    "GISTEMP (NASA temperature)":           (gistemp_src.URL, gistemp_src.fetch, "gistemp"),
+    "CO₂ (NOAA Mauna Loa)":                 (co2_src.URL, co2_src.fetch, "co2"),
+    "CH₄ (NOAA GML)":                       (methane_src.URL, methane_src.fetch, "methane"),
+    "N₂O (NOAA GML)":                       (n2o_src.URL, n2o_src.fetch, "n2o"),
+    "SF₆ (NOAA GML)":                       (sf6_src.URL, sf6_src.fetch, "sf6"),
+    "Sea ice (NSIDC, both hemispheres)":    (sea_ice_src.URL_NORTH, sea_ice_src.fetch, "sea_ice"),
+    "SST (Climate Reanalyzer / OISST)":     (sst_src.URL, sst_src.fetch, "sst"),
+    "ONI (NOAA CPC ENSO)":                  (oni_src.URL, oni_src.fetch, "oni"),
+    "Ocean heat content (NOAA NCEI)":       (ocean_heat_src.URL, ocean_heat_src.fetch, "ocean_heat"),
+    "Sea level (NOAA STAR)":                (sea_level_src.URL, sea_level_src.fetch, "sea_level"),
+    "NH snow cover (Rutgers)":              (snow_cover_src.URL, snow_cover_src.fetch, "snow_cover"),
+    "Country emissions (OWID)":             (emissions_src.URL, emissions_src.fetch, "owid_emissions"),
+    "Polymarket climate markets":           ("https://gamma-api.polymarket.com/events", polymarket_src.fetch, "polymarket"),
 }
 
 
