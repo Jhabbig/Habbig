@@ -98,6 +98,7 @@ DIGEST_HTML_PATH = Path(__file__).parent / "digest.html"
 CHANGELOG_HTML_PATH = Path(__file__).parent / "changelog.html"
 STATUS_HTML_PATH = Path(__file__).parent / "status.html"
 GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
+SETUPS_HTML_PATH = Path(__file__).parent / "setups.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -212,6 +213,11 @@ async def status_page() -> HTMLResponse:
 @app.get("/guide/pump-and-dump", response_class=HTMLResponse)
 async def guide_pump_and_dump() -> HTMLResponse:
     return HTMLResponse(GUIDE_PUMP_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/setups", response_class=HTMLResponse)
+async def setups_page() -> HTMLResponse:
+    return HTMLResponse(SETUPS_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/healthz")

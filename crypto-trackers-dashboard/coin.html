@@ -115,6 +115,8 @@
       <button data-type="line" title="Line">Line</button>
       <button data-type="area" title="Area">Area</button>
       <button data-type="bars" title="OHLC bars">Bars</button>
+      <button data-type="renko" title="Renko — fixed-price bricks, time-independent">Renko</button>
+      <button data-type="kagi" title="Kagi — reversal-threshold line, swing-high/low yin/yang">Kagi</button>
       <span style="flex:1"></span>
       <button data-ind="bb" class="active" title="Bollinger Bands (20, 2σ)">BB</button>
       <button data-ind="sma50" title="SMA 50">SMA50</button>
@@ -1117,9 +1119,94 @@
     `;
   }
 
+  // ─── Renko construction (fixed-price bricks, time-independent) ──────────
+  function renkoBricks(bars, brickPct = 1.0) {
+    if (!bars.length) return [];
+    const firstClose = bars[0].close;
+    if (firstClose <= 0) return [];
+    const brick = firstClose * (brickPct / 100);
+    const out = [];
+    let last = firstClose;
+    for (const b of bars) {
+      const c = b.close;
+      while (c - last >= brick) {
+        last = last + brick;
+        out.push({ open: last - brick, close: last, dir: "up", ts: b.open_ms });
+      }
+      while (last - c >= brick) {
+        last = last - brick;
+        out.push({ open: last + brick, close: last, dir: "down", ts: b.open_ms });
+      }
+    }
+    return out;
+  }
+
+  // ─── Kagi line (reversal-threshold direction-flipping line) ─────────────
+  function kagiLine(bars, reversalPct = 2.0) {
+    if (!bars.length) return [];
+    const out = [{ x: 0, price: bars[0].close, dir: null, segType: "thin" }];
+    let dir = null;
+    let extremum = bars[0].close;
+    let lastSwing = bars[0].close;
+    for (let i = 1; i < bars.length; i++) {
+      const c = bars[i].close;
+      if (dir === null) {
+        if (c > bars[0].close) { dir = "up"; extremum = c; }
+        else if (c < bars[0].close) { dir = "down"; extremum = c; }
+      } else if (dir === "up") {
+        if (c > extremum) extremum = c;
+        else if ((extremum - c) / extremum >= reversalPct / 100) {
+          out.push({ x: i, price: extremum, dir: "up", segType: c > lastSwing ? "thick" : "thin" });
+          lastSwing = extremum;
+          dir = "down"; extremum = c;
+        }
+      } else {
+        if (c < extremum) extremum = c;
+        else if ((c - extremum) / extremum >= reversalPct / 100) {
+          out.push({ x: i, price: extremum, dir: "down", segType: c < lastSwing ? "thick" : "thin" });
+          lastSwing = extremum;
+          dir = "up"; extremum = c;
+        }
+      }
+    }
+    out.push({ x: bars.length - 1, price: bars[bars.length - 1].close, dir, segType: "thin" });
+    return out;
+  }
+
   // ─── Price plot dispatcher ─────────────────────────────────────────────────
   function renderPricePlot(bars, type, ctx) {
-    const { PAD_LEFT, xStep, candleW, yScale, chartBottom } = ctx;
+    const { PAD_LEFT, xStep, candleW, yScale, chartBottom, barIdxToX } = ctx;
+    if (type === "renko") {
+      const bricks = renkoBricks(bars, 1.0);
+      if (!bricks.length) return `<text x="${PAD_LEFT + 8}" y="40" fill="#ef4444" font-size="12">Not enough range for 1% bricks</text>`;
+      const W_RENKO = (barIdxToX(bars.length - 1) - PAD_LEFT) / Math.max(bricks.length, 1);
+      const bw = Math.max(W_RENKO * 0.85, 2);
+      return bricks.map((br, i) => {
+        const x = PAD_LEFT + i * W_RENKO;
+        const top = yScale(Math.max(br.open, br.close));
+        const bot = yScale(Math.min(br.open, br.close));
+        const fill = br.dir === "up" ? "#34d399" : "#ef4444";
+        return `<rect x="${x}" y="${top}" width="${bw}" height="${Math.max(bot - top, 1)}" fill="${fill}" fill-opacity="0.85" stroke="${fill}" stroke-width="0.5"/>`;
+      }).join("") +
+        `<text x="${PAD_LEFT + 4}" y="${chartBottom - 6}" fill="var(--text-3)" font-size="9" font-family="monospace">Renko · 1% bricks · ${bricks.length} bricks from ${bars.length} bars</text>`;
+    }
+    if (type === "kagi") {
+      const pts = kagiLine(bars, 2.0);
+      if (pts.length < 2) return "";
+      const segs = [];
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const ax = PAD_LEFT + a.x * xStep + candleW / 2;
+        const bx = PAD_LEFT + b.x * xStep + candleW / 2;
+        const ay = yScale(a.price), by = yScale(b.price);
+        const thick = b.segType === "thick";
+        const color = thick ? "#34d399" : "#ef4444";
+        segs.push(`<line x1="${ax}" y1="${ay}" x2="${ax}" y2="${by}" stroke="${color}" stroke-width="${thick ? 2.4 : 1.0}"/>`);
+        segs.push(`<line x1="${ax}" y1="${by}" x2="${bx}" y2="${by}" stroke="${color}" stroke-width="${thick ? 2.4 : 1.0}"/>`);
+      }
+      return segs.join("") +
+        `<text x="${PAD_LEFT + 4}" y="${chartBottom - 6}" fill="var(--text-3)" font-size="9" font-family="monospace">Kagi 2% · thick = yang (broke prior swing), thin = yin</text>`;
+    }
     if (type === "line" || type === "area") {
       const path = bars.map((b, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${yScale(b.close)}`).join(" ");
       const stroke = `<path d="${path}" fill="none" stroke="#f59e0b" stroke-width="1.6"/>`;
@@ -1419,7 +1506,7 @@
   }
 
   function _switchChartType(type) {
-    if (!["candle", "heikin", "line", "area", "bars"].includes(type)) return;
+    if (!["candle", "heikin", "line", "area", "bars", "renko", "kagi"].includes(type)) return;
     _chartType = type;
     document.querySelectorAll("#chart-controls button[data-type]").forEach(b => {
       b.classList.toggle("active", b.dataset.type === type);

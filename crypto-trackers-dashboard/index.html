@@ -133,6 +133,57 @@
 
   .footer { color: var(--text-3); font-size: 11px; margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--border); }
   .footer h4 { margin: 0 0 6px; font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* Onboarding tour overlay */
+  .tour-overlay {
+    position: fixed; inset: 0; background: rgba(8, 13, 25, 0.78);
+    z-index: 9000; display: none; align-items: center; justify-content: center;
+    backdrop-filter: blur(3px);
+  }
+  .tour-overlay.show { display: flex; }
+  .tour-card {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 26px; max-width: 460px; width: calc(100% - 32px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .tour-card .step { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .tour-card h2 { margin: 0 0 8px; font-size: 18px; }
+  .tour-card p { margin: 0 0 14px; color: var(--text-2); font-size: 13px; line-height: 1.5; }
+  .tour-card .actions { display: flex; gap: 8px; align-items: center; }
+  .tour-card .actions button {
+    background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2);
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; font-size: 12.5px;
+    font-family: inherit; font-weight: 500;
+  }
+  .tour-card .actions button.primary { background: var(--accent-4); color: var(--bg-0); border-color: var(--accent-4); font-weight: 700; }
+  .tour-card .actions button:hover { opacity: 0.85; }
+  .tour-card .actions .skip { margin-left: auto; font-size: 11px; background: transparent; border: 0; color: var(--text-3); }
+  .tour-card .progress { display: flex; gap: 5px; margin-top: 12px; }
+  .tour-card .progress span { width: 24px; height: 3px; background: var(--bg-2); border-radius: 2px; }
+  .tour-card .progress span.active { background: var(--accent-4); }
+
+  /* Referral panel */
+  .ref-panel {
+    background: linear-gradient(135deg, rgba(245,158,11,0.06), rgba(56,189,248,0.04));
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .ref-panel .label { font-size: 10px; text-transform: uppercase; color: var(--text-3); letter-spacing: 0.08em; }
+  .ref-panel .code {
+    font-family: monospace; font-size: 16px; font-weight: 700; color: var(--accent);
+    background: var(--bg-2); padding: 5px 11px; border-radius: 6px;
+  }
+  .ref-panel .url {
+    font-family: monospace; font-size: 11px; color: var(--text-2); flex: 1;
+    background: var(--bg-2); padding: 6px 10px; border-radius: 6px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .ref-panel button {
+    background: var(--accent-4); color: var(--bg-0); border: 0; padding: 6px 12px;
+    border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px;
+  }
+  .ref-panel .stat { font-size: 12px; color: var(--text-2); }
+  .ref-panel .stat strong { color: var(--text-1); font-size: 14px; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -140,7 +191,7 @@
   <div class="row">
     <div>
       <h1>Crypto Trackers</h1>
-      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; <a href="/welcome" style="color:var(--accent)">about</a> &middot; <a href="/compare" style="color:var(--accent)">compare</a> &middot; <a href="/multipane" style="color:var(--accent)">multipane</a> &middot; <a href="/portfolio" style="color:var(--accent)">portfolio</a> &middot; <a href="/digest" style="color:var(--accent)">digest</a> &middot; <a href="/pricing" style="color:var(--accent)">pricing</a> &middot; <a href="/changelog" style="color:var(--accent)">changelog</a> &middot; <a href="/status" style="color:var(--accent)">status</a> &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
+      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; <a href="/welcome" style="color:var(--accent)">about</a> &middot; <a href="/compare" style="color:var(--accent)">compare</a> &middot; <a href="/multipane" style="color:var(--accent)">multipane</a> &middot; <a href="/portfolio" style="color:var(--accent)">portfolio</a> &middot; <a href="/digest" style="color:var(--accent)">digest</a> &middot; <a href="/setups" style="color:var(--accent)">setups</a> &middot; <a href="/pricing" style="color:var(--accent)">pricing</a> &middot; <a href="/changelog" style="color:var(--accent)">changelog</a> &middot; <a href="/status" style="color:var(--accent)">status</a> &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
     <div class="updated" id="ws-status" style="margin-left:14px"><span class="dot" style="background:var(--text-3)"></span><span id="ws-status-text">ws idle</span></div>
@@ -342,6 +393,22 @@
   <section>
     <h2>Custom alerts <small>price / funding / F&amp;G / fee thresholds with webhook delivery</small></h2>
     <div id="alerts-card"></div>
+  </section>
+
+  <section>
+    <h2>Refer a friend <small>share narve.ai &middot; your friends get welcomed, you get tracked</small></h2>
+    <div class="ref-panel" id="ref-panel">
+      <div>
+        <div class="label">Your code</div>
+        <div class="code" id="ref-code">-</div>
+      </div>
+      <div style="flex:1;min-width:220px">
+        <div class="label">Share URL</div>
+        <div class="url" id="ref-url">-</div>
+      </div>
+      <button id="ref-copy">Copy link</button>
+      <div class="stat"><span class="label">Referred</span><br/><strong id="ref-count">0</strong></div>
+    </div>
   </section>
 
   <section>
@@ -1910,6 +1977,137 @@
   setInterval(loadPumpfun,   60 * 1000);
   setInterval(loadAlerts,   30 * 1000);
   setInterval(loadSources,  30 * 1000);
+})();
+</script>
+
+<!-- Onboarding tour overlay -->
+<div class="tour-overlay" id="tour-overlay">
+  <div class="tour-card">
+    <div class="step" id="tour-step-label">Step 1 of 5</div>
+    <h2 id="tour-title">Welcome to narve.ai</h2>
+    <p id="tour-body">The most complete crypto data infrastructure on the web. Every coin, every exchange, every metric — mirrored from canonical sources with verifiable timestamps.</p>
+    <div class="progress" id="tour-progress"></div>
+    <div class="actions" style="margin-top:14px">
+      <button class="skip" id="tour-skip">Skip tour</button>
+      <button id="tour-prev">Back</button>
+      <button class="primary" id="tour-next">Next →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- Onboarding tour ----
+(function() {
+  const STORAGE_KEY = "ct_onboarded_v1";
+  if (localStorage.getItem(STORAGE_KEY) === "1") return;
+
+  const STEPS = [
+    {
+      title: "Welcome to narve.ai",
+      body: "The most complete crypto data infrastructure on the web. Every coin, every exchange, every metric — mirrored from canonical sources with verifiable timestamps. Let's take 30 seconds to look around.",
+    },
+    {
+      title: "Universe screener",
+      body: "Scroll down to the Universe table — every coin sortable by 24h change, volume, market cap, funding rate, or your own custom filters. Click any coin to open a deep-dive page with live charts and 15 indicators.",
+    },
+    {
+      title: "Drawings & chart tools",
+      body: "Inside any coin page you get 7 chart types (candles, Heikin Ashi, Renko, Kagi, line, area, bars), 15 indicators, and 8 drawing tools (trendline, Fibonacci, rectangles, channels). Your drawings persist per coin+interval.",
+    },
+    {
+      title: "Alerts & journal",
+      body: "Set custom alerts on price, funding rate, F&G, or fees — delivered via webhook. Log every trade in the trade journal (localStorage, fully private) and get win-rate, P&L, and FIFO tax-lot matching automatically.",
+    },
+    {
+      title: "Featured setups & pricing",
+      body: "Head to /setups for hand-picked chart configurations, or /pricing for API key tiers. Everything works without signup — sign up only when you want webhooks or higher rate limits.",
+    },
+  ];
+
+  let idx = 0;
+  const overlay = document.getElementById("tour-overlay");
+  const titleEl = document.getElementById("tour-title");
+  const bodyEl = document.getElementById("tour-body");
+  const stepLabel = document.getElementById("tour-step-label");
+  const progress = document.getElementById("tour-progress");
+  const prevBtn = document.getElementById("tour-prev");
+  const nextBtn = document.getElementById("tour-next");
+  const skipBtn = document.getElementById("tour-skip");
+
+  function render() {
+    const s = STEPS[idx];
+    titleEl.textContent = s.title;
+    bodyEl.textContent = s.body;
+    stepLabel.textContent = `Step ${idx + 1} of ${STEPS.length}`;
+    progress.innerHTML = STEPS.map((_, i) => `<span class="${i <= idx ? "active" : ""}"></span>`).join("");
+    prevBtn.disabled = idx === 0;
+    prevBtn.style.opacity = idx === 0 ? "0.4" : "1";
+    nextBtn.textContent = idx === STEPS.length - 1 ? "Get started →" : "Next →";
+  }
+
+  function finish() {
+    overlay.classList.remove("show");
+    try { localStorage.setItem(STORAGE_KEY, "1"); } catch {}
+  }
+
+  prevBtn.addEventListener("click", () => { if (idx > 0) { idx--; render(); } });
+  nextBtn.addEventListener("click", () => {
+    if (idx < STEPS.length - 1) { idx++; render(); }
+    else { finish(); }
+  });
+  skipBtn.addEventListener("click", finish);
+
+  // Show after a short delay so the page has time to paint
+  setTimeout(() => { overlay.classList.add("show"); render(); }, 500);
+})();
+
+// ---- Referral system stub ----
+(function() {
+  const CODE_KEY = "ct_ref_code_v1";
+  const REFERRED_BY_KEY = "ct_referred_by";
+  const COUNT_KEY = "ct_ref_count_v1";
+
+  // Capture inbound ?ref=ABC123 once, store it
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const inbound = params.get("ref");
+    if (inbound && /^[A-Z0-9]{4,12}$/.test(inbound) && !localStorage.getItem(REFERRED_BY_KEY)) {
+      localStorage.setItem(REFERRED_BY_KEY, inbound);
+    }
+  } catch {}
+
+  // Generate or load your code (8 chars, A-Z + 0-9)
+  let code = localStorage.getItem(CODE_KEY);
+  if (!code) {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    code = "";
+    for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    try { localStorage.setItem(CODE_KEY, code); } catch {}
+  }
+  const count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0;
+
+  const codeEl = document.getElementById("ref-code");
+  const urlEl = document.getElementById("ref-url");
+  const countEl = document.getElementById("ref-count");
+  const copyBtn = document.getElementById("ref-copy");
+  if (!codeEl) return;
+
+  const url = `${window.location.origin}/?ref=${code}`;
+  codeEl.textContent = code;
+  urlEl.textContent = url;
+  countEl.textContent = String(count);
+
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      const orig = copyBtn.textContent;
+      copyBtn.textContent = "✓ Copied";
+      copyBtn.style.background = "var(--accent-3)";
+      setTimeout(() => { copyBtn.textContent = orig; copyBtn.style.background = ""; }, 1800);
+    } catch {
+      copyBtn.textContent = "Copy failed";
+    }
+  });
 })();
 </script>
 </body>
