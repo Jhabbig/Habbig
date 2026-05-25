@@ -1352,6 +1352,133 @@ def narrative_route(iso: str):
     return Response(gen_from_claude(), headers=headers)
 
 
+@app.get("/api/narrative/compare/<iso_a>/<iso_b>")
+def narrative_compare_route(iso_a: str, iso_b: str):
+    """Comparative analyst note for two countries. Same SSE / JSON dual mode
+    as the single-country narrative. Cache key includes both ISOs in sorted
+    order so (A vs B) and (B vs A) share the same cached body — the narrative
+    explicitly frames the deltas as A−B so swap order matters; we cache
+    per-direction to keep the framing honest."""
+    iso_a = iso_a.upper()
+    iso_b = iso_b.upper()
+    if iso_a == iso_b:
+        return jsonify({"error": "Compare requires two distinct countries"}), 400
+    countries = cached("index_map", lambda: compute_subscores())
+    if iso_a not in countries:
+        return jsonify({"error": f"country {iso_a} has no Love Index (insufficient data)"}), 404
+    if iso_b not in countries:
+        return jsonify({"error": f"country {iso_b} has no Love Index (insufficient data)"}), 404
+
+    today = snapshots_module.today_utc()
+    cache_key = f"narrative:compare:{iso_a}:{iso_b}:{today}"
+    wants_stream = (
+        request.args.get("stream") == "1"
+        or "text/event-stream" in (request.headers.get("Accept") or "")
+    )
+
+    def build_inputs():
+        a_country, a_history, a_insights = _narrative_inputs(iso_a, countries)
+        b_country, b_history, b_insights = _narrative_inputs(iso_b, countries)
+        return a_country, b_country, a_history, b_history, a_insights, b_insights
+
+    if not wants_stream:
+        def build_json():
+            args = build_inputs()
+            return narrative_module.compare_narrative(*args)
+        try:
+            return jsonify(cached(cache_key, build_json))
+        except narrative_module.NarrativeError as exc:
+            return jsonify({"error": str(exc)}), 503
+
+    cached_payload = cache_get(cache_key)
+
+    def gen_from_cache(payload):
+        yield _sse({"type": "delta", "text": payload.get("text", "")})
+        yield _sse({"type": "done", **payload})
+
+    def gen_from_claude():
+        try:
+            args = build_inputs()
+            final = None
+            for event in narrative_module.compare_narrative_stream(*args):
+                if event.get("type") == "done":
+                    final = event
+                yield _sse(event)
+            if final is not None:
+                cache_set(cache_key, {k: v for k, v in final.items() if k != "type"})
+        except narrative_module.NarrativeError as exc:
+            yield _sse({"type": "error", "message": str(exc)})
+
+    headers = {
+        "Content-Type":     "text/event-stream",
+        "Cache-Control":    "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    if cached_payload is not None:
+        return Response(gen_from_cache(cached_payload), headers=headers)
+    return Response(gen_from_claude(), headers=headers)
+
+
+@app.get("/api/export/countries.csv")
+def export_countries_csv():
+    """Download current rankings as CSV. Respects custom-weight query params
+    so the file matches the user's reweighted view of the dashboard."""
+    import csv as _csv
+    import io as _io
+
+    weights = _parse_weight_params(request.args)
+    countries = compute_subscores(weights) if weights else cached("index_map", lambda: compute_subscores())
+    rows = [c for c in countries.values()]
+    rows.sort(key=lambda c: (c["composite"] is None, -(c["composite"] or 0)))
+
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow([
+        "rank", "iso3", "iso2", "name", "income_tier", "region",
+        "composite", "stability_label",
+        "connection", "partnership", "stability", "activity",
+        "used_subscores",
+        "marriage_rate_per_1000", "divorce_rate_per_1000",
+        "adolescent_fertility_per_1000", "whr_social_support_pct",
+        "fertility_rate", "female_labour_force_pct", "gdp_per_capita_usd",
+        "life_expectancy_years", "age_at_first_marriage_w", "rainbow_index_0_100",
+    ])
+
+    sens = cached("sensitivity", _sensitivity_payload).get("countries") or {}
+    visual_rank = 0
+    for c in rows:
+        ranked = c.get("composite") is not None
+        if ranked:
+            visual_rank += 1
+        subs = c.get("subscores") or {}
+        raw = c.get("raw") or {}
+        ctx = c.get("context") or {}
+        w.writerow([
+            visual_rank if ranked else "",
+            c.get("iso3"), c.get("iso2"), c.get("name"),
+            c.get("income_tier"), c.get("region"),
+            c.get("composite") if ranked else "",
+            (sens.get(c.get("iso3")) or {}).get("stability") or "",
+            subs.get("connection"), subs.get("partnership"),
+            subs.get("stability"), subs.get("activity"),
+            ",".join(c.get("used") or []),
+            raw.get("marriage_rate_per_1000"),
+            raw.get("divorce_rate_per_1000"),
+            raw.get("adolescent_fertility_per_1000"),
+            raw.get("whr_social_support_pct"),
+            ctx.get("fertility_rate"),
+            ctx.get("female_labour_force_pct"),
+            ctx.get("gdp_per_capita_usd"),
+            ctx.get("life_expectancy_years"),
+            ctx.get("age_at_first_marriage_w"),
+            ctx.get("rainbow_index_0_100"),
+        ])
+
+    fname = f"love_index_{snapshots_module.today_utc()}.csv"
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @app.get("/api/og/global.svg")
 @app.get("/api/og/global.png")  # alias so Facebook crawlers attempting .png still get a response
 def og_global():

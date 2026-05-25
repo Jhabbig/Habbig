@@ -162,6 +162,20 @@
   <pre>curl -N -H 'Accept: text/event-stream' https://love.narve.ai/api/narrative/USA</pre>
 </div>
 
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/narrative/compare/&lt;iso_a&gt;/&lt;iso_b&gt;</code></div>
+  <div class="desc">Comparative analyst note for two countries — same shape as the single-country narrative but framed as a contrast. Uses a dedicated <code>COMPARE_SYSTEM_PROMPT</code> with its own prompt-cache entry. Cached per (iso_a, iso_b, UTC date). Supports <code>?stream=1</code> for SSE. <code>iso_a == iso_b</code> returns 400.</div>
+  <pre>curl -N -H 'Accept: text/event-stream' https://love.narve.ai/api/narrative/compare/USA/DEU?stream=1</pre>
+</div>
+
+<h2>Exports</h2>
+
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/export/countries.csv</code></div>
+  <div class="desc">Current rankings as CSV — rank, ISO, name, tier, region, composite, stability label, all four subscores, raw indicators, all six context indicators. Respects the custom-weight query params (<code>w_*</code>) so the file matches the user's reweighted view.</div>
+  <pre>curl -OJ 'https://love.narve.ai/api/export/countries.csv'</pre>
+</div>
+
 <h2>Share assets</h2>
 
 <div class="endpoint">

@@ -1,7 +1,25 @@
-# State of Love Dashboard (v3.8)
+# State of Love Dashboard (v3.9)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.9 adds:**
+
+- **Comparative LLM analyst note.** When two countries are open in the
+  compare modal, the dashboard streams a 3-paragraph analyst note that
+  explains how they differ — headline / drivers / caveats. New endpoint
+  `/api/narrative/compare/<a>/<b>` (SSE or JSON), backed by a dedicated
+  `COMPARE_SYSTEM_PROMPT` cached separately from the single-country
+  preamble. Pre-computed deltas (composite + per-subscore + per-context)
+  ride in the user payload so the model doesn't have to subtract.
+- **CSV export.** `GET /api/export/countries.csv` returns the current
+  rankings with every subscore, raw indicator, context indicator, and
+  stability label per country. Respects custom-weight URL params so the
+  file matches the on-screen view. A "Download CSV" button in the table
+  toolbar drops the file with a date-stamped filename.
+- **Mobile responsive pass.** Single-column collapse below 720px, full-
+  width modal, table prunes to its essential columns, sliders / search /
+  filters stretch full-width. The dashboard is now usable on a phone.
 
 **v3.8 adds (UX):**
 

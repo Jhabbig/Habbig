@@ -521,6 +521,42 @@
   .dq th { color: var(--text-3); font-weight: 600; font-size: 11px; text-transform: uppercase; }
 
   footer { color: var(--text-3); font-size: 11px; text-align: center; margin-top: 30px; }
+
+  /* Mobile responsive — collapses the dense grid into a single column,
+     hides the noisier table columns, and lets the modal fill the viewport. */
+  @media (max-width: 720px) {
+    header { flex-direction: column; align-items: flex-start; padding: 14px 16px; gap: 12px; }
+    header .index-pill { width: 100%; min-width: 0; }
+    main { padding: 14px 16px 60px; }
+    .grid, .grid.two, .grid.three { grid-template-columns: 1fr !important; gap: 10px; }
+    .card { padding: 12px 14px; }
+    .card .big { font-size: 26px; }
+    .section-title { margin: 16px 0 8px; flex-wrap: wrap; }
+    .section-title .right { font-size: 10px; }
+    .rankings-card .toolbar { flex-direction: column; align-items: stretch; padding: 8px 10px; }
+    .rankings-card .toolbar input[type=search], .rankings-card .toolbar select, .rankings-card .toolbar .btn { width: 100%; }
+    table.rankings { font-size: 12px; }
+    table.rankings th, table.rankings td { padding: 6px 8px; }
+    /* Hide tier / region / activity / partnership on phones — keep rank, flag,
+       name, composite, stability, connection, stability subscore. */
+    table.rankings th:nth-child(5),  table.rankings td:nth-child(5),
+    table.rankings th:nth-child(6),  table.rankings td:nth-child(6),
+    table.rankings th:nth-child(10), table.rankings td:nth-child(10),
+    table.rankings th:nth-child(12), table.rankings td:nth-child(12) { display: none; }
+    .map-wrap { aspect-ratio: 16 / 11; }
+    .modal { width: 100vw; max-height: 100vh; border-radius: 0; padding: 16px 18px; }
+    .modal h2 { font-size: 18px; }
+    .modal .composite-big { flex-direction: column; gap: 6px; padding: 12px 14px; }
+    .modal .composite-big .num { font-size: 30px; }
+    .modal .sub-row { grid-template-columns: 90px 1fr 64px; gap: 6px; padding: 6px 8px; }
+    .modal .sub-row .name span { display: none; }
+    .compare-grid { grid-template-columns: 1fr; }
+    .narrative-card { padding: 12px 14px; font-size: 13px; }
+    .stress-card .summary { grid-template-columns: 1fr 1fr 1fr; }
+    .stress-card .pill-stat { padding: 8px 10px; }
+    .stress-card .pill-stat .num { font-size: 18px; }
+    .weights-card .presets .btn { font-size: 10px; padding: 3px 6px; }
+  }
 </style>
 </head>
 <body>
@@ -672,6 +708,7 @@
         <option value="unranked">Unranked only</option>
       </select>
       <button class="btn" id="reset-filters">Clear filters</button>
+      <button class="btn" id="download-csv" title="Download current rankings as CSV (respects custom weights)">Download CSV</button>
       <button class="btn primary" id="compare-btn" style="display:none">Compare 2 selected</button>
     </div>
     <div class="table-wrap">
@@ -1082,6 +1119,10 @@ document.getElementById("compare-btn").addEventListener("click", () => {
   if (state.compareSelection.size !== 2) return;
   const [a, b] = Array.from(state.compareSelection);
   openCompare(a, b);
+});
+document.getElementById("download-csv").addEventListener("click", () => {
+  // Reuse the weight query-string so the CSV matches the on-screen ranking.
+  window.location.href = "/api/export/countries.csv" + weightQS();
 });
 document.querySelectorAll("table.rankings th[data-sort]").forEach(th => {
   th.addEventListener("click", () => {
@@ -1714,7 +1755,76 @@ function renderCompare(a, b, root) {
     <div class="compare-diff">
       <div style="color:var(--text-3); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">${esc(a.name)} − ${esc(b.name)}</div>
       <dl>${diffRows}</dl>
+    </div>
+    <div id="compare-narrative-mount"></div>`;
+  loadCompareNarrative(a.iso3, b.iso3);
+}
+
+// Stream the comparative LLM note into the compare modal. Same SSE contract
+// as loadNarrative — abandons the stream if the user closes the modal or
+// swaps to a different pair mid-flight.
+async function loadCompareNarrative(isoA, isoB) {
+  const mount = document.getElementById("compare-narrative-mount");
+  if (!mount) return;
+  mount.innerHTML = `
+    <div class="narrative-card streaming">
+      <div class="header"><span>Comparative analyst note</span><span class="meta">streaming…</span></div>
+      <p class="stream-buffer"></p>
     </div>`;
+  const buf = mount.querySelector(".stream-buffer");
+  const accumulated = [];
+  const url = `/api/narrative/compare/${encodeURIComponent(isoA)}/${encodeURIComponent(isoB)}?stream=1`;
+
+  let response;
+  try { response = await fetch(url, { headers: { "Accept": "text/event-stream" } }); }
+  catch (err) { renderNarrativeError(mount, err.message); return; }
+  if (!response.ok) {
+    let msg = `HTTP ${response.status}`;
+    try { const j = await response.json(); if (j && j.error) msg = j.error; } catch {}
+    renderNarrativeError(mount, msg); return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let leftover = "";
+  while (true) {
+    // Bail if the modal closed or the user picked a different pair.
+    if (!state.openCompare || state.openCompare[0] !== isoA || state.openCompare[1] !== isoB) {
+      try { reader.cancel(); } catch {}
+      return;
+    }
+    let chunk;
+    try { chunk = await reader.read(); }
+    catch { renderNarrativeError(mount, "stream interrupted"); return; }
+    if (chunk.done) break;
+    leftover += decoder.decode(chunk.value, { stream: true });
+    const blobs = leftover.split("\n\n");
+    leftover = blobs.pop();
+    for (const blob of blobs) {
+      const line = blob.split("\n").find(l => l.startsWith("data: "));
+      if (!line) continue;
+      let event;
+      try { event = JSON.parse(line.slice(6)); } catch { continue; }
+      if (event.type === "delta") {
+        accumulated.push(event.text || "");
+        buf.textContent = accumulated.join("");
+      } else if (event.type === "done") {
+        // Re-use the same final renderer — header label is the only difference.
+        const paragraphs = String(event.text || "").split(/\n\s*\n/).filter(Boolean);
+        const stamp = (event.generated_at || "").split("T")[0];
+        mount.innerHTML = `
+          <div class="narrative-card">
+            <div class="header">
+              <span>Comparative analyst note</span>
+              <span class="meta">${esc(event.model || "")}${stamp ? " · " + esc(stamp) : ""}</span>
+            </div>
+            ${paragraphs.map(p => `<p>${esc(p)}</p>`).join("")}
+          </div>`;
+      } else if (event.type === "error") {
+        renderNarrativeError(mount, event.message || "narrative error");
+      }
+    }
+  }
 }
 
 // ---- D3 choropleth ----

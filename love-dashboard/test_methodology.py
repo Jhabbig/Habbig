@@ -754,6 +754,64 @@ def test_narrative_module_uses_haiku_with_prompt_caching():
     ok(f"methodology preamble is {preamble_len} chars (clears Haiku 4.5 4096-token min)")
 
 
+def test_compare_narrative_uses_dedicated_preamble_and_pairs_payload():
+    print("test: narrative.compare_narrative sends both countries + deltas through a dedicated preamble")
+    import narrative as narrative_module
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    fake_response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="Alpha leads Beta by 14.1 points.\n\nDriver paragraph.\n\nCaveat paragraph.")],
+        usage=SimpleNamespace(input_tokens=200, output_tokens=110,
+                              cache_creation_input_tokens=5000, cache_read_input_tokens=0),
+    )
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = fake_response
+
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    narrative_module._client = None
+    with patch.object(narrative_module, "anthropic", SimpleNamespace(
+        Anthropic=lambda **kw: fake_client,
+        APIError=Exception, APIStatusError=Exception,
+        APIConnectionError=Exception, RateLimitError=Exception,
+    )):
+        narrative_module._client = None
+        a = {"iso3": "AAA", "name": "Alpha", "income_tier": "H", "composite": 70.0,
+             "subscores": {"connection": 80, "partnership": 60, "stability": 65, "activity": None}}
+        b = {"iso3": "BBB", "name": "Beta",  "income_tier": "H", "composite": 55.9,
+             "subscores": {"connection": 55, "partnership": 60, "stability": 60, "activity": None}}
+        out = narrative_module.compare_narrative(a, b, [], [], [], [])
+
+    if "Alpha leads Beta" not in out["text"]:
+        fail(f"compare text not returned: {out['text'][:60]}")
+    ok("compare_narrative returns text + model + usage")
+
+    call_kwargs = fake_client.messages.create.call_args.kwargs
+    if call_kwargs.get("model") != "claude-haiku-4-5":
+        fail(f"compare call used wrong model: {call_kwargs.get('model')}")
+    sys_block = call_kwargs["system"][0]
+    if sys_block["text"] is not narrative_module.COMPARE_SYSTEM_PROMPT:
+        fail("compare call should use the dedicated COMPARE_SYSTEM_PROMPT, not the single-country one")
+    if sys_block.get("cache_control", {}).get("type") != "ephemeral":
+        fail("compare call missing cache_control: ephemeral on system block")
+    ok("compare path uses COMPARE_SYSTEM_PROMPT with prompt caching enabled")
+
+    user_content = call_kwargs["messages"][0]["content"]
+    if "AAA" not in user_content or "BBB" not in user_content:
+        fail(f"user message missing both country payloads: {user_content[:200]}")
+    # Pre-computed deltas should be in the payload — saves the model from
+    # subtracting numbers itself.
+    if "deltas_a_minus_b" not in user_content:
+        fail("user message missing pre-computed deltas block")
+    if "14.1" not in user_content:  # composite delta = 70.0 - 55.9
+        fail(f"composite delta (14.1) not pre-computed into the payload: {user_content[:400]}")
+    ok("user payload includes both countries + pre-computed deltas_a_minus_b")
+
+    if len(narrative_module.COMPARE_SYSTEM_PROMPT) < 12000:
+        fail(f"COMPARE preamble too short to cache on Haiku 4.5 ({len(narrative_module.COMPARE_SYSTEM_PROMPT)} chars)")
+    ok(f"COMPARE preamble is {len(narrative_module.COMPARE_SYSTEM_PROMPT)} chars (clears Haiku 4.5 cacheable min)")
+
+
 def test_narrative_stream_yields_deltas_then_done():
     print("test: narrative.country_narrative_stream yields deltas, then exactly one done")
     import narrative as narrative_module
@@ -933,6 +991,7 @@ def main():
     test_rainbow_csv_parser()
     test_context_layer_surfaces_on_country()
     test_narrative_module_uses_haiku_with_prompt_caching()
+    test_compare_narrative_uses_dedicated_preamble_and_pairs_payload()
     test_narrative_stream_yields_deltas_then_done()
     test_narrative_module_handles_missing_api_key()
     test_event_overlay_rule()
