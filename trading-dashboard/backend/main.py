@@ -10,9 +10,10 @@ import logging
 import os
 import re
 import secrets
-from typing import Set, Dict, Optional
+from typing import Set, Dict, Optional, Tuple
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,10 @@ facade: RealtimeFacade = None
 connected_clients: Dict[str, Set[WebSocket]] = {}  # ticker -> set of WebSockets
 session_tokens: Set[str] = set()  # Valid session tokens for WebSocket auth
 
+# Simple response caching for Greeks (5min TTL)
+_greeks_cache: Dict[Tuple[str, float, float], Tuple[datetime, Dict]] = {}
+_cache_ttl_seconds = 300
+
 
 # ============================================================================
 # Pydantic Models
@@ -63,6 +68,13 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error message")
     detail: str = Field(default="", description="Additional error details")
     status_code: int = Field(..., description="HTTP status code")
+
+
+class ApiMetadata(BaseModel):
+    """API response metadata for cache and freshness tracking."""
+    timestamp: float = Field(..., description="Response generation timestamp (Unix epoch)")
+    cached: bool = Field(default=False, description="Whether response was from cache")
+    cache_ttl_seconds: int = Field(default=0, description="Cache TTL in seconds")
 
 
 class BarResponse(BaseModel):
@@ -206,14 +218,19 @@ class OptionChainItem(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    """Options scanner request."""
-    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
-    calls: list[OptionChainItem] = Field(..., max_length=500)
-    puts: list[OptionChainItem] = Field(..., max_length=500)
-    spot_price: float = Field(..., gt=0)
+    """Options scanner request with comprehensive validation."""
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$",
+                       description="Stock ticker symbol")
+    calls: list[OptionChainItem] = Field(..., max_length=500,
+                                        description="Call options data (max 500)")
+    puts: list[OptionChainItem] = Field(..., max_length=500,
+                                       description="Put options data (max 500)")
+    spot_price: float = Field(..., gt=0, le=1_000_000,
+                             description="Current spot price (0 < price <= 1M)")
     screening_type: str = Field(
         "all",
         pattern=r"^(all|unusual_volume|iv_spike|skew_shifts|earnings_move)$",
+        description="Scan type: all, unusual_volume, iv_spike, skew_shifts, or earnings_move"
     )
 
 
@@ -415,14 +432,34 @@ async def get_greeks(
     """
     Compute Greeks for an option chain.
     Returns Greeks for ATM ± 5 strikes.
+    Cached for 5 minutes to reduce computation load.
     """
     if not facade:
         raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
-        return facade.compute_greeks_chain(
+        # Check cache (simple LRU-like logic with TTL)
+        cache_key = (ticker, spot_price, expiration_days)
+        now = datetime.now()
+
+        if cache_key in _greeks_cache:
+            cached_time, cached_result = _greeks_cache[cache_key]
+            if (now - cached_time).total_seconds() < _cache_ttl_seconds:
+                log.debug(f"Greeks cache hit for {ticker}")
+                return cached_result
+
+        # Compute and cache
+        result = facade.compute_greeks_chain(
             ticker, spot_price=spot_price, expiration_days=expiration_days
         )
+        _greeks_cache[cache_key] = (now, result)
+
+        # Limit cache size to 100 entries
+        if len(_greeks_cache) > 100:
+            oldest_key = min(_greeks_cache.keys(), key=lambda k: _greeks_cache[k][0])
+            del _greeks_cache[oldest_key]
+
+        return result
     except Exception as e:
         log.exception("Error computing Greeks")
         raise HTTPException(status_code=500, detail="Failed to compute Greeks") from e

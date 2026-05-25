@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { AlertTriangle, TrendingDown, Zap, PieChart } from 'lucide-react';
 
 export interface PortfolioPosition {
@@ -21,7 +21,7 @@ interface RiskDashboardProps {
   startCapital: number;
 }
 
-export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, currentEquity, startCapital }) => {
+const RiskDashboardComponent: React.FC<RiskDashboardProps> = ({ positions, currentEquity, startCapital }) => {
   const [view, setView] = useState<'sectors' | 'greeks' | 'var'>('sectors');
 
   // Calculate sector exposure
@@ -88,11 +88,32 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
     return totalValue > 0 ? (var95 / totalValue) * 100 : 0;
   }, [positions, var95]);
 
-  const maxDrawdown = startCapital > 0 ? ((currentEquity - startCapital) / startCapital) * 100 : 0;
+  const maxDrawdown = useMemo(() =>
+    startCapital > 0 ? ((currentEquity - startCapital) / startCapital) * 100 : 0,
+    [currentEquity, startCapital]
+  );
+
   const isRisk = maxDrawdown < -5;
 
-  // Mock sector colors
-  const sectorColor = (sector: string): string => {
+  const largestPosition = useMemo(() => {
+    if (positions.length === 0) return null;
+    return positions.reduce((max, p) =>
+      p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max
+    );
+  }, [positions]);
+
+  const largestPositionPct = useMemo(() => {
+    if (!largestPosition || currentEquity <= 0) return 0;
+    const value = largestPosition.quantity * largestPosition.currentPrice;
+    return (value / currentEquity) * 100;
+  }, [largestPosition, currentEquity]);
+
+  const greeksInterpretation = useMemo(() => ({
+    deltaInterpretation: greeksExposure.delta > 0.5 ? 'Bullish (70%+)' : greeksExposure.delta < -0.5 ? 'Bearish (70%+)' : 'Neutral',
+    vegaState: greeksExposure.vega > 0 ? 'Long volatility' : 'Short volatility',
+  }), [greeksExposure]);
+
+  const sectorColor = useCallback((sector: string): string => {
     const colors: Record<string, string> = {
       Tech: 'bg-blue-500',
       Finance: 'bg-purple-500',
@@ -103,7 +124,7 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
       Other: 'bg-indigo-500',
     };
     return colors[sector] || colors.Other;
-  };
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -248,8 +269,8 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
           {/* Interpretation */}
           <div className="mt-4 p-3 bg-blue-900/20 border border-blue-700/30 rounded text-xs text-blue-300 space-y-1">
-            <p>📊 <strong>Delta:</strong> {greeksExposure.delta > 0.5 ? 'Bullish (70%+)' : greeksExposure.delta < -0.5 ? 'Bearish (70%+)' : 'Neutral'}</p>
-            <p>📈 <strong>Vega:</strong> {greeksExposure.vega > 0 ? 'Long volatility' : 'Short volatility'}</p>
+            <p>📊 <strong>Delta:</strong> {greeksInterpretation.deltaInterpretation}</p>
+            <p>📈 <strong>Vega:</strong> {greeksInterpretation.vegaState}</p>
           </div>
         </div>
       )}
@@ -285,22 +306,16 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
 
             <div className="bg-gray-900 p-4 rounded border border-gray-700">
               <div className="text-gray-400 text-sm mb-2">Largest Position</div>
-              {(() => {
-                if (positions.length === 0) return <div className="text-gray-500 text-sm">No positions</div>;
-                const largest = positions.reduce((max, p) =>
-                  p.quantity * p.currentPrice > max.quantity * max.currentPrice ? p : max
-                );
-                const value = largest.quantity * largest.currentPrice;
-                const pct = currentEquity > 0 ? (value / currentEquity) * 100 : 0;
-                return (
-                  <>
-                    <div className="text-xl font-bold text-gray-100">{largest.ticker}</div>
-                    <div className="text-xs text-gray-500 mt-2">
-                      {currentEquity > 0 ? `${pct.toFixed(1)}% of portfolio` : '—'}
-                    </div>
-                  </>
-                );
-              })()}
+              {!largestPosition ? (
+                <div className="text-gray-500 text-sm">No positions</div>
+              ) : (
+                <>
+                  <div className="text-xl font-bold text-gray-100">{largestPosition.ticker}</div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    {currentEquity > 0 ? `${largestPositionPct.toFixed(1)}% of portfolio` : '—'}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="bg-blue-900/20 border border-blue-700/30 rounded p-3 text-xs text-blue-300">
@@ -315,3 +330,5 @@ export const RiskDashboard: React.FC<RiskDashboardProps> = ({ positions, current
     </div>
   );
 };
+
+export const RiskDashboard = React.memo(RiskDashboardComponent);
