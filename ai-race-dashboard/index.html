@@ -1,0 +1,1651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Race Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #0e1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --grid: #30363d;
+    --green: #56d364;
+    --red: #f85149;
+    --amber: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { padding: 16px 24px; border-bottom: 1px solid var(--grid);
+           display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+                 background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb55; }
+
+  main { padding: 24px; display: grid; grid-template-columns: 1fr; gap: 24px;
+         max-width: 1280px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+           padding: 20px; }
+  .panel h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--muted);
+              text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  .banner { background: #d2992211; border: 1px solid #d2992255; color: #e6edf3;
+            padding: 10px 14px; border-radius: 6px; font-size: 12px; }
+  .banner b { color: var(--amber); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid);
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase;
+       user-select: none; cursor: pointer; }
+  th.sorted { color: var(--fg); }
+  th .arrow { font-size: 9px; color: var(--accent); margin-left: 4px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.row:hover { background: #ffffff05; }
+
+  .lab-chip { display: inline-flex; align-items: center; gap: 6px;
+              padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              border: 1px solid var(--grid); background: #0e1117; }
+  .lab-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .open-badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
+                font-size: 10px; font-weight: 600; background: #56d36422; color: #56d364;
+                border: 1px solid #56d36455; margin-left: 6px; }
+
+  /* Score cell heatmap */
+  .score { font-variant-numeric: tabular-nums; padding: 6px 10px;
+           border-radius: 4px; display: inline-flex; min-width: 56px;
+           align-items: center; justify-content: flex-end; gap: 6px; }
+  .score.lead { box-shadow: inset 0 0 0 1px var(--accent); }
+  .score.empty { color: var(--muted); }
+  .freshness { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .freshness.live { background: var(--green); box-shadow: 0 0 0 1px #56d36444; }
+  .freshness.curated { background: transparent; }
+  .freshness.stale { background: var(--amber); }
+  .freshness.missing { background: var(--grid); }
+
+  /* Sources panel */
+  .src-row { display: grid; grid-template-columns: 1fr 80px 110px 1fr;
+             gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .src-row:last-child { border-bottom: 0; }
+  .src-name { font-weight: 600; }
+  .src-name a { color: var(--accent); }
+  .src-state { font-size: 11px; padding: 2px 6px; border-radius: 3px;
+               font-weight: 600; text-align: center; }
+  .src-state.ok { background: #56d36422; color: var(--green); }
+  .src-state.fail { background: #f8514922; color: var(--red); }
+  .src-state.never { background: #30363d; color: var(--muted); }
+  .src-meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .src-error { color: var(--muted); font-size: 11px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .refresh-btn { background: var(--panel-2); color: var(--fg);
+                 border: 1px solid var(--grid); padding: 4px 12px;
+                 border-radius: 4px; font-size: 12px; cursor: pointer;
+                 margin-left: auto; }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .refresh-btn[disabled] { opacity: 0.5; cursor: wait; }
+
+  /* Frontier chart */
+  .chart-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chart-toolbar button { background: var(--panel-2); color: var(--fg);
+                          border: 1px solid var(--grid); padding: 4px 10px;
+                          border-radius: 4px; font-size: 12px; cursor: pointer; }
+  .chart-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  svg#frontier-chart { width: 100%; height: 320px; }
+  svg#frontier-chart .axis { stroke: var(--grid); }
+  svg#frontier-chart text { fill: var(--muted); font-size: 10px;
+                            font-family: -apple-system, sans-serif; }
+  svg#frontier-chart .point text { fill: var(--fg); font-size: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px;
+            font-size: 11px; color: var(--muted); }
+  .legend .item { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Timeline */
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .ev { display: grid; grid-template-columns: 110px 1fr; gap: 16px;
+        padding: 10px 0; border-bottom: 1px solid var(--grid); align-items: start; }
+  .ev:last-child { border-bottom: 0; }
+  .ev .when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ev .title { font-weight: 600; }
+  .ev .blurb { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Lab cards */
+  .labs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+               gap: 12px; }
+  .lab-card { background: var(--panel-2); border: 1px solid var(--grid);
+              border-radius: 6px; padding: 14px; }
+  .lab-card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .lab-card .name { font-weight: 600; font-size: 14px; }
+  .lab-card .country { color: var(--muted); font-size: 11px; }
+  .lab-card dl { display: grid; grid-template-columns: max-content 1fr;
+                 gap: 4px 12px; margin: 0; font-size: 12px; }
+  .lab-card dt { color: var(--muted); }
+  .lab-card dd { margin: 0; }
+
+  /* Markets */
+  .market-row { display: grid; grid-template-columns: 1fr 90px 90px;
+                gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+                align-items: center; }
+  .market-row:last-child { border-bottom: 0; }
+  .market-q { font-size: 13px; }
+  .market-q .end { color: var(--muted); font-size: 11px; margin-top: 2px; display: block; }
+  .market-prob { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .market-vol { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right;
+                font-size: 12px; }
+  .empty-state { color: var(--muted); font-size: 12px; padding: 16px 0; text-align: center; }
+
+  /* Featured events */
+  .event-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .event { background: var(--panel-2); border: 1px solid var(--grid);
+           border-radius: 6px; padding: 14px; }
+  .event .ehead { display: flex; align-items: baseline; gap: 10px;
+                  margin-bottom: 6px; flex-wrap: wrap; }
+  .event .etitle { font-weight: 600; font-size: 14px; }
+  .event .etitle a { color: var(--fg); }
+  .event .etitle a:hover { color: var(--accent); }
+  .event .edesc { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .venue-tag { font-size: 10px; padding: 2px 6px; border-radius: 3px;
+               font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .venue-tag.polymarket { background: #2d1b6911; color: #a78bfa; border: 1px solid #a78bfa55; }
+  .venue-tag.kalshi { background: #0c633f11; color: #34d399; border: 1px solid #34d39955; }
+  .event .evol { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .outcome-row { display: grid; grid-template-columns: 1fr 60px;
+                 gap: 10px; align-items: center; padding: 5px 0; }
+  .outcome-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .outcome-bar { position: relative; height: 14px; background: #0e1117;
+                 border: 1px solid var(--grid); border-radius: 3px; overflow: hidden; }
+  .outcome-bar .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                       background: linear-gradient(90deg, #1f6feb88, #58a6ff); }
+  .outcome-bar .lbl { position: absolute; right: 4px; top: 0; bottom: 0;
+                      display: flex; align-items: center; font-size: 10px;
+                      font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
+  .outcome-prob { font-variant-numeric: tabular-nums; font-weight: 600;
+                  text-align: right; font-size: 12px; }
+
+  /* Movers strip */
+  .movers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px; }
+  .mover { background: var(--panel-2); border: 1px solid var(--grid);
+           border-radius: 6px; padding: 10px 12px; }
+  .mover-q { font-size: 12px; min-height: 36px; }
+  .mover-q a { color: var(--fg); }
+  .mover-q a:hover { color: var(--accent); }
+  .mover-foot { display: flex; align-items: baseline; justify-content: space-between;
+                margin-top: 8px; }
+  .mover-prob { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+  .mover-delta { font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600;
+                 padding: 1px 6px; border-radius: 3px; }
+  .mover-delta.up { background: #56d36422; color: var(--green); }
+  .mover-delta.down { background: #f8514922; color: var(--red); }
+
+  /* Saturation gauges */
+  .sat-row { display: grid; grid-template-columns: 160px 1fr 80px;
+             gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .sat-row:last-child { border-bottom: 0; }
+  .sat-name { font-weight: 600; font-size: 13px; }
+  .sat-name .scale { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .sat-track { position: relative; height: 18px; background: #0e1117;
+               border: 1px solid var(--grid); border-radius: 3px; overflow: visible; }
+  .sat-fill { position: absolute; left: 0; top: 0; bottom: 0;
+              background: linear-gradient(90deg, #1f6feb88, #58a6ff); border-radius: 2px; }
+  .sat-ceiling { position: absolute; top: -3px; bottom: -3px; width: 2px;
+                 background: var(--amber); }
+  .sat-human { position: absolute; top: -3px; bottom: -3px; width: 2px;
+               background: var(--muted); }
+  .sat-pct { font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+  .sat-legend { color: var(--muted); font-size: 11px; margin-top: 8px;
+                display: flex; gap: 18px; flex-wrap: wrap; }
+  .sat-legend .swatch { display: inline-block; width: 16px; height: 4px;
+                        margin-right: 4px; vertical-align: middle; }
+
+  /* Capability radars (small multiples) */
+  .radars { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px; }
+  .radar-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 12px; text-align: center; }
+  .radar-card .head { display: flex; align-items: center; justify-content: center;
+                      gap: 6px; margin-bottom: 4px; font-weight: 600; font-size: 13px; }
+  .radar-card .model { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  .radar-card svg { width: 100%; height: 200px; }
+  .radar-card svg .axis { stroke: var(--grid); }
+  .radar-card svg text { fill: var(--muted); font-size: 9px;
+                         font-family: -apple-system, sans-serif; }
+
+  /* First-to-X matrix */
+  .ftx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ftx-table th { text-align: center; padding: 6px 4px; color: var(--muted);
+                  font-size: 10px; text-transform: uppercase; }
+  .ftx-table td { padding: 6px 4px; border-top: 1px solid var(--grid);
+                  text-align: center; }
+  .ftx-table td.label { text-align: left; font-weight: 600; }
+  .ftx-cell { display: inline-flex; flex-direction: column; gap: 1px;
+              line-height: 1.2; padding: 4px 6px; border-radius: 3px;
+              min-width: 90px; background: #0e1117; border: 1px solid var(--grid); }
+  .ftx-cell .who { font-weight: 600; font-size: 11px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+  .ftx-cell .when { color: var(--muted); font-size: 10px; }
+  .ftx-cell.unreached { color: var(--muted); background: transparent; border-style: dashed; }
+
+  /* Funding */
+  .fund-totals { display: grid; grid-template-columns: 220px 1fr 100px;
+                 gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+                 align-items: center; font-size: 12px; }
+  .fund-totals:last-child { border-bottom: 0; }
+  .fund-bar { height: 14px; position: relative; background: #0e1117;
+              border: 1px solid var(--grid); border-radius: 3px; overflow: hidden; }
+  .fund-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .fund-amt { text-align: right; font-variant-numeric: tabular-nums;
+              font-weight: 700; }
+  .fund-amt .post { color: var(--muted); font-size: 10px; font-weight: 400;
+                    display: block; }
+  .fund-round-row { display: grid; grid-template-columns: 100px 180px 1fr 90px 90px;
+                    gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+                    align-items: center; font-size: 12px; }
+  .fund-round-row:last-child { border-bottom: 0; }
+  .fund-round-row .when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .fund-round-row .amt { font-variant-numeric: tabular-nums; font-weight: 700;
+                         text-align: right; }
+  .fund-round-row .post { color: var(--muted); font-variant-numeric: tabular-nums;
+                          text-align: right; }
+  .fund-round-row .post b { color: var(--fg); font-weight: 600; }
+
+  /* Stocks */
+  .stocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 10px; }
+  .stock-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 10px 12px; }
+  .stock-card .head { display: flex; align-items: baseline; justify-content: space-between;
+                      gap: 8px; }
+  .stock-card .ticker { font-weight: 700; font-size: 14px; }
+  .stock-card .theme { color: var(--muted); font-size: 10px;
+                       text-transform: uppercase; letter-spacing: 0.04em; }
+  .stock-card .name { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .stock-card .price { font-variant-numeric: tabular-nums; font-weight: 700;
+                       font-size: 18px; margin-top: 8px; }
+  .stock-card .daily { font-size: 11px; font-weight: 600;
+                       padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .stock-card .daily.up { background: #56d36422; color: var(--green); }
+  .stock-card .daily.down { background: #f8514922; color: var(--red); }
+  .stock-card .range { margin-top: 8px; }
+  .stock-card .range-bar { position: relative; height: 4px; background: #0e1117;
+                           border: 1px solid var(--grid); border-radius: 2px; margin-bottom: 4px; }
+  .stock-card .range-bar .marker { position: absolute; top: -2px; bottom: -2px; width: 2px;
+                                   background: var(--accent); }
+  .stock-card .range-lbl { display: flex; justify-content: space-between;
+                           color: var(--muted); font-size: 10px;
+                           font-variant-numeric: tabular-nums; }
+  .stock-card .meta { display: grid; grid-template-columns: 1fr 1fr;
+                      gap: 4px; margin-top: 8px; font-size: 11px; }
+  .stock-card .meta .lbl { color: var(--muted); }
+  .stock-card .meta .val { font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Recent changes */
+  .chg-row { display: grid; grid-template-columns: 1fr 160px 100px;
+             gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .chg-row:last-child { border-bottom: 0; }
+  .chg-model { font-weight: 600; }
+  .chg-bench { color: var(--muted); font-size: 11px; }
+  .chg-prev-curr { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chg-delta { text-align: right; font-variant-numeric: tabular-nums;
+               font-weight: 700; padding: 2px 8px; border-radius: 3px; }
+  .chg-delta.up { background: #56d36422; color: var(--green); }
+  .chg-delta.down { background: #f8514922; color: var(--red); }
+
+  /* Talent flow */
+  .move-row { display: grid; grid-template-columns: 90px 1fr;
+              gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+              align-items: start; }
+  .move-row:last-child { border-bottom: 0; }
+  .move-date { color: var(--muted); font-size: 12px;
+               font-variant-numeric: tabular-nums; }
+  .move-name { font-weight: 600; font-size: 13px; }
+  .move-role { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .move-flow { display: inline-flex; align-items: center; gap: 6px;
+               flex-wrap: wrap; margin-top: 4px; font-size: 12px; }
+  .move-arrow { color: var(--muted); }
+  .move-org { display: inline-flex; align-items: center; gap: 5px;
+              padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              border: 1px solid var(--grid); background: #0e1117; }
+  .kind-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px;
+                font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                margin-left: 6px; }
+  .kind-badge.founder { background: #f472b622; color: #f472b6; border: 1px solid #f472b655; }
+  .kind-badge.hire    { background: #56d36422; color: var(--green); border: 1px solid #56d36455; }
+  .kind-badge.exit    { background: #f8514922; color: var(--red); border: 1px solid #f8514955; }
+  .kind-badge.return  { background: #58a6ff22; color: var(--accent); border: 1px solid #58a6ff55; }
+
+  .head-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+               gap: 10px; margin-top: 14px; }
+  .head-card { background: var(--panel-2); border: 1px solid var(--grid);
+               border-radius: 6px; padding: 10px 12px; }
+  .head-card .lbl { display: flex; align-items: center; gap: 6px;
+                    color: var(--muted); font-size: 11px; }
+  .head-card .val { font-variant-numeric: tabular-nums; font-weight: 700;
+                    font-size: 18px; margin-top: 4px; }
+  .head-card .asof { color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+  /* News */
+  .news-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .news-toolbar button { background: var(--panel-2); color: var(--fg);
+                         border: 1px solid var(--grid); padding: 3px 10px;
+                         border-radius: 999px; font-size: 11px; cursor: pointer; }
+  .news-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  .news-row { display: grid; grid-template-columns: 130px 1fr 110px;
+              gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--grid);
+              align-items: start; }
+  .news-row:last-child { border-bottom: 0; }
+  .news-src { font-size: 11px; color: var(--muted); display: flex;
+              flex-direction: column; gap: 2px; }
+  .news-src .name { font-weight: 600; color: var(--fg); font-size: 12px; }
+  .news-kind { font-size: 9px; padding: 1px 5px; border-radius: 3px;
+               border: 1px solid var(--grid); width: max-content;
+               text-transform: uppercase; letter-spacing: 0.04em; }
+  .news-title { font-size: 13px; }
+  .news-title a { color: var(--fg); }
+  .news-title a:hover { color: var(--accent); }
+  .news-desc { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .news-when { color: var(--muted); font-size: 11px; text-align: right;
+               font-variant-numeric: tabular-nums; }
+
+  /* Compute scoreboard */
+  .cmp-row { display: grid; grid-template-columns: 180px 110px 1fr 110px;
+             gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+             align-items: center; font-size: 12px; }
+  .cmp-row:last-child { border-bottom: 0; }
+  .cmp-lab { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .cmp-h100 { font-variant-numeric: tabular-nums; }
+  .cmp-h100 .num { font-weight: 700; font-size: 14px; }
+  .cmp-h100 .unit { color: var(--muted); font-size: 10px; margin-left: 3px; }
+  .cmp-cluster { color: var(--fg); font-size: 12px; }
+  .cmp-cluster .cls { color: var(--muted); font-size: 11px; display: block; }
+  .cmp-capex { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .cmp-capex .asof { color: var(--muted); font-size: 10px; display: block; font-weight: 400; }
+  .h100-bar { height: 6px; background: #0e1117; border: 1px solid var(--grid);
+              border-radius: 2px; margin-top: 4px; position: relative; overflow: hidden; }
+  .h100-bar .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                    background: linear-gradient(90deg, #1f6feb88, #58a6ff); }
+
+  /* Export controls timeline */
+  .xc-row { display: grid; grid-template-columns: 110px 70px 1fr;
+            gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+            align-items: start; }
+  .xc-row:last-child { border-bottom: 0; }
+  .xc-date { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .xc-scope { font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+              padding: 2px 6px; border-radius: 3px; text-align: center;
+              background: #f8514922; color: var(--red); border: 1px solid #f8514955;
+              text-transform: uppercase; }
+  .xc-scope.china { background: #d2992222; color: var(--amber); border-color: #d2992255; }
+  .xc-title { font-weight: 600; font-size: 13px; }
+  .xc-blurb { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Capex sparklines */
+  .capex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                gap: 10px; }
+  .capex-card { background: var(--panel-2); border: 1px solid var(--grid);
+                border-radius: 6px; padding: 12px; }
+  .capex-card .head { display: flex; align-items: center; justify-content: space-between;
+                      margin-bottom: 4px; }
+  .capex-card .name { font-weight: 600; font-size: 13px; display: inline-flex;
+                      align-items: center; gap: 6px; }
+  .capex-card .latest { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; }
+  .capex-card .delta { font-size: 11px; padding: 1px 5px; border-radius: 3px;
+                       font-weight: 600; margin-left: 6px; }
+  .capex-card .delta.up { background: #56d36422; color: var(--green); }
+  .capex-card .delta.down { background: #f8514922; color: var(--red); }
+  .capex-card .sub { color: var(--muted); font-size: 10px; margin-bottom: 6px; }
+  .capex-card svg { width: 100%; height: 60px; display: block; }
+  .capex-total { background: var(--panel-2); border: 1px solid var(--grid);
+                 border-radius: 6px; padding: 12px; margin-top: 10px; }
+  .capex-total .lbl { color: var(--muted); font-size: 11px;
+                      text-transform: uppercase; letter-spacing: 0.04em; }
+  .capex-total .val { font-variant-numeric: tabular-nums; font-weight: 700;
+                      font-size: 22px; margin-top: 4px; }
+
+  /* Cross-venue spread */
+  .pair-row { display: grid; grid-template-columns: 1fr 1fr 80px;
+              gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid);
+              align-items: center; font-size: 12px; }
+  .pair-row:last-child { border-bottom: 0; }
+  .pair-side { display: flex; flex-direction: column; gap: 2px; }
+  .pair-side .lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+                    color: var(--muted); }
+  .pair-spread { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+  .pair-spread.pos { color: var(--amber); }
+  .pair-spread.neg { color: var(--accent); }
+
+  footer { color: var(--muted); font-size: 11px; padding: 16px 24px;
+           border-top: 1px solid var(--grid); text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI Race</h1>
+  <span class="pill" id="header-pill">curated · live markets</span>
+  <span class="meta" id="header-as-of"></span>
+</header>
+
+<main>
+  <div class="panel banner">
+    <b>Note:</b> Frontier-model scores, lab valuations and timeline entries are
+    a hand-curated snapshot — every row carries an <code>as_of</code> date
+    and source label in <code>data.py</code>. Polymarket markets below are
+    pulled live (≤60s cache). Verify before trading.
+  </div>
+
+  <!-- Frontier model leaderboard -->
+  <section class="panel" id="leaderboard">
+    <h2>Frontier model leaderboard</h2>
+    <div class="sub">
+      Click a column header to sort. Highlighted cells are the current best
+      score on that benchmark across the table.
+    </div>
+    <div style="overflow-x:auto">
+      <table id="models-table">
+        <thead><tr id="models-thead"></tr></thead>
+        <tbody id="models-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Frontier capability chart -->
+  <section class="panel" id="frontier">
+    <h2>Capability frontier over time</h2>
+    <div class="sub">
+      Running maximum score on each benchmark. Step-ups are the moments
+      a new model raised the public ceiling.
+    </div>
+    <div class="chart-toolbar" id="bench-buttons"></div>
+    <svg id="frontier-chart" viewBox="0 0 800 320" preserveAspectRatio="none"></svg>
+    <div class="legend" id="frontier-legend"></div>
+  </section>
+
+  <!-- Saturation gauges -->
+  <section class="panel" id="saturation-panel">
+    <h2>Benchmark saturation</h2>
+    <div class="sub">
+      How close is each public benchmark to its effective ceiling? Blue fill
+      = current best score. Amber tick = ceiling (effective max). Gray tick
+      = informed-human reference where one applies.
+    </div>
+    <div id="saturation"></div>
+    <div class="sat-legend">
+      <span><span class="swatch" style="background:#58a6ff"></span>Current best</span>
+      <span><span class="swatch" style="background:var(--amber)"></span>Ceiling</span>
+      <span><span class="swatch" style="background:var(--muted)"></span>Human reference</span>
+    </div>
+  </section>
+
+  <!-- Lab capability radars -->
+  <section class="panel" id="radars-panel">
+    <h2>Lab capability radars</h2>
+    <div class="sub">
+      Best model per lab plotted across every benchmark, normalized to its
+      floor/ceiling. Spiky polygons = specialist; round polygons = balanced.
+    </div>
+    <div class="radars" id="radars"></div>
+  </section>
+
+  <!-- First-to-X waterfall -->
+  <section class="panel" id="ftx-panel">
+    <h2>First-to-X</h2>
+    <div class="sub">
+      First model + month to clear each public threshold per benchmark.
+      Dashed cells haven't been crossed yet.
+    </div>
+    <div style="overflow-x:auto"><table class="ftx-table" id="ftx"></table></div>
+  </section>
+
+  <!-- Timeline -->
+  <section class="panel" id="timeline-panel">
+    <h2>Release timeline</h2>
+    <div class="sub">Major frontier releases since ChatGPT.</div>
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <!-- Labs -->
+  <section class="panel" id="labs-panel">
+    <h2>Lab snapshots</h2>
+    <div class="sub">Last-known valuation, headline model, compute posture.</div>
+    <div class="labs-grid" id="labs"></div>
+  </section>
+
+  <!-- Compute scoreboard -->
+  <section class="panel" id="compute-panel">
+    <h2>Compute scoreboard</h2>
+    <div class="sub">
+      H100-equivalents (estimates, common-denominator across mixed fleets);
+      flagship cluster + 2025 announced AI capex. TPU-only labs annotated
+      separately. Bar widths normalize against the highest-disclosed fleet.
+    </div>
+    <div id="compute"></div>
+  </section>
+
+  <!-- Talent flow -->
+  <section class="panel" id="talent-panel">
+    <h2>Talent flow</h2>
+    <div class="sub">
+      Notable senior moves. <b>founder</b> = left to start a new lab,
+      <b>hire</b> = joined a lab, <b>return</b> = came back to a previous
+      employer or got promoted, <b>exit</b> = left without immediate
+      destination disclosed.
+    </div>
+    <div id="talent"></div>
+    <h2 style="margin-top:24px">Headcount estimates</h2>
+    <div class="sub">Rough public estimates — wide error bars. Hover a card for source.</div>
+    <div class="head-grid" id="headcount"></div>
+  </section>
+
+  <!-- Export controls timeline -->
+  <section class="panel" id="xc-panel">
+    <h2>Chip export-control timeline</h2>
+    <div class="sub">US BIS rules + non-US responses. Separate from model
+      timeline because cadence and audience differ.</div>
+    <div id="xc"></div>
+  </section>
+
+  <!-- Big Tech capex sparklines -->
+  <section class="panel" id="capex-panel">
+    <h2>Big Tech AI capex</h2>
+    <div class="sub">Quarterly capex (USD billions) reported by the four
+      hyperscalers. Curated from earnings releases — update each quarter.</div>
+    <div class="capex-grid" id="capex"></div>
+    <div class="capex-total"><span class="lbl">Latest combined quarter</span>
+      <div class="val" id="capex-total"></div></div>
+  </section>
+
+  <!-- Lab funding history -->
+  <section class="panel" id="funding-panel">
+    <h2>Lab funding history</h2>
+    <div class="sub">Disclosed equity rounds. Totals bar normalized against the
+      best-funded lab; cells show cumulative raised and the latest post-money valuation.</div>
+    <div id="funding-totals"></div>
+    <h2 style="margin-top:24px">Round history</h2>
+    <div class="sub">Newest first.</div>
+    <div id="funding-rounds"></div>
+  </section>
+
+  <!-- Public AI exposure -->
+  <section class="panel" id="stocks-panel">
+    <h2>Public AI exposure <span id="stocks-asof" style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px"></span></h2>
+    <div class="sub">Snapshot of the public equities most exposed to the AI buildout.
+      Grouped by theme; 52-week range bar with current price marked.
+      Refresh weekly from public quotes (<code>AI_STOCKS</code> in <code>data.py</code>).</div>
+    <div class="stocks" id="stocks"></div>
+  </section>
+
+  <!-- Recent score changes -->
+  <section class="panel" id="changes-panel">
+    <h2>Recent score changes <span id="changes-window" style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px"></span></h2>
+    <div class="sub">Top model × benchmark cells that moved between the most
+      recent snapshot and an earlier one (default: 7 days back). Snapshots are
+      written daily by the server to <code>.snapshots/ai-race/</code>.</div>
+    <div id="changes"></div>
+  </section>
+
+  <!-- Featured prediction markets -->
+  <section class="panel" id="featured-panel">
+    <h2>Featured AI markets <span style="color:var(--muted);font-weight:400;text-transform:none;font-size:11px" id="featured-counts"></span></h2>
+    <div class="sub">
+      Curated Polymarket events + Kalshi series — see <code>AI_POLY_EVENT_SLUGS</code>
+      and <code>AI_KALSHI_SERIES</code> in <code>data.py</code>. Each card shows
+      every Yes/No outcome bundled into that event.
+    </div>
+    <div class="event-grid" id="featured-events"></div>
+  </section>
+
+  <!-- Cross-venue spreads -->
+  <section class="panel" id="spreads-panel">
+    <h2>Cross-venue spreads</h2>
+    <div class="sub">Same-topic events trading on both Polymarket and Kalshi. Spread is Polymarket Yes − Kalshi Yes (positive ⇒ Polymarket overpriced).</div>
+    <div id="spreads"></div>
+  </section>
+
+  <!-- 24h movers -->
+  <section class="panel" id="movers-panel">
+    <h2>24h movers</h2>
+    <div class="sub">AI-tagged Polymarket questions with the biggest 1-day price swings (≥5pp).</div>
+    <div class="movers" id="movers"></div>
+  </section>
+
+  <!-- Keyword-matched markets (secondary) -->
+  <section class="panel" id="markets-panel">
+    <h2>More AI markets</h2>
+    <div class="sub">Other Polymarket questions matching AI keywords, sorted by 24h volume.</div>
+    <div id="markets"></div>
+  </section>
+
+  <!-- News feed -->
+  <section class="panel" id="news-panel">
+    <h2>News feed</h2>
+    <div class="sub">RSS fan-in across lab blogs, AI newsletters, and arXiv cs.CL.
+      Sorted by publication time. Failed feeds are silently dropped (see
+      <code>NEWS_FEEDS</code> in <code>data.py</code>).</div>
+    <div class="news-toolbar" id="news-toolbar"></div>
+    <div id="news"></div>
+  </section>
+
+  <!-- Ingestion sources -->
+  <section class="panel" id="sources-panel">
+    <h2 style="display:flex;align-items:center;gap:12px">
+      Ingestion sources
+      <button id="refresh-btn" class="refresh-btn">Refresh now</button>
+    </h2>
+    <div class="sub">
+      Live scrapes that overlay the curated dataset. Green dots in the
+      leaderboard mean a value is from a live source; amber means the
+      curated value is older than 60 days; gray means missing.
+    </div>
+    <div id="sources"></div>
+  </section>
+</main>
+
+<footer>
+  AI Race Dashboard · curated values in <code>data.py</code> · live markets via Polymarket Gamma API
+</footer>
+
+<script>
+"use strict";
+
+// ── small utilities ─────────────────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const fmt = {
+  pct: (v) => v == null ? "" : v.toFixed(1),
+  elo: (v) => v == null ? "" : Math.round(v).toString(),
+  k: (v) => v == null ? "" : (v >= 1000 ? (v/1000).toFixed(0)+"M" : v+"K"),
+  usd: (v) => v == null ? "—" : "$" + (v >= 1000 ? (v/1000).toFixed(1)+"T" : v+"B"),
+  date: (d) => d ? d.slice(0,10) : "",
+  vol: (v) => {
+    if (!v) return "—";
+    if (v >= 1e6) return "$" + (v/1e6).toFixed(1) + "M";
+    if (v >= 1e3) return "$" + (v/1e3).toFixed(0) + "K";
+    return "$" + Math.round(v);
+  },
+};
+
+async function fetchJSON(path) {
+  const r = await fetch(path, {headers: {"Accept":"application/json"}});
+  if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+  return r.json();
+}
+
+function escapeHTML(s) {
+  return String(s ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+let STATE = {
+  models: [],
+  benchmarks: [],
+  bestPerBench: {},      // bench_key → max score across models
+  sortKey: "lmarena_elo",
+  sortAsc: false,
+  frontierBench: "swe_bench_verified",
+  frontierData: {},      // bench_key → series
+};
+
+// ── Models leaderboard ─────────────────────────────────────────────────────
+function computeBest(models, benchmarks) {
+  const best = {};
+  for (const b of benchmarks) {
+    let max = -Infinity;
+    for (const m of models) {
+      const s = (m.scores || {})[b.key];
+      if (s != null && s > max) max = s;
+    }
+    if (max > -Infinity) best[b.key] = max;
+  }
+  return best;
+}
+
+function renderLeaderboard() {
+  const {models, benchmarks, bestPerBench, sortKey, sortAsc} = STATE;
+
+  const baseCols = [
+    {key: "name", label: "Model"},
+    {key: "lab_name", label: "Lab"},
+    {key: "released", label: "Released"},
+    {key: "context_k", label: "Ctx (k)"},
+  ];
+  const benchCols = benchmarks.map(b => ({key: b.key, label: b.name, bench: true}));
+  const cols = baseCols.concat(benchCols);
+
+  // Header
+  const thead = $("#models-thead");
+  thead.innerHTML = cols.map(c => {
+    const sortedClass = (c.key === sortKey) ? "sorted" : "";
+    const arrow = (c.key === sortKey) ? `<span class="arrow">${sortAsc ? "▲" : "▼"}</span>` : "";
+    return `<th class="${sortedClass}" data-key="${c.key}" data-bench="${c.bench?1:0}">${escapeHTML(c.label)}${arrow}</th>`;
+  }).join("");
+  thead.querySelectorAll("th").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.key;
+      if (STATE.sortKey === k) STATE.sortAsc = !STATE.sortAsc;
+      else { STATE.sortKey = k; STATE.sortAsc = false; }
+      renderLeaderboard();
+    });
+  });
+
+  // Sort
+  const sorted = models.slice().sort((a,b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (av === undefined && a.scores) av = a.scores[sortKey];
+    if (bv === undefined && b.scores) bv = b.scores[sortKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "number" && typeof bv === "number") {
+      return sortAsc ? av - bv : bv - av;
+    }
+    return sortAsc
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av));
+  });
+
+  // Body
+  const tbody = $("#models-tbody");
+  tbody.innerHTML = sorted.map(m => {
+    const labCell = `<span class="lab-chip">
+        <span class="lab-dot" style="background:${escapeHTML(m.lab_color)}"></span>
+        ${escapeHTML(m.lab_name)}</span>` +
+        (m.open_weights ? '<span class="open-badge">open</span>' : "");
+    const baseCells = [
+      `<td><b>${escapeHTML(m.name)}</b><br><span style="color:var(--muted);font-size:11px">${escapeHTML(m.kind || "")}</span></td>`,
+      `<td>${labCell}</td>`,
+      `<td>${escapeHTML(m.released || "")}</td>`,
+      `<td class="num">${m.context_k ?? ""}</td>`,
+    ];
+    const meta = m.score_meta || {};
+    const benchCells = benchmarks.map(b => {
+      const s = (m.scores || {})[b.key];
+      const cellMeta = meta[b.key] || {source: "missing"};
+      if (s == null) {
+        return `<td class="num"><span class="score empty"><span class="freshness missing"></span>—</span></td>`;
+      }
+      const isBest = (bestPerBench[b.key] != null) && Math.abs(s - bestPerBench[b.key]) < 1e-9;
+      const fmtFn = b.scale === "Elo" ? fmt.elo : fmt.pct;
+      const pct = b.scale === "Elo"
+        ? Math.max(0, Math.min(1, (s - 1100) / 350))
+        : Math.max(0, Math.min(1, s / 100));
+      const bg = `rgba(88,166,255,${0.05 + pct * 0.30})`;
+
+      let freshClass = "curated";
+      let title = `curated · as of ${cellMeta.as_of || ""}`;
+      if (typeof cellMeta.source === "string" && cellMeta.source.startsWith("live:")) {
+        freshClass = "live";
+        const src = cellMeta.source.slice(5);
+        const ts = cellMeta.as_of ? new Date(cellMeta.as_of * 1000).toISOString().slice(0,16).replace("T"," ") : "";
+        title = `live from ${src} · ${ts} UTC` + (cellMeta.scraped_name ? ` · "${cellMeta.scraped_name}"` : "");
+      } else if (cellMeta.stale) {
+        freshClass = "stale";
+        title = `curated (stale) · as of ${cellMeta.as_of || ""}`;
+      }
+      return `<td class="num"><span class="score ${isBest?'lead':''}" style="background:${bg}" title="${escapeHTML(title)}"><span class="freshness ${freshClass}"></span>${fmtFn(s)}</span></td>`;
+    });
+    return `<tr class="row">${baseCells.concat(benchCells).join("")}</tr>`;
+  }).join("");
+}
+
+async function loadModels() {
+  const data = await fetchJSON("/api/models");
+  STATE.models = data.models;
+  STATE.benchmarks = data.benchmarks;
+  STATE.bestPerBench = computeBest(data.models, data.benchmarks);
+  $("#header-as-of").textContent = "as of " + (data.as_of || "");
+  renderLeaderboard();
+  renderSaturation();
+  renderRadars();
+  renderFirstToX();
+}
+
+// ── Saturation ─────────────────────────────────────────────────────────────
+function renderSaturation() {
+  const {benchmarks, models, bestPerBench} = STATE;
+  const wrap = $("#saturation");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  wrap.innerHTML = benchmarks.map(b => {
+    const best = bestPerBench[b.key];
+    if (best == null) return "";
+    const floor = b.floor ?? 0;
+    // For unbounded scales (LMArena Elo) use a visual cap above current best
+    // so the bar still fills sensibly without a ceiling marker.
+    const hardCeiling = b.ceiling;
+    const visualMax = hardCeiling ?? Math.max(best + 50, b.scale === "Elo" ? 1500 : 100);
+    const winnerModel = models.find(m => (m.scores || {})[b.key] === best);
+    const winnerName = winnerModel ? winnerModel.name : "";
+
+    const fillPct = Math.max(0, Math.min(100, ((best - floor) / (visualMax - floor)) * 100));
+    const ceilingPct = hardCeiling != null
+      ? Math.max(0, Math.min(100, ((hardCeiling - floor) / (visualMax - floor)) * 100))
+      : null;
+    const humanPct = b.human_baseline != null
+      ? Math.max(0, Math.min(100, ((b.human_baseline - floor) / (visualMax - floor)) * 100))
+      : null;
+
+    const satTxt = hardCeiling != null
+      ? `${((best / hardCeiling) * 100).toFixed(0)}%`
+      : (b.scale === "Elo" ? Math.round(best).toString() : best.toFixed(1));
+
+    const ceilingHTML = ceilingPct != null
+      ? `<span class="sat-ceiling" style="left:${ceilingPct.toFixed(2)}%" title="ceiling: ${hardCeiling}"></span>`
+      : "";
+    const humanHTML = humanPct != null
+      ? `<span class="sat-human" style="left:${humanPct.toFixed(2)}%" title="human reference: ${b.human_baseline}"></span>`
+      : "";
+
+    return `<div class="sat-row">
+      <div class="sat-name">${escapeHTML(b.name)}<br><span class="scale">${escapeHTML(winnerName)}</span></div>
+      <div class="sat-track" title="${escapeHTML(b.what || '')}">
+        <span class="sat-fill" style="width:${fillPct.toFixed(2)}%"></span>
+        ${humanHTML}
+        ${ceilingHTML}
+      </div>
+      <div class="sat-pct">${satTxt}</div>
+    </div>`;
+  }).join("");
+}
+
+// ── Capability radars ──────────────────────────────────────────────────────
+function bestModelPerLab(models) {
+  // For each lab, pick the model with the highest *average normalized score*
+  // across the benchmarks it reports — proxy for "frontier offering."
+  const byLab = new Map();
+  for (const m of models) {
+    if (!m.scores) continue;
+    const norms = [];
+    for (const b of STATE.benchmarks) {
+      const s = m.scores[b.key];
+      if (s == null) continue;
+      const floor = b.floor ?? 0;
+      const ceil = b.ceiling ?? (b.scale === "Elo" ? 1500 : 100);
+      norms.push(Math.max(0, Math.min(1, (s - floor) / (ceil - floor))));
+    }
+    if (!norms.length) continue;
+    const avg = norms.reduce((a,b) => a+b, 0) / norms.length;
+    const prev = byLab.get(m.lab_key);
+    if (!prev || avg > prev.avg) {
+      byLab.set(m.lab_key, {model: m, avg});
+    }
+  }
+  return [...byLab.values()].sort((a,b) => b.avg - a.avg);
+}
+
+function renderRadars() {
+  const {benchmarks, models} = STATE;
+  const wrap = $("#radars");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  const picks = bestModelPerLab(models);
+  if (!picks.length) { wrap.innerHTML = '<div class="empty-state">No data.</div>'; return; }
+
+  const W = 220, H = 200, cx = W/2, cy = H/2 + 6, R = 72;
+  const N = benchmarks.length;
+
+  // Pre-compute axis endpoints (shared across all radars).
+  const axes = benchmarks.map((b, i) => {
+    const angle = (-Math.PI/2) + (i * 2*Math.PI / N);
+    return {
+      b, angle,
+      x: cx + Math.cos(angle) * R,
+      y: cy + Math.sin(angle) * R,
+      lx: cx + Math.cos(angle) * (R + 14),
+      ly: cy + Math.sin(angle) * (R + 14),
+    };
+  });
+  const rings = [0.25, 0.5, 0.75, 1.0];
+
+  wrap.innerHTML = picks.map(({model: m}) => {
+    const points = axes.map(a => {
+      const score = (m.scores || {})[a.b.key];
+      if (score == null) return null;
+      const floor = a.b.floor ?? 0;
+      const ceil = a.b.ceiling ?? (a.b.scale === "Elo" ? 1500 : 100);
+      const t = Math.max(0, Math.min(1, (score - floor) / (ceil - floor)));
+      return {x: cx + Math.cos(a.angle) * R * t, y: cy + Math.sin(a.angle) * R * t};
+    });
+    const validPoints = points.filter(p => p);
+    const path = validPoints.length >= 3
+      ? "M " + validPoints.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ") + " Z"
+      : "";
+
+    const ringsHTML = rings.map(t =>
+      `<circle class="axis" cx="${cx}" cy="${cy}" r="${(R*t).toFixed(1)}" fill="none" stroke-dasharray="2 3"/>`
+    ).join("");
+    const axesHTML = axes.map(a =>
+      `<line class="axis" x1="${cx}" y1="${cy}" x2="${a.x.toFixed(1)}" y2="${a.y.toFixed(1)}"/>` +
+      `<text x="${a.lx.toFixed(1)}" y="${a.ly.toFixed(1)}" text-anchor="${a.lx > cx+2 ? 'start' : a.lx < cx-2 ? 'end' : 'middle'}" dominant-baseline="${a.ly > cy ? 'hanging' : 'auto'}">${escapeHTML(a.b.name)}</text>`
+    ).join("");
+    const pointsHTML = validPoints.map(p =>
+      `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5" fill="${escapeHTML(m.lab_color)}"/>`
+    ).join("");
+
+    return `<div class="radar-card">
+      <div class="head">
+        <span class="lab-dot" style="background:${escapeHTML(m.lab_color)}"></span>
+        ${escapeHTML(m.lab_name)}
+      </div>
+      <div class="model">${escapeHTML(m.name)} · ${escapeHTML(m.released || '')}</div>
+      <svg viewBox="0 0 ${W} ${H}">
+        ${ringsHTML}
+        ${axesHTML}
+        <path d="${path}" fill="${escapeHTML(m.lab_color)}33" stroke="${escapeHTML(m.lab_color)}" stroke-width="1.5"/>
+        ${pointsHTML}
+      </svg>
+    </div>`;
+  }).join("");
+}
+
+// ── First-to-X waterfall ───────────────────────────────────────────────────
+const FTX_THRESHOLDS = {
+  pct: [50, 70, 80, 90],
+  elo: [1200, 1300, 1400],
+};
+
+function renderFirstToX() {
+  const {benchmarks, models} = STATE;
+  const wrap = $("#ftx");
+  if (!benchmarks?.length) { wrap.innerHTML = ""; return; }
+
+  // Pre-sort models by release date so .find() returns the earliest crosser.
+  const sorted = models.slice().sort((a, b) => (a.released || "").localeCompare(b.released || ""));
+
+  const headerThresholds = (b) => b.scale === "Elo" ? FTX_THRESHOLDS.elo : FTX_THRESHOLDS.pct;
+  // For the table header we'll show the union — separate columns per
+  // threshold-family because Elo thresholds don't apply to % benchmarks.
+  const headers = ['<th class="label">Benchmark</th>'].concat(
+    [...FTX_THRESHOLDS.pct, ...FTX_THRESHOLDS.elo].map(t => `<th>≥${t}</th>`)
+  );
+
+  const rows = benchmarks.map(b => {
+    const cells = [`<td class="label">${escapeHTML(b.name)}<br><span style="color:var(--muted);font-size:11px;font-weight:400">${escapeHTML(b.scale)}</span></td>`];
+    const myThresholds = headerThresholds(b);
+    const allCols = [...FTX_THRESHOLDS.pct, ...FTX_THRESHOLDS.elo];
+    for (const t of allCols) {
+      if (!myThresholds.includes(t)) {
+        cells.push('<td></td>');
+        continue;
+      }
+      const winner = sorted.find(m => {
+        const s = (m.scores || {})[b.key];
+        return s != null && s >= t;
+      });
+      if (winner) {
+        cells.push(`<td><span class="ftx-cell">
+          <span class="who" style="color:${escapeHTML(winner.lab_color)}">${escapeHTML(winner.name)}</span>
+          <span class="when">${escapeHTML(winner.released || '')}</span>
+        </span></td>`);
+      } else {
+        cells.push('<td><span class="ftx-cell unreached"><span class="who">—</span><span class="when">unreached</span></span></td>');
+      }
+    }
+    return `<tr>${cells.join("")}</tr>`;
+  });
+
+  wrap.innerHTML = `<thead><tr>${headers.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
+}
+
+// ── Frontier chart ─────────────────────────────────────────────────────────
+function renderFrontierButtons() {
+  const wrap = $("#bench-buttons");
+  wrap.innerHTML = STATE.benchmarks.map(b => {
+    const active = (b.key === STATE.frontierBench) ? "active" : "";
+    return `<button class="${active}" data-key="${b.key}">${escapeHTML(b.name)}</button>`;
+  }).join("");
+  wrap.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      STATE.frontierBench = btn.dataset.key;
+      renderFrontierButtons();
+      renderFrontierChart();
+    });
+  });
+}
+
+function monthToNum(s) {
+  // "2025-08" or "2025-08-01" → 2025 + 7/12
+  const parts = s.split("-");
+  const y = +parts[0], m = +(parts[1] || "1");
+  return y + (m - 1) / 12;
+}
+
+function renderFrontierChart() {
+  const series = STATE.frontierData[STATE.frontierBench] || [];
+  const bench = STATE.benchmarks.find(b => b.key === STATE.frontierBench);
+  const svg = $("#frontier-chart");
+  const W = 800, H = 320, pad = {l:48, r:16, t:16, b:36};
+
+  if (series.length < 1) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#8b949e">no data</text>`;
+    return;
+  }
+
+  const xs = series.map(p => monthToNum(p.released));
+  const ys = series.map(p => p.score);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs) + 0.05;
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const yPad = (yMax - yMin) * 0.15 || 5;
+  const y0 = yMin - yPad, y1 = yMax + yPad;
+  const xRange = xMax - xMin || 1;
+
+  const sx = v => pad.l + ((v - xMin) / xRange) * (W - pad.l - pad.r);
+  const sy = v => pad.t + (1 - (v - y0) / (y1 - y0)) * (H - pad.t - pad.b);
+
+  // axis ticks
+  const yTicks = 4;
+  let axisHTML = "";
+  for (let i = 0; i <= yTicks; i++) {
+    const v = y0 + ((y1 - y0) * i) / yTicks;
+    const y = sy(v);
+    axisHTML += `<line class="axis" x1="${pad.l}" x2="${W-pad.r}" y1="${y}" y2="${y}" stroke-dasharray="2 4"/>`;
+    axisHTML += `<text x="${pad.l-8}" y="${y+3}" text-anchor="end">${v.toFixed(0)}</text>`;
+  }
+  // x ticks: years
+  const yearStart = Math.floor(xMin), yearEnd = Math.ceil(xMax);
+  for (let y = yearStart; y <= yearEnd; y++) {
+    const x = sx(y);
+    if (x < pad.l - 1 || x > W - pad.r + 1) continue;
+    axisHTML += `<line class="axis" x1="${x}" x2="${x}" y1="${pad.t}" y2="${H-pad.b}" stroke-dasharray="2 4"/>`;
+    axisHTML += `<text x="${x}" y="${H-pad.b+14}" text-anchor="middle">${y}</text>`;
+  }
+
+  // path (step-up)
+  let d = "";
+  let prevY = null;
+  for (let i = 0; i < series.length; i++) {
+    const x = sx(monthToNum(series[i].released));
+    const y = sy(series[i].score);
+    if (i === 0) d += `M${x.toFixed(1)} ${y.toFixed(1)}`;
+    else d += ` L${x.toFixed(1)} ${prevY.toFixed(1)} L${x.toFixed(1)} ${y.toFixed(1)}`;
+    prevY = y;
+  }
+  // extend last segment to right edge
+  if (series.length > 0) {
+    const x = sx(xMax);
+    d += ` L${x.toFixed(1)} ${prevY.toFixed(1)}`;
+  }
+
+  let pointsHTML = "";
+  for (const p of series) {
+    const x = sx(monthToNum(p.released));
+    const y = sy(p.score);
+    pointsHTML += `<g class="point">
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#58a6ff"/>
+      <title>${escapeHTML(p.model)} (${escapeHTML(p.released)}) — ${p.score}</title>
+    </g>`;
+  }
+
+  const ylabel = bench ? `${bench.name} (${bench.scale})` : "";
+  svg.innerHTML = `
+    ${axisHTML}
+    <path d="${d}" stroke="#58a6ff" stroke-width="2" fill="none"/>
+    ${pointsHTML}
+    <text x="${pad.l}" y="${pad.t-2}" fill="#e6edf3" font-size="11">${escapeHTML(ylabel)}</text>
+  `;
+
+  // legend = each step-up
+  $("#frontier-legend").innerHTML = series.map(p =>
+    `<span class="item"><b>${escapeHTML(p.released)}</b> · ${escapeHTML(p.model)} <span style="color:var(--muted)">→ ${p.score}</span></span>`
+  ).join("");
+}
+
+async function loadFrontier() {
+  const data = await fetchJSON("/api/frontier");
+  STATE.frontierData = data.series || {};
+  renderFrontierButtons();
+  renderFrontierChart();
+}
+
+// ── Timeline ───────────────────────────────────────────────────────────────
+async function loadTimeline() {
+  const data = await fetchJSON("/api/timeline");
+  const events = (data.events || []).slice().reverse();  // newest first
+  $("#timeline").innerHTML = events.map(ev => `
+    <div class="ev">
+      <div class="when">${escapeHTML(ev.date)}</div>
+      <div>
+        <div class="title">
+          <span class="lab-chip">
+            <span class="lab-dot" style="background:${escapeHTML(ev.lab_color)}"></span>
+            ${escapeHTML(ev.lab_name)}
+          </span>
+          ${escapeHTML(ev.title)}
+        </div>
+        <div class="blurb">${escapeHTML(ev.blurb)}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+// ── Labs ───────────────────────────────────────────────────────────────────
+async function loadLabs() {
+  const data = await fetchJSON("/api/labs");
+  $("#labs").innerHTML = (data.labs || []).map(lab => `
+    <div class="lab-card">
+      <div class="head">
+        <span class="lab-dot" style="background:${escapeHTML(lab.color)};width:12px;height:12px"></span>
+        <div>
+          <div class="name">${escapeHTML(lab.name)}</div>
+          <div class="country">${escapeHTML(lab.country)} · founded ${lab.founded}</div>
+        </div>
+      </div>
+      <dl>
+        <dt>Lead</dt><dd>${escapeHTML(lab.lead)}</dd>
+        <dt>Headline</dt><dd>${escapeHTML(lab.headline_model)}${lab.open_weights?'<span class="open-badge">open</span>':''}</dd>
+        <dt>Valuation</dt><dd>${fmt.usd(lab.valuation_usd_b)} <span style="color:var(--muted)">(${escapeHTML(lab.valuation_as_of)})</span></dd>
+        <dt>Compute</dt><dd>${escapeHTML(lab.compute_note)}</dd>
+        <dt>Site</dt><dd><a href="${escapeHTML(lab.homepage)}" target="_blank" rel="noopener">${escapeHTML(lab.homepage.replace(/^https?:\/\//,''))}</a></dd>
+      </dl>
+    </div>
+  `).join("");
+}
+
+// ── Talent flow ────────────────────────────────────────────────────────────
+async function loadTalent() {
+  const data = await fetchJSON("/api/talent");
+  const moves = (data.moves || []).slice().reverse();  // newest first
+  $("#talent").innerHTML = moves.map(m => {
+    const fromChip = `<span class="move-org"><span class="lab-dot" style="background:${escapeHTML(m.from_color)}"></span>${escapeHTML(m.from_name)}</span>`;
+    const toChip   = `<span class="move-org"><span class="lab-dot" style="background:${escapeHTML(m.to_color)}"></span>${escapeHTML(m.to_name)}</span>`;
+    return `<div class="move-row">
+      <div class="move-date">${escapeHTML(m.date)}</div>
+      <div>
+        <div class="move-name">${escapeHTML(m.name)}<span class="kind-badge ${escapeHTML(m.kind)}">${escapeHTML(m.kind)}</span></div>
+        <div class="move-role">${escapeHTML(m.role || "")}</div>
+        <div class="move-flow">${fromChip}<span class="move-arrow">→</span>${toChip}</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const heads = data.headcount || [];
+  $("#headcount").innerHTML = heads.map(h => `
+    <div class="head-card" title="${escapeHTML(h.source || '')}">
+      <div class="lbl"><span class="lab-dot" style="background:${escapeHTML(h.lab_color)}"></span>${escapeHTML(h.lab_name)}</div>
+      <div class="val">${h.people.toLocaleString()}</div>
+      <div class="asof">as of ${escapeHTML(h.as_of)}</div>
+    </div>`).join("");
+}
+
+// ── News feed ──────────────────────────────────────────────────────────────
+let NEWS_FILTER = "all";
+
+function relTime(ts) {
+  if (!ts) return "";
+  const now = Date.now() / 1000;
+  const age = now - ts;
+  if (age < 0) return "future";
+  if (age < 3600) return Math.floor(age/60) + "m ago";
+  if (age < 86400) return Math.floor(age/3600) + "h ago";
+  if (age < 86400 * 30) return Math.floor(age/86400) + "d ago";
+  return new Date(ts*1000).toISOString().slice(0,10);
+}
+
+async function loadNews() {
+  const wrap = $("#news");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/news");
+    const items = data.items || [];
+
+    // Build kind filter toolbar from the items we got
+    const kinds = ["all", ...Array.from(new Set(items.map(i => i.kind))).sort()];
+    $("#news-toolbar").innerHTML = kinds.map(k =>
+      `<button data-k="${escapeHTML(k)}" class="${k === NEWS_FILTER ? 'active' : ''}">${escapeHTML(k)}</button>`
+    ).join("");
+    $("#news-toolbar").querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        NEWS_FILTER = btn.dataset.k;
+        loadNews();
+      });
+    });
+
+    const filtered = NEWS_FILTER === "all" ? items : items.filter(i => i.kind === NEWS_FILTER);
+    if (filtered.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No headlines (sandboxed environments without egress will show this).</div>';
+      return;
+    }
+    wrap.innerHTML = filtered.slice(0, 60).map(i => {
+      const titleEl = i.link
+        ? `<a href="${escapeHTML(i.link)}" target="_blank" rel="noopener">${escapeHTML(i.title)}</a>`
+        : escapeHTML(i.title);
+      return `<div class="news-row">
+        <div class="news-src">
+          <span class="name">${escapeHTML(i.source)}</span>
+          <span class="news-kind">${escapeHTML(i.kind || 'other')}</span>
+        </div>
+        <div>
+          <div class="news-title">${titleEl}</div>
+          ${i.description ? `<div class="news-desc">${escapeHTML(i.description)}</div>` : ''}
+        </div>
+        <div class="news-when">${escapeHTML(relTime(i.ts))}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load news: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+// ── Funding ────────────────────────────────────────────────────────────────
+async function loadFunding() {
+  const data = await fetchJSON("/api/funding");
+  const totals = data.totals || [];
+  const maxRaised = Math.max(1, ...totals.map(t => t.raised_usd_b));
+  $("#funding-totals").innerHTML = totals.map(t => {
+    const pct = (t.raised_usd_b / maxRaised) * 100;
+    const post = t.latest_post_usd_b != null
+      ? `<span class="post">post-money $${t.latest_post_usd_b}B (${escapeHTML((t.latest_round_date || '').slice(0,7))})</span>`
+      : `<span class="post">no post-money disclosed</span>`;
+    return `<div class="fund-totals">
+      <div class="cmp-lab">
+        <span class="lab-dot" style="background:${escapeHTML(t.lab_color)}"></span>
+        ${escapeHTML(t.lab_name)} <span style="color:var(--muted);font-size:11px;font-weight:400">· ${t.rounds} round${t.rounds===1?'':'s'}</span>
+      </div>
+      <div class="fund-bar"><div class="fill" style="width:${pct.toFixed(1)}%;background:${escapeHTML(t.lab_color)}99"></div></div>
+      <div class="fund-amt">$${t.raised_usd_b.toFixed(1)}B${post}</div>
+    </div>`;
+  }).join("");
+
+  const rounds = (data.rounds || []).slice().reverse();
+  $("#funding-rounds").innerHTML = rounds.map(r => {
+    const post = r.post_usd_b != null ? `$${r.post_usd_b}B` : "—";
+    return `<div class="fund-round-row">
+      <div class="when">${escapeHTML(r.date)}</div>
+      <div class="cmp-lab"><span class="lab-dot" style="background:${escapeHTML(r.lab_color)}"></span>${escapeHTML(r.lab_name)}</div>
+      <div>${escapeHTML(r.round)} <span style="color:var(--muted)">· lead: ${escapeHTML(r.lead || '—')}</span></div>
+      <div class="amt">$${(r.amount_usd_b || 0).toFixed(2)}B</div>
+      <div class="post"><b>${post}</b><br><span style="font-size:10px">post-money</span></div>
+    </div>`;
+  }).join("");
+}
+
+// ── Stocks ────────────────────────────────────────────────────────────────
+async function loadStocks() {
+  const data = await fetchJSON("/api/stocks");
+  const rows = data.stocks || [];
+  $("#stocks-asof").textContent = data.as_of ? `· as of ${data.as_of}` : "";
+  $("#stocks").innerHTML = rows.map(s => {
+    const [lo, hi] = s.range_52w || [0, 0];
+    const pos = hi > lo ? ((s.price - lo) / (hi - lo)) * 100 : 50;
+    const dailyClass = s.daily_pct >= 0 ? "up" : "down";
+    const dailyLabel = (s.daily_pct >= 0 ? "+" : "") + s.daily_pct.toFixed(1) + "%";
+    return `<div class="stock-card">
+      <div class="head">
+        <span class="ticker">${escapeHTML(s.ticker)}</span>
+        <span class="theme">${escapeHTML(s.theme)}</span>
+      </div>
+      <div class="name">${escapeHTML(s.name)}</div>
+      <div class="price">$${s.price.toFixed(2)}<span class="daily ${dailyClass}">${dailyLabel}</span></div>
+      <div class="range">
+        <div class="range-bar"><div class="marker" style="left:${pos.toFixed(1)}%"></div></div>
+        <div class="range-lbl"><span>$${lo}</span><span>$${hi}</span></div>
+      </div>
+      <div class="meta">
+        <span class="lbl">YTD</span><span class="val ${s.ytd_pct>=0?'':''}" style="color:${s.ytd_pct>=0?'var(--green)':'var(--red)'}">${s.ytd_pct>=0?'+':''}${s.ytd_pct.toFixed(1)}%</span>
+        <span class="lbl">P/E</span><span class="val">${s.pe != null ? s.pe.toFixed(0) : '—'}</span>
+        <span class="lbl">Mkt cap</span><span class="val">$${s.mkt_cap_t.toFixed(2)}T</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ── Recent changes ────────────────────────────────────────────────────────
+async function loadRecentChanges() {
+  const wrap = $("#changes");
+  try {
+    const data = await fetchJSON("/api/recent-changes?days=7&top=25");
+    const changes = data.changes || [];
+    if (data.since && data.until) {
+      $("#changes-window").textContent = `· ${data.since} → ${data.until}`;
+    }
+    if (changes.length === 0) {
+      wrap.innerHTML = `<div class="empty-state">${data.note || 'No score changes yet — server takes daily snapshots; this populates once two are recorded.'}</div>`;
+      return;
+    }
+    wrap.innerHTML = changes.map(c => {
+      const isElo = c.benchmark === "lmarena_elo";
+      const deltaLabel = (c.delta >= 0 ? "+" : "") + (isElo ? c.delta.toFixed(0) : c.delta.toFixed(1)) + (isElo ? " Elo" : "pp");
+      const cls = c.delta >= 0 ? "up" : "down";
+      const fmt = (v) => isElo ? Math.round(v) : v.toFixed(1);
+      return `<div class="chg-row">
+        <div>
+          <div class="chg-model" style="color:${escapeHTML(c.lab_color)}">${escapeHTML(c.model)}</div>
+          <div class="chg-bench">${escapeHTML(c.lab_name)}</div>
+        </div>
+        <div class="chg-prev-curr"><b>${escapeHTML(c.benchmark)}</b><br>${fmt(c.prev)} → ${fmt(c.curr)}</div>
+        <div class="chg-delta ${cls}">${deltaLabel}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load changes: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+// ── Compute / Export controls / Capex ─────────────────────────────────────
+async function loadCompute() {
+  const data = await fetchJSON("/api/compute");
+  const rows = data.compute || [];
+  if (rows.length === 0) { $("#compute").innerHTML = ""; return; }
+  const maxH = Math.max(...rows.map(r => r.h100_equivalents_k || 0));
+  $("#compute").innerHTML = rows.map(r => {
+    const h100 = r.h100_equivalents_k;
+    const bar = (h100 != null && maxH > 0)
+      ? `<div class="h100-bar"><div class="fill" style="width:${(h100/maxH*100).toFixed(1)}%"></div></div>`
+      : "";
+    const h100Cell = h100 != null
+      ? `<div><span class="num">${h100}</span><span class="unit">K H100-eq</span>${bar}</div>`
+      : `<div style="color:var(--muted);font-size:11px">${escapeHTML(r.compute_class || "—")}</div>`;
+    const capexCell = r.capex_2025_usd_b != null
+      ? `<div>$${r.capex_2025_usd_b}B<span class="asof">${escapeHTML(r.as_of || '')}</span></div>`
+      : `<div style="color:var(--muted)">—<span class="asof">${escapeHTML(r.as_of || '')}</span></div>`;
+    return `<div class="cmp-row">
+      <div class="cmp-lab">
+        <span class="lab-dot" style="background:${escapeHTML(r.lab_color)}"></span>
+        <span>${escapeHTML(r.lab_name)}<br><span style="color:var(--muted);font-size:11px;font-weight:400">${escapeHTML(r.country)}</span></span>
+      </div>
+      <div class="cmp-h100">${h100Cell}</div>
+      <div class="cmp-cluster">${escapeHTML(r.flagship_cluster || "")}<span class="cls">${escapeHTML(r.compute_class || "")}</span></div>
+      <div class="cmp-capex">${capexCell}</div>
+    </div>`;
+  }).join("");
+}
+
+async function loadExportControls() {
+  const data = await fetchJSON("/api/export-controls");
+  const events = (data.events || []).slice().reverse();  // newest first
+  $("#xc").innerHTML = events.map(ev => {
+    const scope = (ev.scope || "").toLowerCase();
+    const scopeClass = scope.includes("china") ? "china" : "";
+    return `<div class="xc-row">
+      <div class="xc-date">${escapeHTML(ev.date)}</div>
+      <div class="xc-scope ${scopeClass}">${escapeHTML(ev.scope || "")}</div>
+      <div>
+        <div class="xc-title">${escapeHTML(ev.title)}</div>
+        <div class="xc-blurb">${escapeHTML(ev.blurb)}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderCapexSpark(values, color) {
+  const W = 200, H = 60, pad = 4;
+  if (!values.length) return "";
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => pad + (i * (W - 2*pad)) / Math.max(1, values.length - 1));
+  const ys = values.map(v => pad + (H - 2*pad) * (1 - (v - min) / range));
+  const path = xs.map((x, i) => `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(" ");
+  const area = path + ` L ${xs[xs.length-1].toFixed(1)} ${H-pad} L ${pad} ${H-pad} Z`;
+  const lastX = xs[xs.length-1], lastY = ys[ys.length-1];
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <path d="${area}" fill="${color}22" stroke="none"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="1.5"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="${color}"/>
+  </svg>`;
+}
+
+async function loadCapex() {
+  const data = await fetchJSON("/api/capex");
+  const quarters = data.quarterly || [];
+  const tickers = data.tickers || [];
+  if (!quarters.length) { $("#capex").innerHTML = '<div class="empty-state">No capex data.</div>'; return; }
+  const lastQ = quarters[quarters.length - 1];
+  const prevQ = quarters[quarters.length - 2];
+  $("#capex").innerHTML = tickers.map(t => {
+    const series = quarters.map(q => q[t.ticker]).filter(v => v != null);
+    const latest = lastQ[t.ticker];
+    const prev = prevQ ? prevQ[t.ticker] : null;
+    const delta = (prev != null && latest != null) ? (latest - prev) : null;
+    const deltaPct = (delta != null && prev) ? (delta / prev) * 100 : null;
+    const deltaClass = delta == null ? "" : (delta >= 0 ? "up" : "down");
+    const deltaLabel = delta == null ? ""
+      : `<span class="delta ${deltaClass}">${delta >= 0 ? "+" : ""}${deltaPct.toFixed(0)}%</span>`;
+    return `<div class="capex-card">
+      <div class="head">
+        <span class="name"><span class="lab-dot" style="background:${escapeHTML(t.color)}"></span>${escapeHTML(t.name)}</span>
+        <span class="latest">$${latest}B${deltaLabel}</span>
+      </div>
+      <div class="sub">${escapeHTML(lastQ.q)} · ${quarters.length} quarters shown</div>
+      ${renderCapexSpark(series, t.color)}
+    </div>`;
+  }).join("");
+
+  const total = tickers.reduce((acc, t) => acc + (lastQ[t.ticker] || 0), 0);
+  $("#capex-total").textContent = `$${total.toFixed(0)}B · ${lastQ.q}`;
+}
+
+// ── Featured / Movers / Spreads ───────────────────────────────────────────
+function renderEvent(ev) {
+  const venueClass = ev.venue === "kalshi" ? "kalshi" : "polymarket";
+  const venueLabel = ev.venue === "kalshi" ? "Kalshi" : "Polymarket";
+  // Limit visible outcomes to top 8 by price; collapse the rest.
+  const sorted = (ev.markets || []).slice().sort((a,b) => b.yes_price - a.yes_price);
+  const shown = sorted.slice(0, 8);
+  const hidden = sorted.length - shown.length;
+  const outcomesHTML = shown.map(m => {
+    const pct = Math.max(0, Math.min(1, m.yes_price));
+    const pctLabel = (pct * 100).toFixed(pct < 0.1 ? 1 : 0) + "%";
+    const label = m.yes_outcome || m.question || "Yes";
+    return `<div class="outcome-row">
+      <div class="outcome-label" title="${escapeHTML(m.question)}">${escapeHTML(label)}</div>
+      <div class="outcome-bar"><div class="fill" style="width:${(pct*100).toFixed(1)}%"></div><div class="lbl">${pctLabel}</div></div>
+    </div>`;
+  }).join("");
+  const overflow = hidden > 0 ? `<div style="color:var(--muted);font-size:11px;margin-top:6px">+ ${hidden} more outcome${hidden===1?'':'s'}</div>` : "";
+  const end = ev.end_date ? `<span style="color:var(--muted);font-size:11px">ends ${escapeHTML(ev.end_date.slice(0,10))}</span>` : "";
+  const vol = ev.volume_24h_total ? `<span class="evol">${fmt.vol(ev.volume_24h_total)}/24h</span>` : "";
+  return `<div class="event">
+    <div class="ehead">
+      <span class="venue-tag ${venueClass}">${venueLabel}</span>
+      <span class="etitle"><a href="${escapeHTML(ev.url)}" target="_blank" rel="noopener">${escapeHTML(ev.title)}</a></span>
+      ${end}
+      ${vol}
+    </div>
+    ${ev.description ? `<div class="edesc">${escapeHTML(ev.description)}</div>` : ""}
+    ${outcomesHTML}
+    ${overflow}
+  </div>`;
+}
+
+async function loadFeatured() {
+  const wrap = $("#featured-events");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets/featured");
+    const events = data.events || [];
+    const c = data.counts || {};
+    $("#featured-counts").textContent =
+      `· ${c.polymarket || 0} Polymarket · ${c.kalshi || 0} Kalshi · ${c.cross_venue_pairs || 0} paired`;
+    if (events.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No curated events resolved. Check <code>AI_POLY_EVENT_SLUGS</code> / <code>AI_KALSHI_SERIES</code> in <code>data.py</code> — slugs that don\'t exist are silently dropped.</div>';
+    } else {
+      wrap.innerHTML = events.map(renderEvent).join("");
+    }
+    renderSpreads(data.pairs || []);
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load featured markets: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+function renderSpreads(pairs) {
+  const wrap = $("#spreads");
+  if (!pairs || pairs.length === 0) {
+    wrap.innerHTML = '<div class="empty-state">No same-topic events on both venues right now.</div>';
+    return;
+  }
+  wrap.innerHTML = pairs.map(p => {
+    const sp = p.spread;
+    const spClass = sp >= 0 ? "pos" : "neg";
+    const spLabel = (sp >= 0 ? "+" : "") + (sp * 100).toFixed(1) + "pp";
+    return `<div class="pair-row">
+      <div class="pair-side">
+        <span class="lbl"><span class="venue-tag polymarket">Poly</span> ${(p.polymarket.yes_price*100).toFixed(0)}%</span>
+        <a href="${escapeHTML(p.polymarket.url)}" target="_blank" rel="noopener">${escapeHTML(p.polymarket.title)}</a>
+      </div>
+      <div class="pair-side">
+        <span class="lbl"><span class="venue-tag kalshi">Kalshi</span> ${(p.kalshi.yes_price*100).toFixed(0)}%</span>
+        <a href="${escapeHTML(p.kalshi.url)}" target="_blank" rel="noopener">${escapeHTML(p.kalshi.title)}</a>
+      </div>
+      <div class="pair-spread ${spClass}">${spLabel}</div>
+    </div>`;
+  }).join("");
+}
+
+async function loadMovers() {
+  const wrap = $("#movers");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets/moves");
+    const m = data.movers || [];
+    if (m.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No AI markets moved ≥5pp in the last 24h.</div>';
+      return;
+    }
+    wrap.innerHTML = m.map(row => {
+      const pct = (row.yes_price * 100).toFixed(0) + "%";
+      const delta = row.one_day_change;
+      const deltaClass = delta >= 0 ? "up" : "down";
+      const deltaLabel = (delta >= 0 ? "▲" : "▼") + " " + Math.abs(delta * 100).toFixed(1) + "pp";
+      return `<div class="mover">
+        <div class="mover-q"><a href="${escapeHTML(row.url)}" target="_blank" rel="noopener">${escapeHTML(row.question)}</a></div>
+        <div class="mover-foot">
+          <span class="mover-prob">${pct} → ${escapeHTML(row.yes_outcome)}</span>
+          <span class="mover-delta ${deltaClass}">${deltaLabel}</span>
+        </div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load movers: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+// ── Markets ───────────────────────────────────────────────────────────────
+async function loadMarkets() {
+  const wrap = $("#markets");
+  wrap.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetchJSON("/api/markets");
+    const m = data.markets || [];
+    if (m.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No matching AI markets right now.</div>';
+      return;
+    }
+    wrap.innerHTML = m.map(row => {
+      const pct = (row.top_price * 100).toFixed(0) + "%";
+      const link = row.url ? `<a href="${escapeHTML(row.url)}" target="_blank" rel="noopener">${escapeHTML(row.question)}</a>` : escapeHTML(row.question);
+      const end = row.end_date ? '<span class="end">ends ' + escapeHTML(row.end_date.slice(0,10)) + '</span>' : '';
+      return `<div class="market-row">
+        <div class="market-q">${link}<br>${end}<span class="end">→ ${escapeHTML(row.top_outcome)}</span></div>
+        <div class="market-prob">${pct}</div>
+        <div class="market-vol">${fmt.vol(row.volume_24h)}/24h</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load markets: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+// ── Sources panel ──────────────────────────────────────────────────────────
+async function loadSources() {
+  const wrap = $("#sources");
+  try {
+    const data = await fetchJSON("/api/sources");
+    const rows = data.sources || [];
+    if (rows.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No ingestion sources configured.</div>';
+      return;
+    }
+    const now = Date.now() / 1000;
+    wrap.innerHTML = rows.map(s => {
+      let state = "never", stateLabel = "never run";
+      if (s.fetched_at) {
+        if (s.ok) { state = "ok"; stateLabel = "ok"; }
+        else { state = "fail"; stateLabel = "failed"; }
+      }
+      const age = s.last_ok_at
+        ? Math.max(0, Math.floor((now - s.last_ok_at) / 60))
+        : null;
+      const ageLabel = age == null ? "—"
+                       : age < 60 ? `${age}m ago`
+                       : age < 60*24 ? `${Math.floor(age/60)}h ago`
+                       : `${Math.floor(age/(60*24))}d ago`;
+      const link = s.url ? `<a href="${escapeHTML(s.url)}" target="_blank" rel="noopener">${escapeHTML(s.name)}</a>` : escapeHTML(s.name);
+      return `<div class="src-row">
+        <div class="src-name">${link}<br><span style="color:var(--muted);font-size:11px">→ ${escapeHTML(s.benchmark)} · ${s.entries} entries</span></div>
+        <div class="src-state ${state}">${stateLabel}</div>
+        <div class="src-meta">last ok: ${ageLabel}</div>
+        <div class="src-error" title="${escapeHTML(s.error || '')}">${s.error ? escapeHTML(s.error) : ''}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Failed to load sources: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+async function triggerRefresh() {
+  const btn = $("#refresh-btn");
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  try {
+    const r = await fetch("/api/refresh", {method: "POST"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    await r.json();
+    await loadSources();
+    await loadModels();
+    await loadFrontier();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh now";
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    await loadModels();
+    await loadFrontier();
+    await loadTimeline();
+    await loadLabs();
+    loadCompute();
+    loadTalent();
+    loadExportControls();
+    loadCapex();
+    loadFunding();
+    loadStocks();
+    loadRecentChanges();
+    loadSources();
+    loadFeatured();
+    loadMovers();
+    loadMarkets();
+    loadNews();
+    $("#refresh-btn").addEventListener("click", triggerRefresh);
+    setInterval(loadFeatured, 90_000);
+    setInterval(loadMovers, 90_000);
+    setInterval(loadMarkets, 60_000);
+    setInterval(loadNews, 120_000);
+    setInterval(loadSources, 5 * 60_000);
+  } catch (e) {
+    console.error(e);
+    $("#header-as-of").textContent = "load error: " + e.message;
+  }
+}
+boot();
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Climate Change — narve.ai</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
 <style>
   :root {
     --bg-0: #0b1220;
@@ -184,6 +185,117 @@
     border-radius: 8px;
     font-size: 13px;
   }
+  .toolbar input[type="number"] {
+    flex: 0 0 auto;
+    width: 140px;
+    min-width: 0;
+  }
+  .toolbar label.check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toolbar label.check input { margin: 0; accent-color: var(--accent); }
+  .market-count {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .market-count b { color: var(--text-1); font-weight: 600; }
+
+  .kelly-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .kelly-row .label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .kelly-row input, .kelly-row select {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 6px 9px;
+    border-radius: 6px;
+    font-size: 13px;
+    width: 130px;
+  }
+  .kelly-row .help {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .kelly-row .help a { color: var(--text-3); }
+  .kelly-row .help a:hover { color: var(--accent); }
+  .kelly-yes { color: var(--good); font-weight: 600; }
+  .kelly-no { color: var(--accent-2); font-weight: 600; }
+  .kelly-side {
+    font-size: 10px;
+    color: var(--text-3);
+    margin-left: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .opps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .opp {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .opp:hover { background: var(--bg-2); border-left-color: var(--good); }
+  .opp.neg { border-left-color: var(--accent-2); }
+  .opp.neg:hover { border-left-color: var(--accent-2); }
+  .opp .q {
+    font-size: 13px;
+    color: var(--text-1);
+    font-weight: 500;
+    line-height: 1.35;
+    margin-bottom: 6px;
+    /* Clamp to 2 lines */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .opp .meta {
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .opp .edge { font-weight: 700; font-size: 14px; }
+  .opp .edge.pos { color: var(--good); }
+  .opp .edge.neg { color: var(--accent-2); }
   .thresholds {
     display: flex;
     flex-wrap: wrap;
@@ -205,6 +317,90 @@
   .err-zero { color: var(--good); }
   .err-pos { color: var(--accent-2); }
   .err-neg { color: var(--warn); }
+
+  .calib-badge {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+  }
+  .calib-badge b { color: var(--text-2); font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .calib-badge a { color: var(--text-3); }
+  .calib-badge a:hover { color: var(--accent); }
+
+  .fanchart {
+    width: 100%;
+    height: 90px;
+    margin-top: 10px;
+  }
+
+  .overlay-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 22px;
+  }
+  .overlay-card h3 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .overlay-card .sub {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+  .overlay-chart { width: 100%; height: 360px; }
+  .overlay-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .toggle-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+  }
+  .toggle-pill .swatch {
+    width: 9px; height: 9px; border-radius: 50%;
+    display: inline-block;
+    background: currentColor;
+    opacity: 0.35;
+  }
+  .toggle-pill.on { color: var(--text-1); background: var(--bg-1); }
+  .toggle-pill.on .swatch { opacity: 1; }
+  .toggle-pill:hover { background: var(--bg-1); }
+  .overlay-hover {
+    color: var(--text-3);
+    font-size: 11px;
+    margin-top: 6px;
+    min-height: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .overlay-hover .yr { color: var(--text-1); font-weight: 600; margin-right: 8px; }
+  .overlay-hover .val { margin-right: 12px; }
+  .overlay-hover .val b { color: var(--text-1); font-weight: 600; }
+  /* uPlot dark theme tweaks */
+  .u-legend { display: none; }
+  .u-axis { color: var(--text-3); }
+  .uplot { font-family: inherit; color: var(--text-2); }
 </style>
 </head>
 <body>
@@ -220,14 +416,51 @@
 
 <div class="grid" id="cards"></div>
 
+<div class="section-title">Indicator overlay</div>
+<div class="overlay-card">
+  <h3>Standardized anomalies, annual</h3>
+  <div class="sub">All series shown as σ from each one's own mean over the displayed window. Lets you compare indicators with very different units on a single axis.</div>
+  <div class="overlay-chart" id="overlay"></div>
+  <div class="overlay-hover" id="overlay-hover">Hover the chart for values.</div>
+  <div class="overlay-toggles" id="overlay-toggles"></div>
+</div>
+
+<div class="section-title">Top opportunities</div>
+<div id="opps" class="opps"></div>
+
 <div class="section-title">Climate markets</div>
 <div class="toolbar">
   <input id="search" placeholder="Search markets…" />
+  <select id="topic">
+    <option value="all">Topic: all</option>
+    <option value="temperature">Temperature</option>
+    <option value="co2">CO₂</option>
+    <option value="methane">Methane</option>
+    <option value="sea-ice">Sea ice</option>
+    <option value="other">Other</option>
+  </select>
+  <input id="min-edge" type="number" placeholder="Min |edge| pp" min="0" step="0.5" />
+  <input id="min-liq" type="number" placeholder="Min liquidity $" min="0" step="100" />
+  <label class="check" title="Hide markets we can't score with a model"><input id="scored-only" type="checkbox" /> Scored only</label>
   <select id="sort">
-    <option value="edge">Sort: largest edge</option>
+    <option value="edge">Sort: largest |edge|</option>
+    <option value="edge-signed">Sort: best long edge</option>
     <option value="liquidity">Sort: most liquidity</option>
     <option value="end">Sort: ends soonest</option>
   </select>
+</div>
+<div id="market-count" class="market-count"></div>
+<div class="kelly-row">
+  <span class="label">Position sizing</span>
+  <span class="label">Bankroll $</span>
+  <input id="bankroll" type="number" placeholder="Optional" min="0" step="100" />
+  <span class="label">Fraction</span>
+  <select id="kelly-fraction">
+    <option value="0.25">Quarter-Kelly</option>
+    <option value="0.5" selected>Half-Kelly</option>
+    <option value="1">Full-Kelly</option>
+  </select>
+  <span class="help">Kelly suggests fraction of bankroll for an edge bet at the implied price. Half-Kelly is the standard real-world default — full Kelly's drawdowns are brutal. <a href="/methodology">More</a></span>
 </div>
 <div id="markets"></div>
 
@@ -250,8 +483,10 @@
 
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
 const MONTH = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const Z90 = 1.2815515655;  // z-score for the 10/90 fan edges (90% central band)
 
 function fmt(x, dp = 2) {
   if (x === null || x === undefined || Number.isNaN(x)) return "—";
@@ -276,6 +511,350 @@ function sparkline(values, w = 260, h = 56, color = "#34d399") {
     <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}" />
   </svg>`;
 }
+
+// Calibration badge HTML — sourced from /api/backtest's calibration block.
+// Shows mean abs error so users can weight the projection appropriately.
+function calibBadge(c) {
+  if (!c || !c.unit) return "";
+  return `<div class="calib-badge">
+    <a href="/methodology" title="See /methodology for backtest details">Model error</a>
+    <b>±${Number(c.mae).toFixed(c.unit === "ppb" ? 1 : 2)} ${c.unit}</b>
+    avg over last ${c.n} yrs
+  </div>`;
+}
+
+// Fan chart: historical line + forecast cone widening linearly to year-end.
+// mu/sigma are the projection's mean and residual std. The cone fans from the
+// last observed point to (mu ± Z90·sigma) at horizonX.
+function fanChart(containerSelector, history, forecast, color) {
+  // history: [{x: unixSec, y: value}, …] historical observations
+  // forecast: {x: unixSec, mu: number, sigma: number}
+  // Returns the uPlot instance (or null if uPlot missing / no data).
+  if (typeof uPlot === "undefined" || !history.length || !forecast) return null;
+  const el = document.querySelector(containerSelector);
+  if (!el) return null;
+
+  const lastX = history[history.length - 1].x;
+  const lastY = history[history.length - 1].y;
+  const horizonX = forecast.x;
+  // Build forecast cone in 8 steps so uncertainty grows visibly with horizon.
+  const STEPS = 8;
+  const forecastPts = [];
+  for (let i = 1; i <= STEPS; i++) {
+    const t = i / STEPS;
+    forecastPts.push({
+      x: lastX + (horizonX - lastX) * t,
+      mu: lastY + (forecast.mu - lastY) * t,
+      sig: forecast.sigma * t,  // linearly widening
+    });
+  }
+  const allX = history.map(p => p.x).concat([lastX]).concat(forecastPts.map(p => p.x));
+  // Observed series — historical values, then nulls so the line stops at "now"
+  const observed = history.map(p => p.y).concat([lastY]).concat(forecastPts.map(() => null));
+  const median = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu));
+  const lower = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu - Z90 * p.sig));
+  const upper = history.map(() => null).concat([lastY]).concat(forecastPts.map(p => p.mu + Z90 * p.sig));
+
+  // uPlot wants column-oriented data: [xs, series1, series2, …]
+  const data = [allX, observed, median, lower, upper];
+
+  // Wipe and (re)render
+  el.innerHTML = "";
+
+  const opts = {
+    width: el.clientWidth || 260,
+    height: 90,
+    cursor: { show: false },
+    legend: { show: false },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" } },
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" },
+        size: 36, gap: 4 },
+    ],
+    series: [
+      {},
+      { stroke: color, width: 1.75, points: { show: false } },
+      { stroke: color, width: 1.5, dash: [4, 3], points: { show: false } },
+      { stroke: "transparent", points: { show: false }, paths: () => null },
+      { stroke: "transparent", points: { show: false }, paths: () => null,
+        fill: hexAlpha(color, 0.18),
+        band: true,
+      },
+    ],
+    bands: [{ series: [4, 3], fill: hexAlpha(color, 0.18) }],
+  };
+  return new uPlot(opts, data, el);
+}
+
+function hexAlpha(hex, a) {
+  // Accept #rgb or #rrggbb; return rgba()
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map(c => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16),
+        g = parseInt(h.slice(2, 4), 16),
+        b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// Convert (year, month, day?) → seconds since epoch (UTC).
+function ymdToUnix(y, m, d = 15) {
+  return Math.floor(Date.UTC(y, m - 1, d) / 1000);
+}
+
+// ─── Indicator overlay ────────────────────────────────────────────────────────
+//
+// All long-horizon climate indicators on one z-score-normalized axis.
+// Each series is collapsed to an annual aggregate (mean, except sea-ice min)
+// then standardised against its own mean and std over the displayed window.
+//
+// Default visible set picks the three most-iconic indicators; the user can
+// toggle others on via the pills below the chart.
+
+const OVERLAY_SERIES = [
+  { id: "temp",     label: "Temperature anomaly", unit: "°C",  color: "#f87171",
+    fmt: v => `+${v.toFixed(2)}°C`, defaultOn: true },
+  { id: "co2",      label: "CO₂",                 unit: "ppm", color: "#fbbf24",
+    fmt: v => `${v.toFixed(1)} ppm`, defaultOn: true },
+  { id: "ch4",      label: "CH₄",                 unit: "ppb", color: "#a78bfa",
+    fmt: v => `${v.toFixed(0)} ppb`, defaultOn: false },
+  { id: "n2o",      label: "N₂O",                 unit: "ppb", color: "#fb923c",
+    fmt: v => `${v.toFixed(1)} ppb`, defaultOn: false },
+  { id: "arctic",   label: "Arctic sea ice min",  unit: "Mkm²", color: "#60a5fa",
+    fmt: v => `${v.toFixed(2)} Mkm²`, defaultOn: true },
+  { id: "oni",      label: "ONI (annual mean)",   unit: "",    color: "#34d399",
+    fmt: v => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`, defaultOn: false },
+];
+
+function annualMean(rows, key) {
+  if (!rows || !rows.length) return {};
+  const by = {};
+  for (const r of rows) {
+    if (r[key] == null) continue;
+    (by[r.year] = by[r.year] || []).push(r[key]);
+  }
+  const out = {};
+  for (const y of Object.keys(by)) {
+    out[+y] = by[y].reduce((a, b) => a + b, 0) / by[y].length;
+  }
+  return out;
+}
+
+function stdev(values) {
+  const n = values.length;
+  if (n < 2) return 0;
+  const m = values.reduce((a, b) => a + b, 0) / n;
+  return Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+}
+
+// Annual-mean ONI → list of consecutive ENSO segments. We treat ≥0.5 as El
+// Niño and ≤-0.5 as La Niña (the standard CPC thresholds applied to annual
+// means rather than 3-month runs, which is fine for a background overlay).
+function ensoSegments(oniByYear) {
+  const years = Object.keys(oniByYear).map(Number).sort((a, b) => a - b);
+  const segs = [];
+  let cur = null;
+  for (const y of years) {
+    const v = oniByYear[y];
+    let state = "neutral";
+    if (v >= 0.5) state = "el";
+    else if (v <= -0.5) state = "la";
+    if (state === "neutral") {
+      if (cur) { segs.push(cur); cur = null; }
+      continue;
+    }
+    if (cur && cur.state === state && cur.end === y - 1) {
+      cur.end = y;
+    } else {
+      if (cur) segs.push(cur);
+      cur = { state, start: y, end: y };
+    }
+  }
+  if (cur) segs.push(cur);
+  return segs;
+}
+
+let _overlay = null;
+let _overlayEnabled = new Set();
+
+async function loadOverlay() {
+  const [tempD, co2D, ch4D, n2oD, seaD, regimeD] = await Promise.all([
+    getJSON("/api/temperature"), getJSON("/api/co2"), getJSON("/api/methane"),
+    getJSON("/api/n2o"), getJSON("/api/sea-ice"), getJSON("/api/regime"),
+  ]);
+
+  // Build year → value for each indicator
+  const raw = {
+    temp:   Object.fromEntries((tempD?.annual || []).map(a => [a.year, a.anomaly_c])),
+    co2:    annualMean(co2D?.monthly, "ppm"),
+    ch4:    annualMean(ch4D?.monthly, "ppb"),
+    n2o:    annualMean(n2oD?.monthly, "ppb"),
+    arctic: Object.fromEntries((seaD?.arctic_annual || []).map(a => [a.year, a.min_mkm2])),
+    oni:    annualMean(regimeD?.monthly, "oni"),
+  };
+
+  // For each series, compute mean and std across its own coverage. Then we'll
+  // plot (value - mean) / std for every year that the user has selected.
+  const stats = {};
+  for (const s of OVERLAY_SERIES) {
+    const vs = Object.values(raw[s.id] || {});
+    const mean = vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : 0;
+    const std = stdev(vs);
+    stats[s.id] = { mean, std };
+  }
+
+  // Common x-axis: union of years across all series, sorted.
+  const years = new Set();
+  for (const s of OVERLAY_SERIES) {
+    for (const y of Object.keys(raw[s.id])) years.add(+y);
+  }
+  const xs = Array.from(years).sort((a, b) => a - b);
+
+  _overlay = { raw, stats, xs, enso: ensoSegments(raw.oni) };
+  if (_overlayEnabled.size === 0) {
+    for (const s of OVERLAY_SERIES) if (s.defaultOn) _overlayEnabled.add(s.id);
+  }
+  renderOverlay();
+  renderOverlayToggles();
+}
+
+let _overlayChart = null;
+function renderOverlay() {
+  if (!_overlay || typeof uPlot === "undefined") return;
+  const el = document.getElementById("overlay");
+  if (!el) return;
+
+  const { raw, stats, xs } = _overlay;
+  const xData = xs.map(y => ymdToUnix(y, 6, 15));
+  // First series = x-axis (timestamps). Then one column per indicator —
+  // z-score-normalized so we can compare different units on the same axis.
+  const data = [xData];
+  for (const s of OVERLAY_SERIES) {
+    const { mean, std } = stats[s.id];
+    data.push(xs.map(y => {
+      const v = raw[s.id][y];
+      if (v == null || std === 0) return null;
+      return (v - mean) / std;
+    }));
+  }
+
+  if (_overlayChart) { try { _overlayChart.destroy(); } catch (_) {} _overlayChart = null; }
+  el.innerHTML = "";
+  const width = el.clientWidth || 800;
+
+  const seriesOpts = [{}];
+  OVERLAY_SERIES.forEach((s, i) => {
+    seriesOpts.push({
+      label: s.label,
+      stroke: s.color,
+      width: 2,
+      points: { show: false },
+      show: _overlayEnabled.has(s.id),
+      _raw: s.id,
+    });
+  });
+
+  _overlayChart = new uPlot({
+    width, height: 360,
+    legend: { show: false },
+    cursor: { drag: { x: true, y: false }, focus: { prox: 30 } },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" } },
+      { stroke: "#64748b", grid: { stroke: "#1e293b" }, ticks: { stroke: "#243042" },
+        label: "σ from window mean", labelSize: 28, size: 50, gap: 4 },
+    ],
+    series: seriesOpts,
+    hooks: {
+      // Draw ENSO regime bands AFTER axes but BEFORE series so they sit
+      // behind the data. drawAxes runs at exactly that point in uPlot's
+      // draw cycle.
+      drawAxes: [u => {
+        if (!_overlay || !_overlay.enso || !_overlay.enso.length) return;
+        const ctx = u.ctx;
+        ctx.save();
+        const top = u.bbox.top;
+        const h = u.bbox.height;
+        for (const seg of _overlay.enso) {
+          const x1 = u.valToPos(ymdToUnix(seg.start, 1, 1), "x", true);
+          const x2 = u.valToPos(ymdToUnix(seg.end + 1, 1, 1), "x", true);
+          ctx.fillStyle = seg.state === "el"
+            ? "rgba(248, 113, 113, 0.08)"
+            : "rgba(96, 165, 250, 0.08)";
+          ctx.fillRect(x1, top, x2 - x1, h);
+        }
+        ctx.restore();
+      }],
+      setCursor: [u => {
+        const idx = u.cursor.idx;
+        const hover = document.getElementById("overlay-hover");
+        if (idx == null) { hover.textContent = "Hover the chart for values."; return; }
+        const year = xs[idx];
+        const parts = [`<span class="yr">${year}</span>`];
+        OVERLAY_SERIES.forEach((s) => {
+          if (!_overlayEnabled.has(s.id)) return;
+          const v = raw[s.id][year];
+          if (v == null) return;
+          parts.push(
+            `<span class="val" style="color:${s.color}">${s.label}: <b>${s.fmt(v)}</b></span>`,
+          );
+        });
+        // Annotate the year's ENSO state in the hover too
+        const ensoState = (_overlay.enso || []).find(seg => year >= seg.start && year <= seg.end);
+        if (ensoState) {
+          const label = ensoState.state === "el" ? "El Niño" : "La Niña";
+          const color = ensoState.state === "el" ? "#f87171" : "#60a5fa";
+          parts.push(`<span class="val" style="color:${color}">${label}</span>`);
+        }
+        hover.innerHTML = parts.join("");
+      }],
+    },
+  }, data, el);
+}
+
+function renderOverlayToggles() {
+  const root = document.getElementById("overlay-toggles");
+  if (!root) return;
+  root.innerHTML = "";
+  for (const s of OVERLAY_SERIES) {
+    const pill = document.createElement("button");
+    pill.className = "toggle-pill" + (_overlayEnabled.has(s.id) ? " on" : "");
+    pill.style.color = _overlayEnabled.has(s.id) ? s.color : "";
+    pill.innerHTML = `<span class="swatch" style="color:${s.color}"></span>${s.label}`;
+    pill.addEventListener("click", () => {
+      if (_overlayEnabled.has(s.id)) _overlayEnabled.delete(s.id);
+      else _overlayEnabled.add(s.id);
+      renderOverlay();
+      renderOverlayToggles();
+    });
+    root.appendChild(pill);
+  }
+  // Append a static legend explaining the ENSO shading. Read-only — clicking
+  // does nothing (regime bands are always on if the data's available).
+  if (_overlay && _overlay.enso && _overlay.enso.length) {
+    const legend = document.createElement("span");
+    legend.style.cssText = "display:inline-flex;gap:10px;align-items:center;padding:5px 10px;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;";
+    legend.innerHTML = `
+      <span style="color:var(--text-3)">ENSO bg:</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(248,113,113,0.25);border-radius:2px"></span>
+        El Niño
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:5px">
+        <span style="display:inline-block;width:14px;height:9px;background:rgba(96,165,250,0.25);border-radius:2px"></span>
+        La Niña
+      </span>
+    `;
+    root.appendChild(legend);
+  }
+}
+
+window.addEventListener("resize", () => {
+  if (_overlayChart) {
+    const el = document.getElementById("overlay");
+    if (el && el.clientWidth) _overlayChart.setSize({ width: el.clientWidth, height: 360 });
+  }
+});
 
 async function getJSON(url) {
   try {
@@ -307,14 +886,17 @@ async function loadCards() {
   const co2Data = await getJSON("/api/co2");
   const seaData = await getJSON("/api/sea-ice");
   const ch4Data = await getJSON("/api/methane");
+  const n2oData = await getJSON("/api/n2o");
 
   const cards = [];
+  // Each entry: {id, history, forecast, color} — wired to fan-chart containers
+  // after the cards HTML is inserted into the DOM.
+  const fans = [];
 
   // Temperature anomaly card
   if (s?.gistemp?.projection) {
     const p = s.gistemp.projection;
     const rec = p.current_record;
-    const sparkVals = (tempData?.annual || []).slice(-50).map(a => a.anomaly_c);
     const cls = p.p_breaks_record > 0.7 ? "hot" : p.p_breaks_record > 0.4 ? "warn" : "good";
     const thr = s.gistemp.thresholds;
     const threshHtml = thr ? `
@@ -324,6 +906,15 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_c.toFixed(1)}°C <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    const monthly = (tempData?.monthly || []).slice(-60);
+    fans.push({
+      id: "temp-fan",
+      history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.anomaly_c })),
+      forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                  mu: p.projected_annual_anomaly_c,
+                  sigma: p.drift_std_c || 0.05 },
+      color: "#f87171",
+    });
     cards.push(`
       <div class="card">
         <h3>Global temperature anomaly</h3>
@@ -332,7 +923,8 @@ async function loadCards() {
         <div class="sub" style="margin-top:6px">Record: +${fmt(rec.anomaly_c, 2)}°C (${rec.year})
           &nbsp; <span class="pill ${cls}">P(new record) ${pct(p.p_breaks_record)}</span></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#f87171")}
+        <div class="fanchart" id="temp-fan"></div>
+        ${calibBadge(s.gistemp.calibration)}
       </div>
     `);
   }
@@ -341,9 +933,7 @@ async function loadCards() {
   if (s?.co2?.latest) {
     const l = s.co2.latest;
     const p = s.co2.projection;
-    const sparkVals = (co2Data?.monthly || []).slice(-120).map(m => m.ppm);
     const thr = s.co2.thresholds;
-    // Show only the most "live" thresholds — those between 5-95% prob
     const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
     const threshHtml = liveThr.length ? `
       <div class="thresholds">
@@ -352,6 +942,17 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppm} <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    if (p) {
+      const monthly = (co2Data?.monthly || []).slice(-60);
+      fans.push({
+        id: "co2-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppm })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppm,
+                    sigma: p.residual_std_ppm || 0.5 },
+        color: "#fbbf24",
+      });
+    }
     cards.push(`
       <div class="card">
         <h3>Atmospheric CO₂ (Mauna Loa)</h3>
@@ -359,7 +960,8 @@ async function loadCards() {
         <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppm_per_year ?? 0, 2)} ppm/yr · σ=${fmt(p?.residual_std_ppm ?? 0, 2)}</div>
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppm ?? 0, 2)} ppm</b></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#fbbf24")}
+        <div class="fanchart" id="co2-fan"></div>
+        ${calibBadge(s.co2.calibration)}
       </div>
     `);
   }
@@ -368,7 +970,6 @@ async function loadCards() {
   if (s?.methane?.latest) {
     const l = s.methane.latest;
     const p = s.methane.projection;
-    const sparkVals = (ch4Data?.monthly || []).slice(-120).map(m => m.ppb);
     const thr = s.methane.thresholds;
     const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
     const threshHtml = liveThr.length ? `
@@ -378,6 +979,17 @@ async function loadCards() {
           return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
         }).join("")}
       </div>` : "";
+    if (p) {
+      const monthly = (ch4Data?.monthly || []).slice(-60);
+      fans.push({
+        id: "ch4-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppb })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppb,
+                    sigma: p.residual_std_ppb || 5.0 },
+        color: "#a78bfa",
+      });
+    }
     cards.push(`
       <div class="card">
         <h3>Atmospheric methane (CH₄)</h3>
@@ -385,7 +997,45 @@ async function loadCards() {
         <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 1)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 1)}</div>
         <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
         ${threshHtml}
-        ${sparkline(sparkVals, 260, 56, "#a78bfa")}
+        <div class="fanchart" id="ch4-fan"></div>
+        ${calibBadge(s.methane.calibration)}
+      </div>
+    `);
+  }
+
+  // Nitrous oxide card (N₂O)
+  if (s?.n2o?.latest) {
+    const l = s.n2o.latest;
+    const p = s.n2o.projection;
+    const thr = s.n2o.thresholds;
+    const liveThr = thr ? thr.thresholds.filter(t => t.p_at_or_above > 0.05 && t.p_at_or_above < 0.95) : [];
+    const threshHtml = liveThr.length ? `
+      <div class="thresholds">
+        ${liveThr.map(t => {
+          const hot = t.p_at_or_above >= 0.5;
+          return `<span class="threshold-pill ${hot ? 'hot' : ''}">≥${t.threshold_ppb} <b>${pct(t.p_at_or_above)}</b></span>`;
+        }).join("")}
+      </div>` : "";
+    if (p) {
+      const monthly = (n2oData?.monthly || []).slice(-60);
+      fans.push({
+        id: "n2o-fan",
+        history: monthly.map(m => ({ x: ymdToUnix(m.year, m.month), y: m.ppb })),
+        forecast: { x: ymdToUnix(p.current_year, 12, 15),
+                    mu: p.projected_year_end_ppb,
+                    sigma: p.residual_std_ppb || 0.5 },
+        color: "#fb923c",
+      });
+    }
+    cards.push(`
+      <div class="card">
+        <h3>Atmospheric nitrous oxide (N₂O)</h3>
+        <div class="big">${fmt(l.ppb, 1)} <span style="font-size:14px;color:var(--text-2)">ppb</span></div>
+        <div class="sub">${MONTH[l.month - 1]} ${l.year} · trend +${fmt(p?.ppb_per_year ?? 0, 2)} ppb/yr · σ=${fmt(p?.residual_std_ppb ?? 0, 2)}</div>
+        <div class="sub" style="margin-top:6px">Year-end projection: <b>${fmt(p?.projected_year_end_ppb ?? 0, 1)} ppb</b></div>
+        ${threshHtml}
+        <div class="fanchart" id="n2o-fan"></div>
+        ${calibBadge(s.n2o.calibration)}
       </div>
     `);
   }
@@ -452,13 +1102,136 @@ async function loadCards() {
   }
 
   document.getElementById("cards").innerHTML = cards.join("");
+
+  // Build fan charts now that the containers exist in the DOM.
+  _fanInstances.forEach(u => { try { u.destroy(); } catch (_) {} });
+  _fanInstances = [];
+  for (const f of fans) {
+    const u = fanChart("#" + f.id, f.history, f.forecast, f.color);
+    if (u) _fanInstances.push(u);
+  }
 }
 
+let _fanInstances = [];
+window.addEventListener("resize", () => {
+  for (const u of _fanInstances) {
+    const root = u.root;
+    if (root && root.clientWidth) u.setSize({ width: root.clientWidth, height: 90 });
+  }
+});
+
 let _allMarkets = [];
+
+// ─── Kelly position sizing ────────────────────────────────────────────────────
+//
+// Standard Kelly for a single binary bet: f* = (p·b − q) / b, where
+//   p = model probability of YES
+//   q = 1 − p
+//   b = (1 − implied_p) / implied_p  (the payout-per-$ if YES wins)
+// A negative f* on the YES side means YES is unprofitable at the implied price —
+// we then compute the NO-side Kelly and take that direction if it's positive.
+// "Half-Kelly" multiplier is the standard real-world default; it cuts expected
+// drawdown ~4× at ~75% of full-Kelly's growth rate.
+function kellyBet(modelP, impliedP) {
+  if (modelP == null || impliedP == null) return null;
+  if (impliedP <= 0 || impliedP >= 1) return null;
+  // YES side
+  const bY = (1 - impliedP) / impliedP;
+  const fY = (modelP * bY - (1 - modelP)) / bY;
+  // NO side
+  const pN = 1 - modelP, impN = 1 - impliedP;
+  const bN = (1 - impN) / impN;
+  const fN = (pN * bN - (1 - pN)) / bN;
+  if (fY <= 0 && fN <= 0) return { side: null, fraction: 0 };
+  return fY >= fN
+    ? { side: "YES", fraction: fY }
+    : { side: "NO", fraction: fN };
+}
+
+function fmtKelly(bet, multiplier, bankroll) {
+  if (!bet || bet.side === null || bet.fraction <= 0) return "—";
+  const scaled = bet.fraction * multiplier;
+  const sideCls = bet.side === "YES" ? "kelly-yes" : "kelly-no";
+  if (bankroll && bankroll > 0) {
+    const dollars = Math.round(scaled * bankroll);
+    if (dollars < 1) return "—";
+    return `<span class="${sideCls}">$${dollars.toLocaleString()}</span><span class="kelly-side">${bet.side}</span>`;
+  }
+  return `<span class="${sideCls}">${(scaled * 100).toFixed(1)}%</span><span class="kelly-side">${bet.side}</span>`;
+}
+
+// ─── Top opportunities ────────────────────────────────────────────────────────
+//
+// Surface the few markets that combine a meaningful model edge with enough
+// liquidity to actually trade against. The score is |edge_pp| × √liquidity,
+// with liquidity capped at $5k so deep markets don't drown out everything
+// else. Markets without a model probability are excluded (we can't speak to
+// their edge); markets with very thin liquidity or tiny edge are excluded too.
+function topOpportunities(markets, n = 3) {
+  const opps = markets
+    .filter(m => m._edge_pp !== null && m._edge_pp !== undefined)
+    .filter(m => Math.abs(m._edge_pp) >= 3)
+    .filter(m => Number(m.liquidity || 0) >= 500);
+  const score = m => Math.abs(m._edge_pp) * Math.sqrt(Math.min(Number(m.liquidity || 0), 5000));
+  opps.sort((a, b) => score(b) - score(a));
+  return opps.slice(0, n);
+}
+
+function renderOpps() {
+  const root = document.getElementById("opps");
+  if (!root) return;
+  const opps = topOpportunities(_allMarkets);
+  if (!opps.length) {
+    root.innerHTML = `<div class="opp" style="border-left-color:var(--border);cursor:default"><div class="q" style="color:var(--text-3);font-style:italic">No high-conviction opportunities right now — every scored market is either close to fair or thinly traded.</div></div>`;
+    return;
+  }
+  root.innerHTML = opps.map(m => {
+    const edge = m._edge_pp;
+    const cls = edge > 0 ? "pos" : "neg";
+    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : "#";
+    const liq = Number(m.liquidity || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const kelly = kellyBet(m._model_p, m._implied_p);
+    const kPct = kelly && kelly.fraction > 0 ? `${(kelly.fraction * 50).toFixed(1)}% (½K ${kelly.side})` : "—";
+    return `
+      <a class="opp ${edge < 0 ? "neg" : ""}" href="${url}" target="_blank" rel="noopener">
+        <div class="q">${(m.question || "")}</div>
+        <div class="meta">
+          <span class="edge ${cls}">${edge > 0 ? "+" : ""}${edge.toFixed(1)} pp</span>
+          · model ${pct(m._model_p)} vs implied ${pct(m._implied_p)}
+          · liq $${liq}
+          · ${kPct}
+        </div>
+      </a>
+    `;
+  }).join("");
+}
+
+function categorizeMarket(m) {
+  const t = ((m._event_title || "") + " " + (m.question || "")).toLowerCase();
+  if (/\bmethane\b|\bch4\b|\bppb\b/.test(t)) return "methane";
+  if (/\bco2\b|carbon dioxide|\bppm\b/.test(t)) return "co2";
+  if (/sea ice|\barctic\b|\bantarctic\b/.test(t)) return "sea-ice";
+  if (/temperature|anomaly|warming|warmest|hottest|°c|paris|\b1\.5\b/.test(t)) return "temperature";
+  return "other";
+}
+
+function hasEdge(m) {
+  return m._edge_pp !== null && m._edge_pp !== undefined;
+}
 
 function renderMarkets() {
   const q = document.getElementById("search").value.toLowerCase().trim();
   const sortBy = document.getElementById("sort").value;
+  const topic = document.getElementById("topic").value;
+  const minEdgeRaw = document.getElementById("min-edge").value;
+  const minEdge = minEdgeRaw === "" ? null : Number(minEdgeRaw);
+  const minLiqRaw = document.getElementById("min-liq").value;
+  const minLiq = minLiqRaw === "" ? null : Number(minLiqRaw);
+  const scoredOnly = document.getElementById("scored-only").checked;
+  const bankrollRaw = document.getElementById("bankroll").value;
+  const bankroll = bankrollRaw === "" ? null : Number(bankrollRaw);
+  const kFrac = Number(document.getElementById("kelly-fraction").value) || 0.5;
+
   let rows = _allMarkets.slice();
   if (q) {
     rows = rows.filter(m => {
@@ -466,10 +1239,28 @@ function renderMarkets() {
       return t.includes(q);
     });
   }
+  if (topic !== "all") {
+    rows = rows.filter(m => categorizeMarket(m) === topic);
+  }
+  if (scoredOnly) {
+    rows = rows.filter(m => m._model_p !== null && m._model_p !== undefined);
+  }
+  if (minEdge !== null && !Number.isNaN(minEdge)) {
+    rows = rows.filter(m => hasEdge(m) && Math.abs(m._edge_pp) >= minEdge);
+  }
+  if (minLiq !== null && !Number.isNaN(minLiq)) {
+    rows = rows.filter(m => Number(m.liquidity || 0) >= minLiq);
+  }
+
   rows.sort((a, b) => {
     if (sortBy === "edge") {
-      const ea = a._edge_pp === null ? -999 : Math.abs(a._edge_pp);
-      const eb = b._edge_pp === null ? -999 : Math.abs(b._edge_pp);
+      const ea = hasEdge(a) ? Math.abs(a._edge_pp) : -Infinity;
+      const eb = hasEdge(b) ? Math.abs(b._edge_pp) : -Infinity;
+      return eb - ea;
+    }
+    if (sortBy === "edge-signed") {
+      const ea = hasEdge(a) ? a._edge_pp : -Infinity;
+      const eb = hasEdge(b) ? b._edge_pp : -Infinity;
       return eb - ea;
     }
     if (sortBy === "liquidity") {
@@ -480,6 +1271,9 @@ function renderMarkets() {
     }
     return 0;
   });
+
+  document.getElementById("market-count").innerHTML =
+    `Showing <b>${rows.length}</b> of <b>${_allMarkets.length}</b> markets`;
 
   if (!rows.length) {
     document.getElementById("markets").innerHTML = `<div class="empty">No markets match.</div>`;
@@ -495,13 +1289,13 @@ function renderMarkets() {
             <th class="num">Implied</th>
             <th class="num">Model</th>
             <th class="num">Edge</th>
+            <th class="num">Kelly</th>
             <th class="num">Liquidity</th>
             <th>Ends</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map(m => {
-            const slug = m.slug || (m._event_title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
             const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
             const impl = m._implied_p !== null && m._implied_p !== undefined ? pct(m._implied_p) : "—";
             const mp = m._model_p !== null && m._model_p !== undefined ? pct(m._model_p) : "—";
@@ -509,6 +1303,8 @@ function renderMarkets() {
             const edgeHtml = edge === null || edge === undefined ? "—" :
               edge > 0 ? `<span class="edge-pos">+${edge.toFixed(1)} pp</span>` :
                           `<span class="edge-neg">${edge.toFixed(1)} pp</span>`;
+            const kelly = kellyBet(m._model_p, m._implied_p);
+            const kHtml = fmtKelly(kelly, kFrac, bankroll);
             const liq = m.liquidity ? Number(m.liquidity).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
             const end = m.endDate ? new Date(m.endDate).toISOString().slice(0, 10) : "—";
             const q = m.question || "";
@@ -524,6 +1320,7 @@ function renderMarkets() {
               <td class="num">${impl}</td>
               <td class="num">${mp}</td>
               <td class="num">${edgeHtml}</td>
+              <td class="num">${kHtml}</td>
               <td class="num">${liq}</td>
               <td>${end}</td>
             </tr>`;
@@ -539,6 +1336,7 @@ async function loadMarkets() {
   document.getElementById("markets").innerHTML = `<div class="empty">Loading markets…</div>`;
   const r = await getJSON("/api/markets");
   _allMarkets = (r?.markets) || [];
+  renderOpps();
   renderMarkets();
 }
 
@@ -577,6 +1375,15 @@ async function loadBacktest() {
       <td class="num"><span class="${errCls(r.error_ppb / 10)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 1)} ppb</span></td>
     </tr>
   `).join("");
+  const n2oRows = (b.n2o || []).map(r => `
+    <tr>
+      <td>N₂O year-end ppb</td>
+      <td class="num">${r.year}</td>
+      <td class="num">${fmt(r.projected_year_end_ppb, 2)}</td>
+      <td class="num">${fmt(r.actual_dec_ppb, 2)}</td>
+      <td class="num"><span class="${errCls(r.error_ppb / 1)}">${r.error_ppb >= 0 ? '+' : ''}${fmt(r.error_ppb, 2)} ppb</span></td>
+    </tr>
+  `).join("");
   root.innerHTML = `
     <table>
       <thead>
@@ -588,7 +1395,7 @@ async function loadBacktest() {
           <th class="num">Error</th>
         </tr>
       </thead>
-      <tbody>${tempRows}${co2Rows}${ch4Rows}</tbody>
+      <tbody>${tempRows}${co2Rows}${ch4Rows}${n2oRows}</tbody>
     </table>
     <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);line-height:1.5">
       <b>Method:</b> ${b.method?.gistemp || ""} ${b.method?.co2 || ""} ${b.method?.methane || ""}
@@ -596,11 +1403,97 @@ async function loadBacktest() {
   `;
 }
 
-document.getElementById("search").addEventListener("input", renderMarkets);
-document.getElementById("sort").addEventListener("change", renderMarkets);
+// ─── Filter state ↔ URL hash ─────────────────────────────────────────────────
+//
+// We round-trip the filter/sort UI into window.location.hash so a user can
+// bookmark / share a specific view. Bankroll and Kelly fraction stay in
+// localStorage only — they don't belong in a shareable URL.
+
+const _HASH_FIELDS = {
+  search: { type: "string", default: "" },
+  topic: { type: "string", default: "all" },
+  "min-edge": { type: "string", default: "" },
+  "min-liq": { type: "string", default: "" },
+  "scored-only": { type: "bool", default: false },
+  sort: { type: "string", default: "edge" },
+};
+
+function readHash() {
+  const h = window.location.hash.replace(/^#/, "");
+  if (!h) return {};
+  const out = {};
+  for (const pair of h.split("&")) {
+    const [k, v] = pair.split("=");
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v || "");
+  }
+  return out;
+}
+
+function writeHash() {
+  const out = [];
+  for (const id of Object.keys(_HASH_FIELDS)) {
+    const cfg = _HASH_FIELDS[id];
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const val = cfg.type === "bool" ? (el.checked ? "1" : "") : el.value;
+    if (val !== "" && val !== String(cfg.default)) {
+      out.push(`${encodeURIComponent(id)}=${encodeURIComponent(val)}`);
+    }
+  }
+  const next = out.length ? "#" + out.join("&") : "";
+  if (next !== window.location.hash) {
+    // Use replaceState so the back button isn't polluted with every keystroke
+    history.replaceState(null, "", window.location.pathname + window.location.search + next);
+  }
+}
+
+function restoreFromHash() {
+  const h = readHash();
+  for (const id of Object.keys(_HASH_FIELDS)) {
+    if (!(id in h)) continue;
+    const el = document.getElementById(id);
+    const cfg = _HASH_FIELDS[id];
+    if (!el) continue;
+    if (cfg.type === "bool") el.checked = h[id] === "1";
+    else el.value = h[id];
+  }
+}
+restoreFromHash();
+
+["search", "min-edge", "min-liq", "bankroll"].forEach(id => {
+  document.getElementById(id).addEventListener("input", () => {
+    writeHash();
+    renderMarkets();
+  });
+});
+["topic", "sort", "scored-only", "kelly-fraction"].forEach(id => {
+  document.getElementById(id).addEventListener("change", () => {
+    writeHash();
+    renderMarkets();
+  });
+});
+
+// Persist bankroll + Kelly fraction across page loads. Bankroll is sensitive
+// so we only store it in localStorage on this device — never sent anywhere.
+const _LS_BANKROLL = "climate.bankroll";
+const _LS_KFRAC = "climate.kellyFraction";
+(function restoreSizing() {
+  const br = localStorage.getItem(_LS_BANKROLL);
+  if (br) document.getElementById("bankroll").value = br;
+  const kf = localStorage.getItem(_LS_KFRAC);
+  if (kf) document.getElementById("kelly-fraction").value = kf;
+})();
+document.getElementById("bankroll").addEventListener("input", e => {
+  if (e.target.value) localStorage.setItem(_LS_BANKROLL, e.target.value);
+  else localStorage.removeItem(_LS_BANKROLL);
+});
+document.getElementById("kelly-fraction").addEventListener("change", e => {
+  localStorage.setItem(_LS_KFRAC, e.target.value);
+});
 
 loadRegime();
 loadCards();
+loadOverlay();
 loadMarkets();
 loadBacktest();
 

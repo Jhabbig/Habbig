@@ -134,6 +134,35 @@ CREATE TABLE IF NOT EXISTS stripe_events (
     processed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS superuser_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT UNIQUE NOT NULL,
+    name            TEXT NOT NULL,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER,
+    last_used_at    INTEGER,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_templates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_usage_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id          INTEGER NOT NULL,
+    accessed_at     INTEGER NOT NULL,
+    dashboard_key   TEXT,
+    FOREIGN KEY (key_id) REFERENCES superuser_keys(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_positions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL,
@@ -169,6 +198,11 @@ CREATE INDEX IF NOT EXISTS idx_stripe_events_processed ON stripe_events(processe
 CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_positions_platform ON user_positions(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_superuser_keys ON superuser_keys(key);
+CREATE INDEX IF NOT EXISTS idx_superuser_active ON superuser_keys(active);
+CREATE INDEX IF NOT EXISTS idx_templates_created ON superuser_key_templates(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_key ON superuser_key_usage_logs(key_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_accessed ON superuser_key_usage_logs(accessed_at);
 """
 
 

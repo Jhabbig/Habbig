@@ -1,58 +1,49 @@
 #!/usr/bin/env python3
-"""Polymarket Climate Change Dashboard — Flask backend (v3).
+"""Polymarket Climate Change Dashboard — Flask routes.
 
 Long-horizon climate markets: warmest year on record, Arctic + Antarctic sea
 ice extent, global mean temperature anomaly, atmospheric CO2 + CH4, sea
 surface temperature, ENSO regime.
 
-Data sources:
-  - NASA GISTEMP v4 (monthly global land+ocean anomaly vs 1951-1980 baseline)
-  - NOAA GML Mauna Loa atmospheric CO2 (monthly mean)
-  - NOAA GML globally-averaged methane CH4 (monthly mean)        [v3]
-  - NSIDC Sea Ice Index G02135 v4.0 (daily Arctic + Antarctic extent)
-  - Climate Reanalyzer / NOAA OISST (daily global SST)
-  - NOAA CPC ONI (Oceanic Nino Index — ENSO state)
-
-Markets via Polymarket Gamma API. Tag slugs scanned: climate-change,
-global-temperature, climate, global-warming, sea-level, extreme-weather.
-
-Models (v2):
-  - Year-end record-pace projection from YTD anomaly + historical drift,
-    plus N(μ, σ) threshold probabilities (P(annual ≥ 1.5 / 1.6 / 1.7°C)).
-  - 24-month linear regression on Mauna Loa CO2 with residual-std threshold
-    probabilities (P(year-end ≥ 425 / 430 ppm), etc.).
-  - 25-year linear-trend projections of Arctic AND Antarctic annual minimum
-    sea ice extent, with normal-CDF probability bands for binned markets.
-  - Backtest: each model is replayed 'as of June' for the last 5 completed
-    years and reported as projected-vs-actual at /api/backtest.
-
-Edges = (model_p − implied_p) in percentage points.
+Data sources, models, and methodology live in the ``app`` package — this
+file is intentionally only routes + JSON shaping. See ``app/methodology.py``
+or ``GET /api/methodology`` for the model descriptions.
 """
-
 from __future__ import annotations
 
 import csv
 import hmac
 import io
 import logging
-import math
 import os
-import re
-import threading
+import subprocess
 import time
-from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Optional
 
-import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, send_from_directory
+
+from app.fetchers import co2 as co2_src
+from app.fetchers import gistemp as gistemp_src
+from app.fetchers import methane as methane_src
+from app.fetchers import n2o as n2o_src
+from app.fetchers import oni as oni_src
+from app.fetchers import polymarket as polymarket_src
+from app.fetchers import sea_ice as sea_ice_src
+from app.fetchers import sst as sst_src
+from app.methodology import payload as methodology_payload
+from app.models import co2 as co2_model
+from app.models import calibration
+from app.models import markets as markets_model
+from app.models import methane as methane_model
+from app.models import n2o as n2o_model
+from app.models import sea_ice as sea_ice_model
+from app.models import temperature as temperature_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("climate")
 
 app = Flask(__name__, static_folder="static")
 
-# Gzip compression
 try:
     from flask_compress import Compress
 
@@ -98,7 +89,6 @@ def _gateway_sso_check():
 
 PORT = int(os.environ.get("PORT", "7052"))
 
-# ─── Cache ─────────────────────────────────────────────────────────────────────
 
 _cache: "OrderedDict[str, dict]" = OrderedDict()
 _cache_lock = threading.Lock()
@@ -609,22 +599,9 @@ def fetch_sst() -> Optional[dict]:
         data = r.json()
     except Exception:
         return None
-    # Format: [{name: "1981", data: [v, v, ..., 366]}, ..., {name: "2026", data: [...]}, {name: "1982-2011 mean", ...}]
-    out = {
-        "source": "NOAA OISST v2.1 (world 60S-60N) via climatereanalyzer.org",
-        "units": "°C",
-        "series": data,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-    }
-    cache_set("sst", out)
-    return out
 
 
-# ─── ENSO ONI ──────────────────────────────────────────────────────────────────
-
-# CPC publishes an ASCII table of monthly ONI:
-#   https://psl.noaa.gov/data/correlation/oni.data
-ONI_URL = "https://psl.noaa.gov/data/correlation/oni.data"
+_COMMIT = _git_sha()
 
 
 def fetch_oni() -> Optional[dict]:
@@ -1213,7 +1190,8 @@ def cesium():
 
 @app.route("/api/health")
 def api_health():
-    return jsonify({"ok": True, "service": "climate-dashboard", "ts": time.time()})
+    return jsonify({"ok": True, "service": "climate-dashboard",
+                    "commit": _COMMIT, "ts": time.time()})
 
 
 @app.route("/healthz")
@@ -1251,41 +1229,49 @@ def api_markets():
     )
 
 
+# ─── Per-source endpoints ──────────────────────────────────────────────────────
+
 @app.route("/api/temperature")
 def api_temperature():
-    g = fetch_gistemp()
+    g = gistemp_src.fetch()
     if not g:
         return jsonify({"error": "GISTEMP fetch failed"}), 503
-    proj = annual_record_pace_projection(g)
-    return jsonify({**g, "projection": proj})
+    return jsonify({**g, "projection": temperature_model.projection(g)})
 
 
 @app.route("/api/co2")
 def api_co2():
-    c = fetch_co2()
+    c = co2_src.fetch()
     if not c:
         return jsonify({"error": "CO2 fetch failed"}), 503
-    proj = co2_year_end_projection(c)
-    return jsonify({**c, "projection": proj})
+    return jsonify({**c, "projection": co2_model.projection(c)})
 
 
 @app.route("/api/methane")
 def api_methane():
-    m = fetch_methane()
+    m = methane_src.fetch()
     if not m:
         return jsonify({"error": "Methane fetch failed"}), 503
-    proj = methane_year_end_projection(m)
-    thresholds = methane_threshold_probs(proj)
-    return jsonify({**m, "projection": proj, "thresholds": thresholds})
+    proj = methane_model.projection(m)
+    return jsonify({**m, "projection": proj,
+                    "thresholds": methane_model.threshold_probs(proj)})
+
+
+@app.route("/api/n2o")
+def api_n2o():
+    n = n2o_src.fetch()
+    if not n:
+        return jsonify({"error": "N2O fetch failed"}), 503
+    proj = n2o_model.projection(n)
+    return jsonify({**n, "projection": proj,
+                    "thresholds": n2o_model.threshold_probs(proj)})
 
 
 @app.route("/api/sea-ice")
 def api_sea_ice():
-    s = fetch_sea_ice()
+    s = sea_ice_src.fetch()
     if not s:
         return jsonify({"error": "Sea ice fetch failed"}), 503
-    rec = sea_ice_record_check(s)
-    # Trim arrays sent to the client — frontend only needs last ~3y for plots
     arctic = s.get("arctic") or []
     antarctic = s.get("antarctic") or []
     return jsonify(
@@ -1302,7 +1288,7 @@ def api_sea_ice():
 
 @app.route("/api/sst")
 def api_sst():
-    s = fetch_sst()
+    s = sst_src.fetch()
     if not s:
         return jsonify({"error": "SST fetch failed"}), 503
     return jsonify(s)
@@ -1310,10 +1296,39 @@ def api_sst():
 
 @app.route("/api/regime")
 def api_regime():
-    o = fetch_oni()
+    o = oni_src.fetch()
     if not o:
         return jsonify({"error": "ONI fetch failed"}), 503
     return jsonify(o)
+
+
+# ─── Aggregate endpoints ───────────────────────────────────────────────────────
+
+@app.route("/api/markets")
+def api_markets():
+    markets = polymarket_src.fetch()
+    g = gistemp_src.fetch()
+    c = co2_src.fetch()
+    s = sea_ice_src.fetch()
+    ch4 = methane_src.fetch()
+    gp = temperature_model.projection(g) if g else None
+    cp = co2_model.projection(c) if c else None
+    ap = sea_ice_model.arctic_min_projection(s) if s else None
+    aap = sea_ice_model.antarctic_min_projection(s) if s else None
+    mp = methane_model.projection(ch4) if ch4 else None
+    enriched = markets_model.edges_for_markets(markets, gp, cp, ap, aap, mp)
+    return jsonify({
+        "markets": enriched,
+        "count": len(enriched),
+        "gistemp_projection": gp,
+        "co2_projection": cp,
+        "methane_projection": mp,
+        "arctic_min_projection": ap,
+        "antarctic_min_projection": aap,
+        "temperature_thresholds": temperature_model.threshold_probs(gp),
+        "co2_thresholds": co2_model.threshold_probs(cp),
+        "methane_thresholds": methane_model.threshold_probs(mp),
+    })
 
 
 @app.route("/api/summary")
