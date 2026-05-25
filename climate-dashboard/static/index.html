@@ -1821,6 +1821,7 @@ window.addEventListener("resize", () => {
 
 let _allMarkets = [];
 const _expandedMarketIds = new Set();
+const _historyCache = new Map();  // market id → series array
 
 function _marketId(m) {
   return m.conditionId || m.id || m.slug || "";
@@ -1845,6 +1846,17 @@ function _renderExpandRow(m, kFrac) {
   const polymarketLink = m.slug
     ? `<a href="https://polymarket.com/market/${m.slug}" target="_blank" rel="noopener">View on Polymarket →</a>`
     : "(no Polymarket slug)";
+  // Price-history slot — populated lazily by loadMarketHistory()
+  const venue = m._venue || "polymarket";
+  const historyBlock = venue === "polymarket"
+    ? `<div class="expand-block" id="history-${id}">
+         <h4>Implied probability over time</h4>
+         <div style="color:var(--text-3);font-style:italic;font-size:11px">Loading…</div>
+       </div>`
+    : `<div class="expand-block">
+         <h4>Implied probability over time</h4>
+         <div style="color:var(--text-3);font-style:italic;font-size:11px">Per-market history not supported for ${venue}.</div>
+       </div>`;
   return `
     <tr class="expand-row" data-expand="${id}">
       <td colspan="7">
@@ -1871,9 +1883,64 @@ function _renderExpandRow(m, kFrac) {
             <div>End date: <b>${m.endDate ? new Date(m.endDate).toISOString().slice(0,10) : "—"}</b></div>
             <div style="margin-top:6px">${polymarketLink}</div>
           </div>
+          ${historyBlock}
         </div>
       </td>
     </tr>
+  `;
+}
+
+// Lazily fetch a market's CLOB price history when its row expands, then
+// render a small SVG sparkline overlaid with the current model probability.
+async function loadMarketHistory(market) {
+  const id = _marketId(market);
+  if (!id) return;
+  const slot = document.getElementById(`history-${id}`);
+  if (!slot) return;
+  let series;
+  if (_historyCache.has(id)) {
+    series = _historyCache.get(id);
+  } else {
+    const r = await getJSON(`/api/market-history?id=${encodeURIComponent(id)}`);
+    series = (r && r.history) || null;
+    if (series) _historyCache.set(id, series);
+  }
+  if (!series || !series.length) {
+    slot.innerHTML = `<h4>Implied probability over time</h4>
+      <div style="color:var(--text-3);font-style:italic;font-size:11px">No history (CLOB endpoint unreachable or no trades yet).</div>`;
+    return;
+  }
+  // Build a probability sparkline. The model probability gets drawn as a
+  // horizontal dashed line for visual contrast — "here's where the market
+  // is, here's what we think."
+  const w = 240, h = 56;
+  const xs = series.map(p => p.t);
+  const ys = series.map(p => p.p);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys, market._model_p ?? 1);
+  const yMax = Math.max(...ys, market._model_p ?? 0);
+  const xrange = (xMax - xMin) || 1;
+  const yrange = (yMax - yMin) || 1;
+  const points = series.map(p =>
+    `${((p.t - xMin) / xrange * w).toFixed(1)},${(h - (p.p - yMin) / yrange * h).toFixed(1)}`
+  ).join(" ");
+  let modelLine = "";
+  if (market._model_p != null) {
+    const modelY = h - (market._model_p - yMin) / yrange * h;
+    modelLine = `<line x1="0" y1="${modelY.toFixed(1)}" x2="${w}" y2="${modelY.toFixed(1)}"
+                       stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" />`;
+  }
+  const latestTime = new Date(series[series.length - 1].t * 1000).toISOString().slice(0, 10);
+  slot.innerHTML = `
+    <h4>Implied probability over time</h4>
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:56px;display:block">
+      ${modelLine}
+      <polyline fill="none" stroke="#f1f5f9" stroke-width="1.5" points="${points}" />
+    </svg>
+    <div style="color:var(--text-3);font-size:10px;margin-top:4px">
+      ${series.length} pts · ${pct(series[0].p)} → ${pct(series[series.length - 1].p)} · latest ${latestTime}
+      ${market._model_p != null ? ` · <span style="color:#34d399">— — model ${pct(market._model_p)}</span>` : ""}
+    </div>
   `;
 }
 
@@ -2122,9 +2189,18 @@ function renderMarkets() {
     const toggle = () => {
       const id = tr.getAttribute("data-market-id");
       if (!id) return;
-      if (_expandedMarketIds.has(id)) _expandedMarketIds.delete(id);
-      else _expandedMarketIds.add(id);
+      const isExpanding = !_expandedMarketIds.has(id);
+      if (isExpanding) _expandedMarketIds.add(id);
+      else _expandedMarketIds.delete(id);
       renderMarkets();
+      // On expand, lazy-fetch the per-market history. The render row is
+      // already in the DOM by this point (renderMarkets is synchronous).
+      if (isExpanding) {
+        const m = _allMarkets.find(mm => _marketId(mm) === id);
+        if (m && (m._venue || "polymarket") === "polymarket") {
+          loadMarketHistory(m);
+        }
+      }
     };
     tr.addEventListener("click", (e) => {
       // Don't fire on link clicks inside the row

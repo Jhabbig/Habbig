@@ -67,8 +67,30 @@ def _fake_http_get(url: str, *, timeout=20, params=None):
     if "LSA_SLR_timeseries_global" in url or "sea_level" in url.lower():
         return FakeResponse(text=_load("sea_level_sample.csv"))
     if "gamma-api.polymarket.com" in url:
-        # Polymarket events — empty list is a valid response shape
-        return FakeResponse(json_data=[])
+        # Two minimal climate markets so /api/market-history can find one
+        # by conditionId. Includes clobTokenIds so the YES token extracts
+        # cleanly.
+        return FakeResponse(json_data=[{
+            "title": "Will atmospheric CO₂ exceed 428 ppm in 2025?",
+            "markets": [{
+                "id": "m-co2-428",
+                "conditionId": "0xc02428",
+                "slug": "co2-428-2025",
+                "question": "Above 428 ppm in 2025",
+                "clobTokenIds": '["yes-token-abc","no-token-xyz"]',
+                "lastTradePrice": 0.25,
+                "liquidity": 5000,
+                "endDate": "2025-12-31",
+            }],
+            "tags": [{"label": "climate-change"}],
+        }])
+    if "clob.polymarket.com/prices-history" in url:
+        # The CLOB price-history endpoint our market-history feature targets
+        return FakeResponse(json_data={"history": [
+            {"t": 1700000000, "p": 0.21},
+            {"t": 1700086400, "p": 0.23},
+            {"t": 1700172800, "p": 0.25},
+        ]})
     if "api.elections.kalshi.com" in url:
         # Kalshi events — load from fixture
         import json
@@ -181,6 +203,28 @@ def test_scenarios_endpoint(client):
     assert body["current_match"]["co2"] is not None
 
 
+def test_market_history_endpoint(client):
+    """Lazy per-market price history works end-to-end with mocked CLOB."""
+    r = client.get("/api/market-history?id=0xc02428")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["count"] == 3
+    assert body["history"][0] == {"t": 1700000000, "p": 0.21}
+    # Mirror by slug too
+    r2 = client.get("/api/market-history?id=co2-428-2025")
+    assert r2.status_code == 200
+
+
+def test_market_history_endpoint_404_for_unknown_id(client):
+    r = client.get("/api/market-history?id=does-not-exist")
+    assert r.status_code == 404
+
+
+def test_market_history_endpoint_400_when_id_missing(client):
+    r = client.get("/api/market-history")
+    assert r.status_code == 400
+
+
 def test_dashboard_firehose_endpoint(client):
     """The firehose should include every major data block in one shot."""
     r = client.get("/api/dashboard.json")
@@ -268,17 +312,15 @@ def test_backtest_endpoint_with_mocked_upstream(client):
 
 
 def test_markets_endpoint_merges_polymarket_and_kalshi(client):
-    """Empty Polymarket + the Kalshi fixture (3 climate events, 1 sports
-    event rejected, 1 hurricane event rejected) should yield 2 Kalshi
-    markets tagged with _venue=kalshi."""
+    """Mocked Polymarket fixture has 1 climate market (CO2 428ppm); Kalshi
+    fixture has 2 climate markets (warmest year + CO2 428ppm). Hurricane +
+    NBA Kalshi events get filtered. Total: 3 markets across both venues."""
     r = client.get("/api/markets")
     assert r.status_code == 200
     body = r.get_json()
-    # Polymarket is empty in the fixture; Kalshi contributes 2 climate
-    # markets (warmest year + CO2 428ppm); hurricane + NBA are rejected.
-    assert body["count"] == 2
+    assert body["count"] == 3
     venues = {m["_venue"] for m in body["markets"]}
-    assert venues == {"kalshi"}
+    assert venues == {"polymarket", "kalshi"}
     # The warmest-year market should have been scored by the temperature
     # model since the event title matches the "warmest year" trigger.
     warmest = [m for m in body["markets"]

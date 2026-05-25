@@ -19,6 +19,7 @@ from app.fetchers import kalshi as kalshi_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import ocean_heat as ocean_heat_src
+from app.fetchers import polymarket_history as polymarket_history_src
 from app.fetchers import oni as oni_src
 from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import sea_ice as sea_ice_src
@@ -813,6 +814,53 @@ def test_highlights_arctic_amplification_chip():
     items = highlights_model.compute(zonal=zonal)
     texts = [i["text"] for i in items]
     assert any("Arctic" in t and ("×" in t or "x " in t.lower()) for t in texts), texts
+
+
+def test_polymarket_history_extracts_yes_token_from_string():
+    # Polymarket gamma's clobTokenIds is JSON-stringified historically
+    market = {"clobTokenIds": '["yes-token-abc", "no-token-xyz"]'}
+    token = polymarket_history_src._extract_yes_token_id(market)
+    assert token == "yes-token-abc"
+
+
+def test_polymarket_history_extracts_yes_token_from_list():
+    market = {"clobTokenIds": ["yes-token", "no-token"]}
+    assert polymarket_history_src._extract_yes_token_id(market) == "yes-token"
+
+
+def test_polymarket_history_handles_missing_clob_ids():
+    assert polymarket_history_src._extract_yes_token_id({}) is None
+    assert polymarket_history_src._extract_yes_token_id({"clobTokenIds": ""}) is None
+    assert polymarket_history_src._extract_yes_token_id({"clobTokenIds": "not-json"}) is None
+    assert polymarket_history_src._extract_yes_token_id({"clobTokenIds": "[]"}) is None
+
+
+def test_polymarket_history_parser_normalises_response():
+    # Documented shape
+    payload = {"history": [{"t": 1700000000, "p": 0.42}, {"t": 1700086400, "p": 0.45}]}
+    series = polymarket_history_src.parse(payload)
+    assert series == [{"t": 1700000000, "p": 0.42}, {"t": 1700086400, "p": 0.45}]
+
+
+def test_polymarket_history_parser_accepts_bare_list():
+    # Defensive — older CLOB responses sometimes returned a bare list
+    payload = [{"t": 1700000000, "p": 0.42}]
+    series = polymarket_history_src.parse(payload)
+    assert series == [{"t": 1700000000, "p": 0.42}]
+
+
+def test_polymarket_history_parser_rejects_out_of_range_probabilities():
+    # Malformed/sentinel values must not slip through
+    payload = {"history": [
+        {"t": 1700000000, "p": 0.42},
+        {"t": 1700086400, "p": 1.5},     # invalid
+        {"t": 1700172800, "p": -0.1},     # invalid
+        {"t": 1700259200, "p": "junk"},   # invalid
+        {"t": 1700345600, "p": 0.55},
+    ]}
+    series = polymarket_history_src.parse(payload)
+    assert len(series) == 2
+    assert all(0 <= r["p"] <= 1 for r in series)
 
 
 def test_opportunities_rss_filters_and_sorts():

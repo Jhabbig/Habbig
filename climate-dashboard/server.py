@@ -30,6 +30,7 @@ from app.fetchers import oni as oni_src
 from app.fetchers import owid_emissions as emissions_src
 from app.fetchers import snow_cover as snow_cover_src
 from app.fetchers import polymarket as polymarket_src
+from app.fetchers import polymarket_history as polymarket_history_src
 from app.fetchers import sea_ice as sea_ice_src
 from app.fetchers import sea_level as sea_level_src
 from app.fetchers import sf6 as sf6_src
@@ -537,6 +538,43 @@ def api_regime():
 
 
 # ─── Aggregate endpoints ───────────────────────────────────────────────────────
+
+@app.route("/api/market-history")
+def api_market_history():
+    """Per-market price history for a Polymarket market.
+
+    Lazily called by the frontend when a user expands a market row. Returns
+    {history: [{t, p}], market_id, source} or 503/404 if unavailable.
+    The CLOB endpoint URL is best-effort; if it changes, the detail panel
+    silently lacks a sparkline but the rest of the row still works.
+    """
+    mid = request.args.get("id")
+    if not mid:
+        return jsonify({"error": "missing 'id' query parameter"}), 400
+    # Find the market in the currently-cached gamma response. We don't
+    # re-fetch — if the markets list is stale, this is stale too.
+    markets = polymarket_src.fetch() or []
+    found = next((m for m in markets if (m.get("conditionId") == mid
+                                          or m.get("id") == mid
+                                          or m.get("slug") == mid)), None)
+    if not found:
+        return jsonify({"error": "market not found in current Polymarket cache",
+                        "id": mid}), 404
+    if found.get("_venue") and found["_venue"] != "polymarket":
+        return jsonify({"error": "history endpoint only supports Polymarket markets",
+                        "venue": found["_venue"]}), 400
+    history = polymarket_history_src.fetch(found)
+    if history is None:
+        return jsonify({"error": "CLOB history unavailable",
+                        "hint": "Likely a URL change at clob.polymarket.com",
+                        "id": mid}), 503
+    return jsonify({
+        "id": mid,
+        "source": "Polymarket CLOB /prices-history",
+        "history": history,
+        "count": len(history),
+    })
+
 
 @app.route("/api/markets")
 def api_markets():
