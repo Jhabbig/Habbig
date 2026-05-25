@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calculators · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.55; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 720px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border);
+          margin-bottom: 18px; flex-wrap: wrap; }
+  .tab {
+    padding: 9px 14px; cursor: pointer; color: var(--muted);
+    border: 0; background: transparent; font-size: 13px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-weight: 600;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .calc { display: none; }
+  .calc.active { display: block; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+          align-items: start; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--border);
+           border-radius: 8px; padding: 20px; }
+  .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+              color: var(--muted); font-weight: 600; margin: 0 0 14px; }
+  label { display: block; margin-bottom: 12px; font-size: 12px;
+          color: var(--muted); }
+  label .lbl { display: block; margin-bottom: 4px; }
+  input, select { width: 100%; background: #0d0e13; color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 8px 10px; font-size: 14px; }
+  .row { display: flex; align-items: center; justify-content: space-between;
+         padding: 10px 0; border-bottom: 1px solid var(--border);
+         font-variant-numeric: tabular-nums; }
+  .row:last-child { border-bottom: none; }
+  .row .label { color: var(--muted); }
+  .row .val { font-weight: 700; font-size: 15px; }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px;
+          background: rgba(16, 185, 129, 0.15); color: var(--green);
+          font-size: 10px; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.04em; }
+  .pill.no { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+  .empty { color: var(--muted); text-align: center; padding: 24px; }
+  .err { color: var(--red); font-size: 12px; margin-top: 6px; }
+  .small { font-size: 12px; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Calculators</h1>
+  <p class="sub">
+    Standalone math tools every sharp bettor needs. All compute client-side
+    via the same pure functions the dashboard uses internally — same numbers,
+    no hidden vig.
+    <a href="/features">← All features</a>
+  </p>
+
+  <div class="tabs">
+    <button class="tab active" data-calc="arbitrage">Arbitrage</button>
+    <button class="tab" data-calc="hedge">Hedge</button>
+    <button class="tab" data-calc="promo">Promo conversion</button>
+    <button class="tab" data-calc="odds">Odds converter</button>
+    <button class="tab" data-calc="devig">De-vig</button>
+  </div>
+
+  <!-- Arbitrage -->
+  <div class="calc active" id="calc-arbitrage">
+    <div class="grid">
+      <div class="panel">
+        <h2>Inputs</h2>
+        <label><span class="lbl">Decimal odds — Side A</span>
+          <input id="arb-a" type="number" step="0.01" value="2.10"></label>
+        <label><span class="lbl">Decimal odds — Side B</span>
+          <input id="arb-b" type="number" step="0.01" value="2.05"></label>
+        <label><span class="lbl">Total stake (USD)</span>
+          <input id="arb-stake" type="number" step="1" value="100"></label>
+      </div>
+      <div class="panel" id="arb-result"><div class="empty">Enter inputs.</div></div>
+    </div>
+  </div>
+
+  <!-- Hedge -->
+  <div class="calc" id="calc-hedge">
+    <div class="grid">
+      <div class="panel">
+        <h2>Existing bet</h2>
+        <label><span class="lbl">Original decimal odds</span>
+          <input id="hedge-orig-dec" type="number" step="0.01" value="3.00"></label>
+        <label><span class="lbl">Original stake (USD)</span>
+          <input id="hedge-orig-stake" type="number" step="1" value="100"></label>
+        <h2 style="margin-top: 20px">Hedge</h2>
+        <label><span class="lbl">Hedge decimal odds (other side)</span>
+          <input id="hedge-dec" type="number" step="0.01" value="1.80"></label>
+        <label><span class="lbl">Mode</span>
+          <select id="hedge-mode">
+            <option value="equal">Equal profit either way</option>
+            <option value="breakeven">Break-even on hedge side (free-roll the original)</option>
+            <option value="no_hedge">No hedge (compare unhedged)</option>
+          </select>
+        </label>
+      </div>
+      <div class="panel" id="hedge-result"><div class="empty">Enter inputs.</div></div>
+    </div>
+  </div>
+
+  <!-- Promo conversion -->
+  <div class="calc" id="calc-promo">
+    <div class="grid">
+      <div class="panel">
+        <h2>Inputs</h2>
+        <label><span class="lbl">Free-bet amount (USD)</span>
+          <input id="promo-amt" type="number" step="1" value="50"></label>
+        <label><span class="lbl">Decimal odds on the free bet</span>
+          <input id="promo-fb-dec" type="number" step="0.01" value="4.00"></label>
+        <label><span class="lbl">Hedge decimal odds (other side at a sharp book)</span>
+          <input id="promo-hedge-dec" type="number" step="0.01" value="1.35"></label>
+        <label><span class="lbl">Is the stake returned on a win?</span>
+          <select id="promo-stake-returned">
+            <option value="false" selected>No (standard "free bet" / SNR)</option>
+            <option value="true">Yes (boosted-odds bet placed with own money)</option>
+          </select>
+        </label>
+      </div>
+      <div class="panel" id="promo-result"><div class="empty">Enter inputs.</div></div>
+    </div>
+  </div>
+
+  <!-- Odds converter -->
+  <div class="calc" id="calc-odds">
+    <div class="grid">
+      <div class="panel">
+        <h2>Convert</h2>
+        <label><span class="lbl">Input value</span>
+          <input id="odds-value" type="number" step="any" value="2.50"></label>
+        <label><span class="lbl">Input format</span>
+          <select id="odds-format">
+            <option value="decimal" selected>Decimal (e.g. 2.50)</option>
+            <option value="american">American (e.g. +150 or -200)</option>
+            <option value="implied_pct">Implied % (e.g. 40)</option>
+            <option value="implied_frac">Implied fraction (e.g. 0.40)</option>
+          </select>
+        </label>
+      </div>
+      <div class="panel" id="odds-result"><div class="empty">Enter inputs.</div></div>
+    </div>
+  </div>
+
+  <!-- De-vig -->
+  <div class="calc" id="calc-devig">
+    <div class="grid">
+      <div class="panel">
+        <h2>2-way market</h2>
+        <label><span class="lbl">Book implied % — Side A</span>
+          <input id="devig-a" type="number" step="0.1" value="55"></label>
+        <label><span class="lbl">Book implied % — Side B</span>
+          <input id="devig-b" type="number" step="0.1" value="50"></label>
+        <p class="small">
+          Devig strips the bookmaker's hold (vig) from the listed odds to
+          estimate the true implied probability. Same proportional method the
+          dashboard uses for the de-vigged divergence in /track-record.
+        </p>
+      </div>
+      <div class="panel" id="devig-result"><div class="empty">Enter inputs.</div></div>
+    </div>
+  </div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function fmt(n, d=2) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPct(n, d=2) { return n == null ? "—" : Number(n).toFixed(d) + "%"; }
+function fmtUSD(n) { return n == null ? "—" : (n >= 0 ? "+$" : "-$") + Math.abs(n).toFixed(2); }
+function rowsHTML(rows) {
+  return rows.map(r =>
+    `<div class="row"><span class="label">${r.label}</span>` +
+    `<span class="val ${r.cls || ''}">${r.val}</span></div>`
+  ).join("");
+}
+function errorHTML(msg) {
+  return `<div class="err">${msg}</div>`;
+}
+function moneyClass(n) { return n == null ? "" : n > 0 ? "green" : n < 0 ? "red" : ""; }
+
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+// ── Arbitrage
+async function runArbitrage() {
+  const a = parseFloat($("arb-a").value);
+  const b = parseFloat($("arb-b").value);
+  const stake = parseFloat($("arb-stake").value);
+  try {
+    const d = await post("/api/calc/arbitrage", {
+      decimal_odds_a: a, decimal_odds_b: b, total_stake: stake,
+    });
+    const pillCls = d.is_arbitrage ? "" : "no";
+    const pillTxt = d.is_arbitrage ? "Guaranteed profit" : "No arbitrage";
+    $("arb-result").innerHTML =
+      '<h2>Result <span class="pill ' + pillCls + '">' + pillTxt + '</span></h2>' +
+      rowsHTML([
+        {label: "Stake on Side A", val: fmtUSD(d.stake_a)},
+        {label: "Stake on Side B", val: fmtUSD(d.stake_b)},
+        {label: "Guaranteed payout (either side)", val: fmtUSD(d.payout)},
+        {label: "Guaranteed profit", val: fmtUSD(d.profit), cls: moneyClass(d.profit)},
+        {label: "Profit margin", val: fmtPct(d.profit_margin_pct, 3), cls: moneyClass(d.profit_margin_pct)},
+        {label: "Combined implied", val: fmtPct(d.total_implied_pct, 3)},
+      ]);
+  } catch (e) {
+    $("arb-result").innerHTML = '<h2>Result</h2>' + errorHTML(e.message);
+  }
+}
+
+// ── Hedge
+async function runHedge() {
+  const orig = parseFloat($("hedge-orig-dec").value);
+  const stake = parseFloat($("hedge-orig-stake").value);
+  const hd = parseFloat($("hedge-dec").value);
+  const mode = $("hedge-mode").value;
+  try {
+    const d = await post("/api/calc/hedge", {
+      original_decimal: orig, original_stake: stake,
+      hedge_decimal: hd, mode: mode,
+    });
+    $("hedge-result").innerHTML =
+      '<h2>Result — ' + mode + '</h2>' +
+      rowsHTML([
+        {label: "Hedge stake", val: fmtUSD(d.hedge_stake)},
+        {label: "Total outlay (both legs)", val: fmtUSD(d.total_outlay)},
+        {label: "Profit if original wins",
+         val: fmtUSD(d.profit_if_original_wins),
+         cls: moneyClass(d.profit_if_original_wins)},
+        {label: "Profit if hedge wins",
+         val: fmtUSD(d.profit_if_hedge_wins),
+         cls: moneyClass(d.profit_if_hedge_wins)},
+        {label: "Guaranteed min profit",
+         val: fmtUSD(d.guaranteed_min_profit),
+         cls: moneyClass(d.guaranteed_min_profit)},
+      ]);
+  } catch (e) {
+    $("hedge-result").innerHTML = '<h2>Result</h2>' + errorHTML(e.message);
+  }
+}
+
+// ── Promo conversion
+async function runPromo() {
+  const amt = parseFloat($("promo-amt").value);
+  const fb = parseFloat($("promo-fb-dec").value);
+  const hd = parseFloat($("promo-hedge-dec").value);
+  const sr = $("promo-stake-returned").value === "true";
+  try {
+    const d = await post("/api/calc/promo-conversion", {
+      free_bet_amount: amt, free_bet_decimal: fb,
+      hedge_decimal: hd, stake_returned: sr,
+    });
+    $("promo-result").innerHTML =
+      '<h2>Result</h2>' +
+      rowsHTML([
+        {label: "Hedge stake at other book", val: fmtUSD(d.hedge_stake)},
+        {label: "Guaranteed cash returned", val: fmtUSD(d.guaranteed_cash), cls: "green"},
+        {label: "Conversion rate (cash / face)", val: fmtPct(d.conversion_rate_pct), cls: "green"},
+      ]) +
+      '<p class="small" style="margin-top:12px">' +
+      'You\'re trading a ' + (sr ? "boosted-odds" : "promotional free") +
+      ' bet of $' + amt.toFixed(0) + ' for a guaranteed $' +
+      d.guaranteed_cash.toFixed(2) + ' in cash. That\'s a ' +
+      fmtPct(d.conversion_rate_pct) + ' conversion rate ' +
+      '(industry standard ranges 65–80% for SNR free bets).</p>';
+  } catch (e) {
+    $("promo-result").innerHTML = '<h2>Result</h2>' + errorHTML(e.message);
+  }
+}
+
+// ── Odds converter
+async function runOdds() {
+  const v = parseFloat($("odds-value").value);
+  const fmt_ = $("odds-format").value;
+  try {
+    const d = await post("/api/calc/odds-convert", {value: v, format: fmt_});
+    $("odds-result").innerHTML =
+      '<h2>Equivalent</h2>' +
+      rowsHTML([
+        {label: "Decimal", val: d.decimal.toFixed(4)},
+        {label: "American", val: (d.american >= 0 ? "+" : "") + d.american.toFixed(0)},
+        {label: "Implied %", val: fmtPct(d.implied_pct, 3)},
+        {label: "Implied fraction", val: d.implied_frac.toFixed(5)},
+      ]);
+  } catch (e) {
+    $("odds-result").innerHTML = '<h2>Equivalent</h2>' + errorHTML(e.message);
+  }
+}
+
+// ── De-vig
+async function runDevig() {
+  const a = parseFloat($("devig-a").value);
+  const b = parseFloat($("devig-b").value);
+  try {
+    const d = await post("/api/calc/devig", {prob_a_pct: a, prob_b_pct: b});
+    $("devig-result").innerHTML =
+      '<h2>Fair prices</h2>' +
+      rowsHTML([
+        {label: "Total book-implied", val: fmtPct(d.total_implied_pct, 3)},
+        {label: "Vig (overround)", val: fmtPct(d.vig_pct, 3),
+         cls: d.vig_pct > 0 ? "red" : "green"},
+        {label: "Fair prob — Side A", val: fmtPct(d.fair_prob_a_pct, 3)},
+        {label: "Fair prob — Side B", val: fmtPct(d.fair_prob_b_pct, 3)},
+      ]);
+  } catch (e) {
+    $("devig-result").innerHTML = '<h2>Fair prices</h2>' + errorHTML(e.message);
+  }
+}
+
+// Tabs + auto-recompute on input change
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".calc").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    $("calc-" + t.dataset.calc).classList.add("active");
+  });
+});
+
+["arb-a", "arb-b", "arb-stake"].forEach(id => $(id).addEventListener("input", runArbitrage));
+["hedge-orig-dec", "hedge-orig-stake", "hedge-dec", "hedge-mode"].forEach(id =>
+  $(id).addEventListener("input", runHedge));
+["promo-amt", "promo-fb-dec", "promo-hedge-dec", "promo-stake-returned"].forEach(id =>
+  $(id).addEventListener("input", runPromo));
+["odds-value", "odds-format"].forEach(id => $(id).addEventListener("input", runOdds));
+["devig-a", "devig-b"].forEach(id => $(id).addEventListener("input", runDevig));
+
+runArbitrage(); runHedge(); runPromo(); runOdds(); runDevig();
+</script>
+</body>
+</html>

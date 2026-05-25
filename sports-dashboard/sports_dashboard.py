@@ -7847,6 +7847,219 @@ DEFAULT_MAX_PER_BET_PCT = 5.0     # never risk more than 5% of bankroll per bet
 DEFAULT_DRAWDOWN_ALERT_PCT = 10.0  # alert when down 10% from starting
 
 
+# ---------------------------------------------------------------------------
+# Bettor calculators — pure math, no external state, used by /calculators
+# ---------------------------------------------------------------------------
+#
+# Standalone tools every sharp bettor needs:
+#   - odds_convert: American ↔ Decimal ↔ implied probability
+#   - arb_calculator: split a stake across opposing prices to lock in profit
+#   - hedge_calculator: given an existing bet, what stake on the other side?
+#   - promo_conversion: convert a "free bet" or boosted-odds offer to cash
+#   - devig: strip vig from a 2-way market to estimate the fair line
+#
+# Implemented as pure functions over `dict` inputs (matches the rest of the
+# file's style) so each is trivially testable with no fixtures.
+
+def calc_odds_convert(value: float | int, fmt: str) -> dict:
+    """Convert between odds formats. `fmt` is the input format:
+    'american' | 'decimal' | 'implied_pct' | 'implied_frac'.
+
+    Returns all four representations + the canonical decimal price.
+    """
+    fmt = (fmt or "").lower()
+    v = float(value)
+
+    if fmt == "american":
+        if v == 0 or v == -100 or v == 100:
+            raise ValueError("American odds cannot be 0 or ±100 exactly")
+        if v > 0:
+            decimal = 1.0 + (v / 100.0)
+        else:
+            decimal = 1.0 + (100.0 / abs(v))
+    elif fmt == "decimal":
+        if v <= 1.0:
+            raise ValueError("Decimal odds must be > 1.0")
+        decimal = v
+    elif fmt == "implied_pct":
+        if not (0.0 < v < 100.0):
+            raise ValueError("Implied % must be in (0, 100)")
+        decimal = 100.0 / v
+    elif fmt == "implied_frac":
+        if not (0.0 < v < 1.0):
+            raise ValueError("Implied fraction must be in (0, 1)")
+        decimal = 1.0 / v
+    else:
+        raise ValueError(f"unknown format: {fmt!r}")
+
+    implied_frac = 1.0 / decimal
+    implied_pct = implied_frac * 100.0
+    # American — symmetric inverse of the input conversion above.
+    # At exactly 50% (decimal 2.00 / evens), convention is +100, not -100,
+    # so the > here is strict, not >=.
+    if implied_frac > 0.5:
+        american = -100.0 * implied_frac / (1.0 - implied_frac)
+    else:
+        american = (1.0 - implied_frac) / implied_frac * 100.0
+
+    return {
+        "decimal": round(decimal, 4),
+        "american": round(american, 0),
+        "implied_pct": round(implied_pct, 3),
+        "implied_frac": round(implied_frac, 5),
+    }
+
+
+def calc_arbitrage(decimal_odds_a: float, decimal_odds_b: float,
+                   total_stake: float = 100.0) -> dict:
+    """Given two opposing decimal odds, split `total_stake` so payout is
+    identical regardless of outcome.
+
+    profit > 0 = guaranteed arbitrage; profit == 0 = no edge; profit < 0
+    = no arb exists. We return the breakdown anyway so the UI can show
+    "this combination has -1.2% hold" instead of refusing to compute.
+    """
+    if decimal_odds_a <= 1.0 or decimal_odds_b <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if total_stake <= 0:
+        raise ValueError("total_stake must be > 0")
+
+    implied_a = 1.0 / decimal_odds_a
+    implied_b = 1.0 / decimal_odds_b
+    total_implied = implied_a + implied_b
+
+    stake_a = total_stake * implied_a / total_implied
+    stake_b = total_stake - stake_a
+    payout = stake_a * decimal_odds_a   # same as stake_b * decimal_odds_b
+    profit = payout - total_stake
+    margin_pct = (1.0 / total_implied - 1.0) * 100.0
+    is_arb = total_implied < 1.0
+
+    return {
+        "stake_a": round(stake_a, 2),
+        "stake_b": round(stake_b, 2),
+        "payout": round(payout, 2),
+        "profit": round(profit, 2),
+        "profit_margin_pct": round(margin_pct, 3),
+        "total_implied_pct": round(total_implied * 100.0, 3),
+        "is_arbitrage": is_arb,
+    }
+
+
+def calc_hedge(original_decimal: float, original_stake: float,
+               hedge_decimal: float, mode: str = "equal") -> dict:
+    """Compute the hedge stake against an existing position.
+
+    modes:
+      'equal'     — equal payout regardless of outcome (guarantees a
+                    specific profit/loss)
+      'breakeven' — hedge just enough to recover the original stake;
+                    keep upside on the original
+      'no_hedge'  — return zero stake; useful for showing the no-hedge
+                    P&L side-by-side
+    """
+    if original_decimal <= 1.0 or hedge_decimal <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if original_stake <= 0:
+        raise ValueError("original_stake must be > 0")
+
+    original_payout = original_stake * original_decimal
+
+    if mode == "equal":
+        # Solve S' such that hedge_decimal * S' == original_payout
+        hedge_stake = original_payout / hedge_decimal
+    elif mode == "breakeven":
+        # Solve S' such that hedge_decimal * S' == original_stake + S'
+        # → S' * (hedge_decimal - 1) = original_stake
+        # → S' = original_stake / (hedge_decimal - 1)
+        hedge_stake = original_stake / (hedge_decimal - 1.0)
+    elif mode == "no_hedge":
+        hedge_stake = 0.0
+    else:
+        raise ValueError(f"unknown hedge mode: {mode!r}")
+
+    # Payouts in each scenario (net of all stakes)
+    total_outlay = original_stake + hedge_stake
+    payout_original_wins = original_payout - total_outlay
+    payout_hedge_wins = (hedge_stake * hedge_decimal) - total_outlay
+
+    return {
+        "mode": mode,
+        "hedge_stake": round(hedge_stake, 2),
+        "total_outlay": round(total_outlay, 2),
+        "profit_if_original_wins": round(payout_original_wins, 2),
+        "profit_if_hedge_wins": round(payout_hedge_wins, 2),
+        "guaranteed_min_profit": round(
+            min(payout_original_wins, payout_hedge_wins), 2,
+        ),
+    }
+
+
+def calc_promo_conversion(free_bet_amount: float, free_bet_decimal: float,
+                          hedge_decimal: float,
+                          stake_returned: bool = False) -> dict:
+    """Convert a "free bet" / boosted-odds offer to expected cash via
+    hedging the opposite side at a real book.
+
+    stake_returned=False (standard "free bet"): you win (decimal-1)*amount
+    if the free bet wins, 0 otherwise.
+    stake_returned=True (boosted-odds bet placed with your own money):
+    you win decimal*amount if it wins.
+
+    Returns the hedge stake that maximizes the worst-case payout, plus
+    the conversion rate (cash returned / face value).
+    """
+    if free_bet_decimal <= 1.0 or hedge_decimal <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if free_bet_amount <= 0:
+        raise ValueError("free_bet_amount must be > 0")
+
+    # Payout if free bet wins (does NOT include the stake when not returned)
+    free_bet_payout_if_win = (
+        free_bet_amount * free_bet_decimal
+        if stake_returned
+        else free_bet_amount * (free_bet_decimal - 1.0)
+    )
+
+    # Maximize worst-case: hedge_stake * hedge_decimal - hedge_stake
+    #                     == free_bet_payout_if_win - hedge_stake
+    # → hedge_stake * hedge_decimal == free_bet_payout_if_win
+    # → hedge_stake = free_bet_payout_if_win / hedge_decimal
+    hedge_stake = free_bet_payout_if_win / hedge_decimal
+
+    # Guaranteed cash either way (the same in both scenarios after the maximize)
+    guaranteed_cash = free_bet_payout_if_win - hedge_stake
+    conversion_rate = guaranteed_cash / free_bet_amount
+
+    return {
+        "hedge_stake": round(hedge_stake, 2),
+        "guaranteed_cash": round(guaranteed_cash, 2),
+        "conversion_rate_pct": round(conversion_rate * 100.0, 3),
+        "free_bet_amount": float(free_bet_amount),
+        "stake_returned": stake_returned,
+    }
+
+
+def calc_devig(prob_a_pct: float, prob_b_pct: float) -> dict:
+    """Strip vig from a 2-way market. Returns fair probability for each
+    side + the implied vig percentage. Several methods exist; we use
+    the standard proportional method (the dashboard's matcher uses
+    the same approach for de-vigged divergence).
+    """
+    if not (0.0 < prob_a_pct < 100.0) or not (0.0 < prob_b_pct < 100.0):
+        raise ValueError("probabilities must be in (0, 100)")
+    total = prob_a_pct + prob_b_pct
+    fair_a = prob_a_pct / total * 100.0
+    fair_b = prob_b_pct / total * 100.0
+    vig = (total - 100.0)
+    return {
+        "fair_prob_a_pct": round(fair_a, 3),
+        "fair_prob_b_pct": round(fair_b, 3),
+        "vig_pct": round(vig, 3),
+        "total_implied_pct": round(total, 3),
+    }
+
+
 def _kelly_suggested_stake(bankroll: dict, kelly_pct: float | None) -> dict:
     """Compute a Kelly-adjusted stake suggestion for a single bet.
 
@@ -8223,6 +8436,133 @@ async def api_bankroll_suggest_stake(request: Request):
         "suggestion": suggestion,
         "in_drawdown": annotated.get("in_drawdown", False) if annotated else False,
     })
+
+
+# ---------------------------------------------------------------------------
+# Calculators (public — pure math, no auth needed)
+# ---------------------------------------------------------------------------
+
+def _float_or_400(body: dict, key: str) -> tuple[float, JSONResponse | None]:
+    """Coerce body[key] to float; return (value, None) or (0.0, response)."""
+    if key not in body:
+        return 0.0, JSONResponse(
+            {"error": f"missing required field: {key}"}, status_code=400,
+        )
+    try:
+        return float(body[key]), None
+    except (TypeError, ValueError):
+        return 0.0, JSONResponse(
+            {"error": f"{key} must be a number"}, status_code=400,
+        )
+
+
+@app.post("/api/calc/odds-convert")
+async def api_calc_odds_convert(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    value, err = _float_or_400(body, "value")
+    if err:
+        return err
+    fmt = (body.get("format") or "").strip()
+    try:
+        return JSONResponse(calc_odds_convert(value, fmt))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/arbitrage")
+async def api_calc_arbitrage(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    a, err = _float_or_400(body, "decimal_odds_a")
+    if err:
+        return err
+    b, err = _float_or_400(body, "decimal_odds_b")
+    if err:
+        return err
+    stake = body.get("total_stake", 100.0)
+    try:
+        stake = float(stake)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "total_stake must be a number"}, status_code=400)
+    try:
+        return JSONResponse(calc_arbitrage(a, b, stake))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/hedge")
+async def api_calc_hedge(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    orig_dec, err = _float_or_400(body, "original_decimal")
+    if err:
+        return err
+    orig_stake, err = _float_or_400(body, "original_stake")
+    if err:
+        return err
+    hedge_dec, err = _float_or_400(body, "hedge_decimal")
+    if err:
+        return err
+    mode = (body.get("mode") or "equal").lower()
+    try:
+        return JSONResponse(calc_hedge(orig_dec, orig_stake, hedge_dec, mode))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/promo-conversion")
+async def api_calc_promo_conversion(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    amt, err = _float_or_400(body, "free_bet_amount")
+    if err:
+        return err
+    fb_dec, err = _float_or_400(body, "free_bet_decimal")
+    if err:
+        return err
+    hedge_dec, err = _float_or_400(body, "hedge_decimal")
+    if err:
+        return err
+    stake_returned = bool(body.get("stake_returned", False))
+    try:
+        return JSONResponse(
+            calc_promo_conversion(amt, fb_dec, hedge_dec, stake_returned),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/devig")
+async def api_calc_devig(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    a, err = _float_or_400(body, "prob_a_pct")
+    if err:
+        return err
+    b, err = _float_or_400(body, "prob_b_pct")
+    if err:
+        return err
+    try:
+        return JSONResponse(calc_devig(a, b))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/calculators", response_class=HTMLResponse)
+async def calculators_page(request: Request):
+    """Public page with the standalone bettor calculators."""
+    return HTMLResponse(_load_template("calculators"))
 
 
 # ---------------------------------------------------------------------------

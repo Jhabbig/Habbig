@@ -153,6 +153,7 @@ def test_no_route_path_is_dangerously_generic():
         "/track-record", "/leaderboard", "/signal-history",
         "/player-props", "/cross-book-arbitrage", "/smart-money",
         "/poly-fills", "/steam-moves", "/trades", "/backtest",
+        "/calculators",
     }
     root_paths = set()
     for route in sd.app.routes:
