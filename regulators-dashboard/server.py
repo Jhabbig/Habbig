@@ -201,6 +201,8 @@ async def api_feed(
         "fetched_at": data["fetched_at"],
         "since_days": data["since_days"],
         "sources": data["sources"],
+        "deduped_count": data.get("deduped_count", 0),
+        "stale_sources": [s["code"] for s in data["sources"] if s.get("stale")],
         "market_sources": [
             {"name": "polymarket", "ok": poly["ok"], "count": poly["count"], "error": poly["error"]},
             {"name": "kalshi",     "ok": kal["ok"],  "count": kal["count"],  "error": kal["error"]},

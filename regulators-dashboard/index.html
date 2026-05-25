@@ -234,8 +234,9 @@
   .summary { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .source-status { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px;
                    color: var(--muted); margin-top: 12px; }
-  .source-status .src-ok::before { content: "● "; color: #56d364; }
-  .source-status .src-bad::before { content: "● "; color: #f85149; }
+  .source-status .src-ok::before    { content: "● "; color: #56d364; }
+  .source-status .src-bad::before   { content: "● "; color: #f85149; }
+  .source-status .src-stale::before { content: "● "; color: #d29922; }
   .empty { text-align: center; padding: 40px; color: var(--muted); }
   .err { color: #f85149; }
   .hint { font-size: 11px; color: var(--muted); margin-left: 8px; }
@@ -1113,10 +1114,27 @@ async function load() {
   }
 
   status.innerHTML = data.sources.map(s => {
-    const cls = s.ok ? "src-ok" : "src-bad";
-    const label = s.ok ? `${s.code}: ${s.count}` : `${s.code}: unavailable`;
-    return `<span class="${cls}" title="${escapeHtml(s.rss_url)}">${escapeHtml(label)}</span>`;
+    let cls, label;
+    if (!s.ok) {
+      cls = "src-bad";
+      label = `${s.code}: unavailable`;
+    } else if (s.stale) {
+      cls = "src-stale";
+      const lastDate = (s.latest_published || "").slice(0, 10);
+      label = `${s.code}: stale (last ${lastDate})`;
+    } else {
+      cls = "src-ok";
+      label = `${s.code}: ${s.count}`;
+    }
+    const tooltip = s.rss_url + (s.stale ? ` — newest item: ${s.latest_published}` : '');
+    return `<span class="${cls}" title="${escapeHtml(tooltip)}">${escapeHtml(label)}</span>`;
   }).join("");
+
+  // v2.5: dedup info in the meta line so users see when cross-source
+  // overlap is being filtered.
+  if (data.deduped_count) {
+    meta.textContent = meta.textContent + ` · ${data.deduped_count} duplicate${data.deduped_count === 1 ? "" : "s"} merged`;
+  }
 }
 
 document.querySelectorAll(".chip[data-jx]").forEach(el => {
