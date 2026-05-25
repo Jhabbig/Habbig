@@ -2526,7 +2526,7 @@ def _require_admin_user(request: Request) -> dict:
     return user
 
 
-def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", caller_level: int = 1, csrf_token: str = "") -> dict:
+def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", caller_level: int = 1, csrf_token: str = "", leads_status: str = "new") -> dict:
     """Build the template context for the admin page."""
     tokens = db.list_invite_tokens()
     users = db.list_all_users()
@@ -2749,16 +2749,19 @@ def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", c
         "raw_key_rows": _build_key_rows(csrf_token=csrf_token),
         "raw_enquiry_rows": _build_enquiry_rows(csrf_token=csrf_token),
         "raw_revenue_content": _build_revenue_content(),
-        "raw_leads_panel": _build_leads_panel(csrf_token=csrf_token),
+        "raw_leads_panel": _build_leads_panel(csrf_token=csrf_token, status_view=leads_status),
     }
 
 
-def _build_leads_panel(csrf_token: str = "") -> str:
+def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
     """Render the customer-finding-bot leads list for the admin Leads tab.
 
     Every action button is human-driven: open the source URL in a new tab,
     copy the drafted message to the clipboard, then mark contacted/skip/snooze.
     Nothing sends autonomously.
+
+    `status_view` controls which bucket is rendered (new / contacted /
+    snoozed / skipped). Client-side JS filters further by source / dashboard.
     """
     import datetime as _dt
 
@@ -2767,40 +2770,141 @@ def _build_leads_panel(csrf_token: str = "") -> str:
     contacted_n = counts.get("contacted", 0)
     skipped_n = counts.get("skipped", 0)
     snoozed_n = counts.get("snoozed", 0)
+    archived_n = counts.get("archived", 0)
 
-    rows = leads_store.list_leads(status="new", limit=200)
+    conv = leads_store.conversion_stats()
+    replied_n = conv.get("replied", 0)
+    signed_up_n = conv.get("signed_up", 0)
+    no_reply_n = conv.get("no_reply", 0)
+    sample = contacted_n  # outcome rate is over all contacted
+    conv_pct = f"{100*signed_up_n/sample:.0f}%" if sample else "—"
+
+    rows = leads_store.list_leads(status=status_view, limit=300)
+
+    # Build source/dashboard filter chips from what's actually present in
+    # the visible rows so we don't list empty options.
+    sources_present = sorted({r["source"] for r in rows})
+    dashboards_present = sorted({r["dashboard_key"] for r in rows})
+
+    csrf_esc = html.escape(csrf_token)
+
+    def _status_tab(label: str, key: str, n: int) -> str:
+        active = " style=\"font-weight:600;color:var(--accent);border-bottom:2px solid var(--accent);padding-bottom:6px\"" if key == status_view else " style=\"color:var(--text-secondary);padding-bottom:6px\""
+        return f'<a href="?leads_status={key}#leads"{active}>{html.escape(label)} <span style="color:var(--text-muted)">({n})</span></a>'
+
+    status_bar = (
+        '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:13px">'
+        + _status_tab("New", "new", new_n)
+        + _status_tab("Contacted", "contacted", contacted_n)
+        + _status_tab("Snoozed", "snoozed", snoozed_n)
+        + _status_tab("Skipped", "skipped", skipped_n)
+        + _status_tab("Archived", "archived", archived_n)
+        + '</div>'
+    )
+
+    metrics = (
+        '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text-muted)">'
+        f'  <span>signed-up <strong style="color:var(--green)">{signed_up_n}</strong></span>'
+        f'  <span>replied <strong style="color:var(--text-primary)">{replied_n}</strong></span>'
+        f'  <span>no-reply <strong style="color:var(--text-primary)">{no_reply_n}</strong></span>'
+        f'  <span>conversion <strong style="color:var(--text-primary)">{conv_pct}</strong></span>'
+        '  <span style="margin-left:auto">Reddit posts + comments · HN · Polymarket · polls every 30 min, read-only.</span>'
+        '</div>'
+    )
+
+    # Filter chips (client-side toggles).
+    src_chips = ['<button type="button" class="filter-btn active" onclick="leadsFilter(\'source\',\'all\',this)">All sources</button>']
+    for s in sources_present:
+        src_chips.append(
+            f'<button type="button" class="filter-btn" onclick="leadsFilter(\'source\',{json.dumps(s)},this)">{html.escape(s)}</button>'
+        )
+    dash_chips = ['<button type="button" class="filter-btn active" onclick="leadsFilter(\'dashboard\',\'all\',this)">All dashboards</button>']
+    for d in dashboards_present:
+        name = DASHBOARDS.get(d, {}).get("display_name", d)
+        dash_chips.append(
+            f'<button type="button" class="filter-btn" onclick="leadsFilter(\'dashboard\',{json.dumps(d)},this)">{html.escape(name)}</button>'
+        )
+    chips = (
+        '<div class="filter-bar" style="margin-bottom:10px;flex-wrap:wrap">' + "".join(src_chips) + '</div>'
+        '<div class="filter-bar" style="margin-bottom:14px;flex-wrap:wrap">' + "".join(dash_chips) + '</div>'
+    )
+
     if not rows:
         body = (
             '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">'
-            'No new leads yet. The bot polls Reddit, Hacker News, and Polymarket '
-            'every 30 minutes — fresh ones will appear here.'
+            f'No leads in this view ({html.escape(status_view)}). '
+            'The bot polls Reddit (posts + comments), Hacker News, and Polymarket every 30 minutes.'
             '</div></div></div>'
         )
     else:
         parts = []
         for r in rows:
-            topic = topic_by_key(r["dashboard_key"])
             dash_name = DASHBOARDS.get(r["dashboard_key"], {}).get("display_name", r["dashboard_key"])
             posted = ""
             if r["posted_at"]:
                 posted = _dt.datetime.fromtimestamp(r["posted_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            source_badge = html.escape(r["source"])
+            source = r["source"]
+            source_esc = html.escape(source)
             title = html.escape((r["title"] or "(no title)")[:200])
             snippet = html.escape((r["snippet"] or "")[:400])
             author = html.escape(r["author"] or "anon")
             url = html.escape(r["url"] or "")
             draft = html.escape(r["draft"] or "")
             score = int(r["score"] or 0)
-            csrf_hidden = (
-                f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
+            ref = html.escape(r["ref_code"] or "")
+            outcome = r["outcome"] if "outcome" in r.keys() else ""
+
+            csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{csrf_esc}">'
+
+            # Actions vary by current status.
+            actions: list[str] = []
+            actions.append(
+                f'<a href="{url}" target="_blank" rel="noopener noreferrer" class="btn btn-primary-outline" style="font-size:12px">Open source ↗</a>'
             )
+            actions.append(
+                f'<button type="button" class="btn btn-primary-outline" style="font-size:12px" onclick="copyDraft({r["id"]}, this)">Copy draft</button>'
+            )
+            if status_view == "new":
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/contacted" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-primary" style="font-size:12px">Mark contacted</button></form>'
+                )
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/snooze" style="display:inline">{csrf_hidden}<input type="hidden" name="days" value="7"><button type="submit" class="btn btn-primary-outline" style="font-size:12px">Snooze 7d</button></form>'
+                )
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/skip" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-danger" style="font-size:12px">Skip</button></form>'
+                )
+            elif status_view == "contacted":
+                # Outcome buttons — closes the feedback loop.
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/outcome" style="display:inline">{csrf_hidden}<input type="hidden" name="outcome" value="signed_up"><button type="submit" class="btn btn-primary" style="font-size:12px;background:var(--green);border-color:var(--green)">Signed up</button></form>'
+                )
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/outcome" style="display:inline">{csrf_hidden}<input type="hidden" name="outcome" value="replied"><button type="submit" class="btn btn-primary-outline" style="font-size:12px">Replied</button></form>'
+                )
+                actions.append(
+                    f'<form method="post" action="/admin/leads/{r["id"]}/outcome" style="display:inline">{csrf_hidden}<input type="hidden" name="outcome" value="no_reply"><button type="submit" class="btn btn-primary-outline" style="font-size:12px">No reply</button></form>'
+                )
+
+            outcome_badge = ""
+            if outcome:
+                colour = "var(--green)" if outcome == "signed_up" else "var(--text-secondary)"
+                outcome_badge = f'<span class="badge" style="background:var(--surface);color:{colour}">outcome: {html.escape(outcome)}</span>'
+
+            ref_badge = (
+                f'<span class="badge" style="background:var(--surface);color:var(--text-muted);font-family:monospace">ref {ref}</span>'
+                if ref else ""
+            )
+
             parts.append(
-                f'<div class="admin-row" style="flex-direction:column;align-items:stretch;gap:10px">'
+                f'<div class="admin-row lead-row" data-source="{source_esc}" data-dashboard="{html.escape(r["dashboard_key"])}" style="flex-direction:column;align-items:stretch;gap:10px">'
                 f'  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-                f'    <span class="badge" style="background:var(--accent-light);color:var(--accent)">{source_badge}</span>'
+                f'    <span class="badge" style="background:var(--accent-light);color:var(--accent)">{source_esc}</span>'
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">→ {html.escape(dash_name)}</span>'
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">score {score}</span>'
-                f'    <span style="font-size:12px;color:var(--text-muted);margin-left:auto">{html.escape(author)} · {posted}</span>'
+                f'    {ref_badge}'
+                f'    {outcome_badge}'
+                f'    <span style="font-size:12px;color:var(--text-muted);margin-left:auto">{author} · {posted}</span>'
                 f'  </div>'
                 f'  <div style="font-weight:500;color:var(--text-primary)">{title}</div>'
                 f'  <div style="font-size:13px;color:var(--text-secondary);white-space:pre-wrap">{snippet}</div>'
@@ -2808,27 +2912,15 @@ def _build_leads_panel(csrf_token: str = "") -> str:
                 f'    <summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">Drafted message</summary>'
                 f'    <textarea readonly id="draft-{r["id"]}" style="width:100%;min-height:90px;margin-top:8px;background:var(--surface);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);padding:8px;font-size:13px;font-family:inherit">{draft}</textarea>'
                 f'  </details>'
-                f'  <div style="display:flex;gap:8px;flex-wrap:wrap">'
-                f'    <a href="{url}" target="_blank" rel="noopener noreferrer" class="btn btn-primary-outline" style="font-size:12px">Open source ↗</a>'
-                f'    <button type="button" class="btn btn-primary-outline" style="font-size:12px" onclick="copyDraft({r["id"]}, this)">Copy draft</button>'
-                f'    <form method="post" action="/admin/leads/{r["id"]}/contacted" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-primary" style="font-size:12px">Mark contacted</button></form>'
-                f'    <form method="post" action="/admin/leads/{r["id"]}/snooze" style="display:inline">{csrf_hidden}<input type="hidden" name="days" value="7"><button type="submit" class="btn btn-primary-outline" style="font-size:12px">Snooze 7d</button></form>'
-                f'    <form method="post" action="/admin/leads/{r["id"]}/skip" style="display:inline">{csrf_hidden}<button type="submit" class="btn btn-danger" style="font-size:12px">Skip</button></form>'
-                f'  </div>'
+                f'  <div style="display:flex;gap:8px;flex-wrap:wrap">' + "".join(actions) + '  </div>'
                 f'</div>'
             )
         body = "".join(parts)
 
-    header = (
-        f'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px;font-size:13px;color:var(--text-secondary)">'
-        f'  <span><strong style="color:var(--text-primary)">{new_n}</strong> new</span>'
-        f'  <span><strong style="color:var(--text-primary)">{contacted_n}</strong> contacted</span>'
-        f'  <span><strong style="color:var(--text-primary)">{snoozed_n}</strong> snoozed</span>'
-        f'  <span><strong style="color:var(--text-primary)">{skipped_n}</strong> skipped</span>'
-        f'  <span style="margin-left:auto;color:var(--text-muted)">Polls every 30 min — read-only across all platforms.</span>'
-        f'</div>'
+    return (
+        status_bar + metrics + chips +
+        '<div class="admin-list lead-list" style="display:flex;flex-direction:column;gap:12px">' + body + '</div>'
     )
-    return header + '<div class="admin-list" style="display:flex;flex-direction:column;gap:12px">' + body + '</div>'
 
 
 def _build_key_rows(csrf_token: str = "") -> str:
@@ -3071,7 +3163,10 @@ def _build_revenue_content() -> str:
 async def admin_page(request: Request):
     user = _require_admin_user(request)
     csrf_token = _get_csrf_token(request)
-    ctx = _build_admin_context(caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
+    leads_status = request.query_params.get("leads_status", "new")
+    if leads_status not in ("new", "contacted", "snoozed", "skipped", "archived"):
+        leads_status = "new"
+    ctx = _build_admin_context(caller_level=user.get("admin_level", 1), csrf_token=csrf_token, leads_status=leads_status)
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
 
 
@@ -3341,7 +3436,7 @@ async def admin_lead_mark_contacted(request: Request, lead_id: int):
     if not _validate_csrf(request, form.get("_csrf_token", "")):
         return _csrf_error()
     leads_store.set_status(lead_id, "contacted", note=f"by {admin['email']}")
-    return RedirectResponse(url="/admin#leads", status_code=303)
+    return RedirectResponse(url="/admin?leads_status=new#leads", status_code=303)
 
 
 @app.post("/admin/leads/{lead_id}/skip")
@@ -3351,7 +3446,7 @@ async def admin_lead_skip(request: Request, lead_id: int):
     if not _validate_csrf(request, form.get("_csrf_token", "")):
         return _csrf_error()
     leads_store.set_status(lead_id, "skipped", note=f"by {admin['email']}")
-    return RedirectResponse(url="/admin#leads", status_code=303)
+    return RedirectResponse(url="/admin?leads_status=new#leads", status_code=303)
 
 
 @app.post("/admin/leads/{lead_id}/snooze")
@@ -3367,6 +3462,19 @@ async def admin_lead_snooze(request: Request, lead_id: int):
     until = int(time.time()) + days * 86400
     leads_store.snooze(lead_id, until)
     return RedirectResponse(url="/admin#leads", status_code=303)
+
+
+@app.post("/admin/leads/{lead_id}/outcome")
+async def admin_lead_outcome(request: Request, lead_id: int):
+    _require_admin_user(request)
+    form = await request.form()
+    if not _validate_csrf(request, form.get("_csrf_token", "")):
+        return _csrf_error()
+    outcome = (form.get("outcome") or "").strip()
+    if outcome not in ("replied", "signed_up", "no_reply"):
+        raise HTTPException(status_code=400, detail="Invalid outcome")
+    leads_store.set_outcome(lead_id, outcome)
+    return RedirectResponse(url="/admin?leads_status=contacted#leads", status_code=303)
 
 
 def _can_manage_user(admin: dict, target_user_id: int) -> bool:

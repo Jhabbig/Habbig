@@ -175,7 +175,11 @@ CREATE TABLE IF NOT EXISTS leads (
     snoozed_until   INTEGER,
     posted_at       INTEGER NOT NULL DEFAULT 0,
     discovered_at   INTEGER NOT NULL,
-    updated_at      INTEGER NOT NULL
+    updated_at      INTEGER NOT NULL,
+    ref_code        TEXT NOT NULL DEFAULT '',
+    outcome         TEXT NOT NULL DEFAULT '',
+    outcome_at      INTEGER,
+    archived_at     INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status, score);
@@ -266,6 +270,17 @@ def init_db() -> None:
         order_cols = {row["name"] for row in c.execute("PRAGMA table_info(trading_orders)")}
         if "source_dashboard" not in order_cols:
             c.execute("ALTER TABLE trading_orders ADD COLUMN source_dashboard TEXT")
+        # leads migrations — for DBs that pre-date the v2 customer-bot columns.
+        lead_cols = {row["name"] for row in c.execute("PRAGMA table_info(leads)")}
+        if lead_cols:  # table exists
+            if "ref_code" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN ref_code TEXT NOT NULL DEFAULT ''")
+            if "outcome" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN outcome TEXT NOT NULL DEFAULT ''")
+            if "outcome_at" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN outcome_at INTEGER")
+            if "archived_at" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN archived_at INTEGER")
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────

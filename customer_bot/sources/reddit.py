@@ -55,3 +55,47 @@ async def fetch(client: httpx.AsyncClient, subreddit: str, limit: int = 25) -> A
             engagement=int(p.get("ups") or 0) + int(p.get("num_comments") or 0),
             context_label=f"r/{subreddit}",
         )
+
+
+async def fetch_comments(client: httpx.AsyncClient, subreddit: str, limit: int = 50) -> AsyncIterator[RawLead]:
+    """Poll the comments stream — far higher signal than top-level posts.
+
+    Most people don't *post* asking for tools; they *comment* in a thread
+    saying "anyone know a good X". `link_title` gives the parent thread so
+    drafted replies can reference context.
+    """
+    url = f"https://www.reddit.com/r/{subreddit}/comments.json?limit={limit}"
+    try:
+        r = await client.get(url, headers={"User-Agent": USER_AGENT}, timeout=15.0)
+    except httpx.HTTPError as exc:
+        log.warning("Reddit comment fetch failed for r/%s: %s", subreddit, exc)
+        return
+    if r.status_code != 200:
+        log.warning("Reddit r/%s comments returned %d", subreddit, r.status_code)
+        return
+    try:
+        data = r.json()
+    except ValueError:
+        return
+
+    for child in (data.get("data", {}).get("children") or []):
+        c = child.get("data") or {}
+        comment_id = c.get("id")
+        if not comment_id:
+            continue
+        body = c.get("body") or ""
+        # Reddit's [deleted] / [removed] sentinels.
+        if body in ("[deleted]", "[removed]") or not body.strip():
+            continue
+        permalink = c.get("permalink") or ""
+        yield RawLead(
+            source="reddit_comment",
+            source_id=f"reddit_comment:{comment_id}",
+            url=f"https://www.reddit.com{permalink}" if permalink else "",
+            author=c.get("author") or "",
+            title=c.get("link_title") or "",   # parent thread title for context
+            body=body,
+            posted_at=int(c.get("created_utc") or 0),
+            engagement=int(c.get("ups") or 0),
+            context_label=f"r/{subreddit} (comment)",
+        )

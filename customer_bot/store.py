@@ -11,9 +11,11 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 DB_PATH = Path(__file__).resolve().parent.parent / "gateway" / "auth.db"
+
+VALID_OUTCOMES = ("replied", "signed_up", "no_reply", "")
 
 
 def _connect() -> sqlite3.Connection:
@@ -46,6 +48,7 @@ def upsert_lead(
     score: int,
     draft: str,
     posted_at: int,
+    ref_code: str = "",
 ) -> bool:
     """Insert a lead if (source, source_id) is new. Returns True if inserted."""
     now = int(time.time())
@@ -56,29 +59,48 @@ def upsert_lead(
                 INSERT INTO leads
                     (source, source_id, url, author, title, snippet,
                      dashboard_key, score, draft, status, posted_at,
-                     discovered_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
+                     discovered_at, updated_at, ref_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)
                 """,
                 (source, source_id, url, author, title, snippet,
-                 dashboard_key, score, draft, posted_at, now, now),
+                 dashboard_key, score, draft, posted_at, now, now, ref_code),
             )
             return True
         except sqlite3.IntegrityError:
             return False
 
 
-def list_leads(status: str = "new", limit: int = 200) -> list[sqlite3.Row]:
+def list_leads(
+    status: Optional[str] = "new",
+    *,
+    source: Optional[str] = None,
+    dashboard_key: Optional[str] = None,
+    limit: int = 300,
+) -> list[sqlite3.Row]:
+    """List leads, optionally filtered by status / source / dashboard.
+
+    Pass `status=None` to ignore status filtering (still excludes archived).
+    """
+    where: list[str] = []
+    params: list[object] = []
+    if status is not None:
+        where.append("status = ?")
+        params.append(status)
+    else:
+        where.append("status != 'archived'")
+    if source:
+        where.append("source = ?")
+        params.append(source)
+    if dashboard_key:
+        where.append("dashboard_key = ?")
+        params.append(dashboard_key)
+    sql = (
+        "SELECT * FROM leads WHERE " + " AND ".join(where) +
+        " ORDER BY score DESC, posted_at DESC LIMIT ?"
+    )
+    params.append(limit)
     with _conn() as c:
-        rows = c.execute(
-            """
-            SELECT * FROM leads
-            WHERE status = ?
-            ORDER BY score DESC, posted_at DESC
-            LIMIT ?
-            """,
-            (status, limit),
-        ).fetchall()
-    return list(rows)
+        return list(c.execute(sql, params).fetchall())
 
 
 def counts_by_status() -> dict[str, int]:
@@ -89,12 +111,34 @@ def counts_by_status() -> dict[str, int]:
     return {r["status"]: r["n"] for r in rows}
 
 
+def conversion_stats() -> dict[str, int]:
+    """Counts of each outcome among contacted leads — for the dashboard
+    header so we can see if outreach is actually working."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT outcome, COUNT(*) AS n FROM leads WHERE outcome != '' GROUP BY outcome"
+        ).fetchall()
+    return {r["outcome"]: r["n"] for r in rows}
+
+
 def set_status(lead_id: int, status: str, note: str = "") -> bool:
     now = int(time.time())
     with _conn() as c:
         cur = c.execute(
             "UPDATE leads SET status = ?, status_note = ?, updated_at = ? WHERE id = ?",
             (status, note, now, lead_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_outcome(lead_id: int, outcome: str) -> bool:
+    if outcome not in VALID_OUTCOMES:
+        return False
+    now = int(time.time())
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE leads SET outcome = ?, outcome_at = ?, updated_at = ? WHERE id = ?",
+            (outcome, now if outcome else None, now, lead_id),
         )
         return cur.rowcount > 0
 
@@ -110,7 +154,7 @@ def snooze(lead_id: int, until_ts: int) -> bool:
 
 
 def unsnooze_expired() -> int:
-    """Move snoozed leads whose timer expired back to 'new'. Returns rowcount."""
+    """Move snoozed leads whose timer expired back to 'new'."""
     now = int(time.time())
     with _conn() as c:
         cur = c.execute(
@@ -120,6 +164,26 @@ def unsnooze_expired() -> int:
             WHERE status = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?
             """,
             (now, now),
+        )
+        return cur.rowcount
+
+
+def archive_stale_new(days: int = 21) -> int:
+    """Auto-archive 'new' leads that have sat untouched past `days`.
+
+    Keeps the panel scannable. We never archive contacted/snoozed leads,
+    only stale 'new' ones the user clearly isn't going to action.
+    """
+    now = int(time.time())
+    cutoff = now - days * 86400
+    with _conn() as c:
+        cur = c.execute(
+            """
+            UPDATE leads
+            SET status = 'archived', archived_at = ?, updated_at = ?
+            WHERE status = 'new' AND discovered_at < ?
+            """,
+            (now, now, cutoff),
         )
         return cur.rowcount
 

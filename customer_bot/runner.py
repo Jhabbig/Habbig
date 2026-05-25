@@ -17,7 +17,7 @@ import httpx
 
 from customer_bot import store
 from customer_bot.config import ALL_SUBREDDITS, TOPICS, topic_for_text
-from customer_bot.drafter import draft_for, score_for
+from customer_bot.drafter import draft_for, ref_code, score_for
 from customer_bot.lead import RawLead
 from customer_bot.sources import hn as hn_source
 from customer_bot.sources import polymarket as pm_source
@@ -65,6 +65,9 @@ class LeadsPoller:
         while self._running:
             try:
                 store.unsnooze_expired()
+                archived = store.archive_stale_new(days=21)
+                if archived:
+                    log.info("LeadsPoller archived %d stale 'new' leads", archived)
                 await self._cycle()
             except asyncio.CancelledError:
                 raise
@@ -77,41 +80,53 @@ class LeadsPoller:
 
     async def _cycle(self) -> None:
         assert self._client is not None
-        inserted = 0
+        inserted = rejected = 0
 
-        # 1. Reddit — one subreddit at a time, pause 1s between to be polite.
+        # 1. Reddit posts + comments — comments are where prospects actually
+        #    ask for tools, so we poll both endpoints per sub.
         for sub in ALL_SUBREDDITS:
             async for raw in reddit_source.fetch(self._client, sub, limit=25):
-                if self._ingest(raw):
-                    inserted += 1
+                got = self._ingest(raw)
+                inserted += 1 if got == "ok" else 0
+                rejected += 1 if got == "reject" else 0
+            await asyncio.sleep(1.0)
+            async for raw in reddit_source.fetch_comments(self._client, sub, limit=50):
+                got = self._ingest(raw)
+                inserted += 1 if got == "ok" else 0
+                rejected += 1 if got == "reject" else 0
             await asyncio.sleep(1.0)
 
         # 2. HN — one query per topic.
         for topic in TOPICS:
             async for raw in hn_source.fetch(self._client, topic.hn_query, limit=15):
-                if self._ingest(raw, hinted_topic=topic):
-                    inserted += 1
+                got = self._ingest(raw, hinted_topic=topic)
+                inserted += 1 if got == "ok" else 0
+                rejected += 1 if got == "reject" else 0
             await asyncio.sleep(0.5)
 
         # 3. Polymarket — pooled keywords across all topics.
         all_keywords: tuple[str, ...] = tuple({kw for t in TOPICS for kw in t.keywords})
         async for raw in pm_source.fetch(self._client, all_keywords, limit=30):
-            if self._ingest(raw):
-                inserted += 1
+            got = self._ingest(raw)
+            inserted += 1 if got == "ok" else 0
+            rejected += 1 if got == "reject" else 0
 
-        log.info("LeadsPoller cycle complete — %d new leads", inserted)
+        log.info("LeadsPoller cycle complete — %d new leads, %d rejected", inserted, rejected)
 
-    def _ingest(self, raw: RawLead, hinted_topic=None) -> bool:
+    def _ingest(self, raw: RawLead, hinted_topic=None) -> str:
+        """Return 'ok' if inserted, 'reject' if filtered, 'skip' otherwise."""
         text = f"{raw.title}\n{raw.body}"
         topic = hinted_topic or topic_for_text(text)
         if topic is None:
-            return False
+            return "skip"
         score = score_for(raw, topic)
+        if score < 0:
+            return "reject"
         if score < MIN_SCORE:
-            return False
+            return "skip"
         draft = draft_for(raw, topic)
         snippet = (raw.body or raw.title)[:400]
-        return store.upsert_lead(
+        ok = store.upsert_lead(
             source=raw.source,
             source_id=raw.source_id,
             url=raw.url,
@@ -122,4 +137,6 @@ class LeadsPoller:
             score=score,
             draft=draft,
             posted_at=raw.posted_at or int(time.time()),
+            ref_code=ref_code(raw.source_id),
         )
+        return "ok" if ok else "skip"

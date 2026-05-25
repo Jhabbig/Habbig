@@ -243,6 +243,21 @@ function copyDraft(leadId, btn) {
   });
 }
 
+const _leadsFilter = { source: 'all', dashboard: 'all' };
+function leadsFilter(dim, value, btn) {
+  _leadsFilter[dim] = value;
+  // Mark the clicked chip active among siblings.
+  if (btn && btn.parentElement) {
+    btn.parentElement.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+  document.querySelectorAll('.lead-row').forEach(row => {
+    const okSrc = _leadsFilter.source === 'all' || row.dataset.source === _leadsFilter.source;
+    const okDash = _leadsFilter.dashboard === 'all' || row.dataset.dashboard === _leadsFilter.dashboard;
+    row.style.display = (okSrc && okDash) ? '' : 'none';
+  });
+}
+
 function filterKeys(status, btn) {
   document.querySelectorAll('#panel-keys .filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
