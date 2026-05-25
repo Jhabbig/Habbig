@@ -153,6 +153,7 @@
       <button data-tool="erase" title="Eraser: click near a drawing to remove it">⌫ Erase</button>
       <button onclick="window._clearDrawings()" title="Clear all drawings on this coin + interval" style="border-color:rgba(239,68,68,0.4);color:var(--accent-2)">Clear all</button>
       <button onclick="window._shareChart()" title="Copy a URL that recreates this exact chart (interval + drawings + indicators) for sharing">🔗 Share</button>
+      <button onclick="window._saveSetup()" title="Save this chart configuration to your personal setups list (appears at /setups)" style="border-color:rgba(56,189,248,0.4);color:var(--accent-4)">⭐ Save setup</button>
     </div>
     <div class="chart-card" style="position:relative">
       <svg id="chart-svg" viewBox="0 0 1200 540" preserveAspectRatio="none" style="cursor:crosshair"></svg>
@@ -332,6 +333,47 @@
       alert("Chart URL copied to clipboard. Paste it anywhere — anyone who opens it sees this exact chart setup.");
     } catch {
       prompt("Copy this share-link:", link);
+    }
+  };
+
+  // ─── Save the current setup to localStorage for the /setups gallery ───────
+  window._saveSetup = () => {
+    const title = prompt("Name this setup (e.g. \"BTC 1h Bollinger squeeze\"):", "");
+    if (!title) return;
+    const note = prompt("Optional one-line description:", "") || "";
+    const drawings = loadDrawings();
+    const ind = Object.entries(_indicators).filter(([, v]) => v).map(([k]) => k);
+    const setup = {
+      id: "u_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+      title: title.trim().slice(0, 80),
+      desc: note.trim().slice(0, 200),
+      coin: _coinSymbol || "BTC",
+      interval: _chartInterval,
+      type: _chartType,
+      indicators: ind,
+      log: _logScale,
+      cmp: _compareSymbol || "",
+      drawings_count: drawings.length,
+      saved_at: new Date().toISOString(),
+      state: {
+        interval: _chartInterval,
+        type: _chartType,
+        log: _logScale,
+        cmp: _compareSymbol || undefined,
+        ind: ind.join(","),
+        d: drawings.length ? btoa(unescape(encodeURIComponent(JSON.stringify(drawings)))) : undefined,
+      },
+    };
+    try {
+      const KEY = "ct_my_setups_v1";
+      const raw = localStorage.getItem(KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(setup);
+      if (list.length > 50) list.length = 50;
+      localStorage.setItem(KEY, JSON.stringify(list));
+      alert(`Saved "${setup.title}". Open /setups to see your collection.`);
+    } catch (e) {
+      alert("Could not save setup: " + (e.message || e));
     }
   };
 

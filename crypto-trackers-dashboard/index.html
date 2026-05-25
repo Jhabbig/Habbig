@@ -195,7 +195,8 @@
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
     <div class="updated" id="ws-status" style="margin-left:14px"><span class="dot" style="background:var(--text-3)"></span><span id="ws-status-text">ws idle</span></div>
-    <button id="theme-toggle" title="Toggle light / dark theme" style="margin-left:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">🌙</button>
+    <button id="tour-replay" title="Replay the welcome tour" style="margin-left:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">? Tour</button>
+    <button id="theme-toggle" title="Toggle light / dark theme" style="margin-left:6px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">🌙</button>
   </div>
 </header>
 
@@ -397,6 +398,9 @@
 
   <section>
     <h2>Refer a friend <small>share narve.ai &middot; your friends get welcomed, you get tracked</small></h2>
+    <div id="ref-welcome" style="display:none;background:linear-gradient(135deg,rgba(52,211,153,0.1),rgba(56,189,248,0.06));border:1px solid rgba(52,211,153,0.3);color:var(--accent-3);padding:10px 14px;border-radius:8px;font-size:12.5px;margin-bottom:10px">
+      🎉 You arrived via <strong id="ref-welcome-code"></strong>. Welcome to narve.ai — share your own link below to bring friends in.
+    </div>
     <div class="ref-panel" id="ref-panel">
       <div>
         <div class="label">Your code</div>
@@ -406,7 +410,11 @@
         <div class="label">Share URL</div>
         <div class="url" id="ref-url">-</div>
       </div>
-      <button id="ref-copy">Copy link</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="ref-copy" title="Copy link to clipboard">Copy link</button>
+        <button id="ref-tweet" title="Share on X / Twitter" style="background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:12px;cursor:pointer">𝕏 Tweet</button>
+        <button id="ref-telegram" title="Share on Telegram" style="background:var(--bg-2);color:var(--text-1);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:12px;cursor:pointer">✈ Telegram</button>
+      </div>
       <div class="stat"><span class="label">Referred</span><br/><strong id="ref-count">0</strong></div>
     </div>
   </section>
@@ -1999,8 +2007,6 @@
 // ---- Onboarding tour ----
 (function() {
   const STORAGE_KEY = "ct_onboarded_v1";
-  if (localStorage.getItem(STORAGE_KEY) === "1") return;
-
   const STEPS = [
     {
       title: "Welcome to narve.ai",
@@ -2056,9 +2062,18 @@
     else { finish(); }
   });
   skipBtn.addEventListener("click", finish);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) finish(); });
 
-  // Show after a short delay so the page has time to paint
-  setTimeout(() => { overlay.classList.add("show"); render(); }, 500);
+  function open() { idx = 0; overlay.classList.add("show"); render(); }
+
+  // Wire the replay button so users can re-trigger after dismissal
+  const replayBtn = document.getElementById("tour-replay");
+  if (replayBtn) replayBtn.addEventListener("click", open);
+
+  // Auto-show only on the first visit
+  if (localStorage.getItem(STORAGE_KEY) !== "1") {
+    setTimeout(open, 500);
+  }
 })();
 
 // ---- Referral system stub ----
@@ -2068,15 +2083,19 @@
   const COUNT_KEY = "ct_ref_count_v1";
 
   // Capture inbound ?ref=ABC123 once, store it
+  let referredBy = "";
   try {
     const params = new URLSearchParams(window.location.search);
     const inbound = params.get("ref");
-    if (inbound && /^[A-Z0-9]{4,12}$/.test(inbound) && !localStorage.getItem(REFERRED_BY_KEY)) {
-      localStorage.setItem(REFERRED_BY_KEY, inbound);
+    if (inbound && /^[A-Z0-9]{4,12}$/.test(inbound)) {
+      if (!localStorage.getItem(REFERRED_BY_KEY)) {
+        localStorage.setItem(REFERRED_BY_KEY, inbound);
+      }
     }
+    referredBy = localStorage.getItem(REFERRED_BY_KEY) || "";
   } catch {}
 
-  // Generate or load your code (8 chars, A-Z + 0-9)
+  // Generate or load your code (8 chars, A-Z + 0-9 minus look-alikes)
   let code = localStorage.getItem(CODE_KEY);
   if (!code) {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -2090,12 +2109,23 @@
   const urlEl = document.getElementById("ref-url");
   const countEl = document.getElementById("ref-count");
   const copyBtn = document.getElementById("ref-copy");
+  const tweetBtn = document.getElementById("ref-tweet");
+  const tgBtn = document.getElementById("ref-telegram");
+  const welcome = document.getElementById("ref-welcome");
+  const welcomeCode = document.getElementById("ref-welcome-code");
   if (!codeEl) return;
 
   const url = `${window.location.origin}/?ref=${code}`;
   codeEl.textContent = code;
   urlEl.textContent = url;
   countEl.textContent = String(count);
+
+  if (referredBy && welcome && welcomeCode) {
+    welcomeCode.textContent = referredBy;
+    welcome.style.display = "";
+  }
+
+  const shareMsg = "Just found narve.ai — best crypto data infrastructure on the web. Every coin, every exchange, every metric in one dashboard.";
 
   copyBtn.addEventListener("click", async () => {
     try {
@@ -2108,6 +2138,19 @@
       copyBtn.textContent = "Copy failed";
     }
   });
+
+  if (tweetBtn) {
+    tweetBtn.addEventListener("click", () => {
+      const tw = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareMsg)}&url=${encodeURIComponent(url)}`;
+      window.open(tw, "_blank", "noopener");
+    });
+  }
+  if (tgBtn) {
+    tgBtn.addEventListener("click", () => {
+      const tg = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(shareMsg)}`;
+      window.open(tg, "_blank", "noopener");
+    });
+  }
 })();
 </script>
 </body>

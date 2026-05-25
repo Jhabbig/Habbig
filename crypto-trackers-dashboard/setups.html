@@ -27,30 +27,50 @@
   .intro {
     background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(245,158,11,0.06));
     border: 1px solid var(--border); border-radius: 12px;
-    padding: 18px 22px; margin-bottom: 24px;
+    padding: 18px 22px; margin-bottom: 22px;
   }
   .intro h2 { margin: 0 0 6px; font-size: 16px; }
   .intro p { margin: 0; color: var(--text-2); font-size: 13px; max-width: 720px; }
-  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .toolbar {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .toolbar input.search {
+    background: var(--bg-1); border: 1px solid var(--border); color: var(--text-1);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px; font-family: inherit;
+    flex: 1; min-width: 220px; max-width: 360px;
+  }
+  .toolbar input.search:focus { outline: 2px solid var(--accent-4); outline-offset: 0; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
   .filters button {
     background: var(--bg-1); border: 1px solid var(--border); color: var(--text-2);
     padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 12px;
-    font-weight: 500;
+    font-weight: 500; font-family: inherit;
   }
   .filters button.active { background: var(--accent-4); color: var(--bg-0); border-color: var(--accent-4); }
-  .filters button:hover { color: var(--text-1); }
+  .filters button:hover:not(.active) { color: var(--text-1); }
+  .count { color: var(--text-3); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  section h3.section-title {
+    margin: 26px 0 10px; font-size: 12px; text-transform: uppercase;
+    color: var(--text-2); font-weight: 600; letter-spacing: 0.08em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  section h3.section-title .badge {
+    background: var(--bg-2); color: var(--text-3); padding: 2px 8px;
+    border-radius: 999px; font-size: 10px;
+  }
   .grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px;
   }
   .card {
     background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
-    padding: 16px; display: flex; flex-direction: column; gap: 10px;
-    transition: transform 0.15s, border-color 0.15s;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
   }
-  .card:hover { transform: translateY(-2px); border-color: var(--accent-4); }
-  .card .head { display: flex; align-items: center; gap: 8px; }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent-4); box-shadow: 0 8px 24px rgba(56,189,248,0.08); }
+  .card .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .card .coin {
-    font-family: monospace; font-weight: 700; font-size: 14px;
+    font-family: monospace; font-weight: 700; font-size: 13px;
     background: var(--bg-2); padding: 3px 8px; border-radius: 6px; color: var(--accent-4);
   }
   .card .tag {
@@ -60,20 +80,31 @@
   .card .tag.bull { color: var(--accent-3); background: rgba(52,211,153,0.12); }
   .card .tag.bear { color: var(--accent-2); background: rgba(239,68,68,0.12); }
   .card .tag.neutral { color: var(--accent); background: rgba(245,158,11,0.12); }
-  .card h3 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; }
-  .card p.desc { margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
-  .card .meta {
-    display: flex; gap: 12px; font-size: 11px; color: var(--text-3);
-    font-variant-numeric: tabular-nums; padding-top: 4px;
-    border-top: 1px dashed var(--border);
+  .card .preview {
+    background: var(--bg-2); border-radius: 8px; height: 76px; overflow: hidden;
+    border: 1px solid var(--border);
   }
+  .card .preview svg { width: 100%; height: 100%; display: block; }
+  .card h3 { margin: 0; font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+  .card p.desc { margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
   .card .indicators { display: flex; flex-wrap: wrap; gap: 4px; }
   .card .ind {
     font-size: 10px; color: var(--text-3); background: var(--bg-2);
     padding: 2px 6px; border-radius: 4px; font-family: monospace;
   }
+  .card .meta {
+    display: flex; gap: 12px; font-size: 11px; color: var(--text-3);
+    font-variant-numeric: tabular-nums; padding-top: 6px;
+    border-top: 1px dashed var(--border); align-items: center;
+  }
+  .card .meta .spacer { flex: 1; }
+  .card .meta .delete {
+    background: transparent; border: 0; color: var(--text-3); font-size: 12px;
+    cursor: pointer; padding: 2px 6px; border-radius: 4px;
+  }
+  .card .meta .delete:hover { color: var(--accent-2); background: rgba(239,68,68,0.08); }
   .card .open {
-    margin-top: auto; background: var(--accent-4); color: var(--bg-0);
+    background: var(--accent-4); color: var(--bg-0);
     border: 0; padding: 8px 12px; border-radius: 7px; text-decoration: none;
     text-align: center; font-weight: 600; font-size: 12.5px; cursor: pointer;
     transition: background 0.15s;
@@ -83,6 +114,11 @@
     text-align: center; color: var(--text-3); padding: 36px;
     background: var(--bg-1); border: 1px dashed var(--border); border-radius: 10px;
   }
+  .my-empty {
+    padding: 18px 20px; background: var(--bg-1); border: 1px dashed var(--border);
+    border-radius: 10px; font-size: 12.5px; color: var(--text-3);
+  }
+  .my-empty code { font-family: monospace; color: var(--accent-4); }
 </style>
 </head>
 <body>
@@ -98,154 +134,176 @@
     <p>
       Each card is a one-click chart configuration — coin, interval, indicators,
       and drawings already laid out. Click <strong>Open</strong> to load it in
-      the live chart, then keep what works and edit the rest. These are
-      educational, not financial advice.
+      the live chart. Save your own from any coin page via the <strong>⭐ Save setup</strong> button.
+      These are educational, not financial advice.
     </p>
   </div>
 
-  <div class="filters" id="filters"></div>
-  <div class="grid" id="grid"></div>
+  <div class="toolbar">
+    <input type="search" id="search" class="search" placeholder="Search setups by title, coin, or indicator…" />
+    <div class="filters" id="filters"></div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <section id="my-section" style="display:none">
+    <h3 class="section-title">⭐ My saved setups <span class="badge" id="my-count">0</span></h3>
+    <div class="grid" id="my-grid"></div>
+  </section>
+
+  <section>
+    <h3 class="section-title">Featured by narve.ai <span class="badge" id="featured-count">0</span></h3>
+    <div class="grid" id="grid"></div>
+  </section>
 </main>
 
 <script>
 (function() {
-  // Each setup encodes coin + chart state. The state shape matches what
-  // the /coin page reads from the `s` query param (base64 JSON).
+  // Map common symbols to CoinGecko IDs (the /coin page uses ?id=<cg_id>)
+  const CG_ID = {
+    BTC: "bitcoin", ETH: "ethereum", SOL: "solana", BNB: "binancecoin",
+    XRP: "ripple", ADA: "cardano", DOGE: "dogecoin", AVAX: "avalanche-2",
+    MATIC: "matic-network", DOT: "polkadot", LINK: "chainlink",
+  };
+
   const SETUPS = [
-    {
-      id: "btc-weekly-ichimoku", coin: "BTC", interval: "1w", tag: "bull",
-      type: "trend",
-      title: "BTC weekly — Ichimoku cloud + Fib",
-      desc: "Classic macro view. Ichimoku tells you the dominant trend; Fib levels mark prior pivots that often repeat.",
-      indicators: ["ichimoku", "fib"],
-      state: { chartType: "candle", indicators: ["ichimoku"], drawings: [] },
-    },
-    {
-      id: "btc-daily-bollinger", coin: "BTC", interval: "1d", tag: "neutral",
-      type: "mean-reversion",
-      title: "BTC daily — Bollinger squeeze",
-      desc: "Low volatility precedes high. Watch for the bands tightening, then a directional breakout with volume confirmation.",
-      indicators: ["bollinger", "volume"],
-      state: { chartType: "candle", indicators: ["bollinger"], drawings: [] },
-    },
-    {
-      id: "eth-4h-rsi-divergence", coin: "ETH", interval: "4h", tag: "bear",
-      type: "reversal",
-      title: "ETH 4h — RSI divergence hunt",
-      desc: "Price prints a higher high while RSI prints a lower high → classic bearish divergence. Often precedes a swing.",
-      indicators: ["rsi", "macd"],
-      state: { chartType: "candle", indicators: ["rsi", "macd"], drawings: [] },
-    },
-    {
-      id: "sol-1h-vwap", coin: "SOL", interval: "1h", tag: "neutral",
-      type: "scalping",
-      title: "SOL 1h — VWAP mean-reversion",
-      desc: "Intraday mean-reversion play. Long when price extends 2σ below VWAP with declining volume, exit at VWAP.",
-      indicators: ["vwap", "volume"],
-      state: { chartType: "candle", indicators: ["vwap"], drawings: [] },
-    },
-    {
-      id: "btc-renko-trend", coin: "BTC", interval: "1d", tag: "bull",
-      type: "trend",
-      title: "BTC Renko — trend without noise",
-      desc: "Renko strips time and minor noise. Stay long while bricks are green, flip when 2-3 reversal bricks appear.",
-      indicators: [],
-      state: { chartType: "renko", indicators: [], drawings: [] },
-    },
-    {
-      id: "eth-kagi-swing", coin: "ETH", interval: "1d", tag: "neutral",
-      type: "swing",
-      title: "ETH Kagi — reversal swing trader",
-      desc: "Kagi lines flip thick (yang) on bullish reversals and thin (yin) on bearish ones. Cleaner than candles for swing trades.",
-      indicators: [],
-      state: { chartType: "kagi", indicators: [], drawings: [] },
-    },
-    {
-      id: "btc-daily-ma-cross", coin: "BTC", interval: "1d", tag: "bull",
-      type: "trend",
-      title: "BTC daily — 50/200 MA cross",
-      desc: "The classic golden cross / death cross. Slow but high-conviction trend signal. Pair with rising volume.",
-      indicators: ["ma50", "ma200", "volume"],
-      state: { chartType: "candle", indicators: ["ma"], drawings: [] },
-    },
-    {
-      id: "btc-1h-stochastic", coin: "BTC", interval: "1h", tag: "neutral",
-      type: "scalping",
-      title: "BTC 1h — Stochastic crossover",
-      desc: "Stochastic crossing back above 20 from oversold = scalper entry. Tight stops, quick exits at 80.",
-      indicators: ["stochastic", "rsi"],
-      state: { chartType: "candle", indicators: ["stochastic", "rsi"], drawings: [] },
-    },
-    {
-      id: "eth-1d-obv", coin: "ETH", interval: "1d", tag: "bull",
-      type: "trend",
-      title: "ETH daily — OBV confirmation",
-      desc: "On-balance volume rising while price consolidates = accumulation. Often the lead indicator for the next leg up.",
-      indicators: ["obv", "volume"],
-      state: { chartType: "candle", indicators: ["obv"], drawings: [] },
-    },
-    {
-      id: "btc-atr-stops", coin: "BTC", interval: "4h", tag: "neutral",
-      type: "risk",
-      title: "BTC 4h — ATR-based stops",
-      desc: "Volatility-adjusted stops. Place stop at entry − 2×ATR for longs. Adapts automatically to changing conditions.",
-      indicators: ["atr"],
-      state: { chartType: "candle", indicators: ["atr"], drawings: [] },
-    },
-    {
-      id: "btc-ha-trend-filter", coin: "BTC", interval: "1d", tag: "bull",
-      type: "trend",
-      title: "BTC daily — Heikin Ashi trend filter",
-      desc: "HA candles smooth noise. Strong trend = all green/red bodies with no lower/upper wicks. Excellent entry filter.",
-      indicators: ["ema21"],
-      state: { chartType: "ha", indicators: [], drawings: [] },
-    },
-    {
-      id: "sol-4h-bollinger-rsi", coin: "SOL", interval: "4h", tag: "neutral",
-      type: "mean-reversion",
-      title: "SOL 4h — Bollinger + RSI combo",
-      desc: "Bottom-fishing setup. Price tags lower BB while RSI < 30 → high-probability bounce. Exit at midline.",
-      indicators: ["bollinger", "rsi"],
-      state: { chartType: "candle", indicators: ["bollinger", "rsi"], drawings: [] },
-    },
-    {
-      id: "btc-weekly-pivots", coin: "BTC", interval: "1w", tag: "neutral",
-      type: "swing",
-      title: "BTC weekly — pivot point levels",
-      desc: "Classic pivots from last week. R2/R3 = take-profit zones; S2/S3 = stop / re-entry zones for swings.",
-      indicators: ["pivots"],
-      state: { chartType: "candle", indicators: ["pivots"], drawings: [] },
-    },
-    {
-      id: "eth-volume-profile", coin: "ETH", interval: "1d", tag: "neutral",
-      type: "structure",
-      title: "ETH daily — Volume Profile",
-      desc: "POC (point of control) shows where most volume traded. Acts as a magnet for price. HVN = support, LVN = airpockets.",
-      indicators: ["vp"],
-      state: { chartType: "candle", indicators: ["vp"], drawings: [] },
-    },
-    {
-      id: "btc-line-macro", coin: "BTC", interval: "1w", tag: "bull",
-      type: "macro",
-      title: "BTC weekly — clean line view",
-      desc: "Sometimes you want to remove all the noise. Line chart with logarithmic feel shows the multi-year structure clearly.",
-      indicators: ["ma200"],
-      state: { chartType: "line", indicators: ["ma"], drawings: [] },
-    },
+    { id:"btc-weekly-ichimoku", coin:"BTC", interval:"1w", tag:"bull", type:"trend",
+      title:"BTC weekly — Ichimoku cloud + Fib",
+      desc:"Classic macro view. Ichimoku tells you the dominant trend; Fib levels mark prior pivots that often repeat.",
+      indicators:["ich","sma200"], chartType:"candle" },
+    { id:"btc-daily-bollinger", coin:"BTC", interval:"1d", tag:"neutral", type:"mean-reversion",
+      title:"BTC daily — Bollinger squeeze",
+      desc:"Low volatility precedes high. Watch for the bands tightening, then a directional breakout with volume confirmation.",
+      indicators:["bb"], chartType:"candle" },
+    { id:"eth-4h-rsi-divergence", coin:"ETH", interval:"4h", tag:"bear", type:"reversal",
+      title:"ETH 4h — RSI divergence hunt",
+      desc:"Price prints a higher high while RSI prints a lower high → classic bearish divergence. Often precedes a swing.",
+      indicators:["rsi","macd"], chartType:"candle" },
+    { id:"sol-1h-vwap", coin:"SOL", interval:"1h", tag:"neutral", type:"scalping",
+      title:"SOL 1h — VWAP mean-reversion",
+      desc:"Intraday mean-reversion play. Long when price extends 2σ below VWAP with declining volume, exit at VWAP.",
+      indicators:["vwap"], chartType:"candle" },
+    { id:"btc-renko-trend", coin:"BTC", interval:"1d", tag:"bull", type:"trend",
+      title:"BTC Renko — trend without noise",
+      desc:"Renko strips time and minor noise. Stay long while bricks are green, flip when 2-3 reversal bricks appear.",
+      indicators:[], chartType:"renko" },
+    { id:"eth-kagi-swing", coin:"ETH", interval:"1d", tag:"neutral", type:"swing",
+      title:"ETH Kagi — reversal swing trader",
+      desc:"Kagi lines flip thick (yang) on bullish reversals and thin (yin) on bearish ones. Cleaner than candles for swing trades.",
+      indicators:[], chartType:"kagi" },
+    { id:"btc-daily-ma-cross", coin:"BTC", interval:"1d", tag:"bull", type:"trend",
+      title:"BTC daily — 50/200 MA cross",
+      desc:"The classic golden cross / death cross. Slow but high-conviction trend signal. Pair with rising volume.",
+      indicators:["sma50","sma200"], chartType:"candle" },
+    { id:"btc-1h-stochastic", coin:"BTC", interval:"1h", tag:"neutral", type:"scalping",
+      title:"BTC 1h — Stochastic crossover",
+      desc:"Stochastic crossing back above 20 from oversold = scalper entry. Tight stops, quick exits at 80.",
+      indicators:["stoch","rsi"], chartType:"candle" },
+    { id:"eth-1d-obv", coin:"ETH", interval:"1d", tag:"bull", type:"trend",
+      title:"ETH daily — OBV confirmation",
+      desc:"On-balance volume rising while price consolidates = accumulation. Often the lead indicator for the next leg up.",
+      indicators:["obv"], chartType:"candle" },
+    { id:"btc-atr-stops", coin:"BTC", interval:"4h", tag:"neutral", type:"risk",
+      title:"BTC 4h — ATR-based stops",
+      desc:"Volatility-adjusted stops. Place stop at entry − 2×ATR for longs. Adapts automatically to changing conditions.",
+      indicators:["atr"], chartType:"candle" },
+    { id:"btc-ha-trend-filter", coin:"BTC", interval:"1d", tag:"bull", type:"trend",
+      title:"BTC daily — Heikin Ashi trend filter",
+      desc:"HA candles smooth noise. Strong trend = all green/red bodies with no lower/upper wicks. Excellent entry filter.",
+      indicators:["sma50"], chartType:"heikin" },
+    { id:"sol-4h-bollinger-rsi", coin:"SOL", interval:"4h", tag:"neutral", type:"mean-reversion",
+      title:"SOL 4h — Bollinger + RSI combo",
+      desc:"Bottom-fishing setup. Price tags lower BB while RSI < 30 → high-probability bounce. Exit at midline.",
+      indicators:["bb","rsi"], chartType:"candle" },
+    { id:"btc-weekly-pivots", coin:"BTC", interval:"1w", tag:"neutral", type:"swing",
+      title:"BTC weekly — pivot point levels",
+      desc:"Classic pivots from last week. R2/R3 = take-profit zones; S2/S3 = stop / re-entry zones for swings.",
+      indicators:["pp"], chartType:"candle" },
+    { id:"eth-volume-profile", coin:"ETH", interval:"1d", tag:"neutral", type:"structure",
+      title:"ETH daily — Volume Profile",
+      desc:"POC (point of control) shows where most volume traded. Acts as a magnet for price. HVN = support, LVN = airpockets.",
+      indicators:["vp"], chartType:"candle" },
+    { id:"btc-line-macro", coin:"BTC", interval:"1w", tag:"bull", type:"macro",
+      title:"BTC weekly — clean line view",
+      desc:"Sometimes you want to remove all the noise. Line chart shows the multi-year structure clearly.",
+      indicators:["sma200"], chartType:"line" },
+    { id:"eth-1h-reg-channel", coin:"ETH", interval:"1h", tag:"neutral", type:"mean-reversion",
+      title:"ETH 1h — regression channel",
+      desc:"Linear-regression channel with ±2σ bands. Mean-reversion plays at the outer bands, trend-follow at the midline.",
+      indicators:["reg"], chartType:"candle" },
+    { id:"btc-1d-full-stack", coin:"BTC", interval:"1d", tag:"neutral", type:"structure",
+      title:"BTC daily — full indicator stack",
+      desc:"Everything-and-the-kitchen-sink. BB + Ichimoku + MAs + RSI + MACD. Use it to spot confluence across systems.",
+      indicators:["bb","ich","sma50","sma200","rsi","macd"], chartType:"candle" },
   ];
 
-  const TYPES = ["all", "trend", "mean-reversion", "reversal", "scalping", "swing", "risk", "structure", "macro"];
+  const TYPES = ["all","trend","mean-reversion","reversal","scalping","swing","risk","structure","macro"];
   let activeFilter = "all";
+  let searchQuery = "";
 
-  function encode(state) {
-    try { return btoa(unescape(encodeURIComponent(JSON.stringify(state)))); }
-    catch { return ""; }
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+
+  // Build /coin URL using the share-state params that _loadShareState reads
+  function setupUrl(s) {
+    const id = CG_ID[s.coin] || s.coin.toLowerCase();
+    const params = new URLSearchParams();
+    params.set("id", id);
+    if (s.interval) params.set("interval", s.interval);
+    if (s.chartType) params.set("type", s.chartType);
+    const inds = (s.indicators || []).join(",");
+    if (inds) params.set("ind", inds);
+    if (s.log) params.set("log", "true");
+    if (s.cmp) params.set("cmp", s.cmp);
+    if (s.d) params.set("d", s.d);
+    return "/coin?" + params.toString();
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    }[c]));
+  // Build URL for user-saved setups (which already have a full state blob)
+  function mySetupUrl(s) {
+    const id = CG_ID[(s.coin || "BTC").toUpperCase()] || (s.coin || "btc").toLowerCase();
+    const params = new URLSearchParams();
+    params.set("id", id);
+    const st = s.state || {};
+    Object.entries(st).forEach(([k, v]) => {
+      if (v != null && v !== "" && v !== false) params.set(k, String(v));
+    });
+    return "/coin?" + params.toString();
+  }
+
+  // Deterministic mini-chart preview — synthesized from setup id so each card
+  // is visually distinct. Path biases toward `tag`: bull = uptrend, bear =
+  // downtrend, neutral = sideways with vol.
+  function sparklinePath(seed, tag) {
+    let s = 0;
+    for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) | 0;
+    const rand = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return (s / 0x7fffffff); };
+    const W = 300, H = 76, N = 36;
+    const bias = tag === "bull" ? 0.55 : tag === "bear" ? 0.45 : 0.5;
+    let y = H / 2 + (rand() - 0.5) * 16;
+    let lo = y, hi = y;
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+      const slope = (bias - 0.5) * 1.4 + (rand() - 0.5) * 4;
+      y += slope;
+      y = Math.max(8, Math.min(H - 8, y));
+      lo = Math.min(lo, y); hi = Math.max(hi, y);
+      pts.push([i * (W / (N - 1)), y]);
+    }
+    return { pts, lo, hi, W, H };
+  }
+
+  function previewSvg(setup) {
+    const tag = setup.tag || (setup.indicators && setup.indicators.includes("rsi") ? "neutral" : "bull");
+    const { pts, W, H } = sparklinePath(setup.id || setup.title, tag);
+    const stroke = tag === "bull" ? "#34d399" : tag === "bear" ? "#ef4444" : "#f59e0b";
+    const fill = tag === "bull" ? "rgba(52,211,153,0.18)" : tag === "bear" ? "rgba(239,68,68,0.18)" : "rgba(245,158,11,0.16)";
+    const line = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    const area = line + ` L${W},${H} L0,${H} Z`;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <path d="${area}" fill="${fill}" stroke="none"/>
+      <path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`;
   }
 
   function renderFilters() {
@@ -257,41 +315,100 @@
       b.addEventListener("click", () => {
         activeFilter = b.dataset.type;
         renderFilters();
-        renderGrid();
+        renderAll();
       });
     });
   }
 
-  function renderGrid() {
-    const g = document.getElementById("grid");
-    const visible = SETUPS.filter(s => activeFilter === "all" || s.type === activeFilter);
-    if (!visible.length) {
-      g.innerHTML = '<div class="empty">No setups matching this filter.</div>';
-      return;
-    }
-    g.innerHTML = visible.map(s => {
-      const url = `/coin?coin=${encodeURIComponent(s.coin)}&interval=${encodeURIComponent(s.interval)}&s=${encode(s.state)}`;
-      const inds = (s.indicators || []).map(i => `<span class="ind">${escapeHtml(i)}</span>`).join("");
-      return `<div class="card">
-        <div class="head">
-          <span class="coin">${escapeHtml(s.coin)}</span>
-          <span class="tag">${escapeHtml(s.interval)}</span>
-          <span class="tag ${escapeHtml(s.tag)}">${escapeHtml(s.tag)}</span>
-        </div>
-        <h3>${escapeHtml(s.title)}</h3>
-        <p class="desc">${escapeHtml(s.desc)}</p>
-        ${inds ? `<div class="indicators">${inds}</div>` : ""}
-        <div class="meta">
-          <span>${escapeHtml(s.type)}</span>
-          <span>${(s.indicators || []).length} indicator${(s.indicators || []).length === 1 ? "" : "s"}</span>
-        </div>
-        <a class="open" href="${url}">Open this setup →</a>
-      </div>`;
-    }).join("");
+  function matchSearch(s) {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (s.title || "").toLowerCase().includes(q)
+      || (s.desc || "").toLowerCase().includes(q)
+      || (s.coin || "").toLowerCase().includes(q)
+      || (s.indicators || []).join(" ").toLowerCase().includes(q)
+      || (s.type || "").toLowerCase().includes(q);
   }
 
+  function cardHtml(s, opts) {
+    const isMine = !!opts && opts.mine;
+    const url = isMine ? mySetupUrl(s) : setupUrl(s);
+    const inds = (s.indicators || []).map(i => `<span class="ind">${escapeHtml(i)}</span>`).join("");
+    const tagBlock = s.tag ? `<span class="tag ${escapeHtml(s.tag)}">${escapeHtml(s.tag)}</span>` : "";
+    const typeBlock = s.type ? `<span class="tag">${escapeHtml(s.type)}</span>` : "";
+    const savedAt = isMine && s.saved_at ? `<span title="${escapeHtml(s.saved_at)}">${new Date(s.saved_at).toLocaleDateString()}</span>` : "";
+    const delBtn = isMine ? `<button class="delete" data-del="${escapeHtml(s.id)}" title="Remove from My setups">×</button>` : "";
+    return `<div class="card">
+      <div class="head">
+        <span class="coin">${escapeHtml(s.coin || "?")}</span>
+        <span class="tag">${escapeHtml(s.interval || "?")}</span>
+        ${tagBlock}
+      </div>
+      <div class="preview">${previewSvg(s)}</div>
+      <h3>${escapeHtml(s.title || "(untitled)")}</h3>
+      ${s.desc ? `<p class="desc">${escapeHtml(s.desc)}</p>` : ""}
+      ${inds ? `<div class="indicators">${inds}</div>` : ""}
+      <div class="meta">
+        ${typeBlock}${savedAt}
+        <span class="spacer"></span>
+        ${delBtn}
+      </div>
+      <a class="open" href="${url}">Open this setup →</a>
+    </div>`;
+  }
+
+  function loadMy() {
+    try {
+      const raw = localStorage.getItem("ct_my_setups_v1");
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  }
+  function saveMy(arr) {
+    try { localStorage.setItem("ct_my_setups_v1", JSON.stringify(arr)); } catch {}
+  }
+
+  function renderAll() {
+    const visible = SETUPS.filter(s => (activeFilter === "all" || s.type === activeFilter) && matchSearch(s));
+    const my = loadMy().filter(matchSearch);
+    document.getElementById("count").textContent = `${visible.length + my.length} setup${visible.length + my.length === 1 ? "" : "s"} shown`;
+    document.getElementById("featured-count").textContent = visible.length;
+
+    document.getElementById("grid").innerHTML = visible.length
+      ? visible.map(s => cardHtml(s)).join("")
+      : '<div class="empty">No featured setups match this filter.</div>';
+
+    const mySec = document.getElementById("my-section");
+    const myGrid = document.getElementById("my-grid");
+    document.getElementById("my-count").textContent = my.length;
+    if (my.length || searchQuery || activeFilter !== "all") {
+      mySec.style.display = "";
+      myGrid.innerHTML = my.length
+        ? my.map(s => cardHtml(s, { mine: true })).join("")
+        : '<div class="my-empty">No saved setups yet. Open any coin page, configure your chart, then click <code>⭐ Save setup</code>.</div>';
+      // Wire delete buttons
+      myGrid.querySelectorAll("button[data-del]").forEach(b => {
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
+          const id = b.dataset.del;
+          const next = loadMy().filter(s => s.id !== id);
+          saveMy(next);
+          renderAll();
+        });
+      });
+    } else {
+      mySec.style.display = "";
+      myGrid.innerHTML = '<div class="my-empty">No saved setups yet. Open any coin page, configure your chart, then click <code>⭐ Save setup</code> to add one here.</div>';
+    }
+  }
+
+  document.getElementById("search").addEventListener("input", (e) => {
+    searchQuery = e.target.value.trim();
+    renderAll();
+  });
+
   renderFilters();
-  renderGrid();
+  renderAll();
 })();
 </script>
 </body>

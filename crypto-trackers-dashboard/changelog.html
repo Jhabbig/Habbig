@@ -45,6 +45,37 @@
   <p class="lede">Every shipped version since v0. Newest first.</p>
 
   <div class="release">
+    <div class="ver-line"><span class="ver">v0.24</span><span class="title">Setups upgrade · save your own setups · share buttons · re-triggerable tour</span></div>
+    <ul>
+      <li><span class="scope">page</span> /setups got search box, mini sparkline previews on every card, "My saved setups" section, and 2 more featured configurations (regression channel, full-stack)</li>
+      <li><span class="scope">chart</span> New ⭐ Save setup button on every coin page — captures interval/type/indicators/drawings to localStorage; shows up in /setups under My setups</li>
+      <li><span class="scope">tour</span> Persistent "? Tour" button in header re-opens the welcome tour any time; click-outside-to-dismiss</li>
+      <li><span class="scope">refer</span> Referral panel: Twitter/X + Telegram share buttons (web intent, no auth); welcome banner when arriving via ?ref=</li>
+      <li><span class="scope">fix</span> Setups link URLs now use ?id=<cg_id>&interval=&type=&ind= so the existing coin-page state loader picks them up</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.23</span><span class="title">Renko · Kagi · featured setups gallery · onboarding tour · referral codes</span></div>
+    <ul>
+      <li><span class="scope">chart</span> Two new chart types — Renko (fixed-price bricks, time-independent) and Kagi (reversal-threshold line, yin/yang)</li>
+      <li><span class="scope">page</span> /setups gallery: 15 hand-picked chart configurations across trend, mean-reversion, reversal, scalping, swing, risk, structure, macro</li>
+      <li><span class="scope">ux</span> First-visit 5-step onboarding tour gated by ct_onboarded_v1 localStorage</li>
+      <li><span class="scope">refer</span> Referral system stub: auto-generated 8-char code, inbound ?ref= capture, copy-link button, referral count tracker</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <div class="ver-line"><span class="ver">v0.22</span><span class="title">FIFO tax-lot tracker · API status page · theme toggle · 3 more indicators</span></div>
+    <ul>
+      <li><span class="scope">tool</span> FIFO tax-lot matcher: realised P&L with short/long-term split, by-coin breakdown, IRS-Form-8949-shaped CSV export</li>
+      <li><span class="scope">page</span> /status — per-source health (GREEN/YELLOW/RED), success rate, EMA latency, persisted-cache table; auto-refreshes every 15s</li>
+      <li><span class="scope">ux</span> Light/dark theme toggle in header (🌙 / ☀️) — CSS-variable swap, persists to localStorage</li>
+      <li><span class="scope">chart</span> 3 new indicators on coin page: Stochastic %K/%D, On-Balance Volume (OBV), ATR(14) envelope</li>
+    </ul>
+  </div>
+
+  <div class="release">
     <div class="ver-line"><span class="ver">v0.21</span><span class="title">Portfolio aggregator · landing page · daily digest · changelog · chart-share URLs</span></div>
     <ul>
       <li><span class="scope">tool</span> Portfolio aggregator — paste BTC/ETH/SOL wallet addresses, aggregate USD value with per-chain breakdown, browser-local storage</li>
