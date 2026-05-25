@@ -58,6 +58,13 @@ session_tokens: Set[str] = set()  # Valid session tokens for WebSocket auth
 # Pydantic Models
 # ============================================================================
 
+class ErrorResponse(BaseModel):
+    """Standardized error response."""
+    error: str = Field(..., description="Error message")
+    detail: str = Field(default="", description="Additional error details")
+    status_code: int = Field(..., description="HTTP status code")
+
+
 class BarResponse(BaseModel):
     """OHLCV bar response."""
     ticker: str
@@ -107,21 +114,25 @@ class HealthResponse(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    """Backtest request."""
-    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
-    strategy: str = Field(..., pattern=r"^(rsi|ma_crossover)$")
-    days: int = Field(30, ge=1, le=365)
-    initial_capital: float = Field(100000.0, gt=0, le=1_000_000_000)
-    position_size_pct: float = Field(0.1, gt=0, le=1.0)
+    """Backtest request with comprehensive validation."""
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$",
+                       description="Stock ticker symbol (e.g., AAPL, SPY)")
+    strategy: str = Field(..., pattern=r"^(rsi|ma_crossover)$",
+                         description="Strategy: 'rsi' or 'ma_crossover'")
+    days: int = Field(30, ge=1, le=365, description="Number of days (1-365)")
+    initial_capital: float = Field(100000.0, gt=0, le=1_000_000_000,
+                                  description="Starting capital in USD")
+    position_size_pct: float = Field(0.1, gt=0, le=1.0,
+                                    description="Position size % (0.01-1.0)")
 
     # RSI strategy params
-    rsi_oversold: float = Field(30.0, ge=0, le=100)
-    rsi_overbought: float = Field(70.0, ge=0, le=100)
-    rsi_period: int = Field(14, ge=2, le=200)
+    rsi_oversold: float = Field(30.0, ge=0, le=100, description="RSI oversold threshold")
+    rsi_overbought: float = Field(70.0, ge=0, le=100, description="RSI overbought threshold")
+    rsi_period: int = Field(14, ge=2, le=200, description="RSI lookback period")
 
     # MA crossover params
-    fast_period: int = Field(12, ge=2, le=200)
-    slow_period: int = Field(26, ge=2, le=500)
+    fast_period: int = Field(12, ge=2, le=200, description="Fast MA period")
+    slow_period: int = Field(26, ge=2, le=500, description="Slow MA period")
 
 
 class BacktestResponse(BaseModel):
@@ -298,8 +309,29 @@ else:
 # never leak to clients.
 @app.exception_handler(Exception)
 async def _generic_exception_handler(_, exc):
+    """Generic exception handler with standardized error response."""
     log.exception("Unhandled error")
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": "An unexpected error occurred. Please try again.",
+            "status_code": 500
+        }
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_, exc: HTTPException):
+    """HTTP exception handler with standardized format."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "Request error",
+            "detail": "",
+            "status_code": exc.status_code
+        },
+    )
 
 
 # ============================================================================

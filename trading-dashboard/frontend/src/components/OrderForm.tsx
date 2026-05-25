@@ -61,6 +61,13 @@ export const OrderForm: React.FC<OrderFormProps> = ({ selectedTicker, currentPri
     quantity > 0 &&
     (orderType === 'market' ? hasLivePrice : limitValid);
 
+  // Validation error messages
+  const validationErrors: string[] = [];
+  if (!selectedTicker || selectedTicker.length === 0) validationErrors.push('Select a ticker');
+  if (quantity <= 0) validationErrors.push('Quantity must be > 0');
+  if (orderType !== 'market' && !limitValid) validationErrors.push('Enter a valid price > 0');
+  if (orderType === 'market' && !hasLivePrice) validationErrors.push('No live price available');
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
@@ -194,6 +201,16 @@ export const OrderForm: React.FC<OrderFormProps> = ({ selectedTicker, currentPri
             {hasLivePrice ? `$${currentPrice.toFixed(2)}` : <span className="text-gray-500">waiting for quote…</span>}
           </div>
         </div>
+
+        {/* Validation Errors */}
+        {validationErrors.length > 0 && !canSubmit && (
+          <div className="bg-red-900/20 border border-red-700 rounded p-2">
+            <p className="text-xs text-red-400 font-medium">Cannot submit:</p>
+            {validationErrors.map((err, i) => (
+              <p key={i} className="text-xs text-red-300 mt-1">• {err}</p>
+            ))}
+          </div>
+        )}
 
         {/* Submit */}
         <button
