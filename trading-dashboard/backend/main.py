@@ -459,7 +459,7 @@ async def generate_signal(request: SignalRequest):
 
 @app.post("/api/scan/options", response_model=list[ScanResultResponse])
 @limiter.limit("30/minute")
-async def scan_options(request_obj: Request, request: ScanRequest):
+async def scan_options(request: Request, scan_request: ScanRequest):
     """
     Scan options chain for unusual activity.
     Detects: volume spikes, IV spikes, skew shifts, implied earnings moves.
@@ -468,20 +468,20 @@ async def scan_options(request_obj: Request, request: ScanRequest):
         scanner = OptionsScanEngine()
 
         # Convert to dict format expected by scanner
-        calls = [{"strike": c.strike, "volume": c.volume, "iv": c.iv, "iv_percentile": c.iv_percentile} for c in request.calls]
-        puts = [{"strike": p.strike, "volume": p.volume, "iv": p.iv, "iv_percentile": p.iv_percentile} for p in request.puts]
+        calls = [{"strike": c.strike, "volume": c.volume, "iv": c.iv, "iv_percentile": c.iv_percentile} for c in scan_request.calls]
+        puts = [{"strike": p.strike, "volume": p.volume, "iv": p.iv, "iv_percentile": p.iv_percentile} for p in scan_request.puts]
 
         timestamp = int(datetime.now().timestamp())
         results = []
 
-        if request.screening_type in ["all", "unusual_volume"]:
-            results.extend(scanner.scan_unusual_volume(request.ticker, calls, puts, timestamp))
-        if request.screening_type in ["all", "iv_spike"]:
-            results.extend(scanner.scan_iv_spikes(request.ticker, calls, puts, timestamp))
-        if request.screening_type in ["all", "skew_shifts"]:
-            results.extend(scanner.scan_skew_shifts(request.ticker, calls, puts, request.spot_price, timestamp))
-        if request.screening_type in ["all", "earnings_move"]:
-            results.extend(scanner.scan_earnings_move(request.ticker, calls, puts, request.spot_price, timestamp))
+        if scan_request.screening_type in ["all", "unusual_volume"]:
+            results.extend(scanner.scan_unusual_volume(scan_request.ticker, calls, puts, timestamp))
+        if scan_request.screening_type in ["all", "iv_spike"]:
+            results.extend(scanner.scan_iv_spikes(scan_request.ticker, calls, puts, timestamp))
+        if scan_request.screening_type in ["all", "skew_shifts"]:
+            results.extend(scanner.scan_skew_shifts(scan_request.ticker, calls, puts, scan_request.spot_price, timestamp))
+        if scan_request.screening_type in ["all", "earnings_move"]:
+            results.extend(scanner.scan_earnings_move(scan_request.ticker, calls, puts, scan_request.spot_price, timestamp))
 
         # Convert ScanResult to response format
         response = [
@@ -608,7 +608,7 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str, token: str = Que
 
 @app.post("/api/backtest", response_model=BacktestResponse)
 @limiter.limit("20/minute")
-async def run_backtest(request_obj: Request, request: BacktestRequest):
+async def run_backtest(request: Request, backtest_request: BacktestRequest):
     """
     Run a backtest with specified strategy and parameters.
 
@@ -628,11 +628,11 @@ async def run_backtest(request_obj: Request, request: BacktestRequest):
 
         bars = []
         price = 150.0
-        ts = int((datetime.now() - timedelta(days=request.days)).timestamp())
+        ts = int((datetime.now() - timedelta(days=backtest_request.days)).timestamp())
 
-        # `request.days` is bounded 1..365 by the Pydantic model, so the loop
+        # `backtest_request.days` is bounded 1..365 by the Pydantic model, so the loop
         # is bounded to at most 365 * 48 = 17,520 iterations.
-        for i in range(request.days * 48):  # Assume ~48 5-min bars per day
+        for i in range(backtest_request.days * 48):  # Assume ~48 5-min bars per day
             change = random.gauss(0, 0.8)
             price += change
             price = max(price, 50)
@@ -646,23 +646,23 @@ async def run_backtest(request_obj: Request, request: BacktestRequest):
                 'volume': random.randint(100000, 1000000),
             })
 
-        engine = SimpleBacktestEngine(initial_capital=request.initial_capital)
+        engine = SimpleBacktestEngine(initial_capital=backtest_request.initial_capital)
 
-        strategy = request.strategy.lower()
+        strategy = backtest_request.strategy.lower()
         if strategy == "rsi":
             result = engine.run_rsi_strategy(
                 bars,
-                rsi_oversold=request.rsi_oversold,
-                rsi_overbought=request.rsi_overbought,
-                rsi_period=request.rsi_period,
-                position_size_pct=request.position_size_pct,
+                rsi_oversold=backtest_request.rsi_oversold,
+                rsi_overbought=backtest_request.rsi_overbought,
+                rsi_period=backtest_request.rsi_period,
+                position_size_pct=backtest_request.position_size_pct,
             )
         elif strategy == "ma_crossover":
             result = engine.run_ma_crossover_strategy(
                 bars,
-                fast_period=request.fast_period,
-                slow_period=request.slow_period,
-                position_size_pct=request.position_size_pct,
+                fast_period=backtest_request.fast_period,
+                slow_period=backtest_request.slow_period,
+                position_size_pct=backtest_request.position_size_pct,
             )
         else:
             # Should be unreachable thanks to the Pydantic pattern.
@@ -672,8 +672,8 @@ async def run_backtest(request_obj: Request, request: BacktestRequest):
             raise HTTPException(status_code=501, detail=f"Strategy '{strategy}' not implemented")
 
         result_dict = {
-            "ticker": request.ticker,
-            "strategy": request.strategy,
+            "ticker": backtest_request.ticker,
+            "strategy": backtest_request.strategy,
             "start_date": result.start_date,
             "end_date": result.end_date,
             "initial_capital": result.initial_capital,
