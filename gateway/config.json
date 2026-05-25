@@ -100,6 +100,30 @@
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
     },
+    "truth": {
+      "subdomain": "truth",
+      "target": 18789,
+      "display_name": "Truth Research",
+      "description": "X / TruthSocial prediction-mining · EV signals · paper-trade ledger",
+      "accent": "#f43f5e",
+      "monthly_cents": 1499,
+      "annual_cents": 14900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_TRUTH_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_TRUTH_STRIPE_ANNUAL"
+    },
+    "airace": {
+      "subdomain": "ai",
+      "target": 7070,
+      "display_name": "AI Race",
+      "description": "Frontier model leaderboard · capability frontier · live AI prediction markets",
+      "accent": "#a78bfa",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
+    },
     "disasters": {
       "subdomain": "disasters",
       "target": 7053,
@@ -135,6 +159,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
+    },
+    "whale": {
+      "subdomain": "whale",
+      "target": 8053,
+      "display_name": "Whale Watch",
+      "description": "Institutional whale flow — 13F, Form 4, 13D filings",
+      "accent": "#10b981",
+      "monthly_cents": 1799,
+      "annual_cents": 17900,
+      "supports_websocket": true,
+      "stripe_price_monthly": "TODO_set_stripe_price_id",
+      "stripe_price_annual": "TODO_set_stripe_price_id"
     }
   }
 }

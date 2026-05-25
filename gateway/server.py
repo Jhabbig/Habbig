@@ -231,6 +231,28 @@ DASHBOARD_PREVIEWS = {
             "Data refreshed every 5 minutes",
         ],
     },
+    "whale": {
+        "tagline": "Watch the institutional whales. Real-time SEC filings — 13F, Form 4, 13D — collapsed into one view of where JPMorgan, BlackRock, Berkshire, and the activist funds are actually putting their money.",
+        "features": [
+            {"icon": "\U0001f433", "title": "13F Holdings", "desc": "Quarterly position books for ~17 hand-curated mega-funds, with 30+ sub-CIKs collapsed into a single parent entity per firm."},
+            {"icon": "\U0001f4dd", "title": "Form 4 Insider Feed", "desc": "Insider purchases and sales surfaced within hours of filing, with a cluster-buy detector for tickers where 3+ insiders converge on the buy side."},
+            {"icon": "\U0001f6a8", "title": "Schedule 13D / 13G", "desc": "5%+ stake disclosures with an Item 4 intent classifier — activist vs. acquisition vs. passive vs. governance."},
+            {"icon": "\U0001f4ca", "title": "Smart-Money Consensus", "desc": "Per-ticker score across all tracked whales — unanimous accumulation vs. distribution from the latest 13F."},
+            {"icon": "\U0001f4ca", "title": "Crowdedness Leaderboard", "desc": "Tickers held by the most whales, percentile-ranked. Crowded longs are crash-risk; flip the assumption for squeeze candidates."},
+            {"icon": "⚡", "title": "Real-Time Alerts", "desc": "Watchlist tickers and whales; alert rules fire on 13D filings, cluster buys, whale moves, and consensus crosses via webhook or email."},
+        ],
+        "includes": [
+            "17 mega-fund whales (JPM, MS, GS, BlackRock, Vanguard, Fidelity, Berkshire, Citadel, Millennium, Bridgewater, Pershing Square, Icahn, Elliott, …)",
+            "Quarterly 13F-HR holdings + Q-over-Q deltas (NEW / ADD / TRIM / EXIT)",
+            "Form 4 insider transaction feed with cluster-buy detection",
+            "Schedule 13D/13G filings with intent classification",
+            "Smart-money consensus and crowdedness percentile per ticker",
+            "CFTC Commitment of Traders for futures positioning",
+            "Polymarket cross-links — edge tracking at +24h / +7d / +30d after each filing",
+            "Real-time WebSocket fanout + per-user alert rules",
+            "Updated every 6 hours (Form 4 / 13D feeds within hours of filing)",
+        ],
+    },
 }
 
 # Production flag: set PRODUCTION=1 on the deployed server. Disables the

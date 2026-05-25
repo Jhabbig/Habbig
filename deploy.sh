@@ -28,6 +28,8 @@ SITES=(
     polymarket-bot
     polymarket_weather_bot
     top-traders-dashboard
+    ai-race-dashboard
+    whale-dashboard
 )
 
 # Excluded from rsync
