@@ -23,6 +23,45 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+# ── Layered .env loader ──────────────────────────────────────────────────────
+# See sports-dashboard for rationale. ~/.gateway_env → gateway/.env.production →
+# dashboard/.env.production → dashboard/.env, broadest → narrowest.
+try:
+    from dotenv import load_dotenv as _dotenv_load
+except ImportError:
+    def _dotenv_load(p, override=False):
+        for raw in Path(p).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if not override and k in os.environ:
+                continue
+            os.environ[k] = v
+        return True
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_GATEWAY_ENV = None
+for _p in [_DASHBOARD_DIR, *_DASHBOARD_DIR.parents][:5]:
+    _candidate = _p / "gateway" / ".env.production"
+    if _candidate.is_file():
+        _GATEWAY_ENV = _candidate
+        break
+_ENV_SEARCH = [Path.home() / ".gateway_env"]
+if _GATEWAY_ENV is not None:
+    _ENV_SEARCH.append(_GATEWAY_ENV)
+_ENV_SEARCH.extend([_DASHBOARD_DIR / ".env.production", _DASHBOARD_DIR / ".env"])
+_loaded_env_files: list[str] = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        _dotenv_load(_f, override=False)
+        _loaded_env_files.append(str(_f))
+print(f"[world-dashboard] env files loaded: {len(_loaded_env_files)}", flush=True)
+for _f in _loaded_env_files:
+    print(f"  ✓ {_f}", flush=True)
+if not os.getenv("GATEWAY_SSO_SECRET"):
+    print("⚠ [world-dashboard] GATEWAY_SSO_SECRET missing — gateway-fronted requests will be rejected", flush=True)
+
 from infrastructure_data import (
     UNDERSEA_CABLES as _INFRA_CABLES,
     OIL_GAS_PIPELINES as _INFRA_PIPELINES,
@@ -5933,6 +5972,250 @@ OIL_ANALYTICS = {
     "detail": "Soft demand outlook + OPEC+ unwind keeping prices range-bound",
 }
 
+
+# ═══════════════ WORLD ENERGY (electricity production + transit) ═══════════════
+#
+# Snapshot of world electricity generation, regional mix, transit chokepoints,
+# LNG export hubs, renewable-share forecast, and energy-sector derivatives.
+# Data is annual-cadence (Ember/Energy Institute via OWID) refreshed by hand
+# during release cycles. Live overlay endpoints (Polymarket, Stooq) are
+# called separately via fetch_world_energy_live() and merged on /api/all.
+
+WORLD_ENERGY_MIX = {
+    "year": 2025,
+    "world_total_twh": 31772,
+    "breakdown": [  # ordered descending by share — colors match across the suite
+        {"source": "Coal",     "twh": 10472, "share": 0.330, "color": "#6b7280"},
+        {"source": "Gas",      "twh":  6926, "share": 0.218, "color": "#a78bfa"},
+        {"source": "Hydro",    "twh":  4448, "share": 0.140, "color": "#3b82f6"},
+        {"source": "Nuclear",  "twh":  2812, "share": 0.088, "color": "#22d3ee"},
+        {"source": "Solar",    "twh":  2779, "share": 0.087, "color": "#fbbf24"},
+        {"source": "Wind",     "twh":  2713, "share": 0.085, "color": "#34d399"},
+        {"source": "Oil",      "twh":   826, "share": 0.026, "color": "#9ca3af"},
+        {"source": "Bioenergy","twh":   698, "share": 0.022, "color": "#84cc16"},
+        {"source": "Other RE", "twh":    98, "share": 0.003, "color": "#f472b6"},
+    ],
+    "share_renewable": 0.338,
+    "share_renewable_10y_delta_pp": 10.79,
+    "share_fossil": 0.574,
+    "share_fossil_10y_delta_pp": -9.12,
+    "share_low_carbon": 0.426,
+    "share_nuclear": 0.088,
+    "growth_multipliers_10y": {"Solar": 10.9, "Wind": 3.3, "Coal": 1.13},
+    "source": "Our World in Data — Ember + Energy Institute Statistical Review",
+}
+
+WORLD_ENERGY_REGIONS = [
+    {"region": "Africa",        "year": 2024, "twh":   962, "share_renewable": 0.247, "share_low_carbon": 0.255, "carbon_intensity_g": 544, "top": [("Gas",0.42),("Coal",0.25),("Hydro",0.17)]},
+    {"region": "Asia",          "year": 2024, "twh": 18015, "share_renewable": 0.273, "share_low_carbon": 0.321, "carbon_intensity_g": 573, "top": [("Coal",0.49),("Gas",0.16),("Hydro",0.12)]},
+    {"region": "Europe",        "year": 2025, "twh":  4626, "share_renewable": 0.416, "share_low_carbon": 0.620, "carbon_intensity_g": 271, "top": [("Gas",0.24),("Nuclear",0.20),("Hydro",0.16)]},
+    {"region": "North America", "year": 2024, "twh":  5534, "share_renewable": 0.288, "share_low_carbon": 0.447, "carbon_intensity_g": 369, "top": [("Gas",0.40),("Nuclear",0.16),("Coal",0.13)]},
+    {"region": "South America", "year": 2024, "twh":  1321, "share_renewable": 0.768, "share_low_carbon": 0.788, "carbon_intensity_g": 167, "top": [("Hydro",0.53),("Gas",0.15),("Wind",0.11)]},
+    {"region": "Oceania",       "year": 2024, "twh":   338, "share_renewable": 0.414, "share_low_carbon": 0.414, "carbon_intensity_g": 495, "top": [("Coal",0.38),("Gas",0.16),("Solar",0.15)]},
+    {"region": "Middle East",   "year": 2025, "twh":  1582, "share_renewable": 0.051, "share_low_carbon": 0.081, "carbon_intensity_g": 635, "top": [("Gas",0.73),("Oil",0.18),("Solar",0.04)]},
+]
+
+WORLD_ENERGY_TOP_PRODUCERS = [
+    {"country": "China",         "twh": 10583, "share_renewable": 0.370, "carbon_g": 525},
+    {"country": "United States", "twh":  4520, "share_renewable": 0.256, "carbon_g": 384},
+    {"country": "India",         "twh":  2082, "share_renewable": 0.240, "carbon_g": 670},
+    {"country": "Russia",        "twh":  1193, "share_renewable": 0.170, "carbon_g": 450},
+    {"country": "Japan",         "twh":  1030, "share_renewable": 0.236, "carbon_g": 477},
+    {"country": "Brazil",        "twh":   751, "share_renewable": 0.866, "carbon_g": 110},
+    {"country": "Canada",        "twh":   652, "share_renewable": 0.640, "carbon_g": 191},
+    {"country": "South Korea",   "twh":   625, "share_renewable": 0.099, "carbon_g": 417},
+    {"country": "France",        "twh":   570, "share_renewable": 0.261, "carbon_g":  41},
+    {"country": "Germany",       "twh":   500, "share_renewable": 0.591, "carbon_g": 330},
+    {"country": "Iran",          "twh":   396, "share_renewable": 0.040, "carbon_g": 660},
+    {"country": "Mexico",        "twh":   357, "share_renewable": 0.231, "carbon_g": 474},
+    {"country": "Turkey",        "twh":   354, "share_renewable": 0.433, "carbon_g": 475},
+    {"country": "Vietnam",       "twh":   310, "share_renewable": 0.454, "carbon_g": 461},
+    {"country": "United Kingdom","twh":   292, "share_renewable": 0.520, "carbon_g": 217},
+    {"country": "Spain",         "twh":   288, "share_renewable": 0.559, "carbon_g": 154},
+    {"country": "Australia",     "twh":   286, "share_renewable": 0.386, "carbon_g": 525},
+    {"country": "Italy",         "twh":   265, "share_renewable": 0.488, "carbon_g": 285},
+    {"country": "South Africa",  "twh":   243, "share_renewable": 0.136, "carbon_g": 699},
+    {"country": "Poland",        "twh":   173, "share_renewable": 0.315, "carbon_g": 589},
+]
+
+# Maritime chokepoints — energy throughput emphasis. Augments the geopolitical
+# STRATEGIC_CHOKEPOINTS list above; this one carries petroleum/LNG specifics
+# and the analytical context. Sourced from EIA "World Oil Transit Chokepoints"
+# (latest cycle) + GIIGNL LNG annual report.
+ENERGY_CHOKEPOINTS = [
+    {
+        "id": "hormuz", "name": "Strait of Hormuz", "type": "strait",
+        "lat": 26.6, "lng": 56.3,
+        "between": "Iran / Oman / UAE",
+        "oil_mbd": 20.9, "share_seaborne_oil": 0.27, "share_global_lng": 0.20,
+        "carries": "Crude + condensate + LNG out of the Persian Gulf",
+        "blurb": "World's #1 oil chokepoint. ~21 mb/d of petroleum liquids, ~20% of global LNG. No practical bypass at full volume — Saudi East-West and UAE Habshan-Fujairah pipelines combined cover only ~2.6 mb/d.",
+        "risk": "Iran has threatened closure repeatedly (2011-12, 2019, 2024). US 5th Fleet (Bahrain) maintains transit security.",
+        "risk_tier": "EXTREME",
+    },
+    {
+        "id": "malacca", "name": "Strait of Malacca", "type": "strait",
+        "lat": 2.5, "lng": 101.5,
+        "between": "Malaysia / Singapore / Indonesia",
+        "oil_mbd": 23.7, "share_seaborne_oil": 0.30, "share_global_lng": None,
+        "carries": "Crude + products to East Asia (China, Japan, S Korea)",
+        "blurb": "Busiest oil chokepoint by volume. Primary route for Middle Eastern and African crude bound for Northeast Asia. ~30% of seaborne oil and ~33% of all global maritime trade by tonnage.",
+        "risk": "Piracy concern (declined post-2010). Strategic vulnerability for China — drives 'Malacca Dilemma' rationale for BRI alternatives (Myanmar pipeline, Pakistan corridor).",
+        "risk_tier": "HIGH",
+    },
+    {
+        "id": "suez", "name": "Suez Canal + SUMED Pipeline", "type": "canal",
+        "lat": 30.5, "lng": 32.3,
+        "between": "Egypt — Mediterranean / Red Sea",
+        "oil_mbd": 9.2, "share_seaborne_oil": 0.12, "share_global_lng": None,
+        "carries": "Crude + products + LNG between Europe and Asia/Gulf",
+        "blurb": "Joint Suez (canal) + SUMED (pipeline bypass) carry ~9.2 mb/d. Houthi attacks since late 2023 collapsed Red Sea transit ~70%, rerouting via Cape of Good Hope (+10-14 days, ~$1M extra fuel per voyage).",
+        "risk": "Houthi missile/drone attacks ongoing as of 2025. Ever Given grounding (2021) blocked transit for 6 days, $9B-$10B/day in held cargo.",
+        "risk_tier": "EXTREME",
+    },
+    {
+        "id": "bab_el_mandeb", "name": "Bab el-Mandeb", "type": "strait",
+        "lat": 12.6, "lng": 43.4,
+        "between": "Yemen / Djibouti / Eritrea",
+        "oil_mbd": 6.2, "share_seaborne_oil": 0.08, "share_global_lng": None,
+        "carries": "Crude + products + LNG between Suez and Indian Ocean",
+        "blurb": "Southern gateway to the Red Sea. Pre-2024 ~6.2 mb/d; Houthi attacks have cut transit ~70% since Nov 2023. Most large-tanker traffic now reroutes around Africa.",
+        "risk": "Houthi anti-ship missiles + drones. Operation Prosperity Guardian (US-led) provides limited escort.",
+        "risk_tier": "EXTREME",
+    },
+    {
+        "id": "turkish_straits", "name": "Turkish Straits (Bosporus + Dardanelles)", "type": "strait",
+        "lat": 41.0, "lng": 29.0,
+        "between": "Turkey — Black Sea / Mediterranean",
+        "oil_mbd": 3.0, "share_seaborne_oil": 0.04, "share_global_lng": None,
+        "carries": "Russian + Caspian crude + grain exports to Mediterranean",
+        "blurb": "Two narrow straits (Bosporus + Dardanelles) governed by 1936 Montreux Convention. ~3 mb/d crude. Tanker queues common. Critical for Russian Black Sea fleet basing and Caspian crude (Novorossiysk, Tuapse).",
+        "risk": "Sanctions enforcement on Russia post-2022 has slowed transit. Turkey can restrict warship passage during conflict (invoked 2022 against Russia + NATO).",
+        "risk_tier": "HIGH",
+    },
+    {
+        "id": "panama", "name": "Panama Canal", "type": "canal",
+        "lat": 9.1, "lng": -79.7,
+        "between": "Panama — Atlantic / Pacific",
+        "oil_mbd": 1.0, "share_seaborne_oil": 0.01, "share_global_lng": None,
+        "carries": "Mostly products (gasoline, diesel) + some LPG/LNG",
+        "blurb": "Only ~1 mb/d of petroleum, but disproportionately important for US Gulf → Asia products trade. 2023-24 drought cut transit slots by ~36%, forced reroutes via Cape Horn / Suez.",
+        "risk": "Climate-driven freshwater shortage (Lake Gatún) — recurring drought events expected to worsen. Trump admin reopened question of US control rights in 2025.",
+        "risk_tier": "MEDIUM",
+    },
+    {
+        "id": "danish_straits", "name": "Danish Straits", "type": "strait",
+        "lat": 56.0, "lng": 11.0,
+        "between": "Denmark / Sweden — Baltic / North Sea",
+        "oil_mbd": 3.2, "share_seaborne_oil": 0.04, "share_global_lng": None,
+        "carries": "Russian Baltic crude (Primorsk, Ust-Luga) to global markets",
+        "blurb": "Pre-war ~3.2 mb/d of mostly Russian crude. Post-Ukraine sanctions, traffic increasingly 'shadow fleet' tankers. Denmark + EU exploring inspection regimes for environmental + sanctions enforcement.",
+        "risk": "Shadow fleet (uninsured, aging) tankers raise oil-spill risk. Repeated Russian undersea cable + pipeline incidents in Baltic since 2022.",
+        "risk_tier": "MEDIUM",
+    },
+    {
+        "id": "cape_good_hope", "name": "Cape of Good Hope", "type": "cape",
+        "lat": -34.4, "lng": 18.5,
+        "between": "South Africa — Suez bypass route",
+        "oil_mbd": 7.5, "share_seaborne_oil": 0.10, "share_global_lng": None,
+        "carries": "Reroute path for Suez avoiders",
+        "blurb": "Volume jumped from ~3 mb/d to ~7.5 mb/d in 2024 as Red Sea transit collapsed. Adds ~10-14 days vs Suez routing. No physical chokepoint risk but vulnerable in any global naval conflict.",
+        "risk": "South African ports (Cape Town, Durban) suffer chronic congestion + load-shedding.",
+        "risk_tier": "LOW",
+    },
+]
+
+# Major LNG export hubs — capacity in million tonnes per annum (mtpa).
+ENERGY_LNG_HUBS = [
+    {"name": "Ras Laffan",     "country": "QA", "lat": 25.9, "lng":  51.5, "mtpa": 77, "role": "Export"},
+    {"name": "Sabine Pass",    "country": "US", "lat": 29.7, "lng": -93.9, "mtpa": 30, "role": "Export"},
+    {"name": "Corpus Christi", "country": "US", "lat": 27.8, "lng": -97.1, "mtpa": 22, "role": "Export"},
+    {"name": "Freeport LNG",   "country": "US", "lat": 29.0, "lng": -95.3, "mtpa": 15, "role": "Export"},
+    {"name": "Cameron LNG",    "country": "US", "lat": 29.8, "lng": -93.3, "mtpa": 13, "role": "Export"},
+    {"name": "Yamal LNG",      "country": "RU", "lat": 71.3, "lng":  72.1, "mtpa": 18, "role": "Export"},
+    {"name": "Sakhalin-2",     "country": "RU", "lat": 46.6, "lng": 142.7, "mtpa": 11, "role": "Export"},
+    {"name": "Gorgon",         "country": "AU", "lat":-20.7, "lng": 115.5, "mtpa": 16, "role": "Export"},
+    {"name": "Ichthys",        "country": "AU", "lat":-12.5, "lng": 130.8, "mtpa":  9, "role": "Export"},
+    {"name": "Wheatstone",     "country": "AU", "lat":-21.7, "lng": 115.0, "mtpa":  9, "role": "Export"},
+    {"name": "Bintulu MLNG",   "country": "MY", "lat":  3.2, "lng": 113.0, "mtpa": 30, "role": "Export"},
+    {"name": "Bonny LNG",      "country": "NG", "lat":  4.4, "lng":   7.2, "mtpa": 22, "role": "Export"},
+]
+
+# 5-year renewable-share forecast (OLS regression on 10y of OWID data).
+ENERGY_FORECAST = {
+    "world": {
+        "current_year":   2025,
+        "current_share":  0.338,
+        "horizon_year":   2030,
+        "central":        0.381,
+        "band_low":       0.376,
+        "band_high":      0.386,
+        "slope_pp_year":  1.05,
+        "residual_std_pp": 0.52,
+    },
+    "country_top_growth": [
+        {"country": "Netherlands",   "now": 0.512, "in_5y": 0.753, "slope_pp_year":  4.57},
+        {"country": "Germany",       "now": 0.591, "in_5y": 0.742, "slope_pp_year":  3.15},
+        {"country": "United Kingdom","now": 0.520, "in_5y": 0.668, "slope_pp_year":  2.85},
+        {"country": "Australia",     "now": 0.386, "in_5y": 0.519, "slope_pp_year":  2.65},
+        {"country": "Spain",         "now": 0.559, "in_5y": 0.667, "slope_pp_year":  2.32},
+        {"country": "Poland",        "now": 0.315, "in_5y": 0.394, "slope_pp_year":  1.97},
+        {"country": "Sweden",        "now": 0.712, "in_5y": 0.785, "slope_pp_year":  1.42},
+        {"country": "Turkey",        "now": 0.433, "in_5y": 0.524, "slope_pp_year":  1.42},
+        {"country": "China",         "now": 0.370, "in_5y": 0.402, "slope_pp_year":  1.16},
+        {"country": "Brazil",        "now": 0.866, "in_5y": 0.940, "slope_pp_year":  1.14},
+        {"country": "United States", "now": 0.256, "in_5y": 0.310, "slope_pp_year":  1.12},
+        {"country": "Italy",         "now": 0.488, "in_5y": 0.521, "slope_pp_year":  1.08},
+        {"country": "Japan",         "now": 0.236, "in_5y": 0.288, "slope_pp_year":  1.00},
+    ],
+    "method": "OLS linreg on last 10y of renewables_share_elec, 5y horizon, ±1σ band, clamped [0,1].",
+}
+
+# Snapshot of energy futures, ETFs, equities (Stooq end-of-day).
+ENERGY_DERIVATIVES = {
+    "futures": [
+        {"symbol": "CL", "name": "WTI Crude Oil",            "category": "Crude oil",   "price": 101.94, "change_pct": -3.04},
+        {"symbol": "NG", "name": "Natural Gas (Henry Hub)",  "category": "Natural gas", "price":   2.78, "change_pct": +0.91},
+        {"symbol": "HO", "name": "Heating Oil",              "category": "Distillates", "price":   3.95, "change_pct": -3.61},
+        {"symbol": "RB", "name": "RBOB Gasoline",            "category": "Distillates", "price":   3.60, "change_pct": -0.99},
+    ],
+    "etfs": [
+        {"symbol": "XLE",  "name": "Energy Select Sector SPDR",     "category": "Broad energy",      "price":  58.85, "change_pct": -0.36},
+        {"symbol": "XOP",  "name": "S&P Oil & Gas E&P",             "category": "Oil E&P",           "price": 176.67, "change_pct": -0.08},
+        {"symbol": "USO",  "name": "United States Oil Fund",        "category": "Crude oil",         "price": 142.80, "change_pct": -0.51},
+        {"symbol": "UNG",  "name": "United States Natural Gas Fund","category": "Natural gas",       "price":  10.71, "change_pct": +0.19},
+        {"symbol": "TAN",  "name": "Invesco Solar ETF",             "category": "Solar",             "price":  59.27, "change_pct": +1.58},
+        {"symbol": "ICLN", "name": "iShares Global Clean Energy",   "category": "Clean energy",      "price":  20.95, "change_pct": +0.62},
+        {"symbol": "URA",  "name": "Global X Uranium",              "category": "Uranium",           "price":  55.84, "change_pct": -0.27},
+        {"symbol": "NLR",  "name": "VanEck Uranium+Nuclear Energy", "category": "Nuclear",           "price": 144.00, "change_pct": -0.41},
+        {"symbol": "LIT",  "name": "Global X Lithium & Battery",    "category": "Lithium / battery", "price":  88.72, "change_pct": +0.75},
+        {"symbol": "FAN",  "name": "First Trust Global Wind Energy","category": "Wind",              "price":  26.87, "change_pct": -0.04},
+    ],
+    "equities": [
+        {"symbol": "XOM",  "name": "ExxonMobil",        "category": "Oil major",     "price": 152.75, "change_pct": +0.09},
+        {"symbol": "CVX",  "name": "Chevron",           "category": "Oil major",     "price": 190.63, "change_pct": -0.35},
+        {"symbol": "SHEL", "name": "Shell",             "category": "Oil major",     "price":  88.98, "change_pct": -1.35},
+        {"symbol": "BP",   "name": "BP",                "category": "Oil major",     "price":  46.41, "change_pct": -1.42},
+        {"symbol": "TTE",  "name": "TotalEnergies",     "category": "Oil major",     "price":  92.78, "change_pct": +0.37},
+        {"symbol": "COP",  "name": "ConocoPhillips",    "category": "Oil E&P",       "price": 123.19, "change_pct": -1.45},
+        {"symbol": "EOG",  "name": "EOG Resources",     "category": "Oil E&P",       "price": 138.95, "change_pct": -0.67},
+        {"symbol": "OXY",  "name": "Occidental",        "category": "Oil E&P",       "price":  58.71, "change_pct": -2.22},
+        {"symbol": "FANG", "name": "Diamondback",       "category": "Oil E&P",       "price": 207.65, "change_pct": +1.51},
+        {"symbol": "EQT",  "name": "EQT Corporation",   "category": "Natural gas",   "price":  58.66, "change_pct": -2.23},
+        {"symbol": "SLB",  "name": "Schlumberger",      "category": "Oil services",  "price":  56.92, "change_pct": +0.87},
+        {"symbol": "HAL",  "name": "Halliburton",       "category": "Oil services",  "price":  41.66, "change_pct": -1.88},
+        {"symbol": "NEE",  "name": "NextEra Energy",    "category": "Util / renew",  "price":  96.95, "change_pct": -1.07},
+        {"symbol": "DUK",  "name": "Duke Energy",       "category": "Utility",       "price": 128.60, "change_pct": -0.65},
+        {"symbol": "SO",   "name": "Southern Company",  "category": "Utility",       "price":  96.71, "change_pct": +0.14},
+        {"symbol": "ENPH", "name": "Enphase Energy",    "category": "Solar",         "price":  33.85, "change_pct": +1.85},
+        {"symbol": "FSLR", "name": "First Solar",       "category": "Solar",         "price": 211.71, "change_pct": +5.81},
+        {"symbol": "CEG",  "name": "Constellation Energy","category": "Nuclear",     "price": 307.81, "change_pct": -1.50},
+        {"symbol": "VST",  "name": "Vistra",            "category": "Power gen",     "price": 155.28, "change_pct": -1.91},
+    ],
+    "source": "Stooq end-of-day snapshot",
+}
+
+
 BTC_ETF_FLOWS = [
     {"ticker": "IBIT", "name": "iShares Bitcoin Trust", "issuer": "BlackRock", "aum_b": 58.4, "flow_24h_m": 142.6, "flow_7d_m": 425.8, "expense_pct": 0.25},
     {"ticker": "FBTC", "name": "Fidelity Wise Origin Bitcoin", "issuer": "Fidelity", "aum_b": 19.7, "flow_24h_m": 38.2, "flow_7d_m": 156.3, "expense_pct": 0.25},
@@ -7973,6 +8256,15 @@ async def get_all():
         "bis_rates": BIS_POLICY_RATES,
         "sector_heatmap": SECTOR_HEATMAP,
         "oil_analytics": OIL_ANALYTICS,
+        "world_energy": {
+            "mix": WORLD_ENERGY_MIX,
+            "regions": WORLD_ENERGY_REGIONS,
+            "top_producers": WORLD_ENERGY_TOP_PRODUCERS,
+            "chokepoints": ENERGY_CHOKEPOINTS,
+            "lng_hubs": ENERGY_LNG_HUBS,
+            "forecast": ENERGY_FORECAST,
+            "derivatives": ENERGY_DERIVATIVES,
+        },
         "btc_etfs": BTC_ETF_FLOWS,
         "stablecoins": STABLECOINS,
         "gov_spending": GOV_SPENDING,
@@ -8179,6 +8471,24 @@ async def get_sector_heatmap():
 @app.get("/api/oil-analytics")
 async def get_oil_analytics():
     return _json(OIL_ANALYTICS)
+
+
+@app.get("/api/world-energy")
+async def get_world_energy():
+    """Energy panel payload — production mix, chokepoints, forecast, derivatives.
+
+    Static snapshot data sourced from OWID (Ember + Energy Institute) for the
+    mix/regions/forecast, EIA chokepoint reports + GIIGNL for transit, and
+    Stooq for derivatives. Refresh by editing the dataclasses inline."""
+    return _json({
+        "mix":           WORLD_ENERGY_MIX,
+        "regions":       WORLD_ENERGY_REGIONS,
+        "top_producers": WORLD_ENERGY_TOP_PRODUCERS,
+        "chokepoints":   ENERGY_CHOKEPOINTS,
+        "lng_hubs":      ENERGY_LNG_HUBS,
+        "forecast":      ENERGY_FORECAST,
+        "derivatives":   ENERGY_DERIVATIVES,
+    })
 
 
 @app.get("/api/btc-etfs")

@@ -21,6 +21,43 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
+# ── Layered .env loader ──────────────────────────────────────────────────────
+# See sports-dashboard for rationale. ~/.gateway_env → gateway/.env.production →
+# dashboard/.env.production → dashboard/.env (first definition wins).
+try:
+    from dotenv import load_dotenv as _dotenv_load
+except ImportError:
+    def _dotenv_load(p, override=False):
+        for raw in Path(p).read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if not override and k in os.environ:
+                continue
+            os.environ[k] = v
+        return True
+_DASHBOARD_DIR = Path(__file__).resolve().parent
+_GATEWAY_ENV = None
+for _p in [_DASHBOARD_DIR, *_DASHBOARD_DIR.parents][:5]:
+    _candidate = _p / "gateway" / ".env.production"
+    if _candidate.is_file():
+        _GATEWAY_ENV = _candidate
+        break
+_ENV_SEARCH = [Path.home() / ".gateway_env"]
+if _GATEWAY_ENV is not None:
+    _ENV_SEARCH.append(_GATEWAY_ENV)
+_ENV_SEARCH.extend([_DASHBOARD_DIR / ".env.production", _DASHBOARD_DIR / ".env"])
+_loaded_env_files: list[str] = []
+for _f in _ENV_SEARCH:
+    if _f.is_file():
+        _dotenv_load(_f, override=False)
+        _loaded_env_files.append(str(_f))
+print(f"[stock-dashboard] env files loaded: {len(_loaded_env_files)}", flush=True)
+for _f in _loaded_env_files:
+    print(f"  ✓ {_f}", flush=True)
+
 _sso_secret = os.environ.get("GATEWAY_SSO_SECRET", "")
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
 if not _sso_secret:

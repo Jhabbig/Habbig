@@ -24,49 +24,95 @@
 <script src="/static/maplibre-gl.js"></script>
 <link href="/static/maplibre-gl.css" rel="stylesheet">
 <script src="/static/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg-0: #0a0a0a;
-  --bg-1: #111111;
-  --bg-2: #161616;
-  --bg-3: #1c1c1c;
-  --border: #1f1f1f;
-  --border-light: #262626;
-  --text-0: #e6e6e6;
-  --text-1: #888888;
-  --text-2: #555555;
-  --green: #4ade80;
-  --green-dim: rgba(74,222,128,0.10);
+  /* Surfaces — slightly lifted from pure black for depth without losing the
+     terminal personality. */
+  --bg-0: #0b0b0d;
+  --bg-1: #131418;
+  --bg-2: #1a1c22;
+  --bg-3: #22252d;
+  --border: rgba(255,255,255,0.06);
+  --border-strong: rgba(255,255,255,0.10);
+  --border-light: rgba(255,255,255,0.04);
+
+  /* Text — better contrast than the previous palette. */
+  --text-0: #f0f1f3;
+  --text-1: #b1b3b9;
+  --text-2: #6c6f78;
+
+  /* Accent colors — slightly desaturated for refinement. */
+  --green:        #4ade80;
+  --green-dim:    rgba(74, 222, 128, 0.10);
   --green-bright: #86efac;
-  --red: #f87171;
-  --red-dim: rgba(248,113,113,0.10);
-  --orange: #fb923c;
-  --orange-dim: rgba(251,146,60,0.10);
-  --yellow: #facc15;
-  --blue: #60a5fa;
-  --teal: #2dd4bf;
-  --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Monaco, Consolas, 'Courier New', monospace;
+  --red:          #f87171;
+  --red-dim:      rgba(248, 113, 113, 0.10);
+  --orange:       #fb923c;
+  --orange-dim:   rgba(251, 146, 60, 0.10);
+  --yellow:       #facc15;
+  --blue:         #60a5fa;
+  --teal:         #2dd4bf;
+  --indigo:       #818cf8;
+  --indigo-dim:   rgba(129, 140, 248, 0.10);
+
+  /* Geometry — softened from sharp rectangles. */
+  --radius:    8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+
+  /* Shadows for panel depth. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border-light);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* Typography. */
+  --font-ui:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono:      'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', Monaco, Consolas, 'Courier New', monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   background: var(--bg-0);
   color: var(--text-0);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+/* Numbers & symbols stay mono — locks vertical alignment in tables and
+   preserves the terminal feel inside data-dense rows. */
+.t-num, .panel-badge, .rm-val, .num,
+.t-row-top .t-num, .header-stat, .heatmap-indicator-country,
+[class*="ticker"], [class*="-rate"], [class*="-mbd"] {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+::selection { background: rgba(96, 165, 250, 0.25); color: var(--text-0); }
 
 /* ── Header ──────────────────────────────────────── */
 .header {
-  height: 40px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  background: var(--bg-1);
+  padding: 0 22px;
+  background: linear-gradient(180deg, rgba(74, 222, 128, 0.04), rgba(11, 11, 13, 0));
+  background-color: rgba(19, 20, 24, 0.85);
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -76,25 +122,47 @@ body {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+}
+
+.header-brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--green) 0%, var(--teal) 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #0b0b0d;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: -0.04em;
+  font-family: var(--font-ui);
+  box-shadow: 0 0 12px rgba(74, 222, 128, 0.25), inset 0 0 0 1px rgba(255,255,255,0.10);
 }
 
 .header-title {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--green-bright);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--text-0);
 }
 
 .header-live {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 10px;
+  font-weight: 500;
   color: var(--green);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  background: var(--green-dim);
+  border: 1px solid rgba(74, 222, 128, 0.20);
+  border-radius: 100px;
 }
 
 .live-dot {
@@ -102,12 +170,13 @@ body {
   height: 6px;
   border-radius: 50%;
   background: var(--green);
-  animation: blink 2s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--green);
+  animation: blink 2.4s ease-in-out infinite;
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.85); }
 }
 
 .header-right {
@@ -302,66 +371,175 @@ body {
 
 /* ── Panels Grid ─────────────────────────────────── */
 .panels-container {
-  padding: 8px;
+  padding: 18px 22px 32px;
   position: relative;
   z-index: 2;
+  max-width: 1840px;
+  margin: 0 auto;
 }
+
+.cat-filter {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.cat-chip {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 100px;
+  cursor: pointer;
+  letter-spacing: -0.005em;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.15s ease;
+  font-family: var(--font-ui);
+}
+.cat-chip:hover {
+  color: var(--text-0);
+  border-color: var(--border-strong);
+  background: var(--bg-2);
+  transform: translateY(-1px);
+}
+.cat-chip.active {
+  background: rgba(129, 140, 248, 0.12);
+  color: var(--text-0);
+  border-color: rgba(129, 140, 248, 0.5);
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.08);
+}
+.cat-chip[data-cat="energy"].active {
+  background: rgba(251, 191, 36, 0.13);
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.08);
+}
+.cat-chip[data-cat="markets"].active {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.55);
+  color: var(--green);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.08);
+}
+.cat-chip[data-cat="conflict"].active {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: var(--red);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.08);
+}
+.cat-chip[data-cat="climate"].active {
+  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.55);
+  color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.08);
+}
+.cat-chip[data-cat="tech"].active {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.08);
+}
+.cat-chip[data-cat="geopolitics"].active {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.55);
+  color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.08);
+}
+.cat-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(255,255,255,0.06);
+  padding: 1px 7px;
+  border-radius: 100px;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  opacity: 0.85;
+  min-width: 22px;
+  text-align: center;
+}
+
+/* When a category filter is active, dim/hide non-matching panels.
+   Default (cat=all) shows everything. */
+.panels-container[data-cat="energy"] .panel:not([data-categories~="energy"]) { display: none; }
+.panels-container[data-cat="markets"] .panel:not([data-categories~="markets"]) { display: none; }
+.panels-container[data-cat="conflict"] .panel:not([data-categories~="conflict"]) { display: none; }
+.panels-container[data-cat="climate"] .panel:not([data-categories~="climate"]) { display: none; }
+.panels-container[data-cat="tech"] .panel:not([data-categories~="tech"]) { display: none; }
+.panels-container[data-cat="geopolitics"] .panel:not([data-categories~="geopolitics"]) { display: none; }
 
 .panels-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 14px;
 }
 
 /* ── Panel Base ──────────────────────────────────── */
 .panel {
   background: var(--bg-1);
   border: 1px solid var(--border);
-  border-radius: 0;
+  border-radius: var(--radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  max-height: 320px;
+  max-height: 360px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+.panel:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .panel-head {
-  height: 32px;
-  min-height: 32px;
+  height: 38px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  font-weight: 700;
+  padding: 0 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+  border-bottom: 1px solid var(--border-light);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.10em;
   color: var(--text-1);
 }
 
 .panel-badge {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 0;
-  letter-spacing: 0.5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
 }
 
-.panel-badge.red { background: var(--red-dim); color: var(--red); }
-.panel-badge.orange { background: var(--orange-dim); color: var(--orange); }
-.panel-badge.green { background: rgba(22,163,74,0.15); color: var(--green); }
-.panel-badge.blue { background: rgba(37,99,235,0.15); color: var(--blue); }
+.panel-badge.red    { background: var(--red-dim); color: var(--red); border-color: rgba(248,113,113,0.18); }
+.panel-badge.orange { background: var(--orange-dim); color: var(--orange); border-color: rgba(251,146,60,0.18); }
+.panel-badge.green  { background: var(--green-dim); color: var(--green); border-color: rgba(74,222,128,0.18); }
+.panel-badge.blue   { background: rgba(96,165,250,0.10); color: var(--blue); border-color: rgba(96,165,250,0.18); }
+.panel-badge.indigo { background: var(--indigo-dim); color: var(--indigo); border-color: rgba(129,140,248,0.18); }
 
 .panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0;
+  padding: 4px 0;
 }
 
-.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar { width: 6px; }
 .panel-body::-webkit-scrollbar-track { background: transparent; }
-.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+.panel-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
 
 /* ── Conflict Rows ───────────────────────────────── */
 .c-row {
@@ -464,22 +642,25 @@ body {
 
 /* ── Trend / Air Force / Spaceport Rows ──────────── */
 .t-row {
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.12s ease;
 }
 .t-row:last-child { border-bottom: none; }
-.t-row:hover { background: var(--bg-2); }
+.t-row:hover { background: rgba(255,255,255,0.025); }
 
 .t-row-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
 .t-name {
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
   color: var(--text-0);
   white-space: nowrap;
   overflow: hidden;
@@ -1809,28 +1990,32 @@ body {
   50% { opacity: 0.5; }
 }
 
-/* ── Tabbed panels (Aviation, Live Intel) ── */
+/* ── Tabbed panels (Aviation, Live Intel, World Energy) ── */
 .tab-bar {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-light);
+  margin: 0 0 8px;
+  padding: 0 8px;
 }
 .tab-btn {
   background: transparent;
   color: var(--text-2);
   border: 0;
-  padding: 5px 10px;
-  font-family: inherit;
-  font-size: 10px;
+  padding: 8px 12px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  text-transform: none;
+  letter-spacing: -0.005em;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  margin-bottom: -1px;
 }
-.tab-btn:hover { color: var(--text-1); }
-.tab-btn.active { color: #1ec878; border-bottom-color: #1ec878; }
-.tab-content { display: none; }
+.tab-btn:hover { color: var(--text-0); }
+.tab-btn.active { color: var(--green-bright); border-bottom-color: var(--green-bright); }
+.tab-content { display: none; padding: 0 4px; }
 .tab-content.active { display: block; }
 
 /* ── Sector heatmap grid ── */
@@ -1891,6 +2076,7 @@ body {
 <!-- ── Header ────────────────────────────────────── -->
 <header class="header">
   <div class="header-left">
+    <span class="header-brand-mark">W</span>
     <span class="header-title">World Monitor</span>
     <span class="header-live"><span class="live-dot"></span> live</span>
   </div>
@@ -2003,6 +2189,16 @@ body {
 
 <!-- ── Panels Grid ───────────────────────────────── -->
 <div class="panels-container">
+  <!-- Category filter chips — narrow the grid to a topic -->
+  <div class="cat-filter" id="cat-filter">
+    <button class="cat-chip active" data-cat="all">All <span class="cat-count" id="cat-count-all">—</span></button>
+    <button class="cat-chip" data-cat="energy">⚡ Energy <span class="cat-count" id="cat-count-energy">—</span></button>
+    <button class="cat-chip" data-cat="markets">$ Markets <span class="cat-count" id="cat-count-markets">—</span></button>
+    <button class="cat-chip" data-cat="conflict">⚔ Conflict <span class="cat-count" id="cat-count-conflict">—</span></button>
+    <button class="cat-chip" data-cat="climate">🌍 Climate <span class="cat-count" id="cat-count-climate">—</span></button>
+    <button class="cat-chip" data-cat="tech">⚡︎ Tech <span class="cat-count" id="cat-count-tech">—</span></button>
+    <button class="cat-chip" data-cat="geopolitics">🗺 Geopolitics <span class="cat-count" id="cat-count-geopolitics">—</span></button>
+  </div>
   <div class="panels-grid" id="panels-grid">
     <!-- Populated by JS -->
   </div>
@@ -3759,6 +3955,7 @@ function renderPanels() {
   html += buildBisRatesPanel();
   html += buildSectorHeatmapPanel();
   html += buildOilAnalyticsPanel();
+  html += buildWorldEnergyPanel();
   html += buildBtcEtfPanel();
   html += buildStablecoinsPanel();
   html += buildGovSpendingPanel();
@@ -3804,6 +4001,127 @@ function renderPanels() {
   bindPhase3Panels();
   applyMonitorHighlights();
   decorateNewItems();
+  autoTagPanelCategories();
+  bindCategoryFilter();
+}
+
+// ── Panel category filter ──────────────────────────────
+//
+// Auto-tags each panel with `data-categories` based on its key (`data-panel`)
+// then wires the chip toolbar. Panels can also pre-tag themselves (e.g.
+// World Energy and Oil Analytics already do); auto-tagging only adds.
+const PANEL_CATEGORY_MAP = {
+  // Energy — production, transit, derivatives
+  'world-energy':       'energy',
+  'oil-analytics':      'energy markets',
+  'commodities':        'markets energy',
+  'cot-report':         'markets energy',
+  'sector-heatmap':     'markets energy',
+
+  // Markets — finance, crypto, equities
+  'btc-etfs':           'markets',
+  'stablecoins':        'markets',
+  'market-indices':     'markets',
+  'fear-greed':         'markets',
+  'yield-curve':        'markets',
+  'etf-flows':          'markets',
+  'earnings-calendar':  'markets',
+  'crypto-signals':     'markets',
+  'midterm-elections':  'markets geopolitics',
+  'polymarket':         'markets geopolitics',
+  'gov-spending':       'markets',
+  'national-debt':      'markets',
+  'gdeltevents':        'markets geopolitics',
+  'bis-rates':          'markets',
+  'gdp-shift':          'markets geopolitics',
+  'econ':               'markets geopolitics',
+  'layoffs':            'markets',
+
+  // Conflict + military
+  'conflicts':          'conflict geopolitics',
+  'hotspots':           'conflict geopolitics',
+  'militias':           'conflict geopolitics',
+  'israel-sirens':      'conflict geopolitics',
+  'strategic-risk':     'conflict geopolitics',
+  'strategic-posture':  'conflict geopolitics',
+  'live-intel':         'conflict geopolitics',
+  'global-conflict-index': 'conflict geopolitics',
+  'air-forces':         'conflict geopolitics',
+  'spaceports':         'tech geopolitics',
+  'aviation-intel':     'geopolitics',
+  'sanctions':          'conflict geopolitics',
+  'sanctions-search':   'conflict geopolitics',
+  'wto-trade':          'markets geopolitics',
+  'nuclear':            'conflict geopolitics',
+
+  // Climate + environment
+  'climate-anomalies':  'climate energy',
+  'air-quality':        'climate',
+  'firms-fires':        'climate',
+  'pop-exposure':       'climate',
+  'humanitarian-crises':'climate geopolitics',
+  'displacement':       'climate geopolitics',
+
+  // Tech + cyber
+  'cyber-threats':      'tech',
+  'apt-groups':         'tech conflict',
+  'tech-readiness':     'tech',
+  'telegram-intel':     'tech conflict',
+  'live-streams':       'tech',
+
+  // Pure geopolitics
+  'country-browser':    'geopolitics',
+  'country-brief':      'geopolitics',
+  'intel-index':        'geopolitics',
+  'correlation':        'geopolitics',
+  'supply-chain':       'geopolitics markets',
+  'blocs':              'geopolitics',
+  'democracy':          'geopolitics',
+  'trends':             'geopolitics',
+  'trends-analysis':    'conflict geopolitics',
+  'news':               'geopolitics',
+  'xfeed':              'geopolitics',
+  'world-clock':        'geopolitics',
+};
+
+function autoTagPanelCategories() {
+  document.querySelectorAll('#panels-grid .panel[data-panel]').forEach(p => {
+    const key = p.getAttribute('data-panel');
+    const existing = (p.getAttribute('data-categories') || '').trim();
+    const auto = PANEL_CATEGORY_MAP[key];
+    if (!auto) return;
+    // Merge sets so panel-declared categories aren't overwritten.
+    const merged = (existing + ' ' + auto).split(/\s+/).filter(Boolean);
+    const unique = Array.from(new Set(merged)).join(' ');
+    p.setAttribute('data-categories', unique);
+  });
+  updateCatCounts();
+}
+
+function updateCatCounts() {
+  const all = document.querySelectorAll('#panels-grid .panel');
+  const total = all.length;
+  document.getElementById('cat-count-all').textContent = total;
+  for (const cat of ['energy', 'markets', 'conflict', 'climate', 'tech', 'geopolitics']) {
+    const n = Array.from(all).filter(p => (p.getAttribute('data-categories') || '').split(/\s+/).includes(cat)).length;
+    const el = document.getElementById('cat-count-' + cat);
+    if (el) el.textContent = n;
+  }
+}
+
+function bindCategoryFilter() {
+  const filter = document.getElementById('cat-filter');
+  if (!filter || filter._bound) return;
+  filter._bound = true;
+  const container = document.querySelector('.panels-container');
+  filter.addEventListener('click', e => {
+    const chip = e.target.closest('.cat-chip');
+    if (!chip) return;
+    const cat = chip.getAttribute('data-cat');
+    filter.querySelectorAll('.cat-chip').forEach(c => c.classList.toggle('active', c === chip));
+    if (cat === 'all') container.removeAttribute('data-cat');
+    else container.setAttribute('data-cat', cat);
+  });
 }
 
 // ── Conflicts Panel ──────────────────────────────────────
@@ -5366,11 +5684,257 @@ function buildOilAnalyticsPanel() {
     ['Brent-WTI', (o.spread_brent_wti || o.brent_wti_spread || 0).toFixed(2)]
   ];
   const cells = fields.map(([k, v, chg]) => `<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:3px;font-size:11px"><div style="color:var(--text-2);font-size:9px;text-transform:uppercase;letter-spacing:0.5px">${k}</div><div class="rm-val">${v}${typeof chg === 'number' ? ` <span style="color:${colorPct(chg)};font-size:9px">(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)</span>` : ''}</div></div>`).join('');
-  return `<div class="panel" data-panel="oil-analytics">
+  return `<div class="panel" data-panel="oil-analytics" data-categories="energy markets">
     <div class="panel-head">Oil Analytics <span class="panel-badge orange">EIA</span></div>
     <div class="panel-body">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">${cells}</div>
       ${o.detail ? `<div style="font-size:10px;color:var(--text-2);margin-top:6px;font-style:italic">${o.detail}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// WORLD ENERGY (production · chokepoints · forecast · derivatives)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Single panel with 5 internal tabs. Sourced from data.world_energy bundle
+// served by /api/all (also available standalone at /api/world-energy).
+
+function _eMixDonut(breakdown, size) {
+  size = size || 110;
+  if (!breakdown || !breakdown.length) return '';
+  const r = (size - 22) / 2;
+  const c = 2 * Math.PI * r;
+  let off = 0;
+  const arcs = breakdown.map(b => {
+    const arc = `<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${b.color}" stroke-width="22" stroke-dasharray="${(c*b.share).toFixed(2)} ${c.toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${size/2} ${size/2})" />`;
+    off += c * b.share;
+    return arc;
+  }).join('');
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${arcs}</svg>`;
+}
+
+function _eMixBar(breakdown) {
+  if (!breakdown || !breakdown.length) return '';
+  return `<div style="display:flex;height:10px;width:100%;border-radius:3px;overflow:hidden;background:rgba(255,255,255,0.04);margin-top:4px">${breakdown.map(b => `<span title="${b.source}: ${(b.share*100).toFixed(1)}%" style="width:${(b.share*100).toFixed(2)}%;background:${b.color};height:100%"></span>`).join('')}</div>`;
+}
+
+function _eFmtPct(v, dp) { dp = (dp != null ? dp : 1); return v == null ? '—' : (v*100).toFixed(dp) + '%'; }
+function _eFmtInt(v) { return v == null ? '—' : Math.round(v).toLocaleString(); }
+function _eFmtPp(v, dp) { dp = (dp != null ? dp : 2); if (v == null) return '—'; return (v >= 0 ? '+' : '') + v.toFixed(dp) + ' pp'; }
+
+function _eTabMix() {
+  const we = data.world_energy || {};
+  const mix = we.mix || {};
+  const breakdown = mix.breakdown || [];
+  const legend = breakdown.map(b => `
+    <div style="display:flex;justify-content:space-between;font-size:10px;line-height:1.45">
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${b.color};margin-right:5px;vertical-align:middle"></span>${b.source}</span>
+      <span style="font-variant-numeric:tabular-nums;color:var(--text-2)">${(b.share*100).toFixed(1)}%</span>
+    </div>`).join('');
+  const headline = `
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px">
+      ${_eMixDonut(breakdown, 100)}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:18px;font-weight:600;letter-spacing:-0.02em">${_eFmtInt(mix.world_total_twh)} <span style="font-size:11px;color:var(--text-2);font-weight:400">TWh · ${mix.year}</span></div>
+        ${legend}
+      </div>
+    </div>`;
+
+  const renew = mix.share_renewable || 0;
+  const fossil = mix.share_fossil || 0;
+  const lc = mix.share_low_carbon || 0;
+  const renewDelta = mix.share_renewable_10y_delta_pp;
+  const fossilDelta = mix.share_fossil_10y_delta_pp;
+  const stats = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:8px">
+      <div style="background:rgba(16,185,129,0.10);padding:6px 8px;border-radius:3px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2)">Renewable</div>
+        <div style="font-size:14px;font-weight:600">${(renew*100).toFixed(1)}%</div>
+        <div style="font-size:9px;color:${renewDelta >= 0 ? '#16a34a' : '#dc2626'}">10y ${renewDelta == null ? '—' : (renewDelta >= 0 ? '+' : '') + renewDelta.toFixed(1) + ' pp'}</div>
+      </div>
+      <div style="background:rgba(239,68,68,0.10);padding:6px 8px;border-radius:3px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2)">Fossil</div>
+        <div style="font-size:14px;font-weight:600">${(fossil*100).toFixed(1)}%</div>
+        <div style="font-size:9px;color:${fossilDelta < 0 ? '#16a34a' : '#dc2626'}">10y ${fossilDelta == null ? '—' : (fossilDelta >= 0 ? '+' : '') + fossilDelta.toFixed(1) + ' pp'}</div>
+      </div>
+      <div style="background:rgba(34,211,238,0.10);padding:6px 8px;border-radius:3px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2)">Low-carbon</div>
+        <div style="font-size:14px;font-weight:600">${(lc*100).toFixed(1)}%</div>
+        <div style="font-size:9px;color:var(--text-2)">incl. nuclear ${(mix.share_nuclear*100).toFixed(1)}%</div>
+      </div>
+    </div>`;
+
+  // Regions
+  const regions = (we.regions || []).map(r => {
+    const top = (r.top || []).map(t => `${t[0]} ${(t[1]*100).toFixed(0)}%`).join(' · ');
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${r.region} <span style="color:var(--text-2);font-weight:400">${r.year}</span></div>
+        <div class="t-num">${_eFmtInt(r.twh)} TWh</div>
+      </div>
+      <div class="t-meta">${top} · <b style="color:var(--text-1)">${(r.share_renewable*100).toFixed(0)}% renew</b> · ${(r.carbon_intensity_g||0).toFixed(0)} gCO₂/kWh</div>
+    </div>`;
+  }).join('');
+
+  // Top 10 producers
+  const tp = (we.top_producers || []).slice(0, 10).map(p => `
+    <div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${p.country}</div>
+        <div class="t-num">${_eFmtInt(p.twh)} TWh</div>
+      </div>
+      <div class="t-meta">${(p.share_renewable*100).toFixed(0)}% renewable · ${p.carbon_g} gCO₂/kWh</div>
+    </div>`).join('');
+
+  return `${headline}${stats}
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2);margin:8px 0 4px">Regions</div>
+    ${regions}
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2);margin:10px 0 4px">Top producers</div>
+    ${tp}
+    <div style="font-size:9px;color:var(--text-2);margin-top:8px;font-style:italic">${mix.source || ''}</div>`;
+}
+
+function _eTabChokepoints() {
+  const we = data.world_energy || {};
+  const cps = we.chokepoints || [];
+  if (!cps.length) return '<div style="color:#666;font-size:11px">No chokepoint data.</div>';
+  const totalMbd = cps.reduce((s,c) => s + (c.oil_mbd || 0), 0);
+  const tierColor = t => t === 'EXTREME' ? '#dc2626' : t === 'HIGH' ? '#ea580c' : t === 'MEDIUM' ? '#fbbf24' : '#16a34a';
+
+  const rows = cps.slice().sort((a,b) => (b.oil_mbd||0) - (a.oil_mbd||0)).map(cp => {
+    const lng = cp.share_global_lng != null ? ` · <b style="color:var(--text-1)">${(cp.share_global_lng*100).toFixed(0)}%</b> global LNG` : '';
+    const sea = cp.share_seaborne_oil != null ? ` · <b style="color:var(--text-1)">${(cp.share_seaborne_oil*100).toFixed(0)}%</b> seaborne oil` : '';
+    return `<div class="t-row" data-lat="${cp.lat}" data-lng="${cp.lng}" style="border-left:2px solid ${tierColor(cp.risk_tier)}">
+      <div class="t-row-top">
+        <div class="t-name">${cp.name}</div>
+        <span class="t-pill" style="background:${tierColor(cp.risk_tier)}33;color:${tierColor(cp.risk_tier)};font-weight:600">${cp.risk_tier}</span>
+      </div>
+      <div class="t-meta" style="margin-top:3px"><b style="color:var(--text-1)">${cp.oil_mbd.toFixed(1)} mb/d</b>${sea}${lng} · ${cp.between}</div>
+      <div class="t-meta" style="margin-top:4px;color:var(--text-2)">${cp.blurb}</div>
+      ${cp.risk ? `<div style="margin-top:5px;font-size:10px;background:rgba(251,191,36,0.08);padding:5px 8px;border-radius:3px;line-height:1.5;color:var(--text-2)"><b style="color:#fbbf24">Risk:</b> ${cp.risk}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Total tracked transit: <b style="color:var(--text-1)">${totalMbd.toFixed(1)} mb/d</b> across ${cps.length} maritime chokepoints. Click a row to fly to it on the map.</div>${rows}`;
+}
+
+function _eTabLngHubs() {
+  const we = data.world_energy || {};
+  const hubs = we.lng_hubs || [];
+  if (!hubs.length) return '<div style="color:#666;font-size:11px">No LNG hub data.</div>';
+  const total = hubs.reduce((s,h) => s + (h.mtpa || 0), 0);
+  // group by country
+  const byCountry = {};
+  for (const h of hubs) (byCountry[h.country] = byCountry[h.country] || []).push(h);
+  const order = Object.keys(byCountry).sort((a,b) => {
+    const sa = byCountry[a].reduce((s,h)=>s+h.mtpa,0);
+    const sb = byCountry[b].reduce((s,h)=>s+h.mtpa,0);
+    return sb - sa;
+  });
+  const groups = order.map(cc => {
+    const list = byCountry[cc].sort((a,b)=>b.mtpa-a.mtpa);
+    const sub = list.reduce((s,h)=>s+h.mtpa,0);
+    const items = list.map(h => `<div class="t-row" data-lat="${h.lat}" data-lng="${h.lng}">
+      <div class="t-row-top">
+        <div class="t-name">${h.name}</div>
+        <div class="t-num">${h.mtpa} mtpa</div>
+      </div>
+      <div class="t-meta">${h.role} terminal · click to locate</div>
+    </div>`).join('');
+    return `<div style="margin-top:10px"><div style="font-size:10px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px">${countryFlag(cc)} ${cc} · <b style="color:var(--text-1)">${sub} mtpa</b></div>${items}</div>`;
+  }).join('');
+  return `<div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Tracked liquefaction capacity: <b style="color:var(--text-1)">${total} mtpa</b> across ${hubs.length} export terminals.</div>${groups}`;
+}
+
+function _eTabForecast() {
+  const we = data.world_energy || {};
+  const fc = we.forecast || {};
+  const w = fc.world || {};
+  const cs = fc.country_top_growth || [];
+  if (!w.current_share) return '<div style="color:#666;font-size:11px">No forecast data.</div>';
+
+  const headline = `
+    <div style="background:rgba(16,185,129,0.06);border-left:2px solid #16a34a;padding:10px 12px;border-radius:3px;margin-bottom:8px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2)">World renewable share — projected</div>
+      <div style="font-size:18px;font-weight:600;margin-top:3px">${(w.current_share*100).toFixed(1)}% <span style="color:var(--text-2);font-weight:400;font-size:11px">today</span> → <b style="color:#16a34a">${(w.central*100).toFixed(1)}%</b> <span style="color:var(--text-2);font-weight:400;font-size:11px">by ${w.horizon_year}</span></div>
+      <div style="font-size:10px;color:var(--text-2);margin-top:3px">Slope <b style="color:var(--text-1)">+${w.slope_pp_year.toFixed(2)} pp/yr</b> · ±1σ band [${(w.band_low*100).toFixed(1)}%, ${(w.band_high*100).toFixed(1)}%]</div>
+    </div>`;
+
+  const rows = cs.map(c => {
+    const now = c.now || 0;
+    const proj = c.in_5y || 0;
+    const slope = c.slope_pp_year || 0;
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name">${c.country}</div>
+        <div class="t-num" style="color:#16a34a">+${slope.toFixed(2)} pp/yr</div>
+      </div>
+      <div style="margin-top:4px">
+        <div style="height:14px;background:rgba(255,255,255,0.04);border-radius:2px;overflow:hidden;position:relative">
+          <div style="height:100%;background:linear-gradient(to right, rgba(16,185,129,0.4), rgba(16,185,129,0.15));position:absolute;top:0;width:${Math.min(100, proj*100)}%"></div>
+          <div style="height:100%;background:#16a34a;opacity:0.85;width:${Math.min(100, now*100)}%"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:2px">now <b style="color:var(--text-1)">${(now*100).toFixed(1)}%</b> → 5y <b style="color:var(--text-1)">${(proj*100).toFixed(1)}%</b></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `${headline}
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2);margin-bottom:4px">Top growth — among 30 largest producers</div>
+    ${rows}
+    <div style="font-size:9px;color:var(--text-2);margin-top:8px;font-style:italic">${fc.method || ''}</div>`;
+}
+
+function _eTabDerivatives() {
+  const we = data.world_energy || {};
+  const d = we.derivatives || {};
+  const renderRows = (rows) => (rows || []).map(r => {
+    const chg = r.change_pct;
+    const cc = chg == null ? 'var(--text-2)' : (chg >= 0 ? '#16a34a' : '#dc2626');
+    return `<div class="t-row">
+      <div class="t-row-top">
+        <div class="t-name"><b>${r.symbol}</b> <span style="color:var(--text-2);font-weight:400">${r.name}</span></div>
+        <div class="t-num">$${Number(r.price).toLocaleString(undefined, {maximumFractionDigits: 4})}</div>
+      </div>
+      <div class="t-meta" style="display:flex;justify-content:space-between">
+        <span>${r.category}</span>
+        <span style="color:${cc};font-weight:500">${chg == null ? '—' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const groupHead = (label, n) => `<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-2);margin:8px 0 4px">${label} <span style="color:var(--text-1)">· ${n}</span></div>`;
+
+  return `${groupHead('Futures (continuous)', (d.futures||[]).length)}${renderRows(d.futures)}
+    ${groupHead('Energy ETFs', (d.etfs||[]).length)}${renderRows(d.etfs)}
+    ${groupHead('Energy equities', (d.equities||[]).length)}${renderRows(d.equities)}
+    <div style="font-size:9px;color:var(--text-2);margin-top:8px;font-style:italic">${d.source || ''}</div>`;
+}
+
+function buildWorldEnergyPanel() {
+  const we = data.world_energy || {};
+  if (!we.mix) return '';
+  const mix = we.mix;
+  const yr = mix.year || '';
+
+  const tabs = [
+    ['Mix',         _eTabMix()],
+    ['Chokepoints', _eTabChokepoints()],
+    ['LNG Hubs',    _eTabLngHubs()],
+    ['Forecast',    _eTabForecast()],
+    ['Markets',     _eTabDerivatives()],
+  ];
+  const tabBar = tabs.map((t, i) => `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="we-${i}">${t[0]}</button>`).join('');
+  const tabContents = tabs.map((t, i) => `<div class="tab-content ${i === 0 ? 'active' : ''}" id="we-${i}">${t[1]}</div>`).join('');
+
+  // Top-line badge: world renewable %
+  const renewPct = (mix.share_renewable * 100).toFixed(1) + '%';
+  return `<div class="panel" data-panel="world-energy" data-categories="energy" style="grid-column: span 2; min-width:0">
+    <div class="panel-head">World Energy <span class="panel-badge green">${renewPct} renew</span> <span class="panel-badge orange" style="margin-left:4px">${yr}</span></div>
+    <div class="panel-body">
+      <div class="tab-bar" data-tab-group="we">${tabBar}</div>
+      ${tabContents}
     </div>
   </div>`;
 }

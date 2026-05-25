@@ -1,0 +1,28 @@
+# systemd unit for the email relay (Ubuntu).
+#
+# Install:
+#   sudo cp email-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now email-relay
+#
+# Tail logs:
+#   journalctl -u email-relay -f
+#
+# Edit User= / WorkingDirectory= / ExecStart= for your machine.
+
+[Unit]
+Description=Polymarket email relay (Claude Code over email)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=julian
+WorkingDirectory=/home/julian/Polymarket/gateway/email_relay
+ExecStart=/usr/bin/python3 /home/julian/Polymarket/gateway/email_relay/relay.py
+Restart=on-failure
+RestartSec=10
+Environment=PATH=/home/julian/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
