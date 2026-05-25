@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
 import type { Trade } from './OrderForm';
 
@@ -10,8 +10,16 @@ interface PositionsPanelProps {
 
 const sideDirection = (side: Trade['side']) => (side === 'buy' ? 1 : -1);
 
-export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, priceFor, onClosePosition }) => {
-  const openPositions = positions.filter((p) => !p.exitPrice);
+const PositionsPanelComponent: React.FC<PositionsPanelProps> = ({ positions, priceFor, onClosePosition }) => {
+  const openPositions = useMemo(() => positions.filter((p) => !p.exitPrice), [positions]);
+
+  const summaryStats = useMemo(() => {
+    const totalQty = openPositions.reduce((sum, p) => sum + p.quantity, 0);
+    const avgEntry = totalQty > 0
+      ? openPositions.reduce((sum, p) => sum + p.entryPrice * p.quantity, 0) / totalQty
+      : 0;
+    return { totalQty, avgEntry };
+  }, [openPositions]);
 
   if (openPositions.length === 0) {
     return (
@@ -24,11 +32,6 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, price
       </div>
     );
   }
-
-  const totalQty = openPositions.reduce((sum, p) => sum + p.quantity, 0);
-  const avgEntry = totalQty > 0
-    ? openPositions.reduce((sum, p) => sum + p.entryPrice * p.quantity, 0) / totalQty
-    : 0;
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
@@ -110,14 +113,16 @@ export const PositionsPanel: React.FC<PositionsPanelProps> = ({ positions, price
           </div>
           <div>
             <div className="text-gray-400 text-xs">Total Quantity</div>
-            <div className="text-gray-100 font-semibold">{totalQty}</div>
+            <div className="text-gray-100 font-semibold">{summaryStats.totalQty}</div>
           </div>
           <div>
             <div className="text-gray-400 text-xs">Avg Entry Price</div>
-            <div className="text-gray-100 font-semibold">${avgEntry.toFixed(2)}</div>
+            <div className="text-gray-100 font-semibold">${summaryStats.avgEntry.toFixed(2)}</div>
           </div>
         </div>
       </div>
     </div>
   );
 };
+
+export const PositionsPanel = React.memo(PositionsPanelComponent);
