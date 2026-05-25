@@ -118,7 +118,7 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 8. Central Bank Dashboard (port 7060)
-    echo -e "${GREEN}[8/10]${NC} Starting Central Bank Dashboard on port 7060..."
+    echo -e "${GREEN}[8/13]${NC} Starting Central Bank Dashboard on port 7060..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
     PORT=7060 python3 -m uvicorn server:app --host 127.0.0.1 --port 7060 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid

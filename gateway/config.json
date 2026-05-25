@@ -147,6 +147,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
+    },
+    "whale": {
+      "subdomain": "whale",
+      "target": 8053,
+      "display_name": "Whale Watch",
+      "description": "Institutional whale flow — 13F, Form 4, 13D filings",
+      "accent": "#10b981",
+      "monthly_cents": 1799,
+      "annual_cents": 17900,
+      "supports_websocket": true,
+      "stripe_price_monthly": "TODO_set_stripe_price_id",
+      "stripe_price_annual": "TODO_set_stripe_price_id"
     }
   }
 }

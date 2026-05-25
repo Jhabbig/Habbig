@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voters Atlas — narve</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div>
+      <h1>Voters Atlas</h1>
+      <p class="brand-sub">Who voters are, what they want, when they vote.</p>
+    </div>
+  </div>
+  <div class="topbar-meta">
+    <span class="legend">
+      <span class="dot dot-A"></span> Tier A — full depth
+      <span class="dot dot-B"></span> Tier B — election-cycle deep
+      <span class="dot dot-C"></span> Tier C — watchlist
+    </span>
+    <span id="last-curated" class="curated"></span>
+  </div>
+</header>
+
+<section class="timeline-strip">
+  <div class="timeline-header">
+    <h2>Upcoming elections</h2>
+    <span class="hint">Next 18 months · scroll →</span>
+  </div>
+  <div id="timeline" class="timeline"></div>
+</section>
+
+<main id="grid-root" class="grid-root">
+  <div class="grid-loading">Loading countries…</div>
+</main>
+
+<aside id="drawer" class="drawer drawer-closed" aria-hidden="true">
+  <button id="drawer-close" class="drawer-close" aria-label="Close">×</button>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+<div id="drawer-scrim" class="drawer-scrim"></div>
+
+<footer class="foot">
+  <p>
+    Sources are cited inline on every issue-salience figure. Demographics from
+    World Bank; democracy indicators from V-Dem; election dates from IFES &amp;
+    IDEA plus hand curation. Updated nightly. This is curated journalism, not
+    real-time polling — see methodology on each card.
+  </p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

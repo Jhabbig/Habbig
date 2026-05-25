@@ -1,11 +1,28 @@
 from app.models import Prediction, Source
-from app.processing.ranker import compute_ev_score, compute_risk_flags
+from app.processing.ranker import best_side_ev, compute_ev_score, compute_risk_flags, rank_prediction
 from app.tests.conftest import NOW
 
 def test_ev_positive(): assert abs(compute_ev_score(0.80, 0.50) - 0.60) < 0.001
 def test_ev_negative(): assert abs(compute_ev_score(0.30, 0.50) - (-0.40)) < 0.001
 def test_ev_zero(): assert abs(compute_ev_score(0.50, 0.50)) < 0.001
 def test_ev_none_extreme(): assert compute_ev_score(0.50, 0.0) is None and compute_ev_score(0.50, 1.0) is None
+
+def test_best_side_picks_yes_when_p_above_market():
+    ev, side = best_side_ev(0.80, 0.50)
+    assert side == "YES" and abs(ev - 0.60) < 0.001
+
+def test_best_side_picks_no_when_p_below_market():
+    # p=0.30, m=0.50 -> NO side EV = (0.70/0.50 - 1) = 0.40
+    ev, side = best_side_ev(0.30, 0.50)
+    assert side == "NO" and abs(ev - 0.40) < 0.001
+
+def test_best_side_at_market_is_zero():
+    ev, side = best_side_ev(0.50, 0.50)
+    assert abs(ev) < 0.001
+
+def test_best_side_extreme_returns_none():
+    ev, side = best_side_ev(0.50, 1.0)
+    assert ev is None
 
 def _pred(**kw): return Prediction(raw_post_id="twitter:1", category="crypto", predicted_outcome="Yes", extracted_at=NOW, **kw)
 def _src(**kw):
