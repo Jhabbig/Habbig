@@ -317,3 +317,44 @@ def test_methodology_page_lists_all_known_models(client):
     # Has the loader scripts
     assert "/api/methodology" in body
     assert "/api/backtest" in body
+
+
+def test_status_endpoint_classifies_sources(client):
+    """When every upstream is healthy (mocked), all sources report 'ok'."""
+    r = client.get("/api/status")
+    assert r.status_code == 200
+    body = r.get_json()
+    # Counts dict has the three categories
+    for k in ("ok", "down", "error"):
+        assert k in body["counts"]
+    # Total sources matches list length
+    assert sum(body["counts"].values()) == len(body["sources"])
+    # Every source has the expected fields
+    for s in body["sources"]:
+        assert "name" in s and "status" in s and "url" in s
+        assert s["status"] in ("ok", "down", "error")
+
+
+def test_status_endpoint_marks_down_when_upstream_fails():
+    """When EVERY upstream HTTP call returns None, every source must be
+    classified 'down' (not 'ok'). This is the bug we want to catch: the
+    status endpoint silently saying 'ok' for sources that aren't actually
+    reachable."""
+    cache_module.clear()
+    with patch("app.http.get", return_value=None):
+        from server import app
+        with app.test_client() as c:
+            r = c.get("/api/status")
+            assert r.status_code == 200
+            body = r.get_json()
+            # OWID and Polymarket and Sea Ice (and any other) should all
+            # be down because we forced HTTP to None
+            assert body["counts"].get("ok", 0) == 0, body["counts"]
+            assert body["counts"].get("down", 0) > 0
+
+
+def test_status_page_renders(client):
+    r = client.get("/status")
+    assert r.status_code == 200
+    assert b"<title>Status" in r.data
+    assert b"/api/status" in r.data

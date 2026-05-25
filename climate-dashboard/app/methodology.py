@@ -184,6 +184,17 @@ MODELS = [
         "code": "app/models/markets.py",
     },
     {
+        "id": "upstream_status",
+        "name": "Upstream status dashboard",
+        "summary": "Per-source health snapshot — runs every fetcher (through the cache, so it's cheap on repeat) and classifies each as OK / down / error. Surfaces the actual URL the dashboard is hitting and the last data value, so an operator can swap broken URLs without poking at individual endpoints. Served at /status; raw payload at /api/status.",
+        "inputs": ["All registered upstream fetchers"],
+        "outputs": {
+            "sources": "List of {name, status, url, summary, fetched_at}",
+            "counts": "{ok, down, error} totals for the summary pills",
+        },
+        "code": "app/status.py + server.py _STATUS_SOURCES",
+    },
+    {
         "id": "highlights",
         "name": "Today's highlights",
         "summary": "Pure-derivative one-liners surfaced at the top of the dashboard. Examines the cached upstream data for: (a) whether the last completed year was a new annual temperature record; (b) streaks of years above +1.0°C / +1.5°C anomaly; (c) the 12-month change in CO₂ / CH₄ / N₂O; (d) the Arctic sea-ice rank for today's day-of-year; (e) the current ENSO state and how long it's held. Nothing inferred — every chip can be derived directly from the data the dashboard already shows.",

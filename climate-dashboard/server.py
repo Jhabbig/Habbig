@@ -34,6 +34,7 @@ from app.fetchers import sf6 as sf6_src
 from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app import snapshot as snapshot_module
+from app import status as status_module
 from app.models import co2 as co2_model
 from app.models import calibration
 from app.models import emissions as emissions_model
@@ -86,6 +87,37 @@ def index():
 @app.route("/methodology")
 def methodology_page():
     return send_from_directory("static", "methodology.html")
+
+
+@app.route("/status")
+def status_page():
+    return send_from_directory("static", "status.html")
+
+
+# Map every upstream source to (display URL, fetch callable) for the status
+# health-dashboard. Defined once so /api/status doesn't drift from the actual
+# fetchers as we add new ones.
+_STATUS_SOURCES = {
+    "GISTEMP (NASA temperature)":           (gistemp_src.URL, gistemp_src.fetch),
+    "CO₂ (NOAA Mauna Loa)":                 (co2_src.URL, co2_src.fetch),
+    "CH₄ (NOAA GML)":                       (methane_src.URL, methane_src.fetch),
+    "N₂O (NOAA GML)":                       (n2o_src.URL, n2o_src.fetch),
+    "SF₆ (NOAA GML)":                       (sf6_src.URL, sf6_src.fetch),
+    "Sea ice (NSIDC, both hemispheres)":    (sea_ice_src.URL_NORTH, sea_ice_src.fetch),
+    "SST (Climate Reanalyzer / OISST)":     (sst_src.URL, sst_src.fetch),
+    "ONI (NOAA CPC ENSO)":                  (oni_src.URL, oni_src.fetch),
+    "Ocean heat content (NOAA NCEI)":       (ocean_heat_src.URL, ocean_heat_src.fetch),
+    "Sea level (NOAA STAR)":                (sea_level_src.URL, sea_level_src.fetch),
+    "NH snow cover (Rutgers)":              (snow_cover_src.URL, snow_cover_src.fetch),
+    "Country emissions (OWID)":             (emissions_src.URL, emissions_src.fetch),
+    "Polymarket climate markets":           ("https://gamma-api.polymarket.com/events", polymarket_src.fetch),
+}
+
+
+@app.route("/api/status")
+def api_status():
+    """Per-source health snapshot — which upstream fetchers are succeeding."""
+    return jsonify(status_module.compute(fetchers=_STATUS_SOURCES))
 
 
 @app.route("/api/health")
