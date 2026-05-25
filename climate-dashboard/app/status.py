@@ -16,10 +16,17 @@ from typing import Any, Callable, Optional
 from . import cache
 
 
-def _last_value_summary(payload: Optional[dict]) -> Optional[str]:
-    """Pick a short human-readable summary of the most recent data point."""
+def _last_value_summary(payload) -> Optional[str]:
+    """Pick a short human-readable summary of the most recent data point.
+
+    Most fetchers return dicts shaped like {latest: {...}, monthly: [...]};
+    the markets fetchers (Polymarket, Kalshi) return plain lists. We accept
+    either and surface a sensible one-line summary.
+    """
     if not payload:
         return None
+    if isinstance(payload, list):
+        return f"{len(payload)} markets"
     latest = payload.get("latest")
     if latest:
         for key, unit in (("ppm", " ppm"), ("ppb", " ppb"), ("ppt", " ppt"),
@@ -69,12 +76,15 @@ def _check(name: str, url: Optional[str], fetcher: Callable[[], Any],
                 "fetched_at": None,
                 "cache_age": _fmt_age(cache_age),
                 "cache_ttl_s": cache_ttl}
+    # Markets fetchers return lists; everything else returns a dict with a
+    # fetched_at field. Handle both.
+    fetched_at = data.get("fetched_at") if isinstance(data, dict) else None
     return {
         "name": name,
         "status": "ok",
         "url": url,
         "summary": _last_value_summary(data),
-        "fetched_at": data.get("fetched_at"),
+        "fetched_at": fetched_at,
         "cache_age": _fmt_age(cache_age),
         "cache_ttl_s": cache_ttl,
     }

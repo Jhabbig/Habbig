@@ -1,0 +1,59 @@
+{
+  "events": [
+    {
+      "event_ticker": "WARMEST-2025",
+      "title": "Will 2025 be the warmest year on record?",
+      "category": "Climate",
+      "markets": [
+        {
+          "ticker": "WARMEST-2025-YES",
+          "subtitle": "2025 sets a new annual temperature record",
+          "yes_bid": 62,
+          "yes_ask": 65,
+          "last_price": 63,
+          "open_interest": 12000,
+          "expiration_time": "2025-12-31T23:59:00Z"
+        }
+      ]
+    },
+    {
+      "event_ticker": "CO2-2025",
+      "title": "Will atmospheric CO2 exceed 428 ppm in December 2025?",
+      "category": "Climate",
+      "markets": [
+        {
+          "ticker": "CO2-DEC-2025-428",
+          "subtitle": "December 2025 NOAA Mauna Loa CO2 exceeds 428 ppm",
+          "yes_bid": 30,
+          "yes_ask": 35,
+          "last_price": 32,
+          "open_interest": 4000,
+          "expiration_time": "2025-12-31T23:59:00Z"
+        }
+      ]
+    },
+    {
+      "event_ticker": "HURRICANE-2025",
+      "title": "Will a Cat 5 hurricane hit Florida in 2025?",
+      "category": "Weather",
+      "markets": [
+        {
+          "ticker": "HURRICANE-FL-2025",
+          "subtitle": "Cat 5 lands in Florida by Dec 31 2025",
+          "yes_bid": 8,
+          "yes_ask": 12,
+          "last_price": 10,
+          "open_interest": 50000
+        }
+      ]
+    },
+    {
+      "event_ticker": "NBA-FINALS-2025",
+      "title": "Who wins the NBA Finals 2025?",
+      "category": "Sports",
+      "markets": [
+        {"ticker": "LAKERS", "subtitle": "Lakers win 2025 NBA Finals", "yes_bid": 5, "yes_ask": 7, "last_price": 6, "open_interest": 1000000}
+      ]
+    }
+  ]
+}

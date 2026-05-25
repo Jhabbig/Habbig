@@ -33,6 +33,7 @@ TTL: dict[str, int] = {
     "sst": 60 * 60 * 3,
     "oni": 60 * 60 * 12,
     "polymarket": 60 * 5,
+    "kalshi": 60 * 5,                # markets move; same TTL as Polymarket
 }
 
 

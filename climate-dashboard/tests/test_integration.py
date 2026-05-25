@@ -67,6 +67,10 @@ def _fake_http_get(url: str, *, timeout=20, params=None):
     if "gamma-api.polymarket.com" in url:
         # Polymarket events — empty list is a valid response shape
         return FakeResponse(json_data=[])
+    if "api.elections.kalshi.com" in url:
+        # Kalshi events — load from fixture
+        import json
+        return FakeResponse(json_data=json.loads(_load("kalshi_sample.json")))
     return None
 
 
@@ -220,17 +224,23 @@ def test_backtest_endpoint_with_mocked_upstream(client):
     assert isinstance(body["gistemp"], list)
 
 
-def test_markets_endpoint_with_empty_polymarket(client):
-    # The fake polymarket response is an empty list. The endpoint should
-    # still return 200 with markets=[].
+def test_markets_endpoint_merges_polymarket_and_kalshi(client):
+    """Empty Polymarket + the Kalshi fixture (3 climate events, 1 sports
+    event rejected, 1 hurricane event rejected) should yield 2 Kalshi
+    markets tagged with _venue=kalshi."""
     r = client.get("/api/markets")
     assert r.status_code == 200
     body = r.get_json()
-    assert body["count"] == 0
-    assert body["markets"] == []
-    # Projections should still be populated from the other fetchers
-    assert body["co2_projection"] is not None
-    assert body["n2o_projection"] is not None
+    # Polymarket is empty in the fixture; Kalshi contributes 2 climate
+    # markets (warmest year + CO2 428ppm); hurricane + NBA are rejected.
+    assert body["count"] == 2
+    venues = {m["_venue"] for m in body["markets"]}
+    assert venues == {"kalshi"}
+    # The warmest-year market should have been scored by the temperature
+    # model since the event title matches the "warmest year" trigger.
+    warmest = [m for m in body["markets"]
+               if "warmest" in (m.get("_event_title") or "").lower()]
+    assert warmest and warmest[0]["_model_p"] is not None
 
 
 def test_methodology_page_renders(client):

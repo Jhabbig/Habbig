@@ -14,6 +14,7 @@ from pathlib import Path
 from app import math_utils
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
+from app.fetchers import kalshi as kalshi_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import ocean_heat as ocean_heat_src
@@ -679,6 +680,33 @@ def test_all_trajectories_returns_5year_steps():
     assert traj["SSP1-2.6"][0]["year"] == 2020
     # Last point should be ≥ 2100
     assert traj["SSP1-2.6"][-1]["year"] >= 2095
+
+
+def test_kalshi_normalizes_cents_to_probability():
+    # Kalshi reports cents 0-100; we convert to (0,1) probabilities so the
+    # rest of the dashboard treats Kalshi and Polymarket markets identically.
+    m = kalshi_src._normalize_market(
+        {"ticker": "X", "subtitle": "Q",
+         "yes_bid": 30, "yes_ask": 35, "last_price": 32,
+         "open_interest": 4000, "expiration_time": "2025-12-31T23:59:00Z"},
+        "Event title", "Climate",
+    )
+    assert m["lastTradePrice"] == 0.32
+    assert m["bestBid"] == 0.30
+    assert m["bestAsk"] == 0.35
+    assert m["_venue"] == "kalshi"
+    assert m["question"] == "Q"
+    assert m["_event_title"] == "Event title"
+    assert m["liquidity"] == 4000
+
+
+def test_kalshi_to_probability_rejects_out_of_range():
+    # Defensive guard for malformed upstream data
+    assert kalshi_src._to_probability(0) is None       # both 0 and 100 are
+    assert kalshi_src._to_probability(100) is None     # not strictly in (0,1)
+    assert kalshi_src._to_probability(None) is None
+    assert kalshi_src._to_probability("abc") is None
+    assert kalshi_src._to_probability(50) == 0.50
 
 
 def test_opportunities_rss_filters_and_sorts():

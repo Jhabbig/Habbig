@@ -21,6 +21,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 from app.fetchers import co2 as co2_src
 from app.fetchers import gistemp as gistemp_src
+from app.fetchers import kalshi as kalshi_src
 from app.fetchers import methane as methane_src
 from app.fetchers import n2o as n2o_src
 from app.fetchers import ocean_heat as ocean_heat_src
@@ -111,6 +112,7 @@ _STATUS_SOURCES = {
     "NH snow cover (Rutgers)":              (snow_cover_src.URL, snow_cover_src.fetch, "snow_cover"),
     "Country emissions (OWID)":             (emissions_src.URL, emissions_src.fetch, "owid_emissions"),
     "Polymarket climate markets":           ("https://gamma-api.polymarket.com/events", polymarket_src.fetch, "polymarket"),
+    "Kalshi climate markets":               (kalshi_src.URL, kalshi_src.fetch, "kalshi"),
 }
 
 
@@ -417,7 +419,11 @@ def api_regime():
 
 @app.route("/api/markets")
 def api_markets():
-    markets = polymarket_src.fetch()
+    poly = polymarket_src.fetch() or []
+    kalshi = kalshi_src.fetch() or []
+    # Merge both venues — every market has _venue set so the frontend can
+    # render a venue badge. Score both with the same model regex set.
+    markets = list(poly) + list(kalshi)
     g = gistemp_src.fetch()
     c = co2_src.fetch()
     s = sea_ice_src.fetch()

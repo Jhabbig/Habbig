@@ -181,6 +181,19 @@
 
   .market-q { font-weight: 500; color: var(--text-1); }
   .market-event { color: var(--text-3); font-size: 11px; }
+  .venue-badge {
+    display: inline-block;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .venue-badge.polymarket { background: rgba(52,211,153,0.15); color: var(--good); }
+  .venue-badge.kalshi    { background: rgba(96,165,250,0.15); color: #60a5fa; }
 
   .toolbar {
     display: flex;
@@ -658,6 +671,11 @@
     <option value="methane">Methane</option>
     <option value="sea-ice">Sea ice</option>
     <option value="other">Other</option>
+  </select>
+  <select id="venue" aria-label="Filter by venue">
+    <option value="all">Venue: all</option>
+    <option value="polymarket">Polymarket</option>
+    <option value="kalshi">Kalshi</option>
   </select>
   <input id="min-edge" type="number" placeholder="Min |edge| pp" min="0" step="0.5" aria-label="Minimum absolute edge in percentage points" />
   <input id="min-liq" type="number" placeholder="Min liquidity $" min="0" step="100" aria-label="Minimum liquidity in USD" />
@@ -1859,14 +1877,22 @@ function renderOpps() {
   root.innerHTML = opps.map(m => {
     const edge = m._edge_pp;
     const cls = edge > 0 ? "pos" : "neg";
-    const url = m.slug ? `https://polymarket.com/market/${m.slug}` : null;
+    const venue = m._venue || "polymarket";
+    // Each venue uses a different URL pattern. We only know how to deep-link
+    // to Polymarket markets; Kalshi tickers don't have a stable public URL,
+    // so we fall back to the venue homepage.
+    let url = null;
+    if (venue === "polymarket" && m.slug) {
+      url = `https://polymarket.com/market/${m.slug}`;
+    } else if (venue === "kalshi" && m.slug) {
+      url = `https://kalshi.com/markets/${m.slug.toUpperCase()}`;
+    }
     const liq = Number(m.liquidity || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
     const kelly = kellyBet(m._model_p, m._implied_p);
-    // Mirror the markets-table convention: respect the user's selected
-    // Kelly multiplier instead of hard-coding half-Kelly.
     const kPct = kelly && kelly.fraction > 0
       ? `${(kelly.fraction * kFrac * 100).toFixed(1)}% (${_kellyMultiplierLabel(kFrac)} ${kelly.side})`
       : "—";
+    const venueBadge = `<span class="venue-badge ${venue}">${venue}</span>`;
     const meta = `
       <div class="meta">
         <span class="edge ${cls}">${edge > 0 ? "+" : ""}${edge.toFixed(1)} pp</span>
@@ -1874,9 +1900,7 @@ function renderOpps() {
         · liq $${liq}
         · ${kPct}
       </div>`;
-    const inner = `<div class="q">${(m.question || "")}</div>${meta}`;
-    // Don't render a clickable <a> for markets without a Polymarket slug —
-    // it would scroll to top instead of going anywhere useful.
+    const inner = `<div class="q">${venueBadge}${(m.question || "")}</div>${meta}`;
     return url
       ? `<a class="opp ${edge < 0 ? "neg" : ""}" href="${url}" target="_blank" rel="noopener">${inner}</a>`
       : `<div class="opp ${edge < 0 ? "neg" : ""}" style="cursor:default">${inner}</div>`;
@@ -1900,6 +1924,7 @@ function renderMarkets() {
   const q = document.getElementById("search").value.toLowerCase().trim();
   const sortBy = document.getElementById("sort").value;
   const topic = document.getElementById("topic").value;
+  const venue = document.getElementById("venue").value;
   const minEdgeRaw = document.getElementById("min-edge").value;
   const minEdge = minEdgeRaw === "" ? null : Number(minEdgeRaw);
   const minLiqRaw = document.getElementById("min-liq").value;
@@ -1918,6 +1943,9 @@ function renderMarkets() {
   }
   if (topic !== "all") {
     rows = rows.filter(m => categorizeMarket(m) === topic);
+  }
+  if (venue !== "all") {
+    rows = rows.filter(m => (m._venue || "polymarket") === venue);
   }
   if (scoredOnly) {
     rows = rows.filter(m => m._model_p !== null && m._model_p !== undefined);
@@ -1992,9 +2020,11 @@ function renderMarkets() {
             const rationale = m._rationale ? `<div class="market-event">${m._rationale}</div>` : "";
             const expanded = _expandedMarketIds.has(id);
             const chev = expanded ? "▾" : "▸";
+            const venue = m._venue || "polymarket";
+            const venueBadge = `<span class="venue-badge ${venue}">${venue}</span>`;
             const row = `<tr class="market-row" data-market-id="${id}" tabindex="0" aria-expanded="${expanded}">
               <td>
-                <div class="market-q"><span style="color:var(--text-3);margin-right:6px">${chev}</span>${q}</div>
+                <div class="market-q"><span style="color:var(--text-3);margin-right:6px">${chev}</span>${venueBadge}${q}</div>
                 <div class="market-event">${ev}</div>
                 ${rationale}
               </td>
@@ -2114,6 +2144,7 @@ async function loadBacktest() {
 const _HASH_FIELDS = {
   search: { type: "string", default: "" },
   topic: { type: "string", default: "all" },
+  venue: { type: "string", default: "all" },
   "min-edge": { type: "string", default: "" },
   "min-liq": { type: "string", default: "" },
   "scored-only": { type: "bool", default: false },
@@ -2168,7 +2199,7 @@ restoreFromHash();
     renderMarkets();
   });
 });
-["topic", "sort", "scored-only", "kelly-fraction"].forEach(id => {
+["topic", "venue", "sort", "scored-only", "kelly-fraction"].forEach(id => {
   document.getElementById(id).addEventListener("change", () => {
     writeHash();
     renderMarkets();

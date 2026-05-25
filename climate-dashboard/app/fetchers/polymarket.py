@@ -77,6 +77,7 @@ def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list,
                     seen_ids.add(mid)
                     m["_event_title"] = title
                     m["_event_tags"] = tag_labels
+                    m["_venue"] = "polymarket"
                     all_markets.append(m)
         offset += 100
 
