@@ -306,8 +306,13 @@ def _dca_curve(dates: list[str], total_deposits: float,
     if not rows:
         return None
     close_map = {r["date"]: float(r["close"]) for r in rows}
-    n_weeks = max(1, len(dates) // 7)
-    weekly_dep = total_deposits / n_weeks
+    # Number of weekly-DCA dates is the count of `i % 7 == 0` over
+    # range(len(dates)), which is ⌈len/7⌉. The previous code split
+    # total_deposits by `len(dates)//7`, which under-counts by 1 on any
+    # partial-week window (e.g. 8 days → 2 deposit days but n_weeks=1,
+    # so total invested = 2 × total_deposits, distorting the benchmark).
+    n_buys = (len(dates) + 6) // 7  # ceil(len(dates) / 7)
+    weekly_dep = total_deposits / max(1, n_buys)
     qty = 0.0
     last_price = None
     curve = np.zeros(len(dates))

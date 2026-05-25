@@ -674,8 +674,9 @@ CREATE TABLE IF NOT EXISTS crypto_dvol_bars (
 );
 
 -- ── Exchange-side fill imports (auto-import history) ────────────────────────
--- Ledger row per imported fill. UNIQUE(exchange, external_id) is the
--- idempotency boundary — re-running import is always safe.
+-- Ledger row per imported fill. UNIQUE(user_id, exchange, external_id) is
+-- the idempotency boundary — scoped by user so two users that happen to
+-- share an external_id (Kraken txid recycling, etc.) don't dedup-collide.
 CREATE TABLE IF NOT EXISTS crypto_exchange_imports (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT NOT NULL,
@@ -691,7 +692,7 @@ CREATE TABLE IF NOT EXISTS crypto_exchange_imports (
     disposition_id  INTEGER,                 -- FK into crypto_dispositions
     raw_json        TEXT DEFAULT '{}',
     imported_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(exchange, external_id)
+    UNIQUE(user_id, exchange, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_imports_user_exchange ON crypto_exchange_imports(user_id, exchange);
 CREATE INDEX IF NOT EXISTS idx_imports_user_filled_at ON crypto_exchange_imports(user_id, filled_at DESC);
@@ -773,9 +774,10 @@ def init_db() -> None:
 
 
 def _run_migrations(c: sqlite3.Connection) -> None:
-    """Add columns that may be missing on existing deployments. SQLite has
-    no ADD COLUMN IF NOT EXISTS, so we catch the duplicate-column error
-    and ignore it. Cheap and idempotent."""
+    """Add columns / fix constraints that may be missing on existing
+    deployments. SQLite has no ADD COLUMN IF NOT EXISTS and no way to
+    alter a UNIQUE constraint, so we catch duplicate-column errors and
+    detect old-constraint shapes via PRAGMA."""
     pending = [
         ("crypto_options_term_structure", "iv_put_10  REAL"),
         ("crypto_options_term_structure", "iv_put_25  REAL"),
@@ -786,10 +788,70 @@ def _run_migrations(c: sqlite3.Connection) -> None:
         try:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
         except sqlite3.OperationalError as e:
-            # "duplicate column name" → already migrated. Anything else is
-            # actionable, so let it propagate so we don't silently break.
             if "duplicate column name" not in str(e).lower():
                 raise
+
+    # crypto_exchange_imports: original schema had UNIQUE(exchange,
+    # external_id) which lets two users dedup-collide on shared ids.
+    # Rebuild the table with UNIQUE(user_id, exchange, external_id) if
+    # the old constraint is still present. Idempotent — checks first.
+    _migrate_exchange_imports_unique(c)
+
+
+def _migrate_exchange_imports_unique(c: sqlite3.Connection) -> None:
+    """Rebuild crypto_exchange_imports with the wider UNIQUE constraint
+    iff the old shape is present. SQLite can't alter UNIQUE in place."""
+    # Cheap probe: SQLite stores the table's CREATE statement in
+    # sqlite_master; look for the old constraint.
+    row = c.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='crypto_exchange_imports'"
+    ).fetchone()
+    if not row:
+        return  # fresh deploy — schema script already created the right shape
+    sql = (row["sql"] or "").lower()
+    # Old: `unique(exchange, external_id)`. New: `unique(user_id, exchange, external_id)`.
+    if "unique(user_id" in sql.replace(" ", "") or "unique (user_id" in sql:
+        return
+    if "unique(exchange" not in sql.replace(" ", "") and "unique (exchange" not in sql:
+        return  # neither constraint — leave alone
+
+    log.info("migrating crypto_exchange_imports UNIQUE constraint")
+    c.execute("ALTER TABLE crypto_exchange_imports RENAME TO crypto_exchange_imports_old")
+    c.execute("""
+        CREATE TABLE crypto_exchange_imports (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         TEXT NOT NULL,
+            exchange        TEXT NOT NULL,
+            external_id     TEXT NOT NULL,
+            ticker          TEXT NOT NULL,
+            side            TEXT NOT NULL,
+            qty             REAL NOT NULL,
+            price           REAL NOT NULL,
+            fee_usd         REAL DEFAULT 0,
+            filled_at       TEXT NOT NULL,
+            holding_id      INTEGER,
+            disposition_id  INTEGER,
+            raw_json        TEXT DEFAULT '{}',
+            imported_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, exchange, external_id)
+        )
+    """)
+    c.execute("""
+        INSERT INTO crypto_exchange_imports
+            (id, user_id, exchange, external_id, ticker, side, qty, price,
+             fee_usd, filled_at, holding_id, disposition_id, raw_json,
+             imported_at)
+        SELECT id, user_id, exchange, external_id, ticker, side, qty, price,
+               fee_usd, filled_at, holding_id, disposition_id, raw_json,
+               imported_at
+        FROM crypto_exchange_imports_old
+    """)
+    c.execute("DROP TABLE crypto_exchange_imports_old")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_imports_user_exchange "
+              "ON crypto_exchange_imports(user_id, exchange)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_imports_user_filled_at "
+              "ON crypto_exchange_imports(user_id, filled_at DESC)")
 
 
 # ── Helper: Row wrapper ─────────────────────────────────────────────────────
@@ -1973,6 +2035,29 @@ def get_disposition_by_execution(execution_id: int) -> Optional[Row]:
     return _row(row)
 
 
+def remove_disposition(user_id: str, disposition_id: int) -> bool:
+    """Delete a disposition + its lot consumption rows atomically. Owner-
+    scoped: a disposition_id that doesn't belong to user_id is rejected
+    silently (returns False). Used as the rollback path on the auto-import
+    side when the import-ledger write fails after the disposition committed."""
+    with _conn() as c:
+        owner = c.execute(
+            "SELECT user_id FROM crypto_dispositions WHERE id = ?",
+            (disposition_id,),
+        ).fetchone()
+        if not owner or owner["user_id"] != user_id:
+            return False
+        c.execute(
+            "DELETE FROM crypto_tax_lot_consumption WHERE disposition_id = ?",
+            (disposition_id,),
+        )
+        c.execute(
+            "DELETE FROM crypto_dispositions WHERE id = ?",
+            (disposition_id,),
+        )
+        return True
+
+
 # ── Tax: lot consumption ────────────────────────────────────────────────────
 
 def insert_lot_consumption(rows: list[tuple]) -> None:
@@ -3045,12 +3130,15 @@ def insert_exchange_import(user_id: str, exchange: str, external_id: str,
             return False
 
 
-def exchange_import_exists(exchange: str, external_id: str) -> bool:
+def exchange_import_exists(user_id: str, exchange: str, external_id: str) -> bool:
+    """Scoped by user_id to match the UNIQUE(user_id, exchange, external_id)
+    constraint. Two users that happen to share an external_id (Kraken
+    txid recycling, Coinbase trade_id collisions) must not dedup-collide."""
     with _conn() as c:
         row = c.execute(
             "SELECT 1 FROM crypto_exchange_imports "
-            "WHERE exchange = ? AND external_id = ? LIMIT 1",
-            (exchange, external_id),
+            "WHERE user_id = ? AND exchange = ? AND external_id = ? LIMIT 1",
+            (user_id, exchange, external_id),
         ).fetchone()
     return row is not None
 

@@ -344,12 +344,19 @@ def create_strategy(user_id: str, strategy: Strategy,
 
 def update_strategy(user_id: str, strategy_id: int, strategy: Strategy,
                     visibility: Optional[str] = None) -> bool:
-    """Owner-only update. Returns False if not owner."""
+    """Owner-only update. Returns False if not owner.
+
+    Name + description are only sanitised (length cap + control-char strip)
+    when the user actually changed them. Otherwise legacy rows with names
+    longer than _NAME_MAX would be silently truncated every time the user
+    edits any other field, which is data loss."""
     row = db.get_strategy(strategy_id)
     if not row or row["owner_user_id"] != user_id:
         return False
-    strategy.name = _sanitise_text(strategy.name, _NAME_MAX) or "untitled"
-    strategy.description = _sanitise_text(strategy.description, _DESC_MAX)
+    if strategy.name != row["name"]:
+        strategy.name = _sanitise_text(strategy.name, _NAME_MAX) or "untitled"
+    if strategy.description != row["description"]:
+        strategy.description = _sanitise_text(strategy.description, _DESC_MAX)
     db.update_strategy_row(
         strategy_id=strategy_id, name=strategy.name,
         description=strategy.description,

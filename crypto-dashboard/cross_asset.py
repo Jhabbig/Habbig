@@ -202,12 +202,18 @@ def _ytd_return(dates: list[str], closes: np.ndarray) -> Optional[float]:
 
 
 def _correlation(t1: str, t2: str, window_days: int) -> Optional[float]:
+    """Pearson correlation of daily log returns over `window_days` calendar
+    days. After inner-join on equity-business-day dates a 30-calendar-day
+    window yields ~22 aligned bars, so we use a percentage threshold of
+    the requested window (60%) rather than a hardcoded 30 — that way a
+    30d window needs ~18 observations and a 90d window needs ~54."""
     a1, a2, _ = _aligned_pair(t1, t2, days=window_days)
-    if len(a1) < 30 or len(a2) < 30:
+    min_obs = max(10, int(window_days * 0.6))
+    if len(a1) < min_obs or len(a2) < min_obs:
         return None
     r1 = _returns(a1)
     r2 = _returns(a2)
-    if len(r1) < 30 or len(r2) < 30:
+    if len(r1) < min_obs - 1 or len(r2) < min_obs - 1:
         return None
     if np.std(r1) == 0 or np.std(r2) == 0:
         return None
@@ -215,14 +221,17 @@ def _correlation(t1: str, t2: str, window_days: int) -> Optional[float]:
 
 
 def _beta(asset: str, ref: str, window_days: int) -> Optional[float]:
-    """Beta of `asset` returns vs `ref` returns. > 1 = more volatile."""
+    """Beta of `asset` returns vs `ref` returns. > 1 = more volatile.
+    Same percentage-threshold approach as _correlation so 30d windows
+    aren't unconditionally rejected after business-day inner-join."""
     a, b, _ = _aligned_pair(asset, ref, days=window_days)
-    if len(a) < 30 or len(b) < 30:
+    min_obs = max(10, int(window_days * 0.6))
+    if len(a) < min_obs or len(b) < min_obs:
         return None
     ra = _returns(a)
     rb = _returns(b)
     n = min(len(ra), len(rb))
-    if n < 30:
+    if n < min_obs - 1:
         return None
     ra, rb = ra[-n:], rb[-n:]
     var_ref = float(np.var(rb))

@@ -411,10 +411,16 @@ def _fire_alerts_for(item: NewsItem) -> int:
     for rule in rules:
         if not _rule_matches(rule, item):
             continue
-        # De-dupe: don't fire the same rule against the same item twice.
-        if db.has_alert_fired(rule["id"], item.id):
+        # Insert FIRST (atomic via UNIQUE(rule_id, news_id) on the
+        # crypto_news_alert_history table). insert_news_alert_history
+        # returns True only when a new row was actually created — i.e.
+        # this is the unambiguous winner of any concurrent race. Send
+        # the push only on that path. Previous check-then-insert layout
+        # could fire two pushes if the news_refresher and admin POST
+        # /api/news/refresh ran concurrently.
+        won = db.insert_news_alert_history(rule["id"], rule["user_id"], item.id)
+        if not won:
             continue
-        db.insert_news_alert_history(rule["id"], rule["user_id"], item.id)
         if rule.get("notify_push"):
             if push_mod is None:
                 import push as _p

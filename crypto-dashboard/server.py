@@ -5581,6 +5581,17 @@ async def import_all_exchanges(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     _require_feature(user, "exchange_connect")
+    # multi_exchange is Wealth-only. A user who linked both at Wealth and
+    # then downgraded retains both credential rows; without this gate they
+    # would still use both via import-all, bypassing the paywall.
+    configured = xch.configured_exchanges(user["id"])
+    if len(configured) > 1 and not billing_mod.feature_allowed(user["tier"], "multi_exchange"):
+        raise HTTPException(
+            status_code=402,
+            detail="Importing from multiple exchanges at once requires the "
+                   "Wealth tier. Disconnect one exchange to continue, or "
+                   "use /api/exchanges/import/{exchange} to import a single one.",
+        )
     return await asyncio.to_thread(imp_mod.import_all, user["id"])
 
 
@@ -6126,13 +6137,27 @@ async def update_strategy_api(strategy_id: int, request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = await request.json()
-    rules = payload.get("rules") or {}
+    rules = payload.get("rules")
     visibility = payload.get("visibility")
-    # Publishing to the marketplace requires Pro — gate on update too,
-    # not just create.
+    # Publishing to the marketplace requires Pro — gate on update too.
     if visibility == "public":
         _require_feature(user, "strategy_publish")
-    strategy = strat_mod.Strategy.from_dict(rules)
+    # Reject missing/empty rules outright: `payload.get("rules") or {}`
+    # used to silently overwrite the stored rules with `Strategy.from_dict({})`
+    # — the default "new strategy" template — when a client PATCHed only
+    # visibility. That was silent data loss.
+    if rules is None:
+        raise HTTPException(
+            status_code=400,
+            detail="rules field is required on update — to change visibility "
+                   "only, fetch the current rules and resend them",
+        )
+    if not isinstance(rules, dict):
+        raise HTTPException(status_code=400, detail="rules must be an object")
+    try:
+        strategy = strat_mod.Strategy.from_dict(rules)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid rules: {e}")
     ok = await asyncio.to_thread(
         strat_mod.update_strategy, user["id"], strategy_id, strategy, visibility,
     )
@@ -7035,6 +7060,21 @@ async def toggle_news_rule(rule_id: int, request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = await request.json()
     active = bool(payload.get("active", True))
+    # Re-enforce the tier cap when flipping a disabled rule back to active.
+    # Otherwise a free user can hold N active rules: create cap-many, disable
+    # one, create another, then PATCH the disabled rule active → over cap.
+    if active:
+        limit = _NEWS_RULE_LIMITS.get(user["tier"], 3)
+        current = db.count_user_news_alert_rules(user["id"])
+        # Only block if this rule isn't already active (re-toggling a
+        # currently-active rule shouldn't be rejected on the cap).
+        rule_rows = db.get_user_news_alert_rules(user["id"])
+        already_active = any(r["id"] == rule_id and r["active"] for r in rule_rows)
+        if not already_active and current >= limit:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Your {user['tier']} tier allows {limit} active rule(s).",
+            )
     ok = db.update_news_alert_rule(user["id"], rule_id, active)
     if not ok:
         raise HTTPException(status_code=404, detail="rule not found")

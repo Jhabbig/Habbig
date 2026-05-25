@@ -402,8 +402,12 @@ class CoinbaseAdapter:
                     product = f.get("product_id", "")
                     base = product.split("-", 1)[0] if "-" in product else product
                     base = base.upper()
-                    if base not in COINBASE_PRODUCTS:
-                        continue   # we only track BTC/ETH/SOL/DOGE/XRP
+                    # We only support USD-quoted spot pairs (BTC-USD etc.).
+                    # Naive base-only matching would let BTC-USDC / BTC-USDT
+                    # through and persist their quote-currency prices as USD
+                    # — wrong cost basis. Match the *whole* product id.
+                    if COINBASE_PRODUCTS.get(base) != product:
+                        continue
                     qty = float(f.get("size") or 0)
                     price = float(f.get("price") or 0)
                     if qty <= 0 or price <= 0:
@@ -411,8 +415,15 @@ class CoinbaseAdapter:
                     side = (f.get("side") or "").upper()
                     if side not in ("BUY", "SELL"):
                         continue
+                    external_id = str(f.get("trade_id") or f.get("entry_id") or "").strip()
+                    # Reject empty external_id outright. The UNIQUE
+                    # (exchange, external_id) constraint would otherwise
+                    # collapse every later no-id fill into one global slot
+                    # and silently drop them under "already imported".
+                    if not external_id:
+                        continue
                     out.append(Fill(
-                        external_id=str(f.get("trade_id") or f.get("entry_id") or ""),
+                        external_id=external_id,
                         ticker=base, side=side.lower(),
                         qty=qty, price=price,
                         fee_usd=float(f.get("commission") or 0),
@@ -681,11 +692,14 @@ class KrakenAdapter:
                     ts_unix = float(t.get("time") or 0)
                     if ts_unix <= 0:
                         continue
+                    ext = str(tid).strip()
+                    if not ext:
+                        continue   # see Coinbase: empty id would dedup-collapse
                     filled_at = datetime.fromtimestamp(
                         ts_unix, tz=timezone.utc,
                     ).isoformat()
                     out.append(Fill(
-                        external_id=str(tid),
+                        external_id=ext,
                         ticker=ticker, side=side,
                         qty=qty, price=price,
                         fee_usd=float(t.get("fee") or 0),

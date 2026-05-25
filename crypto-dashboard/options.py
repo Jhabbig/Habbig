@@ -225,15 +225,23 @@ def _atm_iv(options: list[OptionInfo]) -> Optional[float]:
     return float(sum(o.mark_iv for o in leg) / len(leg))
 
 
-def _delta_skew(options: list[OptionInfo], target_delta: float = 0.25) -> Optional[float]:
-    """25-delta put IV − 25-delta call IV. Positive = bearish skew."""
+def _delta_skew(options: list[OptionInfo], target_delta: float = 0.25,
+                 tolerance: float = 0.15) -> Optional[float]:
+    """25-delta put IV − 25-delta call IV. Positive = bearish skew.
+    Returns None if the closest call/put on either side is more than
+    `tolerance` off the target delta — better to omit than to label a
+    deep-ITM vs deep-OTM IV diff as "skew". Matches the contract of
+    `_iv_at_delta` below."""
     calls = [o for o in options if o.is_call]
     puts = [o for o in options if not o.is_call]
     if not calls or not puts:
         return None
-    call_25 = min(calls, key=lambda o: abs(o.delta - target_delta))
-    put_25 = min(puts, key=lambda o: abs(o.delta + target_delta))  # put delta is negative
-    return float(put_25.mark_iv - call_25.mark_iv)
+    call_pick = min(calls, key=lambda o: abs(o.delta - target_delta))
+    put_pick = min(puts, key=lambda o: abs(o.delta + target_delta))  # put delta is negative
+    if (abs(call_pick.delta - target_delta) > tolerance
+            or abs(put_pick.delta + target_delta) > tolerance):
+        return None
+    return float(put_pick.mark_iv - call_pick.mark_iv)
 
 
 def _iv_at_delta(options: list[OptionInfo], target_delta: float,

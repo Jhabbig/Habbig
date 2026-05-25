@@ -91,17 +91,27 @@ def _persist_buy(user_id: str, exchange: str, fill: xch.Fill) -> dict:
         acquired_at=acquired,
         note=f"auto-import: {exchange} #{fill.external_id[:16]}",
     )
-    inserted = db.insert_exchange_import(
-        user_id=user_id, exchange=exchange,
-        external_id=fill.external_id, ticker=fill.ticker,
-        side="buy", qty=float(fill.qty), price=float(fill.price),
-        fee_usd=float(fill.fee_usd), filled_at=fill.filled_at,
-        holding_id=holding_id, disposition_id=None,
-        raw_json=json.dumps(fill.raw, default=str)[:8000],
-    )
+    # Try the import-ledger insert. ANY exception here (not just
+    # IntegrityError on the UNIQUE constraint) must roll back the holding
+    # we just created — otherwise a transient sqlite3.OperationalError
+    # like "database is locked" leaves the holding orphaned with no
+    # ledger row, and the next retry creates a duplicate.
+    try:
+        inserted = db.insert_exchange_import(
+            user_id=user_id, exchange=exchange,
+            external_id=fill.external_id, ticker=fill.ticker,
+            side="buy", qty=float(fill.qty), price=float(fill.price),
+            fee_usd=float(fill.fee_usd), filled_at=fill.filled_at,
+            holding_id=holding_id, disposition_id=None,
+            raw_json=json.dumps(fill.raw, default=str)[:8000],
+        )
+    except Exception as e:
+        try:
+            db.remove_holding(user_id, holding_id)
+        except Exception:
+            pass
+        raise
     if not inserted:
-        # Race condition or stale state — the import row already existed.
-        # Roll back the holding we just created.
         db.remove_holding(user_id, holding_id)
         return {"imported": False, "reason": "already imported (race)"}
     return {"imported": True, "holding_id": holding_id}
@@ -145,6 +155,16 @@ def _persist_sell(user_id: str, exchange: str, fill: xch.Fill) -> dict:
         raw_json=json.dumps(fill.raw, default=str)[:8000],
     )
     if not inserted:
+        # Lost the UNIQUE(exchange, external_id) race against a concurrent
+        # importer. Roll back the disposition + lot-consumption rows so we
+        # don't double-decrement the user's open lots. Mirrors the
+        # rollback in _persist_buy.
+        if disposition_id is not None:
+            try:
+                db.remove_disposition(user_id, disposition_id)
+            except Exception as e:
+                log.warning("rollback failed for disposition %s: %s",
+                            disposition_id, e)
         return {"imported": False, "reason": "already imported (race)"}
     return {"imported": True, "disposition_id": disposition_id,
             "no_lots": disposition_id is None}
@@ -180,7 +200,7 @@ def import_fills(user_id: str, exchange: str) -> dict:
     for fill in fills:
         # Dedup at the source: if the external_id already exists in the
         # import ledger, skip.
-        if db.exchange_import_exists(exchange, fill.external_id):
+        if db.exchange_import_exists(user_id, exchange, fill.external_id):
             summary["skipped"] += 1
             continue
         try:

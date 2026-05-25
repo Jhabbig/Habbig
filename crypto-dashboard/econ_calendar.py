@@ -105,22 +105,23 @@ CRYPTO_IMPACT_WEIGHTS = [
     (r"\bBeige Book\b",                              0.30),
 ]
 
-# Time-of-day map: most US macro releases drop at 8:30 AM ET (12:30 UTC);
-# FOMC decisions at 2:00 PM ET (18:00 UTC); H.4.1 at 4:30 PM ET (20:30
-# UTC) on Thursdays. We add the time component so the UI can render an
-# accurate countdown.
-RELEASE_TIME_UTC = {
-    "fomc":      (18, 0),
-    "cpi":       (12, 30),
-    "ppi":       (12, 30),
-    "nfp":       (12, 30),
-    "pce":       (12, 30),
-    "gdp":       (12, 30),
-    "retail":    (12, 30),
-    "industrial": (13, 15),
-    "claims":    (12, 30),
-    "fed_h41":   (20, 30),
-    "default":   (12, 30),
+# US macro releases happen at fixed Eastern *local* times. The UTC offset
+# is -4 (EDT, mid-Mar→early-Nov) or -5 (EST, the rest of the year) — so a
+# hardcoded UTC time would be wrong by an hour in winter (FOMC actually
+# 19:00 UTC during EST, not 18:00). We store the Eastern local hour/minute
+# and convert each event to UTC against its own date.
+RELEASE_TIME_ET = {
+    "fomc":       (14, 0),   # 2:00 PM ET (rate decision)
+    "cpi":        (8, 30),
+    "ppi":        (8, 30),
+    "nfp":        (8, 30),
+    "pce":        (8, 30),
+    "gdp":        (8, 30),
+    "retail":     (8, 30),
+    "industrial": (9, 15),
+    "claims":     (8, 30),
+    "fed_h41":    (16, 30),  # 4:30 PM ET (Thursdays)
+    "default":    (8, 30),
 }
 
 
@@ -250,11 +251,26 @@ def fetch_fred_release_dates(start: str, end: str) -> list[dict]:
 
 
 def _to_datetime_utc(date_str: str, name: str) -> datetime:
-    """Combine FRED's date with our hardcoded release-time-of-day."""
-    d = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    """Combine FRED's date with the release's fixed Eastern local time,
+    then convert to UTC. Handles EDT/EST correctly across DST boundaries.
+
+    `zoneinfo` is in the stdlib (Python 3.9+). If unavailable on the
+    deploy target we fall back to a -5 offset (EST) — which is wrong in
+    summer but better than the previous fixed -4."""
     bucket = _time_bucket_for(name)
-    hh, mm = RELEASE_TIME_UTC.get(bucket, RELEASE_TIME_UTC["default"])
-    return d.replace(hour=hh, minute=mm)
+    hh, mm = RELEASE_TIME_ET.get(bucket, RELEASE_TIME_ET["default"])
+    base_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    try:
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        local_dt = datetime(base_date.year, base_date.month, base_date.day,
+                            hh, mm, tzinfo=et)
+        return local_dt.astimezone(timezone.utc)
+    except (ImportError, Exception):
+        # Fallback: assume EST (-5). Accurate Nov→mid-Mar; off by 1h
+        # in summer.
+        return datetime(base_date.year, base_date.month, base_date.day,
+                        hh + 5, mm, tzinfo=timezone.utc)
 
 
 # ─── Refresh job ────────────────────────────────────────────────────────────
@@ -345,17 +361,37 @@ def next_event(name_pattern: str) -> Optional[dict]:
 
 def fire_pre_event_alerts() -> dict:
     """Cron entry — for every event that's < 60 min away and not yet
-    alerted, fire a push to every user who has push subscriptions. Idempotent
-    via the `alerted_at` flag on the event row."""
+    alerted, fire a push to every user who (a) has a push subscription
+    AND (b) hasn't disabled notifications via `crypto_user_preferences`.
+    Idempotent via the `alerted_at` flag on the event row."""
     cutoff_iso = (datetime.now(timezone.utc) + timedelta(minutes=60)).isoformat()
     now_iso = datetime.now(timezone.utc).isoformat()
     events = db.get_econ_events_due_for_alert(now_iso, cutoff_iso)
     if not events:
         return {"checked": 0, "alerted": 0}
+
+    # Hoist the user-target list outside the per-event loop — was an
+    # O(events × users) query before.
+    user_ids = db.get_users_with_push_subscriptions()
+    # Respect per-user notification opt-out. `digest_enabled` is the only
+    # notification-pref flag today; an explicit False is opt-out. Users
+    # with no preferences row default to opted-in (the product norm —
+    # they explicitly subscribed to push, and macro events are a core
+    # feature).
+    filtered_uids: list[str] = []
+    for uid in user_ids:
+        prefs = db.get_user_preferences(uid)
+        if prefs is not None and prefs.get("digest_enabled") is False:
+            continue
+        filtered_uids.append(uid)
+
     push_mod = None
     alerted = 0
     for ev in events:
+        # Mark non-high events as alerted too so the ticker doesn't
+        # re-scan them every 5 minutes for the rest of the 60-min window.
         if ev["impact"] != "high":
+            db.mark_econ_event_alerted(ev["id"])
             continue
         try:
             dt = datetime.fromisoformat(ev["datetime_utc"])
@@ -365,11 +401,7 @@ def fire_pre_event_alerts() -> dict:
         if push_mod is None:
             import push as _p
             push_mod = _p
-        # Fan out to every user with active push subscriptions. We don't
-        # filter by user preferences here yet — this is a "high-impact macro
-        # event" notification that everyone in a HODL product wants.
-        user_ids = db.get_users_with_push_subscriptions()
-        for uid in user_ids:
+        for uid in filtered_uids:
             try:
                 push_mod.notify_user(
                     uid,
