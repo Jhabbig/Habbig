@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>API status · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #f59e0b; --accent-2: #ef4444; --accent-3: #34d399; --accent-4: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    display: flex; align-items: center; gap: 16px; }
+  header a.back { color: var(--text-3); font-size: 12px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+  header .right { margin-left: auto; font-size: 12px; color: var(--text-3); }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto 60px; }
+  .summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;
+    margin-bottom: 24px;
+  }
+  .tile { background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { font-size: 10px; text-transform: uppercase; color: var(--text-3); letter-spacing: 0.08em; }
+  .tile .val { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .tile.green .val { color: var(--accent-3); }
+  .tile.amber .val { color: var(--accent); }
+  .tile.red   .val { color: var(--accent-2); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+  .src {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .src .row1 { display: flex; align-items: center; gap: 10px; }
+  .src .dot { width: 10px; height: 10px; border-radius: 999px; flex-shrink: 0; }
+  .src .dot.GREEN  { background: var(--accent-3); box-shadow: 0 0 8px var(--accent-3); }
+  .src .dot.YELLOW { background: var(--accent); }
+  .src .dot.RED    { background: var(--accent-2); }
+  .src .dot.UNKNOWN{ background: var(--text-3); }
+  .src .name { font-family: monospace; font-size: 13px; flex: 1; }
+  .src .pill { font-size: 10px; padding: 2px 7px; border-radius: 999px; font-weight: 600; }
+  .src .pill.GREEN  { background: rgba(52,211,153,0.15); color: var(--accent-3); }
+  .src .pill.YELLOW { background: rgba(245,158,11,0.15); color: var(--accent); }
+  .src .pill.RED    { background: rgba(239,68,68,0.15); color: var(--accent-2); }
+  .src .pill.UNKNOWN{ background: var(--bg-2); color: var(--text-3); }
+  .src .row2 { font-size: 11px; color: var(--text-3); margin-top: 6px; display: flex; gap: 18px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .src .row2 strong { color: var(--text-2); }
+  .empty { color: var(--text-3); padding: 24px; text-align: center; font-style: italic; }
+  section { margin-bottom: 28px; }
+  section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-2); font-weight: 600; margin: 0 0 10px;
+  }
+  .err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: var(--accent-2); padding: 12px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← dashboard</a>
+  <h1>API status</h1>
+  <span class="right" id="updated">loading…</span>
+</header>
+
+<main>
+  <div class="summary" id="summary"></div>
+
+  <section>
+    <h2>Per-source health</h2>
+    <div class="grid" id="sources"></div>
+  </section>
+
+  <section>
+    <h2>Persisted cache</h2>
+    <div id="cache"></div>
+  </section>
+
+  <p style="color:var(--text-3);font-size:12px;margin-top:36px">
+    Status reflects in-process health since the last server restart.
+    GREEN = last successful call &lt; 1 min. YELLOW = last success
+    1-10 min. RED = no success in 10 min or last 5 calls all failed.
+    UNKNOWN = no calls recorded yet.
+  </p>
+</main>
+
+<script>
+(function() {
+  const fmt = (n, d = 0) => n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+  const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function load() {
+    try {
+      const r = await fetch("/api/sources", { credentials: "include" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const sources = data.sources || [];
+      const cache = data.persisted_cache || {};
+      const byStatus = { GREEN: 0, YELLOW: 0, RED: 0, UNKNOWN: 0 };
+      let totalCalls = 0, totalOk = 0;
+      sources.forEach(s => {
+        byStatus[s.status] = (byStatus[s.status] || 0) + 1;
+        totalCalls += s.calls_total || 0;
+        totalOk += s.calls_ok || 0;
+      });
+      const okPct = totalCalls ? (totalOk / totalCalls) * 100 : 0;
+      document.getElementById("summary").innerHTML = `
+        <div class="tile green"><div class="label">Healthy</div><div class="val">${byStatus.GREEN}</div></div>
+        <div class="tile amber"><div class="label">Degraded</div><div class="val">${byStatus.YELLOW}</div></div>
+        <div class="tile red"><div class="label">Down</div><div class="val">${byStatus.RED}</div></div>
+        <div class="tile"><div class="label">Tracked sources</div><div class="val">${sources.length}</div></div>
+        <div class="tile ${okPct >= 95 ? "green" : okPct >= 80 ? "amber" : "red"}"><div class="label">Success rate</div><div class="val">${okPct.toFixed(1)}%</div></div>
+        <div class="tile"><div class="label">Total calls</div><div class="val">${fmt(totalCalls)}</div></div>`;
+
+      // Sort GREEN -> YELLOW -> RED -> UNKNOWN; within group by latency desc
+      const order = { RED: 0, YELLOW: 1, GREEN: 2, UNKNOWN: 3 };
+      sources.sort((a, b) => (order[a.status] - order[b.status]) ||
+                              ((b.latency_ema_ms || 0) - (a.latency_ema_ms || 0)));
+      document.getElementById("sources").innerHTML = sources.length ? sources.map(s => {
+        const okPct = s.calls_total ? ((s.calls_ok / s.calls_total) * 100).toFixed(1) : "0.0";
+        const ageOk = s.last_ok_age_s != null ? `${s.last_ok_age_s}s ago` : "never";
+        const lat = s.latency_ema_ms != null ? `${s.latency_ema_ms}ms` : "-";
+        return `<div class="src">
+          <div class="row1">
+            <span class="dot ${escapeHtml(s.status)}"></span>
+            <span class="name">${escapeHtml(s.source)}</span>
+            <span class="pill ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>
+          </div>
+          <div class="row2">
+            <span>last ok: <strong>${escapeHtml(ageOk)}</strong></span>
+            <span>latency: <strong>${escapeHtml(lat)}</strong></span>
+            <span>success: <strong>${okPct}%</strong> (${s.calls_total})</span>
+            ${s.last_http_status ? `<span>last http: <strong>${s.last_http_status}</strong></span>` : ""}
+          </div>
+        </div>`;
+      }).join("") : '<div class="empty">No upstream calls recorded yet.</div>';
+
+      // Persisted cache table
+      const entries = Object.entries(cache);
+      entries.sort((a, b) => a[1].age_s - b[1].age_s);
+      document.getElementById("cache").innerHTML = entries.length ? `
+        <table style="width:100%;border-collapse:collapse;background:var(--bg-1);border:1px solid var(--border);border-radius:10px;overflow:hidden;font-size:13px">
+          <thead><tr>
+            <th style="padding:7px 10px;text-align:left;background:var(--bg-2);font-size:10px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em">Cache key</th>
+            <th style="padding:7px 10px;text-align:right;background:var(--bg-2);font-size:10px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em">Age</th>
+            <th style="padding:7px 10px;text-align:right;background:var(--bg-2);font-size:10px;text-transform:uppercase;color:var(--text-3);letter-spacing:0.06em">Size</th>
+          </tr></thead>
+          <tbody>${entries.slice(0, 60).map(([k, v]) => `<tr>
+            <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">${escapeHtml(k)}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums">${v.age_s}s</td>
+            <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums">${(v.size_b/1024).toFixed(1)} KB</td>
+          </tr>`).join("")}</tbody>
+        </table>
+        <div style="color:var(--text-3);font-size:11px;margin-top:6px">${entries.length} entries · showing first 60</div>` :
+        '<div class="empty">No persisted cache entries (background pre-fetch may be disabled — set CT_PREFETCH=1).</div>';
+
+      document.getElementById("updated").textContent = "refreshed " + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById("summary").innerHTML = `<div class="err">Status fetch failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  load();
+  setInterval(load, 15 * 1000);
+})();
+</script>
+</body>
+</html>

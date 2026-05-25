@@ -133,6 +133,9 @@
       <button id="chart-export" title="Download current chart as SVG">💾</button>
       <button data-ind="rsi" class="active" title="RSI(14) subplot">RSI</button>
       <button data-ind="macd" class="active" title="MACD(12,26,9) subplot">MACD</button>
+      <button data-ind="stoch" title="Stochastic %K/%D (14,3,3) subplot">STO</button>
+      <button data-ind="obv" title="On-Balance Volume overlay (cumulative volume signed by close direction)">OBV</button>
+      <button data-ind="atr" title="ATR(14) band — average true range as ±1 ATR envelope around close">ATR</button>
     </div>
     <div class="chart-controls" id="draw-controls" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
       <span style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-right:6px">Draw</span>
@@ -272,7 +275,8 @@
   let _chartInterval = "1h";
   let _chartType = "candle"; // "candle" | "heikin" | "line" | "area" | "bars"
   const _indicators = { bb: true, rsi: true, macd: true, sma50: false, sma200: false,
-                         vwap: false, ich: false, vp: false, pp: false, reg: false };
+                         vwap: false, ich: false, vp: false, pp: false, reg: false,
+                         stoch: false, obv: false, atr: false };
   let _bars = [];
   let _chartGeometry = null;  // saved after every render so drawings can re-map data-coords to px
   let _compareSymbol = "";     // e.g. "ETH" — when set, overlays compare-coin % returns
@@ -581,6 +585,56 @@
     };
   }
 
+  // ─── Stochastic %K / %D (14, 3, 3) ────────────────────────────────────────
+  function stochastic(bars, kP = 14, kSmooth = 3, dSmooth = 3) {
+    const n = bars.length;
+    const raw = new Array(n).fill(null);
+    for (let i = kP - 1; i < n; i++) {
+      let hi = -Infinity, lo = Infinity;
+      for (let j = i - kP + 1; j <= i; j++) {
+        if (bars[j].high > hi) hi = bars[j].high;
+        if (bars[j].low  < lo) lo = bars[j].low;
+      }
+      const c = bars[i].close;
+      raw[i] = hi > lo ? ((c - lo) / (hi - lo)) * 100 : null;
+    }
+    const k = sma(raw.map(v => v ?? null), kSmooth);
+    const d = sma(k.map(v => v ?? null), dSmooth);
+    return { k, d };
+  }
+
+  // ─── OBV (On-Balance Volume) ──────────────────────────────────────────────
+  function obv(bars) {
+    const out = [0];
+    for (let i = 1; i < bars.length; i++) {
+      const prev = out[i - 1];
+      const dC = bars[i].close - bars[i - 1].close;
+      const v = bars[i].volume || 0;
+      out.push(dC > 0 ? prev + v : dC < 0 ? prev - v : prev);
+    }
+    return out;
+  }
+
+  // ─── ATR (Average True Range) ─────────────────────────────────────────────
+  function atr(bars, period = 14) {
+    const tr = new Array(bars.length).fill(null);
+    for (let i = 0; i < bars.length; i++) {
+      const b = bars[i];
+      const prevC = i > 0 ? bars[i - 1].close : b.close;
+      tr[i] = Math.max(b.high - b.low, Math.abs(b.high - prevC), Math.abs(b.low - prevC));
+    }
+    // Wilder's smoothing
+    const out = new Array(bars.length).fill(null);
+    if (tr.length < period) return out;
+    let s = 0;
+    for (let i = 0; i < period; i++) s += tr[i];
+    out[period - 1] = s / period;
+    for (let i = period; i < tr.length; i++) {
+      out[i] = (out[i - 1] * (period - 1) + tr[i]) / period;
+    }
+    return out;
+  }
+
   // ─── Anchored VWAP (from a chosen bar index forward) ─────────────────────
   function anchoredVWAP(bars, anchorIdx) {
     const out = new Array(bars.length).fill(null);
@@ -610,6 +664,8 @@
     const CHART_H = 360, VOL_H = 60;
     const RSI_H = _indicators.rsi ? 80 : 0;
     const MACD_H = _indicators.macd ? 100 : 0;
+    const STOCH_H = _indicators.stoch ? 80 : 0;
+    const OBV_H = _indicators.obv ? 70 : 0;
     const PAD_TOP = 10, PAD_LEFT = 8, PAD_RIGHT = 70;
     const GAP = 10, AXIS_BOTTOM = 30;
     const chartTop = PAD_TOP, chartBottom = PAD_TOP + CHART_H;
@@ -618,7 +674,11 @@
     const rsiBottom = rsiTop + RSI_H;
     const macdTop = _indicators.macd ? rsiBottom + GAP : rsiBottom;
     const macdBottom = macdTop + MACD_H;
-    const H = macdBottom + AXIS_BOTTOM;
+    const stochTop = _indicators.stoch ? macdBottom + GAP : macdBottom;
+    const stochBottom = stochTop + STOCH_H;
+    const obvTop = _indicators.obv ? stochBottom + GAP : stochBottom;
+    const obvBottom = obvTop + OBV_H;
+    const H = obvBottom + AXIS_BOTTOM;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 
     const n = renderBars.length;
@@ -734,6 +794,34 @@
       extraOverlays += `<path d="${p}" fill="none" stroke="${color}" stroke-width="1.1" stroke-opacity="0.85"/>
         <text x="${PAD_LEFT + 4}" y="${chartTop + 24 + idx * 12}" fill="${color}" font-size="9" font-family="monospace">SMA(${period})</text>`;
     });
+    if (_indicators.atr) {
+      const atrVals = atr(renderBars, 14);
+      let upper = [], lower = [];
+      atrVals.forEach((a, i) => {
+        if (a == null) { upper.push(null); lower.push(null); return; }
+        upper.push(renderBars[i].close + a);
+        lower.push(renderBars[i].close - a);
+      });
+      const uP = pathFromValues(upper, PAD_LEFT, xStep, candleW / 2, yScale);
+      const lP = pathFromValues(lower, PAD_LEFT, xStep, candleW / 2, yScale);
+      let band = ""; let started = false;
+      upper.forEach((v, i) => {
+        if (v == null) { started = false; return; }
+        const x = PAD_LEFT + i * xStep + candleW / 2;
+        band += (started ? " L" : "M") + x + " " + yScale(v);
+        started = true;
+      });
+      for (let i = lower.length - 1; i >= 0; i--) {
+        if (lower[i] == null) continue;
+        const x = PAD_LEFT + i * xStep + candleW / 2;
+        band += " L" + x + " " + yScale(lower[i]);
+      }
+      band += " Z";
+      extraOverlays += `<path d="${band}" fill="rgba(251,191,36,0.06)"/>
+        <path d="${uP}" fill="none" stroke="#fbbf24" stroke-width="0.7" stroke-dasharray="3 2" stroke-opacity="0.75"/>
+        <path d="${lP}" fill="none" stroke="#fbbf24" stroke-width="0.7" stroke-dasharray="3 2" stroke-opacity="0.75"/>
+        <text x="${PAD_LEFT + 4}" y="${chartBottom - 18}" fill="#fbbf24" font-size="9" font-family="monospace">ATR(14) ±1 envelope · last ${atrVals[n-1] ? atrVals[n-1].toFixed(4) : '-'}</text>`;
+    }
     if (_indicators.reg) {
       const reg = regressionChannel(closes);
       if (reg) {
@@ -966,6 +1054,39 @@
         <text x="${PAD_LEFT + 4}" y="${macdTop + 12}" class="indicator-label">MACD(12,26,9)</text>`;
     }
 
+    // Stochastic subplot
+    let stochSvg = "";
+    if (_indicators.stoch) {
+      const st = stochastic(renderBars, 14, 3, 3);
+      const stScale = (v) => stochBottom - (v / 100) * STOCH_H;
+      const kPath = pathFromValues(st.k, PAD_LEFT, xStep, candleW / 2, stScale);
+      const dPath = pathFromValues(st.d, PAD_LEFT, xStep, candleW / 2, stScale);
+      const y20 = stScale(20), y50 = stScale(50), y80 = stScale(80);
+      stochSvg = `
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y20}" x2="${W - PAD_RIGHT}" y2="${y20}"/>
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y50}" x2="${W - PAD_RIGHT}" y2="${y50}"/>
+        <line class="rsi-tick" x1="${PAD_LEFT}" y1="${y80}" x2="${W - PAD_RIGHT}" y2="${y80}"/>
+        <text x="${W - PAD_RIGHT + 4}" y="${y20 + 3}" class="indicator-label">20</text>
+        <text x="${W - PAD_RIGHT + 4}" y="${y80 + 3}" class="indicator-label">80</text>
+        <text x="${PAD_LEFT + 4}" y="${stochTop + 12}" class="indicator-label">Stoch %K/%D (14,3,3)</text>
+        <path d="${kPath}" fill="none" stroke="#38bdf8" stroke-width="1.2"/>
+        <path d="${dPath}" fill="none" stroke="#f59e0b" stroke-width="1"/>`;
+    }
+
+    // OBV subplot
+    let obvSvg = "";
+    if (_indicators.obv) {
+      const v = obv(renderBars);
+      const vMax = Math.max(...v), vMin = Math.min(...v);
+      const vRange = Math.max(vMax - vMin, 1);
+      const oScale = (x) => obvBottom - ((x - vMin) / vRange) * OBV_H;
+      const oPath = v.map((val, i) => `${i === 0 ? "M" : "L"}${PAD_LEFT + i * xStep + candleW / 2} ${oScale(val)}`).join(" ");
+      const trendCls = v[v.length - 1] >= v[0] ? "#34d399" : "#ef4444";
+      obvSvg = `
+        <text x="${PAD_LEFT + 4}" y="${obvTop + 12}" class="indicator-label">OBV · trend ${v[v.length - 1] >= v[0] ? "↑" : "↓"}</text>
+        <path d="${oPath}" fill="none" stroke="${trendCls}" stroke-width="1.2"/>`;
+    }
+
     // Latest price marker on right
     const last = renderBars[n - 1];
     const lastY = yScale(last.close);
@@ -982,6 +1103,8 @@
       ${volBars.join("")}
       ${rsiSvg}
       ${macdSvg}
+      ${stochSvg}
+      ${obvSvg}
       <path class="ma" d="${emaPath}"/>
       ${extraOverlays}
       ${drawingsSvg}

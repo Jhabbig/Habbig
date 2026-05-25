@@ -17,6 +17,18 @@
     --text-1: #f1f5f9;
     --text-2: #94a3b8;
     --text-3: #64748b;
+  }
+  [data-theme="light"] {
+    --bg-0: #f8fafc;
+    --bg-1: #ffffff;
+    --bg-2: #f1f5f9;
+    --bg-3: #e2e8f0;
+    --border: #cbd5e1;
+    --text-1: #0f172a;
+    --text-2: #475569;
+    --text-3: #94a3b8;
+  }
+  :root {
     --accent: #f59e0b;          /* amber - crypto theme */
     --accent-2: #ef4444;        /* red - losers */
     --accent-3: #34d399;        /* green - gainers */
@@ -128,10 +140,11 @@
   <div class="row">
     <div>
       <h1>Crypto Trackers</h1>
-      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; <a href="/welcome" style="color:var(--accent)">about</a> &middot; <a href="/compare" style="color:var(--accent)">compare</a> &middot; <a href="/multipane" style="color:var(--accent)">multipane</a> &middot; <a href="/portfolio" style="color:var(--accent)">portfolio</a> &middot; <a href="/digest" style="color:var(--accent)">digest</a> &middot; <a href="/pricing" style="color:var(--accent)">pricing</a> &middot; <a href="/changelog" style="color:var(--accent)">changelog</a> &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
+      <div class="sub">Every coin &middot; multi-exchange spot+perps &middot; cross-venue arb &middot; funding rates &middot; DeFi TVL &middot; F&amp;G index &middot; <a href="/welcome" style="color:var(--accent)">about</a> &middot; <a href="/compare" style="color:var(--accent)">compare</a> &middot; <a href="/multipane" style="color:var(--accent)">multipane</a> &middot; <a href="/portfolio" style="color:var(--accent)">portfolio</a> &middot; <a href="/digest" style="color:var(--accent)">digest</a> &middot; <a href="/pricing" style="color:var(--accent)">pricing</a> &middot; <a href="/changelog" style="color:var(--accent)">changelog</a> &middot; <a href="/status" style="color:var(--accent)">status</a> &middot; <a href="/guide/pump-and-dump" style="color:var(--accent)">P&amp;D guide</a></div>
     </div>
     <div class="updated" id="updated"><span class="dot"></span><span id="updated-text">loading...</span></div>
     <div class="updated" id="ws-status" style="margin-left:14px"><span class="dot" style="background:var(--text-3)"></span><span id="ws-status-text">ws idle</span></div>
+    <button id="theme-toggle" title="Toggle light / dark theme" style="margin-left:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:4px 9px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">🌙</button>
   </div>
 </header>
 
@@ -1529,6 +1542,8 @@
           <input id="j-size" type="number" step="any" placeholder="size (tokens)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:120px"/>
           <input id="j-notes" placeholder="notes (optional)" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);padding:6px 8px;border-radius:6px;width:200px"/>
           <button onclick="window._addTrade()" style="background:var(--accent);border:none;color:black;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">+ Add</button>
+          <button onclick="window._taxLotsSummary()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:6px 12px;border-radius:6px;font-size:11px;cursor:pointer">FIFO summary</button>
+          <button onclick="window._taxLotsCSV()" style="background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);padding:6px 12px;border-radius:6px;font-size:11px;cursor:pointer">Export CSV (Form 8949)</button>
         </div>
       </div>
     </div>`;
@@ -1564,6 +1579,46 @@
     trades.splice(idx, 1);
     saveJournal(trades);
     renderJournal();
+  };
+
+  // ─── Tax-lot summary (FIFO, server-computed) ─────────────────────────────
+  window._taxLotsSummary = async () => {
+    const trades = loadJournal();
+    if (!trades.length) { alert("No trades in the journal yet."); return; }
+    try {
+      const r = await fetch("/api/tools/tax_lots", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trades }) });
+      if (!r.ok) { alert("Failed: " + r.status); return; }
+      const d = await r.json();
+      const s = d.summary || {};
+      const byCoin = (s.by_coin || []).slice(0, 6).map(b =>
+        `${escapeHtml(b.coin)}: ${b.realised_pnl_usd >= 0 ? "+" : ""}$${fmt(b.realised_pnl_usd, 2)} (${b.match_count})`
+      ).join("\n");
+      alert(`FIFO realised P&L summary\n────────────────────────\n` +
+            `Total: ${s.total_realised_pnl_usd >= 0 ? "+" : ""}$${fmt(s.total_realised_pnl_usd, 2)}\n` +
+            `Short-term (<1y): ${s.short_term_pnl_usd >= 0 ? "+" : ""}$${fmt(s.short_term_pnl_usd, 2)}\n` +
+            `Long-term  (≥1y): ${s.long_term_pnl_usd >= 0 ? "+" : ""}$${fmt(s.long_term_pnl_usd, 2)}\n` +
+            `Matches: ${s.match_count} · Wins: ${s.win_count} · Losses: ${s.loss_count}\n` +
+            `Open lots: ${(d.open_lots || []).length}\n\n` +
+            `By coin:\n${byCoin}`);
+    } catch (e) { alert("Tax-lots failed: " + e.message); }
+  };
+
+  window._taxLotsCSV = async () => {
+    const trades = loadJournal();
+    if (!trades.length) { alert("No trades in the journal yet."); return; }
+    try {
+      const r = await fetch("/api/tools/tax_lots/csv", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trades }) });
+      if (!r.ok) { alert("Failed: " + r.status); return; }
+      const csv = await r.text();
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `tax-lots-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { alert("CSV export failed: " + e.message); }
   };
 
   // ─── Alert templates marketplace ──────────────────────────────────────────
@@ -1786,6 +1841,24 @@
     }, 1000);
   }
   startWS();
+
+  // ─── Theme toggle (light / dark) ──────────────────────────────────────────
+  (function initTheme() {
+    const KEY = "ct_theme_v1";
+    const btn = document.getElementById("theme-toggle");
+    function apply(theme) {
+      if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
+      else document.documentElement.removeAttribute("data-theme");
+      if (btn) btn.textContent = theme === "light" ? "☀️" : "🌙";
+      try { localStorage.setItem(KEY, theme); } catch {}
+    }
+    const saved = (() => { try { return localStorage.getItem(KEY); } catch { return null; } })();
+    apply(saved === "light" ? "light" : "dark");
+    if (btn) btn.addEventListener("click", () => {
+      const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+      apply(cur === "light" ? "dark" : "light");
+    });
+  })();
 
   maybeRegisterServiceWorker();
   renderWatchlist();

@@ -40,6 +40,7 @@ from analysis import lp_il
 from analysis import onchain_lookup
 from analysis import screener as screener_mod
 from analysis import sectors as sectors_mod
+from analysis import tax_lots
 from ingestion import (
     _background,
     _health,
@@ -95,6 +96,7 @@ WELCOME_HTML_PATH = Path(__file__).parent / "welcome.html"
 PORTFOLIO_HTML_PATH = Path(__file__).parent / "portfolio.html"
 DIGEST_HTML_PATH = Path(__file__).parent / "digest.html"
 CHANGELOG_HTML_PATH = Path(__file__).parent / "changelog.html"
+STATUS_HTML_PATH = Path(__file__).parent / "status.html"
 GUIDE_PUMP_PATH = Path(__file__).parent / "guide-pump-and-dump.html"
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -200,6 +202,11 @@ async def digest_page() -> HTMLResponse:
 @app.get("/changelog", response_class=HTMLResponse)
 async def changelog_page() -> HTMLResponse:
     return HTMLResponse(CHANGELOG_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/status", response_class=HTMLResponse)
+async def status_page() -> HTMLResponse:
+    return HTMLResponse(STATUS_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/guide/pump-and-dump", response_class=HTMLResponse)
@@ -667,6 +674,39 @@ async def api_tools_size(
         account_usd=account_usd, risk_pct=risk_pct, entry=entry, stop=stop,
         target=target, leverage=leverage, fee_pct=fee_pct,
     ))
+
+
+@app.post("/api/tools/tax_lots")
+async def api_tools_tax_lots(req: Request) -> JSONResponse:
+    """POST a trade-journal JSON array; receive FIFO-matched lots with
+    realised P&L + short/long-term split + CSV-ready download.
+
+    Body: {"trades": [...]}. No server-side state — the client (trade
+    journal in localStorage) is the source of truth."""
+    try:
+        body = await req.json()
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    trades = body.get("trades") if isinstance(body, dict) else body
+    if not isinstance(trades, list):
+        return JSONResponse({"error": "trades must be a JSON array"}, status_code=400)
+    return JSONResponse(tax_lots.realised_pnl_fifo(trades))
+
+
+@app.post("/api/tools/tax_lots/csv")
+async def api_tools_tax_lots_csv(req: Request):
+    """Same as /api/tools/tax_lots but returns CSV ready for IRS Form 8949."""
+    from fastapi.responses import PlainTextResponse
+    try:
+        body = await req.json()
+    except (ValueError, TypeError):
+        return PlainTextResponse("error: invalid JSON body", status_code=400)
+    trades = body.get("trades") if isinstance(body, dict) else body
+    if not isinstance(trades, list):
+        return PlainTextResponse("error: trades must be a JSON array", status_code=400)
+    result = tax_lots.realised_pnl_fifo(trades)
+    return PlainTextResponse(tax_lots.to_csv(result.get("matches", [])),
+                              headers={"Content-Disposition": 'attachment; filename="tax-lots.csv"'})
 
 
 # ─── L2 sequencer revenue + restaking ─────────────────────────────────────────
