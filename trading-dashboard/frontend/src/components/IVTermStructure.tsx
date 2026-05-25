@@ -1,12 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface IVTermStructureProps {
   spotPrice: number;
 }
 
-export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) => {
-  const [selectedStrike, setSelectedStrike] = React.useState('ATM');
+const IVTermStructureComponent: React.FC<IVTermStructureProps> = ({ spotPrice }) => {
+  const [selectedStrike, setSelectedStrike] = useState('ATM');
 
   // Generate IV term structure data
   const ivData = useMemo(() => {
@@ -44,27 +44,35 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
 
   const currentData = ivData[selectedStrike as keyof typeof ivData];
 
-  // SVG chart dimensions
-  const width = 600;
-  const height = 300;
-  const padding = { top: 30, right: 30, bottom: 50, left: 60 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
+  const chartConfig = useMemo(() => {
+    const width = 600;
+    const height = 300;
+    const padding = { top: 30, right: 30, bottom: 50, left: 60 };
+    return { width, height, padding, chartWidth: width - padding.left - padding.right, chartHeight: height - padding.top - padding.bottom };
+  }, []);
 
-  // Scale functions
-  const maxDTE = Math.max(...currentData.map((d) => d.dte));
-  const minIV = Math.min(...currentData.map((d) => d.iv));
-  const maxIV = Math.max(...currentData.map((d) => d.iv));
+  const ivStats = useMemo(() => {
+    const maxDTE = Math.max(...currentData.map((d) => d.dte));
+    const minIV = Math.min(...currentData.map((d) => d.iv));
+    const maxIV = Math.max(...currentData.map((d) => d.iv));
+    return { maxDTE, minIV, maxIV };
+  }, [currentData]);
 
-  const xScale = (dte: number) => padding.left + (dte / maxDTE) * chartWidth;
-  const yScale = (iv: number) => padding.top + chartHeight - ((iv - minIV) / (maxIV - minIV + 0.001)) * chartHeight;
+  const scales = useMemo(() => {
+    const xScale = (dte: number) => chartConfig.padding.left + (dte / ivStats.maxDTE) * chartConfig.chartWidth;
+    const yScale = (iv: number) => chartConfig.padding.top + chartConfig.chartHeight - ((iv - ivStats.minIV) / (ivStats.maxIV - ivStats.minIV + 0.001)) * chartConfig.chartHeight;
+    return { xScale, yScale };
+  }, [chartConfig, ivStats]);
 
-  // Create SVG path
-  const points = currentData.map((d) => `${xScale(d.dte)},${yScale(d.iv)}`).join(' ');
+  const points = useMemo(() =>
+    currentData.map((d) => `${scales.xScale(d.dte)},${scales.yScale(d.iv)}`).join(' '),
+    [currentData, scales]
+  );
 
-  // Calculate trend
-  const trend =
-    currentData[currentData.length - 1].iv - currentData[0].iv > 0 ? 'increasing' : 'decreasing';
+  const trend = useMemo(() =>
+    currentData[currentData.length - 1].iv - currentData[0].iv > 0 ? 'increasing' : 'decreasing',
+    [currentData]
+  );
 
   return (
     <div className="space-y-4">
@@ -94,15 +102,15 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
 
       {/* SVG Chart */}
       <div className="bg-gray-900 p-4 rounded-lg border border-gray-700 overflow-x-auto">
-        <svg width={width} height={height} className="bg-gray-800 rounded">
+        <svg width={chartConfig.width} height={chartConfig.height} className="bg-gray-800 rounded">
           {/* Grid lines */}
           {Array.from({ length: 5 }).map((_, i) => (
             <React.Fragment key={`grid-${i}`}>
               <line
-                x1={padding.left}
-                y1={padding.top + (chartHeight / 4) * i}
-                x2={width - padding.right}
-                y2={padding.top + (chartHeight / 4) * i}
+                x1={chartConfig.padding.left}
+                y1={chartConfig.padding.top + (chartConfig.chartHeight / 4) * i}
+                x2={chartConfig.width - chartConfig.padding.right}
+                y2={chartConfig.padding.top + (chartConfig.chartHeight / 4) * i}
                 stroke="#444"
                 strokeWidth="1"
                 strokeDasharray="4"
@@ -112,18 +120,18 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
 
           {/* Axes */}
           <line
-            x1={padding.left}
-            y1={padding.top}
-            x2={padding.left}
-            y2={height - padding.bottom}
+            x1={chartConfig.padding.left}
+            y1={chartConfig.padding.top}
+            x2={chartConfig.padding.left}
+            y2={chartConfig.height - chartConfig.padding.bottom}
             stroke="#666"
             strokeWidth="2"
           />
           <line
-            x1={padding.left}
-            y1={height - padding.bottom}
-            x2={width - padding.right}
-            y2={height - padding.bottom}
+            x1={chartConfig.padding.left}
+            y1={chartConfig.height - chartConfig.padding.bottom}
+            x2={chartConfig.width - chartConfig.padding.right}
+            y2={chartConfig.height - chartConfig.padding.bottom}
             stroke="#666"
             strokeWidth="2"
           />
@@ -133,7 +141,7 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
 
           {/* Gradient fill under line */}
           <polygon
-            points={`${padding.left},${height - padding.bottom} ${points} ${width - padding.right},${height - padding.bottom}`}
+            points={`${chartConfig.padding.left},${chartConfig.height - chartConfig.padding.bottom} ${points} ${chartConfig.width - chartConfig.padding.right},${chartConfig.height - chartConfig.padding.bottom}`}
             fill="url(#ivGradient)"
             opacity="0.2"
           />
@@ -150,8 +158,8 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
           {currentData.map((d) => (
             <circle
               key={d.dte}
-              cx={xScale(d.dte)}
-              cy={yScale(d.iv)}
+              cx={scales.xScale(d.dte)}
+              cy={scales.yScale(d.iv)}
               r="4"
               fill="#3b82f6"
               stroke="#1f2937"
@@ -162,12 +170,12 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
 
           {/* Y-axis labels */}
           {Array.from({ length: 5 }).map((_, i) => {
-            const iv = minIV + ((maxIV - minIV) / 4) * i;
+            const iv = ivStats.minIV + ((ivStats.maxIV - ivStats.minIV) / 4) * i;
             return (
               <text
                 key={`y-${i}`}
-                x={padding.left - 10}
-                y={padding.top + (chartHeight / 4) * (4 - i)}
+                x={chartConfig.padding.left - 10}
+                y={chartConfig.padding.top + (chartConfig.chartHeight / 4) * (4 - i)}
                 textAnchor="end"
                 dominantBaseline="middle"
                 fill="#999"
@@ -182,8 +190,8 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
           {[7, 30, 60, 90, 180, 365].map((dte) => (
             <text
               key={`x-${dte}`}
-              x={xScale(dte)}
-              y={height - padding.bottom + 20}
+              x={scales.xScale(dte)}
+              y={chartConfig.height - chartConfig.padding.bottom + 20}
               textAnchor="middle"
               fill="#999"
               fontSize="12"
@@ -193,10 +201,10 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
           ))}
 
           {/* Axis labels */}
-          <text x={20} y={height / 2} textAnchor="middle" fill="#999" fontSize="12" transform={`rotate(-90 20 ${height / 2})`}>
+          <text x={20} y={chartConfig.height / 2} textAnchor="middle" fill="#999" fontSize="12" transform={`rotate(-90 20 ${chartConfig.height / 2})`}>
             Implied Volatility
           </text>
-          <text x={width / 2} y={height - 10} textAnchor="middle" fill="#999" fontSize="12">
+          <text x={chartConfig.width / 2} y={chartConfig.height - 10} textAnchor="middle" fill="#999" fontSize="12">
             Days to Expiration
           </text>
         </svg>
@@ -226,7 +234,7 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
           <div className="text-gray-400 text-sm mb-2">IV Range</div>
           <div className="text-lg font-bold text-blue-400">
-            {(minIV * 100).toFixed(1)}% - {(maxIV * 100).toFixed(1)}%
+            {(ivStats.minIV * 100).toFixed(1)}% - {(ivStats.maxIV * 100).toFixed(1)}%
           </div>
           <p className="text-xs text-gray-500 mt-2">Implied volatility spread across expiration dates</p>
         </div>
@@ -241,3 +249,5 @@ export const IVTermStructure: React.FC<IVTermStructureProps> = ({ spotPrice }) =
     </div>
   );
 };
+
+export const IVTermStructure = React.memo(IVTermStructureComponent);
