@@ -156,6 +156,12 @@
   <pre>curl https://love.narve.ai/api/narrative/USA</pre>
 </div>
 
+<div class="endpoint">
+  <div class="method-path"><span class="method">GET</span> <code class="path">/api/narrative/&lt;iso3&gt;?stream=1</code></div>
+  <div class="desc">Same narrative as above but returned as Server-Sent Events so the UI can render tokens live. Emits <code>{type:"delta",text:...}</code> events as Claude writes them, terminating with one <code>{type:"done", text, model, generated_at, usage}</code>. Cache-aware: a same-day re-open emits the cached text in one delta + done immediately (no Claude call).</div>
+  <pre>curl -N -H 'Accept: text/event-stream' https://love.narve.ai/api/narrative/USA</pre>
+</div>
+
 <h2>Share assets</h2>
 
 <div class="endpoint">

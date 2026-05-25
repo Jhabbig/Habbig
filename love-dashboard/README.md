@@ -1,7 +1,21 @@
-# State of Love Dashboard (v3.7)
+# State of Love Dashboard (v3.8)
 
 A global "State of Love" dashboard that tracks marriage, divorce, sexual
 activity, and connection-quality signals as a happiness proxy.
+
+**v3.8 adds (UX):**
+
+- **Streaming analyst notes.** `/api/narrative/<iso>` accepts `?stream=1`
+  (or `Accept: text/event-stream`) and returns Server-Sent Events:
+  `{type:"delta",text:...}` chunks land in the UI as Claude writes them,
+  then a single `{type:"done", text, model, generated_at, usage}` terminates
+  the stream. Cache-aware: a same-day re-open emits the cached text in one
+  delta + done immediately. JSON path unchanged for non-streaming clients.
+- **Weight-impact panel.** When custom weights are active, a panel under
+  the sliders shows how many countries moved ≥ 5 positions vs. the default
+  weighting, and lists the biggest movers (click to drill in). When the
+  rankings are robust to the user's weighting, the panel says so explicitly
+  — methodology transparency in the moment of customization.
 
 **v3.7 adds (data + LLM):**
 

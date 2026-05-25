@@ -22,6 +22,7 @@ v1.1 will add:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -31,7 +32,7 @@ from collections import OrderedDict
 from typing import Any, Callable
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 import insights as insights_module
 import narrative as narrative_module
@@ -1255,10 +1256,46 @@ def history_global():
     })
 
 
+def _narrative_inputs(iso: str, countries: dict) -> tuple[dict, list[dict], list[dict]]:
+    """Build the (country, history, country_insights) triple the narrative
+    module consumes. Same construction for streaming + JSON paths."""
+    country = dict(countries[iso])
+    country["peer_compare"] = _peer_compare(country, list(countries.values()))
+    sens_payload = cached("sensitivity", _sensitivity_payload)
+    sens = (sens_payload.get("countries") or {}).get(iso)
+    if sens:
+        country["sensitivity"] = sens
+    history = snapshots_module.get_country_history(iso, SNAPSHOTS_DB, days=365)
+    layers = cached("subscore_layers", _build_subscore_layers)
+    partnership_uncapped = (layers.get("extras") or {}).get("partnership_uncapped") or {}
+    all_insights = insights_module.generate_insights(
+        list(countries.values()),
+        layers["meta"],
+        partnership_uncapped=partnership_uncapped,
+        history_accessor=lambda iso3: snapshots_module.get_country_history(iso3, SNAPSHOTS_DB),
+        events=insights_module.STARTER_EVENTS,
+    )
+    country_insights = [i for i in all_insights if i.get("iso3") == iso]
+    return country, history, country_insights
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
 @app.get("/api/narrative/<iso>")
 def narrative_route(iso: str):
-    """LLM-generated analyst note for a single country. Cached per (iso, UTC
-    date) — at most one Claude call per country per day."""
+    """LLM-generated analyst note for a single country.
+
+    Two modes on the same URL:
+      - default: JSON, cached per (iso, UTC date). Subsequent same-day calls
+        are instant.
+      - `?stream=1` (or `Accept: text/event-stream`): Server-Sent Events.
+        Emits {"type":"delta","text":...} as Claude streams, ends with one
+        {"type":"done", text, model, generated_at, usage}. On cache hit,
+        emits the cached text in a single delta + done immediately (still
+        SSE — keeps the frontend code path uniform).
+    """
     iso = iso.upper()
     countries = cached("index_map", lambda: compute_subscores())
     if iso not in countries:
@@ -1266,34 +1303,53 @@ def narrative_route(iso: str):
 
     today = snapshots_module.today_utc()
     cache_key = f"narrative:{iso}:{today}"
+    wants_stream = (
+        request.args.get("stream") == "1"
+        or "text/event-stream" in (request.headers.get("Accept") or "")
+    )
 
-    def build():
-        country = dict(countries[iso])
-        # Enrich with peer_compare + sensitivity (same as /api/country/<iso>)
-        country["peer_compare"] = _peer_compare(country, list(countries.values()))
-        sens_payload = cached("sensitivity", _sensitivity_payload)
-        sens = (sens_payload.get("countries") or {}).get(iso)
-        if sens:
-            country["sensitivity"] = sens
-        history = snapshots_module.get_country_history(iso, SNAPSHOTS_DB, days=365)
-        # All insights, filtered to ones about this country.
-        layers = cached("subscore_layers", _build_subscore_layers)
-        partnership_uncapped = (layers.get("extras") or {}).get("partnership_uncapped") or {}
-        all_insights = insights_module.generate_insights(
-            list(countries.values()),
-            layers["meta"],
-            partnership_uncapped=partnership_uncapped,
-            history_accessor=lambda iso3: snapshots_module.get_country_history(iso3, SNAPSHOTS_DB),
-            events=insights_module.STARTER_EVENTS,
-        )
-        country_insights = [i for i in all_insights if i.get("iso3") == iso]
-        return narrative_module.country_narrative(country, history, country_insights)
+    if not wants_stream:
+        def build_json():
+            country, history, country_insights = _narrative_inputs(iso, countries)
+            return narrative_module.country_narrative(country, history, country_insights)
+        try:
+            return jsonify(cached(cache_key, build_json))
+        except narrative_module.NarrativeError as exc:
+            return jsonify({"error": str(exc)}), 503
 
-    try:
-        payload = cached(cache_key, build)
-    except narrative_module.NarrativeError as exc:
-        return jsonify({"error": str(exc)}), 503
-    return jsonify(payload)
+    # SSE path.
+    cached_payload = cache_get(cache_key)
+
+    def gen_from_cache(payload):
+        yield _sse({"type": "delta", "text": payload.get("text", "")})
+        yield _sse({"type": "done", **payload})
+
+    def gen_from_claude():
+        try:
+            country, history, country_insights = _narrative_inputs(iso, countries)
+            final = None
+            for event in narrative_module.country_narrative_stream(country, history, country_insights):
+                if event.get("type") == "done":
+                    final = event
+                yield _sse(event)
+            if final is not None:
+                # Cache the final result so re-opens (same UTC day) skip the
+                # Claude call. Drop the "type" key — JSON consumers don't
+                # need it, and matching the JSON-path payload shape keeps
+                # client code uniform.
+                payload = {k: v for k, v in final.items() if k != "type"}
+                cache_set(cache_key, payload)
+        except narrative_module.NarrativeError as exc:
+            yield _sse({"type": "error", "message": str(exc)})
+
+    headers = {
+        "Content-Type":     "text/event-stream",
+        "Cache-Control":    "no-cache",
+        "X-Accel-Buffering": "no",  # in case there's an Nginx-like proxy
+    }
+    if cached_payload is not None:
+        return Response(gen_from_cache(cached_payload), headers=headers)
+    return Response(gen_from_claude(), headers=headers)
 
 
 @app.get("/api/og/global.svg")

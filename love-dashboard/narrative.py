@@ -288,3 +288,57 @@ def country_narrative(
             "cache_read_input_tokens":     getattr(usage, "cache_read_input_tokens", 0) or 0,
         },
     }
+
+
+def country_narrative_stream(
+    country: dict,
+    history: list[dict],
+    insights: list[dict],
+):
+    """Generator: yields {"type": "delta", "text": <chunk>} as Claude streams,
+    followed by exactly one {"type": "done", text, model, generated_at,
+    usage} at the end.
+
+    Same prompt-caching configuration as `country_narrative`. Raises
+    NarrativeError before the first yield on auth/network failure; if the
+    stream fails *mid-way*, the error is raised by the generator (the SSE
+    route catches and emits an `{"type":"error"}` event).
+    """
+    client = get_client()
+    payload = _build_payload(country, history, insights)
+    try:
+        with client.messages.stream(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=[{
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": payload}],
+        ) as stream:
+            for chunk in stream.text_stream:
+                if chunk:
+                    yield {"type": "delta", "text": chunk}
+            final = stream.get_final_message()
+    except anthropic.RateLimitError as exc:
+        raise NarrativeError("Narrative service rate-limited; try again shortly.") from exc
+    except anthropic.APIStatusError as exc:
+        raise NarrativeError(f"Narrative API error {exc.status_code}: {exc.message}") from exc
+    except anthropic.APIConnectionError as exc:
+        raise NarrativeError(f"Narrative network error: {exc}") from exc
+
+    text = next((b.text for b in final.content if b.type == "text"), "").strip()
+    usage = final.usage
+    yield {
+        "type": "done",
+        "text": text,
+        "model": MODEL,
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "usage": {
+            "input_tokens":               getattr(usage, "input_tokens", 0),
+            "output_tokens":              getattr(usage, "output_tokens", 0),
+            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            "cache_read_input_tokens":     getattr(usage, "cache_read_input_tokens", 0) or 0,
+        },
+    }

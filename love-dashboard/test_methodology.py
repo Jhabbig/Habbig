@@ -754,6 +754,75 @@ def test_narrative_module_uses_haiku_with_prompt_caching():
     ok(f"methodology preamble is {preamble_len} chars (clears Haiku 4.5 4096-token min)")
 
 
+def test_narrative_stream_yields_deltas_then_done():
+    print("test: narrative.country_narrative_stream yields deltas, then exactly one done")
+    import narrative as narrative_module
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    # Fake stream context manager that yields three text chunks then a final
+    # message with usage info — matches the shape of client.messages.stream.
+    class FakeStream:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def text_stream(self):
+            for t in ["Alpha sits at 62.1.", " Connection drives the score.", "\n\nSecond paragraph."]:
+                yield t
+        def get_final_message(self):
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text",
+                                          text="Alpha sits at 62.1. Connection drives the score.\n\nSecond paragraph.")],
+                usage=SimpleNamespace(
+                    input_tokens=120, output_tokens=85,
+                    cache_creation_input_tokens=4800,
+                    cache_read_input_tokens=0,
+                ),
+            )
+
+    fake_client = MagicMock()
+    fake_client.messages.stream.return_value = FakeStream()
+
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    narrative_module._client = None
+    with patch.object(narrative_module, "anthropic", SimpleNamespace(
+        Anthropic=lambda **kw: fake_client,
+        APIError=Exception,
+        APIStatusError=Exception,
+        APIConnectionError=Exception,
+        RateLimitError=Exception,
+    )):
+        narrative_module._client = None
+        events = list(narrative_module.country_narrative_stream(
+            country={"iso3": "AAA", "name": "Alpha"}, history=[], insights=[],
+        ))
+
+    deltas = [e for e in events if e["type"] == "delta"]
+    dones  = [e for e in events if e["type"] == "done"]
+    if len(deltas) != 3:
+        fail(f"expected 3 delta events, got {len(deltas)}: {deltas}")
+    if len(dones) != 1:
+        fail(f"expected exactly 1 done event, got {len(dones)}")
+    ok(f"3 delta chunks streamed, 1 done event terminates the generator")
+
+    final = dones[0]
+    if final["model"] != "claude-haiku-4-5":
+        fail(f"done event missing model: {final}")
+    if "Alpha sits at 62.1" not in final["text"]:
+        fail(f"done event text wrong: {final['text'][:60]}")
+    if final["usage"]["cache_creation_input_tokens"] != 4800:
+        fail(f"done event usage wrong: {final['usage']}")
+    ok("done event carries full text + model + usage (matches JSON-path payload shape)")
+
+    # Verify the streaming call passed cache_control: ephemeral on the system
+    # block — same prompt-caching wiring as the non-streaming path.
+    call_kwargs = fake_client.messages.stream.call_args.kwargs
+    sys_block = call_kwargs["system"][0]
+    if "cache_control" not in sys_block or sys_block["cache_control"].get("type") != "ephemeral":
+        fail(f"streaming call missing cache_control: {sys_block}")
+    ok("streaming path preserves prompt caching on the methodology preamble")
+
+
 def test_narrative_module_handles_missing_api_key():
     print("test: narrative.py raises NarrativeError when ANTHROPIC_API_KEY is unset")
     import narrative as narrative_module
@@ -864,6 +933,7 @@ def main():
     test_rainbow_csv_parser()
     test_context_layer_surfaces_on_country()
     test_narrative_module_uses_haiku_with_prompt_caching()
+    test_narrative_stream_yields_deltas_then_done()
     test_narrative_module_handles_missing_api_key()
     test_event_overlay_rule()
     print("\nall tests passed.")

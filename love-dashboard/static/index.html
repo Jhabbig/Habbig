@@ -199,6 +199,27 @@
   .weight-row input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; }
   .weight-row .val { color: var(--text-1); font-variant-numeric: tabular-nums; text-align: right; font-size: 11px; }
   .weights-card .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .weights-diff {
+    margin-top: 12px; padding: 10px 12px;
+    background: var(--bg-2); border-radius: 8px; font-size: 12px; color: var(--text-2);
+  }
+  .weights-diff .summary {
+    color: var(--text-1); font-weight: 600; margin-bottom: 8px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .weights-diff .summary .up { color: var(--good); }
+  .weights-diff .summary .down { color: var(--accent-2); }
+  .weights-diff .mover {
+    display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center;
+    padding: 4px 0; border-bottom: 1px solid var(--border-soft); cursor: pointer;
+    font-size: 12px; color: var(--text-1);
+  }
+  .weights-diff .mover:last-child { border-bottom: none; }
+  .weights-diff .mover:hover { color: var(--accent); }
+  .weights-diff .mover .delta { font-variant-numeric: tabular-nums; font-size: 11px; }
+  .weights-diff .mover .delta.up { color: var(--good); }
+  .weights-diff .mover .delta.down { color: var(--accent-2); }
+  .weights-diff .empty { color: var(--text-3); padding: 4px 0; }
   .btn {
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -375,6 +396,11 @@
     color: var(--text-1);
   }
   .narrative-card.loading { color: var(--text-3); font-style: italic; }
+  .narrative-card.streaming .stream-buffer { white-space: pre-wrap; margin: 0; color: var(--text-1); }
+  .narrative-card.streaming .stream-buffer::after {
+    content: "▎"; color: var(--accent); animation: narrative-blink 1s steps(1) infinite;
+  }
+  @keyframes narrative-blink { 50% { opacity: 0; } }
   .narrative-card.error { border-left-color: var(--accent-2); color: var(--text-2); }
   .narrative-card .header {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -575,6 +601,7 @@
         <button class="btn primary" id="apply-weights">Apply</button>
         <button class="btn" id="reset-weights">Reset to defaults</button>
       </div>
+      <div id="weights-diff" class="weights-diff" style="display:none"></div>
     </div>
   </div>
 
@@ -897,6 +924,15 @@ async function loadCountries() {
   catch { d = []; }
   state.countries = d;
   state.countriesByISO = Object.fromEntries(d.map(c => [c.iso3, c]));
+  // Snapshot the default-weight rankings the first time we see them — used
+  // by renderWeightsDiff() to show how custom weights moved each country.
+  if (!state.defaultRankByISO && !state.weights) {
+    const rankedDefault = d.filter(c => c.composite != null);
+    rankedDefault.sort((a, b) => b.composite - a.composite);
+    state.defaultRankByISO = {};
+    rankedDefault.forEach((c, i) => { state.defaultRankByISO[c.iso3] = i + 1; });
+  }
+  renderWeightsDiff();
   // Populate the region filter dropdown with whatever appears in the data.
   const sel = document.getElementById("filter-region");
   if (sel && sel.options.length <= 1) {
@@ -1100,6 +1136,68 @@ function renderPresets() {
   }
 }
 
+const MOVER_THRESHOLD = 5;  // |rank shift| >= this to surface as a mover
+
+function renderWeightsDiff() {
+  const panel = document.getElementById("weights-diff");
+  if (!panel) return;
+  if (!state.weights || !state.defaultRankByISO) {
+    panel.style.display = "none";
+    return;
+  }
+  // Current ranked order under the custom weights.
+  const rankedNow = state.countries.filter(c => c.composite != null);
+  rankedNow.sort((a, b) => b.composite - a.composite);
+  const currentRankByISO = {};
+  rankedNow.forEach((c, i) => { currentRankByISO[c.iso3] = i + 1; });
+
+  // Compute deltas. Default rank − new rank. Positive = moved up under custom.
+  const movers = [];
+  for (const c of rankedNow) {
+    const defaultRank = state.defaultRankByISO[c.iso3];
+    const currentRank = currentRankByISO[c.iso3];
+    if (defaultRank == null) continue;
+    const delta = defaultRank - currentRank;
+    if (Math.abs(delta) >= MOVER_THRESHOLD) {
+      movers.push({ ...c, defaultRank, currentRank, delta });
+    }
+  }
+  movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  const up = movers.filter(m => m.delta > 0).length;
+  const down = movers.filter(m => m.delta < 0).length;
+
+  if (movers.length === 0) {
+    panel.style.display = "";
+    panel.innerHTML = `
+      <div class="summary"><span>Weight impact</span></div>
+      <div class="empty">Your custom weights don't shift any country by ≥${MOVER_THRESHOLD} positions vs. defaults — the ranking is robust here.</div>`;
+    return;
+  }
+
+  const topShown = movers.slice(0, 6);
+  panel.style.display = "";
+  panel.innerHTML = `
+    <div class="summary">
+      <span>Weight impact</span>
+      <span class="up">${up}↑ moved up ≥${MOVER_THRESHOLD}</span>
+      <span class="down">${down}↓ moved down ≥${MOVER_THRESHOLD}</span>
+    </div>
+    ${topShown.map(m => {
+      const sign = m.delta > 0 ? "+" : "";
+      const cls = m.delta > 0 ? "up" : "down";
+      return `
+        <div class="mover" data-iso="${esc(m.iso3)}">
+          <span>${ISO2_FLAG(m.iso2)}</span>
+          <span>${esc(m.name)} <span style="color:var(--text-3);font-size:11px">#${m.currentRank} (was #${m.defaultRank})</span></span>
+          <span class="delta ${cls}">${sign}${m.delta}</span>
+        </div>`;
+    }).join("")}`;
+  panel.querySelectorAll(".mover").forEach(row => {
+    row.onclick = () => openCountry(row.dataset.iso);
+  });
+}
+
 function applyPreset(preset) {
   // Balanced is the default: clear state.weights so subsequent calls hit
   // the no-args cache. Any other preset sets explicit weights.
@@ -1276,42 +1374,91 @@ async function loadSources() {
 }
 
 // ---- country drill-down modal ----
-async function loadNarrative(iso3) {
-  const mount = document.getElementById("narrative-mount");
-  if (!mount) return;
-  mount.innerHTML = `
-    <div class="narrative-card loading">
-      <div class="header"><span>Analyst note</span></div>
-      Generating narrative…
-    </div>`;
-  let d;
-  try { d = await fetchJSON(`/api/narrative/${encodeURIComponent(iso3)}`); }
-  catch (err) {
-    mount.innerHTML = `
-      <div class="narrative-card error">
-        <div class="header"><span>Analyst note</span></div>
-        ${esc(err.message)}
-      </div>`;
-    return;
-  }
-  if (d.error) {
-    mount.innerHTML = `
-      <div class="narrative-card error">
-        <div class="header"><span>Analyst note</span></div>
-        ${esc(d.error)}
-      </div>`;
-    return;
-  }
-  const paragraphs = String(d.text || "").split(/\n\s*\n/).filter(Boolean);
-  const stamp = (d.generated_at || "").split("T")[0];
+function renderNarrativeFinal(mount, payload) {
+  const paragraphs = String(payload.text || "").split(/\n\s*\n/).filter(Boolean);
+  const stamp = (payload.generated_at || "").split("T")[0];
   mount.innerHTML = `
     <div class="narrative-card">
       <div class="header">
         <span>Analyst note</span>
-        <span class="meta">${esc(d.model || "")}${stamp ? " · " + esc(stamp) : ""}</span>
+        <span class="meta">${esc(payload.model || "")}${stamp ? " · " + esc(stamp) : ""}</span>
       </div>
       ${paragraphs.map(p => `<p>${esc(p)}</p>`).join("")}
     </div>`;
+}
+
+function renderNarrativeError(mount, message) {
+  mount.innerHTML = `
+    <div class="narrative-card error">
+      <div class="header"><span>Analyst note</span></div>
+      ${esc(message)}
+    </div>`;
+}
+
+// Stream the narrative as Server-Sent Events so the user sees tokens land
+// live instead of staring at a 3-5s placeholder. We avoid EventSource (no
+// way to send headers / cancel cleanly) and read the body directly.
+async function loadNarrative(iso3) {
+  const mount = document.getElementById("narrative-mount");
+  if (!mount) return;
+  state.openCountry = iso3;  // so a mid-stream modal close can short-circuit below
+  mount.innerHTML = `
+    <div class="narrative-card streaming">
+      <div class="header"><span>Analyst note</span><span class="meta">streaming…</span></div>
+      <p class="stream-buffer"></p>
+    </div>`;
+  const buf = mount.querySelector(".stream-buffer");
+  const accumulated = [];
+
+  let response;
+  try {
+    response = await fetch(`/api/narrative/${encodeURIComponent(iso3)}?stream=1`, {
+      headers: { "Accept": "text/event-stream" },
+    });
+  } catch (err) {
+    renderNarrativeError(mount, err.message); return;
+  }
+  if (!response.ok) {
+    let msg = `HTTP ${response.status}`;
+    try {
+      const j = await response.json();
+      if (j && j.error) msg = j.error;
+    } catch { /* swallow — not JSON */ }
+    renderNarrativeError(mount, msg); return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let leftover = "";
+  while (true) {
+    if (state.openCountry !== iso3) {
+      // User switched modals or closed — abandon this stream.
+      try { reader.cancel(); } catch {}
+      return;
+    }
+    let chunk;
+    try { chunk = await reader.read(); }
+    catch (err) { renderNarrativeError(mount, "stream interrupted"); return; }
+    if (chunk.done) break;
+    leftover += decoder.decode(chunk.value, { stream: true });
+    const events = leftover.split("\n\n");
+    leftover = events.pop();  // last fragment may be incomplete
+    for (const blob of events) {
+      const line = blob.split("\n").find(l => l.startsWith("data: "));
+      if (!line) continue;
+      let event;
+      try { event = JSON.parse(line.slice(6)); }
+      catch { continue; }
+      if (event.type === "delta") {
+        accumulated.push(event.text || "");
+        buf.textContent = accumulated.join("");
+      } else if (event.type === "done") {
+        renderNarrativeFinal(mount, event);
+      } else if (event.type === "error") {
+        renderNarrativeError(mount, event.message || "narrative error");
+      }
+    }
+  }
 }
 
 async function openCountry(iso3) {
