@@ -249,6 +249,40 @@ day the row holds the final state; reads expose the last 30 days
 newest-first. UI: a scrollable timeline panel above the topics grid
 that links each topic label to its `/topic/{label}` permalink.
 
+### Source-quality reweighting of the composite
+
+`index_calc.effective_calibration()` blends the hand-tuned section weights
+with per-section quality multipliers derived from `source_quality.compute()`.
+Each section's multiplier is `1 + alpha × (mean_hit_rate − 0.5)` for the
+sources feeding it, capped at 0.5x-1.5x. `CULTURE_QUALITY_WEIGHT_ALPHA`
+(default 0.5) tunes how aggressive the blending is; 0 disables it.
+
+Cached in-process for 5 minutes so `/api/index` doesn't re-walk snapshot
+history on every page load. Returned under `calibration` in `/api/index`.
+
+### Source permalinks (`/source/{name}`)
+
+Click any source name in the source-quality leaderboard. Page shows the
+30-day hit/n + hit rate badge, every topic cluster the source contributed
+to (linked to each topic permalink), and the source's currently-cached
+items.
+
+### Watch rules / predicates (`/api/predicates`)
+
+`predicates.json` (next to the dashboard) holds a list of `{name, type,
+conditions, cooldown_hours}` rules. The predicate worker (inside the
+surge cycle) walks every current topic cluster against the rule set; matches
+that haven't fired within the rule's cooldown get recorded into
+`predicate_matches` and (if `WATCH_WEBHOOK_URL` is set) POSTed downstream.
+
+Supported field set for `type: "topic"` rules is enumerated at the top of
+`predicates.py`. Supported ops: `==`, `!=`, `<`, `<=`, `>`, `>=`,
+`in`, `not_in`, `contains`, `contains_all`, `contains_any`.
+
+UI: a "Watch rules" panel on the main dashboard shows the loaded rules
+side-by-side with the last 7 days of matches (linking each match to its
+topic permalink).
+
 ### Source-quality leaderboard (`/api/source_quality`)
 
 For every cross-source topic snapshot with `surge_signal ≥ 1.5`, the
@@ -340,6 +374,10 @@ the dashboard is already surfacing.
 | `GET /api/backtest?days=30&threshold_pct=0.05&window_hours=24` | Hit/weak/miss rates. All three parameters are tunable from the dashboard's backtest controls. |
 | `GET /api/headlines?days=30` | One row per UTC day: overall index, per-section scores, top 3 surges/topics/news. |
 | `GET /api/source_quality?days=30` | Per-source hit rate from topic snapshots × matched-market velocity. |
+| `GET /api/source/{name}?days=30` | Source detail: quality stats, topic contributions, recent items. |
+| `GET /source/{name}` | HTML source-detail page. |
+| `GET /api/predicates` | Loaded watch rules (from predicates.json). |
+| `GET /api/predicates/matches?days=7` | Recent predicate matches with payloads. |
 | `GET /api/export` | List exportable data types. |
 | `GET /api/export?type=X&days=30&format=csv` | Streaming CSV of one table (or `format=json` for the full result set). |
 | `GET /export` | HTML page with download links for every export type, with a window selector. |

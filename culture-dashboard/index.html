@@ -430,6 +430,56 @@
   .sq-row .bar-fill { height: 100%; background: var(--good); }
   .sq-row .n { text-align: right; color: var(--muted);
                 font-variant-numeric: tabular-nums; font-size: 11px; }
+  .sq-row .src a { color: inherit; text-decoration: none;
+                    border-bottom: 1px dotted var(--muted); }
+  .sq-row .src a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Predicates / watch-rules panel */
+  .predicates { background: var(--panel); border: 1px solid var(--border);
+                 border-radius: 10px; padding: 16px 18px; margin-bottom: 22px; }
+  .predicates h2 { margin: 0 0 4px; font-size: 14px; }
+  .predicates .sub { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .predicates-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 800px) { .predicates-grid { grid-template-columns: 1fr; } }
+  .predicates-rules { display: grid; gap: 6px; font-size: 12px; }
+  .predicate-rule { background: var(--panel-2); border-radius: 6px;
+                     padding: 8px 10px; }
+  .predicate-rule .name { font-weight: 600; font-size: 13px; }
+  .predicate-rule .conds { color: var(--muted); font-family: monospace;
+                            font-size: 11px; margin-top: 4px;
+                            line-height: 1.4; }
+  .predicate-rule .cooldown { color: var(--muted); font-size: 10px;
+                               text-transform: uppercase; letter-spacing: 0.05em;
+                               margin-top: 2px; }
+  .predicates-matches { display: grid; gap: 4px; font-size: 12px;
+                         max-height: 320px; overflow-y: auto; }
+  .predicate-match { display: grid;
+                      grid-template-columns: 80px 1fr 90px;
+                      gap: 8px; padding: 6px 0;
+                      border-bottom: 1px solid var(--border);
+                      align-items: center; }
+  .predicate-match .when { color: var(--muted); font-size: 11px; }
+  .predicate-match .rule { font-weight: 600; }
+  .predicate-match .label { font-family: monospace; font-size: 11px;
+                             text-align: right; color: var(--accent); }
+  .predicate-match .label a { color: inherit; text-decoration: none;
+                                border-bottom: 1px dotted var(--accent); }
+
+  /* Source detail page */
+  .source-page { max-width: 900px; margin: 0 auto; }
+  .source-page-head { display: flex; align-items: baseline; gap: 16px;
+                       margin-bottom: 22px; flex-wrap: wrap; }
+  .source-page-head h1 { margin: 0; font-size: 28px; font-weight: 700;
+                          font-family: monospace; }
+  .source-page-head .back { color: var(--muted); text-decoration: none;
+                             font-size: 13px; }
+  .source-page-head .back:hover { color: var(--accent); }
+  .source-page-head .section-pill { background: var(--panel-2);
+                                      border: 1px solid var(--border);
+                                      border-radius: 999px; padding: 2px 10px;
+                                      font-size: 11px; color: var(--muted);
+                                      text-transform: uppercase;
+                                      letter-spacing: 0.06em; }
   .bars { display: grid; gap: 8px; }
   .bar-row { display: grid; grid-template-columns: 130px 1fr 60px;
              gap: 10px; align-items: center; font-size: 13px; }
@@ -583,6 +633,21 @@
     <div class="sq-table" id="sq-table"></div>
   </section>
 
+  <section class="predicates" id="predicates" aria-labelledby="predicates-title">
+    <h2 id="predicates-title">Watch rules</h2>
+    <div class="sub">Custom alert conditions from predicates.json. Matches are de-duped per (rule, topic) within each rule's cooldown.</div>
+    <div class="predicates-grid">
+      <div>
+        <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px">Configured rules</h3>
+        <div class="predicates-rules" id="predicates-rules"></div>
+      </div>
+      <div>
+        <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 8px">Recent matches (7d)</h3>
+        <div class="predicates-matches" id="predicates-matches"></div>
+      </div>
+    </div>
+  </section>
+
   <section class="topics" id="topics">
     <h2>Cross-platform topics</h2>
     <div class="sub">Same topic surfacing across multiple sources — the stronger the spread, the deeper the cultural moment</div>
@@ -595,6 +660,7 @@
   </div>
 
   <div id="topic-view" class="topic-page" hidden></div>
+  <div id="source-view" class="source-page" hidden></div>
   <div id="compare-view" class="compare-page" hidden></div>
   <div id="export-view" class="export-page" hidden></div>
 </main>
@@ -1048,7 +1114,7 @@ async function loadSourceQuality() {
     }
     const barWidth = s.hit_rate != null ? (s.hit_rate / maxRate) * 100 : 0;
     return `<div class="sq-row">
-      <span class="src">${s.source}</span>
+      <span class="src"><a href="/source/${encodeURIComponent(s.source)}">${s.source}</a></span>
       ${rateHtml}
       <div class="bar"><div class="bar-fill" style="width:${barWidth}%"></div></div>
       <span class="n">${s.hit}/${s.validatable}</span>
@@ -1062,6 +1128,45 @@ async function loadSourceQuality() {
       <span style="text-align:right">Hits/n</span>
     </div>
     ${rows}`;
+}
+
+async function loadPredicates() {
+  const [rRules, rMatches] = await Promise.all([
+    fetch("/api/predicates"),
+    fetch("/api/predicates/matches?days=7&limit=50"),
+  ]);
+  const rulesData = await rRules.json();
+  const matchesData = await rMatches.json();
+  const rulesRoot = document.getElementById("predicates-rules");
+  const matchesRoot = document.getElementById("predicates-matches");
+
+  if (!rulesData.rules || !rulesData.rules.length) {
+    rulesRoot.innerHTML = `<div class="empty-state">No rules in <code>predicates.json</code>. Edit the file to add some.</div>`;
+  } else {
+    rulesRoot.innerHTML = rulesData.rules.map(r => {
+      const conds = (r.conditions || []).map(c =>
+        `<div>${c.field} ${c.op} ${JSON.stringify(c.value)}</div>`).join("");
+      return `<div class="predicate-rule">
+        <div class="name">${escapeHtml(r.name)}</div>
+        <div class="conds">${conds}</div>
+        <div class="cooldown">type: ${r.type} · cooldown ${r.cooldown_hours}h</div>
+      </div>`;
+    }).join("");
+  }
+
+  if (!matchesData.matches || !matchesData.matches.length) {
+    matchesRoot.innerHTML = `<div class="empty-state">No matches in the last 7 days.</div>`;
+  } else {
+    matchesRoot.innerHTML = matchesData.matches.map(m => {
+      const when = new Date(m.matched_at * 1000).toLocaleString().split(",")[0];
+      const label = m.object_key || m.payload?.label || "?";
+      return `<div class="predicate-match">
+        <span class="when">${when}</span>
+        <span class="rule">${escapeHtml(m.rule_name)}</span>
+        <span class="label"><a href="/topic/${encodeURIComponent(label)}">${escapeHtml(label)}</a></span>
+      </div>`;
+    }).join("");
+  }
 }
 
 async function loadSurges() {
@@ -1206,7 +1311,7 @@ async function refreshAll() {
   document.getElementById("updated").textContent = "refreshing…";
   await Promise.all([
     loadDigest(), loadIndex(), loadSurges(), loadEdges(), loadBacktest(),
-    loadHeadlines(), loadSourceQuality(),
+    loadHeadlines(), loadSourceQuality(), loadPredicates(),
     loadTopics(), loadSections(), loadHealth(),
   ]);
   document.getElementById("updated").textContent = new Date().toLocaleTimeString();
@@ -1220,8 +1325,10 @@ document.getElementById("refresh").addEventListener("click", async () => {
 // ── Router ──────────────────────────────────────────────────────────────
 function routeFromPath() {
   const path = window.location.pathname;
-  const m = path.match(/^\/topic\/([^/]+)/);
+  let m = path.match(/^\/topic\/([^/]+)/);
   if (m) return { kind: "topic", slug: decodeURIComponent(m[1]) };
+  m = path.match(/^\/source\/([^/]+)/);
+  if (m) return { kind: "source", name: decodeURIComponent(m[1]) };
   if (path === "/compare") {
     const params = new URLSearchParams(window.location.search);
     const slugs = ["a", "b", "c", "d"]
@@ -1237,8 +1344,62 @@ function routeFromPath() {
 function hideAllViews() {
   document.getElementById("main-view").hidden = true;
   document.getElementById("topic-view").hidden = true;
+  document.getElementById("source-view").hidden = true;
   document.getElementById("compare-view").hidden = true;
   document.getElementById("export-view").hidden = true;
+}
+
+function showSourceView(name) {
+  hideAllViews();
+  const root = document.getElementById("source-view");
+  root.hidden = false;
+  root.innerHTML = '<div class="empty-state">Loading source…</div>';
+  loadSourcePage(name);
+}
+
+async function loadSourcePage(name) {
+  const root = document.getElementById("source-view");
+  let data;
+  try {
+    const r = await fetch(`/api/source/${encodeURIComponent(name)}?days=30`);
+    data = await r.json();
+  } catch (e) {
+    root.innerHTML = '<div class="empty-state">Failed to load source.</div>';
+    return;
+  }
+  const q = data.quality;
+  let rateBadge = `<span style="color:var(--muted)">no hit-rate data yet</span>`;
+  if (q && q.hit_rate != null) {
+    const cls = q.hit_rate >= 0.4 ? "good" : q.hit_rate >= 0.2 ? "warn" : "bad";
+    rateBadge = `<span class="rate ${cls}" style="font-weight:700;font-size:20px;color:var(--${cls === 'good' ? 'good' : cls === 'warn' ? 'warn' : 'bad'})">${(q.hit_rate * 100).toFixed(0)}%</span>
+      <span style="color:var(--muted);font-size:11px"> hit rate · ${q.hit}/${q.validatable}</span>`;
+  }
+  const contribs = (data.contributions || []).slice(0, 25).map(c => {
+    const when = new Date(c.ts * 1000).toLocaleString().split(",")[0];
+    return `<div class="row">
+      ${when} · <a href="/topic/${encodeURIComponent(c.label)}">${c.label}</a>
+      <span style="color:var(--muted);font-size:11px"> · spread ${c.spread} · z ${c.surge_signal != null ? c.surge_signal.toFixed(1) : '—'} · ${(c.market_slugs || []).length} markets</span>
+    </div>`;
+  }).join("");
+  const recent = (data.recent_items || []).slice(0, 10).map(it =>
+    `<div class="row">${it.url
+      ? `<a href="${it.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title)}</a>`
+      : escapeHtml(it.title)}</div>`).join("");
+  root.innerHTML = `
+    <div class="source-page-head">
+      <a class="back" href="/">← Back to dashboard</a>
+      <h1>${escapeHtml(name)}</h1>
+      ${data.section ? `<span class="section-pill">${data.section}</span>` : ""}
+    </div>
+    <section class="topic-current">
+      <h2>Predictive quality (30d)</h2>
+      <div style="font-size:24px;margin:6px 0 14px">${rateBadge}</div>
+      ${contribs ? `<h3 style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 6px">Topic contributions</h3>${contribs}` : "<div style='color:var(--muted);font-size:13px'>No topic contributions yet.</div>"}
+    </section>
+    <section class="topic-current">
+      <h2>Recent items</h2>
+      ${recent || "<div style='color:var(--muted);font-size:13px'>No items currently in the cache for this source.</div>"}
+    </section>`;
 }
 
 function showExportView() {
@@ -1528,6 +1689,8 @@ function renderTopicCurrent(c) {
 const initial = routeFromPath();
 if (initial.kind === "topic") {
   showTopicView(initial.slug);
+} else if (initial.kind === "source") {
+  showSourceView(initial.name);
 } else if (initial.kind === "compare") {
   showCompareView(initial.slugs);
 } else if (initial.kind === "export") {
@@ -1541,6 +1704,7 @@ if (initial.kind === "topic") {
 window.addEventListener("popstate", () => {
   const r = routeFromPath();
   if (r.kind === "topic") showTopicView(r.slug);
+  else if (r.kind === "source") showSourceView(r.name);
   else if (r.kind === "compare") showCompareView(r.slugs);
   else if (r.kind === "export") showExportView();
   else showMainView();

@@ -37,6 +37,7 @@ import digest as digest_mod                                    # noqa: E402
 import edge                                                    # noqa: E402
 import export as export_mod                                    # noqa: E402
 import index_calc                                              # noqa: E402
+import predicates                                              # noqa: E402
 import source_quality                                          # noqa: E402
 import surge_calc                                              # noqa: E402
 from models import SECTIONS                                    # noqa: E402
@@ -255,6 +256,70 @@ async def api_headlines(days: int = 30) -> JSONResponse:
 async def api_source_quality(days: int = 30) -> JSONResponse:
     days = max(1, min(days, 365))
     return JSONResponse(source_quality.compute(days=days))
+
+
+@app.get("/api/predicates")
+async def api_predicates() -> JSONResponse:
+    return JSONResponse({"rules": predicates.load_rules(),
+                         "path": str(predicates._config_path())})
+
+
+@app.get("/api/predicates/matches")
+async def api_predicate_matches(days: int = 7, limit: int = 100) -> JSONResponse:
+    days = max(1, min(days, 365))
+    limit = max(1, min(limit, 500))
+    return JSONResponse({"matches": cache.predicate_matches(days=days, limit=limit)})
+
+
+@app.get("/source/{name}", response_class=HTMLResponse)
+async def source_page(name: str) -> HTMLResponse:
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/source/{name}")
+async def api_source(name: str, days: int = 30) -> JSONResponse:
+    days = max(1, min(days, 365))
+    # Discover the source's section from the scraper registry.
+    section = None
+    try:
+        import scrapers as _scrapers_pkg
+        for attr in dir(_scrapers_pkg):
+            mod = getattr(_scrapers_pkg, attr, None)
+            if mod is not None and getattr(mod, "NAME", None) == name:
+                section = getattr(mod, "SECTION", None)
+                break
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Aggregate hit rate for this source from source_quality.compute().
+    sq = source_quality.compute(days=days)
+    quality = next((s for s in sq["sources"] if s["source"] == name), None)
+
+    # Topic-snapshot contributions: every cluster this source has appeared in.
+    contributions = []
+    import time as _time
+    since = _time.time() - days * 86400
+    for snap in cache.topic_snapshots_since(since_ts=since, min_signal=1.0):
+        if name in snap.get("sources", []):
+            contributions.append({
+                "ts": snap["ts"],
+                "label": snap["label"],
+                "spread": snap["spread"],
+                "surge_signal": snap["surge_signal"],
+                "market_slugs": snap.get("market_slugs", []),
+            })
+
+    # Recent items from this source's section feed (top current rows).
+    recent_items = cache.get_source(name, limit=15)
+
+    return JSONResponse({
+        "name": name,
+        "section": section,
+        "quality": quality,
+        "contributions": sorted(contributions, key=lambda c: c["ts"], reverse=True)[:50],
+        "recent_items": recent_items,
+        "window_days": days,
+    })
 
 
 @app.get("/api/export")

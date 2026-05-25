@@ -1,0 +1,34 @@
+{
+  "_comment": "Predicate rules — drop new entries here and they take effect on the next surge-worker cycle. See predicates.py for field reference + supported operators.",
+  "rules": [
+    {
+      "name": "Cross-platform surge with matched market",
+      "type": "topic",
+      "conditions": [
+        {"field": "spread", "op": ">=", "value": 3},
+        {"field": "surge_signal", "op": ">=", "value": 2.0},
+        {"field": "has_market", "op": "==", "value": true}
+      ],
+      "cooldown_hours": 6
+    },
+    {
+      "name": "Meme/social trio (Reddit + TikTok + Wikipedia)",
+      "type": "topic",
+      "conditions": [
+        {"field": "sources", "op": "contains_all",
+         "value": ["reddit_memes", "tiktok_trending", "wikipedia_top"]},
+        {"field": "spread", "op": ">=", "value": 3}
+      ],
+      "cooldown_hours": 12
+    },
+    {
+      "name": "High-conviction mispricing",
+      "type": "topic",
+      "conditions": [
+        {"field": "mispricing_score", "op": ">=", "value": 2.0},
+        {"field": "has_market", "op": "==", "value": true}
+      ],
+      "cooldown_hours": 6
+    }
+  ]
+}

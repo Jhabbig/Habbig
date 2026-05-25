@@ -21,6 +21,7 @@ import digest
 import edge as edge_mod
 import headlines
 import index_calc
+import predicates
 import surge_calc
 import time as _time
 from models import Item
@@ -166,6 +167,12 @@ async def surge_worker(stop: asyncio.Event, period: int = 300) -> None:
                 headlines.write_today()
             except Exception as e:  # noqa: BLE001
                 log.warning("daily headline write failed: %s", e)
+            try:
+                matches = await predicates.run_once()
+                if matches:
+                    log.info("predicate worker fired %d fresh matches", len(matches))
+            except Exception as e:  # noqa: BLE001
+                log.warning("predicate worker hiccup: %s", e)
         except Exception as e:  # noqa: BLE001
             log.warning("surge worker hiccup: %s", e)
         try:

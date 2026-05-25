@@ -138,6 +138,18 @@ def init_db() -> None:
                 created_at   REAL NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS predicate_matches (
+                rule_name     TEXT NOT NULL,
+                object_key    TEXT NOT NULL,
+                matched_at    REAL NOT NULL,
+                payload_json  TEXT,
+                PRIMARY KEY (rule_name, object_key, matched_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_predicate_matches_recent
+                ON predicate_matches(rule_name, object_key, matched_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_predicate_matches_when
+                ON predicate_matches(matched_at DESC);
+
             CREATE TABLE IF NOT EXISTS topic_snapshots (
                 snapshot_id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts                 REAL NOT NULL,
@@ -546,6 +558,45 @@ def daily_headlines(days: int = 30) -> list[dict]:
             d = dict(r)
             try:
                 d["payload"] = json.loads(d.pop("payload_json"))
+            except json.JSONDecodeError:
+                d["payload"] = {}
+            out.append(d)
+        return out
+
+
+def record_predicate_match(rule_name: str, object_key: str, payload: dict) -> None:
+    with _txn() as c:
+        c.execute(
+            "INSERT INTO predicate_matches (rule_name, object_key, matched_at, payload_json) "
+            "VALUES (?, ?, ?, ?)",
+            (rule_name, object_key, time.time(), json.dumps(payload)),
+        )
+
+
+def recent_predicate_match(rule_name: str, object_key: str, within_s: float) -> bool:
+    cutoff = time.time() - within_s
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT 1 FROM predicate_matches WHERE rule_name = ? AND object_key = ? "
+            "AND matched_at >= ? LIMIT 1",
+            (rule_name, object_key, cutoff),
+        )
+        return cur.fetchone() is not None
+
+
+def predicate_matches(days: int = 7, limit: int = 200) -> list[dict]:
+    cutoff = time.time() - days * 86400
+    with _connect() as c:
+        cur = c.execute(
+            "SELECT rule_name, object_key, matched_at, payload_json FROM predicate_matches "
+            "WHERE matched_at >= ? ORDER BY matched_at DESC LIMIT ?",
+            (cutoff, limit),
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d.pop("payload_json") or "{}")
             except json.JSONDecodeError:
                 d["payload"] = {}
             out.append(d)
