@@ -1,0 +1,38 @@
+name: regulators-dashboard tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'regulators-dashboard/**'
+      - '.github/workflows/regulators-dashboard-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'regulators-dashboard/**'
+      - '.github/workflows/regulators-dashboard-tests.yml'
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: regulators-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime dependencies
+        # Fixture suites use defusedxml; FastAPI / uvicorn aren't needed to
+        # run them but they're cheap to install and let the import-check
+        # below verify server.py loads cleanly too.
+        run: pip install -r requirements.txt
+      - name: Import-check server module
+        # Catches accidental syntax / import errors that the fixture suite
+        # would otherwise miss (server.py has no self-test).
+        run: python3 -c "import sys; sys.path.insert(0,'.'); import server"
+        env:
+          DEV_MODE: "1"
+      - name: Run fixture suite
+        run: bash run_tests.sh

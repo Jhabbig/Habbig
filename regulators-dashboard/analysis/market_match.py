@@ -79,6 +79,10 @@ ANCHOR_TOKENS: set[str] = {
     "bailey",
     # New v2.1 personnel anchors
     "knot", "kamlana", "barr", "marx",
+    # v2.4 personnel anchors
+    "jefferson", "bowman", "waller", "cook", "kugler",
+    "mersinger", "johnson", "gould", "hill", "gacki",
+    "carstens", "servais", "madrazo", "guindos", "lane",
 }
 
 STOPWORDS: set[str] = {

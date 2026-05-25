@@ -192,6 +192,44 @@ _FIXTURES = [
      "A principles-based, proportionate, risk-based approach respects national discretion and "
      "subsidiarity. Outcomes-based supervision tailored to national contexts works best.",
      "PRINCIPLES_BASED"),
+    # ── v2.4 new axes ──────────────────────────────────────────────────────
+    ("BoE",
+     "Financial stability is paramount. Our macroprudential tools and the countercyclical capital "
+     "buffer guard against systemic risk. The stress test confirmed firms have robust resilience.",
+     "PRO_STABILITY"),
+    ("BoE",
+     "The secondary objective on growth and competitiveness is reshaping our approach. We must "
+     "remove barriers, support innovation, and improve international competitiveness.",
+     "PRO_GROWTH"),
+    ("CFTC",
+     "We brought a vigorous enforcement action against spoofing and market manipulation, obtaining "
+     "judgment with significant civil penalties and disgorgement.",
+     "PRO_ENFORCEMENT"),
+    ("CFTC",
+     "Regulatory clarity is essential. Our pilot program and regulatory sandbox provide an "
+     "innovation-friendly, principles-based framework with no-action letters.",
+     "LIGHT_TOUCH"),
+    ("Fed",
+     "Inflationary pressures remain elevated. The Committee judges that further tightening is "
+     "appropriate and policy must be sufficiently restrictive to bring inflation to target. "
+     "The labor market is tight and the Committee will remain vigilant.",
+     "HAWKISH"),
+    ("Fed",
+     "Disinflation is broadening. The Committee judges accommodative policy may be appropriate "
+     "to support growth as softening data point to easing. Rate cuts are on the table.",
+     "DOVISH"),
+    ("ECB",
+     "Policy must remain sufficiently restrictive. Underlying inflation is elevated and the "
+     "transmission of monetary policy is ongoing. We remain vigilant on second-round effects.",
+     "HAWKISH"),
+    ("MAS",
+     "We are advancing CBDC and tokenisation pilots. The regulatory sandbox and digital banking "
+     "framework support fintech experimentation in Singapore as a global financial centre.",
+     "PRO_INNOVATION"),
+    ("MAS",
+     "Financial stability and resilience are foundational. We remain vigilant against AML threats, "
+     "scams, and vulnerable-consumer harm; prudential supervision is robust.",
+     "PRO_STABILITY"),
 ]
 
 
