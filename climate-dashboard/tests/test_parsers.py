@@ -26,6 +26,7 @@ from app.fetchers import sf6 as sf6_src
 from app.fetchers import snow_cover as snow_cover_src
 from app import snapshot
 from app.models import calibration as calibration_model
+from app.models import carbon_budget as carbon_budget_model
 from app.models import co2 as co2_model
 from app.models import emissions as emissions_model
 from app.models import forcing as forcing_model
@@ -707,6 +708,67 @@ def test_kalshi_to_probability_rejects_out_of_range():
     assert kalshi_src._to_probability(None) is None
     assert kalshi_src._to_probability("abc") is None
     assert kalshi_src._to_probability(50) == 0.50
+
+
+def test_carbon_budget_subtracts_emissions_since_anchor():
+    """Synthetic OWID-shaped data: 40 Gt/yr × 4 years (2020-2023) → 160 Gt
+    cumulative. Each anchor budget should drop by that much, and years_at_
+    current_rate at the latest year should match remaining/latest_annual.
+    """
+    parsed = {
+        "world_key": "__nocode_World",
+        "countries": {
+            "__nocode_World": {
+                "name": "World",
+                "iso": "",
+                "data": {
+                    2019: {"co2_mt": 38000.0},
+                    2020: {"co2_mt": 35000.0},
+                    2021: {"co2_mt": 37000.0},
+                    2022: {"co2_mt": 38000.0},
+                    2023: {"co2_mt": 39000.0},
+                },
+            },
+        },
+    }
+    payload = carbon_budget_model.compute(parsed)
+    assert payload is not None
+    # 35+37+38+39 = 149 Gt since 2020
+    assert payload["cumulative_since_anchor_gt"] == 149.0
+    assert payload["latest_annual_gt"] == 39.0
+    # 1.5°C 50% chance: 500 - 149 = 351 GtCO2 remaining
+    b1 = next(b for b in payload["budgets"] if b["target_c"] == 1.5 and b["probability"] == 0.50)
+    assert b1["remaining_gt"] == 351
+    # At 39 Gt/yr → 9.0 years
+    assert b1["years_at_current_rate"] == 9.0
+    assert b1["exhausted"] is False
+    # 2°C 67% chance has the most headroom
+    b3 = next(b for b in payload["budgets"] if b["target_c"] == 2.0)
+    assert b3["remaining_gt"] > b1["remaining_gt"]
+
+
+def test_carbon_budget_handles_exhausted_target():
+    # Synthetic: 200 Gt/yr × 5 years = 1000 Gt — exceeds the 1.5°C 50% budget (500)
+    parsed = {
+        "world_key": "__nocode_World",
+        "countries": {
+            "__nocode_World": {
+                "name": "World", "iso": "",
+                "data": {y: {"co2_mt": 200000.0} for y in range(2020, 2026)},
+            },
+        },
+    }
+    payload = carbon_budget_model.compute(parsed)
+    b = next(b for b in payload["budgets"] if b["target_c"] == 1.5 and b["probability"] == 0.50)
+    assert b["exhausted"] is True
+    assert b["remaining_gt"] <= 0
+    # When exhausted, years_at_current_rate is None (don't show "-5 years")
+    assert b["years_at_current_rate"] is None
+
+
+def test_carbon_budget_returns_none_without_world_data():
+    assert carbon_budget_model.compute(None) is None
+    assert carbon_budget_model.compute({"countries": {}}) is None
 
 
 def test_opportunities_rss_filters_and_sorts():

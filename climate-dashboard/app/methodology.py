@@ -115,6 +115,21 @@ MODELS = [
         "code": "app/models/scenarios.py",
     },
     {
+        "id": "carbon_budget",
+        "name": "Remaining carbon budget for 1.5°C / 2°C",
+        "summary": "IPCC AR6 WG1 Table 5.8 anchor budgets (start of 2020): 500 / 400 / 1150 GtCO₂ for 1.5°C-50% / 1.5°C-67% / 2°C-67%. Subtract cumulative world CO₂ emissions from OWID since 2020 to get the remaining budget today. Years-at-current-rate divides by the latest annual emission. Pure derivative — no new URLs.",
+        "inputs": [
+            "IPCC AR6 anchor budgets (hard-coded)",
+            "OWID owid-co2-data.csv World row for cumulative + latest annual emissions",
+        ],
+        "outputs": {
+            "budgets": "Per-target {remaining_gt, years_at_current_rate, exhausted}",
+            "cumulative_since_anchor_gt": "Total world CO₂ emitted since 2020",
+            "latest_annual_gt": "Most recent year's global emissions",
+        },
+        "code": "app/models/carbon_budget.py",
+    },
+    {
         "id": "country_emissions",
         "name": "Country-level CO₂ emissions",
         "summary": "Top emitters by total annual CO₂ (million tonnes) for the latest year on record, plus per-capita and share-of-global breakdowns. Filters out regional aggregates (codes starting with 'OWID_') so the leaderboard is real countries only. Includes a global summary showing the 10-year change in worldwide emissions.",

@@ -179,6 +179,18 @@ def test_scenarios_endpoint(client):
     assert body["current_match"]["co2"] is not None
 
 
+def test_carbon_budget_endpoint(client):
+    r = client.get("/api/carbon-budget")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["anchor_year"] == 2020
+    # All three targets present
+    targets = [b["target_c"] for b in body["budgets"]]
+    assert 1.5 in targets and 2.0 in targets
+    # Cumulative since 2020 should be positive (fixture has 2022 data)
+    assert body["cumulative_since_anchor_gt"] > 0
+
+
 def test_emissions_endpoint_with_mocked_upstream(client):
     r = client.get("/api/emissions")
     assert r.status_code == 200

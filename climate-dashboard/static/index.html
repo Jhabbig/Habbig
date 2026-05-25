@@ -414,6 +414,34 @@
   }
   .emitters-summary b { color: var(--text-1); }
 
+  .budget-card {
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .budget-rows {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .budget-rows > div { background: var(--bg-1); padding: 9px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .budget-rows .head { background: var(--bg-2); color: var(--text-3); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+  .budget-rows .target { color: var(--text-1); font-weight: 600; }
+  .budget-rows .num { text-align: right; }
+  .budget-rows .num b { color: var(--text-1); }
+  .budget-rows .num.urgent b { color: var(--accent-2); }
+  .budget-rows .num.soon b { color: var(--warn); }
+  .budget-rows .num.ok b { color: var(--good); }
+  .budget-rows .num.exhausted { color: var(--accent-2); font-weight: 700; }
+  .budget-foot { font-size: 11px; color: var(--text-3); }
+  .budget-foot b { color: var(--text-2); }
+
   .scenario-metric {
     display: inline-flex;
     background: var(--bg-2);
@@ -617,6 +645,7 @@
     <a href="#highlights">Highlights</a>
     <a href="#cards">Indicators</a>
     <a href="#emitters-card">Emitters</a>
+    <a href="#budget-card">Carbon budget</a>
     <a href="#scenarios-chart">SSP scenarios</a>
     <a href="#overlay">Overlay</a>
     <a href="#opps">Opportunities</a>
@@ -634,6 +663,9 @@
 
 <div class="section-title">Top CO₂ emitters <a class="export-link" id="export-emitters" role="button" tabindex="0">↓ CSV</a></div>
 <div id="emitters-card" class="card"><div class="empty">Loading country emissions…</div></div>
+
+<div class="section-title">Remaining carbon budget</div>
+<div id="budget-card" class="budget-card"><div class="empty">Loading budget…</div></div>
 
 <div class="section-title">
   Long-term outlook (IPCC SSPs)
@@ -1159,6 +1191,48 @@ async function getJSON(url) {
 }
 
 let _emittersPayload = null;
+async function loadCarbonBudget() {
+  const root = document.getElementById("budget-card");
+  if (!root) return;
+  const r = await getJSON("/api/carbon-budget");
+  if (!r || !r.budgets) {
+    root.innerHTML = `<div class="empty">Carbon budget unavailable — depends on OWID emissions feed. See <a href="/status">status</a>.</div>`;
+    return;
+  }
+  const urgency = (years, exhausted) => {
+    if (exhausted) return "exhausted";
+    if (years == null) return "";
+    if (years < 5) return "urgent";
+    if (years < 20) return "soon";
+    return "ok";
+  };
+  const rows = r.budgets.map(b => {
+    const cls = urgency(b.years_at_current_rate, b.exhausted);
+    const remaining = b.exhausted
+      ? "Exhausted"
+      : `<b>${b.remaining_gt.toLocaleString()}</b> GtCO₂`;
+    const years = b.exhausted
+      ? "—"
+      : (b.years_at_current_rate != null ? `<b>${b.years_at_current_rate}</b> yrs at today's rate` : "—");
+    return `
+      <div class="target">${b.label}</div>
+      <div class="num ${cls}">${remaining}</div>
+      <div class="num ${cls}">${years}</div>
+    `;
+  }).join("");
+  root.innerHTML = `
+    <div class="budget-rows" role="table" aria-label="Remaining carbon budgets">
+      <div class="head">Warming target</div>
+      <div class="head num">Remaining</div>
+      <div class="head num">Years at current rate</div>
+      ${rows}
+    </div>
+    <div class="budget-foot">
+      Cumulative since <b>${r.anchor_year}</b>: <b>${r.cumulative_since_anchor_gt}</b> GtCO₂ · Latest annual (<b>${r.latest_year}</b>): <b>${r.latest_annual_gt}</b> GtCO₂. Sources: <a href="https://www.ipcc.ch/report/ar6/wg1/" target="_blank">IPCC AR6 Table 5.8</a> + <a href="https://github.com/owid/co2-data" target="_blank">Our World in Data</a>.
+    </div>
+  `;
+}
+
 async function loadEmitters() {
   const root = document.getElementById("emitters-card");
   if (!root) return;
@@ -2320,6 +2394,7 @@ loadRegime();
 loadHighlights();
 loadCards();
 loadEmitters();
+loadCarbonBudget();
 loadScenarios();
 loadOverlay();
 loadMarkets();

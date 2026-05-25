@@ -158,6 +158,18 @@ const MOCK_RESPONSES = {
       co2: { scenario: "SSP2-4.5", distance_ppm: 5.0, scenario_value_ppm: 430.0, observed_value_ppm: 425.0, position: "between", year: 2025 },
     },
   },
+  "/api/carbon-budget": {
+    anchor_year: 2020,
+    latest_year: 2024,
+    cumulative_since_anchor_gt: 188.0,
+    latest_annual_gt: 38.6,
+    budgets: [
+      { label: "+1.5°C (50% chance)", target_c: 1.5, probability: 0.50, remaining_gt: 312, years_at_current_rate: 8.1, exhausted: false },
+      { label: "+1.5°C (67% chance)", target_c: 1.5, probability: 0.67, remaining_gt: 212, years_at_current_rate: 5.5, exhausted: false },
+      { label: "+2.0°C (67% chance)", target_c: 2.0, probability: 0.67, remaining_gt: 962, years_at_current_rate: 24.9, exhausted: false },
+    ],
+    source: "IPCC AR6 + OWID",
+  },
   "/api/emissions": {
     latest_year: 2022,
     top_emitters: [

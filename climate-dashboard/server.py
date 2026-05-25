@@ -36,8 +36,9 @@ from app.fetchers import sst as sst_src
 from app.methodology import payload as methodology_payload
 from app import snapshot as snapshot_module
 from app import status as status_module
-from app.models import co2 as co2_model
 from app.models import calibration
+from app.models import carbon_budget as carbon_budget_model
+from app.models import co2 as co2_model
 from app.models import emissions as emissions_model
 from app.models import forcing as forcing_model
 from app.models import highlights as highlights_model
@@ -338,6 +339,24 @@ def api_scenarios():
         "source": "IPCC AR6 WG1 Table SPM.1 (temperature) + SSP database (CO₂); anchor points only, linearly interpolated.",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     })
+
+
+@app.route("/api/carbon-budget")
+def api_carbon_budget():
+    """Remaining carbon budget for 1.5°C / 2°C warming targets.
+
+    IPCC AR6 anchor budgets (start of 2020) minus cumulative global CO₂
+    emissions from OWID since then. Reports remaining GtCO₂ + years at
+    the latest annual emission rate for each target.
+    """
+    parsed = emissions_src.fetch()
+    if not parsed:
+        return jsonify({"error": "Carbon budget needs OWID emissions data",
+                        "hint": "Check /status — Country emissions (OWID)"}), 503
+    payload = carbon_budget_model.compute(parsed)
+    if not payload:
+        return jsonify({"error": "World row missing from OWID data"}), 503
+    return jsonify(payload)
 
 
 @app.route("/api/emissions")
