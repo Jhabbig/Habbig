@@ -330,15 +330,23 @@ async def api_status_subscribe(request: Request):
         raise HTTPException(status_code=400, detail="components must be 'all' or a list")
 
     try:
-        sub = status_db.create_subscription(email, components)
+        # Idempotent upsert — re-subscribing the same email succeeds and
+        # returns the existing row. We deliberately ignore the returned
+        # `status` ("new"/"existing") and `token` below: echoing either to
+        # an unauthenticated caller is an email-enumeration oracle, and the
+        # token is a working unsubscribe credential anyone could harvest by
+        # guessing an address. (AUDIT: enumeration + unsubscribe-token leak.)
+        status_db.create_subscription(email, components)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # Generic, constant response regardless of new-vs-existing. The
+    # unsubscribe link is delivered out-of-band via the footer of every
+    # status notification email (status_system.subscriptions), never in
+    # this HTTP response.
     return JSONResponse({
         "ok": True,
-        "email": sub["email"],
-        "status": sub["status"],
-        "unsubscribe_url": f"{_base_url(request)}/status/unsubscribe?token={sub['token']}",
+        "message": "If that's a valid email, you're subscribed to status updates.",
     })
 
 
