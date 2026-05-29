@@ -1,0 +1,1367 @@
+# Political context overlay — current leader, party spectrum, regional
+# breakdown. The server merges this into /api/country/{iso} so the drawer
+# can show:
+#   • who currently runs the country (and their approval)
+#   • where each major party sits on the left-right axis (and seats/share)
+#   • which provinces / states / regions tilt which way
+#
+# All positions are author-curated -10 (far left) to +10 (far right) on
+# the economic axis. Where social-axis positioning materially differs
+# from economic (e.g. Hindu-nationalist BJP, evangelical PiS), we add an
+# optional `social` field with the same scale.
+#
+# Schema:
+#   countries[ISO].leader:
+#     name, role, party_abbr, since (YYYY-MM), approval_pct, approval_source,
+#     bio (one-liner)
+#   countries[ISO].parties[]:
+#     abbr, name, position (-10..+10 econ), social (-10..+10, optional),
+#     seats, total_seats, vote_share_pct, color (hex), in_government (bool),
+#     leader (name)
+#   countries[ISO].regions[]:
+#     name, population_m (optional), top_issue, lean (party_abbr or "swing"),
+#     note (one-liner)
+
+schema_version: 1
+last_curated: "2026-04-25"
+
+countries:
+
+  USA:
+    leader:
+      name: "Donald J. Trump"
+      role: "President"
+      party_abbr: "R"
+      since: "2025-01"
+      approval_pct: 43
+      approval_source: "Gallup, Mar 2026"
+      bio: "47th president; second non-consecutive term"
+    parties:
+      - { abbr: D,    name: "Democratic Party",  position: -3, social: -3, seats: 213, total_seats: 435, vote_share_pct: 47.6, color: "#1f77b4", in_government: false, leader: "Hakeem Jeffries (House)" }
+      - { abbr: R,    name: "Republican Party",  position: 4,  social: 6,  seats: 222, total_seats: 435, vote_share_pct: 49.8, color: "#d62728", in_government: true,  leader: "Donald Trump" }
+      - { abbr: I/G,  name: "Independents / Greens", position: -1, social: -3, seats: 0, total_seats: 435, vote_share_pct: 2.6, color: "#7f7f7f", in_government: false, leader: "—" }
+    regions:
+      - { name: "Northeast",      top_issue: "Cost of living",       lean: "D",    note: "NY/MA/NJ deep blue; PA the swing anchor" }
+      - { name: "Midwest",        top_issue: "Manufacturing jobs",   lean: "swing", note: "MI/WI/PA decide every cycle" }
+      - { name: "South",          top_issue: "Immigration / border", lean: "R",    note: "TX trending; FL solidly R" }
+      - { name: "Mountain West",  top_issue: "Energy / land",        lean: "R",    note: "AZ/NV swing; CO drifted D" }
+      - { name: "Pacific",        top_issue: "Housing / homelessness", lean: "D",  note: "CA/OR/WA reliably D" }
+
+  GBR:
+    leader:
+      name: "Keir Starmer"
+      role: "Prime Minister"
+      party_abbr: "LAB"
+      since: "2024-07"
+      approval_pct: 28
+      approval_source: "YouGov, Mar 2026"
+      bio: "Labour PM since 2024; majority government, sliding poll position"
+    parties:
+      - { abbr: LAB,  name: "Labour",        position: -3, social: -2, seats: 411, total_seats: 650, vote_share_pct: 26, color: "#e4003b", in_government: true,  leader: "Keir Starmer" }
+      - { abbr: REF,  name: "Reform UK",     position: 6,  social: 7,  seats: 5,   total_seats: 650, vote_share_pct: 30, color: "#12b6cf", in_government: false, leader: "Nigel Farage" }
+      - { abbr: CON,  name: "Conservatives", position: 4,  social: 4,  seats: 121, total_seats: 650, vote_share_pct: 19, color: "#0087dc", in_government: false, leader: "Kemi Badenoch" }
+      - { abbr: LD,   name: "Liberal Democrats", position: -1, social: -3, seats: 72, total_seats: 650, vote_share_pct: 13, color: "#faa61a", in_government: false, leader: "Ed Davey" }
+      - { abbr: SNP,  name: "SNP",           position: -2, social: -2, seats: 9,   total_seats: 650, vote_share_pct: 3, color: "#fdf38e", in_government: false, leader: "John Swinney" }
+      - { abbr: GRN,  name: "Green",         position: -5, social: -5, seats: 4,   total_seats: 650, vote_share_pct: 7, color: "#6ab023", in_government: false, leader: "Adrian Ramsay / Ellie Chowns" }
+    regions:
+      - { name: "England (North)",  top_issue: "NHS waiting lists",   lean: "REF/LAB swing", note: "Reform now leading in many former Red Wall seats" }
+      - { name: "England (South)",  top_issue: "Housing affordability", lean: "LAB/LD",      note: "London + commuter belt mostly Labour/LD" }
+      - { name: "Midlands",         top_issue: "Cost of living",      lean: "swing",         note: "Bellwether — flipped Lab→Con→Lab→? since 2010" }
+      - { name: "Scotland",         top_issue: "Energy / NHS Scotland", lean: "LAB/SNP",     note: "SNP collapsed; Labour resurgent but Reform rising" }
+      - { name: "Wales",            top_issue: "Public services",     lean: "LAB",           note: "Plaid + Reform splitting opposition" }
+      - { name: "Northern Ireland", top_issue: "Cross-border trade",  lean: "Sinn Féin / DUP", note: "Distinct party system" }
+
+  DEU:
+    leader:
+      name: "Friedrich Merz"
+      role: "Chancellor"
+      party_abbr: "CDU"
+      since: "2025-05"
+      approval_pct: 41
+      approval_source: "ARD-DeutschlandTrend, Mar 2026"
+      bio: "CDU/CSU + SPD grand coalition; defense supplemental signature policy"
+    parties:
+      - { abbr: CDU/CSU, name: "CDU/CSU",  position: 3,  social: 2,  seats: 208, total_seats: 736, vote_share_pct: 30, color: "#000000", in_government: true,  leader: "Friedrich Merz" }
+      - { abbr: AfD,     name: "AfD",      position: 5,  social: 8,  seats: 152, total_seats: 736, vote_share_pct: 23, color: "#009ee0", in_government: false, leader: "Alice Weidel" }
+      - { abbr: SPD,     name: "SPD",      position: -3, social: -2, seats: 121, total_seats: 736, vote_share_pct: 14, color: "#e3000f", in_government: true,  leader: "Lars Klingbeil" }
+      - { abbr: GRÜNE,   name: "Bündnis 90/Die Grünen", position: -3, social: -5, seats: 85,  total_seats: 736, vote_share_pct: 11, color: "#1aa037", in_government: false, leader: "Felix Banaszak / Franziska Brantner" }
+      - { abbr: BSW,     name: "BSW",      position: -4, social: 3,  seats: 41,  total_seats: 736, vote_share_pct: 6,  color: "#7d3f98", in_government: false, leader: "Sahra Wagenknecht" }
+      - { abbr: LINKE,   name: "Die Linke", position: -7, social: -3, seats: 35,  total_seats: 736, vote_share_pct: 4,  color: "#be3075", in_government: false, leader: "Ines Schwerdtner / Jan van Aken" }
+      - { abbr: FDP,     name: "FDP",      position: 4,  social: 0,  seats: 0,   total_seats: 736, vote_share_pct: 4,  color: "#ffed00", in_government: false, leader: "Christian Dürr" }
+    regions:
+      - { name: "Bayern",            top_issue: "Migration",          lean: "CDU/CSU", note: "CSU fortress; AfD second" }
+      - { name: "Baden-Württemberg", top_issue: "Industrial transition", lean: "CDU/Grüne", note: "Auto sector pressure" }
+      - { name: "Nordrhein-Westfalen", top_issue: "Cost of living",   lean: "swing",  note: "Most populous Land; SPD/CDU tight" }
+      - { name: "Berlin",            top_issue: "Housing",            lean: "Grüne/SPD", note: "Coalition city, Linke strong in east" }
+      - { name: "Sachsen / Thüringen / Sachsen-Anhalt (East)", top_issue: "Wages / migration", lean: "AfD", note: "AfD won pluralities in 2024 state elections" }
+
+  FRA:
+    leader:
+      name: "Emmanuel Macron"
+      role: "President"
+      party_abbr: "RE"
+      since: "2017-05"
+      approval_pct: 26
+      approval_source: "Ifop, Mar 2026"
+      bio: "Second term ends 2027; lame-duck phase, no PM majority"
+    parties:
+      - { abbr: RN,     name: "Rassemblement National", position: 6,  social: 7,  seats: 142, total_seats: 577, vote_share_pct: 32, color: "#0d378a", in_government: false, leader: "Jordan Bardella / Marine Le Pen" }
+      - { abbr: NFP,    name: "Nouveau Front Populaire", position: -5, social: -3, seats: 178, total_seats: 577, vote_share_pct: 28, color: "#dd0000", in_government: false, leader: "Jean-Luc Mélenchon (LFI lead)" }
+      - { abbr: RE,     name: "Renaissance",            position: 1,  social: -1, seats: 168, total_seats: 577, vote_share_pct: 22, color: "#ffd147", in_government: true,  leader: "Gabriel Attal" }
+      - { abbr: LR,     name: "Les Républicains",       position: 4,  social: 3,  seats: 47,  total_seats: 577, vote_share_pct: 7,  color: "#0066cc", in_government: false, leader: "Laurent Wauquiez" }
+      - { abbr: REC,    name: "Reconquête",             position: 7,  social: 9,  seats: 1,   total_seats: 577, vote_share_pct: 4,  color: "#1e1e6e", in_government: false, leader: "Éric Zemmour" }
+    regions:
+      - { name: "Île-de-France",         top_issue: "Cost of living",     lean: "NFP/RE", note: "Paris core left; suburbs trending RN" }
+      - { name: "Hauts-de-France",       top_issue: "Industrial decline", lean: "RN",     note: "RN dominant since 2017" }
+      - { name: "Provence-Alpes-Côte d'Azur", top_issue: "Immigration",   lean: "RN",     note: "Highest RN share nationally" }
+      - { name: "Bretagne",              top_issue: "Agriculture / fisheries", lean: "RE/NFP", note: "Most resistant to RN" }
+      - { name: "Auvergne-Rhône-Alpes",  top_issue: "Cost of living",     lean: "swing",  note: "Lyon left, rural areas right" }
+
+  BRA:
+    leader:
+      name: "Luiz Inácio Lula da Silva"
+      role: "President"
+      party_abbr: "PT"
+      since: "2023-01"
+      approval_pct: 38
+      approval_source: "DataFolha, Mar 2026"
+      bio: "Third presidency; running for re-election in Oct 2026"
+    parties:
+      - { abbr: PT,    name: "Partido dos Trabalhadores", position: -4, social: -2, seats: 68,  total_seats: 513, vote_share_pct: 13, color: "#cc0000", in_government: true,  leader: "Lula" }
+      - { abbr: PL,    name: "Partido Liberal",           position: 5,  social: 6,  seats: 99,  total_seats: 513, vote_share_pct: 22, color: "#003399", in_government: false, leader: "Valdemar Costa Neto / Bolsonaro" }
+      - { abbr: PP,    name: "Progressistas",             position: 4,  social: 5,  seats: 50, total_seats: 513, vote_share_pct: 11, color: "#0066cc", in_government: false, leader: "Ciro Nogueira" }
+      - { abbr: REPUB, name: "Republicanos",              position: 4,  social: 7,  seats: 41, total_seats: 513, vote_share_pct: 9,  color: "#0073e6", in_government: false, leader: "Marcos Pereira" }
+      - { abbr: UNIÃO, name: "União Brasil",              position: 3,  social: 2,  seats: 54, total_seats: 513, vote_share_pct: 11, color: "#003399", in_government: false, leader: "Antônio Rueda" }
+      - { abbr: PSDB,  name: "PSDB / Cidadania",          position: 2,  social: 0,  seats: 16, total_seats: 513, vote_share_pct: 3,  color: "#00a3df", in_government: false, leader: "Marconi Perillo" }
+      - { abbr: PSOL,  name: "PSOL / REDE",               position: -7, social: -6, seats: 14, total_seats: 513, vote_share_pct: 3,  color: "#a52a2a", in_government: false, leader: "Paula Coradi" }
+    regions:
+      - { name: "Sudeste (SP/RJ/MG)", top_issue: "Public security",       lean: "swing", note: "São Paulo decisive; Tarcísio gov" }
+      - { name: "Nordeste",           top_issue: "Bolsa Família / drought", lean: "PT", note: "Lula's strongest base — 70%+ in 2022" }
+      - { name: "Sul",                top_issue: "Agribusiness exports",  lean: "PL",   note: "Bolsonarismo concentrated here" }
+      - { name: "Centro-Oeste",       top_issue: "Land conflict / agro",  lean: "PL",   note: "Soy belt; pro-agro caucus dominant" }
+      - { name: "Norte",              top_issue: "Amazon policy / mining", lean: "swing", note: "Smaller electorate; high volatility" }
+
+  ARG:
+    leader:
+      name: "Javier Milei"
+      role: "President"
+      party_abbr: "LLA"
+      since: "2023-12"
+      approval_pct: 47
+      approval_source: "Poliarquía, Mar 2026"
+      bio: "Libertarian economist; first non-Peronist non-PJ president since '99"
+    parties:
+      - { abbr: LLA,  name: "La Libertad Avanza",       position: 8, social: 4, seats: 38, total_seats: 257, vote_share_pct: 30, color: "#6f3a90", in_government: true,  leader: "Javier Milei / Karina Milei" }
+      - { abbr: UP,   name: "Unión por la Patria (Peronist)", position: -4, social: -2, seats: 99, total_seats: 257, vote_share_pct: 24, color: "#0099cc", in_government: false, leader: "Sergio Massa / Cristina Kirchner" }
+      - { abbr: JxC,  name: "Juntos por el Cambio (PRO/UCR)", position: 3,  social: 1,  seats: 93, total_seats: 257, vote_share_pct: 23, color: "#ffcc00", in_government: false, leader: "Mauricio Macri / Patricia Bullrich" }
+      - { abbr: HCF,  name: "Hacemos Coalición Federal", position: 0, social: 0, seats: 23, total_seats: 257, vote_share_pct: 7, color: "#00aaaa", in_government: false, leader: "Miguel Pichetto" }
+      - { abbr: FIT,  name: "FIT-U (Trotskyist)",       position: -8, social: -7, seats: 1, total_seats: 257, vote_share_pct: 3, color: "#cc0000", in_government: false, leader: "Myriam Bregman" }
+    regions:
+      - { name: "Buenos Aires Province", top_issue: "Inflation / wages",  lean: "UP",   note: "37% of national electorate; Peronist heartland" }
+      - { name: "CABA (Buenos Aires city)", top_issue: "Public services", lean: "JxC/LLA", note: "PRO stronghold; LLA gaining" }
+      - { name: "Córdoba",               top_issue: "Agribusiness",       lean: "JxC/LLA", note: "Anti-Peronist, swung hard to Milei" }
+      - { name: "Santa Fe",              top_issue: "Crime (Rosario)",    lean: "swing",   note: "Drug-trafficking violence dominates" }
+      - { name: "Patagonia",             top_issue: "Energy (Vaca Muerta)", lean: "UP",   note: "Oil rents argument" }
+
+  ISR:
+    leader:
+      name: "Benjamin Netanyahu"
+      role: "Prime Minister"
+      party_abbr: "Likud"
+      since: "2022-12"
+      approval_pct: 33
+      approval_source: "Israel Democracy Institute, Mar 2026"
+      bio: "Sixth term; longest-serving PM in Israeli history"
+    parties:
+      - { abbr: Likud,    name: "Likud",                position: 4, social: 5, seats: 32, total_seats: 120, vote_share_pct: 24, color: "#0046ad", in_government: true,  leader: "Netanyahu" }
+      - { abbr: NU,       name: "National Unity",       position: 1, social: 1, seats: 12, total_seats: 120, vote_share_pct: 9,  color: "#5f5f5f", in_government: false, leader: "Benny Gantz" }
+      - { abbr: YA,       name: "Yesh Atid",            position: 0, social: -2, seats: 24, total_seats: 120, vote_share_pct: 18, color: "#0099ff", in_government: false, leader: "Yair Lapid" }
+      - { abbr: Shas,     name: "Shas",                 position: 1, social: 7, seats: 11, total_seats: 120, vote_share_pct: 8,  color: "#000000", in_government: true,  leader: "Aryeh Deri" }
+      - { abbr: UTJ,      name: "United Torah Judaism", position: 1, social: 8, seats: 7,  total_seats: 120, vote_share_pct: 5,  color: "#003399", in_government: true,  leader: "Yitzchak Goldknopf" }
+      - { abbr: RZP,      name: "Religious Zionism",    position: 6, social: 8, seats: 14, total_seats: 120, vote_share_pct: 11, color: "#ffaa00", in_government: true,  leader: "Bezalel Smotrich" }
+      - { abbr: Otzma,    name: "Otzma Yehudit",        position: 7, social: 9, seats: 6,  total_seats: 120, vote_share_pct: 5,  color: "#cc0000", in_government: true,  leader: "Itamar Ben-Gvir" }
+      - { abbr: Labor/Mzh, name: "Labor / Meretz (The Democrats)", position: -3, social: -4, seats: 4, total_seats: 120, vote_share_pct: 4, color: "#dd0000", in_government: false, leader: "Yair Golan" }
+    regions:
+      - { name: "Tel Aviv metro",      top_issue: "Hostages / war",        lean: "Yesh Atid / Labor", note: "Secular liberal centre" }
+      - { name: "Jerusalem",           top_issue: "Religion-state / war",  lean: "Likud / Haredi",    note: "Haredi neighbourhoods + nationalist" }
+      - { name: "Haifa / North",       top_issue: "Hezbollah / displacement", lean: "swing",          note: "Mixed Jewish-Arab; war proximity" }
+      - { name: "Negev / South",       top_issue: "Gaza envelope security", lean: "Likud / RZP",     note: "Hardened post-Oct 7" }
+      - { name: "Judea & Samaria settlements", top_issue: "Annexation",   lean: "RZP / Otzma",       note: "Far-right base" }
+
+  IND:
+    leader:
+      name: "Narendra Modi"
+      role: "Prime Minister"
+      party_abbr: "BJP"
+      since: "2014-05"
+      approval_pct: 56
+      approval_source: "CSDS-Lokniti, Mar 2026"
+      bio: "Third term, but BJP lost solo majority — runs NDA coalition"
+    parties:
+      - { abbr: BJP,   name: "Bharatiya Janata Party", position: 4,  social: 7,  seats: 240, total_seats: 543, vote_share_pct: 36, color: "#ff9933", in_government: true,  leader: "Modi" }
+      - { abbr: INC,   name: "Indian National Congress", position: -2, social: -1, seats: 99, total_seats: 543, vote_share_pct: 21, color: "#138808", in_government: false, leader: "Mallikarjun Kharge / Rahul Gandhi" }
+      - { abbr: SP,    name: "Samajwadi Party",        position: -2, social: 0,  seats: 37,  total_seats: 543, vote_share_pct: 5,  color: "#dd0000", in_government: false, leader: "Akhilesh Yadav" }
+      - { abbr: TMC,   name: "Trinamool Congress",     position: -1, social: -1, seats: 29,  total_seats: 543, vote_share_pct: 4,  color: "#20b2aa", in_government: false, leader: "Mamata Banerjee" }
+      - { abbr: DMK,   name: "DMK",                    position: -3, social: -2, seats: 22,  total_seats: 543, vote_share_pct: 2,  color: "#cc0000", in_government: false, leader: "M. K. Stalin" }
+      - { abbr: TDP,   name: "TDP",                    position: 2,  social: 1,  seats: 16,  total_seats: 543, vote_share_pct: 2,  color: "#ffcc00", in_government: true,  leader: "N. Chandrababu Naidu" }
+      - { abbr: JD(U), name: "JD(U)",                  position: 2,  social: 2,  seats: 12,  total_seats: 543, vote_share_pct: 1,  color: "#006400", in_government: true,  leader: "Nitish Kumar" }
+    regions:
+      - { name: "Hindi belt (UP, Bihar, MP, Rajasthan)", top_issue: "Jobs / inflation", lean: "BJP", note: "Half of Lok Sabha; BJP's spine" }
+      - { name: "South (Tamil Nadu, Kerala, Karnataka, AP, Telangana)", top_issue: "Federal transfers", lean: "INC/DMK/regional", note: "Ideologically resistant to BJP" }
+      - { name: "West (Maharashtra, Gujarat)", top_issue: "Industrial slowdown", lean: "BJP",   note: "Adani/Modi heartland Gujarat; MH is contested" }
+      - { name: "East (West Bengal, Odisha)",  top_issue: "Cyclones / jobs",    lean: "TMC/regional", note: "BJP made inroads in 2024" }
+      - { name: "Northeast",                   top_issue: "Manipur conflict",   lean: "BJP/regional", note: "Volatile; Manipur unresolved" }
+
+  MEX:
+    leader:
+      name: "Claudia Sheinbaum"
+      role: "President"
+      party_abbr: "MORENA"
+      since: "2024-10"
+      approval_pct: 62
+      approval_source: "Mitofsky, Mar 2026"
+      bio: "AMLO's anointed successor; first woman president of Mexico"
+    parties:
+      - { abbr: MORENA, name: "Movimiento Regeneración Nacional", position: -3, social: 0, seats: 256, total_seats: 500, vote_share_pct: 41, color: "#a8252b", in_government: true,  leader: "Sheinbaum / Mario Delgado" }
+      - { abbr: PAN,    name: "Partido Acción Nacional",          position: 4,  social: 4, seats: 71,  total_seats: 500, vote_share_pct: 18, color: "#0a4ea2", in_government: false, leader: "Marko Cortés" }
+      - { abbr: PRI,    name: "Partido Revolucionario Institucional", position: 1, social: 0, seats: 36, total_seats: 500, vote_share_pct: 11, color: "#cc0000", in_government: false, leader: "Alejandro Moreno" }
+      - { abbr: PT,     name: "Partido del Trabajo",              position: -5, social: -2, seats: 38, total_seats: 500, vote_share_pct: 6, color: "#cc0066", in_government: true,  leader: "Alberto Anaya" }
+      - { abbr: PVEM,   name: "Partido Verde Ecologista",         position: -2, social: -2, seats: 76, total_seats: 500, vote_share_pct: 8, color: "#5a9e3a", in_government: true,  leader: "Manuel Velasco" }
+      - { abbr: MC,     name: "Movimiento Ciudadano",             position: 1,  social: -1, seats: 27, total_seats: 500, vote_share_pct: 11, color: "#ee7203", in_government: false, leader: "Jorge Álvarez Máynez" }
+    regions:
+      - { name: "CDMX (Mexico City)",       top_issue: "Public transport / water", lean: "MORENA", note: "Sheinbaum's base; CDMX 2024 still tight" }
+      - { name: "Northern border states",   top_issue: "Trade / cartel violence",  lean: "swing",  note: "Nuevo León / BC / Tamaulipas; cartel pressure" }
+      - { name: "Bajío (Guanajuato, Querétaro)", top_issue: "Manufacturing / nearshoring", lean: "PAN", note: "Auto belt; PAN holds out" }
+      - { name: "South (Oaxaca, Chiapas, Guerrero)", top_issue: "Poverty",        lean: "MORENA", note: "Welfare-state stronghold" }
+      - { name: "Yucatán Peninsula",        top_issue: "Tourism / Maya Train",     lean: "MORENA", note: "AMLO infra-led conversion" }
+
+  CAN:
+    leader:
+      name: "Mark Carney"
+      role: "Prime Minister"
+      party_abbr: "LIB"
+      since: "2025-04"
+      approval_pct: 49
+      approval_source: "Abacus, Mar 2026"
+      bio: "Former BoC/BoE governor; took over from Trudeau and won 2025 election"
+    parties:
+      - { abbr: LIB,  name: "Liberal Party",      position: -1, social: -3, seats: 169, total_seats: 343, vote_share_pct: 43, color: "#d71920", in_government: true,  leader: "Mark Carney" }
+      - { abbr: CON,  name: "Conservative Party", position: 4,  social: 2,  seats: 144, total_seats: 343, vote_share_pct: 41, color: "#1a4782", in_government: false, leader: "Pierre Poilievre" }
+      - { abbr: BQ,   name: "Bloc Québécois",     position: -2, social: -2, seats: 23,  total_seats: 343, vote_share_pct: 7,  color: "#33b2cc", in_government: false, leader: "Yves-François Blanchet" }
+      - { abbr: NDP,  name: "New Democratic Party", position: -4, social: -3, seats: 7,  total_seats: 343, vote_share_pct: 6,  color: "#f37021", in_government: false, leader: "Jagmeet Singh" }
+      - { abbr: GRN,  name: "Green Party",        position: -3, social: -4, seats: 0,   total_seats: 343, vote_share_pct: 1,  color: "#3d9b35", in_government: false, leader: "Elizabeth May / Jonathan Pedneault" }
+    regions:
+      - { name: "Ontario",         top_issue: "Housing / health",         lean: "swing", note: "GTA decides federal majorities" }
+      - { name: "Quebec",          top_issue: "French-language / sovereignty", lean: "BQ/LIB", note: "Bloc resurgent in 2025" }
+      - { name: "Prairies (AB, SK, MB)", top_issue: "Energy policy",      lean: "CON",   note: "Solid Conservative; Alberta separatism murmurs" }
+      - { name: "British Columbia", top_issue: "Housing affordability",   lean: "swing", note: "Vancouver expensive; NDP provincial gov" }
+      - { name: "Atlantic (NB/NS/PEI/NL)", top_issue: "Healthcare", lean: "LIB",          note: "Reliable for whoever's red" }
+
+  ITA:
+    leader:
+      name: "Giorgia Meloni"
+      role: "Prime Minister"
+      party_abbr: "FdI"
+      since: "2022-10"
+      approval_pct: 39
+      approval_source: "Ipsos Italia, Mar 2026"
+      bio: "First woman PM; FdI-led right coalition has held since 2022"
+    parties:
+      - { abbr: FdI,   name: "Fratelli d'Italia",   position: 6,  social: 7,  seats: 119, total_seats: 400, vote_share_pct: 30, color: "#0066cc", in_government: true,  leader: "Meloni" }
+      - { abbr: PD,    name: "Partito Democratico", position: -3, social: -2, seats: 69,  total_seats: 400, vote_share_pct: 22, color: "#ed1c24", in_government: false, leader: "Elly Schlein" }
+      - { abbr: M5S,   name: "Movimento 5 Stelle",  position: -3, social: -1, seats: 52,  total_seats: 400, vote_share_pct: 12, color: "#ffeb3b", in_government: false, leader: "Giuseppe Conte" }
+      - { abbr: Lega,  name: "Lega",                position: 5,  social: 6,  seats: 66,  total_seats: 400, vote_share_pct: 9,  color: "#008f0e", in_government: true,  leader: "Matteo Salvini" }
+      - { abbr: FI,    name: "Forza Italia",        position: 3,  social: 3,  seats: 45,  total_seats: 400, vote_share_pct: 9,  color: "#0090d6", in_government: true,  leader: "Antonio Tajani" }
+      - { abbr: AVS,   name: "Alleanza Verdi-Sinistra", position: -6, social: -5, seats: 12, total_seats: 400, vote_share_pct: 6, color: "#3d9b35", in_government: false, leader: "Bonelli / Fratoianni" }
+    regions:
+      - { name: "Nord (Lombardia, Veneto, Piemonte)", top_issue: "Industrial competitiveness", lean: "Lega/FdI", note: "Industrial heartland; Lega's base" }
+      - { name: "Centro (Lazio, Toscana, Emilia-Romagna)", top_issue: "Cost of living", lean: "PD/FdI", note: "PD strongholds in Toscana, ER" }
+      - { name: "Sud + Isole",  top_issue: "Reddito / unemployment", lean: "M5S/FdI", note: "M5S anchored south; FdI broke through" }
+
+  POL:
+    leader:
+      name: "Donald Tusk"
+      role: "Prime Minister"
+      party_abbr: "KO"
+      since: "2023-12"
+      approval_pct: 36
+      approval_source: "CBOS, Mar 2026"
+      bio: "Pro-EU coalition gov ousted PiS; tense cohabitation with PiS-aligned president"
+    parties:
+      - { abbr: KO,    name: "Civic Coalition (PO + Modern + Green)", position: 0,  social: -2, seats: 157, total_seats: 460, vote_share_pct: 31, color: "#ff8c00", in_government: true,  leader: "Tusk" }
+      - { abbr: PiS,   name: "Prawo i Sprawiedliwość",                position: 3,  social: 6,  seats: 194, total_seats: 460, vote_share_pct: 35, color: "#003366", in_government: false, leader: "Jarosław Kaczyński" }
+      - { abbr: TD,    name: "Trzecia Droga (PSL+Polska 2050)",       position: 1,  social: 0,  seats: 65,  total_seats: 460, vote_share_pct: 14, color: "#80bb43", in_government: true,  leader: "Władysław Kosiniak-Kamysz" }
+      - { abbr: NL,    name: "Nowa Lewica",                           position: -3, social: -3, seats: 26,  total_seats: 460, vote_share_pct: 9,  color: "#cc0000", in_government: true,  leader: "Włodzimierz Czarzasty" }
+      - { abbr: KONF,  name: "Konfederacja",                          position: 7,  social: 7,  seats: 18,  total_seats: 460, vote_share_pct: 7,  color: "#1f1f1f", in_government: false, leader: "Krzysztof Bosak / Sławomir Mentzen" }
+    regions:
+      - { name: "Mazowieckie (Warsaw)",  top_issue: "Cost of living",         lean: "KO",   note: "KO base; urban liberal" }
+      - { name: "East (Lubelskie, Podkarpackie)", top_issue: "EU funds", lean: "PiS", note: "Catholic conservative core" }
+      - { name: "West (Wielkopolska, Dolnośląskie)", top_issue: "Industry / climate", lean: "KO/TD", note: "Pro-EU centrist" }
+      - { name: "Silesia",  top_issue: "Coal transition",                lean: "swing", note: "Mining politics decisive" }
+
+  JPN:
+    leader:
+      name: "Shigeru Ishiba"
+      role: "Prime Minister"
+      party_abbr: "LDP"
+      since: "2024-10"
+      approval_pct: 31
+      approval_source: "NHK, Mar 2026"
+      bio: "LDP minority government with Komeito after 2024 election losses"
+    parties:
+      - { abbr: LDP,    name: "Liberal Democratic Party", position: 4,  social: 4,  seats: 191, total_seats: 465, vote_share_pct: 26, color: "#3ca324", in_government: true,  leader: "Ishiba" }
+      - { abbr: CDP,    name: "Constitutional Democratic Party", position: -2, social: -2, seats: 148, total_seats: 465, vote_share_pct: 21, color: "#004098", in_government: false, leader: "Yoshihiko Noda" }
+      - { abbr: DPFP,   name: "Democratic Party For the People", position: 1, social: 0, seats: 28, total_seats: 465, vote_share_pct: 11, color: "#ffea00", in_government: false, leader: "Yuichiro Tamaki" }
+      - { abbr: Ishin,  name: "Japan Innovation Party",     position: 4, social: 2, seats: 38, total_seats: 465, vote_share_pct: 10, color: "#7ac143", in_government: false, leader: "Hirofumi Yoshimura" }
+      - { abbr: Komeito, name: "Komeito",                   position: 1, social: 1, seats: 24, total_seats: 465, vote_share_pct: 8,  color: "#f29400", in_government: true,  leader: "Tetsuo Saito" }
+      - { abbr: Reiwa,  name: "Reiwa Shinsengumi",           position: -5, social: -3, seats: 9,  total_seats: 465, vote_share_pct: 4,  color: "#e91e63", in_government: false, leader: "Tarō Yamamoto" }
+      - { abbr: JCP,    name: "Japanese Communist Party",   position: -6, social: -3, seats: 8,  total_seats: 465, vote_share_pct: 3,  color: "#cc0000", in_government: false, leader: "Tomoko Tamura" }
+    regions:
+      - { name: "Tokyo metro",     top_issue: "Aging / housing",       lean: "swing", note: "LDP losing urban seats; CDP gaining" }
+      - { name: "Kansai (Osaka)",  top_issue: "Economy / yen",         lean: "Ishin", note: "Innovation Party heartland" }
+      - { name: "Tohoku / North",  top_issue: "Depopulation / energy", lean: "LDP/CDP", note: "Rural LDP base eroding" }
+      - { name: "Kyushu / Okinawa", top_issue: "US base presence",     lean: "LDP/regional", note: "Okinawa anti-base sentiment persistent" }
+
+  KOR:
+    leader:
+      name: "Lee Jae-myung"
+      role: "President"
+      party_abbr: "DPK"
+      since: "2025-06"
+      approval_pct: 51
+      approval_source: "Realmeter, Mar 2026"
+      bio: "DPK candidate elected in snap after Yoon impeachment / martial-law fallout"
+    parties:
+      - { abbr: DPK,    name: "Democratic Party of Korea", position: -3, social: -2, seats: 175, total_seats: 300, vote_share_pct: 47, color: "#0a4ea2", in_government: true,  leader: "Lee Jae-myung" }
+      - { abbr: PPP,    name: "People Power Party",       position: 4,  social: 4,  seats: 108, total_seats: 300, vote_share_pct: 39, color: "#e61e2b", in_government: false, leader: "Han Dong-hoon" }
+      - { abbr: ReformK, name: "Reform Party",            position: 2,  social: 1,  seats: 8,   total_seats: 300, vote_share_pct: 5,  color: "#ff7a00", in_government: false, leader: "Lee Jun-seok" }
+      - { abbr: RebuildK, name: "Rebuilding Korea Party", position: -3, social: -3, seats: 7,   total_seats: 300, vote_share_pct: 6,  color: "#1ec6c6", in_government: false, leader: "Cho Kuk" }
+      - { abbr: Justice, name: "Justice Party",           position: -5, social: -4, seats: 2,   total_seats: 300, vote_share_pct: 2,  color: "#ffe600", in_government: false, leader: "Kwon Young-guk" }
+    regions:
+      - { name: "Seoul / Gyeonggi", top_issue: "Housing prices",       lean: "DPK/PPP", note: "Greater capital is the swing prize" }
+      - { name: "Honam (Gwangju, Jeolla)", top_issue: "Industrial decline", lean: "DPK", note: "Democratic stronghold since 1987" }
+      - { name: "Yeongnam (Busan, Daegu, Gyeongsang)", top_issue: "Conservative culture", lean: "PPP", note: "Conservative heartland; PK swing" }
+      - { name: "Jeju + outer",     top_issue: "Tourism / China relations", lean: "DPK", note: "Smaller electorates, often DPK-tilted" }
+
+  IDN:
+    leader:
+      name: "Prabowo Subianto"
+      role: "President"
+      party_abbr: "Gerindra"
+      since: "2024-10"
+      approval_pct: 71
+      approval_source: "Indikator Politik, Mar 2026"
+      bio: "Former general; succeeded Jokowi after running w/ Gibran (Jokowi's son) as VP"
+    parties:
+      - { abbr: Gerindra, name: "Gerindra",                position: 4,  social: 5,  seats: 86,  total_seats: 580, vote_share_pct: 13, color: "#a02828", in_government: true,  leader: "Prabowo / Sufmi Dasco Ahmad" }
+      - { abbr: PDI-P,    name: "PDI-Perjuangan",          position: -2, social: -1, seats: 110, total_seats: 580, vote_share_pct: 17, color: "#cc0000", in_government: false, leader: "Megawati / Puan Maharani" }
+      - { abbr: Golkar,   name: "Golkar",                  position: 2,  social: 2,  seats: 102, total_seats: 580, vote_share_pct: 15, color: "#ffd400", in_government: true,  leader: "Bahlil Lahadalia" }
+      - { abbr: NasDem,   name: "NasDem",                  position: 0,  social: 0,  seats: 69,  total_seats: 580, vote_share_pct: 9,  color: "#1e6cb1", in_government: true,  leader: "Surya Paloh" }
+      - { abbr: PKB,      name: "Partai Kebangkitan Bangsa (PKB)", position: 1, social: 3, seats: 68, total_seats: 580, vote_share_pct: 10, color: "#1e8c3a", in_government: true,  leader: "Muhaimin Iskandar" }
+      - { abbr: PKS,      name: "PKS",                     position: 3,  social: 7,  seats: 53,  total_seats: 580, vote_share_pct: 8,  color: "#ff8c00", in_government: false, leader: "Ahmad Syaikhu" }
+      - { abbr: PAN,      name: "PAN",                     position: 2,  social: 4,  seats: 48,  total_seats: 580, vote_share_pct: 7,  color: "#1e90ff", in_government: true,  leader: "Zulkifli Hasan" }
+      - { abbr: Demokrat, name: "Partai Demokrat",         position: 2,  social: 2,  seats: 44,  total_seats: 580, vote_share_pct: 7,  color: "#0066b2", in_government: true,  leader: "Agus Yudhoyono" }
+    regions:
+      - { name: "Java",             top_issue: "Cost of living / jobs",    lean: "PDI-P/Gerindra", note: "60% of population; decides every cycle" }
+      - { name: "Sumatra",          top_issue: "Palm oil / land rights",   lean: "Gerindra/Golkar", note: "Conservative belt; Aceh has separate party system" }
+      - { name: "Kalimantan",       top_issue: "New capital (IKN) build", lean: "Gerindra",       note: "Nusantara construction zone; Prabowo extending Jokowi plan" }
+      - { name: "Sulawesi",         top_issue: "Nickel mining royalties", lean: "Gerindra/Golkar", note: "Mining boom area; PKB strong in some areas" }
+      - { name: "Papua",            top_issue: "Indigenous rights / autonomy", lean: "regional", note: "Persistent tension; multiple local parties" }
+
+  TUR:
+    leader:
+      name: "Recep Tayyip Erdoğan"
+      role: "President"
+      party_abbr: "AKP"
+      since: "2014-08"
+      approval_pct: 38
+      approval_source: "MetroPOLL, Mar 2026"
+      bio: "AKP leader since 2001; won 2023 runoff but lost 2024 municipals to CHP"
+    parties:
+      - { abbr: AKP,    name: "Justice and Development Party", position: 3,  social: 7,  seats: 273, total_seats: 600, vote_share_pct: 36, color: "#ff8c00", in_government: true,  leader: "Erdoğan" }
+      - { abbr: CHP,    name: "Republican People's Party",     position: -1, social: -2, seats: 169, total_seats: 600, vote_share_pct: 31, color: "#cc0000", in_government: false, leader: "Özgür Özel / İmamoğlu" }
+      - { abbr: DEM,    name: "Peoples' Equality and Democracy Party", position: -4, social: -4, seats: 57, total_seats: 600, vote_share_pct: 9, color: "#7c3aed", in_government: false, leader: "Tülay Hatimoğulları / Tuncer Bakırhan" }
+      - { abbr: MHP,    name: "Nationalist Movement Party",    position: 5,  social: 8,  seats: 50,  total_seats: 600, vote_share_pct: 10, color: "#cc0033", in_government: true,  leader: "Devlet Bahçeli" }
+      - { abbr: İYİ,    name: "Good Party",                    position: 2,  social: 3,  seats: 35,  total_seats: 600, vote_share_pct: 9,  color: "#00ace5", in_government: false, leader: "Müsavat Dervişoğlu" }
+      - { abbr: YRP,    name: "Yeniden Refah",                 position: 4,  social: 9,  seats: 5,   total_seats: 600, vote_share_pct: 3,  color: "#005f3d", in_government: false, leader: "Fatih Erbakan" }
+    regions:
+      - { name: "Marmara (Istanbul, Bursa)", top_issue: "Cost of living",  lean: "CHP/AKP", note: "Most populous; İmamoğlu base in İstanbul" }
+      - { name: "Central Anatolia",        top_issue: "Drought / agriculture", lean: "AKP", note: "Conservative heartland incl. Ankara contest" }
+      - { name: "Aegean / Mediterranean",  top_issue: "Tourism / inflation", lean: "CHP",  note: "Secular coast" }
+      - { name: "Southeast (Kurdish)",     top_issue: "Kurdish rights / war", lean: "DEM", note: "DEM Party (formerly HDP) dominant" }
+      - { name: "Black Sea",               top_issue: "Tea / hazelnut prices", lean: "AKP/MHP", note: "Erdoğan's birthplace region" }
+
+  TWN:
+    leader:
+      name: "Lai Ching-te"
+      role: "President"
+      party_abbr: "DPP"
+      since: "2024-05"
+      approval_pct: 43
+      approval_source: "TPOF, Mar 2026"
+      bio: "DPP's third consecutive term but lost legislative majority"
+    parties:
+      - { abbr: DPP,    name: "Democratic Progressive Party", position: -1, social: -3, seats: 51, total_seats: 113, vote_share_pct: 36, color: "#1b9431", in_government: true,  leader: "Lai Ching-te" }
+      - { abbr: KMT,    name: "Kuomintang",                   position: 2,  social: 3,  seats: 52, total_seats: 113, vote_share_pct: 33, color: "#0a4ea2", in_government: false, leader: "Eric Chu" }
+      - { abbr: TPP,    name: "Taiwan People's Party",        position: 2,  social: 0,  seats: 8,  total_seats: 113, vote_share_pct: 22, color: "#26b8b8", in_government: false, leader: "Huang Kuo-chang" }
+      - { abbr: NPP,    name: "New Power Party",              position: -3, social: -4, seats: 0,  total_seats: 113, vote_share_pct: 2,  color: "#ffe900", in_government: false, leader: "Wang Wan-yu" }
+    regions:
+      - { name: "Taipei / New Taipei", top_issue: "Housing / cost of living", lean: "swing", note: "Greater Taipei has the swing voters" }
+      - { name: "Taichung",         top_issue: "Manufacturing / TSMC supply chain", lean: "swing", note: "Critical bellwether" }
+      - { name: "Tainan / Kaohsiung", top_issue: "Cross-strait threat", lean: "DPP", note: "Southern green strongholds" }
+      - { name: "Hualien / Taitung", top_issue: "Indigenous rights / tourism", lean: "KMT", note: "Eastern mountains historically blue" }
+
+  PHL:
+    leader:
+      name: "Ferdinand Marcos Jr."
+      role: "President"
+      party_abbr: "PFP"
+      since: "2022-06"
+      approval_pct: 36
+      approval_source: "OCTA / Pulse Asia, Mar 2026"
+      bio: "Bongbong Marcos; coalition fractured with Duterte camp in 2025"
+    parties:
+      - { abbr: PFP,        name: "Partido Federal ng Pilipinas", position: 3, social: 4, seats: 25, total_seats: 316, vote_share_pct: 8, color: "#0a4ea2", in_government: true,  leader: "Marcos Jr." }
+      - { abbr: PDP-Laban,  name: "PDP-Laban (Duterte wing)",  position: 2, social: 6, seats: 12, total_seats: 316, vote_share_pct: 5, color: "#a52a2a", in_government: false, leader: "Sara Duterte / Robin Padilla" }
+      - { abbr: Lakas-CMD,  name: "Lakas-CMD",                position: 3, social: 3, seats: 49, total_seats: 316, vote_share_pct: 11, color: "#ffd700", in_government: true,  leader: "Martin Romualdez" }
+      - { abbr: NPC,        name: "Nationalist People's Coalition", position: 2, social: 2, seats: 39, total_seats: 316, vote_share_pct: 11, color: "#ff7f00", in_government: true, leader: "Cojuangco family" }
+      - { abbr: NUP,        name: "National Unity Party",      position: 2, social: 2, seats: 32, total_seats: 316, vote_share_pct: 9, color: "#cc0000", in_government: true,  leader: "Alfredo Benitez" }
+      - { abbr: LP,         name: "Liberal Party",             position: -2, social: -2, seats: 5, total_seats: 316, vote_share_pct: 4, color: "#ffea00", in_government: false, leader: "Kiko Pangilinan / Leni Robredo" }
+      - { abbr: Makabayan,  name: "Makabayan bloc",            position: -6, social: -3, seats: 3, total_seats: 316, vote_share_pct: 2, color: "#cc3333", in_government: false, leader: "Various (party-list)" }
+    regions:
+      - { name: "Luzon (Metro Manila)", top_issue: "Cost of living / jobs", lean: "Marcos/Duterte", note: "Marcos solid in Ilocos; Manila contested" }
+      - { name: "Visayas",        top_issue: "Disaster recovery (Yolanda lasting)", lean: "Lakas/NPC", note: "Tightly held by traditional clans" }
+      - { name: "Mindanao",       top_issue: "South China Sea / drugs / BARMM",   lean: "Duterte",  note: "Duterte heartland; political family system" }
+
+  AUS:
+    leader:
+      name: "Anthony Albanese"
+      role: "Prime Minister"
+      party_abbr: "ALP"
+      since: "2022-05"
+      approval_pct: 41
+      approval_source: "Newspoll, Mar 2026"
+      bio: "Labor PM; 2025 election produced minority government with Greens / Teals support"
+    parties:
+      - { abbr: ALP,    name: "Australian Labor Party",  position: -2, social: -2, seats: 73, total_seats: 151, vote_share_pct: 33, color: "#cc0000", in_government: true,  leader: "Anthony Albanese" }
+      - { abbr: LIB,    name: "Liberal Party",           position: 4,  social: 3,  seats: 49, total_seats: 151, vote_share_pct: 32, color: "#1c4f9c", in_government: false, leader: "Sussan Ley" }
+      - { abbr: Nat,    name: "National Party",          position: 5,  social: 5,  seats: 14, total_seats: 151, vote_share_pct: 4,  color: "#006644", in_government: false, leader: "David Littleproud" }
+      - { abbr: Grn,    name: "Australian Greens",       position: -5, social: -5, seats: 4,  total_seats: 151, vote_share_pct: 12, color: "#10b51d", in_government: false, leader: "Adam Bandt" }
+      - { abbr: Teal,   name: "Teal Independents",       position: 0,  social: -3, seats: 6,  total_seats: 151, vote_share_pct: 7,  color: "#26b8b8", in_government: false, leader: "Various crossbench" }
+      - { abbr: ON,     name: "One Nation",              position: 6,  social: 7,  seats: 0,  total_seats: 151, vote_share_pct: 5,  color: "#ff8c00", in_government: false, leader: "Pauline Hanson" }
+    regions:
+      - { name: "NSW",  top_issue: "Housing affordability",  lean: "swing", note: "Sydney decides federal majorities" }
+      - { name: "Victoria", top_issue: "Cost of living",     lean: "ALP",   note: "Labor heartland post-2014" }
+      - { name: "Queensland", top_issue: "Mining / climate", lean: "LIB/Nat", note: "Coal politics; LNP fortress" }
+      - { name: "WA",   top_issue: "Resources royalties",    lean: "swing", note: "Iron-ore boom state" }
+      - { name: "SA / TAS / NT / ACT", top_issue: "Federal transfers", lean: "varied", note: "Smaller states/territories" }
+
+  NGA:
+    leader:
+      name: "Bola Ahmed Tinubu"
+      role: "President"
+      party_abbr: "APC"
+      since: "2023-05"
+      approval_pct: 30
+      approval_source: "NOIPolls, Mar 2026"
+      bio: "Former Lagos governor; fuel subsidy removal triggered cost-of-living crisis"
+    parties:
+      - { abbr: APC,   name: "All Progressives Congress", position: 3,  social: 4, seats: 162, total_seats: 360, vote_share_pct: 37, color: "#1e90ff", in_government: true,  leader: "Tinubu / Ganduje" }
+      - { abbr: PDP,   name: "Peoples Democratic Party", position: -1, social: 2, seats: 102, total_seats: 360, vote_share_pct: 29, color: "#cc0000", in_government: false, leader: "Atiku Abubakar / Umar Damagum" }
+      - { abbr: LP,    name: "Labour Party",             position: -2, social: 0, seats: 35,  total_seats: 360, vote_share_pct: 25, color: "#ffd700", in_government: false, leader: "Peter Obi (figurehead)" }
+      - { abbr: NNPP,  name: "New Nigeria Peoples Party", position: 1, social: 4, seats: 19, total_seats: 360, vote_share_pct: 6,  color: "#cc0033", in_government: false, leader: "Rabiu Kwankwaso" }
+    regions:
+      - { name: "Southwest (Lagos, Oyo)", top_issue: "Power supply / business", lean: "APC", note: "Tinubu's home base; Yoruba bloc" }
+      - { name: "Southeast (Igbo)",       top_issue: "Marginalisation / IPOB", lean: "LP",  note: "Obi support concentrated; security crisis" }
+      - { name: "South-South (Niger Delta)", top_issue: "Oil rents / pollution", lean: "PDP", note: "Rotational politics, oil industry" }
+      - { name: "North-East / North-West", top_issue: "Boko Haram / banditry", lean: "APC", note: "Hausa-Fulani; security collapse" }
+      - { name: "North-Central (Middle Belt)", top_issue: "Farmer-herder conflict", lean: "swing", note: "Bellwether for national politics" }
+
+  ZAF:
+    leader:
+      name: "Cyril Ramaphosa"
+      role: "President"
+      party_abbr: "ANC"
+      since: "2018-02"
+      approval_pct: 38
+      approval_source: "Ipsos SA, Mar 2026"
+      bio: "ANC president; led GNU coalition with DA after losing majority in 2024"
+    parties:
+      - { abbr: ANC,    name: "African National Congress", position: -2, social: 0,  seats: 159, total_seats: 400, vote_share_pct: 40, color: "#006644", in_government: true,  leader: "Cyril Ramaphosa" }
+      - { abbr: DA,     name: "Democratic Alliance",      position: 3,  social: -1, seats: 87,  total_seats: 400, vote_share_pct: 22, color: "#1f59cf", in_government: true,  leader: "John Steenhuisen" }
+      - { abbr: MK,     name: "uMkhonto we Sizwe Party",  position: -4, social: 4,  seats: 58,  total_seats: 400, vote_share_pct: 15, color: "#000000", in_government: false, leader: "Jacob Zuma" }
+      - { abbr: EFF,    name: "Economic Freedom Fighters", position: -7, social: 2,  seats: 39,  total_seats: 400, vote_share_pct: 10, color: "#cc0000", in_government: false, leader: "Julius Malema" }
+      - { abbr: IFP,    name: "Inkatha Freedom Party",    position: 1,  social: 4,  seats: 17,  total_seats: 400, vote_share_pct: 4,  color: "#cc3333", in_government: true,  leader: "Velenkosini Hlabisa" }
+      - { abbr: PA,     name: "Patriotic Alliance",       position: 2,  social: 6,  seats: 9,   total_seats: 400, vote_share_pct: 2,  color: "#003399", in_government: true,  leader: "Gayton McKenzie" }
+      - { abbr: FFP,    name: "Freedom Front Plus",       position: 5,  social: 6,  seats: 6,   total_seats: 400, vote_share_pct: 1.4, color: "#ff8c00", in_government: false, leader: "Pieter Groenewald" }
+    regions:
+      - { name: "Gauteng",          top_issue: "Crime / unemployment",  lean: "swing", note: "Joburg/Pretoria — economic engine" }
+      - { name: "KwaZulu-Natal",    top_issue: "Floods / ethnic politics", lean: "MK/IFP/ANC", note: "Zuma's MK split ANC vote in 2024" }
+      - { name: "Western Cape",     top_issue: "Water / migration",     lean: "DA",    note: "DA fortress" }
+      - { name: "Eastern Cape",     top_issue: "Unemployment",          lean: "ANC",   note: "Mandela birthplace; ANC heartland" }
+      - { name: "Limpopo / Mpumalanga / North West", top_issue: "Land / mining", lean: "ANC/EFF", note: "Rural ANC + rising EFF" }
+
+  PAK:
+    leader:
+      name: "Shehbaz Sharif"
+      role: "Prime Minister"
+      party_abbr: "PML-N"
+      since: "2024-03"
+      approval_pct: 32
+      approval_source: "Gallup Pakistan, Mar 2026"
+      bio: "PML-N PM in coalition with PPP; runs against backdrop of jailed Imran Khan / military influence"
+    parties:
+      - { abbr: PML-N,  name: "Pakistan Muslim League (Nawaz)", position: 2, social: 4, seats: 75,  total_seats: 336, vote_share_pct: 20, color: "#006644", in_government: true,  leader: "Shehbaz Sharif / Nawaz Sharif" }
+      - { abbr: PPP,    name: "Pakistan Peoples Party",         position: -2, social: 1, seats: 54, total_seats: 336, vote_share_pct: 14, color: "#cc0000", in_government: true,  leader: "Bilawal Bhutto Zardari" }
+      - { abbr: PTI,    name: "Pakistan Tehreek-e-Insaf",       position: 1, social: 4, seats: 91,  total_seats: 336, vote_share_pct: 32, color: "#cc0033", in_government: false, leader: "Imran Khan (jailed) / Barrister Gohar" }
+      - { abbr: MQM-P,  name: "MQM-Pakistan",                   position: 1, social: 1, seats: 22,  total_seats: 336, vote_share_pct: 3,  color: "#3399cc", in_government: true,  leader: "Khalid Maqbool Siddiqui" }
+      - { abbr: JUI-F,  name: "Jamiat Ulema-e-Islam (F)",       position: 2, social: 9, seats: 8,   total_seats: 336, vote_share_pct: 4,  color: "#003366", in_government: false, leader: "Fazlur Rehman" }
+    regions:
+      - { name: "Punjab",          top_issue: "Inflation / electricity", lean: "PML-N/PTI", note: "Most populous, most contested" }
+      - { name: "Sindh",           top_issue: "Karachi services / floods", lean: "PPP",   note: "Bhutto family stronghold + MQM in Karachi" }
+      - { name: "Khyber Pakhtunkhwa", top_issue: "Militancy resurgence", lean: "PTI", note: "PTI heartland" }
+      - { name: "Balochistan",     top_issue: "Insurgency / CPEC",     lean: "establishment + regional", note: "BNP, BAP, BLA insurgency" }
+
+  IRN:
+    leader:
+      name: "Ali Khamenei (Supreme Leader) / Masoud Pezeshkian (President)"
+      role: "Supreme Leader / President"
+      party_abbr: "Reformist coalition"
+      since: "1989 (Khamenei) / 2024-07 (Pezeshkian)"
+      approval_pct: null
+      approval_source: "(no reliable polling)"
+      bio: "Pezeshkian narrowly elected on reformist ticket post-Raisi crash; Khamenei retains ultimate authority"
+    parties:
+      - { abbr: Princip, name: "Principlists / Hard-liners (Paydari, etc.)", position: 4, social: 9, seats: 200, total_seats: 290, vote_share_pct: 50, color: "#003366", in_government: true,  leader: "Ghalibaf / Jalili camp" }
+      - { abbr: Moder,   name: "Moderates / Pragmatists",                    position: 2, social: 5, seats: 50, total_seats: 290, vote_share_pct: 18, color: "#888888", in_government: true,  leader: "Larijani / Rouhani allies" }
+      - { abbr: Reform,  name: "Reformist coalition (allowed candidates)",   position: 0, social: 3, seats: 35, total_seats: 290, vote_share_pct: 22, color: "#7c5cff", in_government: false, leader: "Pezeshkian / Khatami circle" }
+      - { abbr: Indep,   name: "Independents",                              position: null, social: null, seats: 5, total_seats: 290, vote_share_pct: 10, color: "#aaaaaa", in_government: false, leader: "—" }
+    regions:
+      - { name: "Tehran",          top_issue: "Inflation / hijab enforcement", lean: "Reform", note: "Reformist base; protests epicentre" }
+      - { name: "Religious cities (Qom, Mashhad)", top_issue: "Clerical authority", lean: "Princip", note: "Hardline strongholds" }
+      - { name: "Kurdish + Baluch peripheries", top_issue: "Ethnic repression", lean: "boycott", note: "Lowest turnout; periodic uprisings" }
+      - { name: "Khuzestan / Arab south", top_issue: "Water crisis / petro jobs", lean: "varied", note: "Resource wealth, restive population" }
+
+  UKR:
+    leader:
+      name: "Volodymyr Zelensky"
+      role: "President"
+      party_abbr: "SN"
+      since: "2019-05"
+      approval_pct: 56
+      approval_source: "KIIS, Mar 2026"
+      bio: "Wartime president; martial law has suspended elections since Feb 2022"
+    parties:
+      - { abbr: SN,     name: "Servant of the People", position: 1, social: -1, seats: 235, total_seats: 450, vote_share_pct: 43, color: "#39b54a", in_government: true,  leader: "David Arakhamia" }
+      - { abbr: ES,     name: "European Solidarity",   position: 2, social: 1,  seats: 27,  total_seats: 450, vote_share_pct: 8,  color: "#e91e63", in_government: false, leader: "Petro Poroshenko" }
+      - { abbr: BV,     name: "Batkivshchyna",         position: -1, social: 0, seats: 24, total_seats: 450, vote_share_pct: 8, color: "#ffd700", in_government: false, leader: "Yulia Tymoshenko" }
+      - { abbr: HOLOS,  name: "Holos",                 position: 1, social: -2, seats: 20, total_seats: 450, vote_share_pct: 6, color: "#ffea00", in_government: false, leader: "Kira Rudyk" }
+      - { abbr: OPZZ,   name: "Opposition Platform — For Life (banned)", position: -1, social: 4, seats: 0, total_seats: 450, vote_share_pct: 0, color: "#cc0000", in_government: false, leader: "(party suspended in war)" }
+    regions:
+      - { name: "Kyiv + Centre",       top_issue: "Air defence / corruption", lean: "SN/ES", note: "Civic-nationalist" }
+      - { name: "West (Lviv, Ivano-Frankivsk)", top_issue: "EU integration", lean: "ES/Batkivshchyna", note: "Most pro-Western, anti-Russian" }
+      - { name: "South / East (occupied/contested)", top_issue: "Reconstruction / displacement", lean: "—", note: "Donetsk/Luhansk/Zaporizhzhia/Kherson partly under occupation" }
+      - { name: "Odesa / Black Sea coast", top_issue: "Port economy / Russian missiles", lean: "SN", note: "Pro-Western shift since invasion" }
+
+  VEN:
+    leader:
+      name: "Nicolás Maduro"
+      role: "President (disputed)"
+      party_abbr: "PSUV"
+      since: "2013-04"
+      approval_pct: 24
+      approval_source: "ORC Consultores, Mar 2026"
+      bio: "PSUV; 2024 election widely held to be stolen from Edmundo González"
+    parties:
+      - { abbr: PSUV,    name: "United Socialist Party of Venezuela", position: -5, social: 6, seats: 256, total_seats: 277, vote_share_pct: 50, color: "#cc0000", in_government: true,  leader: "Diosdado Cabello / Maduro" }
+      - { abbr: PUD,     name: "Plataforma Unitaria Democrática",   position: 2,  social: -1, seats: 8,   total_seats: 277, vote_share_pct: 30, color: "#ffd700", in_government: false, leader: "María Corina Machado / Edmundo González" }
+      - { abbr: Comuneros, name: "Communist / dissident PSUV",       position: -7, social: 3, seats: 0,   total_seats: 277, vote_share_pct: 3,  color: "#660000", in_government: false, leader: "PCV (proscribed)" }
+      - { abbr: AD-CO,   name: "Acción Democrática (collaborationist)", position: 1, social: 0, seats: 11, total_seats: 277, vote_share_pct: 5, color: "#ffffff", in_government: false, leader: "Bernabé Gutiérrez" }
+    regions:
+      - { name: "Caracas / Capital",     top_issue: "Hyperinflation hangover / migration", lean: "PUD", note: "Opposition base" }
+      - { name: "Zulia (Maracaibo, oil)", top_issue: "Power outages / crude exports",     lean: "PUD", note: "Oil basin; chavismo collapsed there" }
+      - { name: "Llanos / interior",      top_issue: "Food / fuel access",                lean: "PSUV/contested", note: "Chavista rural base, eroded" }
+      - { name: "Border states (Táchira, Apure)", top_issue: "Migration / armed groups", lean: "swing", note: "Refugee corridor / FARC dissidents" }
+
+  EGY:
+    leader:
+      name: "Abdel Fattah el-Sisi"
+      role: "President"
+      party_abbr: "MFP"
+      since: "2014-06"
+      approval_pct: null
+      approval_source: "(no independent polling)"
+      bio: "Third term begun 2024; opposition jailed or exiled; structural IMF crisis"
+    parties:
+      - { abbr: MFP,    name: "Mostaqbal Watan (regime party)", position: 2, social: 5, seats: 316, total_seats: 596, vote_share_pct: 52, color: "#000000", in_government: true,  leader: "Abdel Wahab Abdel-Razek" }
+      - { abbr: RP,     name: "Republican People's Party",     position: 2, social: 5, seats: 50, total_seats: 596, vote_share_pct: 8, color: "#cc0000", in_government: true,  leader: "Hazem Omar" }
+      - { abbr: Wafd,   name: "Wafd Party",                    position: 1, social: 3, seats: 26, total_seats: 596, vote_share_pct: 4, color: "#1f77b4", in_government: true,  leader: "Abdel Sanad Yamama" }
+      - { abbr: Nour,   name: "Salafist Nour Party",           position: 3, social: 9, seats: 8,  total_seats: 596, vote_share_pct: 1, color: "#003300", in_government: false, leader: "Younis Makhioun" }
+      - { abbr: CivOpp, name: "Civil opposition (boycott / banned)", position: -1, social: -3, seats: 0, total_seats: 596, vote_share_pct: 0, color: "#7c5cff", in_government: false, leader: "Various exiled / detained" }
+    regions:
+      - { name: "Greater Cairo",   top_issue: "Cost of living / pound devaluation", lean: "regime", note: "Most populous; tightly policed" }
+      - { name: "Alexandria / Delta", top_issue: "Wheat / fuel subsidies",         lean: "regime/Wafd", note: "Mediterranean coast + agri belt" }
+      - { name: "Upper Egypt",     top_issue: "Poverty / unemployment",            lean: "regime", note: "Tribal politics, Salafi pockets" }
+      - { name: "Sinai",           top_issue: "Insurgency / military zone",        lean: "—",      note: "Restricted; insurgent activity" }
+
+  THA:
+    leader:
+      name: "Paetongtarn Shinawatra"
+      role: "Prime Minister"
+      party_abbr: "PT"
+      since: "2024-08"
+      approval_pct: 30
+      approval_source: "NIDA, Mar 2026"
+      bio: "Thaksin's daughter; took over after Srettha removed by court; PT-PPRP-Bhumjaithai coalition"
+    parties:
+      - { abbr: PP,     name: "People's Party (former Move Forward)", position: -2, social: -4, seats: 143, total_seats: 500, vote_share_pct: 38, color: "#ff8c00", in_government: false, leader: "Natthaphong Ruengpanyawut" }
+      - { abbr: PT,     name: "Pheu Thai",       position: -1, social: 1,  seats: 141, total_seats: 500, vote_share_pct: 29, color: "#cc0000", in_government: true,  leader: "Paetongtarn Shinawatra" }
+      - { abbr: BJT,    name: "Bhumjaithai",     position: 2,  social: 4,  seats: 71,  total_seats: 500, vote_share_pct: 10, color: "#003399", in_government: true,  leader: "Anutin Charnvirakul" }
+      - { abbr: PPRP,   name: "Palang Pracharath", position: 4, social: 6, seats: 40, total_seats: 500, vote_share_pct: 7, color: "#0066cc", in_government: true,  leader: "Prawit Wongsuwan" }
+      - { abbr: UTN,    name: "United Thai Nation", position: 4, social: 7, seats: 36, total_seats: 500, vote_share_pct: 7, color: "#1c4f9c", in_government: true,  leader: "Pirapan Salirathavibhaga" }
+      - { abbr: DEM,    name: "Democrat Party",   position: 3,  social: 3,  seats: 25, total_seats: 500, vote_share_pct: 4,  color: "#1f59cf", in_government: false, leader: "Chalermchai Sri-on" }
+    regions:
+      - { name: "Bangkok",         top_issue: "Civil liberties / royal reform", lean: "PP", note: "PP swept 2023 in capital" }
+      - { name: "North + Northeast (Isan)", top_issue: "Rice prices / debt",   lean: "PT", note: "Shinawatra base for 20+ years" }
+      - { name: "Central plains",  top_issue: "Industrial wages",               lean: "swing", note: "Auto sector & migrants" }
+      - { name: "South",           top_issue: "Insurgency / tourism",          lean: "DEM/BJT", note: "Muslim-majority Pattani / Yala / Narathiwat unrest" }
+
+  ESP:
+    leader:
+      name: "Pedro Sánchez"
+      role: "Prime Minister"
+      party_abbr: "PSOE"
+      since: "2018-06"
+      approval_pct: 33
+      approval_source: "CIS, Mar 2026"
+      bio: "PSOE leader; minority govt with Sumar + Catalan/Basque regionalists"
+    parties:
+      - { abbr: PSOE,  name: "Partido Socialista Obrero Español", position: -3, social: -2, seats: 121, total_seats: 350, vote_share_pct: 32, color: "#ed1c24", in_government: true,  leader: "Pedro Sánchez" }
+      - { abbr: PP,    name: "Partido Popular",                position: 4,  social: 3,  seats: 137, total_seats: 350, vote_share_pct: 34, color: "#1c4f9c", in_government: false, leader: "Alberto Núñez Feijóo" }
+      - { abbr: VOX,   name: "Vox",                            position: 6,  social: 8,  seats: 33,  total_seats: 350, vote_share_pct: 12, color: "#5cb830", in_government: false, leader: "Santiago Abascal" }
+      - { abbr: Sumar, name: "Sumar",                          position: -5, social: -4, seats: 27,  total_seats: 350, vote_share_pct: 8,  color: "#cc3399", in_government: true,  leader: "Yolanda Díaz" }
+      - { abbr: ERC,   name: "Esquerra Republicana de Catalunya", position: -3, social: -3, seats: 7, total_seats: 350, vote_share_pct: 2, color: "#ffea00", in_government: false, leader: "Oriol Junqueras" }
+      - { abbr: Junts, name: "Junts per Catalunya",            position: 1,  social: 0,  seats: 7,   total_seats: 350, vote_share_pct: 2,  color: "#0096c8", in_government: false, leader: "Carles Puigdemont" }
+      - { abbr: EHB,   name: "EH Bildu",                       position: -5, social: -3, seats: 6,   total_seats: 350, vote_share_pct: 2,  color: "#ff8c00", in_government: false, leader: "Arnaldo Otegi" }
+      - { abbr: PNV,   name: "Partido Nacionalista Vasco",     position: 1,  social: 1,  seats: 5,   total_seats: 350, vote_share_pct: 1.4, color: "#006633", in_government: false, leader: "Andoni Ortuzar" }
+    regions:
+      - { name: "Madrid",          top_issue: "Housing / centrist culture-war", lean: "PP",   note: "Ayuso's PP fortress" }
+      - { name: "Catalonia",       top_issue: "Independence + amnistía",        lean: "PSC/Junts/ERC", note: "Catalan question structurally split" }
+      - { name: "Andalusia",       top_issue: "Drought + jobs",                 lean: "PP",   note: "PP took it from PSOE in 2022" }
+      - { name: "Basque Country",  top_issue: "Self-rule + housing",            lean: "PNV/EHB", note: "Distinct party system" }
+      - { name: "Valencia",        top_issue: "DANA flood recovery",            lean: "swing", note: "PP took region in 2023; Mazón damaged by 2024 DANA" }
+
+  SWE:
+    leader:
+      name: "Ulf Kristersson"
+      role: "Prime Minister"
+      party_abbr: "M"
+      since: "2022-10"
+      approval_pct: 38
+      approval_source: "Demoskop, Mar 2026"
+      bio: "Moderaterna PM running M-KD-L govt with Sverigedemokraterna parliamentary support (Tidö agreement)"
+    parties:
+      - { abbr: SD,    name: "Sverigedemokraterna",         position: 5,  social: 7,  seats: 73,  total_seats: 349, vote_share_pct: 21, color: "#dddd00", in_government: false, leader: "Jimmie Åkesson" }
+      - { abbr: S,     name: "Socialdemokraterna",          position: -3, social: -2, seats: 107, total_seats: 349, vote_share_pct: 32, color: "#cc0033", in_government: false, leader: "Magdalena Andersson" }
+      - { abbr: M,     name: "Moderaterna",                 position: 3,  social: 1,  seats: 68,  total_seats: 349, vote_share_pct: 19, color: "#1f59cf", in_government: true,  leader: "Ulf Kristersson" }
+      - { abbr: V,     name: "Vänsterpartiet",              position: -6, social: -5, seats: 24,  total_seats: 349, vote_share_pct: 7,  color: "#cc0000", in_government: false, leader: "Nooshi Dadgostar" }
+      - { abbr: C,     name: "Centerpartiet",               position: 0,  social: -2, seats: 24,  total_seats: 349, vote_share_pct: 5,  color: "#006633", in_government: false, leader: "Muharrem Demirok" }
+      - { abbr: KD,    name: "Kristdemokraterna",           position: 3,  social: 5,  seats: 19,  total_seats: 349, vote_share_pct: 5,  color: "#22338b", in_government: true,  leader: "Ebba Busch" }
+      - { abbr: MP,    name: "Miljöpartiet",                position: -3, social: -5, seats: 18,  total_seats: 349, vote_share_pct: 5,  color: "#3d9b35", in_government: false, leader: "Daniel Helldén / Amanda Lind" }
+      - { abbr: L,     name: "Liberalerna",                 position: 2,  social: -1, seats: 16,  total_seats: 349, vote_share_pct: 4,  color: "#0099ff", in_government: true,  leader: "Johan Pehrson" }
+    regions:
+      - { name: "Stockholm",       top_issue: "Housing / segregation",          lean: "M/S/MP", note: "Capital still leans left + liberal centre" }
+      - { name: "Skåne / Malmö",   top_issue: "Gang shootings / integration",   lean: "SD/M",   note: "SD's strongest region" }
+      - { name: "Göteborg / West", top_issue: "Auto / industrial transition",   lean: "S/M",    note: "Volvo cluster; Geely ownership" }
+      - { name: "Norrland (North)", top_issue: "Wind / mining / battery",       lean: "S/SD",   note: "Northvolt + green steel reshape politics" }
+
+  HUN:
+    leader:
+      name: "Viktor Orbán"
+      role: "Prime Minister"
+      party_abbr: "Fidesz"
+      since: "2010-05"
+      approval_pct: 41
+      approval_source: "Medián, Mar 2026"
+      bio: "Fourth consecutive term; faces Péter Magyar's Tisza in Apr 2026 — the first competitive race since 2010"
+    parties:
+      - { abbr: Fidesz,  name: "Fidesz–KDNP",         position: 4,  social: 8,  seats: 134, total_seats: 199, vote_share_pct: 39, color: "#ff8c00", in_government: true,  leader: "Viktor Orbán" }
+      - { abbr: Tisza,   name: "Tisza Party",         position: 2,  social: 1,  seats: 0,   total_seats: 199, vote_share_pct: 41, color: "#0066cc", in_government: false, leader: "Péter Magyar" }
+      - { abbr: DK,      name: "Demokratikus Koalíció", position: -2, social: -2, seats: 10, total_seats: 199, vote_share_pct: 6, color: "#1f59cf", in_government: false, leader: "Ferenc Gyurcsány" }
+      - { abbr: Mom,     name: "Momentum",            position: -1, social: -3, seats: 8,   total_seats: 199, vote_share_pct: 3,  color: "#8855aa", in_government: false, leader: "Anna Donáth" }
+      - { abbr: MSZP,    name: "MSZP",                position: -3, social: -2, seats: 9,   total_seats: 199, vote_share_pct: 3,  color: "#cc0033", in_government: false, leader: "Imre Komjáthi" }
+      - { abbr: MiHaz,   name: "Mi Hazánk",           position: 5,  social: 9,  seats: 7,   total_seats: 199, vote_share_pct: 5,  color: "#003366", in_government: false, leader: "László Toroczkai" }
+    regions:
+      - { name: "Budapest",        top_issue: "Cost of living / corruption",     lean: "Tisza/DK", note: "Fidesz lost the capital decisively in 2019 + 2024" }
+      - { name: "Pest county",     top_issue: "Commuter cost-of-living",         lean: "Tisza/Fidesz", note: "Bellwether for next majority" }
+      - { name: "Great Plain (East)", top_issue: "EU funds / agri",              lean: "Fidesz", note: "Fidesz fortress" }
+      - { name: "Transdanubia (West)", top_issue: "German auto industry",        lean: "Fidesz/Tisza", note: "Audi/Mercedes/BMW dependence" }
+
+  COL:
+    leader:
+      name: "Gustavo Petro"
+      role: "President"
+      party_abbr: "Pacto"
+      since: "2022-08"
+      approval_pct: 31
+      approval_source: "Invamer, Mar 2026"
+      bio: "First left-wing president; term-limited 2026; deeply polarising"
+    parties:
+      - { abbr: Pacto,  name: "Pacto Histórico",          position: -4, social: -3, seats: 30, total_seats: 188, vote_share_pct: 19, color: "#cc0033", in_government: true,  leader: "Petro / Iván Cepeda" }
+      - { abbr: CD,     name: "Centro Democrático",       position: 5,  social: 6,  seats: 21, total_seats: 188, vote_share_pct: 14, color: "#003366", in_government: false, leader: "Álvaro Uribe" }
+      - { abbr: CR,     name: "Cambio Radical",           position: 3,  social: 3,  seats: 18, total_seats: 188, vote_share_pct: 10, color: "#0066cc", in_government: false, leader: "Germán Vargas Lleras" }
+      - { abbr: PL,     name: "Partido Liberal",          position: 1,  social: 1,  seats: 32, total_seats: 188, vote_share_pct: 14, color: "#cc0000", in_government: false, leader: "César Gaviria" }
+      - { abbr: PC,     name: "Partido Conservador",      position: 3,  social: 5,  seats: 28, total_seats: 188, vote_share_pct: 12, color: "#0099cc", in_government: false, leader: "Efraín Cepeda" }
+      - { abbr: U,      name: "Partido de la U",          position: 2,  social: 2,  seats: 16, total_seats: 188, vote_share_pct: 8,  color: "#ff8c00", in_government: false, leader: "Dilian Francisca Toro" }
+      - { abbr: Verde,  name: "Alianza Verde",            position: -2, social: -3, seats: 14, total_seats: 188, vote_share_pct: 8,  color: "#3d9b35", in_government: false, leader: "Carlos Camargo" }
+    regions:
+      - { name: "Bogotá D.C.",     top_issue: "Insecurity + transit",           lean: "Pacto/Verde", note: "Capital flipped to Pacto in 2022" }
+      - { name: "Antioquia (Medellín)", top_issue: "Anti-Petro economic",       lean: "CD/CR",   note: "Uribe heartland" }
+      - { name: "Caribbean coast", top_issue: "Climate + poverty",              lean: "PL/Pacto", note: "Costa party machines decisive" }
+      - { name: "Pacific (Cauca, Nariño, Chocó)", top_issue: "FARC dissident violence", lean: "Pacto", note: "Petro's strongest region in 2022" }
+      - { name: "Orinoquía / Amazon", top_issue: "Coca crops + extraction",     lean: "swing",  note: "Frontier zones; armed-actor pressure" }
+
+  CHL:
+    leader:
+      name: "José Antonio Kast"
+      role: "President-elect (Dec 2025 runoff winner)"
+      party_abbr: "PR"
+      since: "2026-03"
+      approval_pct: 51
+      approval_source: "Cadem, Mar 2026"
+      bio: "Republican Party's Kast defeated Communist Jara in Dec 2025 runoff; sworn in March 2026"
+    parties:
+      - { abbr: PR,     name: "Partido Republicano",      position: 6,  social: 7,  seats: 22, total_seats: 155, vote_share_pct: 18, color: "#ff8c00", in_government: true,  leader: "José Antonio Kast" }
+      - { abbr: RN,     name: "Renovación Nacional",      position: 4,  social: 3,  seats: 24, total_seats: 155, vote_share_pct: 14, color: "#003366", in_government: true,  leader: "Rodrigo Galilea" }
+      - { abbr: UDI,    name: "Unión Demócrata Independiente", position: 5, social: 5, seats: 23, total_seats: 155, vote_share_pct: 13, color: "#0066cc", in_government: true,  leader: "Javier Macaya" }
+      - { abbr: PCCh,   name: "Partido Comunista",        position: -7, social: -3, seats: 12, total_seats: 155, vote_share_pct: 8,  color: "#cc0000", in_government: false, leader: "Lautaro Carmona / Jeannette Jara" }
+      - { abbr: FA,     name: "Frente Amplio",            position: -5, social: -5, seats: 14, total_seats: 155, vote_share_pct: 11, color: "#3d9b35", in_government: false, leader: "Boric / Constanza Martínez" }
+      - { abbr: PS,     name: "Partido Socialista",       position: -3, social: -2, seats: 16, total_seats: 155, vote_share_pct: 10, color: "#cc3333", in_government: false, leader: "Paulina Vodanovic" }
+      - { abbr: PDC,    name: "Democracia Cristiana",     position: 0,  social: 1,  seats: 8,  total_seats: 155, vote_share_pct: 4,  color: "#003399", in_government: false, leader: "Alberto Undurraga" }
+    regions:
+      - { name: "Santiago Metro",  top_issue: "Public security + transit",      lean: "swing", note: "RM has nearly half the electorate" }
+      - { name: "Valparaíso",      top_issue: "Coastal housing + jobs",          lean: "FA/PR", note: "Boric's home region" }
+      - { name: "North (mining)",  top_issue: "Copper + lithium royalties",     lean: "PR/RN", note: "Mining communities + migration" }
+      - { name: "South / Araucanía", top_issue: "Mapuche conflict",              lean: "PR/UDI", note: "Forestry + indigenous tensions" }
+
+  BGD:
+    leader:
+      name: "Muhammad Yunus"
+      role: "Chief Adviser (interim govt)"
+      party_abbr: "interim"
+      since: "2024-08"
+      approval_pct: 64
+      approval_source: "Voice of America BD survey, Mar 2026"
+      bio: "Nobel laureate leading interim govt after July 2024 student-led ouster of Hasina; elections set Feb 2026"
+    parties:
+      - { abbr: BNP,    name: "Bangladesh Nationalist Party", position: 3, social: 4, seats: 0, total_seats: 300, vote_share_pct: 38, color: "#cc0000", in_government: false, leader: "Khaleda Zia / Tarique Rahman" }
+      - { abbr: JeI,    name: "Jamaat-e-Islami",          position: 4,  social: 9,  seats: 0,  total_seats: 300, vote_share_pct: 14, color: "#003300", in_government: false, leader: "Shafiqur Rahman" }
+      - { abbr: AL,     name: "Awami League (banned)",    position: -1, social: 1,  seats: 0,  total_seats: 300, vote_share_pct: 0,  color: "#006633", in_government: false, leader: "Sheikh Hasina (in exile in India)" }
+      - { abbr: NCP,    name: "National Citizen Party (student-led)", position: -2, social: -2, seats: 0, total_seats: 300, vote_share_pct: 12, color: "#7c5cff", in_government: false, leader: "Nahid Islam / Sarjis Alam" }
+      - { abbr: JP,     name: "Jatiya Party (Ershad)",    position: 2,  social: 3,  seats: 0,  total_seats: 300, vote_share_pct: 5,  color: "#33aa33", in_government: false, leader: "G.M. Quader" }
+    regions:
+      - { name: "Dhaka",           top_issue: "Justice + economy",              lean: "BNP/NCP", note: "July 2024 protests ground zero" }
+      - { name: "Chittagong",      top_issue: "Port economy + Rohingya",         lean: "BNP/JeI", note: "BNP-Jamaat alliance strong" }
+      - { name: "Sylhet",          top_issue: "Floods + remittances (UK diaspora)", lean: "BNP", note: "AL's traditional base; collapsing" }
+      - { name: "Rajshahi / Khulna", top_issue: "Border + minorities",           lean: "BNP/JeI", note: "Hindu minority concerns" }
+
+  VNM:
+    leader:
+      name: "Tô Lâm"
+      role: "General Secretary of CPV / President"
+      party_abbr: "CPV"
+      since: "2024-08"
+      approval_pct: null
+      approval_source: "(no independent polling); Asian Barometer wave 5 limited Vietnam fieldwork"
+      bio: "Former Public Security Minister; took helm after Trọng's death; consolidating anti-corruption + factional power"
+    parties:
+      - { abbr: CPV,    name: "Communist Party of Vietnam", position: 2, social: 6, seats: 485, total_seats: 500, vote_share_pct: 100, color: "#cc0000", in_government: true,  leader: "Tô Lâm" }
+      - { abbr: Indep,  name: "Approved independents",      position: null, social: null, seats: 15, total_seats: 500, vote_share_pct: 0, color: "#888888", in_government: false, leader: "(party-vetted)" }
+    regions:
+      - { name: "Hanoi (North)",        top_issue: "Anti-corruption + party politics", lean: "CPV", note: "Political-bureau heartland" }
+      - { name: "Ho Chi Minh City (South)", top_issue: "Cost of living + economy",     lean: "CPV/reform", note: "Commercial engine; reform-oriented within party" }
+      - { name: "Mekong Delta",         top_issue: "Climate + saltwater intrusion",     lean: "CPV", note: "Rice basin vulnerable to climate" }
+      - { name: "Central Highlands",    top_issue: "Indigenous + church repression",    lean: "CPV", note: "Coffee region; ethnic Montagnard pressure" }
+
+  ETH:
+    leader:
+      name: "Abiy Ahmed"
+      role: "Prime Minister"
+      party_abbr: "PP"
+      since: "2018-04"
+      approval_pct: 41
+      approval_source: "Afrobarometer R10 (Ethiopia 2024)"
+      bio: "Nobel laureate (2019) turned wartime PM; post-Tigray reckoning + active Amhara/Oromo conflicts"
+    parties:
+      - { abbr: PP,     name: "Prosperity Party",         position: 2,  social: 3,  seats: 410, total_seats: 547, vote_share_pct: 78, color: "#ff7f00", in_government: true,  leader: "Abiy Ahmed" }
+      - { abbr: TPLF,   name: "Tigray People's Liberation Front", position: -2, social: 2, seats: 0, total_seats: 547, vote_share_pct: 0, color: "#cc0000", in_government: false, leader: "Debretsion Gebremichael" }
+      - { abbr: Fano,   name: "Amhara Fano (armed)",      position: 1,  social: 7,  seats: 0,   total_seats: 547, vote_share_pct: 0,  color: "#003366", in_government: false, leader: "(decentralised militias)" }
+      - { abbr: OLA,    name: "Oromo Liberation Army (armed)", position: -2, social: 2, seats: 0, total_seats: 547, vote_share_pct: 0, color: "#003300", in_government: false, leader: "Jaal Marroo" }
+      - { abbr: EZEMA,  name: "Ethiopian Citizens for Social Justice", position: 1, social: 1, seats: 0, total_seats: 547, vote_share_pct: 0, color: "#7c5cff", in_government: false, leader: "Berhanu Nega" }
+    regions:
+      - { name: "Addis Ababa",     top_issue: "Inflation + housing",            lean: "PP", note: "Capital — federal employees + service economy" }
+      - { name: "Amhara",          top_issue: "Fano insurgency + autonomy",     lean: "Fano",  note: "Federal forces engaged; high casualty" }
+      - { name: "Oromia",          top_issue: "OLA insurgency + ethnic killings", lean: "PP/OLA", note: "Largest region; Abiy's home" }
+      - { name: "Tigray",          top_issue: "Reconstruction + war crimes",     lean: "TPLF", note: "Cease-fire holding but fragile" }
+      - { name: "Somali / Afar",   top_issue: "Pastoralism + drought",           lean: "PP", note: "Border with Somalia; food insecurity" }
+
+  SAU:
+    leader:
+      name: "Mohammed bin Salman (Crown Prince + PM)"
+      role: "Crown Prince + Prime Minister"
+      party_abbr: "monarchy"
+      since: "2017-06"
+      approval_pct: 78
+      approval_source: "Arab Barometer Wave 8 (Saudi 2024); Doha Institute survey"
+      bio: "De facto ruler; King Salman ceremonial head; Vision 2030 + NEOM + Khashoggi legacy"
+    parties:
+      - { abbr: AlSaud, name: "House of Saud (ruling family)", position: 4, social: 6, seats: 150, total_seats: 150, vote_share_pct: 100, color: "#006633", in_government: true,  leader: "MBS" }
+      - { abbr: Wahabi, name: "Religious establishment (advisory)", position: 5, social: 9, seats: 0, total_seats: 150, vote_share_pct: 0, color: "#003300", in_government: false, leader: "Council of Senior Scholars" }
+      - { abbr: Tech,   name: "Technocrats (Vision 2030)", position: 3, social: 2, seats: 0, total_seats: 150, vote_share_pct: 0, color: "#0099cc", in_government: false, leader: "Khalid Al-Falih + PIF leadership" }
+      - { abbr: Opp,    name: "Diaspora opposition",       position: 0, social: -2, seats: 0, total_seats: 150, vote_share_pct: 0, color: "#cc0000", in_government: false, leader: "(exiled / detained)" }
+    regions:
+      - { name: "Riyadh (Najd)",   top_issue: "Vision 2030 megaprojects",       lean: "AlSaud", note: "Capital + royal heartland" }
+      - { name: "Eastern Province", top_issue: "Oil + Shia minority restiveness", lean: "AlSaud", note: "Aramco + 1.5M Shia population" }
+      - { name: "Hejaz (Mecca / Medina)", top_issue: "Pilgrimage economy",      lean: "AlSaud", note: "Religious authority centre" }
+      - { name: "NEOM / Tabuk (NW)", top_issue: "Megaproject displacement",      lean: "AlSaud", note: "Howeitat tribe forced relocations" }
+
+  ARE:
+    leader:
+      name: "Mohammed bin Zayed Al Nahyan"
+      role: "President of UAE / Ruler of Abu Dhabi"
+      party_abbr: "monarchy"
+      since: "2022-05"
+      approval_pct: 88
+      approval_source: "(no independent polling); YouGov Gulf 2024 estimates high"
+      bio: "MBZ; leads federation of seven emirates; key foreign-policy hawk regionally"
+    parties:
+      - { abbr: AlNahyan, name: "Abu Dhabi ruling family", position: 3, social: 4, seats: 20, total_seats: 40, vote_share_pct: 50, color: "#cc0000", in_government: true, leader: "MBZ" }
+      - { abbr: AlMaktoum, name: "Dubai ruling family",   position: 2, social: 2, seats: 8,  total_seats: 40, vote_share_pct: 20, color: "#006633", in_government: true, leader: "Mohammed bin Rashid" }
+      - { abbr: OtherEm, name: "Other emirate ruling families (Sharjah, Ajman, RAK, UAQ, Fujairah)", position: 3, social: 4, seats: 12, total_seats: 40, vote_share_pct: 30, color: "#888888", in_government: true, leader: "Various" }
+    regions:
+      - { name: "Abu Dhabi",       top_issue: "Oil + sovereign wealth",         lean: "AlNahyan", note: "Capital + 90% of UAE oil" }
+      - { name: "Dubai",           top_issue: "Real-estate + commerce",         lean: "AlMaktoum", note: "Trade entrepôt" }
+      - { name: "Northern emirates (Sharjah, Ajman, RAK, UAQ, Fujairah)", top_issue: "Federal transfers + jobs", lean: "rulers", note: "Less oil; depend on Abu Dhabi subventions" }
+
+  PER:
+    leader: { name: "Dina Boluarte", role: "President", party_abbr: "Indep", since: "2022-12", approval_pct: 7, approval_source: "Ipsos, Mar 2026", bio: "Took over after Castillo's self-coup; lowest-approval leader in LatAm" }
+    parties:
+      - { abbr: FP,    name: "Fuerza Popular (Fujimorista)", position: 4,  social: 6,  seats: 24, total_seats: 130, vote_share_pct: 18, color: "#ff8c00", in_government: false, leader: "Keiko Fujimori" }
+      - { abbr: PL,    name: "Perú Libre",                    position: -5, social: 3,  seats: 14, total_seats: 130, vote_share_pct: 10, color: "#cc0000", in_government: false, leader: "Vladimir Cerrón" }
+      - { abbr: AP,    name: "Acción Popular",                position: 1,  social: 1,  seats: 16, total_seats: 130, vote_share_pct: 10, color: "#cc0033", in_government: false, leader: "Edwin Martínez" }
+      - { abbr: APP,   name: "Alianza para el Progreso",      position: 2,  social: 2,  seats: 15, total_seats: 130, vote_share_pct: 8,  color: "#3399ff", in_government: false, leader: "César Acuña" }
+      - { abbr: RP,    name: "Renovación Popular",            position: 5,  social: 7,  seats: 9,  total_seats: 130, vote_share_pct: 6,  color: "#003366", in_government: false, leader: "Rafael López Aliaga" }
+      - { abbr: SP,    name: "Somos Perú",                    position: 1,  social: 1,  seats: 7,  total_seats: 130, vote_share_pct: 5,  color: "#0099cc", in_government: false, leader: "Patricia Li" }
+      - { abbr: AvP,   name: "Avanza País",                   position: 3,  social: 3,  seats: 8,  total_seats: 130, vote_share_pct: 5,  color: "#cc6600", in_government: false, leader: "Hernando de Soto" }
+    regions:
+      - { name: "Lima",          top_issue: "Crime + transport",        lean: "Fujimorista/RP", note: "Capital + 1/3 electorate" }
+      - { name: "Northern coast", top_issue: "Mining + remittances",    lean: "swing", note: "Trujillo / Piura / Lambayeque" }
+      - { name: "Andean south",   top_issue: "Mining royalties + Castillo legacy", lean: "PL", note: "Puno / Cusco / Apurímac" }
+      - { name: "Amazon",         top_issue: "Cocaine + indigenous",    lean: "swing", note: "Loreto / Ucayali / Madre de Dios" }
+
+  ECU:
+    leader: { name: "Daniel Noboa", role: "President", party_abbr: "ADN", since: "2023-11", approval_pct: 53, approval_source: "Cedatos, Mar 2026", bio: "Banana-empire heir; mano-dura security; re-elected April 2025" }
+    parties:
+      - { abbr: ADN,   name: "Acción Democrática Nacional", position: 3,  social: 2,  seats: 66, total_seats: 151, vote_share_pct: 45, color: "#1f59cf", in_government: true,  leader: "Daniel Noboa" }
+      - { abbr: RC,    name: "Revolución Ciudadana (Correísmo)", position: -4, social: -1, seats: 67, total_seats: 151, vote_share_pct: 44, color: "#33aa33", in_government: false, leader: "Luisa González / Rafael Correa" }
+      - { abbr: PSC,   name: "Partido Social Cristiano",    position: 5,  social: 5,  seats: 4,  total_seats: 151, vote_share_pct: 4,  color: "#cc0000", in_government: false, leader: "Henry Kronfle" }
+      - { abbr: PK,    name: "Pachakutik (indigenous)",     position: -3, social: -2, seats: 5,  total_seats: 151, vote_share_pct: 5,  color: "#ffd700", in_government: false, leader: "Marlon Vargas" }
+    regions:
+      - { name: "Costa (Guayaquil)", top_issue: "Cartel violence", lean: "ADN/PSC", note: "Largest city; cocaine corridor" }
+      - { name: "Sierra (Quito)",    top_issue: "Inflation + indigenous", lean: "swing", note: "Capital + indigenous belt" }
+      - { name: "Amazon",            top_issue: "Oil + ITT block",  lean: "PK/RC",   note: "Yasuní + indigenous federation" }
+
+  BOL:
+    leader: { name: "Rodrigo Paz Pereira", role: "President", party_abbr: "PDC", since: "2025-11", approval_pct: 56, approval_source: "Tu Voto Cuenta, Mar 2026", bio: "Centrist Christian-Democrat; ended 19y MAS dominance in Aug 2025 election" }
+    parties:
+      - { abbr: PDC,   name: "Partido Demócrata Cristiano", position: 1,  social: 2,  seats: 50, total_seats: 130, vote_share_pct: 33, color: "#3366cc", in_government: true,  leader: "Rodrigo Paz" }
+      - { abbr: LIBRE, name: "Libre (Quiroga)",             position: 3,  social: 3,  seats: 47, total_seats: 130, vote_share_pct: 29, color: "#ff8c00", in_government: false, leader: "Tuto Quiroga" }
+      - { abbr: MAS,   name: "MAS-IPSP (Arce wing)",        position: -4, social: -2, seats: 12, total_seats: 130, vote_share_pct: 9,  color: "#0066cc", in_government: false, leader: "Luis Arce" }
+      - { abbr: Evis,  name: "MAS-Evo (banned candidate)",  position: -5, social: -1, seats: 0,  total_seats: 130, vote_share_pct: 7,  color: "#003366", in_government: false, leader: "Evo Morales (disqualified)" }
+      - { abbr: AP,    name: "Alianza Popular",             position: 0,  social: 0,  seats: 12, total_seats: 130, vote_share_pct: 9,  color: "#33aa33", in_government: false, leader: "Andrónico Rodríguez" }
+    regions:
+      - { name: "La Paz / El Alto", top_issue: "Indigenous + dollar shortage", lean: "MAS/PDC", note: "MAS heartland — cracking" }
+      - { name: "Santa Cruz",       top_issue: "Agribusiness + autonomy",     lean: "LIBRE/PDC", note: "Eastern lowlands; anti-MAS" }
+      - { name: "Cochabamba",       top_issue: "Coca + Evo politics",         lean: "Evis", note: "Chapare cocalero base" }
+      - { name: "Potosí / Oruro",   top_issue: "Lithium + mining",            lean: "MAS/PDC", note: "Salar de Uyuni lithium reserves" }
+
+  URY:
+    leader: { name: "Yamandú Orsi", role: "President", party_abbr: "FA", since: "2025-03", approval_pct: 51, approval_source: "Equipos, Mar 2026", bio: "Frente Amplio; defeated Delgado in Nov 2024 runoff; left returns" }
+    parties:
+      - { abbr: FA,    name: "Frente Amplio",                position: -3, social: -2, seats: 48, total_seats: 99, vote_share_pct: 44, color: "#cc0033", in_government: true,  leader: "Yamandú Orsi" }
+      - { abbr: PN,    name: "Partido Nacional (Blancos)",   position: 3,  social: 2,  seats: 29, total_seats: 99, vote_share_pct: 27, color: "#0099ff", in_government: false, leader: "Álvaro Delgado" }
+      - { abbr: PC,    name: "Partido Colorado",             position: 2,  social: 1,  seats: 17, total_seats: 99, vote_share_pct: 16, color: "#cc0000", in_government: false, leader: "Andrés Ojeda" }
+      - { abbr: CA,    name: "Cabildo Abierto",              position: 5,  social: 6,  seats: 1,  total_seats: 99, vote_share_pct: 3,  color: "#003366", in_government: false, leader: "Guido Manini Ríos" }
+      - { abbr: II,    name: "Identidad Soberana",           position: 4,  social: 7,  seats: 2,  total_seats: 99, vote_share_pct: 2,  color: "#666666", in_government: false, leader: "Gustavo Salle" }
+    regions:
+      - { name: "Montevideo",       top_issue: "Crime + housing",         lean: "FA",  note: "Capital — half the country, FA fortress" }
+      - { name: "Canelones",        top_issue: "Cost of living",          lean: "FA",  note: "Suburb belt; Orsi's home" }
+      - { name: "Interior (rural)", top_issue: "Beef prices + drought",   lean: "PN",  note: "Estancias / cattle ranches" }
+      - { name: "Border (Rivera/Cerro Largo)", top_issue: "Smuggling + Brazil currency", lean: "swing", note: "Peso vs real cycles" }
+
+  CRI:
+    leader: { name: "Rodrigo Chaves Robles", role: "President", party_abbr: "PPSD", since: "2022-05", approval_pct: 48, approval_source: "CIEP, Feb 2026", bio: "Anti-establishment outsider; clashed with judiciary; term-limited 2026" }
+    parties:
+      - { abbr: PPSD,  name: "Partido Progreso Social Democrático", position: 2, social: 4, seats: 9, total_seats: 57, vote_share_pct: 17, color: "#ff8c00", in_government: true,  leader: "Chaves" }
+      - { abbr: PLN,   name: "Partido Liberación Nacional", position: 1,  social: 1,  seats: 19, total_seats: 57, vote_share_pct: 28, color: "#33aa33", in_government: false, leader: "José María Figueres" }
+      - { abbr: PUSC,  name: "Partido Unidad Social Cristiana", position: 3, social: 3, seats: 9,  total_seats: 57, vote_share_pct: 17, color: "#003399", in_government: false, leader: "Erwen Masís" }
+      - { abbr: NR,    name: "Nueva República",              position: 5,  social: 8,  seats: 7,  total_seats: 57, vote_share_pct: 13, color: "#cc0033", in_government: false, leader: "Fabricio Alvarado" }
+      - { abbr: FA-CR, name: "Frente Amplio",                position: -5, social: -3, seats: 6,  total_seats: 57, vote_share_pct: 9,  color: "#cc0000", in_government: false, leader: "Ana Cristina Quirós" }
+    regions:
+      - { name: "Gran Área Metropolitana", top_issue: "Crime + traffic", lean: "PPSD/PLN", note: "Half the country; San José metro" }
+      - { name: "Caribe (Limón)",          top_issue: "Drug-trafficking", lean: "swing",   note: "Atlantic port; Afro-Caribbean" }
+      - { name: "Pacific coast",           top_issue: "Tourism + fisheries", lean: "PLN", note: "Guanacaste resort belt" }
+      - { name: "Northern + Talamanca",    top_issue: "Migration + indigenous", lean: "swing", note: "Border with Nicaragua" }
+
+  NLD:
+    leader: { name: "Dick Schoof", role: "Prime Minister", party_abbr: "Indep", since: "2024-07", approval_pct: 36, approval_source: "I&O Research, Mar 2026", bio: "Technocrat PM of Wilders-led PVV-VVD-NSC-BBB cabinet; 7 cabinet resignations in 12mo" }
+    parties:
+      - { abbr: PVV,   name: "Partij voor de Vrijheid",      position: 4,  social: 8,  seats: 37, total_seats: 150, vote_share_pct: 24, color: "#003366", in_government: true,  leader: "Geert Wilders" }
+      - { abbr: GLPvdA, name: "GroenLinks-PvdA",             position: -4, social: -4, seats: 25, total_seats: 150, vote_share_pct: 16, color: "#cc0033", in_government: false, leader: "Frans Timmermans" }
+      - { abbr: VVD,   name: "Volkspartij voor Vrijheid en Democratie", position: 4, social: 1, seats: 24, total_seats: 150, vote_share_pct: 15, color: "#1f59cf", in_government: true, leader: "Dilan Yeşilgöz-Zegerius" }
+      - { abbr: NSC,   name: "Nieuw Sociaal Contract",       position: 1,  social: 2,  seats: 20, total_seats: 150, vote_share_pct: 13, color: "#cc6600", in_government: true,  leader: "Nicolien van Vroonhoven" }
+      - { abbr: D66,   name: "Democraten 66",                position: -1, social: -3, seats: 9,  total_seats: 150, vote_share_pct: 7,  color: "#3d9b35", in_government: false, leader: "Rob Jetten" }
+      - { abbr: BBB,   name: "BoerBurgerBeweging",           position: 3,  social: 5,  seats: 7,  total_seats: 150, vote_share_pct: 5,  color: "#80bb43", in_government: true,  leader: "Caroline van der Plas" }
+      - { abbr: SP,    name: "Socialistische Partij",        position: -5, social: -1, seats: 5,  total_seats: 150, vote_share_pct: 4,  color: "#cc0000", in_government: false, leader: "Jimmy Dijk" }
+      - { abbr: CDA,   name: "Christen-Democratisch Appèl",  position: 2,  social: 3,  seats: 5,  total_seats: 150, vote_share_pct: 4,  color: "#3d9b35", in_government: false, leader: "Henri Bontenbal" }
+    regions:
+      - { name: "Randstad (Amsterdam-Rotterdam-Den Haag-Utrecht)", top_issue: "Housing + asylum", lean: "GLPvdA/D66/PVV", note: "60% of population; cleavage core" }
+      - { name: "Zuid (North Brabant + Limburg)", top_issue: "Border + Vlaams influence", lean: "PVV/VVD", note: "Catholic / Belgian-leaning" }
+      - { name: "Noord + Friesland", top_issue: "Nitrogen / agriculture", lean: "BBB/PVV",  note: "Farmer-protest heartland" }
+
+  BEL:
+    leader: { name: "Bart De Wever", role: "Prime Minister", party_abbr: "N-VA", since: "2025-02", approval_pct: 41, approval_source: "Ipsos BE, Mar 2026", bio: "Flemish nationalist; Arizona coalition (N-VA + MR + Les Engagés + CD&V + Vooruit)" }
+    parties:
+      - { abbr: NVA,   name: "Nieuw-Vlaamse Alliantie",      position: 4,  social: 4,  seats: 24, total_seats: 150, vote_share_pct: 17, color: "#fcdc00", in_government: true,  leader: "Bart De Wever" }
+      - { abbr: VB,    name: "Vlaams Belang",                position: 6,  social: 8,  seats: 20, total_seats: 150, vote_share_pct: 14, color: "#cc6600", in_government: false, leader: "Tom Van Grieken" }
+      - { abbr: MR,    name: "Mouvement Réformateur",        position: 4,  social: 1,  seats: 20, total_seats: 150, vote_share_pct: 11, color: "#0099cc", in_government: true,  leader: "Georges-Louis Bouchez" }
+      - { abbr: PS,    name: "Parti Socialiste",             position: -3, social: -2, seats: 16, total_seats: 150, vote_share_pct: 9,  color: "#cc0033", in_government: false, leader: "Paul Magnette" }
+      - { abbr: Vooruit, name: "Vooruit (Flemish socialists)", position: -3, social: -2, seats: 13, total_seats: 150, vote_share_pct: 9, color: "#cc0000", in_government: true, leader: "Conner Rousseau" }
+      - { abbr: Engages, name: "Les Engagés",                position: 1,  social: 0,  seats: 14, total_seats: 150, vote_share_pct: 7,  color: "#3d9b35", in_government: true,  leader: "Maxime Prévot" }
+      - { abbr: PTB,   name: "PTB-PVDA",                     position: -7, social: -3, seats: 15, total_seats: 150, vote_share_pct: 11, color: "#cc0000", in_government: false, leader: "Raoul Hedebouw" }
+      - { abbr: CDV,   name: "Christen-Democratisch en Vlaams", position: 2, social: 3, seats: 11, total_seats: 150, vote_share_pct: 6, color: "#ff8c00", in_government: true, leader: "Sammy Mahdi" }
+      - { abbr: Groen, name: "Groen + Ecolo",                position: -3, social: -4, seats: 9,  total_seats: 150, vote_share_pct: 7,  color: "#3d9b35", in_government: false, leader: "Jeremie Vaneeckhout / Marie Lecocq" }
+    regions:
+      - { name: "Flanders",         top_issue: "Migration + identity",     lean: "N-VA/VB", note: "60% of country; right-leaning" }
+      - { name: "Wallonia",         top_issue: "Industrial decline",       lean: "PS/PTB",  note: "French-speaking; left bloc" }
+      - { name: "Brussels (bilingual)", top_issue: "Cost of living",       lean: "PS/Engages/MR", note: "EU institutions cluster" }
+
+  GRC:
+    leader: { name: "Kyriakos Mitsotakis", role: "Prime Minister", party_abbr: "ND", since: "2019-07", approval_pct: 36, approval_source: "Pulse, Mar 2026", bio: "Néa Dimokratía PM, second term 2023-now; Tempi disaster fallout" }
+    parties:
+      - { abbr: ND,    name: "Néa Dimokratía",               position: 4,  social: 4,  seats: 156, total_seats: 300, vote_share_pct: 27, color: "#003366", in_government: true,  leader: "Mitsotakis" }
+      - { abbr: PASOK, name: "PASOK-KINAL",                  position: -2, social: -1, seats: 32, total_seats: 300, vote_share_pct: 14, color: "#3d9b35", in_government: false, leader: "Nikos Androulakis" }
+      - { abbr: SYRIZA, name: "SYRIZA-PA",                  position: -4, social: -3, seats: 21, total_seats: 300, vote_share_pct: 9,  color: "#cc0000", in_government: false, leader: "Sokratis Famellos" }
+      - { abbr: KKE,   name: "Communist Party of Greece",    position: -7, social: -2, seats: 21, total_seats: 300, vote_share_pct: 8,  color: "#cc0033", in_government: false, leader: "Dimitris Koutsoumpas" }
+      - { abbr: Spartiates, name: "Spartans",               position: 6,  social: 9,  seats: 12, total_seats: 300, vote_share_pct: 5,  color: "#000000", in_government: false, leader: "Vasilis Stigkas" }
+      - { abbr: ELL,   name: "Elliniki Lysi",                position: 5,  social: 7,  seats: 12, total_seats: 300, vote_share_pct: 4,  color: "#003399", in_government: false, leader: "Kyriakos Velopoulos" }
+      - { abbr: NIKI,  name: "NIKI",                         position: 5,  social: 9,  seats: 10, total_seats: 300, vote_share_pct: 4,  color: "#cc6600", in_government: false, leader: "Dimitrios Natsios" }
+    regions:
+      - { name: "Attica (Athens)",  top_issue: "Cost of living + Tempi",  lean: "swing", note: "Half the electorate; SYRIZA's old base" }
+      - { name: "Northern Greece + Thessaloniki", top_issue: "Border + Macedonia", lean: "ND", note: "ND fortress" }
+      - { name: "Crete + islands",  top_issue: "Migration + tourism",     lean: "PASOK/ND", note: "Tourism economy" }
+
+  PRT:
+    leader: { name: "Luís Montenegro", role: "Prime Minister", party_abbr: "PSD", since: "2024-04", approval_pct: 40, approval_source: "Eurosondagem, Mar 2026", bio: "AD coalition (PSD+CDS+PPM); minority govt with Chega kingmaker" }
+    parties:
+      - { abbr: PSD,   name: "Partido Social Democrata (AD)", position: 3,  social: 2,  seats: 80, total_seats: 230, vote_share_pct: 29, color: "#ff8c00", in_government: true,  leader: "Luís Montenegro" }
+      - { abbr: PS,    name: "Partido Socialista",            position: -2, social: -2, seats: 78, total_seats: 230, vote_share_pct: 28, color: "#cc0033", in_government: false, leader: "Pedro Nuno Santos" }
+      - { abbr: Chega, name: "Chega",                          position: 6,  social: 8,  seats: 50, total_seats: 230, vote_share_pct: 18, color: "#003366", in_government: false, leader: "André Ventura" }
+      - { abbr: IL,    name: "Iniciativa Liberal",            position: 5,  social: -1, seats: 8,  total_seats: 230, vote_share_pct: 5,  color: "#0099ff", in_government: false, leader: "Rui Rocha" }
+      - { abbr: BE,    name: "Bloco de Esquerda",             position: -6, social: -4, seats: 5,  total_seats: 230, vote_share_pct: 4,  color: "#cc0000", in_government: false, leader: "Mariana Mortágua" }
+      - { abbr: PCP,   name: "Partido Comunista Português",   position: -7, social: -2, seats: 4,  total_seats: 230, vote_share_pct: 3,  color: "#cc0000", in_government: false, leader: "Paulo Raimundo" }
+      - { abbr: Livre, name: "Livre",                          position: -4, social: -4, seats: 4,  total_seats: 230, vote_share_pct: 3,  color: "#3d9b35", in_government: false, leader: "Rui Tavares" }
+    regions:
+      - { name: "Lisboa metro",     top_issue: "Housing + cost of living", lean: "PS/AD/Livre", note: "1/3 of country" }
+      - { name: "Norte (Porto)",    top_issue: "Industrial wages",          lean: "AD/PS", note: "PSD's traditional base" }
+      - { name: "Alentejo + Algarve", top_issue: "Tourism + drought",      lean: "Chega rising", note: "PS's old base eroding" }
+      - { name: "Madeira + Açores", top_issue: "Autonomy + connectivity",   lean: "AD",  note: "Insular politics" }
+
+  ROU:
+    leader: { name: "Nicușor Dan", role: "President", party_abbr: "Indep", since: "2025-05", approval_pct: 49, approval_source: "INSCOP, Mar 2026", bio: "Independent mathematician; defeated AUR's Simion in re-run after 2024 annulment" }
+    parties:
+      - { abbr: PSD,   name: "Partidul Social Democrat",     position: -2, social: 1,  seats: 85, total_seats: 330, vote_share_pct: 22, color: "#cc0033", in_government: true,  leader: "Marcel Ciolacu" }
+      - { abbr: PNL,   name: "Partidul Național Liberal",    position: 3,  social: 2,  seats: 49, total_seats: 330, vote_share_pct: 13, color: "#ff8c00", in_government: true,  leader: "Ilie Bolojan" }
+      - { abbr: AUR,   name: "Alianța pentru Unirea Românilor", position: 5, social: 8, seats: 63, total_seats: 330, vote_share_pct: 18, color: "#003366", in_government: false, leader: "George Simion" }
+      - { abbr: USR,   name: "Uniunea Salvați România",      position: 1,  social: -2, seats: 40, total_seats: 330, vote_share_pct: 12, color: "#0099cc", in_government: false, leader: "Elena Lasconi" }
+      - { abbr: SOS,   name: "S.O.S. România",               position: 5,  social: 8,  seats: 28, total_seats: 330, vote_share_pct: 7,  color: "#cc0000", in_government: false, leader: "Diana Șoșoacă" }
+      - { abbr: POT,   name: "Partidul Oamenilor Tineri",    position: 4,  social: 7,  seats: 24, total_seats: 330, vote_share_pct: 6,  color: "#cc6600", in_government: false, leader: "Anamaria Gavrilă" }
+      - { abbr: UDMR,  name: "UDMR (Hungarian minority)",    position: 2,  social: 2,  seats: 22, total_seats: 330, vote_share_pct: 6,  color: "#3d9b35", in_government: true,  leader: "Kelemen Hunor" }
+    regions:
+      - { name: "Bucharest",        top_issue: "Cost of living + Russia narratives", lean: "USR/Indep", note: "Capital — Nicușor Dan's mayoral base" }
+      - { name: "Moldova (East)",   top_issue: "Pro-Russia narratives + EU funds", lean: "PSD/AUR", note: "Border with Moldova/Ukraine" }
+      - { name: "Transylvania",     top_issue: "Hungarian minority + UDMR",  lean: "UDMR/PNL", note: "Cluj/Brașov tech belt" }
+      - { name: "South + Wallachia", top_issue: "Industry + agriculture",   lean: "swing", note: "Bellwether" }
+
+  CZE:
+    leader: { name: "Andrej Babiš", role: "Prime Minister", party_abbr: "ANO", since: "2025-12", approval_pct: 38, approval_source: "STEM, Mar 2026", bio: "Returned to power Oct 2025 election; coalition with Motorists + SPD" }
+    parties:
+      - { abbr: ANO,   name: "ANO 2011",                     position: 1,  social: 4,  seats: 92, total_seats: 200, vote_share_pct: 35, color: "#003366", in_government: true,  leader: "Andrej Babiš" }
+      - { abbr: SPOLU, name: "SPOLU (ODS+KDU+TOP09)",        position: 3,  social: 3,  seats: 49, total_seats: 200, vote_share_pct: 23, color: "#0099cc", in_government: false, leader: "Petr Fiala" }
+      - { abbr: STAN,  name: "STAN",                         position: 1,  social: -1, seats: 22, total_seats: 200, vote_share_pct: 11, color: "#3d9b35", in_government: false, leader: "Vít Rakušan" }
+      - { abbr: SPD,   name: "Svoboda a přímá demokracie",   position: 5,  social: 8,  seats: 14, total_seats: 200, vote_share_pct: 8,  color: "#cc0000", in_government: true,  leader: "Tomio Okamura" }
+      - { abbr: Pirates, name: "Pirate Party",               position: -1, social: -3, seats: 11, total_seats: 200, vote_share_pct: 6,  color: "#000000", in_government: false, leader: "Zdeněk Hřib" }
+      - { abbr: Motor, name: "Motorists for Themselves",     position: 4,  social: 6,  seats: 12, total_seats: 200, vote_share_pct: 7,  color: "#cc6600", in_government: true,  leader: "Filip Turek" }
+    regions:
+      - { name: "Prague",           top_issue: "Cost of living + EU",       lean: "SPOLU/STAN", note: "Capital — pro-EU centrist" }
+      - { name: "Moravia (Brno)",   top_issue: "Industrial wages",          lean: "ANO/SPOLU", note: "Auto + tech cluster" }
+      - { name: "Bohemia (rural)",  top_issue: "Energy + farmers",           lean: "ANO/SPD", note: "Babiš base" }
+
+  NOR:
+    leader: { name: "Jonas Gahr Støre", role: "Prime Minister", party_abbr: "Ap", since: "2021-10", approval_pct: 31, approval_source: "Norstat, Mar 2026", bio: "Labour PM; minority govt after 2025; Centre Party left coalition over EU energy" }
+    parties:
+      - { abbr: Ap,    name: "Arbeiderpartiet (Labour)",      position: -3, social: -2, seats: 53, total_seats: 169, vote_share_pct: 25, color: "#cc0033", in_government: true,  leader: "Jonas Gahr Støre" }
+      - { abbr: H,     name: "Høyre",                         position: 3,  social: 2,  seats: 36, total_seats: 169, vote_share_pct: 21, color: "#0099cc", in_government: false, leader: "Erna Solberg" }
+      - { abbr: FrP,   name: "Fremskrittspartiet",            position: 5,  social: 6,  seats: 26, total_seats: 169, vote_share_pct: 15, color: "#003366", in_government: false, leader: "Sylvi Listhaug" }
+      - { abbr: Sp,    name: "Senterpartiet (Centre)",        position: -1, social: 3,  seats: 19, total_seats: 169, vote_share_pct: 11, color: "#3d9b35", in_government: false, leader: "Trygve Slagsvold Vedum" }
+      - { abbr: SV,    name: "Sosialistisk Venstreparti",     position: -5, social: -4, seats: 12, total_seats: 169, vote_share_pct: 7,  color: "#cc0000", in_government: false, leader: "Kirsti Bergstø" }
+      - { abbr: R,     name: "Rødt",                          position: -7, social: -3, seats: 9,  total_seats: 169, vote_share_pct: 5,  color: "#990000", in_government: false, leader: "Marie Sneve Martinussen" }
+      - { abbr: V,     name: "Venstre",                       position: 1,  social: -3, seats: 8,  total_seats: 169, vote_share_pct: 5,  color: "#80bb43", in_government: false, leader: "Guri Melby" }
+      - { abbr: KrF,   name: "Kristelig Folkeparti",          position: 2,  social: 5,  seats: 6,  total_seats: 169, vote_share_pct: 4,  color: "#ffea00", in_government: false, leader: "Dag Inge Ulstein" }
+    regions:
+      - { name: "Oslo + Akershus",  top_issue: "Housing + electricity",     lean: "Ap/H/SV", note: "Capital region" }
+      - { name: "Vestlandet",       top_issue: "Oil + climate transition",  lean: "Ap/H/Sp", note: "Stavanger/Bergen — oil hub" }
+      - { name: "Nord-Norge",       top_issue: "NATO frontier + fish",      lean: "Ap/Sp",   note: "Russia-border + military buildup" }
+
+  FIN:
+    leader: { name: "Petteri Orpo", role: "Prime Minister", party_abbr: "KOK", since: "2023-06", approval_pct: 37, approval_source: "Taloustutkimus, Mar 2026", bio: "Kokoomus PM; right-bloc coalition with PS+KD+RKP" }
+    parties:
+      - { abbr: KOK,   name: "Kokoomus (NCP)",               position: 4,  social: 1,  seats: 48, total_seats: 200, vote_share_pct: 21, color: "#0099cc", in_government: true,  leader: "Petteri Orpo" }
+      - { abbr: PS,    name: "Perussuomalaiset (Finns Party)", position: 4, social: 8, seats: 46, total_seats: 200, vote_share_pct: 20, color: "#003366", in_government: true,  leader: "Riikka Purra" }
+      - { abbr: SDP,   name: "Sosialidemokraatit (SDP)",     position: -3, social: -2, seats: 43, total_seats: 200, vote_share_pct: 19, color: "#cc0033", in_government: false, leader: "Antti Lindtman" }
+      - { abbr: KESK,  name: "Keskusta (Centre Party)",      position: 0,  social: 2,  seats: 23, total_seats: 200, vote_share_pct: 11, color: "#3d9b35", in_government: false, leader: "Antti Kaikkonen" }
+      - { abbr: VIHR,  name: "Vihreät (Greens)",             position: -3, social: -4, seats: 13, total_seats: 200, vote_share_pct: 7,  color: "#80bb43", in_government: false, leader: "Sofia Virta" }
+      - { abbr: VAS,   name: "Vasemmistoliitto (Left)",      position: -6, social: -3, seats: 11, total_seats: 200, vote_share_pct: 7,  color: "#cc0000", in_government: false, leader: "Minja Koskela" }
+      - { abbr: KD,    name: "Kristillisdemokraatit (KD)",   position: 3,  social: 6,  seats: 5,  total_seats: 200, vote_share_pct: 4,  color: "#003399", in_government: true,  leader: "Sari Essayah" }
+      - { abbr: RKP,   name: "RKP (Swedish People's Party)", position: 1,  social: -1, seats: 10, total_seats: 200, vote_share_pct: 4,  color: "#ffea00", in_government: true,  leader: "Anna-Maja Henriksson" }
+    regions:
+      - { name: "Helsinki + Uusimaa", top_issue: "Cost of living + Russia threat", lean: "KOK/SDP/VIHR", note: "Capital region" }
+      - { name: "Tampere + South",  top_issue: "Industrial wages",          lean: "SDP/KOK", note: "Industrial heartland" }
+      - { name: "North + Lapland",  top_issue: "Defence + minerals",        lean: "KESK/PS", note: "Russia-border region" }
+
+  DNK:
+    leader: { name: "Mette Frederiksen", role: "Prime Minister", party_abbr: "S", since: "2019-06", approval_pct: 39, approval_source: "Voxmeter, Mar 2026", bio: "Socialdemokratiet PM; grand coalition with V (Liberals) + M (Moderaterne)" }
+    parties:
+      - { abbr: S,     name: "Socialdemokratiet",            position: -2, social: 0,  seats: 50, total_seats: 179, vote_share_pct: 25, color: "#cc0033", in_government: true,  leader: "Mette Frederiksen" }
+      - { abbr: V,     name: "Venstre (Liberals)",            position: 3,  social: 2,  seats: 23, total_seats: 179, vote_share_pct: 13, color: "#0099cc", in_government: true,  leader: "Troels Lund Poulsen" }
+      - { abbr: M,     name: "Moderaterne",                  position: 1,  social: 1,  seats: 16, total_seats: 179, vote_share_pct: 9,  color: "#3d9b35", in_government: true,  leader: "Lars Løkke Rasmussen" }
+      - { abbr: SF,    name: "Socialistisk Folkeparti",       position: -4, social: -3, seats: 15, total_seats: 179, vote_share_pct: 8,  color: "#cc0000", in_government: false, leader: "Pia Olsen Dyhr" }
+      - { abbr: DD,    name: "Danmarksdemokraterne",          position: 4,  social: 7,  seats: 14, total_seats: 179, vote_share_pct: 8,  color: "#003366", in_government: false, leader: "Inger Støjberg" }
+      - { abbr: LA,    name: "Liberal Alliance",              position: 6,  social: -1, seats: 14, total_seats: 179, vote_share_pct: 8,  color: "#cc6600", in_government: false, leader: "Alex Vanopslagh" }
+      - { abbr: KF,    name: "Det Konservative Folkeparti",  position: 4,  social: 4,  seats: 10, total_seats: 179, vote_share_pct: 6,  color: "#003399", in_government: false, leader: "Mona Juul" }
+      - { abbr: EL,    name: "Enhedslisten",                 position: -7, social: -3, seats: 9,  total_seats: 179, vote_share_pct: 5,  color: "#990000", in_government: false, leader: "Pelle Dragsted" }
+      - { abbr: DF,    name: "Dansk Folkeparti",              position: 3,  social: 8,  seats: 5,  total_seats: 179, vote_share_pct: 3,  color: "#ffea00", in_government: false, leader: "Morten Messerschmidt" }
+    regions:
+      - { name: "Copenhagen metro", top_issue: "Housing + integration",     lean: "S/SF/EL", note: "Capital cluster" }
+      - { name: "Jutland",          top_issue: "Migration + Greenland politics", lean: "S/V/DD", note: "Most populous landmass; rural" }
+      - { name: "Greenland (autonomous)", top_issue: "Independence + US pressure", lean: "Inuit Ataqatigiit / Siumut", note: "Distinct system; Trump's interest" }
+
+  CHE:
+    leader: { name: "Karin Keller-Sutter (rotating)", role: "President of Confederation 2026", party_abbr: "FDP", since: "2026-01", approval_pct: null, approval_source: "(no national leader-approval polling — collegial system)", bio: "Federal Council 7-member collegial body; presidency rotates annually" }
+    parties:
+      - { abbr: SVP,   name: "Schweizerische Volkspartei (SVP/UDC)", position: 5, social: 6, seats: 62, total_seats: 200, vote_share_pct: 28, color: "#003366", in_government: true,  leader: "Marcel Dettling" }
+      - { abbr: SP,    name: "Sozialdemokratische Partei (SP/PS)", position: -3, social: -2, seats: 41, total_seats: 200, vote_share_pct: 18, color: "#cc0033", in_government: true, leader: "Cédric Wermuth / Mattea Meyer" }
+      - { abbr: Mitte, name: "Die Mitte (PDC merger)",       position: 1,  social: 2,  seats: 29, total_seats: 200, vote_share_pct: 14, color: "#ff8c00", in_government: true,  leader: "Gerhard Pfister" }
+      - { abbr: FDP,   name: "FDP/PLR",                      position: 4,  social: 0,  seats: 28, total_seats: 200, vote_share_pct: 14, color: "#0099cc", in_government: true,  leader: "Thierry Burkart" }
+      - { abbr: Grüne, name: "Grüne (Greens)",               position: -3, social: -4, seats: 23, total_seats: 200, vote_share_pct: 9,  color: "#3d9b35", in_government: false, leader: "Lisa Mazzone" }
+      - { abbr: GLP,   name: "Grünliberale (GLP/PVL)",       position: 1,  social: -2, seats: 10, total_seats: 200, vote_share_pct: 7,  color: "#80bb43", in_government: false, leader: "Jürg Grossen" }
+    regions:
+      - { name: "Deutschschweiz",   top_issue: "EU treaties + immigration", lean: "SVP/Mitte/FDP", note: "65% of population" }
+      - { name: "Suisse romande",   top_issue: "EU + healthcare premiums",  lean: "SP/PLR/Centre", note: "French-speaking; more EU-friendly" }
+      - { name: "Ticino",           top_issue: "Cross-border (Italy) commuter politics", lean: "Lega + UDC", note: "Italian-speaking" }
+
+  IRL:
+    leader: { name: "Micheál Martin", role: "Taoiseach", party_abbr: "FF", since: "2025-01", approval_pct: 38, approval_source: "Red C, Mar 2026", bio: "Fianna Fáil leader; FF-FG-Labour coalition formed Jan 2025" }
+    parties:
+      - { abbr: FF,    name: "Fianna Fáil",                  position: 1,  social: 2,  seats: 48, total_seats: 174, vote_share_pct: 22, color: "#3d9b35", in_government: true,  leader: "Micheál Martin" }
+      - { abbr: FG,    name: "Fine Gael",                    position: 3,  social: 1,  seats: 38, total_seats: 174, vote_share_pct: 21, color: "#0099cc", in_government: true,  leader: "Simon Harris" }
+      - { abbr: SF,    name: "Sinn Féin",                    position: -3, social: -1, seats: 39, total_seats: 174, vote_share_pct: 19, color: "#3d9b35", in_government: false, leader: "Mary Lou McDonald" }
+      - { abbr: Lab,   name: "Labour",                       position: -3, social: -2, seats: 11, total_seats: 174, vote_share_pct: 5,  color: "#cc0033", in_government: true,  leader: "Ivana Bacik" }
+      - { abbr: SocD,  name: "Social Democrats",             position: -3, social: -3, seats: 11, total_seats: 174, vote_share_pct: 5,  color: "#cc0066", in_government: false, leader: "Holly Cairns" }
+      - { abbr: Greens, name: "Green Party",                 position: -2, social: -4, seats: 1,  total_seats: 174, vote_share_pct: 3,  color: "#3d9b35", in_government: false, leader: "Roderic O'Gorman" }
+      - { abbr: Aontu, name: "Aontú",                        position: 2,  social: 4,  seats: 2,  total_seats: 174, vote_share_pct: 4,  color: "#000000", in_government: false, leader: "Peadar Tóibín" }
+    regions:
+      - { name: "Dublin",           top_issue: "Housing crisis",            lean: "SF/FG/SocD", note: "Capital — SF strongest among under-35" }
+      - { name: "Border counties",   top_issue: "Brexit + united-Ireland",   lean: "SF",  note: "Border with NI — Sinn Féin strongest" }
+      - { name: "South + Munster",  top_issue: "Healthcare + cost of living", lean: "FF/FG", note: "Cork / Limerick cluster" }
+      - { name: "West",             top_issue: "Rural decline + connectivity", lean: "FF",  note: "FF heartland" }
+
+  AUT:
+    leader: { name: "Christian Stocker", role: "Chancellor", party_abbr: "ÖVP", since: "2025-02", approval_pct: 33, approval_source: "Unique research, Mar 2026", bio: "ÖVP took chancellorship after Kickl (FPÖ) failed to form govt; ÖVP+SPÖ+NEOS coalition" }
+    parties:
+      - { abbr: FPÖ,   name: "Freiheitliche Partei Österreichs", position: 5, social: 8, seats: 57, total_seats: 183, vote_share_pct: 29, color: "#003366", in_government: false, leader: "Herbert Kickl" }
+      - { abbr: ÖVP,   name: "Österreichische Volkspartei",  position: 3,  social: 3,  seats: 51, total_seats: 183, vote_share_pct: 26, color: "#000000", in_government: true,  leader: "Christian Stocker" }
+      - { abbr: SPÖ,   name: "Sozialdemokratische Partei Österreichs", position: -3, social: -2, seats: 41, total_seats: 183, vote_share_pct: 21, color: "#cc0033", in_government: true,  leader: "Andreas Babler" }
+      - { abbr: NEOS,  name: "Das Neue Österreich",          position: 2,  social: -2, seats: 18, total_seats: 183, vote_share_pct: 9,  color: "#cc6600", in_government: true,  leader: "Beate Meinl-Reisinger" }
+      - { abbr: Grüne, name: "Die Grünen",                   position: -3, social: -4, seats: 16, total_seats: 183, vote_share_pct: 8,  color: "#3d9b35", in_government: false, leader: "Werner Kogler / Leonore Gewessler" }
+    regions:
+      - { name: "Vienna",           top_issue: "Cost of living + housing",  lean: "SPÖ/Grüne", note: "Red Vienna tradition" }
+      - { name: "Lower + Upper Austria", top_issue: "Auto industry + migration", lean: "ÖVP/FPÖ", note: "Industrial belt" }
+      - { name: "Carinthia + Styria",   top_issue: "Energy + Russia ties",   lean: "FPÖ/ÖVP",   note: "FPÖ stronghold" }
+
+  MYS:
+    leader: { name: "Anwar Ibrahim", role: "Prime Minister", party_abbr: "PH", since: "2022-11", approval_pct: 50, approval_source: "Merdeka Centre, Mar 2026", bio: "Pakatan Harapan; unity govt with Barisan Nasional + GPS + GRS — held by anti-PN coalition" }
+    parties:
+      - { abbr: PN,    name: "Perikatan Nasional (PAS+Bersatu)", position: 4, social: 8, seats: 73, total_seats: 222, vote_share_pct: 31, color: "#003300", in_government: false, leader: "Muhyiddin Yassin / PAS Hadi Awang" }
+      - { abbr: PH,    name: "Pakatan Harapan (DAP+PKR+Amanah)", position: -2, social: -2, seats: 82, total_seats: 222, vote_share_pct: 33, color: "#ff0000", in_government: true,  leader: "Anwar Ibrahim" }
+      - { abbr: BN,    name: "Barisan Nasional (UMNO-led)",   position: 3,  social: 4,  seats: 30, total_seats: 222, vote_share_pct: 14, color: "#003399", in_government: true,  leader: "Ahmad Zahid Hamidi" }
+      - { abbr: GPS,   name: "Gabungan Parti Sarawak",        position: 2,  social: 2,  seats: 23, total_seats: 222, vote_share_pct: 6,  color: "#cc0000", in_government: true,  leader: "Abang Johari" }
+      - { abbr: GRS,   name: "Gabungan Rakyat Sabah",         position: 2,  social: 3,  seats: 6,  total_seats: 222, vote_share_pct: 3,  color: "#003366", in_government: true,  leader: "Hajiji Noor" }
+      - { abbr: MUDA,  name: "MUDA (Youth)",                  position: -1, social: -3, seats: 1,  total_seats: 222, vote_share_pct: 1,  color: "#7c5cff", in_government: false, leader: "Syed Saddiq" }
+    regions:
+      - { name: "Klang Valley (KL + Selangor)", top_issue: "Cost of living", lean: "PH",  note: "Largest urban cluster; DAP/PKR base" }
+      - { name: "Northern peninsula (Kelantan/Terengganu)", top_issue: "Religion + cost of living", lean: "PN/PAS", note: "PAS green-wave heartland" }
+      - { name: "Sabah + Sarawak (Borneo)",    top_issue: "Resource sharing + autonomy", lean: "GPS/GRS", note: "Distinct party systems" }
+
+  SGP:
+    leader: { name: "Lawrence Wong", role: "Prime Minister", party_abbr: "PAP", since: "2024-05", approval_pct: 67, approval_source: "IPS Singapore, Mar 2026", bio: "PAP 4G leader; took over from Lee Hsien Loong; won 2025 election with 65.6% PAP vote" }
+    parties:
+      - { abbr: PAP,   name: "People's Action Party",         position: 3,  social: 4,  seats: 87, total_seats: 97, vote_share_pct: 65.6, color: "#cc0000", in_government: true,  leader: "Lawrence Wong" }
+      - { abbr: WP,    name: "Workers' Party",                position: 0,  social: 0,  seats: 10, total_seats: 97, vote_share_pct: 23,   color: "#3d9b35", in_government: false, leader: "Pritam Singh" }
+      - { abbr: PSP,   name: "Progress Singapore Party",      position: 1,  social: 1,  seats: 0,  total_seats: 97, vote_share_pct: 5,    color: "#0099cc", in_government: false, leader: "Leong Mun Wai" }
+      - { abbr: SDP,   name: "Singapore Democratic Party",    position: -2, social: -2, seats: 0,  total_seats: 97, vote_share_pct: 4,    color: "#ffea00", in_government: false, leader: "Chee Soon Juan" }
+    regions:
+      - { name: "Central + East",   top_issue: "Cost of living + housing",  lean: "PAP", note: "PAP dominates; older demographics" }
+      - { name: "West + Northwest", top_issue: "Foreign-talent policy",     lean: "PAP", note: "Industrial estates" }
+      - { name: "Aljunied / Sengkang", top_issue: "GRC contests",            lean: "WP",  note: "Workers' Party held wards" }
+
+  KHM:
+    leader: { name: "Hun Manet", role: "Prime Minister", party_abbr: "CPP", since: "2023-08", approval_pct: null, approval_source: "(no independent polling)", bio: "Hun Sen's son; West Point grad; succeeded father after CPP swept 2023 election" }
+    parties:
+      - { abbr: CPP,   name: "Cambodian People's Party",     position: 2,  social: 6,  seats: 120, total_seats: 125, vote_share_pct: 82, color: "#003366", in_government: true,  leader: "Hun Manet / Hun Sen" }
+      - { abbr: FUNCINPEC, name: "FUNCINPEC (royalist)",     position: 2,  social: 4,  seats: 5,   total_seats: 125, vote_share_pct: 9,  color: "#cc0000", in_government: false, leader: "Norodom Chakravuth" }
+      - { abbr: CNP,   name: "Candlelight Party (banned)",   position: 0,  social: -1, seats: 0,   total_seats: 125, vote_share_pct: 0,  color: "#ffd700", in_government: false, leader: "Son Chhay (in exile)" }
+    regions:
+      - { name: "Phnom Penh",       top_issue: "Land disputes + cost of living", lean: "CPP", note: "Capital — opposition strongest historically" }
+      - { name: "Tonlé Sap basin",  top_issue: "Fishing collapse + climate",   lean: "CPP", note: "Rural rice + fish economy" }
+      - { name: "Cardamom + Coast", top_issue: "Chinese investment (Sihanoukville)", lean: "CPP", note: "Special-economic-zones boom" }
+
+  LKA:
+    leader: { name: "Anura Kumara Dissanayake", role: "President", party_abbr: "NPP", since: "2024-09", approval_pct: 61, approval_source: "IHP Sri Lanka, Mar 2026", bio: "JVP-led NPP; first leftist president; massive 159/225 supermajority Nov 2024" }
+    parties:
+      - { abbr: NPP,   name: "National People's Power (JVP-led)", position: -4, social: -2, seats: 159, total_seats: 225, vote_share_pct: 62, color: "#cc0000", in_government: true,  leader: "AKD" }
+      - { abbr: SJB,   name: "Samagi Jana Balawegaya",       position: -1, social: -1, seats: 40, total_seats: 225, vote_share_pct: 17, color: "#3d9b35", in_government: false, leader: "Sajith Premadasa" }
+      - { abbr: SLPP,  name: "Sri Lanka Podujana Peramuna (Rajapaksa)", position: 3, social: 4, seats: 3, total_seats: 225, vote_share_pct: 4, color: "#cc6600", in_government: false, leader: "Mahinda Rajapaksa / Namal Rajapaksa" }
+      - { abbr: ITAK,  name: "Tamil National Alliance / ITAK", position: -2, social: -2, seats: 8, total_seats: 225, vote_share_pct: 3,  color: "#ffd700", in_government: false, leader: "M.A. Sumanthiran" }
+      - { abbr: UNP,   name: "United National Party",         position: 2,  social: 2,  seats: 1,  total_seats: 225, vote_share_pct: 2,  color: "#003366", in_government: false, leader: "Ranil Wickremesinghe" }
+    regions:
+      - { name: "Western Province (Colombo)", top_issue: "Cost of living + IMF", lean: "NPP/SJB", note: "Capital cluster" }
+      - { name: "Southern + Central (Sinhalese-Buddhist)", top_issue: "Economic recovery", lean: "NPP", note: "AKD's strongest region" }
+      - { name: "Northern + Eastern (Tamil)", top_issue: "Reconciliation + accountability", lean: "ITAK/SJB", note: "Tamil parties strong" }
+      - { name: "Hill Country (plantation Tamils)", top_issue: "Tea-estate wages", lean: "swing", note: "Indian-origin Tamils" }
+
+  NPL:
+    leader: { name: "KP Sharma Oli", role: "Prime Minister", party_abbr: "UML", since: "2024-07", approval_pct: 31, approval_source: "Nepal Watch, Mar 2026", bio: "CPN-UML leader; coalition with Nepali Congress; Nepal's typical 18mo PM cycle" }
+    parties:
+      - { abbr: NC,    name: "Nepali Congress",              position: 1,  social: 1,  seats: 89, total_seats: 275, vote_share_pct: 26, color: "#cc0000", in_government: true,  leader: "Sher Bahadur Deuba" }
+      - { abbr: UML,   name: "CPN-UML (Marxist-Leninist)",   position: -3, social: 0,  seats: 79, total_seats: 275, vote_share_pct: 25, color: "#cc0033", in_government: true,  leader: "KP Sharma Oli" }
+      - { abbr: MaoC,  name: "CPN (Maoist Centre)",          position: -4, social: -1, seats: 32, total_seats: 275, vote_share_pct: 11, color: "#990000", in_government: false, leader: "Pushpa Kamal Dahal 'Prachanda'" }
+      - { abbr: RSP,   name: "Rastriya Swatantra Party",     position: 1,  social: -1, seats: 21, total_seats: 275, vote_share_pct: 11, color: "#0099cc", in_government: false, leader: "Rabi Lamichhane" }
+      - { abbr: RPP,   name: "Rastriya Prajatantra Party (monarchist)", position: 4, social: 6, seats: 14, total_seats: 275, vote_share_pct: 6, color: "#ff8c00", in_government: false, leader: "Rajendra Lingden" }
+      - { abbr: JSPN,  name: "Janata Samajbadi Party Nepal", position: -1, social: -1, seats: 12, total_seats: 275, vote_share_pct: 4,  color: "#3d9b35", in_government: false, leader: "Upendra Yadav" }
+    regions:
+      - { name: "Kathmandu Valley", top_issue: "Cost of living + RSP youth bloc", lean: "RSP/NC", note: "Capital + 1/3 electorate" }
+      - { name: "Terai (south plain)", top_issue: "Madhesi rights + India trade", lean: "JSPN/NC", note: "Madhesi parties strong" }
+      - { name: "Hills + mountains", top_issue: "Migration to Gulf",        lean: "UML/MaoC", note: "Communist heartlands" }
+
+  MMR:
+    leader: { name: "Min Aung Hlaing (junta) / Duwa Lashi La (NUG)", role: "Junta chair / NUG acting president", party_abbr: "SAC / NUG", since: "2021-02 / 2021-08", approval_pct: null, approval_source: "(active civil war; no polling possible)", bio: "Tatmadaw under SAC vs NUG-aligned PDF + EAOs" }
+    parties:
+      - { abbr: USDP,  name: "Union Solidarity and Development Party (junta-aligned)", position: 4, social: 7, seats: 0, total_seats: 0, vote_share_pct: 0, color: "#003366", in_government: true,  leader: "(junta-installed)" }
+      - { abbr: NUG,   name: "National Unity Government (in exile/parallel)", position: 0, social: -3, seats: 0, total_seats: 0, vote_share_pct: 0, color: "#cc0033", in_government: false, leader: "Duwa Lashi La / Aung San Suu Kyi (detained)" }
+      - { abbr: PDF,   name: "People's Defence Force (NUG armed wing)", position: 0, social: -2, seats: 0, total_seats: 0, vote_share_pct: 0, color: "#cc6600", in_government: false, leader: "Various local commands" }
+      - { abbr: EAO,   name: "Ethnic Armed Organisations (KIA, AA, TNLA, etc.)", position: null, social: null, seats: 0, total_seats: 0, vote_share_pct: 0, color: "#666666", in_government: false, leader: "Various ethnic commands" }
+    regions:
+      - { name: "Naypyitaw + Yangon", top_issue: "Junta control + economy", lean: "SAC", note: "Junta-controlled core" }
+      - { name: "Rakhine",          top_issue: "Arakan Army advance",       lean: "AA",  note: "AA controls most of Rakhine" }
+      - { name: "Kachin + Shan",    top_issue: "Ethnic resistance + China border", lean: "EAOs", note: "EAOs pushing junta out" }
+      - { name: "Sagaing + Magway", top_issue: "PDF heartland + drone war", lean: "PDF/NUG", note: "Bamar resistance core" }
+
+  KEN:
+    leader: { name: "William Ruto", role: "President", party_abbr: "UDA", since: "2022-09", approval_pct: 27, approval_source: "Infotrak, Mar 2026", bio: "Kenya Kwanza coalition; 2024 Finance Bill protests battered approval; Gen-Z rebellion" }
+    parties:
+      - { abbr: UDA,   name: "United Democratic Alliance",   position: 3,  social: 4,  seats: 145, total_seats: 349, vote_share_pct: 32, color: "#ffd700", in_government: true,  leader: "William Ruto" }
+      - { abbr: ODM,   name: "Orange Democratic Movement",   position: -1, social: -1, seats: 81, total_seats: 349, vote_share_pct: 22, color: "#ff8c00", in_government: false, leader: "Raila Odinga" }
+      - { abbr: WiperD, name: "Wiper Democratic Movement",   position: 1,  social: 2,  seats: 22, total_seats: 349, vote_share_pct: 7,  color: "#003366", in_government: false, leader: "Kalonzo Musyoka" }
+      - { abbr: Jubilee, name: "Jubilee Party (Kenyatta wing)", position: 2, social: 2, seats: 26, total_seats: 349, vote_share_pct: 9, color: "#cc0000", in_government: false, leader: "Uhuru Kenyatta" }
+      - { abbr: GenZ,  name: "Gen-Z movement (no party yet)", position: -1, social: -2, seats: 0, total_seats: 349, vote_share_pct: 0, color: "#7c5cff", in_government: false, leader: "Decentralised (post-2024 protests)" }
+    regions:
+      - { name: "Central (Mt Kenya)", top_issue: "Cost of living + Ruto fallout", lean: "UDA/Jubilee", note: "Kikuyu heartland; Ruto loses ground" }
+      - { name: "Western + Nyanza",   top_issue: "Marginalisation",          lean: "ODM",   note: "Luo/Luhya — Raila base" }
+      - { name: "Coast",              top_issue: "Land + tourism",            lean: "ODM/UDA swing", note: "Mombasa + Swahili coast" }
+      - { name: "Rift Valley",        top_issue: "Maize + farmers",           lean: "UDA",   note: "Kalenjin — Ruto core" }
+      - { name: "Northern",           top_issue: "Banditry + climate",        lean: "swing", note: "Pastoralist counties" }
+
+  GHA:
+    leader: { name: "John Mahama", role: "President", party_abbr: "NDC", since: "2025-01", approval_pct: 53, approval_source: "Afrobarometer R10, 2024", bio: "NDC leader; defeated Bawumia (NPP) Dec 2024; second non-consecutive term" }
+    parties:
+      - { abbr: NDC,   name: "National Democratic Congress", position: -1, social: 0,  seats: 183, total_seats: 276, vote_share_pct: 56, color: "#3d9b35", in_government: true,  leader: "John Mahama" }
+      - { abbr: NPP,   name: "New Patriotic Party",          position: 3,  social: 3,  seats: 88, total_seats: 276, vote_share_pct: 41, color: "#0099cc", in_government: false, leader: "Mahamudu Bawumia" }
+      - { abbr: GUM,   name: "Ghana Union Movement",         position: 2,  social: 5,  seats: 1,  total_seats: 276, vote_share_pct: 1,  color: "#003366", in_government: false, leader: "Christian Kwabena Andrews" }
+    regions:
+      - { name: "Greater Accra",    top_issue: "Cost of living + dumsor",   lean: "swing", note: "Capital — bellwether" }
+      - { name: "Ashanti (Kumasi)", top_issue: "NPP heartland identity",     lean: "NPP",   note: "Akan-Asante; reliably NPP" }
+      - { name: "Volta + Northern", top_issue: "Marginalisation + cocoa",    lean: "NDC",   note: "NDC strongholds" }
+      - { name: "Central + Western", top_issue: "Cocoa + galamsey mining",   lean: "swing", note: "Decisive in tight elections" }
+
+  SEN:
+    leader: { name: "Bassirou Diomaye Faye", role: "President", party_abbr: "PASTEF", since: "2024-04", approval_pct: 56, approval_source: "Afrobarometer Senegal 2024", bio: "PASTEF; won 1st-round from prison release; PM is Ousmane Sonko (PASTEF de facto leader)" }
+    parties:
+      - { abbr: PASTEF, name: "Patriotes Africains du Sénégal", position: -3, social: 1, seats: 130, total_seats: 165, vote_share_pct: 54, color: "#cc0000", in_government: true, leader: "Ousmane Sonko / Faye" }
+      - { abbr: BBY,   name: "Benno Bokk Yakaar (Macky Sall)", position: 2,  social: 2,  seats: 16, total_seats: 165, vote_share_pct: 14, color: "#003366", in_government: false, leader: "Aminata Touré (defected) / Mahamadou Lamine Massaly" }
+      - { abbr: Takku, name: "Takku Wallu Senegal",           position: 1,  social: 1,  seats: 16, total_seats: 165, vote_share_pct: 13, color: "#003399", in_government: false, leader: "Macky Sall" }
+      - { abbr: SAM,   name: "Sàmm Sa Kàddu",                 position: 1,  social: 0,  seats: 3,  total_seats: 165, vote_share_pct: 4,  color: "#0099cc", in_government: false, leader: "Barthélémy Dias" }
+    regions:
+      - { name: "Dakar + Pikine",   top_issue: "Youth unemployment + cost of living", lean: "PASTEF", note: "Capital cluster — PASTEF base" }
+      - { name: "Casamance (south)", top_issue: "MFDC peace + neglect",      lean: "PASTEF/local", note: "MFDC dormant insurgency" }
+      - { name: "Saint-Louis + north", top_issue: "Migration + fisheries",   lean: "PASTEF",   note: "Mauritanian-border drift" }
+      - { name: "Touba (Mouride)",  top_issue: "Religious-leader politics",  lean: "varies",  note: "Mouride brotherhood power" }
+
+  TUN:
+    leader: { name: "Kais Saied", role: "President", party_abbr: "Indep", since: "2019-10", approval_pct: 41, approval_source: "Sigma Conseil, Mar 2026", bio: "Independent; 2021 self-coup dissolved parliament; 2024 'reelection' 90.7% with opponents detained" }
+    parties:
+      - { abbr: Saiedist, name: "Pro-Saied independents",    position: 1,  social: 4,  seats: 132, total_seats: 161, vote_share_pct: 60, color: "#cc0000", in_government: true,  leader: "Saied (no formal party)" }
+      - { abbr: NS,    name: "National Salvation Front (FSN)", position: 1, social: -1, seats: 0, total_seats: 161, vote_share_pct: 0,  color: "#003366", in_government: false, leader: "Ahmed Chebbi" }
+      - { abbr: Ennahda, name: "Ennahda Movement",           position: 2,  social: 6,  seats: 0,  total_seats: 161, vote_share_pct: 0,  color: "#3d9b35", in_government: false, leader: "Rached Ghannouchi (jailed)" }
+      - { abbr: PDL,   name: "Free Destourian Party",        position: 4,  social: 5,  seats: 0,  total_seats: 161, vote_share_pct: 0,  color: "#0099cc", in_government: false, leader: "Abir Moussi (jailed)" }
+    regions:
+      - { name: "Tunis + Coast (Sahel)", top_issue: "Migration + cost of living", lean: "Saiedist", note: "Capital + tourist coast" }
+      - { name: "Interior + South",  top_issue: "Drought + unemployment",     lean: "Saiedist", note: "Sidi Bouzid - revolution origin" }
+      - { name: "Sfax + South-East", top_issue: "Migration corridor + jobs",  lean: "swing",     note: "Med-crossing departure point" }
+
+  MAR:
+    leader: { name: "Aziz Akhannouch", role: "Prime Minister", party_abbr: "RNI", since: "2021-10", approval_pct: 32, approval_source: "Arab Barometer Morocco 2024", bio: "Wealthy businessman PM; King Mohammed VI is head of state and de facto power; technocratic govt" }
+    parties:
+      - { abbr: RNI,   name: "Rassemblement National des Indépendants", position: 2, social: 3, seats: 102, total_seats: 395, vote_share_pct: 24, color: "#0099cc", in_government: true, leader: "Akhannouch" }
+      - { abbr: PAM,   name: "Parti Authenticité et Modernité", position: 3, social: 3, seats: 87, total_seats: 395, vote_share_pct: 18, color: "#cc6600", in_government: true,  leader: "Abdellatif Ouahbi" }
+      - { abbr: Istiqlal, name: "Parti de l'Istiqlal",       position: 3,  social: 4,  seats: 81, total_seats: 395, vote_share_pct: 16, color: "#cc0000", in_government: true,  leader: "Nizar Baraka" }
+      - { abbr: USFP,  name: "Union Socialiste des Forces Populaires", position: -2, social: 0, seats: 34, total_seats: 395, vote_share_pct: 8, color: "#cc0033", in_government: false, leader: "Driss Lachgar" }
+      - { abbr: PJD,   name: "Parti de la Justice et du Développement", position: 3, social: 7, seats: 13, total_seats: 395, vote_share_pct: 6, color: "#3d9b35", in_government: false, leader: "Abdelilah Benkirane" }
+    regions:
+      - { name: "Casablanca-Settat", top_issue: "Cost of living + earthquake recovery", lean: "RNI/PAM", note: "Economic engine" }
+      - { name: "Rabat-Salé-Kénitra", top_issue: "Govt jobs + housing",     lean: "RNI",   note: "Capital region" }
+      - { name: "Marrakech-Safi (Atlas)", top_issue: "Earthquake reconstruction", lean: "swing", note: "Sept 2023 quake hit hardest" }
+      - { name: "Western Sahara (Laayoune)", top_issue: "Sovereignty + phosphates", lean: "regime", note: "Disputed territory" }
+
+  DZA:
+    leader: { name: "Abdelmadjid Tebboune", role: "President", party_abbr: "Indep", since: "2019-12", approval_pct: null, approval_source: "(no independent polling)", bio: "Independent backed by FLN+RND+military; 2024 'reelection' 84.3% on disputed turnout" }
+    parties:
+      - { abbr: FLN,   name: "Front de Libération Nationale", position: 1, social: 4, seats: 105, total_seats: 407, vote_share_pct: 25, color: "#3d9b35", in_government: true,  leader: "Abdelkrim Benbouzid" }
+      - { abbr: RND,   name: "Rassemblement National Démocratique", position: 2, social: 3, seats: 58, total_seats: 407, vote_share_pct: 14, color: "#003366", in_government: true,  leader: "Tayeb Zitouni" }
+      - { abbr: MSP,   name: "Mouvement de la Société pour la Paix", position: 3, social: 7, seats: 65, total_seats: 407, vote_share_pct: 16, color: "#0099cc", in_government: false, leader: "Abderrazak Makri" }
+      - { abbr: FFS,   name: "Front des Forces Socialistes (Hirak-aligned)", position: -3, social: -2, seats: 27, total_seats: 407, vote_share_pct: 7, color: "#cc0000", in_government: false, leader: "Yousef Aouchiche" }
+    regions:
+      - { name: "Algiers",          top_issue: "Cost of living + civil liberties", lean: "FLN/Indep", note: "Capital — Hirak-protest origin" }
+      - { name: "Kabylie (Tizi Ouzou)", top_issue: "Berber identity + autonomy", lean: "FFS/RCD",   note: "Berber-heartland; restive" }
+      - { name: "Sahara (south)",    top_issue: "Hydrocarbon rents + Mali border", lean: "FLN/RND", note: "Oil/gas extraction zone" }
+
+  COD:
+    leader: { name: "Félix Tshisekedi", role: "President", party_abbr: "UDPS", since: "2019-01", approval_pct: 24, approval_source: "Afrobarometer DRC 2024", bio: "UDPS leader; second term from contested 2023 election; eastern conflict + M23 dominate" }
+    parties:
+      - { abbr: UDPS,  name: "Union pour la Démocratie et le Progrès Social", position: 0, social: 1, seats: 81, total_seats: 500, vote_share_pct: 17, color: "#cc0033", in_government: true,  leader: "Tshisekedi" }
+      - { abbr: AAUDPS, name: "Alliance pour une Action Unie (Tshisekedi-allied)", position: 0, social: 1, seats: 50, total_seats: 500, vote_share_pct: 11, color: "#cc6600", in_government: true,  leader: "(coalition group)" }
+      - { abbr: AFDC,  name: "AFDC (Bemba/Kasai-Oriental machines)", position: 1, social: 2, seats: 40, total_seats: 500, vote_share_pct: 9, color: "#003366", in_government: true, leader: "Modeste Bahati" }
+      - { abbr: PPRD,  name: "PPRD (Kabila wing — banned/limited)", position: 0, social: 2, seats: 20, total_seats: 500, vote_share_pct: 0, color: "#003399", in_government: false, leader: "Joseph Kabila (now sided with M23)" }
+      - { abbr: Ensemble, name: "Ensemble pour la République (Katumbi)", position: 1, social: 0, seats: 30, total_seats: 500, vote_share_pct: 7, color: "#0099cc", in_government: false, leader: "Moïse Katumbi" }
+    regions:
+      - { name: "Kinshasa",         top_issue: "Cost of living + service delivery", lean: "UDPS", note: "Capital — Tshisekedi base" }
+      - { name: "North + South Kivu", top_issue: "M23/AFC + Rwanda",         lean: "war-zone", note: "Active conflict" }
+      - { name: "Katanga (Lubumbashi)", top_issue: "Copper rents + Katumbi", lean: "Ensemble", note: "Mining heartland" }
+      - { name: "Kasai",            top_issue: "Tshisekedi's home + diamonds", lean: "UDPS", note: "Tshisekedi's birthplace" }
+
+  RWA:
+    leader: { name: "Paul Kagame", role: "President", party_abbr: "RPF", since: "2000-04", approval_pct: 88, approval_source: "Afrobarometer Rwanda 2022 (last); govt narrative", bio: "RPF; effectively in power since 1994; '24 election won 99.18%; eastern DRC interventions controversial" }
+    parties:
+      - { abbr: RPF,   name: "Rwandan Patriotic Front",       position: 0,  social: 1,  seats: 49, total_seats: 80, vote_share_pct: 71, color: "#cc0033", in_government: true,  leader: "Paul Kagame" }
+      - { abbr: PSD,   name: "Parti Social Démocrate (allied)", position: -1, social: 0, seats: 5, total_seats: 80, vote_share_pct: 8,  color: "#3d9b35", in_government: true,  leader: "Vincent Biruta" }
+      - { abbr: PL,    name: "Parti Libéral (allied)",         position: 1,  social: -1, seats: 3, total_seats: 80, vote_share_pct: 5,  color: "#0099cc", in_government: true,  leader: "Donatille Mukabalisa" }
+      - { abbr: DGPR,  name: "Democratic Green Party of Rwanda (token opposition)", position: -2, social: -2, seats: 2, total_seats: 80, vote_share_pct: 3, color: "#3d9b35", in_government: false, leader: "Frank Habineza" }
+      - { abbr: FDU,   name: "FDU-Inkingi (banned-Ingabire wing)", position: 0, social: -2, seats: 0, total_seats: 80, vote_share_pct: 0, color: "#cc0000", in_government: false, leader: "Victoire Ingabire" }
+    regions:
+      - { name: "Kigali",           top_issue: "Cost of living + service delivery", lean: "RPF", note: "Capital — model city narrative" }
+      - { name: "North + Northwest", top_issue: "Genocide memory + DRC engagement", lean: "RPF", note: "RPF power base" }
+      - { name: "South + East",     top_issue: "Agriculture + electrification",     lean: "RPF", note: "Rural — RPF dominant" }
+
+  UGA:
+    leader: { name: "Yoweri Museveni", role: "President", party_abbr: "NRM", since: "1986-01", approval_pct: 51, approval_source: "Afrobarometer Uganda 2024", bio: "NRM; in power since 1986; 2026 challenge from Bobi Wine (NUP) — 81 vs 41" }
+    parties:
+      - { abbr: NRM,   name: "National Resistance Movement", position: 2,  social: 4,  seats: 336, total_seats: 529, vote_share_pct: 60, color: "#ffd700", in_government: true,  leader: "Museveni / Muhoozi Kainerugaba" }
+      - { abbr: NUP,   name: "National Unity Platform",      position: -1, social: -1, seats: 57, total_seats: 529, vote_share_pct: 35, color: "#cc0000", in_government: false, leader: "Bobi Wine" }
+      - { abbr: FDC,   name: "Forum for Democratic Change",  position: 0,  social: 0,  seats: 32, total_seats: 529, vote_share_pct: 6,  color: "#003366", in_government: false, leader: "Patrick Amuriat" }
+      - { abbr: DPU,   name: "Democratic Party",             position: 1,  social: 4,  seats: 9,  total_seats: 529, vote_share_pct: 2,  color: "#3d9b35", in_government: false, leader: "Norbert Mao" }
+    regions:
+      - { name: "Kampala + Wakiso",  top_issue: "Cost of living + Bobi Wine repression", lean: "NUP", note: "Capital — opposition stronghold" }
+      - { name: "Buganda (central)", top_issue: "Bobi Wine + Kabaka politics",   lean: "NUP",   note: "Largest ethnic group; NUP base" }
+      - { name: "Northern (Acholi)", top_issue: "Post-LRA recovery",             lean: "NRM/UPC", note: "LRA-war legacy" }
+      - { name: "Karamoja (NE)",     top_issue: "Cattle + climate",              lean: "NRM",   note: "Pastoralist; UPDF presence" }
+
+  TZA:
+    leader: { name: "Samia Suluhu Hassan", role: "President", party_abbr: "CCM", since: "2021-03", approval_pct: 71, approval_source: "Afrobarometer Tanzania 2024", bio: "CCM; succeeded Magufuli; 2025 election won amid Chadema's Lissu disqualification + crackdown" }
+    parties:
+      - { abbr: CCM,   name: "Chama Cha Mapinduzi",          position: 1,  social: 3,  seats: 256, total_seats: 393, vote_share_pct: 84, color: "#3d9b35", in_government: true,  leader: "Samia Suluhu Hassan" }
+      - { abbr: Chadema, name: "Chadema",                    position: 1,  social: 2,  seats: 19, total_seats: 393, vote_share_pct: 9,  color: "#cc0000", in_government: false, leader: "Tundu Lissu (disqualified)" }
+      - { abbr: CUF,   name: "Civic United Front",           position: 1,  social: 4,  seats: 6,  total_seats: 393, vote_share_pct: 3,  color: "#003366", in_government: false, leader: "Ibrahim Lipumba" }
+      - { abbr: ACT,   name: "ACT-Wazalendo",                position: -1, social: 1,  seats: 4,  total_seats: 393, vote_share_pct: 2,  color: "#0099cc", in_government: false, leader: "Dorothy Semu" }
+    regions:
+      - { name: "Dar es Salaam",    top_issue: "Cost of living + jobs",     lean: "CCM/Chadema", note: "Largest city" }
+      - { name: "Zanzibar",         top_issue: "Autonomy + religious-tourism politics", lean: "CUF/CCM", note: "Distinct system" }
+      - { name: "Northern (Kilimanjaro/Arusha)", top_issue: "Tourism + minerals", lean: "Chadema", note: "Chadema strongholds" }
+      - { name: "Lake zone (Mwanza)", top_issue: "Mining + agriculture",     lean: "CCM",   note: "Magufuli's base" }
+
+  NZL:
+    leader: { name: "Christopher Luxon", role: "Prime Minister", party_abbr: "NAT", since: "2023-11", approval_pct: 31, approval_source: "1News-Verian, Mar 2026", bio: "National Party; centre-right coalition with ACT + NZ First; running cost-of-living agenda" }
+    parties:
+      - { abbr: NAT,   name: "National Party",                position: 3,  social: 1,  seats: 49, total_seats: 123, vote_share_pct: 31, color: "#0099cc", in_government: true,  leader: "Christopher Luxon" }
+      - { abbr: LAB,   name: "Labour Party",                  position: -2, social: -2, seats: 34, total_seats: 123, vote_share_pct: 27, color: "#cc0033", in_government: false, leader: "Chris Hipkins" }
+      - { abbr: GRN,   name: "Green Party",                   position: -4, social: -4, seats: 15, total_seats: 123, vote_share_pct: 12, color: "#3d9b35", in_government: false, leader: "Chlöe Swarbrick / Marama Davidson" }
+      - { abbr: ACT,   name: "ACT New Zealand",               position: 6,  social: -1, seats: 11, total_seats: 123, vote_share_pct: 9,  color: "#ffd700", in_government: true,  leader: "David Seymour" }
+      - { abbr: NZF,   name: "New Zealand First",             position: 4,  social: 5,  seats: 8,  total_seats: 123, vote_share_pct: 6,  color: "#000000", in_government: true,  leader: "Winston Peters" }
+      - { abbr: TPM,   name: "Te Pāti Māori",                 position: -3, social: -2, seats: 6,  total_seats: 123, vote_share_pct: 4,  color: "#cc0000", in_government: false, leader: "Debbie Ngarewa-Packer / Rawiri Waititi" }
+    regions:
+      - { name: "Auckland",         top_issue: "Housing + immigration",     lean: "NAT/LAB swing", note: "1/3 of country" }
+      - { name: "Wellington",       top_issue: "Public-sector cuts",        lean: "LAB/GRN",   note: "Capital — public-service heavy" }
+      - { name: "South Island",     top_issue: "Farming + climate policy",  lean: "NAT",   note: "National's heartland" }
+      - { name: "Māori electorates", top_issue: "Treaty principles + waka",  lean: "TPM/LAB", note: "Reserved seats" }
+
+  RUS:
+    leader: { name: "Vladimir Putin", role: "President", party_abbr: "ER", since: "2012-05", approval_pct: 79, approval_source: "Levada Center, Mar 2026", bio: "United Russia-aligned; in power since 1999; ongoing war in Ukraine" }
+    parties:
+      - { abbr: ER,    name: "United Russia",                 position: 3,  social: 6,  seats: 325, total_seats: 450, vote_share_pct: 50, color: "#0099cc", in_government: true,  leader: "Putin / Medvedev" }
+      - { abbr: KPRF,  name: "Communist Party (KPRF)",        position: -3, social: 2,  seats: 57, total_seats: 450, vote_share_pct: 18, color: "#cc0033", in_government: false, leader: "Gennady Zyuganov" }
+      - { abbr: SR,    name: "A Just Russia – For Truth",     position: -2, social: 4,  seats: 27, total_seats: 450, vote_share_pct: 7,  color: "#cc6600", in_government: false, leader: "Sergey Mironov" }
+      - { abbr: LDPR,  name: "Liberal Democratic Party of Russia", position: 4, social: 7, seats: 21, total_seats: 450, vote_share_pct: 7, color: "#003366", in_government: false, leader: "Leonid Slutsky" }
+      - { abbr: NL,    name: "New People",                    position: 3,  social: 0,  seats: 15, total_seats: 450, vote_share_pct: 5,  color: "#7c5cff", in_government: false, leader: "Alexei Nechayev" }
+      - { abbr: RealOpp, name: "Real opposition (banned/exiled)", position: -1, social: -3, seats: 0, total_seats: 450, vote_share_pct: 0, color: "#666666", in_government: false, leader: "Yulia Navalnaya / Khodorkovsky / Kara-Murza" }
+    regions:
+      - { name: "Moscow",           top_issue: "War economy + inflation",   lean: "ER (with discontent)", note: "Capital — most independent thinking" }
+      - { name: "St Petersburg",    top_issue: "Defence industry + sanctions", lean: "ER", note: "Putin's hometown" }
+      - { name: "North Caucasus (Chechnya, Dagestan)", top_issue: "Kadyrov rule + war casualties", lean: "ER",  note: "Highest war-casualty rates" }
+      - { name: "Far East",         top_issue: "Demographics + China trade", lean: "ER/KPRF",  note: "Depopulating" }
+      - { name: "Occupied Ukraine territories", top_issue: "Annexation reality", lean: "ER (under occupation)", note: "Donetsk/Luhansk/Zaporizhzhia/Kherson — disputed" }
+
+  BLR:
+    leader: { name: "Alexander Lukashenko", role: "President", party_abbr: "Indep / regime", since: "1994-07", approval_pct: null, approval_source: "(no independent polling — Chatham House Belarus Tracker estimates ~25-30%)", bio: "In power since 1994; 2025 'win' 86.8% with all opposition exiled or jailed" }
+    parties:
+      - { abbr: BelayaRus, name: "Belaya Rus (regime party)", position: 2, social: 6, seats: 51, total_seats: 110, vote_share_pct: 47, color: "#cc0033", in_government: true, leader: "Aleksandr Lukashanok" }
+      - { abbr: KPB,   name: "Communist Party of Belarus (regime-allied)", position: -3, social: 4, seats: 6, total_seats: 110, vote_share_pct: 5, color: "#990000", in_government: true, leader: "Aleksei Sokol" }
+      - { abbr: LDPB,  name: "Liberal Democratic Party of Belarus", position: 3, social: 5, seats: 4, total_seats: 110, vote_share_pct: 4, color: "#003366", in_government: true, leader: "Oleg Gaidukevich" }
+      - { abbr: NewOpp, name: "Coordination Council (in exile)", position: -1, social: -2, seats: 0, total_seats: 110, vote_share_pct: 0, color: "#cc0000", in_government: false, leader: "Sviatlana Tsikhanouskaya" }
+    regions:
+      - { name: "Minsk",            top_issue: "Cost of living + war involvement", lean: "regime", note: "Capital — origin of 2020 protests" }
+      - { name: "Western (Hrodna, Brest)", top_issue: "EU border + sanctions",  lean: "regime/protest", note: "Polish-Ukrainian heritage" }
+      - { name: "Eastern (Mahilou, Homyel)", top_issue: "Russia ties",          lean: "regime",  note: "Russian-leaning" }
+
+  KAZ:
+    leader: { name: "Kassym-Jomart Tokayev", role: "President", party_abbr: "Amanat", since: "2019-03", approval_pct: 64, approval_source: "Demoscope KZ, Mar 2026", bio: "Took over from Nazarbayev; 2022 unrest reset; 'New Kazakhstan' technocratic agenda" }
+    parties:
+      - { abbr: Amanat, name: "Amanat (formerly Nur Otan)",  position: 1,  social: 4,  seats: 62, total_seats: 98, vote_share_pct: 53, color: "#0099cc", in_government: true,  leader: "Erlan Koshanov" }
+      - { abbr: Auyl,  name: "Auyl People's Democratic Party", position: -1, social: 2, seats: 8, total_seats: 98, vote_share_pct: 11, color: "#3d9b35", in_government: true, leader: "Ali Bektaev" }
+      - { abbr: Respublika, name: "Respublika",               position: 2,  social: 1,  seats: 6,  total_seats: 98, vote_share_pct: 9,  color: "#cc6600", in_government: true,  leader: "Aydarbek Khodzhanazarov" }
+      - { abbr: AkJol, name: "Ak Zhol",                       position: 3,  social: 1,  seats: 6,  total_seats: 98, vote_share_pct: 8,  color: "#ffd700", in_government: true,  leader: "Azat Peruashev" }
+      - { abbr: KhalykP, name: "People's Party of Kazakhstan", position: -3, social: 2, seats: 5, total_seats: 98, vote_share_pct: 7,  color: "#cc0033", in_government: true,  leader: "Yermukhamet Yertysbayev" }
+      - { abbr: OSDP,  name: "OSDP (token opposition)",       position: -1, social: -1, seats: 4,  total_seats: 98, vote_share_pct: 5,  color: "#003366", in_government: false, leader: "Askhat Rakhimzhanov" }
+    regions:
+      - { name: "Astana",           top_issue: "Cost of living + Tokayev's vision", lean: "Amanat", note: "Capital — political centre" }
+      - { name: "Almaty",           top_issue: "2022 unrest legacy",        lean: "Amanat (with discontent)", note: "Largest city — Jan 2022 protests origin" }
+      - { name: "West (Atyrau, Mangystau)", top_issue: "Oil + worker strikes", lean: "Amanat", note: "Oil region — strike-prone" }
+      - { name: "South (Shymkent, Turkistan)", top_issue: "Religious revival + inflation", lean: "Amanat", note: "Most religious region" }

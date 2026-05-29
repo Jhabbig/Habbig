@@ -1,10 +1,68 @@
 from __future__ import annotations
 import aiohttp
 import asyncio
+import json as _json
 import logging
 import re
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+from data_sources.countries import COUNTRIES, country_name
+from data_sources.fips import STATE_NAMES, STATE_FIPS
+
+logger = logging.getLogger(__name__)
+
+GAMMA_API = "https://gamma-api.polymarket.com"
+CLOB_API = "https://clob.polymarket.com"
+
+# Polymarket exposes structured tags on events. These slugs reliably mark a
+# market as election-relevant — far more accurate than substring keyword soup
+# on titles. Tag slugs are case-insensitive on the API side.
+ELECTION_TAG_SLUGS: set[str] = {
+    "elections", "us-elections", "midterm-elections", "2026-midterms",
+    "senate", "house", "governor", "presidential", "primary",
+    "world-elections", "international-elections",
+}
+
+# Tag → race_type mapping. First match wins.
+RACE_TYPE_BY_TAG: list[tuple[str, str]] = [
+    ("senate", "senate"),
+    ("house", "house"),
+    ("governor", "governor"),
+    ("presidential", "presidential"),
+    ("primary", "primary"),
+    ("congressional-control", "control"),
+    ("world-elections", "world"),
+    ("international-elections", "world"),
+]
+
+# Title fallbacks (only used when no structured tag yields a race_type).
+_RACE_TYPE_FALLBACK_TITLE_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
+    (("senate",), "senate"),
+    (("house", "representative"), "house"),
+    (("governor",), "governor"),
+    (("president",), "presidential"),
+    (("primary", "nomination", "nominee"), "primary"),
+    (("control", "majority"), "control"),
+]
+
+# US-domestic exclusion keywords for the world-elections filter — built once
+# from STATE_NAMES so adding/removing states stays in sync automatically.
+_US_DOMESTIC_KEYWORDS: set[str] = {
+    "senate", "house", "governor", "midterm", "congress",
+    "representative", "seat", "supreme court", "state legislature",
+    "us election", "american election",
+}
+_US_DOMESTIC_KEYWORDS.update(name.lower() for name in STATE_NAMES.values())
+
+# Election keywords for the world filter — these don't need to be exhaustive
+# because we also require a tag-based world signal as the primary filter.
+_WORLD_ELECTION_KEYWORDS = {
+    "president", "prime minister", "chancellor", "parliament",
+    "coalition", "election", "inaugurated", "reelect",
+    "ruling party", "opposition leader",
+}
 
 
 def _is_current_open_market(end_date_str: Optional[str], closed: bool, active: bool, max_years_out: float = 3.0) -> bool:
@@ -29,17 +87,84 @@ def _is_current_open_market(end_date_str: Optional[str], closed: bool, active: b
         return False
     return True
 
-logger = logging.getLogger(__name__)
 
-GAMMA_API = "https://gamma-api.polymarket.com"
-CLOB_API = "https://clob.polymarket.com"
+def _tag_slugs(event: dict) -> set[str]:
+    """Return the set of tag slugs on an event, lowercased."""
+    tags = event.get("tags") or []
+    out: set[str] = set()
+    for t in tags:
+        if isinstance(t, dict):
+            slug = (t.get("slug") or t.get("label") or "").lower().strip()
+            if slug:
+                out.add(slug)
+        elif isinstance(t, str):
+            out.add(t.lower().strip())
+    return out
+
+
+def _race_type_from_tags(tag_slugs: set[str]) -> Optional[str]:
+    for slug, rt in RACE_TYPE_BY_TAG:
+        if slug in tag_slugs:
+            return rt
+    return None
+
+
+def _race_type_from_title(text: str) -> str:
+    for keywords, rt in _RACE_TYPE_FALLBACK_TITLE_KEYWORDS:
+        if any(kw in text for kw in keywords):
+            return rt
+    return "other"
+
+
+def _parse_outcomes(market: dict) -> tuple[list[str], list[Optional[float]], list[Optional[str]]]:
+    """Extract (outcomes, prices, token_ids) from a Polymarket market dict.
+
+    All three fields ship as JSON-encoded strings on the API. Returns parallel
+    lists indexed by outcome.
+    """
+    def _decode(field, default):
+        raw = market.get(field, default)
+        if isinstance(raw, str):
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return []
+        return raw or []
+
+    outcomes = _decode("outcomes", "[]")
+    prices_raw = _decode("outcomePrices", "[]")
+    token_ids = _decode("clobTokenIds", "[]")
+
+    prices: list[Optional[float]] = []
+    for i in range(len(outcomes)):
+        if i < len(prices_raw) and prices_raw[i] is not None:
+            try:
+                prices.append(float(prices_raw[i]))
+            except (TypeError, ValueError):
+                prices.append(None)
+        else:
+            prices.append(None)
+
+    tids: list[Optional[str]] = []
+    for i in range(len(outcomes)):
+        tids.append(token_ids[i] if i < len(token_ids) else None)
+
+    return list(outcomes), prices, tids
+
 
 class PolymarketAggregator:
     """Fetches midterm election market data from Polymarket."""
 
+    # Cache events for 4 minutes. The data refresh loop runs every 5 minutes
+    # and calls fetch_election_markets + fetch_world_election_markets back to
+    # back, so a single fetch covers both calls without re-hitting the API.
+    _EVENT_CACHE_TTL = 240
+
     def __init__(self, session: Optional[aiohttp.ClientSession] = None):
         self._session = session
         self._owns_session = session is None
+        self._cached_events: list[dict] = []
+        self._cache_time: float = 0.0
 
     async def _get_session(self):
         if self._session is None or self._session.closed:
@@ -51,18 +176,36 @@ class PolymarketAggregator:
         if self._owns_session and self._session and not self._session.closed:
             await self._session.close()
 
-    async def _fetch_politics_events(self, max_pages: int = 5) -> list[dict]:
-        """Fetch politics events from Gamma API with page cap."""
+    async def _fetch_politics_events(self) -> list[dict]:
+        """Fetch politics events from Gamma API with no hard page cap.
+
+        Cached for ``_EVENT_CACHE_TTL`` seconds so subsequent calls within a
+        refresh cycle (``fetch_election_markets`` + ``fetch_world_election_markets``)
+        share the same fetched events.
+        """
+        now = time.time()
+        if self._cached_events and (now - self._cache_time) < self._EVENT_CACHE_TTL:
+            return self._cached_events
+
         session = await self._get_session()
-        markets = []
+        events: list[dict] = []
         offset = 0
         limit = 100
-        page = 0
+        # Hard ceiling to avoid runaway loops if the API ever stops paginating
+        # cleanly. 50 pages × 100 = 5,000 events is well above any realistic
+        # politics catalog size on Polymarket.
+        max_pages = 50
 
-        while page < max_pages:
+        for page in range(max_pages):
             try:
                 url = f"{GAMMA_API}/events"
-                params = {"tag_slug": "politics", "limit": limit, "offset": offset, "active": "true", "closed": "false"}
+                params = {
+                    "tag_slug": "politics",
+                    "limit": limit,
+                    "offset": offset,
+                    "active": "true",
+                    "closed": "false",
+                }
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 429:
                         logger.warning("Polymarket rate limited, backing off")
@@ -74,22 +217,32 @@ class PolymarketAggregator:
                     data = await resp.json()
                     if not data:
                         break
-                    markets.extend(data)
+                    events.extend(data)
                     if len(data) < limit:
                         break
                     offset += limit
-                    page += 1
             except Exception as e:
-                logger.error(f"Polymarket fetch error at page {page}: {e}")
+                logger.error(f"Polymarket fetch error at offset {offset}: {e}")
                 break
 
-        logger.info(f"Polymarket fetched {len(markets)} politics events in {page + 1} pages")
-        return markets
+        logger.info(f"Polymarket fetched {len(events)} politics events")
+        self._cached_events = events
+        self._cache_time = now
+        return events
 
     async def fetch_election_markets(self) -> list[dict]:
         """Fetch US midterm election markets from Gamma API."""
-        markets = await self._fetch_politics_events(max_pages=5)
-        return self._normalize_markets(markets)
+        events = await self._fetch_politics_events()
+        return self._normalize_markets(events)
+
+    async def fetch_world_election_markets(self) -> list[dict]:
+        """Fetch international election markets from Gamma API.
+
+        Reuses the cached events from ``fetch_election_markets`` instead of
+        re-paginating the entire politics catalog.
+        """
+        events = await self._fetch_politics_events()
+        return self._normalize_world_markets(events)
 
     async def fetch_price_history(self, token_id: str, interval: str = "1d", fidelity: int = 60) -> list[dict]:
         """Fetch historical prices for a token from CLOB API."""
@@ -105,7 +258,7 @@ class PolymarketAggregator:
                     {
                         "timestamp": point.get("t", 0),
                         "price": float(point.get("p", 0)),
-                        "source": "polymarket"
+                        "source": "polymarket",
                     }
                     for point in (data.get("history", []) if isinstance(data, dict) else data)
                 ]
@@ -128,90 +281,53 @@ class PolymarketAggregator:
             return {}
 
     def _normalize_markets(self, events: list[dict]) -> list[dict]:
-        """Normalize Polymarket events into standardized market format."""
+        """Normalize Polymarket events into US midterm markets."""
         normalized = []
-        midterm_keywords = [
-            "senate", "house", "governor", "midterm", "2026", "congress",
-            "republican", "democrat", "gop", "election", "seat", "representative",
-            "control", "majority", "flip"
-        ]
 
         for event in events:
+            tag_slugs = _tag_slugs(event)
             title = (event.get("title") or "").lower()
             slug = (event.get("slug") or "").lower()
             description = (event.get("description") or "").lower()
             combined = f"{title} {slug} {description}"
 
-            # Filter for midterm-relevant markets
-            if not any(kw in combined for kw in midterm_keywords):
+            # Election relevance: prefer tag-based detection. Fall back to a
+            # narrow keyword set only if the event has no usable tags at all.
+            is_election_tagged = bool(tag_slugs & ELECTION_TAG_SLUGS)
+            if not is_election_tagged:
+                fallback_keywords = (
+                    "senate", "house", "governor", "midterm", "2026",
+                    "congress", "election", "primary",
+                )
+                if not any(kw in combined for kw in fallback_keywords):
+                    continue
+
+            # Skip world-election-tagged events here — they belong to the
+            # international set.
+            if "world-elections" in tag_slugs or "international-elections" in tag_slugs:
                 continue
 
-            # Determine race type
-            race_type = "other"
-            if "senate" in combined:
-                race_type = "senate"
-            elif "house" in combined or "representative" in combined:
-                race_type = "house"
-            elif "governor" in combined:
-                race_type = "governor"
-            elif "control" in combined or "majority" in combined:
-                race_type = "control"
+            race_type = _race_type_from_tags(tag_slugs) or _race_type_from_title(combined)
+            # World tag would have been excluded above, but defend against
+            # mis-tagged events surfacing as US races.
+            if race_type == "world":
+                continue
 
-            # Extract state from title if possible
             state = self._extract_state(event.get("title", ""))
 
-            # Process nested markets (outcomes)
-            sub_markets = event.get("markets", [])
-            for market in sub_markets:
+            for market in event.get("markets", []) or []:
                 if not _is_current_open_market(
                     market.get("endDate"),
                     bool(market.get("closed", False)),
                     bool(market.get("active", True)),
                 ):
                     continue
-                outcomes = market.get("outcomes", "[]")
-                if isinstance(outcomes, str):
-                    import json
-                    try:
-                        outcomes = json.loads(outcomes)
-                    except Exception:
-                        outcomes = []
 
-                prices_str = market.get("outcomePrices", "[]")
-                if isinstance(prices_str, str):
-                    import json
-                    try:
-                        prices = json.loads(prices_str)
-                    except Exception:
-                        prices = []
-                else:
-                    prices = prices_str or []
-
-                token_ids = []
-                clob_ids = market.get("clobTokenIds", "[]")
-                if isinstance(clob_ids, str):
-                    import json
-                    try:
-                        token_ids = json.loads(clob_ids)
-                    except Exception:
-                        token_ids = []
-                else:
-                    token_ids = clob_ids or []
-
-                outcome_data = []
-                for i, outcome in enumerate(outcomes):
-                    price = None
-                    if i < len(prices) and prices[i] is not None:
-                        try:
-                            price = float(prices[i])
-                        except (TypeError, ValueError):
-                            price = None
-                    tid = token_ids[i] if i < len(token_ids) else None
-                    outcome_data.append({
-                        "name": outcome,
-                        "probability": price,
-                        "token_id": tid
-                    })
+                outcomes, prices, token_ids = _parse_outcomes(market)
+                outcome_data = [
+                    {"name": outcomes[i], "probability": prices[i], "token_id": token_ids[i]}
+                    for i in range(len(outcomes))
+                ]
 
                 normalized.append({
                     "source": "polymarket",
@@ -233,123 +349,50 @@ class PolymarketAggregator:
 
         return normalized
 
-    async def fetch_world_election_markets(self) -> list[dict]:
-        """Fetch international/world election markets from Gamma API."""
-        # Reuse the same fetched events (capped at 5 pages)
-        markets = await self._fetch_politics_events(max_pages=5)
-        return self._normalize_world_markets(markets)
-
     def _normalize_world_markets(self, events: list[dict]) -> list[dict]:
-        """Normalize Polymarket events into world election market format."""
-        import json as _json
+        """Normalize Polymarket events into world election markets.
+
+        Primary filter: ``world-elections`` / ``international-elections`` tag.
+        For events without those tags, fall back to a (country-keyword AND
+        election-keyword AND NOT US-domestic) heuristic.
+        """
         normalized = []
 
-        # Must match an election-specific keyword
-        election_keywords = [
-            "president", "prime minister", "chancellor", "parliament",
-            "coalition government", "election", "inaugurated", "reelect",
-            "head of state", "ruling party", "opposition leader"
-        ]
-        # MUST mention a non-US country (required, not optional)
-        country_keywords = [
-            "uk ", "united kingdom", "britain", "france", "french",
-            "germany", "german", "canada", "canadian", "australia",
-            "australian", "brazil", "brazilian", "mexico", "mexican",
-            "india", "indian", "japan", "japanese", "south korea", "korean",
-            "italy", "italian", "spain", "spanish", "netherlands", "dutch",
-            "israel", "israeli", "turkey", "turkish", "argentina",
-            "colombian", "colombia", "poland", "polish", "ukraine",
-            "ukrainian", "china", "chinese", "russia", "russian",
-            "european", "eu ", "nato", "zelenskyy", "macron", "starmer",
-            "trudeau", "modi", "lula", "meloni", "scholz"
-        ]
-        # Exclude US domestic politics
-        us_exclude = [
-            "senate", "house", "governor", "midterm", "congress",
-            "representative", "seat", "supreme court", "state legislature",
-            "us election", "american election", "trump", "biden",
-            "harris", "desantis", "newsom"
-        ]
-        # Exclude clearly non-election topics
-        noise_exclude = [
-            "cricket", "nfl", "nba", "mlb", "soccer", "football match",
-            "hurricane", "tropical", "earthquake", "refugee", "covid",
-            "bitcoin", "crypto", "stock", "fed ", "interest rate",
-            "weather", "temperature", "oscar", "grammy", "emmy"
-        ]
-
         for event in events:
+            tag_slugs = _tag_slugs(event)
             title = (event.get("title") or "").lower()
             slug = (event.get("slug") or "").lower()
             description = (event.get("description") or "").lower()
             combined = f"{title} {slug} {description}"
 
-            # Must match an election keyword
-            if not any(kw in combined for kw in election_keywords):
-                continue
+            world_tagged = ("world-elections" in tag_slugs) or ("international-elections" in tag_slugs)
 
-            # Must mention a non-US country or leader
-            if not any(kw in combined for kw in country_keywords):
-                continue
+            if not world_tagged:
+                # Fallback: must hit an election keyword AND mention a known
+                # non-US country, AND NOT mention US-domestic markers.
+                if not any(kw in combined for kw in _WORLD_ELECTION_KEYWORDS):
+                    continue
+                country = self._extract_country(event.get("title", ""))
+                if not country:
+                    continue
+                if any(kw in combined for kw in _US_DOMESTIC_KEYWORDS):
+                    continue
+            else:
+                country = self._extract_country(event.get("title", ""))
 
-            # Exclude US domestic politics
-            if any(kw in combined for kw in us_exclude):
-                continue
-
-            # Exclude noise
-            if any(kw in combined for kw in noise_exclude):
-                continue
-
-            country = self._extract_country(event.get("title", ""))
-
-            sub_markets = event.get("markets", [])
-            for market in sub_markets:
+            for market in event.get("markets", []) or []:
                 if not _is_current_open_market(
                     market.get("endDate"),
                     bool(market.get("closed", False)),
                     bool(market.get("active", True)),
                 ):
                     continue
-                outcomes = market.get("outcomes", "[]")
-                if isinstance(outcomes, str):
-                    try:
-                        outcomes = _json.loads(outcomes)
-                    except Exception:
-                        outcomes = []
 
-                prices_str = market.get("outcomePrices", "[]")
-                if isinstance(prices_str, str):
-                    try:
-                        prices = _json.loads(prices_str)
-                    except Exception:
-                        prices = []
-                else:
-                    prices = prices_str or []
-
-                token_ids = []
-                clob_ids = market.get("clobTokenIds", "[]")
-                if isinstance(clob_ids, str):
-                    try:
-                        token_ids = _json.loads(clob_ids)
-                    except Exception:
-                        token_ids = []
-                else:
-                    token_ids = clob_ids or []
-
-                outcome_data = []
-                for i, outcome in enumerate(outcomes):
-                    price = None
-                    if i < len(prices) and prices[i] is not None:
-                        try:
-                            price = float(prices[i])
-                        except (TypeError, ValueError):
-                            price = None
-                    tid = token_ids[i] if i < len(token_ids) else None
-                    outcome_data.append({
-                        "name": outcome,
-                        "probability": price,
-                        "token_id": tid
-                    })
+                outcomes, prices, token_ids = _parse_outcomes(market)
+                outcome_data = [
+                    {"name": outcomes[i], "probability": prices[i], "token_id": token_ids[i]}
+                    for i in range(len(outcomes))
+                ]
 
                 normalized.append({
                     "source": "polymarket",
@@ -371,75 +414,76 @@ class PolymarketAggregator:
 
         return normalized
 
-    def _extract_country(self, title: str) -> Optional[str]:
-        """Try to extract country code from market title."""
-        # Order matters: check longer/more specific names first to avoid
-        # e.g. "ukraine" matching "uk"
-        countries = [
-            ("united kingdom", "UK"), ("britain", "UK"), ("british", "UK"),
-            ("ukraine", "UA"), ("ukrainian", "UA"),
-            ("france", "FR"), ("french", "FR"),
-            ("germany", "DE"), ("german", "DE"),
-            ("canada", "CA"), ("canadian", "CA"),
-            ("australia", "AU"), ("australian", "AU"),
-            ("brazil", "BR"), ("brazilian", "BR"),
-            ("mexico", "MX"), ("mexican", "MX"),
-            ("india", "IN"), ("indian", "IN"),
-            ("japan", "JP"), ("japanese", "JP"),
-            ("south korea", "KR"), ("korean", "KR"),
-            ("italy", "IT"), ("italian", "IT"),
-            ("spain", "ES"), ("spanish", "ES"),
-            ("netherlands", "NL"), ("dutch", "NL"),
-            ("israel", "IL"), ("israeli", "IL"),
-            ("turkey", "TR"), ("turkish", "TR"),
-            ("argentina", "AR"), ("argentine", "AR"),
-            ("colombia", "CO"), ("colombian", "CO"),
-            ("poland", "PL"), ("polish", "PL"),
-            ("china", "CN"), ("chinese", "CN"),
-            ("russia", "RU"), ("russian", "RU"),
-            ("european union", "EU"), ("eu ", "EU"),
-        ]
+    @staticmethod
+    def _extract_country(title: str) -> Optional[str]:
+        """Extract an ISO-2 country code from a market title.
+
+        Built from the shared ``COUNTRIES`` table so adding a country in one
+        place updates this matcher automatically. Demonyms are also matched
+        (e.g. "French" → FR) via the ``COUNTRY_ADJECTIVES`` table.
+        """
+        if not title:
+            return None
         title_lower = title.lower()
-        for name, code in countries:
-            if name in title_lower:
+
+        # Match full country names first (longer = more specific). Sort by
+        # length descending so e.g. "United Kingdom" beats "Kingdom".
+        sorted_countries = sorted(
+            COUNTRIES.items(),
+            key=lambda item: len(item[1][1]),
+            reverse=True,
+        )
+        for code, (_iso3, name) in sorted_countries:
+            if name.lower() in title_lower:
                 return code
-        # Check for " UK " as a word boundary (avoids matching "ukraine")
-        if " uk " in f" {title_lower} " and "ukrain" not in title_lower:
+
+        # Demonyms (e.g. "British", "Hungarian"). Import lazily so the module
+        # stays importable even if the demonym table grows huge.
+        from data_sources.countries import COUNTRY_ADJECTIVES
+        sorted_adjs = sorted(COUNTRY_ADJECTIVES.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for code, adj in sorted_adjs:
+            # Word-boundary match avoids "Italian" matching inside "Italianate"
+            if re.search(rf"\b{re.escape(adj.lower())}\b", title_lower):
+                return code
+
+        # "UK" as a whole word, but not inside "ukraine"
+        if re.search(r"\buk\b", title_lower) and "ukrain" not in title_lower:
             return "UK"
+
         return None
 
-    def _extract_state(self, title: str) -> Optional[str]:
-        """Try to extract US state from market title."""
-        states = {
-            "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-            "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
-            "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
-            "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
-            "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
-            "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
-            "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
-            "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
-            "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
-            "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
-            "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
-            "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
-            "Wisconsin": "WI", "Wyoming": "WY"
-        }
-        # Check full state names first. Use word-boundary regex so e.g.
-        # "New York" doesn't shadow "York"-something, and explicitly skip
-        # the "Washington" → WA mapping when the title is about Washington
-        # D.C. (which isn't a state).
+    @staticmethod
+    def _extract_state(title: str) -> Optional[str]:
+        """Extract a US state code from a market title.
+
+        Built from the shared ``STATE_NAMES`` and ``STATE_FIPS`` tables in
+        ``data_sources.fips`` rather than a hardcoded copy.
+        """
+        if not title:
+            return None
+
         title_lower = title.lower()
         is_dc_title = "washington d.c." in title_lower or "washington, d.c." in title_lower
-        for name, abbr in states.items():
+
+        # Full state names — sort by length descending so "New Mexico" beats
+        # "Mexico", "North Carolina" beats "Carolina", etc.
+        sorted_states = sorted(STATE_NAMES.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for abbr, name in sorted_states:
             name_lower = name.lower()
             if name_lower == "washington" and is_dc_title:
                 continue
             if re.search(rf"\b{re.escape(name_lower)}\b", title_lower):
                 return abbr
-        # Only check abbreviations that won't match common English words
-        ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA"}
-        for name, abbr in states.items():
-            if abbr not in ambiguous_abbrs and f" {abbr} " in f" {title} ":
+
+        # Postal abbreviations: only safe ones. Many US state codes collide
+        # with common English words ("IN", "OR", "ME", "OH", "AL", "OK", "HI",
+        # "ID", "PA", "MA"), so skip those.
+        ambiguous_abbrs = {"IN", "OR", "ME", "OH", "AL", "OK", "HI", "ID", "PA", "MA", "AK", "AR", "DE"}
+        padded = f" {title} "
+        for abbr in STATE_FIPS:
+            if abbr in ambiguous_abbrs:
+                continue
+            if f" {abbr} " in padded:
                 return abbr
+
         return None

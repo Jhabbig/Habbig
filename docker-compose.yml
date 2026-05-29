@@ -39,6 +39,16 @@ services:
         condition: service_healthy
       centralbank:
         condition: service_healthy
+      airace:
+        condition: service_healthy
+      disasters:
+        condition: service_healthy
+      crypto-trackers:
+        condition: service_healthy
+      religion:
+        condition: service_healthy
+      whale:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -150,6 +160,72 @@ services:
       timeout: 5s
       retries: 3
 
+  airace:
+    build: ./ai-race-dashboard
+    expose:
+      - "7070"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7070/api/health',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  disasters:
+    build: ./disasters-dashboard
+    expose:
+      - "7053"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7053/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  crypto-trackers:
+    build: ./crypto-trackers-dashboard
+    expose:
+      - "7054"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7054/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  religion:
+    build: ./religion-dashboard
+    expose:
+      - "7062"
+    env_file: ./gateway/.env.production
+    volumes:
+      - religion-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7062/api/health',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  whale:
+    build: ./whale-dashboard
+    expose:
+      - "8053"
+    env_file: ./gateway/.env.production
+    volumes:
+      - whale-data:/app/backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8053/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   gateway-data:
   crypto-data:
+  religion-data:
+  whale-data:

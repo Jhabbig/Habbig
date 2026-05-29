@@ -8,7 +8,7 @@ set -e
 if [ "$(id -u)" -ne 0 ]; then echo "Error: must run as root (sudo)"; exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICES="narve-gateway narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock"
+SERVICES="narve-gateway narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock narve-centralbank narve-disasters narve-crypto-trackers narve-whale"
 
 echo "Installing systemd service units..."
 for svc in $SERVICES; do
@@ -32,7 +32,7 @@ fi
 
 echo ""
 echo "Done. To start everything:"
-echo "  sudo systemctl start narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock"
+echo "  sudo systemctl start narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock narve-centralbank narve-disasters narve-crypto-trackers narve-whale"
 echo "  sudo systemctl start narve-gateway"
 echo ""
 echo "To check status:"

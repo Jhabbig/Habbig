@@ -1,0 +1,31 @@
+[Unit]
+Description=Narve Whale Watch Dashboard (port 8053)
+After=network.target
+
+[Service]
+# Required env vars: GATEWAY_SSO_SECRET, PORT, SEC_USER_AGENT
+# Optional env vars: OPENFIGI_API_KEY, SMTP_HOST/PORT/USER/PASSWORD/FROM
+# Note: This service loads the shared gateway .env but only needs the above vars
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/whale-dashboard/backend
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/whale-dashboard/backend
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -912,9 +912,38 @@
     .perf-grid { grid-template-columns: 1fr; }
     .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
   }
+  /* Quota-exhausted banner — server-rendered: shown only when the
+     the-odds-api circuit breaker is open (degraded-quota-exhausted),
+     otherwise stays display:none. Sits above the nav so the bookmaker-odds
+     gap is acknowledged before users see empty edge cards. Polymarket +
+     Kalshi cross-venue signals continue working. */
+  .quota-banner {
+    display: none;
+    background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
+    border-bottom: 1px solid rgba(251,191,36,0.4);
+    color: #fbbf24;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .quota-banner b { color: #fde68a; }
+  .quota-banner .quota-banner-detail {
+    color: rgba(253,230,138,0.7);
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
+
+<!-- ===== QUOTA BANNER (server-rendered: shown only when breaker is open) ===== -->
+<div class="quota-banner" id="quotaBanner" style="display:__QUOTA_BANNER_DISPLAY__;">
+  <b>Bookmaker odds temporarily unavailable</b> — the-odds-api monthly quota exhausted; falling back to Polymarket↔Kalshi cross-venue signals below.
+  <div class="quota-banner-detail">Auto-probes again in ~__QUOTA_BANNER_HOURS__h, or restored instantly when ODDS_API_KEY is rotated/upgraded.</div>
+</div>
 
 <!-- ===== NAV ===== -->
 <nav class="nav">

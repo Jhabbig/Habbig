@@ -121,6 +121,8 @@
         <button data-tab="best-bets" onclick="switchTab('best-bets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.bestBets">Best Bets</button>
         <button data-tab="leaderboard" onclick="switchTab('leaderboard')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.leaderboard">Leaderboard</button>
         <button data-tab="markets" onclick="switchTab('markets')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)" data-i18n="tab.markets">Markets</button>
+        <button data-tab="performance" onclick="switchTab('performance')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Performance</button>
+        <button data-tab="arbitrage" onclick="switchTab('arbitrage')" class="tab-btn px-5 py-2.5 text-xs font-medium border-b-2 border-transparent transition-all" style="color:var(--text-muted)">Arbitrage</button>
     </div>
 </nav>
 
@@ -153,8 +155,8 @@
 <!-- =============== LEADERBOARD TAB =============== -->
 <div id="tab-leaderboard" class="tab-panel">
     <div class="mb-4"><h2 class="text-lg font-semibold" style="color:var(--text-primary)">Source Leaderboard</h2><p class="text-xs themed-text mt-0.5">Ranked by credibility. Hover to adjust trust.</p></div>
-    <div class="overflow-x-auto rounded-xl border themed-border"><table class="w-full text-sm"><thead><tr class="themed-card text-[10px] uppercase tracking-wider themed-muted"><th class="px-4 py-2.5 text-center font-medium w-12">#</th><th class="px-4 py-2.5 text-left font-medium">Source</th><th class="px-4 py-2.5 text-left font-medium">Credibility</th><th class="px-4 py-2.5 text-left font-medium">Accuracy</th><th class="px-4 py-2.5 text-left font-medium">Record</th><th class="px-4 py-2.5 text-left font-medium">Categories</th><th class="px-4 py-2.5 text-left font-medium">Followers</th><th class="px-4 py-2.5 text-left font-medium w-24">Trust</th></tr></thead>
-    <tbody id="leaderboard-content" hx-get="/leaderboard" hx-trigger="load" hx-swap="innerHTML"><tr><td colspan="8" class="text-center py-16 themed-muted">Loading...</td></tr></tbody></table></div>
+    <div class="overflow-x-auto rounded-xl border themed-border"><table class="w-full text-sm"><thead><tr class="themed-card text-[10px] uppercase tracking-wider themed-muted"><th class="px-4 py-2.5 text-center font-medium w-12">#</th><th class="px-4 py-2.5 text-left font-medium">Source</th><th class="px-4 py-2.5 text-left font-medium">Credibility</th><th class="px-4 py-2.5 text-left font-medium">Accuracy</th><th class="px-4 py-2.5 text-left font-medium">Record</th><th class="px-4 py-2.5 text-left font-medium" title="Brier score — lower is better. Only counts probability-bearing predictions.">Brier</th><th class="px-4 py-2.5 text-left font-medium">Categories</th><th class="px-4 py-2.5 text-left font-medium">Followers</th><th class="px-4 py-2.5 text-left font-medium w-24">Trust</th></tr></thead>
+    <tbody id="leaderboard-content" hx-get="/leaderboard" hx-trigger="load" hx-swap="innerHTML"><tr><td colspan="9" class="text-center py-16 themed-muted">Loading...</td></tr></tbody></table></div>
 </div>
 
 <!-- =============== MARKETS TAB =============== -->
@@ -180,6 +182,60 @@
     <div id="market-chart"></div>
 </div>
 
+<!-- =============== PERFORMANCE TAB =============== -->
+<div id="tab-performance" class="tab-panel">
+    <div class="mb-4 flex items-end justify-between">
+        <div>
+            <h2 class="text-lg font-semibold" style="color:var(--text-primary)">Paper-Trade Ledger</h2>
+            <p class="text-xs themed-text mt-0.5">$1 staked every time the system fires a tradeable signal. Settles when the market resolves.</p>
+        </div>
+    </div>
+    <div id="performance-content" hx-get="/performance" hx-trigger="load, every 60s" hx-swap="innerHTML">
+        <div class="text-center py-16 themed-muted">Loading...</div>
+    </div>
+
+    <div class="mt-8">
+        <h3 class="text-sm font-semibold mb-2" style="color:var(--text-primary)">Backtest the thresholds</h3>
+        <p class="text-xs themed-text mb-4">Replays every resolved prediction under the picked filter. Use this to tune the live trade rules.</p>
+        <div class="themed-card border themed-border rounded-xl p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Min EV</label>
+                    <input id="bt-min-ev" type="number" step="0.01" min="0" max="1" value="0.10" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Min Credibility</label>
+                    <input id="bt-min-cred" type="number" step="0.01" min="0" max="1" value="0.55" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase tracking-wider themed-muted mb-1 block">Stake ($/signal)</label>
+                    <input id="bt-stake" type="number" step="1" min="1" max="1000" value="1" class="w-full themed-card border themed-border rounded-lg px-2.5 py-1.5 text-xs" style="color:var(--text-primary)">
+                </div>
+            </div>
+            <button onclick="runBacktest()" class="mt-4 px-4 py-2 rounded-lg accent-bg text-white text-xs font-medium hover:opacity-90 transition-opacity">Run backtest</button>
+        </div>
+        <div id="bt-result" class="text-sm themed-text"></div>
+    </div>
+</div>
+
+<!-- =============== ARBITRAGE TAB =============== -->
+<div id="tab-arbitrage" class="tab-panel">
+    <div class="mb-4 flex items-end justify-between">
+        <div>
+            <h2 class="text-lg font-semibold" style="color:var(--text-primary)">Cross-Venue Arbitrage</h2>
+            <p class="text-xs themed-text mt-0.5">Polymarket vs Kalshi YES-price spreads ≥3pp on matched events.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-[10px] uppercase tracking-wider themed-muted">Min edge (pp)</label>
+            <input id="arb-min-edge" type="number" step="0.5" min="0.5" max="50" value="3" class="w-20 themed-card border themed-border rounded-lg px-2 py-1 text-xs" style="color:var(--text-primary)">
+            <button onclick="reloadArbitrage()" class="px-3 py-1.5 rounded-lg accent-bg text-white text-xs font-medium hover:opacity-90 transition-opacity">Refresh</button>
+        </div>
+    </div>
+    <div id="arbitrage-content" hx-get="/arbitrage" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-16 themed-muted">Loading...</div>
+    </div>
+</div>
+
 </main>
 
 <script>
@@ -195,6 +251,72 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     const panel = document.getElementById(`tab-${tab}`);
     if (panel) panel.classList.add('active');
+}
+
+// Arbitrage refresh with custom min-edge.
+function reloadArbitrage() {
+    const minEdge = parseFloat(document.getElementById('arb-min-edge').value || '3');
+    htmx.ajax('GET', `/arbitrage?min_edge=${minEdge}`, {target: '#arbitrage-content', swap: 'innerHTML'});
+}
+
+// Backtest knob runner
+let _btChart = null;
+async function runBacktest() {
+    const ev = parseFloat(document.getElementById('bt-min-ev').value || '0.10');
+    const cred = parseFloat(document.getElementById('bt-min-cred').value || '0.55');
+    const stake = parseFloat(document.getElementById('bt-stake').value || '1');
+    const out = document.getElementById('bt-result');
+    out.innerHTML = '<span class="themed-muted">Running...</span>';
+    try {
+        const r = await fetch(`/backtest?min_ev=${ev}&min_credibility=${cred}&stake_usd=${stake}`, {credentials: 'same-origin'});
+        if (!r.ok) { out.innerHTML = '<span class="text-red-400">Backtest failed</span>'; return; }
+        const d = await r.json();
+        const pnlClass = (d.total_pnl_usd || 0) >= 0 ? 'text-green-400' : 'text-red-400';
+        const hr = d.hit_rate != null ? `${(d.hit_rate*100).toFixed(0)}%` : '—';
+        const roi = d.roi != null ? `${(d.roi*100).toFixed(1)}%` : '—';
+        // Sharpe: >1 is good, >2 is great, <0 is losing
+        const sharpe = d.sharpe != null ? d.sharpe.toFixed(2) : '—';
+        const sharpeClass = d.sharpe == null ? 'text-gray-500'
+            : d.sharpe >= 1 ? 'text-green-400'
+            : d.sharpe >= 0 ? 'text-amber-400' : 'text-red-400';
+        const drawdown = d.max_drawdown_usd != null ? d.max_drawdown_usd.toFixed(2) : '—';
+        let cats = '';
+        for (const [k,v] of Object.entries(d.by_category || {})) {
+            const cClass = v.pnl >= 0 ? 'text-green-400' : 'text-red-400';
+            cats += `<tr class="border-b border-white/5"><td class="px-3 py-1.5 text-xs">${k}</td><td class="px-3 py-1.5 text-xs">${v.n}</td><td class="px-3 py-1.5 text-xs">${v.wins}</td><td class="px-3 py-1.5 text-xs font-mono ${cClass}">${v.pnl >= 0 ? '+' : ''}${v.pnl.toFixed(2)}</td></tr>`;
+        }
+        out.innerHTML = `
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Signals</div><div class="text-2xl font-bold text-gray-200">${d.n_signals}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Hit rate</div><div class="text-2xl font-bold text-gray-200">${hr}</div><div class="text-xs text-gray-500 mt-1">${d.wins}W / ${d.losses}L</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">P&amp;L</div><div class="text-2xl font-bold ${pnlClass}">${(d.total_pnl_usd || 0) >= 0 ? '+' : ''}${(d.total_pnl_usd || 0).toFixed(2)}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">ROI</div><div class="text-2xl font-bold text-gray-200">${roi}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card" title="Annualised Sharpe ratio. >1 good, >2 great, <0 losing."><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Sharpe</div><div class="text-2xl font-bold ${sharpeClass}">${sharpe}</div></div>
+                <div class="rounded-xl p-4 border border-white/5 themed-card" title="Worst peak-to-trough decline. Smaller (closer to zero) is better."><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Max DD</div><div class="text-2xl font-bold text-red-400">${drawdown}</div></div>
+            </div>
+            ${d.daily_curve && d.daily_curve.length > 1 ? '<div class="rounded-xl p-4 border border-white/5 themed-card mb-4"><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Cumulative P&amp;L (daily)</div><canvas id="bt-curve" height="120"></canvas></div>' : ''}
+            ${cats ? `<div class="rounded-xl border border-white/5 overflow-hidden"><table class="w-full"><thead class="themed-card"><tr><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Category</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">N</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">Wins</th><th class="px-3 py-2 text-left text-[10px] uppercase tracking-wider themed-muted">P&amp;L</th></tr></thead><tbody>${cats}</tbody></table></div>` : ''}`;
+        // Render the daily curve chart (if Chart.js is loaded and we have ≥2 points).
+        if (d.daily_curve && d.daily_curve.length > 1 && window.Chart) {
+            const canvas = document.getElementById('bt-curve');
+            if (canvas) {
+                if (_btChart) { _btChart.destroy(); }
+                const labels = d.daily_curve.map(x => x.date);
+                const cum = d.daily_curve.map(x => x.cum_pnl);
+                const dd = d.daily_curve.map(x => x.drawdown);
+                _btChart = new Chart(canvas, {
+                    type: 'line',
+                    data: {labels, datasets: [
+                        {label: 'Cumulative P&L', data: cum, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0},
+                        {label: 'Drawdown', data: dd, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 1.5, fill: true, tension: 0.2, pointRadius: 0},
+                    ]},
+                    options: {responsive: true, plugins: {legend: {display: true, labels: {color: '#9ca3af', font: {size: 10}}}}, scales: {x: {ticks: {color: '#6b7280', maxRotation: 45, autoSkip: true, maxTicksLimit: 10}, grid: {display: false}}, y: {ticks: {color: '#6b7280'}, grid: {color: 'rgba(255,255,255,0.03)'}}}}
+                });
+            }
+        }
+    } catch (e) {
+        out.innerHTML = '<span class="text-red-400">Backtest failed</span>';
+    }
 }
 
 // Reset feed filters
