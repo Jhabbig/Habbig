@@ -2079,6 +2079,32 @@ def _auth_rate_limited(ip: str) -> bool:
     return _is_rate_limited(f"auth:{ip}", AUTH_RATE_LIMIT_COUNT, AUTH_RATE_LIMIT_WINDOW)
 
 
+# ── Gate brute-force guard ───────────────────────────────────────────────────
+#
+# The /gate perimeter validates a single shared SITE_ACCESS_TOKEN, so an
+# unmetered POST endpoint is a brute-force oracle. This per-IP bucket throttles
+# *failed* token submissions only: a wrong guess records a strike, and once an
+# IP exceeds GATE_FAIL_RATE_LIMIT_COUNT strikes inside the window every further
+# wrong guess gets a 429 until the window slides. Correct submissions are never
+# recorded here, so a legitimate visitor (or a user behind a shared NAT an
+# attacker has tripped) is never throttled for entering the real token.
+#
+# Deliberately NOT the shared "auth:<ip>" bucket: that one counts every POST
+# incl. correct ones and is stricter (5/15min), which would both penalise
+# correct submissions and shadow this limiter. /gate is a distinct perimeter
+# from account-auth, so it gets its own dedicated, failure-only bucket.
+GATE_FAIL_RATE_LIMIT_COUNT = 10
+GATE_FAIL_RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def _gate_brute_force_locked(ip: str) -> bool:
+    """Record a failed /gate token attempt for *ip* and return True once the
+    IP has exceeded the failure threshold within the window."""
+    return _is_rate_limited(
+        f"gate-fail:{ip}", GATE_FAIL_RATE_LIMIT_COUNT, GATE_FAIL_RATE_LIMIT_WINDOW
+    )
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -3668,13 +3694,16 @@ async def seo_robots_txt(request: Request):
 # match crawl-importance: homepage highest, legal pages lowest, content
 # pages in between.
 #
-# EVERY path here MUST be anonymously crawlable — i.e. present in
-# _PUBLIC_PATHS (or under a _PUBLIC_PREFIXES prefix) so GateMiddleware lets
-# an unauthenticated Googlebot through with a 200. Gated routes
-# (/landing, /pricing, /calendar, /dashboards, …) are DELIBERATELY absent:
-# behind the gate they 302 to /gate for anon crawlers, which Search Console
-# files as soft-404s and which would also leak the existence of authed
-# surfaces. Do not add a path here without first whitelisting it as public.
+# This is the PUBLIC tier: every path here is anonymously crawlable — present
+# in _PUBLIC_PATHS (or under a _PUBLIC_PREFIXES prefix) so GateMiddleware lets
+# an unauthenticated Googlebot through with a 200. Gated product pages
+# (/dashboards, /settings, /billing, …) are NO LONGER excluded — they are
+# added separately at request time by _gated_page_entries() so the obscure
+# sitemap is a COMPLETE inventory of the site (product decision 2026-05-29).
+# Those gated pages 302->/gate for anon crawlers (Google soft-404s them); that
+# tradeoff was accepted to keep one complete map. Admin/auth internals stay
+# excluded. Add public marketing/legal pages here; gated pages are discovered
+# automatically — do not hand-list them.
 #
 # There is no static gateway/static/sitemap.xml; the dynamic route below
 # is the single source of truth (StaticFiles is mounted at
@@ -3720,13 +3749,100 @@ def _subdomain_landing_entries():
 _SITEMAP_PATH = "/497951413996680578.xml"
 
 
+# Gated product pages are auto-discovered from the live route table and added
+# to the COMPLETE apex sitemap (product decision 2026-05-29). We exclude the
+# API, static assets, auth endpoints, admin/superadmin internals, and
+# parametrised utility routes — even at an obscure URL we never advertise the
+# admin surface. Anything not skipped here is treated as a user-facing page.
+_GATED_SITEMAP_SKIP_PREFIXES = (
+    "/api", "/_gateway_static", "/og/", "/auth/", "/admin", "/static",
+    "/.well-known", "/embed", "/s/", "/connect/", "/extension/", "/tools/",
+    "/preview/", "/invite/", "/sources/", "/u/", "/predictions/",
+)
+_GATED_SITEMAP_SKIP_EXACT = frozenset({
+    "/", "/gate", "/offline", "/landing", "/health", "/robots.txt",
+    "/favicon.ico", "/login", "/signup", "/register", "/logout",
+    "/forgot-password", "/reset-password", "/unsubscribe",
+    "/status/unsubscribe", "/changelog.rss", "/status/feed.xml",
+    "/sw.js", "/manifest.json",
+})
+
+
+def _gated_page_entries():
+    """Auto-discovered gated product pages — one per static GET HTML route.
+
+    Walks the live FastAPI route table and returns (path, changefreq,
+    priority) for every GET page that isn't already public (in
+    _SITEMAP_ENTRIES), isn't admin/auth/api/static, and has no path
+    parameters. New product pages land in the sitemap automatically. These
+    302->/gate for an anonymous crawler (Google soft-404s them); they're here
+    so the obscure sitemap is a single complete inventory of the site.
+    """
+    public = {p for (p, _f, _pr) in _SITEMAP_ENTRIES}
+    seen = set()
+    out = []
+    for r in app.routes:
+        methods = getattr(r, "methods", None)
+        path = getattr(r, "path", "")
+        if not methods or "GET" not in methods:
+            continue
+        if not path or "{" in path:
+            continue
+        if path in _GATED_SITEMAP_SKIP_EXACT or path in public:
+            continue
+        if path == _SITEMAP_PATH or "cancel-flow" in path:
+            continue
+        if any(path.startswith(p) for p in _GATED_SITEMAP_SKIP_PREFIXES):
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        out.append((path, "weekly", "0.5"))
+    out.sort()
+    return out
+
+
+def _dynamic_source_entries(limit: int = 5000):
+    """Public /sources/<handle> profile pages for accuracy-unlocked sources.
+
+    Unrated handles render a 'not rated yet' page (would be soft-404s), so we
+    list only unlocked sources. Bounded + fully wrapped so a DB hiccup never
+    breaks the sitemap. Emits 0 today (no sources unlocked yet); auto-fills as
+    rating data lands.
+    """
+    try:
+        rows = db.list_all_source_credibilities() if hasattr(db, "list_all_source_credibilities") else []
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        try:
+            keys = r.keys()
+            if "accuracy_unlocked" in keys and not r["accuracy_unlocked"]:
+                continue
+            handle = r["source_handle"] if "source_handle" in keys else None
+        except Exception:
+            continue
+        if not handle:
+            continue
+        out.append((f"/sources/{html.escape(str(handle).lstrip('@'))}", "weekly", "0.6"))
+        if len(out) >= limit:
+            break
+    return out
+
+
 @app.get(_SITEMAP_PATH)
 async def seo_sitemap_xml(request: Request):
     """Auto-generated sitemap served at an obscure path (see _SITEMAP_PATH).
 
-    Called on each crawl; cheap enough to render live. Contains ONLY public,
-    anonymously-crawlable pages plus the per-subdomain brand landings — no
-    gated, auth, admin, or dynamic profile URLs.
+    Called on each crawl; cheap enough to render live. The apex sitemap is a
+    COMPLETE inventory of the site's own pages (product decision 2026-05-29):
+    the public marketing/legal pages (_SITEMAP_ENTRIES), the per-subdomain
+    brand landings, every gated product page (_gated_page_entries — dashboards,
+    settings, billing, …), and dynamic public source profiles. Admin/superadmin
+    internals, auth endpoints, the API and static assets are excluded. Gated
+    pages 302->/gate for anonymous crawlers (Google soft-404s them); they are
+    listed deliberately so this obscure URL is a single complete site map.
 
     Sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) return a
     minimal sitemap canonical to the subdomain itself. The sub-brand
@@ -3786,10 +3902,17 @@ async def seo_sitemap_xml(request: Request):
             f"<changefreq>{freq}</changefreq>"
             f"<priority>{priority}</priority></url>"
         )
-    # NOTE: dynamic /sources/<handle> profile pages are intentionally NOT
-    # listed here. The apex sitemap is restricted to the fixed set of public
-    # marketing/legal pages (_SITEMAP_ENTRIES) plus the per-subdomain brand
-    # landings, keeping the advertised page-graph minimal at the obscure URL.
+    # Gated product pages + dynamic public content. Per the 2026-05-29 product
+    # decision the obscure sitemap is a COMPLETE inventory of the site's own
+    # pages, not just the public SEO surface (see _gated_page_entries). Both
+    # return apex-relative paths, so prefix with the apex host.
+    for path, freq, priority in (_gated_page_entries() + _dynamic_source_entries()):
+        parts.append(
+            f"<url><loc>https://{apex}{path}</loc>"
+            f"<lastmod>{today}</lastmod>"
+            f"<changefreq>{freq}</changefreq>"
+            f"<priority>{priority}</priority></url>"
+        )
     parts.append('</urlset>')
     return Response("".join(parts), media_type="application/xml; charset=utf-8")
 
@@ -3853,19 +3976,21 @@ async def gate_submit(request: Request, token: str = Form("")):
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/gate")
-    if _auth_rate_limited(_get_client_ip(request)):
-        return RATE_LIMITED_RESPONSE
-    token = _bounded(token, FIELD_MAX["invite_token"], "token")
-    if not token:
-        return render_page("gate", request=request, error="Invalid token.")
     if not SITE_ACCESS_TOKEN:
+        # Misconfiguration, not a guess — don't count it against the limiter.
         return render_page("gate", request=request, error="Gate not configured. Contact admin.")
-    if not hmac.compare_digest(token, SITE_ACCESS_TOKEN):
-        return render_page("gate", request=request, error="Invalid token.")
-    # Correct — set gate cookie and redirect to landing
-    response = RedirectResponse("/landing", status_code=302)
-    set_gate_cookie(response, request)
-    return response
+    token = _bounded(token, FIELD_MAX["invite_token"], "token")
+    if token and hmac.compare_digest(token, SITE_ACCESS_TOKEN):
+        # Correct — never recorded, never throttled. Set gate cookie and go.
+        response = RedirectResponse("/landing", status_code=302)
+        set_gate_cookie(response, request)
+        return response
+    # Wrong/empty token: record the failed attempt. Once this IP exceeds the
+    # failure threshold within the window, further wrong guesses get a 429
+    # (brute-force lockout). Correct submissions skip this entirely above.
+    if _gate_brute_force_locked(_get_client_ip(request)):
+        return RATE_LIMITED_RESPONSE
+    return render_page("gate", request=request, error="Invalid token.")
 
 
 # Invite-token entry (/invite, /token) removed 2026-05-15. The
