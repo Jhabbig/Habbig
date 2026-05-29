@@ -3758,6 +3758,8 @@ _GATED_SITEMAP_SKIP_PREFIXES = (
     "/api", "/_gateway_static", "/og/", "/auth/", "/admin", "/static",
     "/.well-known", "/embed", "/s/", "/connect/", "/extension/", "/tools/",
     "/preview/", "/invite/", "/sources/", "/u/", "/predictions/",
+    # Ops / health / metrics probes — registered GET routes but not pages.
+    "/health", "/healthz", "/readyz", "/livez", "/metrics", "/debug",
 )
 _GATED_SITEMAP_SKIP_EXACT = frozenset({
     "/", "/gate", "/offline", "/landing", "/health", "/robots.txt",
