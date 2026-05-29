@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Play, Settings } from 'lucide-react';
 
 interface BacktestFormProps {
@@ -19,7 +19,7 @@ export interface BacktestParams {
   slow_period: number;
 }
 
-export const BacktestForm: React.FC<BacktestFormProps> = ({ onSubmit, loading }) => {
+const BacktestFormComponent: React.FC<BacktestFormProps> = ({ onSubmit, loading }) => {
   const [params, setParams] = useState<BacktestParams>({
     ticker: 'AAPL',
     strategy: 'rsi',
@@ -33,14 +33,14 @@ export const BacktestForm: React.FC<BacktestFormProps> = ({ onSubmit, loading })
     slow_period: 26,
   });
 
-  const handleChange = (key: keyof BacktestParams, value: any) => {
-    setParams({ ...params, [key]: value });
-  };
+  const handleChange = useCallback((key: keyof BacktestParams, value: any) => {
+    setParams((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     onSubmit(params);
-  };
+  }, [params, onSubmit]);
 
   return (
     <form onSubmit={handleSubmit} className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
@@ -204,3 +204,5 @@ export const BacktestForm: React.FC<BacktestFormProps> = ({ onSubmit, loading })
     </form>
   );
 };
+
+export const BacktestForm = React.memo(BacktestFormComponent);
