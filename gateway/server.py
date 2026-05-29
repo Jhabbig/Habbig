@@ -639,8 +639,9 @@ APP_DEPLOYED_AT = _read_deployed_at()
 # registered before tags/security/include_in_schema conventions landed.
 # Rather than re-touch every decorator, we post-process the generated spec:
 #
-#   1. Drop any /admin/* or /settings/* paths that slipped through —
-#      these are internal surfaces, never part of the public contract.
+#   1. Allowlist /api/public/v1/* paths only and drop everything else —
+#      this doc is served unauthenticated, so internal surfaces (admin,
+#      account, billing, portfolio) must never appear in the public contract.
 #   2. Inject reusable security schemes (Bearer for /api/public/v1/*,
 #      session cookie for /api/*, X-API-Key for /api/embed/*).
 #   3. Apply a tag to every operation based on path prefix, so the spec
@@ -666,12 +667,44 @@ def _custom_openapi():  # type: ignore[no-untyped-def]
         terms_of_service=app.terms_of_service,
     )
 
-    # Hide internal surfaces. /admin/* and /settings/* are session-cookie
-    # gated dashboards meant for humans, not the public API contract.
-    paths = schema.get("paths", {})
-    for p in list(paths.keys()):
-        if p.startswith("/admin/") or p == "/admin" or p.startswith("/settings/"):
-            paths.pop(p, None)
+    # Publish ONLY the documented public developer API. The OpenAPI doc is
+    # served unauthenticated at /api/openapi.json, so it must not enumerate
+    # internal surfaces — admin (/api/admin/*, /api/v1/admin/*), session-authed
+    # account/billing/portfolio endpoints (/api/*), or the human dashboards
+    # (/admin/*, /settings/*). Allowlist /api/public/v1/* and drop the rest.
+    schema["paths"] = {
+        p: item for p, item in schema.get("paths", {}).items()
+        if p.startswith("/api/public/v1/")
+    }
+    paths = schema["paths"]
+
+    # Prune component schemas no longer referenced by any surviving path, so
+    # the published spec doesn't leak the type shapes of internal models.
+    try:
+        import json as _json
+        import re as _re
+        _kept_blob = _json.dumps(paths)
+        _all_schemas = schema.get("components", {}).get("schemas", {})
+        # Iterate to a fixed point: a kept schema may reference other schemas.
+        _referenced: set[str] = set()
+        _frontier = set(_re.findall(r"#/components/schemas/([^\"/]+)", _kept_blob))
+        while _frontier:
+            name = _frontier.pop()
+            if name in _referenced or name not in _all_schemas:
+                continue
+            _referenced.add(name)
+            _frontier |= set(_re.findall(
+                r"#/components/schemas/([^\"/]+)",
+                _json.dumps(_all_schemas[name]),
+            ))
+        if _all_schemas:
+            schema["components"]["schemas"] = {
+                n: s for n, s in _all_schemas.items() if n in _referenced
+            }
+    except Exception:
+        # Pruning is best-effort; unused component schemas leak type shapes,
+        # not routes, so a failure here is non-fatal.
+        log.warning("OpenAPI component-schema pruning skipped", exc_info=True)
 
     # Reusable security schemes. We document three auth modes:
     #   - BearerAuth: Authorization: Bearer <token> for /api/public/v1/*
