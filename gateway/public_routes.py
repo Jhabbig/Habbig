@@ -4,8 +4,9 @@ Extracted from server.py. Handles the non-auth public endpoints that sit
 in front of the gate: /enquire, /pricing, /subscribe, /support, /contact,
 /suspended, and the prerelease newsletter signup (/api/newsletter*).
 
-Legal pages (/terms, /privacy, /dpa) and source-profile SEO pages
-(/sources/{handle}, /sitemap.xml, /robots.txt) live in server_features.py.
+Legal pages (/terms, /privacy, /dpa) and the source-profile SEO page
+(/sources/{handle}) live in server_features.py. The sitemap (served at an
+obscure path, server._SITEMAP_PATH) and /robots.txt live in server.py.
 Marketing content pages (/about, /faq, /team, ...) live in seo_routes.py.
 Those modules own their surface — don't duplicate routes here.
 

@@ -70,7 +70,9 @@ HTML_PAGES: tuple[str, ...] = (
 # Non-HTML — included so curl smoke-scans cover them, but axe-core skips.
 NON_HTML_PATHS: tuple[str, ...] = (
     "/robots.txt",
-    "/sitemap.xml",
+    # Sitemap lives at an obscure, non-guessable path (server._SITEMAP_PATH);
+    # /sitemap.xml is deliberately not served. Submitted via Search Console.
+    "/497951413996680578.xml",
     "/manifest.json",
     "/sw.js",
     "/favicon.ico",

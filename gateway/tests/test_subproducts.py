@@ -226,15 +226,24 @@ class TestLandingHttpSmoke(unittest.TestCase):
         self.assertNotIn("narve.ai / crypto", r.text)
 
     def test_subdomain_sitemap_is_self_canonical(self):
-        r = self.client.get("/sitemap.xml", headers={"Host": "weather.narve.ai"})
+        # Sitemap lives at an obscure path (server._SITEMAP_PATH), not
+        # /sitemap.xml. The guessable path no longer serves a sitemap: it
+        # falls through to the generic HTML shell (a soft-404), so it never
+        # exposes a <urlset> page-roadmap.
+        guessable = self.client.get("/sitemap.xml", headers={"Host": "weather.narve.ai"})
+        self.assertNotIn("<urlset", guessable.text)
+        r = self.client.get("/497951413996680578.xml", headers={"Host": "weather.narve.ai"})
         self.assertEqual(r.status_code, 200)
+        self.assertIn("<urlset", r.text)
         self.assertIn("https://weather.narve.ai/", r.text)
         self.assertNotIn("https://narve.ai/sources/", r.text)
 
-    def test_subdomain_robots_is_self_sitemap(self):
+    def test_subdomain_robots_omits_sitemap(self):
+        # The obscure sitemap URL is submitted to Search Console, never
+        # advertised — so subdomain robots.txt carries no Sitemap: line.
         r = self.client.get("/robots.txt", headers={"Host": "midterm.narve.ai"})
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Sitemap: https://midterm.narve.ai/sitemap.xml", r.text)
+        self.assertNotIn("Sitemap:", r.text)
 
 
 if __name__ == "__main__":

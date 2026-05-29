@@ -211,12 +211,19 @@ async def process_scheduled_deletions() -> dict[str, Any]:
 
 @register_job("generate_sitemap")
 async def generate_sitemap() -> dict[str, Any]:
-    """Regenerate the sitemap.xml file on disk.
+    """Regenerate the on-disk sitemap snapshot.
 
-    Runs daily via cron, and on-demand after the pipeline resolves new
-    sources. Writes to `static/sitemap.xml` so the static mount serves it.
+    Runs daily via cron. Writes to the obscure filename matching
+    server._SITEMAP_PATH (currently ``497951413996680578.xml``) under
+    ``static/`` — NOT ``sitemap.xml`` — so we never leave a guessable
+    page-roadmap on disk. The live handler in server.py renders the sitemap
+    dynamically; this snapshot is kept only as an offline reference/fallback
+    and is submitted to Search Console, never advertised in robots.txt.
+
+    Contents are restricted to the fixed set of public marketing/legal pages.
+    Dynamic ``/sources/<handle>`` profile URLs are intentionally excluded so
+    the file does not enumerate the rated-source graph.
     """
-    import db
     from pathlib import Path
 
     base_url = "https://narve.ai"
@@ -224,10 +231,20 @@ async def generate_sitemap() -> dict[str, Any]:
     parts.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
 
     static_urls = [
-        ("/", "1.0", "daily"),
-        ("/terms", "0.5", "monthly"),
-        ("/privacy", "0.5", "monthly"),
-        ("/pricing", "0.8", "weekly"),
+        ("/", "1.0", "weekly"),
+        ("/about", "0.8", "monthly"),
+        ("/how-it-works", "0.8", "monthly"),
+        ("/methodology", "0.7", "monthly"),
+        ("/faq", "0.7", "monthly"),
+        ("/team", "0.6", "monthly"),
+        ("/press", "0.6", "monthly"),
+        ("/changelog", "0.7", "weekly"),
+        ("/narve", "0.7", "monthly"),
+        ("/status", "0.5", "daily"),
+        ("/api/docs", "0.6", "monthly"),
+        ("/terms", "0.3", "yearly"),
+        ("/privacy", "0.3", "yearly"),
+        ("/dpa", "0.3", "yearly"),
     ]
     for url, priority, changefreq in static_urls:
         parts.append(
@@ -236,25 +253,11 @@ async def generate_sitemap() -> dict[str, Any]:
             f"<changefreq>{changefreq}</changefreq></url>"
         )
 
-    # Public source profiles — only include rated sources.
-    try:
-        sources = db.list_all_source_credibilities() if hasattr(db, "list_all_source_credibilities") else []
-        for s in sources:
-            if not s["accuracy_unlocked"]:
-                continue
-            handle = s["source_handle"]
-            parts.append(
-                f"<url><loc>{base_url}/sources/{handle}</loc>"
-                f"<priority>0.7</priority>"
-                f"<changefreq>weekly</changefreq></url>"
-            )
-    except Exception as e:
-        log.warning("sitemap source listing failed: %s", e)
-
     parts.append("</urlset>")
     xml = "\n".join(parts)
 
-    sitemap_path = Path(__file__).parent.parent / "static" / "sitemap.xml"
+    # Obscure filename — keep in sync with server._SITEMAP_PATH.
+    sitemap_path = Path(__file__).parent.parent / "static" / "497951413996680578.xml"
     sitemap_path.write_text(xml)
     return {"urls": len(parts) - 2, "path": str(sitemap_path)}
 

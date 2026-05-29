@@ -1483,7 +1483,8 @@ _PUBLIC_PATHS = frozenset({
     # before any session exists. See analytics.js + the
     # /api/analytics/event handler near _hash_ip.
     "/api/analytics/event",
-    "/sitemap.xml", "/robots.txt",
+    # Obscure sitemap path (not /sitemap.xml) — see _SITEMAP_PATH / seo_sitemap_xml.
+    "/497951413996680578.xml", "/robots.txt",
     "/favicon.ico",
     "/.well-known/security.txt",
     # Public status page (incidents, uptime, component health, RSS, subscribe)
@@ -3607,13 +3608,21 @@ async def seo_robots_txt(request: Request):
     """Static robots.txt — allow indexing of public pages, block auth/admin/API.
 
     On a sub-brand subdomain (sports.narve.ai, crypto.narve.ai, …) we emit
-    a minimal subdomain-scoped robots.txt that points at that subdomain's
-    own sitemap. Each sub-brand is its own Google property.
+    a minimal subdomain-scoped robots.txt. Each sub-brand is its own Google
+    property.
+
+    Intentionally NO ``Sitemap:`` directive. The sitemap lives at an obscure,
+    non-guessable URL (see _SITEMAP_PATH) and is submitted directly in Google
+    Search Console rather than advertised here — publishing the path in
+    robots.txt would hand the full public-page roadmap to any scraper that
+    fetches robots.txt, defeating the obscurity.
     """
     sub = get_subdomain(request)
     if sub:
         from subproduct import SUBPRODUCTS as _SP
         if sub in _SP:
+            # No Sitemap: line — obscure sitemap URL is submitted via Search
+            # Console, not advertised. See docstring above.
             body = (
                 "User-agent: *\n"
                 "Allow: /\n"
@@ -3622,11 +3631,9 @@ async def seo_robots_txt(request: Request):
                 "Disallow: /auth/\n"
                 "Disallow: /dashboard/\n"
                 "Disallow: /gate\n"
-                f"Sitemap: https://{sub}.narve.ai/sitemap.xml\n"
             )
             return Response(body, media_type="text/plain; charset=utf-8")
 
-    apex = _request_apex(request) or DOMAIN
     body = (
         "User-agent: *\n"
         "Allow: /\n"
@@ -3650,7 +3657,9 @@ async def seo_robots_txt(request: Request):
         "Disallow: /settings/\n"
         "Disallow: /embed/\n"
         "Disallow: /invite/\n"
-        f"Sitemap: https://{apex}/sitemap.xml\n"
+        # No Sitemap: line — the sitemap lives at an obscure URL
+        # (see _SITEMAP_PATH) and is submitted directly in Search Console,
+        # never advertised here. See docstring above.
     )
     return Response(body, media_type="text/plain; charset=utf-8")
 
@@ -3704,9 +3713,20 @@ def _subdomain_landing_entries():
     ]
 
 
-@app.get("/sitemap.xml")
+# Obscure, non-guessable sitemap path. Deliberately NOT /sitemap.xml so the
+# full public-page graph isn't a one-request roadmap for scrapers/competitors.
+# This URL is submitted directly in Google Search Console, never linked or
+# advertised in robots.txt (see seo_robots_txt above — no Sitemap: line).
+_SITEMAP_PATH = "/497951413996680578.xml"
+
+
+@app.get(_SITEMAP_PATH)
 async def seo_sitemap_xml(request: Request):
-    """Auto-generated sitemap. Called on every crawl; cheap enough to render live.
+    """Auto-generated sitemap served at an obscure path (see _SITEMAP_PATH).
+
+    Called on each crawl; cheap enough to render live. Contains ONLY public,
+    anonymously-crawlable pages plus the per-subdomain brand landings — no
+    gated, auth, admin, or dynamic profile URLs.
 
     Sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) return a
     minimal sitemap canonical to the subdomain itself. The sub-brand
@@ -3766,29 +3786,10 @@ async def seo_sitemap_xml(request: Request):
             f"<changefreq>{freq}</changefreq>"
             f"<priority>{priority}</priority></url>"
         )
-    # Dynamic source profile pages — only sources whose credibility has
-    # been unlocked (>=10 predictions resolved) are crawl-worthy. Unrated
-    # sources show a sparse "not enough signal yet" stub, so we keep them
-    # out of the sitemap to avoid Google indexing thin content.
-    try:
-        with db.conn() as _c:
-            rated = _c.execute(
-                "SELECT source_handle FROM source_credibility "
-                "WHERE accuracy_unlocked = 1 "
-                "ORDER BY global_credibility DESC LIMIT 5000",
-            ).fetchall()
-        for row in rated:
-            handle = row[0] if not isinstance(row, dict) else row.get("source_handle")
-            if not handle:
-                continue
-            parts.append(
-                f"<url><loc>https://{apex}/sources/{handle}</loc>"
-                f"<lastmod>{today}</lastmod>"
-                f"<changefreq>weekly</changefreq>"
-                f"<priority>0.6</priority></url>"
-            )
-    except Exception:
-        pass
+    # NOTE: dynamic /sources/<handle> profile pages are intentionally NOT
+    # listed here. The apex sitemap is restricted to the fixed set of public
+    # marketing/legal pages (_SITEMAP_ENTRIES) plus the per-subdomain brand
+    # landings, keeping the advertised page-graph minimal at the obscure URL.
     parts.append('</urlset>')
     return Response("".join(parts), media_type="application/xml; charset=utf-8")
 

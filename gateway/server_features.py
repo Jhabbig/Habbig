@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 from fastapi import HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
 import server

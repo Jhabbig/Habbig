@@ -38,6 +38,12 @@ class TestTermsAndPrivacy(unittest.TestCase):
         self.assertIn("Privacy Policy", r.text)
 
 
+# Sitemap lives at an obscure, non-guessable path (server._SITEMAP_PATH) and
+# is submitted directly to Search Console — never advertised at /sitemap.xml
+# or via a robots.txt Sitemap: line.
+_SITEMAP_PATH = "/497951413996680578.xml"
+
+
 class TestRobotsAndSitemap(unittest.TestCase):
     def test_robots_txt(self):
         r = client.get("/robots.txt")
@@ -45,15 +51,23 @@ class TestRobotsAndSitemap(unittest.TestCase):
         self.assertIn("User-agent: *", r.text)
         self.assertIn("Disallow: /admin/", r.text)
         self.assertIn("Disallow: /api/", r.text)
-        self.assertIn("Sitemap:", r.text)
+        # No Sitemap: line — obscure URL is not advertised.
+        self.assertNotIn("Sitemap:", r.text)
 
-    def test_sitemap_xml_renders_live_when_no_file(self):
+    def test_sitemap_xml_path_is_not_served(self):
+        # The guessable /sitemap.xml must 404 so it isn't a page-roadmap.
         r = client.get("/sitemap.xml")
+        self.assertEqual(r.status_code, 404)
+
+    def test_sitemap_renders_live_at_obscure_path(self):
+        r = client.get(_SITEMAP_PATH)
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.text.startswith("<?xml"))
         self.assertIn("<urlset", r.text)
         self.assertIn("/terms", r.text)
         self.assertIn("/privacy", r.text)
+        # Public-only: no source profile / gated URLs leak in.
+        self.assertNotIn("/sources/", r.text)
 
 
 class TestUnsubscribe(unittest.TestCase):

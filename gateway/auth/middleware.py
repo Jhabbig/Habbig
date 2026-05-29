@@ -38,7 +38,8 @@ _SKIP_PREFIXES = (
 _SKIP_EXACT = frozenset({
     "/",
     "/health",
-    "/sitemap.xml",
+    # Obscure sitemap path (not /sitemap.xml) — see server._SITEMAP_PATH.
+    "/497951413996680578.xml",
     "/robots.txt",
     "/token",
     "/gate",
