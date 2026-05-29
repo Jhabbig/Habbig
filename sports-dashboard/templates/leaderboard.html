@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLV Leaderboard · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+    --gold: #f59e0b; --silver: #9ca3af; --bronze: #b45309;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; max-width: 640px; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0;
+              align-items: end; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 6px 10px; font-size: 13px; }
+  button { background: var(--accent); color: #fff; border: 0;
+           border-radius: 4px; padding: 8px 14px; font-size: 13px;
+           font-weight: 600; cursor: pointer; }
+  button:hover { background: #2563eb; }
+  button.ghost { background: transparent; border: 1px solid var(--border);
+                 color: var(--fg); }
+  .optin-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  .cta {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 18px; margin: 0 0 16px;
+    background: linear-gradient(135deg, #1e293b, #111218);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .cta-btn {
+    background: var(--accent); color: #fff !important;
+    padding: 8px 16px; border-radius: 5px; font-weight: 600;
+    text-decoration: none !important;
+  }
+  .cta-btn:hover { background: #2563eb; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  td.rank { font-weight: 700; }
+  .rank-1 { color: var(--gold); }
+  .rank-2 { color: var(--silver); }
+  .rank-3 { color: var(--bronze); }
+  .pos { color: var(--green); font-weight: 600; }
+  .neg { color: var(--red); font-weight: 600; }
+  .empty { padding: 60px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CLV Leaderboard</h1>
+  <p class="sub">
+    Sharpe users ranked by mean closing line value across their resolved
+    bets. CLV is the gold standard for sharp-bettor performance — it
+    measures whether you consistently get better numbers than the
+    market's closing line. Minimum <b id="minTradesLbl">10</b> resolved
+    trades to qualify.
+  </p>
+
+  <div id="ctaContainer"></div>
+
+  <div class="optin-panel" id="optinPanel" style="display:none">
+    <div id="optinStatus" style="flex:1; color: var(--muted);"></div>
+    <div id="optinActions"></div>
+  </div>
+
+  <div class="controls">
+    <label class="field">Window
+      <select id="days">
+        <option value="30">30d</option>
+        <option value="90" selected>90d</option>
+        <option value="180">180d</option>
+        <option value="365">365d</option>
+      </select>
+    </label>
+    <label class="field">Show
+      <select id="limit">
+        <option value="20">Top 20</option>
+        <option value="50" selected>Top 50</option>
+        <option value="100">Top 100</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="content"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmtUSD(n) { return n == null ? "—" : (n>=0?"+":"") + "$" + Math.abs(n).toFixed(2); }
+function fmtPP(n) { return n == null ? "—" : (n>=0?"+":"") + Number(n).toFixed(2) + "pp"; }
+function fmtPct(n) { return n == null ? "—" : (Number(n) * 100).toFixed(1) + "%"; }
+function rankClass(r) { return r === 1 ? "rank-1" : r === 2 ? "rank-2" : r === 3 ? "rank-3" : ""; }
+function pnlClass(n) { return n == null ? "" : n > 0 ? "pos" : n < 0 ? "neg" : ""; }
+
+async function loadLeaderboard() {
+  const params = new URLSearchParams({days: $("days").value, limit: $("limit").value});
+  let r;
+  try { r = await fetch("/api/leaderboard/clv?" + params.toString()); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (!r.ok) { $("content").innerHTML = `<div class="empty">Error ${r.status}</div>`; return; }
+  const d = await r.json();
+  $("minTradesLbl").textContent = d.min_trades;
+  render(d.rows || []);
+}
+
+function render(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">' +
+      'Nobody has qualifying trades in this window yet. Sign up and log ' +
+      'your bets to be the first.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>#</th><th>User</th><th class="num">Mean CLV</th>' +
+    '<th class="num">Trades</th><th class="num">Win%</th>' +
+    '<th class="num">PnL</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const rankCls = rankClass(r.rank);
+    html += '<tr>' +
+      `<td class="rank ${rankCls}">${r.rank}</td>` +
+      `<td>${esc(r.display_name)}</td>` +
+      `<td class="num ${pnlClass(r.mean_clv_pp)}">${fmtPP(r.mean_clv_pp)}</td>` +
+      `<td class="num">${r.n_trades}</td>` +
+      `<td class="num">${fmtPct(r.win_rate)}</td>` +
+      `<td class="num ${pnlClass(r.total_pnl)}">${fmtUSD(r.total_pnl)}</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
+}
+
+async function loadOptinStatus() {
+  let r;
+  try { r = await fetch("/api/leaderboard/optin"); }
+  catch { return; }
+  if (r.status === 401) {
+    // Anonymous viewer — show signup CTA
+    $("ctaContainer").innerHTML =
+      '<div class="cta">' +
+      '<div style="flex:1"><b>Climb this board.</b> Sign up, log your bets, and we’ll publish your CLV here.</div>' +
+      '<a class="cta-btn" href="/signup">Sign up free →</a>' +
+      '</div>';
+    return;
+  }
+  if (!r.ok) return;
+  const d = await r.json();
+  const panel = $("optinPanel");
+  panel.style.display = "flex";
+  if (d.optin) {
+    $("optinStatus").innerHTML =
+      `You're on the leaderboard as <b>${esc(d.optin.display_name)}</b>. ` +
+      `<a href="/trades">Log more bets</a> to climb the ranks.`;
+    $("optinActions").innerHTML =
+      '<button class="ghost" id="leaveBtn">Leave leaderboard</button>';
+    $("leaveBtn").addEventListener("click", leave);
+  } else {
+    $("optinStatus").innerHTML =
+      'You haven’t joined the leaderboard yet. Pick a display name to publish your CLV.';
+    $("optinActions").innerHTML =
+      '<input id="dispName" type="text" placeholder="display name" style="margin-right:6px">' +
+      '<button id="joinBtn">Join</button>';
+    $("joinBtn").addEventListener("click", join);
+  }
+}
+
+async function join() {
+  const name = $("dispName").value.trim();
+  if (!name) { alert("Enter a display name first."); return; }
+  const r = await fetch("/api/leaderboard/optin", {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({display_name: name}),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    alert("Couldn't join: " + (err.error || r.status));
+    return;
+  }
+  await loadOptinStatus();
+  await loadLeaderboard();
+}
+
+async function leave() {
+  if (!confirm("Leave the public leaderboard? Your ranking will disappear.")) return;
+  const r = await fetch("/api/leaderboard/optin", {method: "DELETE"});
+  if (!r.ok) { alert("Failed: " + r.status); return; }
+  await loadOptinStatus();
+  await loadLeaderboard();
+}
+
+["days", "limit"].forEach(id => $(id).addEventListener("change", loadLeaderboard));
+loadOptinStatus();
+loadLeaderboard();
+</script>
+</body>
+</html>

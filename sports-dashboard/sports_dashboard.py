@@ -69,10 +69,112 @@ except ImportError:
         return ciphertext
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+
+# Prometheus metrics (optional — degrade to no-op if not installed).
+try:
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        Counter as _PromCounter,
+        Gauge as _PromGauge,
+        Histogram as _PromHistogram,
+        generate_latest as _prom_generate_latest,
+    )
+    _PROM_ENABLED = True
+except ImportError:
+    _PROM_ENABLED = False
+    CONTENT_TYPE_LATEST = "text/plain; version=0.0.4"
+
+    class _NoOpMetric:
+        def labels(self, *a, **kw): return self
+        def inc(self, *a, **kw): pass
+        def observe(self, *a, **kw): pass
+        def set(self, *a, **kw): pass
+
+    def _PromCounter(*a, **kw): return _NoOpMetric()
+    def _PromGauge(*a, **kw): return _NoOpMetric()
+    def _PromHistogram(*a, **kw): return _NoOpMetric()
+    def _prom_generate_latest(): return b""
+
+
+# ── Metrics ─────────────────────────────────────────────────────────────────
+M_POLL_DURATION = _PromHistogram(
+    "sports_dashboard_poll_loop_seconds",
+    "Time spent in one poll-loop iteration",
+    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
+)
+M_COMPARISONS = _PromCounter(
+    "sports_dashboard_comparisons_total",
+    "Comparisons computed per loop, by sport",
+    labelnames=("sport",),
+)
+M_SIGNALS = _PromCounter(
+    "sports_dashboard_signals_total",
+    "Signals (above divergence threshold) emitted, by sport",
+    labelnames=("sport",),
+)
+M_POLL_ERRORS = _PromCounter(
+    "sports_dashboard_poll_errors_total",
+    "Errors raised inside the poll loop, by stage",
+    labelnames=("stage",),
+)
+M_ALERT_SEND = _PromCounter(
+    "sports_dashboard_alert_send_total",
+    "Alert delivery attempts, by channel and result",
+    labelnames=("channel", "result"),
+)
+M_ODDS_REMAINING = _PromGauge(
+    "sports_dashboard_odds_api_remaining",
+    "Latest x-requests-remaining from The Odds API",
+)
+M_ODDS_USED = _PromGauge(
+    "sports_dashboard_odds_api_used",
+    "Latest x-requests-used from The Odds API",
+)
+M_ODDS_EXHAUSTED = _PromCounter(
+    "sports_dashboard_odds_api_exhausted_total",
+    "Number of 429 / quota-exhausted responses observed",
+)
+M_MATCH_REJECTS = _PromCounter(
+    "sports_dashboard_match_rejects_total",
+    "Near-reject matches by reason",
+    labelnames=("reason",),
+)
+M_POLL_INTERVAL = _PromGauge(
+    "sports_dashboard_poll_interval_seconds",
+    "Computed sleep interval for the next poll-loop iteration",
+)
+M_WS_LIVE_PRICES = _PromGauge(
+    "sports_dashboard_ws_live_prices",
+    "Number of Polymarket assets currently receiving live WS price updates",
+)
+M_WS_PRICE_EVENTS = _PromCounter(
+    "sports_dashboard_ws_price_events_total",
+    "Polymarket WS price events processed",
+)
+M_WS_RECONNECTS = _PromCounter(
+    "sports_dashboard_ws_reconnects_total",
+    "Polymarket WS reconnect attempts",
+)
+M_EXPLAIN_REQUESTS = _PromCounter(
+    "sports_dashboard_explain_requests_total",
+    "AI-explanation requests by outcome",
+    labelnames=("result",),  # cache_hit | api_call | error | disabled
+)
+M_PM_FILLS_CAPTURED = _PromCounter(
+    "sports_dashboard_pm_fills_total",
+    "Large Polymarket fills captured from the WS feed",
+    labelnames=("side",),  # BUY | SELL
+)
+M_PM_WS_FAILURES = _PromGauge(
+    "sports_dashboard_pm_ws_consecutive_failures",
+    "Polymarket WS consecutive connect failures; circuit opens at threshold",
+)
+
 
 # ---------------------------------------------------------------------------
 # Layered env loading
@@ -100,6 +202,20 @@ for _f in _ENV_SEARCH:
     if _f.is_file():
         load_dotenv(_f, override=False)
         _loaded_from.append(str(_f))
+
+# ── Template loader ─────────────────────────────────────────────────────────
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+def _load_template(name: str) -> str:
+    """Load an HTML template from templates/<name>.html.
+
+    Templates are read once at module import. They contain no Jinja syntax;
+    runtime substitution still happens via .replace() at the call sites that
+    used the inline strings before.
+    """
+    return (_TEMPLATES_DIR / f"{name}.html").read_text()
+
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -345,6 +461,91 @@ def _init_db():
                 sports TEXT DEFAULT '[]',
                 last_alert_at TEXT DEFAULT ''
             );
+            -- Rich, per-rule alert configuration. The simple sports_alert_config
+            -- above stays as a fallback / quick-start config; users can add
+            -- multiple rules with structured filters on top of it.
+            CREATE TABLE IF NOT EXISTS sports_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                sports TEXT DEFAULT '[]',          -- JSON list of sport keys
+                market_types TEXT DEFAULT '[]',    -- JSON list: h2h/spreads/totals/futures/props
+                min_divergence_pp REAL DEFAULT 5.0,
+                min_volume REAL,                   -- Polymarket USD volume floor
+                max_time_to_event_hours REAL,      -- only fire when game is this close
+                require_sharp_consensus INTEGER DEFAULT 1,
+                require_not_stale INTEGER DEFAULT 1,
+                require_liquidity_ok INTEGER DEFAULT 1,
+                channel TEXT DEFAULT 'telegram',   -- telegram|webhook|both
+                quiet_hours_start INTEGER,         -- 0-23 UTC; null = no quiet hours
+                quiet_hours_end INTEGER,
+                cooldown_secs INTEGER DEFAULT 300,
+                last_fired_at TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_user ON sports_alert_rules(user_id, enabled);
+            -- Web Push subscriptions (one per device per user)
+            CREATE TABLE IF NOT EXISTS sports_push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                user_agent TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_pushed_at TEXT,
+                UNIQUE(user_id, endpoint)
+            );
+            CREATE INDEX IF NOT EXISTS idx_push_user ON sports_push_subscriptions(user_id);
+            -- LLM-generated explanations for signals. Keyed by a stable hash
+            -- of (event, outcome, divergence-rounded, sport) so repeated
+            -- views of the same signal hit the cache instead of the API.
+            CREATE TABLE IF NOT EXISTS sports_signal_explanations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cache_key TEXT NOT NULL UNIQUE,
+                signal_summary TEXT,
+                explanation TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_signal_expl_key ON sports_signal_explanations(cache_key, created_at);
+            -- Per-user API tokens for Bearer auth. token_hash is the
+            -- SHA-256 of the token; we never store the plaintext after
+            -- the create response.
+            CREATE TABLE IF NOT EXISTS sports_api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                token_hash TEXT NOT NULL UNIQUE,
+                token_prefix TEXT DEFAULT '',
+                scopes TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_used_at TEXT,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON sports_api_tokens(user_id, revoked_at);
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON sports_api_tokens(token_hash) WHERE revoked_at IS NULL;
+            -- Opt-in roster for the public CLV leaderboard. Users
+            -- choose a display name (often distinct from email); only
+            -- rows in this table appear on the public /leaderboard.
+            CREATE TABLE IF NOT EXISTS sports_clv_leaderboard_optin (
+                user_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                joined_at TEXT DEFAULT (datetime('now'))
+            );
+            -- Per-user bankroll for Kelly-aware stake suggestions and
+            -- drawdown alerts. Defaults are conservative half-Kelly with
+            -- a 5% per-bet ceiling.
+            CREATE TABLE IF NOT EXISTS sports_bankroll (
+                user_id TEXT PRIMARY KEY,
+                starting_bankroll REAL NOT NULL,
+                current_bankroll REAL NOT NULL,
+                kelly_fraction REAL DEFAULT 0.5,
+                max_per_bet_pct REAL DEFAULT 5.0,
+                drawdown_alert_pct REAL DEFAULT 10.0,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
             CREATE TABLE IF NOT EXISTS sports_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sport TEXT,
@@ -485,8 +686,55 @@ def _migrate_db():
         snap_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_market_snapshots)").fetchall()}
         if "market_type" not in snap_cols:
             conn.execute("ALTER TABLE sports_market_snapshots ADD COLUMN market_type TEXT DEFAULT 'h2h'")
+        # Watchlist alerts: per-item divergence threshold + cooldown timestamp.
+        wl_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_watchlist)").fetchall()}
+        if "alert_threshold_pp" not in wl_cols:
+            conn.execute("ALTER TABLE sports_watchlist ADD COLUMN alert_threshold_pp REAL")
+        if "last_alerted_at" not in wl_cols:
+            conn.execute("ALTER TABLE sports_watchlist ADD COLUMN last_alerted_at TEXT DEFAULT ''")
+        # Bet tracker enrichment: sport, book, market_type, line,
+        # commence_time, source, closing_book_prob, clv_pp.
+        tr_cols = {r[1] for r in conn.execute("PRAGMA table_info(sports_trades)").fetchall()}
+        # Per-user webhook HMAC signing key (encrypted via Fernet).
+        ac_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(sports_alert_config)").fetchall()}
+        if "webhook_signing_key" not in ac_cols:
+            conn.execute(
+                "ALTER TABLE sports_alert_config "
+                "ADD COLUMN webhook_signing_key TEXT DEFAULT ''"
+            )
+        for col, decl in [
+            ("sport", "TEXT DEFAULT ''"),
+            ("book", "TEXT DEFAULT ''"),           # which venue: polymarket, kalshi, draftkings, ...
+            ("market_type", "TEXT DEFAULT 'h2h'"),
+            ("line", "REAL"),                       # for spreads/totals/props
+            ("commence_time", "TEXT DEFAULT ''"),
+            ("source", "TEXT DEFAULT 'manual'"),    # manual | csv | webhook
+            ("closing_book_prob", "REAL"),          # filled at resolution time
+            ("clv_pp", "REAL"),                     # filled at resolution time
+            ("notes", "TEXT DEFAULT ''"),
+            ("home_team", "TEXT DEFAULT ''"),
+            ("away_team", "TEXT DEFAULT ''"),
+        ]:
+            if col not in tr_cols:
+                conn.execute(f"ALTER TABLE sports_trades ADD COLUMN {col} {decl}")
 
 _migrate_db()
+
+
+def _event_name(home: str | None, away: str | None) -> str:
+    """Build a canonical 'Home vs Away' event name.
+
+    Edge cases: when one side is missing, drop the ' vs ' join entirely.
+    Do NOT use `.strip(' vs')` on the joined string — `.strip()` strips
+    a character SET, not a substring, so 'Lakers vs Warriors'.strip(' vs')
+    becomes 'Lakers vs Warrior' (the trailing 's' is in the set).
+    """
+    h = (home or "").strip()
+    a = (away or "").strip()
+    if h and a:
+        return f"{h} vs {a}"
+    return h or a
 
 
 def _is_safe_webhook_url(url: str) -> bool:
@@ -510,6 +758,56 @@ def _is_safe_webhook_url(url: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def _get_webhook_signing_key(user_id: str) -> str | None:
+    """Look up the user's webhook signing secret (plaintext, encrypted at rest).
+
+    Returns None if no key is set (delivery still proceeds — signing is
+    optional, recipients can ignore the header). Keys are stored on
+    sports_alert_config to keep webhook config in one place.
+    """
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT webhook_signing_key FROM sports_alert_config WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row or not row["webhook_signing_key"]:
+        return None
+    try:
+        return _decrypt_field(row["webhook_signing_key"])
+    except Exception:
+        return None
+
+
+def _signed_webhook_post(url: str, payload: dict, signing_key: str | None = None,
+                          timeout: int = 10) -> bool:
+    """POST a webhook with optional HMAC-SHA256 signature on the raw body.
+
+    Headers:
+      Content-Type: application/json
+      X-Sharpe-Timestamp: <unix seconds at send time>
+      X-Sharpe-Signature: sha256=<hex hmac of (timestamp + '.' + body)>
+
+    Recipients verify by recomputing HMAC and constant-time comparing.
+    Including the timestamp in the signature prevents replay attacks.
+    """
+    if not _is_safe_webhook_url(url):
+        return False
+    body_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    headers = {"Content-Type": "application/json"}
+    if signing_key:
+        ts = str(int(time.time()))
+        message = ts.encode() + b"." + body_bytes
+        sig = hmac.new(signing_key.encode(), message, hashlib.sha256).hexdigest()
+        headers["X-Sharpe-Timestamp"] = ts
+        headers["X-Sharpe-Signature"] = f"sha256={sig}"
+    try:
+        requests.post(url, data=body_bytes, headers=headers, timeout=timeout)
+        return True
+    except Exception as e:
+        log.warning("Webhook POST failed (%s): %s", url, e)
+        return False
 
 
 def log_activity(user_id: str, action: str, detail: str = ""):
@@ -585,6 +883,18 @@ def get_current_user(request: Request) -> dict | None:
                 "_gateway_sso": True,
             }
 
+    # Bearer token auth — for programmatic API clients. Falls back to
+    # other auth paths if the token is missing or invalid (we don't 401
+    # here so a malformed Authorization header doesn't break sessions
+    # that would otherwise auth via DEV_MODE or gateway SSO).
+    authz = request.headers.get("authorization", "")
+    if authz.startswith("Bearer "):
+        token = authz[7:].strip()
+        if token:
+            user = _resolve_bearer_token(token)
+            if user:
+                return user
+
     # DEV_MODE: synthesize a local dev user so the dashboard renders without gateway SSO
     if _DEV_MODE:
         return {
@@ -597,6 +907,52 @@ def get_current_user(request: Request) -> dict | None:
 
     # No gateway SSO -- not authenticated (auth handled by gateway)
     return None
+
+
+def _hash_api_token(token: str) -> str:
+    """SHA-256 of the token, hex-encoded. We never store the plaintext."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _resolve_bearer_token(token: str) -> dict | None:
+    """Look up a Bearer token, return the user dict it authenticates.
+
+    Updates last_used_at on hit. Constant-time compare via hash lookup
+    rather than equality on the plaintext.
+    """
+    if not token or len(token) < 16 or len(token) > 100:
+        return None
+    token_hash = _hash_api_token(token)
+    try:
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT t.id, t.user_id, t.scopes, p.email, p.username, p.is_admin "
+                "FROM sports_api_tokens t "
+                "LEFT JOIN profiles p ON p.id = t.user_id "
+                "WHERE t.token_hash = ? AND t.revoked_at IS NULL LIMIT 1",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            # Bump last_used_at — best-effort, ignore failures
+            try:
+                conn.execute(
+                    "UPDATE sports_api_tokens SET last_used_at = datetime('now') "
+                    "WHERE id = ?",
+                    (row["id"],),
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("Bearer token lookup error: %s", e)
+        return None
+    return {
+        "id": row["user_id"],
+        "email": row["email"] or "",
+        "username": row["username"] or "",
+        "is_admin": row["is_admin"] or 0,
+        "_bearer_token_id": row["id"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +970,11 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
+
+# Static asset mount for the PWA manifest, service worker, icons.
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.middleware("http")
@@ -656,6 +1017,7 @@ connected_ws: set[WebSocket] = set()
 # Team name normalization for fuzzy matching
 # ---------------------------------------------------------------------------
 TEAM_ALIASES = {
+    # ── EPL ─────────────────────────────────────────────────────────────────
     "man utd": "manchester united",
     "man city": "manchester city",
     "man united": "manchester united",
@@ -665,29 +1027,130 @@ TEAM_ALIASES = {
     "wolves": "wolverhampton wanderers",
     "wolverhampton": "wolverhampton wanderers",
     "wolverhampton wanderers": "wolverhampton wanderers",
+    "newcastle": "newcastle united",
     "newcastle utd": "newcastle united",
     "brighton": "brighton and hove albion",
+    "brighton & hove albion": "brighton and hove albion",
     "west ham": "west ham united",
     "nott'm forest": "nottingham forest",
     "nottm forest": "nottingham forest",
+    "forest": "nottingham forest",
     "leicester": "leicester city",
     "ipswich": "ipswich town",
     "afc bournemouth": "bournemouth",
     "luton": "luton town",
+    # ── La Liga ────────────────────────────────────────────────────────────
     "athletic bilbao": "athletic club",
     "atletico madrid": "atletico de madrid",
+    "atletico": "atletico de madrid",
+    "real": "real madrid",
+    "barca": "barcelona",
+    "fc barcelona": "barcelona",
+    # ── Serie A ────────────────────────────────────────────────────────────
     "inter milan": "internazionale",
+    "inter": "internazionale",
     "ac milan": "milan",
+    "juve": "juventus",
+    # ── Bundesliga ─────────────────────────────────────────────────────────
     "bayern": "bayern munich",
     "bayern munchen": "bayern munich",
+    "bayern münchen": "bayern munich",
+    "fc bayern": "bayern munich",
     "borussia dortmund": "dortmund",
+    "bvb": "dortmund",
     "rb leipzig": "rasenballsport leipzig",
+    "leipzig": "rasenballsport leipzig",
+    "leverkusen": "bayer leverkusen",
+    # ── Ligue 1 ────────────────────────────────────────────────────────────
     "psg": "paris saint-germain",
     "paris sg": "paris saint-germain",
-    # NBA
+    "paris": "paris saint-germain",
+    # ── NBA ────────────────────────────────────────────────────────────────
     "sixers": "philadelphia 76ers",
+    "76ers": "philadelphia 76ers",
+    "philly": "philadelphia 76ers",
     "blazers": "portland trail blazers",
+    "trail blazers": "portland trail blazers",
     "timberwolves": "minnesota timberwolves",
+    "wolves nba": "minnesota timberwolves",
+    "cavs": "cleveland cavaliers",
+    "mavs": "dallas mavericks",
+    "nuggets": "denver nuggets",
+    "warriors": "golden state warriors",
+    "gsw": "golden state warriors",
+    "lakers": "los angeles lakers",
+    "la lakers": "los angeles lakers",
+    "clippers": "los angeles clippers",
+    "la clippers": "los angeles clippers",
+    "knicks": "new york knicks",
+    "nets": "brooklyn nets",
+    "bucks": "milwaukee bucks",
+    "celtics": "boston celtics",
+    "heat": "miami heat",
+    "thunder": "oklahoma city thunder",
+    "okc": "oklahoma city thunder",
+    "okc thunder": "oklahoma city thunder",
+    # ── NFL ────────────────────────────────────────────────────────────────
+    "niners": "san francisco 49ers",
+    "49ers": "san francisco 49ers",
+    "sf 49ers": "san francisco 49ers",
+    "bucs": "tampa bay buccaneers",
+    "patriots": "new england patriots",
+    "pats": "new england patriots",
+    "kc": "kansas city chiefs",
+    "kc chiefs": "kansas city chiefs",
+    "chiefs": "kansas city chiefs",
+    "packers": "green bay packers",
+    "gb packers": "green bay packers",
+    "ny giants": "new york giants",
+    "ny jets": "new york jets",
+    "la rams": "los angeles rams",
+    "la chargers": "los angeles chargers",
+    # ── MLB ────────────────────────────────────────────────────────────────
+    "yankees": "new york yankees",
+    "ny yankees": "new york yankees",
+    "mets": "new york mets",
+    "ny mets": "new york mets",
+    "red sox": "boston red sox",
+    "bosox": "boston red sox",
+    "dodgers": "los angeles dodgers",
+    "la dodgers": "los angeles dodgers",
+    "angels": "los angeles angels",
+    "la angels": "los angeles angels",
+    "cubs": "chicago cubs",
+    "white sox": "chicago white sox",
+    "phillies": "philadelphia phillies",
+    "braves": "atlanta braves",
+    "astros": "houston astros",
+    "rangers mlb": "texas rangers",
+    # ── NHL ────────────────────────────────────────────────────────────────
+    "leafs": "toronto maple leafs",
+    "maple leafs": "toronto maple leafs",
+    "habs": "montreal canadiens",
+    "canadiens": "montreal canadiens",
+    "sens": "ottawa senators",
+    "jets nhl": "winnipeg jets",
+    "preds": "nashville predators",
+    "hawks": "chicago blackhawks",
+    "blackhawks": "chicago blackhawks",
+    "kings": "los angeles kings",
+    "la kings": "los angeles kings",
+    "ducks": "anaheim ducks",
+    "sharks": "san jose sharks",
+    "rangers nhl": "new york rangers",
+    "ny rangers": "new york rangers",
+    "isles": "new york islanders",
+    "ny islanders": "new york islanders",
+    "caps": "washington capitals",
+    "pens": "pittsburgh penguins",
+    "bruins": "boston bruins",
+    "lightning": "tampa bay lightning",
+    "bolts": "tampa bay lightning",
+    "panthers nhl": "florida panthers",
+    "stars": "dallas stars",
+    "avs": "colorado avalanche",
+    "vegas": "vegas golden knights",
+    "golden knights": "vegas golden knights",
 }
 
 
@@ -713,6 +1176,117 @@ OUTRIGHT_SPORT_KEYS = {
     "icehockey_nhl": "icehockey_nhl_championship_winner",
     "baseball_mlb": "baseball_mlb_world_series_winner",
 }
+
+
+# ── Odds API quota tracking ─────────────────────────────────────────────────
+# The Odds API returns x-requests-remaining and x-requests-used headers on
+# every response. We track the most recent values so the dashboard can
+# (a) surface them in diagnostics, (b) throttle polling when quota is low.
+_ODDS_QUOTA: dict = {
+    "remaining": None,    # int | None — most recent x-requests-remaining
+    "used": None,         # int | None — most recent x-requests-used
+    "last_remaining_check": None,  # ISO-8601 string of last successful read
+    "low_water_mark": None,  # lowest 'remaining' we've seen this process
+    "exhausted_count": 0,    # number of 429/quota-exhausted responses observed
+}
+
+
+def _record_odds_quota(resp: requests.Response) -> str | None:
+    """Update _ODDS_QUOTA from an Odds API response. Returns remaining as str."""
+    remaining_hdr = resp.headers.get("x-requests-remaining")
+    used_hdr = resp.headers.get("x-requests-used")
+    try:
+        remaining_int = int(remaining_hdr) if remaining_hdr is not None else None
+    except (TypeError, ValueError):
+        remaining_int = None
+    try:
+        used_int = int(used_hdr) if used_hdr is not None else None
+    except (TypeError, ValueError):
+        used_int = None
+    _ODDS_QUOTA["remaining"] = remaining_int
+    _ODDS_QUOTA["used"] = used_int
+    _ODDS_QUOTA["last_remaining_check"] = datetime.now(timezone.utc).isoformat()
+    if remaining_int is not None:
+        prev_low = _ODDS_QUOTA["low_water_mark"]
+        if prev_low is None or remaining_int < prev_low:
+            _ODDS_QUOTA["low_water_mark"] = remaining_int
+        M_ODDS_REMAINING.set(remaining_int)
+    if used_int is not None:
+        M_ODDS_USED.set(used_int)
+    return remaining_hdr
+
+
+def odds_quota_remaining() -> int | None:
+    """Best-known remaining Odds API quota, or None if not yet observed."""
+    return _ODDS_QUOTA.get("remaining")
+
+
+# ── Adaptive poll-interval policy ───────────────────────────────────────────
+# Map (nearest game in N hours, quota remaining) -> sleep seconds. The
+# closer kickoff is, the harder we poll. The lower the quota, the longer
+# we sleep. Constants are tuned for the free Odds API tier (500 req/mo).
+
+POLL_INTERVAL_PRE_GAME = 15      # <=30 min to kickoff anywhere on the active sport
+POLL_INTERVAL_SOON = 60          # <=4 h to kickoff
+POLL_INTERVAL_TODAY = 300        # <=24 h to kickoff
+POLL_INTERVAL_IDLE = 1800        # nothing in the next day
+
+
+def _hours_until_nearest_kickoff(comparisons: list[dict]) -> float | None:
+    """Return hours-until-soonest commence_time across the comparison set,
+    or None if no comparison has a parseable commence_time.
+
+    Negative values (game already started) are clamped to 0 so we keep
+    polling fast through live windows.
+    """
+    if not comparisons:
+        return None
+    now = datetime.now(timezone.utc)
+    best: float | None = None
+    for c in comparisons:
+        ts = c.get("commence_time") or ""
+        dt = _parse_iso_utc(ts)
+        if dt is None:
+            continue
+        hours = (dt - now).total_seconds() / 3600.0
+        hours = max(0.0, hours)
+        if best is None or hours < best:
+            best = hours
+    return best
+
+
+def _compute_poll_interval(comparisons: list[dict], remaining: int | None) -> int:
+    """Decide how long to sleep before the next poll.
+
+    Combines pre-game proximity with quota-aware throttling. The schedule
+    multiplier shrinks the interval (poll faster) when a game is close;
+    the quota multiplier expands it (poll slower) when the API budget is
+    low. Final interval is the *max* of the two so we never poll faster
+    than the quota allows.
+    """
+    hours = _hours_until_nearest_kickoff(comparisons)
+    if hours is None:
+        schedule = POLL_INTERVAL_IDLE
+    elif hours <= 0.5:
+        schedule = POLL_INTERVAL_PRE_GAME
+    elif hours <= 4:
+        schedule = POLL_INTERVAL_SOON
+    elif hours <= 24:
+        schedule = POLL_INTERVAL_TODAY
+    else:
+        schedule = POLL_INTERVAL_IDLE
+
+    # Quota floor — when remaining is low, ignore the schedule entirely.
+    floor = 0
+    if remaining is not None:
+        if remaining <= 25:
+            floor = 1800
+        elif remaining <= 100:
+            floor = 900
+        elif remaining <= 300:
+            floor = 600
+
+    return max(schedule, floor)
 
 
 # Throttle the "ODDS_API_KEY missing" warning to once per hour so the log
@@ -783,10 +1357,18 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
         "markets": markets,
         "oddsFormat": "decimal",
     }
-    resp = requests.get(url, params=params, timeout=30)
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+    except requests.RequestException as e:
+        log.warning("Odds API network error for %s: %s", sport_key, e)
+        return [], None
+    # the-odds-api quota: hard exhaustion returns HTTP 401 OUT_OF_USAGE_CREDITS
+    # (trip the 6h breaker); transient over-rate returns 429 (record metric).
     if _is_odds_quota_error(resp):
         _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
         _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+        _ODDS_QUOTA["exhausted_count"] += 1
+        M_ODDS_EXHAUSTED.inc()
         print(
             f"⚠ the-odds-api quota exhausted (HTTP 401, OUT_OF_USAGE_CREDITS). "
             f"Suspending bookmaker fetch for 6h. Dashboard will fall back to "
@@ -795,8 +1377,13 @@ def fetch_odds(sport_key: str, markets: str = "h2h,spreads,totals") -> tuple[lis
             flush=True,
         )
         return [], None
+    if resp.status_code == 429:
+        _ODDS_QUOTA["exhausted_count"] += 1
+        M_ODDS_EXHAUSTED.inc()
+        log.warning("Odds API quota exhausted for %s (429)", sport_key)
+        return [], None
     resp.raise_for_status()
-    remaining = resp.headers.get("x-requests-remaining")
+    remaining = _record_odds_quota(resp)
     return resp.json(), remaining
 
 
@@ -827,12 +1414,269 @@ def fetch_outright_odds(sport_key: str) -> tuple[list[dict], str | None]:
         if _is_odds_quota_error(resp):
             _ODDS_BREAKER_OPEN_UNTIL = time.time() + _ODDS_BREAKER_PROBE_INTERVAL_S
             _ODDS_BREAKER_LAST_REASON = "OUT_OF_USAGE_CREDITS"
+            _ODDS_QUOTA["exhausted_count"] += 1
+            M_ODDS_EXHAUSTED.inc()
+            return [], None
+        if resp.status_code == 429:
+            _ODDS_QUOTA["exhausted_count"] += 1
+            M_ODDS_EXHAUSTED.inc()
             return [], None
         resp.raise_for_status()
-        remaining = resp.headers.get("x-requests-remaining")
+        remaining = _record_odds_quota(resp)
         return resp.json(), remaining
     except Exception:
         return [], None
+
+
+# ── Player props ────────────────────────────────────────────────────────────
+# The Odds API exposes player props on a per-event endpoint, which is much
+# more expensive than the per-sport h2h/spreads/totals call. We cache
+# aggressively (10 min TTL per event) and only fetch for events that are
+# imminent (next 6 hours) to keep monthly quota burn manageable.
+
+PROP_MARKETS_BY_SPORT = {
+    # NBA props that overlap with Kalshi's coverage (KXNBAPTS / KXNBA3PT / KXNBAAST / KXNBAREB)
+    "basketball_nba": "player_points,player_rebounds,player_assists,player_threes",
+    # NFL — most-traded prop markets
+    "americanfootball_nfl": "player_pass_tds,player_pass_yds,player_rush_yds,player_receptions,player_anytime_td",
+    # MLB — batter + pitcher headliners
+    "baseball_mlb": "batter_hits,batter_home_runs,batter_total_bases,pitcher_strikeouts",
+    # NHL — scoring side
+    "icehockey_nhl": "player_goals,player_assists,player_points,player_shots",
+}
+
+PROP_CACHE_TTL_SECONDS = 600  # 10 min — props move less than h2h
+PROP_EVENT_LOOKAHEAD_HOURS = 6  # only fetch for games this close to kickoff
+
+# {(sport, event_id): {"ts": float, "data": list[dict], "remaining": int|None}}
+_PROP_CACHE: dict[tuple[str, str], dict] = {}
+
+
+def fetch_player_props_for_event(sport_key: str, event_id: str) -> tuple[list[dict], str | None]:
+    """Fetch player-prop odds for one event. Cached for PROP_CACHE_TTL_SECONDS.
+
+    Returns (raw_event_dict_list, remaining_quota). The Odds API returns a
+    single event-shaped dict, but we wrap it in a list so the parser
+    signature matches parse_odds_events.
+    """
+    if not ODDS_API_KEY:
+        return [], None
+    markets = PROP_MARKETS_BY_SPORT.get(sport_key)
+    if not markets:
+        return [], None
+
+    key = (sport_key, event_id)
+    now = time.time()
+    cached = _PROP_CACHE.get(key)
+    if cached and (now - cached["ts"]) < PROP_CACHE_TTL_SECONDS:
+        return cached["data"], cached["remaining"]
+
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "us",  # player props are US-side only at the major books
+        "markets": markets,
+        "oddsFormat": "decimal",
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+    except requests.RequestException as e:
+        log.warning("Player-prop fetch network error for %s/%s: %s", sport_key, event_id, e)
+        return [], None
+    if resp.status_code == 429:
+        _ODDS_QUOTA["exhausted_count"] += 1
+        M_ODDS_EXHAUSTED.inc()
+        return [], None
+    if resp.status_code == 404:
+        # Event has no props posted yet (typical for distant future games)
+        return [], None
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        log.debug("Player-prop fetch non-OK %s/%s: %s", sport_key, event_id, e)
+        return [], None
+    remaining = _record_odds_quota(resp)
+    data = [resp.json()] if resp.json() else []
+    _PROP_CACHE[key] = {"ts": now, "data": data, "remaining": remaining}
+    return data, remaining
+
+
+def fetch_imminent_events(sport_key: str) -> list[dict]:
+    """List events starting within PROP_EVENT_LOOKAHEAD_HOURS. Cheap call
+    (no markets in the params), used to gate the per-event prop fetch.
+    """
+    if not ODDS_API_KEY:
+        return []
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events"
+    params = {"apiKey": ODDS_API_KEY}
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+        if resp.status_code != 200:
+            return []
+        _record_odds_quota(resp)
+    except requests.RequestException:
+        return []
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=PROP_EVENT_LOOKAHEAD_HOURS)
+    out: list[dict] = []
+    for ev in resp.json() or []:
+        dt = _parse_iso_utc(ev.get("commence_time", ""))
+        if dt is None:
+            continue
+        # Include in-progress games (started up to 4 hours ago)
+        if (now - timedelta(hours=4)) <= dt <= cutoff:
+            out.append(ev)
+    return out
+
+
+# ── Player-name normalization ───────────────────────────────────────────────
+# Bookmakers, Kalshi, and Polymarket all spell player names slightly
+# differently ("LeBron James" vs "L. James" vs "lebron-james"). We
+# normalize to lowercase first-initial-last-name form for matching, and
+# keep a small alias table for the cases where that doesn't work
+# (suffixes, hyphenation, common nicknames).
+
+PLAYER_NAME_ALIASES = {
+    # Common-name collisions resolved by team affiliation in match logic;
+    # this table is for spelling/nickname normalization only.
+    "lebron": "lebron james",
+    "kd": "kevin durant",
+    "steph": "stephen curry",
+    "steph curry": "stephen curry",
+    "giannis": "giannis antetokounmpo",
+    "luka": "luka doncic",
+    "jokic": "nikola jokic",
+    "embiid": "joel embiid",
+    "tatum": "jayson tatum",
+    "ja": "ja morant",
+    "shai": "shai gilgeous-alexander",
+    "sga": "shai gilgeous-alexander",
+    "kawhi": "kawhi leonard",
+    "pg": "paul george",
+    "pg13": "paul george",
+    "ad": "anthony davis",
+    "cp3": "chris paul",
+    "klay": "klay thompson",
+    "dame": "damian lillard",
+    "dame lillard": "damian lillard",
+    "mahomes": "patrick mahomes",
+    "lamar": "lamar jackson",
+    "josh allen": "josh allen",
+    "ja'marr chase": "ja'marr chase",
+    "ja marr chase": "ja'marr chase",
+    "mcdavid": "connor mcdavid",
+    "ovi": "alexander ovechkin",
+    "ohtani": "shohei ohtani",
+}
+
+_PLAYER_NAME_STRIP = re.compile(r"[^a-z'\s-]")
+
+
+def normalize_player_name(name: str) -> str:
+    """Lowercase, strip suffixes (Jr./Sr./II/III), collapse spaces, apply
+    alias table. Returns a canonical form for fuzzy matching."""
+    if not name:
+        return ""
+    n = name.lower().strip()
+    n = _PLAYER_NAME_STRIP.sub("", n)
+    # Strip suffixes
+    for suffix in (" jr", " sr", " ii", " iii", " iv"):
+        if n.endswith(suffix):
+            n = n[: -len(suffix)].strip()
+    # Collapse internal whitespace
+    n = " ".join(n.split())
+    return PLAYER_NAME_ALIASES.get(n, n)
+
+
+def parse_player_props(raw: list[dict]) -> list[dict]:
+    """Parse The Odds API per-event player-prop response into a flat list
+    of {player, market, line, books{}} dicts.
+
+    The Odds API shape for player props is:
+      event:
+        bookmakers: [
+          {key, title, markets: [
+            {key: 'player_points', outcomes: [
+              {name: 'Over', description: 'LeBron James', point: 25.5, price: 1.85},
+              {name: 'Under', description: 'LeBron James', point: 25.5, price: 1.95},
+              ...
+            ]}
+          ]}
+        ]
+
+    We pivot to per-(player, market, line) rows so each row can be matched
+    against Kalshi and Polymarket independently.
+    """
+    out: list[dict] = []
+    for ev in raw:
+        commence_time = ev.get("commence_time", "")
+        home = ev.get("home_team", "")
+        away = ev.get("away_team", "")
+        event_id = ev.get("id", "")
+
+        # First pass: collect per-(player, market, line) book quotes
+        # Key: (player_norm, market_key, line)
+        bucket: dict[tuple[str, str, float], dict] = {}
+        for bk in ev.get("bookmakers") or []:
+            bk_key = bk.get("key", "")
+            for mkt in bk.get("markets") or []:
+                market_key = mkt.get("key", "")
+                if not market_key.startswith(("player_", "batter_", "pitcher_")):
+                    continue
+                for oc in mkt.get("outcomes") or []:
+                    side = (oc.get("name") or "").lower()  # "over" or "under"
+                    if side not in ("over", "under", "yes", "no"):
+                        continue
+                    player_raw = oc.get("description") or oc.get("name") or ""
+                    if not player_raw or player_raw.lower() in ("over", "under", "yes", "no"):
+                        continue
+                    try:
+                        line = float(oc.get("point") or 0)
+                        price = float(oc.get("price") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if price <= 0:
+                        continue
+                    implied = (1.0 / price) * 100.0
+                    player_norm = normalize_player_name(player_raw)
+                    key = (player_norm, market_key, round(line, 1))
+                    if key not in bucket:
+                        bucket[key] = {
+                            "player": player_raw,
+                            "player_norm": player_norm,
+                            "market": market_key,
+                            "line": round(line, 1),
+                            "books": {},
+                        }
+                    if bk_key not in bucket[key]["books"]:
+                        bucket[key]["books"][bk_key] = {"title": bk.get("title", bk_key)}
+                    bucket[key]["books"][bk_key][f"{side}_prob"] = round(implied, 2)
+                    bucket[key]["books"][bk_key][f"{side}_odds"] = price
+
+        # Second pass: enrich each row with event meta + de-vigged consensus
+        for row in bucket.values():
+            row["event"] = f"{away} @ {home}" if home and away else (home or away or "")
+            row["event_id"] = event_id
+            row["commence_time"] = commence_time
+            # Mean over_prob and under_prob across books that quoted both sides.
+            over_probs = [b["over_prob"] for b in row["books"].values() if "over_prob" in b]
+            under_probs = [b["under_prob"] for b in row["books"].values() if "under_prob" in b]
+            paired = [(b["over_prob"], b["under_prob"])
+                      for b in row["books"].values()
+                      if "over_prob" in b and "under_prob" in b]
+            row["consensus_over_pp"] = round(sum(over_probs) / len(over_probs), 2) if over_probs else None
+            row["consensus_under_pp"] = round(sum(under_probs) / len(under_probs), 2) if under_probs else None
+            if paired:
+                vig_per_book = [(o + u) - 100.0 for o, u in paired]
+                row["vig_pct"] = round(sum(vig_per_book) / len(vig_per_book), 2)
+                # De-vigged consensus = over_prob / (over_prob + under_prob), averaged
+                devigged = [o / (o + u) * 100.0 for o, u in paired if (o + u) > 0]
+                row["consensus_over_devigged"] = round(sum(devigged) / len(devigged), 2) if devigged else None
+            else:
+                row["vig_pct"] = 0.0
+                row["consensus_over_devigged"] = row["consensus_over_pp"]
+            out.append(row)
+    return out
 
 
 def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
@@ -912,6 +1756,206 @@ def parse_odds_events(raw: list[dict], market_type: str = "h2h") -> list[dict]:
             "market_type": market_type,
         })
     return events
+
+
+# ── Cross-book arbitrage scanners ───────────────────────────────────────────
+# Find +EV plays that exist *without* Polymarket — pure book-vs-book.
+#
+# Low-hold (low-vig) arb: when the best OVER price at one book and the
+# best UNDER price at a different book sum to < 100% implied probability,
+# betting both sides locks in a profit equal to the negative-hold margin.
+#
+# Middle: when book A has a spread/total at X.5 and book B has the same
+# market at (X+N).5 where N >= 1, betting OVER at the lower book and
+# UNDER at the higher book locks in a guaranteed win for the side that's
+# right + an additional payout if the final result lands inside (X, X+N).
+# These are rare but high-EV when they appear.
+
+CROSS_BOOK_MIN_GAP_PP = 0.5  # below this the "arb" is within bookmaker margin
+
+
+def _best_per_outcome(parsed_events: list[dict]) -> list[dict]:
+    """For each (event, market_type), return per-outcome best implied
+    probability and the book offering it. Used as input to both
+    low-hold and middle scanners.
+
+    Note: parsed_events here comes from parse_odds_events. Each event
+    has `bookmakers` keyed `<bookmaker>_<market_type>` (or bare for h2h)
+    with each book's outcomes inside.
+    """
+    out: list[dict] = []
+    for ev in parsed_events:
+        market_type = ev.get("market_type", "h2h")
+        # outcome_name -> {"best": {"book": str, "prob": float, "title": str}}
+        per_outcome: dict[str, dict] = {}
+        for bk_key, bk_data in (ev.get("bookmakers") or {}).items():
+            # Strip the market_type suffix that parse_odds_events appends
+            bk_name = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+            for oc_name, oc_data in (bk_data.get("outcomes") or {}).items():
+                prob = float(oc_data.get("implied_prob") or 0)
+                if prob <= 0:
+                    continue
+                rec = per_outcome.setdefault(oc_name, {"book": bk_name,
+                                                       "title": bk_data.get("title", bk_name),
+                                                       "prob": prob,
+                                                       "point": oc_data.get("point")})
+                # We want the LOWEST implied prob (= highest decimal odds = best price)
+                if prob < rec["prob"]:
+                    rec["book"] = bk_name
+                    rec["title"] = bk_data.get("title", bk_name)
+                    rec["prob"] = prob
+                    rec["point"] = oc_data.get("point")
+        out.append({
+            "event_id": ev.get("id", ""),
+            "home_team": ev.get("home_team", ""),
+            "away_team": ev.get("away_team", ""),
+            "commence_time": ev.get("commence_time", ""),
+            "market_type": market_type,
+            "best_per_outcome": per_outcome,
+        })
+    return out
+
+
+def find_low_hold_opportunities(parsed_events: list[dict]) -> list[dict]:
+    """Scan for low-hold (negative-vig) opportunities across books.
+
+    For each event+market_type, sum the best implied prob per outcome.
+    If the sum is < 100%, the gap is risk-free profit (subject to limits,
+    bonus restrictions, and exchanges' withdrawal rules — disclaimer is
+    in the UI).
+    """
+    rows: list[dict] = []
+    for entry in _best_per_outcome(parsed_events):
+        per_oc = entry["best_per_outcome"]
+        if len(per_oc) < 2:
+            continue
+        total_implied = sum(oc["prob"] for oc in per_oc.values())
+        gap_pp = round(100.0 - total_implied, 3)
+        if gap_pp < CROSS_BOOK_MIN_GAP_PP:
+            continue
+        legs = [
+            {"outcome": name, "book": rec["book"], "book_title": rec["title"],
+             "implied_prob": round(rec["prob"], 2),
+             "decimal_odds": round(100.0 / rec["prob"], 3) if rec["prob"] > 0 else None,
+             "point": rec["point"]}
+            for name, rec in per_oc.items()
+        ]
+        rows.append({
+            "event": f"{entry['home_team']} vs {entry['away_team']}",
+            "home_team": entry["home_team"],
+            "away_team": entry["away_team"],
+            "commence_time": entry["commence_time"],
+            "market_type": entry["market_type"],
+            "total_implied_pp": round(total_implied, 2),
+            "gap_pp": gap_pp,
+            # Profit % on a $100 stake split proportionally between legs
+            "profit_pct": round((100.0 / total_implied - 1.0) * 100, 3) if total_implied > 0 else 0.0,
+            "legs": legs,
+        })
+    rows.sort(key=lambda r: -r["gap_pp"])
+    return rows
+
+
+def find_middle_opportunities(parsed_events: list[dict]) -> list[dict]:
+    """Scan for middling opportunities on spreads and totals.
+
+    A middle exists when one book offers OVER at a line and another book
+    offers UNDER at a higher line. If the final result lands strictly
+    between the two lines, both legs win; otherwise the side that's right
+    pays out and the other is a loss (you lose the vig on the wrong leg).
+
+    Worth the bet when the implied probability of landing in the middle
+    exceeds the cost of vig on the wrong leg.
+    """
+    rows: list[dict] = []
+    for ev in parsed_events:
+        market_type = ev.get("market_type", "")
+        if market_type not in ("spreads", "totals"):
+            continue
+        # Collect every (book, side, line, implied_prob) quote.
+        # For spreads, labels look like "Lakers +3.5" / "Warriors -3.5"
+        # For totals, labels look like "Over 220.5" / "Under 220.5"
+        over_quotes: list[dict] = []   # higher score = win
+        under_quotes: list[dict] = []  # lower score = win
+        for bk_key, bk_data in (ev.get("bookmakers") or {}).items():
+            bk_name = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+            bk_title = bk_data.get("title", bk_name)
+            for oc_name, oc_data in (bk_data.get("outcomes") or {}).items():
+                point = oc_data.get("point")
+                prob = float(oc_data.get("implied_prob") or 0)
+                if prob <= 0 or point is None:
+                    continue
+                label = oc_name.lower()
+                if market_type == "totals":
+                    if label.startswith("over"):
+                        over_quotes.append({"book": bk_name, "title": bk_title,
+                                             "outcome": oc_name, "line": float(point),
+                                             "implied_prob": prob})
+                    elif label.startswith("under"):
+                        under_quotes.append({"book": bk_name, "title": bk_title,
+                                              "outcome": oc_name, "line": float(point),
+                                              "implied_prob": prob})
+                else:
+                    # spreads: positive point = underdog (wins if score margin > -point),
+                    # negative point = favorite (wins if margin > -point). For middling
+                    # we look at the underdog side (positive point) as "over" the line,
+                    # favorite (negative point) as "under". Equivalently, pair by team:
+                    # bet team A +X at book X, bet team A -Y at book Y — middle hits if
+                    # team A wins by between Y and X.
+                    if point > 0:
+                        over_quotes.append({"book": bk_name, "title": bk_title,
+                                             "outcome": oc_name, "line": float(point),
+                                             "implied_prob": prob, "team": oc_name})
+                    else:
+                        under_quotes.append({"book": bk_name, "title": bk_title,
+                                              "outcome": oc_name, "line": float(point),
+                                              "implied_prob": prob, "team": oc_name})
+
+        # Find pairs where OVER line < UNDER line (totals)
+        # or for spreads where (team_underdog +X) and (team_favorite -Y) have X > Y
+        # Skip same-book pairs (need cross-book to be useful)
+        for over in over_quotes:
+            for under in under_quotes:
+                if over["book"] == under["book"]:
+                    continue
+                if market_type == "totals":
+                    if over["line"] >= under["line"]:
+                        continue
+                    middle_width = round(under["line"] - over["line"], 1)
+                else:  # spreads
+                    # We want underdog +X and favorite -Y where the team names
+                    # don't match (i.e. opposite sides of the same game).
+                    if over.get("team") == under.get("team"):
+                        continue
+                    # For spreads, "over.line" is positive (underdog spread),
+                    # "under.line" is negative (favorite spread). Middle width
+                    # = over.line - abs(under.line). A real middle requires
+                    # over.line > abs(under.line).
+                    fav_line = abs(under["line"])
+                    if over["line"] <= fav_line:
+                        continue
+                    middle_width = round(over["line"] - fav_line, 1)
+
+                # Cost: sum of vig on both legs (rough estimate — accurate
+                # arithmetic depends on stake sizing). If both legs are at
+                # implied prob ~50%, vig ≈ (over.prob + under.prob - 100)
+                total_implied = over["implied_prob"] + under["implied_prob"]
+                cost_pp = round(total_implied - 100.0, 2)
+                rows.append({
+                    "event": f"{ev.get('home_team', '')} vs {ev.get('away_team', '')}",
+                    "home_team": ev.get("home_team", ""),
+                    "away_team": ev.get("away_team", ""),
+                    "commence_time": ev.get("commence_time", ""),
+                    "market_type": market_type,
+                    "middle_width": middle_width,
+                    "cost_pp": cost_pp,
+                    "over_leg": {**over, "implied_prob": round(over["implied_prob"], 2)},
+                    "under_leg": {**under, "implied_prob": round(under["implied_prob"], 2)},
+                })
+
+    # Sort by widest middle first (more room = higher chance of hitting)
+    rows.sort(key=lambda r: (-r["middle_width"], r["cost_pp"]))
+    return rows
 
 
 def parse_outright_events(raw: list[dict]) -> list[dict]:
@@ -1118,6 +2162,8 @@ def parse_polymarket_events(raw: list[dict]) -> list[dict]:
                 "one_week_change": float(mkt.get("oneWeekPriceChange", 0) or 0),
                 "last_trade_price": float(mkt.get("lastTradePrice", 0) or 0),
                 "tags": [t.get("label", "") for t in ev.get("tags", [])],
+                "start_date": ev.get("startDate") or mkt.get("startDate", "") or "",
+                "end_date": ev.get("endDate") or mkt.get("endDate", "") or ev.get("closedTime", "") or "",
             })
     return parsed
 
@@ -1198,6 +2244,275 @@ def fetch_kalshi_markets(sport_key: str) -> list[dict]:
         time.sleep(_KALSHI_REQ_DELAY_S)
 
     return all_markets
+
+
+def _kalshi_series_to_market(event_ticker: str) -> str | None:
+    """Map a Kalshi event ticker prefix to a The Odds API market_key.
+
+    Kalshi NBA props: KXNBAPTS → player_points, KXNBA3PT → player_threes,
+    KXNBAAST → player_assists, KXNBAREB → player_rebounds. Extensible
+    to other sports as Kalshi adds them.
+    """
+    et = (event_ticker or "").upper()
+    if "NBAPTS" in et: return "player_points"
+    if "NBA3PT" in et: return "player_threes"
+    if "NBAAST" in et: return "player_assists"
+    if "NBAREB" in et: return "player_rebounds"
+    return None
+
+
+_KALSHI_LINE_RE = re.compile(r"-T?(\d+(?:\.\d+)?)(?:-\w+)?$")
+
+
+def _extract_kalshi_prop_line(ticker: str) -> float | None:
+    """Pull the threshold (e.g. 26.5 or 27) off the tail of a Kalshi ticker."""
+    if not ticker:
+        return None
+    m = _KALSHI_LINE_RE.search(ticker)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_kalshi_prop_player(market: dict) -> str | None:
+    """Best-effort player-name extraction. Tries yes_sub_title, then a
+    couple of regex patterns over the market title."""
+    sub = (market.get("yes_sub_title") or "").strip()
+    if sub and sub.lower() not in ("yes", "no", ""):
+        return sub
+    title = (market.get("title") or "").strip()
+    # Pattern: "Will <Player> score/throw/hit ... ?"
+    m = re.match(
+        r"(?:will\s+)?([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+        r"(?:score|throw|hit|record|achieve|have|get|pass|rush|catch)",
+        title.lower(),
+    )
+    if m:
+        return m.group(1).strip()
+    # Pattern: "<Player> <stat>" at start of title
+    m = re.match(
+        r"^([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+        r"(points|3\-?pt|threes|assists|rebounds|td|tds|yards)",
+        title.lower(),
+    )
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def parse_kalshi_player_props(parsed_kalshi: list[dict]) -> list[dict]:
+    """Reshape parse_kalshi_markets output into a flat list of player-prop
+    rows ready for cross-venue matching. Each row is one (player, market,
+    line) quote at Kalshi.
+
+    Kalshi prop tier convention: a ticker ending in "T27" means
+    "score >= 27", which mathematically equals "over 26.5" on a book.
+    We expose `line_book_equivalent` = ticker_line - 0.5 so matching
+    against book lines is straightforward.
+    """
+    out: list[dict] = []
+    for ev in parsed_kalshi or []:
+        if ev.get("market_type") != "props":
+            continue
+        market_key = _kalshi_series_to_market(ev.get("event_ticker", ""))
+        if not market_key:
+            continue
+        for team_name, data in (ev.get("teams") or {}).items():
+            ticker = data.get("ticker", "")
+            line_raw = _extract_kalshi_prop_line(ticker)
+            if line_raw is None:
+                continue
+            # Try to extract player from team_name first (Kalshi's yes_sub_title);
+            # fall back to title parsing on the parent event.
+            player_raw = team_name
+            if not player_raw or player_raw.lower() in ("yes", "no"):
+                player_raw = _extract_kalshi_prop_player({"title": ev.get("title", "")}) or ""
+            player_norm = normalize_player_name(player_raw)
+            if not player_norm:
+                continue
+            out.append({
+                "player": player_raw,
+                "player_norm": player_norm,
+                "market": market_key,
+                # Kalshi-native line: "score N or more" threshold
+                "line_kalshi": line_raw,
+                # Book-equivalent line: book "over N-0.5" == Kalshi "T(N)"
+                "line_book_equivalent": round(line_raw - 0.5, 1),
+                "yes_prob": data.get("implied_prob"),
+                "yes_bid": data.get("yes_bid"),
+                "yes_ask": data.get("yes_ask"),
+                "volume": data.get("volume", 0),
+                "ticker": ticker,
+                "event_ticker": ev.get("event_ticker", ""),
+                "event_title": ev.get("title", ""),
+            })
+    return out
+
+
+def match_player_props_cross_venue(
+    book_props: list[dict],
+    kalshi_props: list[dict],
+    poly_markets: list[dict] | None = None,
+) -> list[dict]:
+    """Join book player-prop rows to Kalshi (and optionally Polymarket)
+    by (player_norm, market, line). Returns enriched rows with
+    divergences and signal flags.
+
+    Matching is exact on (player_norm, market, line); books use
+    continuous half-integer lines so the equality holds when Kalshi's
+    book-equivalent line lines up.
+    """
+    # Index Kalshi by (player_norm, market, line_book_equivalent) for O(1) lookup
+    kalshi_idx: dict[tuple[str, str, float], dict] = {}
+    for kp in kalshi_props or []:
+        key = (kp["player_norm"], kp["market"], kp["line_book_equivalent"])
+        # Prefer higher-volume Kalshi market if duplicates
+        existing = kalshi_idx.get(key)
+        if existing is None or (kp.get("volume") or 0) > (existing.get("volume") or 0):
+            kalshi_idx[key] = kp
+
+    # Same for Polymarket: filter to prop-shaped questions and key by
+    # extracted (player, market, line).
+    poly_idx: dict[tuple[str, str, float], dict] = {}
+    for pm in poly_markets or []:
+        info = _extract_poly_prop_info(pm)
+        if info is None:
+            continue
+        key = (info["player_norm"], info["market"], info["line"])
+        poly_idx[key] = {**pm, **info}
+
+    out: list[dict] = []
+    for bp in book_props:
+        key = (bp["player_norm"], bp["market"], bp["line"])
+        k = kalshi_idx.get(key)
+        p = poly_idx.get(key)
+
+        # Pick best book line for each side (highest implied prob = cheapest)
+        best_book_over = None
+        best_book_under = None
+        for bk_key, bk_data in (bp.get("books") or {}).items():
+            if "over_prob" in bk_data:
+                if best_book_over is None or bk_data["over_prob"] > best_book_over["prob"]:
+                    best_book_over = {"book": bk_key, "title": bk_data.get("title"),
+                                       "prob": bk_data["over_prob"],
+                                       "odds": bk_data.get("over_odds")}
+            if "under_prob" in bk_data:
+                if best_book_under is None or bk_data["under_prob"] > best_book_under["prob"]:
+                    best_book_under = {"book": bk_key, "title": bk_data.get("title"),
+                                        "prob": bk_data["under_prob"],
+                                        "odds": bk_data.get("under_odds")}
+
+        # De-vigged consensus = our "fair" probability of OVER
+        fair_over = bp.get("consensus_over_devigged") or bp.get("consensus_over_pp")
+
+        divergences: dict = {}
+        if k and fair_over is not None and k.get("yes_prob") is not None:
+            # Positive = Kalshi YES underprices the over (we should buy YES)
+            divergences["kalshi"] = round(fair_over - float(k["yes_prob"]), 2)
+        if p and fair_over is not None and p.get("yes_prob") is not None:
+            divergences["polymarket"] = round(fair_over - float(p["yes_prob"]), 2)
+
+        max_abs_div = max((abs(v) for v in divergences.values()), default=0.0)
+
+        # Signal: any divergence exceeds threshold AND we have a sharp book quote
+        is_signal = max_abs_div >= DIVERGENCE_THRESHOLD and bool(bp.get("books"))
+
+        out.append({
+            "player": bp["player"],
+            "player_norm": bp["player_norm"],
+            "market": bp["market"],
+            "line": bp["line"],
+            "event": bp.get("event", ""),
+            "commence_time": bp.get("commence_time", ""),
+            "consensus_over_pp": bp.get("consensus_over_pp"),
+            "consensus_over_devigged": bp.get("consensus_over_devigged"),
+            "consensus_under_pp": bp.get("consensus_under_pp"),
+            "vig_pct": bp.get("vig_pct"),
+            "books": bp.get("books"),
+            "best_book_over": best_book_over,
+            "best_book_under": best_book_under,
+            "kalshi": {
+                "yes_prob": k.get("yes_prob") if k else None,
+                "ticker": k.get("ticker") if k else None,
+                "line_kalshi": k.get("line_kalshi") if k else None,
+                "volume": k.get("volume") if k else None,
+                "trade_url": f"https://kalshi.com/markets/{k['ticker'].lower()}" if k and k.get("ticker") else None,
+            } if k else None,
+            "polymarket": {
+                "yes_prob": p.get("yes_prob") if p else None,
+                "slug": p.get("slug") if p else None,
+                "trade_url": f"https://polymarket.com/market/{p['slug']}" if p and p.get("slug") else None,
+            } if p else None,
+            "divergences": divergences,
+            "max_divergence_pp": round(max_abs_div, 2),
+            "is_signal": is_signal,
+        })
+
+    # Sort: signals first, then by absolute divergence
+    out.sort(key=lambda r: (-int(r["is_signal"]), -r["max_divergence_pp"]))
+    return out
+
+
+# Patterns that suggest a Polymarket market is a player prop
+_POLY_PROP_STAT_PATTERNS = [
+    (r"point", "player_points"),
+    (r"3-?pt|three-?pointer|threes?", "player_threes"),
+    (r"assist", "player_assists"),
+    (r"rebound", "player_rebounds"),
+    (r"touchdown|td", "player_anytime_td"),
+    (r"passing yards?|pass yds?", "player_pass_yds"),
+    (r"rushing yards?|rush yds?", "player_rush_yds"),
+    (r"strikeout|k's?", "pitcher_strikeouts"),
+    (r"home run|hr", "batter_home_runs"),
+    (r"goal", "player_goals"),
+]
+
+_POLY_PROP_QUESTION_RE = re.compile(
+    r"(?:will\s+)?([a-z][a-z\.'\-]*(?:\s+[a-z][a-z\.'\-]*)+?)\s+"
+    r"(?:score|throw|hit|record|achieve|have|get|pass for)\s+"
+    r"(?:at\s+least\s+|over\s+)?(\d+(?:\.\d+)?)\+?\s*"
+    r"(point|3-?pt|three-?pointer|threes?|assist|rebound|touchdown|td|"
+    r"passing yards?|rushing yards?|strikeout|home run|hr|goal)",
+    re.IGNORECASE,
+)
+
+
+def _extract_poly_prop_info(pm: dict) -> dict | None:
+    """Try to parse a Polymarket market dict into a player-prop tuple.
+    Returns None if the question doesn't look like a prop."""
+    q = (pm.get("market_question") or "").lower()
+    if not q:
+        return None
+    m = _POLY_PROP_QUESTION_RE.search(q)
+    if not m:
+        return None
+    player = m.group(1).strip()
+    try:
+        threshold = float(m.group(2))
+    except ValueError:
+        return None
+    stat_word = m.group(3)
+    market_key = None
+    for pat, key in _POLY_PROP_STAT_PATTERNS:
+        if re.search(pat, stat_word, re.IGNORECASE):
+            market_key = key
+            break
+    if not market_key:
+        return None
+    # Polymarket "score N+" means score >= N == book "over N-0.5"
+    line = round(threshold - 0.5, 1)
+    # Yes price = book over_prob
+    yes = (pm.get("outcomes") or {}).get("Yes") or {}
+    yes_prob = yes.get("implied_prob")
+    return {
+        "player_norm": normalize_player_name(player),
+        "market": market_key,
+        "line": line,
+        "yes_prob": yes_prob,
+    }
 
 
 def parse_kalshi_markets(raw: list[dict]) -> list[dict]:
@@ -1297,6 +2612,136 @@ def is_comparable_market(question: str) -> bool:
     return True
 
 
+def _parse_iso_utc(s: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp into a UTC-aware datetime, or None."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+# Time window for matching: a Polymarket market resolving more than this long
+# before or after the bookmaker event's commence_time is rejected.
+MATCH_WINDOW_HOURS_BEFORE = 12   # poly resolved >12h before kickoff is suspicious
+MATCH_WINDOW_HOURS_AFTER = 24 * 7  # poly resolved >7d after is a different event
+
+# Diagnostic ring buffer for near-reject matches (min(home,away) in [55, 70)).
+# Surfaced via /api/diagnostics/match-rejects so we can tune the threshold.
+_NEAR_REJECTS: list[dict] = []
+_NEAR_REJECTS_MAX = 200
+
+
+def _log_near_reject(event: dict, pm: dict, home_score: float, away_score: float, reason: str) -> None:
+    """Record a near-reject for diagnostic review. Capped ring buffer."""
+    if len(_NEAR_REJECTS) >= _NEAR_REJECTS_MAX:
+        _NEAR_REJECTS.pop(0)
+    _NEAR_REJECTS.append({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": f"{event.get('home_team', '')} vs {event.get('away_team', '')}",
+        "commence_time": event.get("commence_time", ""),
+        "poly_question": pm.get("market_question", ""),
+        "poly_event_title": pm.get("event_title", ""),
+        "poly_end_date": pm.get("end_date", ""),
+        "home_score": round(home_score, 1),
+        "away_score": round(away_score, 1),
+        "reason": reason,
+    })
+    M_MATCH_REJECTS.labels(reason=reason).inc()
+
+
+# Sharp books — these are known to be the most efficient (lowest vig,
+# tightest correlation with closing line). Signals require at least one
+# sharp book to be present.
+SHARP_BOOK_KEYS = {"pinnacle", "betcris", "circa", "bookmakerxch", "betfair_ex_eu", "betfair_ex_uk"}
+
+# Liquidity gate: minimum Polymarket volume and maximum spread (in price
+# points, where 1.0 = 100%) for a signal to fire. The product is roughly
+# the cost-to-fill: a signal isn't actionable if you'd give back the edge
+# crossing the spread.
+MIN_POLY_VOLUME = 1000.0      # USD
+MAX_POLY_SPREAD = 0.05         # 5pp — below this we treat it as quotable
+SHARP_CONSENSUS_TOLERANCE = 2.0  # pp; sharps must agree within this band
+
+
+def _build_trade_urls(poly_slug: str | None, kalshi_event_ticker: str | None = None,
+                      kalshi_market_ticker: str | None = None) -> dict:
+    """Build deep-link URLs so the user can place orders on each venue.
+
+    Polymarket pattern: polymarket.com/market/<slug>
+    Kalshi pattern:     kalshi.com/markets/<ticker> (specific market) or
+                        kalshi.com/events/<event_ticker> (groups all sub-markets)
+    """
+    return {
+        "trade_poly_url": f"https://polymarket.com/market/{poly_slug}" if poly_slug else None,
+        "trade_kalshi_url": (
+            f"https://kalshi.com/markets/{kalshi_market_ticker.lower()}" if kalshi_market_ticker
+            else f"https://kalshi.com/events/{kalshi_event_ticker.lower()}" if kalshi_event_ticker
+            else None
+        ),
+    }
+
+
+def _signal_quality(event: dict, outcome_name: str, odds_prob: float,
+                    poly_prob: float, poly_market: dict) -> dict:
+    """Compute signal-quality flags for one outcome of a matched comparison.
+
+    Returns a dict with the de-vigged divergence, vig pct, and four boolean
+    gates (sharp_consensus_ok, liquidity_ok, not_stale, plus the combined
+    passes_all_gates). The matcher uses passes_all_gates to decide whether
+    to flag the signal — raw `divergence` and `is_signal` stay populated
+    for the legacy frontend.
+    """
+    consensus = event.get("consensus_probs") or {}
+    total = sum(consensus.values()) if consensus else 100.0
+    vig_pct = round(total - 100.0, 2) if consensus else 0.0
+    devigged_pct = (odds_prob / total) * 100.0 if total > 0 else odds_prob
+    devigged_div = round(devigged_pct - poly_prob, 2)
+
+    # Sharp-book consensus: which sharp books cover this outcome and do
+    # their probs agree within tolerance?
+    sharp_probs: list[tuple[str, float]] = []
+    for bk_key, bk_data in (event.get("bookmakers") or {}).items():
+        # Strip the "_h2h" / "_spreads" / "_totals" suffix added in parse_odds_events
+        bare = bk_key.rsplit("_", 1)[0] if "_" in bk_key else bk_key
+        if bare not in SHARP_BOOK_KEYS:
+            continue
+        oc = (bk_data.get("outcomes") or {}).get(outcome_name)
+        if oc and oc.get("implied_prob") is not None:
+            sharp_probs.append((bare, float(oc["implied_prob"])))
+
+    sharp_consensus_ok = bool(sharp_probs)
+    if len(sharp_probs) >= 2:
+        probs_only = [p for _, p in sharp_probs]
+        spread = max(probs_only) - min(probs_only)
+        sharp_consensus_ok = spread <= SHARP_CONSENSUS_TOLERANCE
+
+    # Liquidity gate
+    pm_volume = float(poly_market.get("volume") or 0.0)
+    pm_spread = float(poly_market.get("spread") or 0.0)
+    liquidity_ok = (pm_volume >= MIN_POLY_VOLUME) and (pm_spread <= MAX_POLY_SPREAD)
+
+    # Stale-data gate: a market that's never traded or has been completely
+    # flat for a week is almost certainly mispriced because nobody's there
+    # — not because we found a real edge.
+    last_trade = float(poly_market.get("last_trade_price") or 0.0)
+    one_day = float(poly_market.get("one_day_change") or 0.0)
+    one_week = float(poly_market.get("one_week_change") or 0.0)
+    not_stale = (last_trade > 0) and (pm_volume > 0) and not (one_day == 0 and one_week == 0)
+
+    return {
+        "divergence_raw": round(odds_prob - poly_prob, 2),
+        "divergence_devigged": devigged_div,
+        "vig_pct": vig_pct,
+        "sharp_books_present": [k for k, _ in sharp_probs],
+        "sharp_consensus_ok": sharp_consensus_ok,
+        "liquidity_ok": liquidity_ok,
+        "not_stale": not_stale,
+        "passes_all_gates": sharp_consensus_ok and liquidity_ok and not_stale,
+    }
+
+
 def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_markets: list[dict] | None = None) -> list[dict]:
     """
     Fuzzy-match odds events to Polymarket markets and compute divergence.
@@ -1309,6 +2754,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
     for event in odds_events:
         home = normalize_name(event["home_team"])
         away = normalize_name(event["away_team"])
+        ev_commence = _parse_iso_utc(event.get("commence_time", ""))
 
         best_match = None
         best_score = 0
@@ -1327,6 +2773,16 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             if pm["volume"] <= 0 and pm["liquidity"] <= 0:
                 continue
 
+            # Time-window check: reject if the Polymarket market resolves
+            # too far from the bookmaker event's commence_time. Skips when
+            # either timestamp is missing (Polymarket's end_date is sometimes
+            # unset for game-level markets — fall back to fuzzy matching only).
+            pm_end = _parse_iso_utc(pm.get("end_date", ""))
+            if ev_commence and pm_end:
+                delta_h = (pm_end - ev_commence).total_seconds() / 3600.0
+                if delta_h < -MATCH_WINDOW_HOURS_BEFORE or delta_h > MATCH_WINDOW_HOURS_AFTER:
+                    continue
+
             q = pm["market_question"].lower()
             title = pm["event_title"].lower()
             text = f"{q} {title}"
@@ -1335,8 +2791,11 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             home_score = fuzz.partial_ratio(home, text)
             away_score = fuzz.partial_ratio(away, text)
 
-            # Require both teams to be present (min 70 each)
+            # Require both teams to be present (min 70 each).
+            # Log near-rejects (55-70) so we can tune aliases / threshold.
             if home_score < 70 or away_score < 70:
+                if min(home_score, away_score) >= 55:
+                    _log_near_reject(event, pm, home_score, away_score, "team_score_below_70")
                 continue
 
             combined = (home_score + away_score) / 2
@@ -1377,6 +2836,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             # Find matching Polymarket outcome
             poly_prob = None
             poly_outcome_key = None
+            poly_token_id = None
             norm_outcome = normalize_name(outcome_name)
 
             for pk, pv in best_match["outcomes"].items():
@@ -1385,6 +2845,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 if score > 75 or (len(norm_outcome) > 3 and norm_outcome in norm_pk) or (len(norm_pk) > 3 and norm_pk in norm_outcome):
                     poly_prob = pv["implied_prob"]
                     poly_outcome_key = pk
+                    poly_token_id = pv.get("token_id") or None
                     break
 
             # Binary Yes/No: check if outcome name is in the question
@@ -1393,6 +2854,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 if yes_data and outcome_name.lower() in best_match["market_question"].lower():
                     poly_prob = yes_data["implied_prob"]
                     poly_outcome_key = "Yes"
+                    poly_token_id = yes_data.get("token_id") or None
 
             if poly_prob is None:
                 continue
@@ -1401,14 +2863,16 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             if poly_prob <= 0.5 or poly_prob >= 99.5:
                 continue
 
-            divergence = odds_prob - poly_prob  # positive = poly is cheap
+            # Compute signal-quality flags (vig-adjustment, sharp consensus,
+            # liquidity, staleness). We use the DE-VIGGED divergence as the
+            # primary signal driver and gate on all four quality flags.
+            quality = _signal_quality(event, outcome_name, odds_prob, poly_prob, best_match)
+            divergence_raw = quality["divergence_raw"]
+            divergence = quality["divergence_devigged"]
             abs_div = abs(divergence)
 
-            # Half-Kelly criterion: f* = (b*p - q) / (2*b)
-            # where b = net decimal odds, p = de-vigged true prob, q = 1-p
-            # De-vig: divide sharp prob by the sharp book's total overround
-            all_consensus_vals = list(event.get("consensus_probs", {}).values()) if event.get("consensus_probs") else []
-            total_prob_raw = sum(all_consensus_vals) if all_consensus_vals else 100
+            # Half-Kelly criterion uses the de-vigged true prob.
+            total_prob_raw = sum(event.get("consensus_probs", {}).values()) or 100.0
             p = (odds_prob / total_prob_raw) if total_prob_raw > 0 else (odds_prob / 100)
             q = 1 - p
             if poly_prob > 0:
@@ -1435,10 +2899,18 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
 
             kalshi_divergence = round(odds_prob - kalshi_prob, 2) if kalshi_prob is not None else None
 
+            # Signal fires when devigged divergence clears threshold AND
+            # all four quality gates pass. Raw fields preserved for the UI.
+            is_signal = (
+                abs_div >= DIVERGENCE_THRESHOLD
+                and quality["passes_all_gates"]
+            )
+
             outcome_comparisons.append({
                 "outcome": outcome_name,
                 "outcome_name": outcome_name,  # alias for frontend
                 "poly_outcome": poly_outcome_key,
+                "poly_token_id": poly_token_id,
                 "sharp_prob": odds_prob,
                 "consensus_prob": consensus_prob,
                 "poly_prob": poly_prob,
@@ -1446,13 +2918,20 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                 "kalshi_prob": kalshi_prob,
                 "kalshi_ticker": kalshi_ticker,
                 "kalshi_divergence": kalshi_divergence,
-                "divergence": round(divergence, 2),
-                "divergence_pct": round(divergence, 2),  # alias for frontend
+                "divergence": divergence,                # de-vigged (used for is_signal)
+                "divergence_raw": divergence_raw,        # raw, with vig — for transparency
+                "divergence_pct": divergence,            # alias for frontend
                 "abs_divergence": round(abs_div, 2),
                 "cheap_on": "Polymarket" if divergence > 0 else "Bookmaker",
                 "kelly_pct": kelly_pct,
                 "kelly_fraction": kelly_pct / 100 if kelly_pct else 0,  # 0-1 scale for frontend
-                "is_signal": abs_div >= DIVERGENCE_THRESHOLD,
+                "is_signal": is_signal,
+                # Signal quality breakdown (lets the UI explain why it did/didn't fire)
+                "vig_pct": quality["vig_pct"],
+                "sharp_books_present": quality["sharp_books_present"],
+                "sharp_consensus_ok": quality["sharp_consensus_ok"],
+                "liquidity_ok": quality["liquidity_ok"],
+                "not_stale": quality["not_stale"],
             })
 
         if not outcome_comparisons:
@@ -1602,6 +3081,10 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             # Kalshi data
             "kalshi_event": kalshi_match["event_ticker"] if kalshi_match else None,
             "kalshi_volume": kalshi_match["total_volume"] if kalshi_match else 0,
+            **_build_trade_urls(
+                best_match["slug"],
+                kalshi_match["event_ticker"] if kalshi_match else None,
+            ),
         })
 
     # Sort: signals first, then by max divergence
@@ -1789,6 +3272,7 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
             "confidence_score": confidence_score_o,
             "kalshi_event": None,
             "kalshi_volume": 0,
+            **_build_trade_urls(best_match["slug"]),
         })
 
     comparisons.sort(key=lambda x: (-x["has_signal"], -x["max_divergence"]))
@@ -1849,6 +3333,567 @@ def _save_market_snapshots(sport: str, comparisons: list[dict]):
                 "INSERT INTO sports_market_snapshots (sport, event_name, outcome, book_prob, poly_prob, kalshi_prob, divergence, poly_volume, kalshi_volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+
+
+# ---------------------------------------------------------------------------
+# Track record — CLV, P&L simulation, calibration
+# ---------------------------------------------------------------------------
+#
+# These three computations turn the dashboard from "trust me bro" into a
+# verifiable product. They run against `sports_edge_history` (signals) and
+# `sports_market_snapshots` (line movement) — both already populated by the
+# main poll loop.
+#
+# - CLV (closing line value): for each signal, find the latest poly_prob
+#   snapshot before commence_time and compute the move in our betting
+#   direction. Positive = the market moved toward our prediction = we got
+#   the better number when we bet.
+# - P&L simulation: replay every resolved signal at threshold T with stake S,
+#   compute total profit, win rate, Sharpe, max drawdown.
+# - Calibration: bin signals by predicted divergence, compare empirical
+#   win rate to expected. A well-calibrated dashboard sits on the diagonal.
+
+def _compute_clv(sport: str | None = None, days: int = 30) -> dict:
+    """Compute closing line value across all signals in the window.
+
+    For each `sports_edge_history` row, find the most recent snapshot in
+    `sports_market_snapshots` taken before `commence_time` (or before
+    detected_at + 24h if commence_time is missing) for the same event +
+    outcome. CLV in pp = (poly_prob_close - poly_prob_signal) * direction,
+    where direction = +1 if we bet YES on Polymarket (divergence > 0),
+    -1 otherwise.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        if sport:
+            rows = conn.execute(
+                """SELECT id, sport, home_team, away_team, outcome, sharp_prob, poly_prob,
+                          divergence, commence_time, detected_at
+                   FROM sports_edge_history
+                   WHERE detected_at >= ? AND sport = ?""",
+                (cutoff, sport),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, sport, home_team, away_team, outcome, sharp_prob, poly_prob,
+                          divergence, commence_time, detected_at
+                   FROM sports_edge_history
+                   WHERE detected_at >= ?""",
+                (cutoff,),
+            ).fetchall()
+
+        clv_values: list[float] = []
+        per_sport: dict[str, list[float]] = {}
+        for r in rows:
+            event_name = (r["home_team"] or "") + (" vs " + r["away_team"] if r["away_team"] else "")
+            close_cutoff = r["commence_time"] or r["detected_at"]
+            if not close_cutoff:
+                continue
+            snap = conn.execute(
+                """SELECT poly_prob FROM sports_market_snapshots
+                   WHERE sport = ? AND event_name = ? AND outcome = ?
+                         AND snapshot_at <= ? AND snapshot_at >= ?
+                   ORDER BY snapshot_at DESC LIMIT 1""",
+                (r["sport"], event_name, r["outcome"], close_cutoff, r["detected_at"]),
+            ).fetchone()
+            if not snap or snap["poly_prob"] is None or r["poly_prob"] is None:
+                continue
+            direction = 1.0 if (r["divergence"] or 0) > 0 else -1.0
+            clv_pp = (float(snap["poly_prob"]) - float(r["poly_prob"])) * direction
+            clv_values.append(clv_pp)
+            per_sport.setdefault(r["sport"] or "unknown", []).append(clv_pp)
+
+    def _summary(values: list[float]) -> dict:
+        if not values:
+            return {"n": 0, "mean": 0.0, "median": 0.0, "positive_rate": 0.0}
+        sorted_vs = sorted(values)
+        median = sorted_vs[len(sorted_vs) // 2]
+        return {
+            "n": len(values),
+            "mean": round(sum(values) / len(values), 3),
+            "median": round(median, 3),
+            "positive_rate": round(sum(1 for v in values if v > 0) / len(values), 3),
+        }
+
+    return {
+        "window_days": days,
+        "sport": sport,
+        "overall": _summary(clv_values),
+        "per_sport": {s: _summary(vs) for s, vs in per_sport.items()},
+    }
+
+
+def _compute_pnl_simulation(
+    sport: str | None = None,
+    days: int = 90,
+    threshold_pp: float = 5.0,
+    stake: float = 100.0,
+) -> dict:
+    """Replay all resolved signals and simulate fixed-stake betting.
+
+    Profit on a winning $stake bet at Polymarket = stake * (100/poly_prob - 1)
+    because Polymarket prices map directly to implied probability and the
+    payout multiplier is 1/price. Losses are -$stake.
+
+    Returns total PnL, win rate, Sharpe (per-bet, sqrt(N) annualization),
+    max drawdown, and the per-bet equity curve.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    params: list = [cutoff, threshold_pp]
+    sql = """SELECT detected_at, sport, divergence, poly_prob, resolution
+             FROM sports_edge_history
+             WHERE detected_at >= ?
+               AND ABS(divergence) >= ?
+               AND resolved = 1
+               AND resolution IN ('correct', 'incorrect')"""
+    if sport:
+        sql += " AND sport = ?"
+        params.append(sport)
+    sql += " ORDER BY detected_at ASC"
+
+    with _get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    bets: list[float] = []
+    for r in rows:
+        poly = float(r["poly_prob"] or 0)
+        if poly <= 0 or poly >= 100:
+            continue
+        if r["resolution"] == "correct":
+            profit = stake * (100.0 / poly - 1.0)
+        else:
+            profit = -stake
+        bets.append(profit)
+
+    n = len(bets)
+    if n == 0:
+        return {
+            "window_days": days, "threshold_pp": threshold_pp, "stake": stake,
+            "n_bets": 0, "total_pnl": 0.0, "win_rate": 0.0, "roi_pct": 0.0,
+            "sharpe": 0.0, "max_drawdown": 0.0, "equity_curve": [],
+        }
+
+    total_pnl = sum(bets)
+    wins = sum(1 for b in bets if b > 0)
+    win_rate = wins / n
+
+    # Equity curve + max drawdown
+    equity = []
+    running = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for b in bets:
+        running += b
+        peak = max(peak, running)
+        dd = peak - running
+        if dd > max_dd:
+            max_dd = dd
+        equity.append(round(running, 2))
+
+    # Per-bet Sharpe (no risk-free rate, since stakes are tiny vs portfolio).
+    if n > 1:
+        mean = total_pnl / n
+        var = sum((b - mean) ** 2 for b in bets) / (n - 1)
+        std = math.sqrt(var) if var > 0 else 0.0
+        sharpe = (mean / std) * math.sqrt(n) if std > 0 else 0.0
+    else:
+        sharpe = 0.0
+
+    return {
+        "window_days": days,
+        "threshold_pp": threshold_pp,
+        "stake": stake,
+        "sport": sport,
+        "n_bets": n,
+        "total_pnl": round(total_pnl, 2),
+        "win_rate": round(win_rate, 4),
+        "roi_pct": round((total_pnl / (n * stake)) * 100, 3) if n > 0 else 0.0,
+        "sharpe": round(sharpe, 3),
+        "max_drawdown": round(max_dd, 2),
+        "equity_curve": equity,
+    }
+
+
+def _compute_calibration(sport: str | None = None, days: int = 180) -> dict:
+    """Bin resolved signals by predicted divergence and report empirical win rate.
+
+    Bins: [1,5), [5,10), [10,15), [15,20), [20,inf). For each bin we report
+    the count, win rate, and the implied "expected" prob for a perfectly
+    calibrated model (= mean sharp_prob in the bin / 100, capped to [0,1]).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    params: list = [cutoff]
+    sql = """SELECT divergence, sharp_prob, resolution
+             FROM sports_edge_history
+             WHERE detected_at >= ?
+               AND resolved = 1
+               AND resolution IN ('correct', 'incorrect')"""
+    if sport:
+        sql += " AND sport = ?"
+        params.append(sport)
+    with _get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    bins = [(1, 5), (5, 10), (10, 15), (15, 20), (20, 1000)]
+    out: list[dict] = []
+    for lo, hi in bins:
+        bucket = [r for r in rows if lo <= abs(r["divergence"] or 0) < hi]
+        n = len(bucket)
+        if n == 0:
+            out.append({
+                "lo": lo, "hi": hi if hi < 1000 else None, "n": 0,
+                "win_rate": None, "expected": None,
+            })
+            continue
+        wins = sum(1 for r in bucket if r["resolution"] == "correct")
+        # Expected = mean of (sharp_prob / 100) — what our model says the
+        # win prob should be, on average, for signals in this bucket.
+        sharp_probs = [(r["sharp_prob"] or 0) / 100.0 for r in bucket]
+        expected = sum(sharp_probs) / n if sharp_probs else 0.0
+        out.append({
+            "lo": lo, "hi": hi if hi < 1000 else None, "n": n,
+            "win_rate": round(wins / n, 4),
+            "expected": round(max(0.0, min(1.0, expected)), 4),
+        })
+    return {"window_days": days, "sport": sport, "bins": out}
+
+
+# ---------------------------------------------------------------------------
+# Backtest replay — apply an arbitrary alert rule to historical signals
+# ---------------------------------------------------------------------------
+#
+# _compute_pnl_simulation only supports a flat divergence threshold. The
+# backtest replay endpoint accepts the same rule shape used by
+# /api/alert-rules (sports allowlist, market_type allowlist, min_volume,
+# max_time_to_event, quality-gate flags) and replays it across resolved
+# edge_history. Pros use this to test new rules before turning them on.
+
+def _signal_from_edge_row(row: dict) -> tuple[str, dict]:
+    """Reshape a sports_edge_history row into the comparison-shaped dict
+    that _signal_matches_rule expects.
+
+    Some fields aren't stored on edge_history (poly_volume, time-to-event,
+    per-gate flags), so we synthesize neutral values: poly_volume=0 means
+    rules with a min_volume filter will reject the row (caller's choice),
+    and the quality gates default to True since rows in edge_history
+    already passed the live gates at signal time.
+    """
+    sport = row.get("sport") or ""
+    outcome = {
+        "outcome_name": row.get("outcome", ""),
+        "divergence_pct": row.get("divergence", 0),
+        "is_signal": True,
+        "sharp_consensus_ok": True,
+        "not_stale": True,
+        "liquidity_ok": True,
+    }
+    # Compute time-to-event from commence_time at the moment the signal
+    # fired (detected_at) — closer to what the live rule sees.
+    tth = None
+    commence = _parse_iso_utc(row.get("commence_time") or "")
+    detected = _parse_iso_utc(row.get("detected_at") or "")
+    if commence and detected:
+        delta = (commence - detected).total_seconds() / 3600.0
+        tth = max(0.0, delta)
+    return sport, {
+        "home_team": row.get("home_team", ""),
+        "away_team": row.get("away_team", ""),
+        "market_type": row.get("market_type", "h2h"),
+        "max_divergence": abs(float(row.get("divergence") or 0)),
+        "poly_volume": 0,
+        "time_to_event_hours": tth,
+        "outcomes": [outcome],
+    }
+
+
+def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
+    """Replay resolved signals against a rule. Returns aggregate stats +
+    the per-bet equity curve + the first 200 matched signals.
+
+    The rule shape matches what /api/alert-rules accepts: sports (JSON
+    list), market_types (JSON list), min_divergence_pp, min_volume,
+    max_time_to_event_hours, require_sharp_consensus, require_not_stale,
+    require_liquidity_ok.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM sports_edge_history
+               WHERE detected_at >= ?
+                 AND resolved = 1
+                 AND resolution IN ('correct', 'incorrect')
+               ORDER BY detected_at ASC""",
+            (cutoff,),
+        ).fetchall()
+
+    bets: list[float] = []
+    equity: list[float] = []
+    running = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    matches: list[dict] = []
+
+    for raw in rows:
+        row = dict(raw)
+        sport, signal = _signal_from_edge_row(row)
+        if not _signal_matches_rule(signal, sport, rule):
+            continue
+        poly = float(row.get("poly_prob") or 0)
+        if poly <= 0 or poly >= 100:
+            continue
+        if row.get("resolution") == "correct":
+            profit = stake * (100.0 / poly - 1.0)
+        else:
+            profit = -stake
+        bets.append(profit)
+        running += profit
+        peak = max(peak, running)
+        dd = peak - running
+        if dd > max_dd:
+            max_dd = dd
+        equity.append(round(running, 2))
+        if len(matches) < 200:
+            matches.append({
+                "detected_at": row.get("detected_at"),
+                "sport": sport,
+                "event": _event_name(row.get("home_team"), row.get("away_team")),
+                "outcome": row.get("outcome"),
+                "divergence": row.get("divergence"),
+                "poly_prob": poly,
+                "resolution": row.get("resolution"),
+                "pnl": round(profit, 2),
+            })
+
+    n = len(bets)
+    if n == 0:
+        return {
+            "days": days, "stake": stake,
+            "n_bets": 0, "total_pnl": 0.0,
+            "win_rate": 0.0, "roi_pct": 0.0,
+            "sharpe": 0.0, "max_drawdown": 0.0,
+            "equity_curve": [], "matches": [],
+        }
+
+    total_pnl = sum(bets)
+    wins = sum(1 for b in bets if b > 0)
+    win_rate = wins / n
+    roi = (total_pnl / (n * stake)) * 100
+
+    if n > 1:
+        mean = total_pnl / n
+        var = sum((b - mean) ** 2 for b in bets) / (n - 1)
+        std = math.sqrt(var) if var > 0 else 0.0
+        sharpe = (mean / std) * math.sqrt(n) if std > 0 else 0.0
+    else:
+        sharpe = 0.0
+
+    return {
+        "days": days,
+        "stake": stake,
+        "n_bets": n,
+        "total_pnl": round(total_pnl, 2),
+        "win_rate": round(win_rate, 4),
+        "roi_pct": round(roi, 3),
+        "sharpe": round(sharpe, 3),
+        "max_drawdown": round(max_dd, 2),
+        "equity_curve": equity,
+        "matches": matches,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Steam moves — detect rapid sharp-book line moves (T4.1)
+# ---------------------------------------------------------------------------
+#
+# A "steam move" is a fast, sharp-money-driven line move at a major book.
+# We detect it by scanning consecutive snapshots in sports_market_snapshots
+# for the same (sport, event, outcome) and flagging any pair where:
+#   |book_prob_late - book_prob_early| >= STEAM_MIN_DELTA_PP
+#   and (snapshot_at_late - snapshot_at_early) <= STEAM_WINDOW_MINUTES
+#
+# Pros trade off steam moves because they signal that sharp action just
+# hit a major book — the rest of the market is about to follow.
+
+STEAM_MIN_DELTA_PP = 2.0     # minimum sharp-book move to qualify
+STEAM_WINDOW_MINUTES = 30    # over no more than this many minutes
+
+
+def _detect_steam_moves(sport: str | None, hours: int = 24,
+                          min_delta_pp: float | None = None,
+                          window_min: int | None = None) -> list[dict]:
+    """Scan recent market snapshots for fast sharp-book moves.
+
+    For each (sport, event, outcome), walk the snapshot stream and emit
+    a steam-move row whenever two snapshots within `window_min` minutes
+    show a |book_prob| swing >= `min_delta_pp`. Each event/outcome can
+    emit multiple moves if the line keeps stair-stepping.
+    """
+    min_d = float(min_delta_pp if min_delta_pp is not None else STEAM_MIN_DELTA_PP)
+    win = int(window_min if window_min is not None else STEAM_WINDOW_MINUTES)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    where = ["snapshot_at >= ?", "book_prob IS NOT NULL"]
+    params: list = [cutoff]
+    if sport:
+        where.append("sport = ?")
+        params.append(sport)
+
+    sql = ("SELECT sport, event_name, outcome, book_prob, poly_prob, "
+           "       kalshi_prob, snapshot_at "
+           "FROM sports_market_snapshots "
+           "WHERE " + " AND ".join(where) + " "
+           "ORDER BY sport, event_name, outcome, snapshot_at ASC")
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    moves: list[dict] = []
+    # Group consecutive rows by (sport, event, outcome) — they're already
+    # sorted, so we just walk and reset whenever the key changes.
+    current_key = None
+    history: list[dict] = []
+    for r in rows:
+        key = (r["sport"], r["event_name"], r["outcome"])
+        if key != current_key:
+            current_key = key
+            history = []
+        history.append(r)
+
+        # Walk back through this key's history looking for the most-recent
+        # snapshot still inside the window. Compare against r to detect a
+        # move. We don't dedupe overlapping moves per key — successive
+        # snapshots can each emit a move, which is the desired behavior
+        # for a line that keeps stair-stepping.
+        late_dt = _parse_iso_utc(r["snapshot_at"])
+        if not late_dt:
+            continue
+        for i in range(len(history) - 2, -1, -1):
+            early = history[i]
+            early_dt = _parse_iso_utc(early["snapshot_at"])
+            if not early_dt:
+                continue
+            elapsed_min = (late_dt - early_dt).total_seconds() / 60.0
+            if elapsed_min > win:
+                break  # rest of history is older than the window
+            try:
+                early_prob = float(early["book_prob"])
+                late_prob = float(r["book_prob"])
+            except (TypeError, ValueError):
+                continue
+            delta = late_prob - early_prob
+            if abs(delta) >= min_d:
+                # Don't double-emit the same (window, direction). The
+                # caller usually cares about the strongest move per key,
+                # so we only emit if this is the largest move involving
+                # `r` we've seen so far for this pair span.
+                moves.append({
+                    "sport": r["sport"],
+                    "event": r["event_name"],
+                    "outcome": r["outcome"],
+                    "delta_pp": round(delta, 2),
+                    "from_prob": round(early_prob, 2),
+                    "to_prob": round(late_prob, 2),
+                    "elapsed_min": round(elapsed_min, 1),
+                    "from_ts": early["snapshot_at"],
+                    "to_ts": r["snapshot_at"],
+                    "poly_prob": r.get("poly_prob"),
+                    "kalshi_prob": r.get("kalshi_prob"),
+                })
+                break  # one move per `late` row is enough
+
+    # Dedupe to most-significant move per (key, late_ts) — within a single
+    # snapshot we might match multiple earlier snapshots; the inner break
+    # above already enforces "first match wins" but we also collapse the
+    # outer list to one row per (key, to_ts) to be safe.
+    seen = set()
+    unique: list[dict] = []
+    for m in moves:
+        ident = (m["sport"], m["event"], m["outcome"], m["to_ts"])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        unique.append(m)
+
+    # Sort by absolute delta desc — biggest moves first.
+    unique.sort(key=lambda m: -abs(m["delta_pp"]))
+    return unique
+
+
+# ---------------------------------------------------------------------------
+# Closing line consensus — sharp book closing prob per (event, outcome) (T4.2)
+# ---------------------------------------------------------------------------
+#
+# The closing line at a sharp book is the canonical "true" probability for
+# retrospective CLV analysis. We compute it from sports_market_snapshots
+# as "the latest book_prob snapshot before (or at) the event's
+# commence_time" — same logic _compute_clv uses, but exposed as a
+# first-class endpoint so pros can pull closing lines for arbitrary
+# events without inferring them from the CLV summary.
+
+def _compute_closing_lines(sport: str | None, days: int = 7) -> list[dict]:
+    """Return closing-line rows for every (sport, event, outcome) with at
+    least one snapshot inside the window.
+
+    Closing line = latest book_prob whose snapshot_at is <= the linked
+    event's commence_time (joined from sports_scores). If commence_time
+    is unknown for an event, we fall back to the latest snapshot in the
+    window (best-effort).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    where = ["s.snapshot_at >= ?"]
+    params: list = [cutoff]
+    if sport:
+        where.append("s.sport = ?")
+        params.append(sport)
+
+    sql = (
+        "SELECT s.sport, s.event_name, s.outcome, "
+        "       s.book_prob, s.poly_prob, s.kalshi_prob, s.snapshot_at, "
+        "       sc.commence_time, sc.home_team, sc.away_team "
+        "FROM sports_market_snapshots s "
+        "LEFT JOIN sports_scores sc "
+        "  ON sc.sport = s.sport "
+        " AND (s.event_name = sc.home_team || ' vs ' || sc.away_team) "
+        "WHERE " + " AND ".join(where) + " "
+        "  AND s.book_prob IS NOT NULL "
+        "ORDER BY s.sport, s.event_name, s.outcome, s.snapshot_at ASC"
+    )
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    # Group by (sport, event, outcome) and pick the latest snapshot <= commence_time
+    closings: dict[tuple[str, str, str], dict] = {}
+    for r in rows:
+        key = (r["sport"], r["event_name"], r["outcome"])
+        commence_dt = _parse_iso_utc(r.get("commence_time") or "")
+        snap_dt = _parse_iso_utc(r["snapshot_at"])
+        if not snap_dt:
+            continue
+        if commence_dt and snap_dt > commence_dt:
+            # snapshot was after kickoff — skip
+            continue
+        existing = closings.get(key)
+        if existing is None or snap_dt > existing["_snap_dt"]:
+            closings[key] = {
+                "sport": r["sport"],
+                "event": r["event_name"],
+                "outcome": r["outcome"],
+                "closing_book_prob": round(float(r["book_prob"]), 2),
+                "closing_poly_prob": (round(float(r["poly_prob"]), 2)
+                                       if r.get("poly_prob") is not None else None),
+                "closing_kalshi_prob": (round(float(r["kalshi_prob"]), 2)
+                                         if r.get("kalshi_prob") is not None else None),
+                "closing_ts": r["snapshot_at"],
+                "commence_time": r.get("commence_time") or None,
+                "_snap_dt": snap_dt,
+            }
+
+    out = []
+    for v in closings.values():
+        v.pop("_snap_dt", None)
+        out.append(v)
+    # Most-recently closed first
+    out.sort(key=lambda x: x.get("closing_ts") or "", reverse=True)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -3719,17 +5764,19 @@ def _send_alerts(sport: str, signals: list[dict]):
                 except Exception as e:
                     log.warning("Telegram alert error: %s", e)
 
-        # Send webhook (re-validate at dispatch time to prevent DNS rebinding SSRF)
+        # Send webhook — signed with the user's HMAC key if configured.
+        # _signed_webhook_post re-validates the URL at dispatch (DNS
+        # rebinding SSRF guard) and handles JSON serialization itself.
         webhook_url = cfg.get("webhook_url", "")
-        if webhook_url and _is_safe_webhook_url(webhook_url):
-            try:
-                requests.post(
-                    webhook_url,
-                    json={"text": msg, "signals": user_signals[:5], "sport": sport},
-                    timeout=10,
-                )
-            except Exception as e:
-                log.warning("Webhook alert error: %s", e)
+        if webhook_url:
+            key = _get_webhook_signing_key(cfg["user_id"])
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "broadcast", "signals": user_signals[:5], "sport": sport},
+                signing_key=key,
+            )
+            label = "webhook_signed" if key else "webhook_unsigned"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
 
         # Update last alert time
         with _get_db() as conn:
@@ -3737,6 +5784,748 @@ def _send_alerts(sport: str, signals: list[dict]):
                 "UPDATE sports_alert_config SET last_alert_at = ? WHERE user_id = ?",
                 (datetime.now(timezone.utc).isoformat(), cfg["user_id"]),
             )
+
+
+# ---------------------------------------------------------------------------
+# Watchlist alerts — per-user-per-market divergence triggers
+# ---------------------------------------------------------------------------
+
+WATCHLIST_ALERT_COOLDOWN_SECS = 3600  # one ping per item per hour
+
+
+def _watchlist_market_key(comp: dict) -> str:
+    """Normalize a comparison to the same `market_key` shape the frontend
+    POSTs to /api/watchlist. Frontend convention: 'home|away'."""
+    home = (comp.get("home_team") or "").strip()
+    away = (comp.get("away_team") or "").strip()
+    return f"{home}|{away}"
+
+
+def _send_watchlist_alerts(sport: str, comparisons: list[dict]) -> None:
+    """Fire per-user alerts for watchlisted markets where divergence has
+    crossed the user's configured threshold (default: alert_threshold_pp
+    column on the row; falls back to the user's global min_edge).
+
+    Only triggers for items the user explicitly pinned, so it's
+    higher-signal than the broadcast _send_alerts feed.
+    """
+    if not comparisons:
+        return
+    by_key: dict[str, dict] = {_watchlist_market_key(c): c for c in comparisons}
+    if not by_key:
+        return
+
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT w.id, w.user_id, w.market_key, w.alert_threshold_pp, w.last_alerted_at,
+                      a.telegram_bot_token, a.telegram_chat_id, a.webhook_url, a.min_edge
+               FROM sports_watchlist w
+               LEFT JOIN sports_alert_config a ON a.user_id = w.user_id AND a.enabled = 1"""
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        comp = by_key.get(r["market_key"])
+        if not comp:
+            continue
+        threshold = r["alert_threshold_pp"]
+        if threshold is None or threshold <= 0:
+            threshold = float(r["min_edge"] or DIVERGENCE_THRESHOLD)
+        max_div = float(comp.get("max_divergence") or 0)
+        if max_div < threshold:
+            continue
+        # Cooldown
+        last = r["last_alerted_at"] or ""
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if (now - last_dt).total_seconds() < WATCHLIST_ALERT_COOLDOWN_SECS:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        best_oc = max(comp.get("outcomes") or [{}],
+                      key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+        msg = (
+            f"Watchlist hit ({SPORTS.get(sport, sport)}): "
+            f"{comp.get('home_team', '')} vs {comp.get('away_team', '')} — "
+            f"{best_oc.get('outcome_name', '')} {best_oc.get('divergence_pct', 0):+.1f}pp "
+            f"(threshold {threshold:.1f}pp)"
+        )
+        trade_url = comp.get("trade_poly_url")
+        if trade_url:
+            msg += f"\n{trade_url}"
+
+        # Telegram
+        tg_token = _decrypt_field(r["telegram_bot_token"] or "")
+        tg_chat = r["telegram_chat_id"] or ""
+        if tg_token and tg_chat and re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id": tg_chat, "text": msg},
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="telegram_watchlist", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="telegram_watchlist", result="error").inc()
+                log.warning("Watchlist Telegram error: %s", e)
+
+        # Webhook — signed if user has set a key.
+        webhook_url = r["webhook_url"] or ""
+        if webhook_url:
+            key = _get_webhook_signing_key(r["user_id"])
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "watchlist", "sport": sport,
+                 "comparison": comp, "threshold_pp": threshold},
+                signing_key=key,
+            )
+            label = "webhook_watchlist_signed" if key else "webhook_watchlist"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
+
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_watchlist SET last_alerted_at = ? WHERE id = ?",
+                (now.isoformat(), r["id"]),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Rule-based alerts — structured per-user alert rules
+# ---------------------------------------------------------------------------
+#
+# Each user can create multiple alert rules. A rule is a set of structured
+# filters (sports, market types, min divergence, min volume, time-to-event,
+# quality gates) plus a channel and a cooldown. When the poll loop produces
+# new signals, _eval_alert_rules walks each enabled rule and fires alerts
+# for any signal that passes the filters, respecting cooldown + quiet hours.
+
+
+def _rule_quiet_hours_active(rule: dict, now: datetime) -> bool:
+    """Return True iff the rule's quiet hours window contains `now` (UTC)."""
+    start = rule.get("quiet_hours_start")
+    end = rule.get("quiet_hours_end")
+    if start is None or end is None:
+        return False
+    try:
+        start_h = int(start)
+        end_h = int(end)
+    except (TypeError, ValueError):
+        return False
+    h = now.hour
+    if start_h <= end_h:
+        return start_h <= h < end_h
+    # Wraps midnight, e.g. quiet 22:00 -> 07:00
+    return h >= start_h or h < end_h
+
+
+def _signal_matches_rule(signal: dict, sport: str, rule: dict) -> bool:
+    """Check whether a comparison-shaped signal satisfies the rule filters.
+
+    Filters are conjunctive: every set field must match. JSON-encoded list
+    fields (sports, market_types) of [] mean "any".
+    """
+    # sports allowlist
+    try:
+        sports = json.loads(rule.get("sports") or "[]")
+    except (TypeError, ValueError):
+        sports = []
+    if sports and sport not in sports:
+        return False
+
+    # market_types allowlist — the comparison may carry per-outcome market_type
+    # or a comparison-level "market_type". For h2h+spreads+totals we set the
+    # comparison's market_type in the data_updater; futures and esports tag
+    # is_futures/is_esport. Map both ways.
+    try:
+        market_types = json.loads(rule.get("market_types") or "[]")
+    except (TypeError, ValueError):
+        market_types = []
+    if market_types:
+        signal_mtype = signal.get("market_type", "h2h")
+        if signal_mtype not in market_types:
+            return False
+
+    # Divergence floor
+    min_div = float(rule.get("min_divergence_pp") or 0.0)
+    if float(signal.get("max_divergence") or 0.0) < min_div:
+        return False
+
+    # Volume floor
+    min_vol = rule.get("min_volume")
+    if min_vol is not None:
+        try:
+            if float(signal.get("poly_volume") or 0.0) < float(min_vol):
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    # Time-to-event window
+    max_hours = rule.get("max_time_to_event_hours")
+    if max_hours is not None:
+        tth = signal.get("time_to_event_hours")
+        # Skip rule when we have no commence_time to compare against
+        if tth is None:
+            return False
+        try:
+            if float(tth) > float(max_hours):
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    # Quality gates — applied per-outcome since the comparison may have
+    # multiple outcomes with different gate states. Require at least one
+    # outcome that passes the required gates AND fires the signal.
+    outcomes = signal.get("outcomes") or []
+    if not outcomes:
+        return False
+    require_sharp = bool(rule.get("require_sharp_consensus", 1))
+    require_stale = bool(rule.get("require_not_stale", 1))
+    require_liq = bool(rule.get("require_liquidity_ok", 1))
+    for oc in outcomes:
+        if not oc.get("is_signal"):
+            continue
+        if require_sharp and not oc.get("sharp_consensus_ok", True):
+            continue
+        if require_stale and not oc.get("not_stale", True):
+            continue
+        if require_liq and not oc.get("liquidity_ok", True):
+            continue
+        return True
+    return False
+
+
+# ── Web Push (VAPID) ────────────────────────────────────────────────────────
+# Set VAPID_PUBLIC_KEY (base64url) + VAPID_PRIVATE_KEY + VAPID_SUBJECT
+# (mailto:...) to enable push. Generate keys with: pywebpush vapid_key.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@narve.ai")
+
+# Lazy import — pywebpush is optional. Without it, /api/push/subscribe
+# still works (subscriptions are stored), but actual push delivery is a no-op.
+try:
+    from pywebpush import webpush as _webpush, WebPushException as _WebPushException
+    _PUSH_AVAILABLE = bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+except ImportError:
+    _webpush = None
+    _WebPushException = Exception
+    _PUSH_AVAILABLE = False
+
+
+def _send_web_push(user_id: str, payload: dict) -> int:
+    """Push `payload` to every registered subscription for user_id.
+
+    Returns count of successful deliveries. Removes dead subscriptions
+    (410 Gone) from the DB so we don't keep retrying them forever.
+    """
+    if not _PUSH_AVAILABLE or not _webpush:
+        return 0
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, endpoint, p256dh, auth FROM sports_push_subscriptions WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    if not rows:
+        return 0
+    delivered = 0
+    dead_ids: list[int] = []
+    for r in rows:
+        try:
+            _webpush(
+                subscription_info={
+                    "endpoint": r["endpoint"],
+                    "keys": {"p256dh": r["p256dh"], "auth": r["auth"]},
+                },
+                data=json.dumps(payload),
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_SUBJECT},
+                ttl=300,
+            )
+            delivered += 1
+            M_ALERT_SEND.labels(channel="webpush", result="ok").inc()
+        except _WebPushException as e:
+            M_ALERT_SEND.labels(channel="webpush", result="error").inc()
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 410:  # Gone — subscription is permanently dead
+                dead_ids.append(r["id"])
+            else:
+                log.warning("Web push error (status=%s): %s", status, e)
+        except Exception as e:
+            M_ALERT_SEND.labels(channel="webpush", result="error").inc()
+            log.warning("Web push generic error: %s", e)
+    if dead_ids:
+        with _get_db() as conn:
+            placeholders = ",".join("?" for _ in dead_ids)
+            conn.execute(
+                f"DELETE FROM sports_push_subscriptions WHERE id IN ({placeholders})",
+                dead_ids,
+            )
+    if delivered:
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_push_subscriptions SET last_pushed_at = ? WHERE user_id = ?",
+                (datetime.now(timezone.utc).isoformat(), user_id),
+            )
+    return delivered
+
+
+def _send_alert_to_channel(rule: dict, msg: str, payload: dict) -> None:
+    """Dispatch one alert via the rule's configured channel(s)."""
+    user_id = rule.get("user_id")
+    if not user_id:
+        return
+    # Look up the user's stored credentials in sports_alert_config — we
+    # reuse the existing single-row config for Telegram/webhook secrets
+    # rather than duplicating them per rule.
+    with _get_db() as conn:
+        cfg = conn.execute(
+            "SELECT telegram_chat_id, telegram_bot_token, webhook_url "
+            "FROM sports_alert_config WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not cfg:
+        cfg = {}
+    else:
+        cfg = dict(cfg)
+    channel = (rule.get("channel") or "telegram").lower()
+
+    if channel in ("telegram", "both"):
+        tg_token = _decrypt_field(cfg.get("telegram_bot_token", "") or "")
+        tg_chat = cfg.get("telegram_chat_id", "") or ""
+        if tg_token and tg_chat and re.fullmatch(r"\d+:[A-Za-z0-9_-]+", tg_token):
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id": tg_chat, "text": msg},
+                    timeout=10,
+                )
+                M_ALERT_SEND.labels(channel="telegram_rule", result="ok").inc()
+            except Exception as e:
+                M_ALERT_SEND.labels(channel="telegram_rule", result="error").inc()
+                log.warning("Rule alert (telegram) error: %s", e)
+
+    if channel in ("webhook", "both"):
+        webhook_url = cfg.get("webhook_url", "") or ""
+        if webhook_url:
+            key = _get_webhook_signing_key(user_id)
+            ok = _signed_webhook_post(
+                webhook_url,
+                {"text": msg, "kind": "rule", "rule_id": rule.get("id"), **payload},
+                signing_key=key,
+            )
+            label = "webhook_rule_signed" if key else "webhook_rule"
+            M_ALERT_SEND.labels(channel=label, result="ok" if ok else "error").inc()
+
+    if channel in ("push", "both"):
+        push_payload = {
+            "title": f"Sharpe — {len(payload.get('signals', []))} signal(s)",
+            "body": msg.split("\n", 1)[0] if msg else "New +EV signal",
+            "tag": f"rule-{rule.get('id', '')}",
+            "data": {"url": "/", "rule_id": rule.get("id")},
+        }
+        try:
+            _send_web_push(user_id, push_payload)
+        except Exception as e:
+            log.warning("Web push dispatch error: %s", e)
+
+
+def _eval_alert_rules(sport: str, signals: list[dict]) -> None:
+    """For each enabled rule, find matching signals and fire alerts."""
+    if not signals:
+        return
+    with _get_db() as conn:
+        rules = conn.execute(
+            "SELECT * FROM sports_alert_rules WHERE enabled = 1"
+        ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    for r in rules:
+        rule = dict(r)
+        # Quiet hours skip
+        if _rule_quiet_hours_active(rule, now):
+            continue
+        # Cooldown
+        cooldown = int(rule.get("cooldown_secs") or 300)
+        last = rule.get("last_fired_at") or ""
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if (now - last_dt).total_seconds() < cooldown:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        matching = [s for s in signals if _signal_matches_rule(s, sport, rule)]
+        if not matching:
+            continue
+
+        # Build a compact message — top 5 matches
+        sport_label = SPORTS.get(sport, sport)
+        lines = [f"[{rule.get('name') or 'rule #' + str(rule['id'])}] "
+                 f"{len(matching)} signal(s) in {sport_label}"]
+        for s in matching[:5]:
+            best = max(s.get("outcomes") or [{}],
+                       key=lambda o: abs(o.get("divergence_pct", 0) or 0), default={})
+            lines.append(
+                f"  {s.get('home_team','')} vs {s.get('away_team','')}: "
+                f"{best.get('outcome_name','')} {best.get('divergence_pct', 0):+.1f}pp"
+            )
+        if len(matching) > 5:
+            lines.append(f"  ...and {len(matching) - 5} more")
+        msg = "\n".join(lines)
+        _send_alert_to_channel(rule, msg, {"signals": matching[:5], "sport": sport})
+
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE sports_alert_rules SET last_fired_at = ? WHERE id = ?",
+                (now.isoformat(), rule["id"]),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Polymarket WebSocket subscriber — live price feed
+# ---------------------------------------------------------------------------
+#
+# Polymarket exposes a public WebSocket at
+#   wss://ws-subscriptions-clob.polymarket.com/ws/market
+# Send {"type": "MARKET", "assets_ids": [...]} to subscribe; the server pushes
+# price_change / tick_size_change / last_trade_price events for those assets.
+#
+# We use this to:
+#   1. Drop dashboard time-to-signal from one poll interval (~30s to 5 min)
+#      down to ~1-2s — whenever a subscribed asset's price moves, the
+#      in-memory comparison list is updated immediately.
+#   2. Push real-time deltas to every connected dashboard WS client so the
+#      browser updates without a refetch.
+#
+# Subscription set = union of poly_token_id across the current comparison
+# set, capped at PM_WS_MAX_SUBSCRIPTIONS to keep the feed manageable. When
+# the set changes, we close the connection — the loop reconnects and
+# resubscribes.
+
+PM_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+PM_WS_MAX_SUBSCRIPTIONS = 200
+PM_WS_PRICE_FRESH_SECONDS = 90  # ignore live prices older than this
+
+_LIVE_POLY_PRICES: dict[str, dict] = {}  # asset_id -> {"price": float, "ts": float}
+
+# Ring buffer of recent large Polymarket fills. Pros watch this for
+# real-time conviction signals — when a $50k+ buy hits a market, that's
+# information OddsJam-class tools don't surface for sports.
+PM_FILL_BUFFER_MAX = 500
+PM_FILL_MIN_USD = float(os.getenv("PM_FILL_MIN_USD", "1000"))
+_LIVE_POLY_FILLS: list[dict] = []
+_LIVE_POLY_FILLS_LOCK = threading.Lock()
+_PM_WS_DESIRED_TOKENS: set[str] = set()
+_pm_ws_reconnect_event: asyncio.Event | None = None  # set on startup
+
+
+def _collect_poly_token_ids(comparisons: list[dict]) -> set[str]:
+    """Pull the union of poly_token_id values out of a comparison list."""
+    out: set[str] = set()
+    for c in comparisons or []:
+        for oc in c.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if tid:
+                out.add(tid)
+    return out
+
+
+def _update_pm_ws_subscriptions(comparisons: list[dict]) -> None:
+    """Recompute the desired subscription set after a poll and trigger
+    reconnect if it changed. Caps to PM_WS_MAX_SUBSCRIPTIONS by frequency
+    of appearance (every subscribed token represents one poll-matched
+    market — they're all roughly equal-priority)."""
+    global _PM_WS_DESIRED_TOKENS
+    tokens = _collect_poly_token_ids(comparisons)
+    if len(tokens) > PM_WS_MAX_SUBSCRIPTIONS:
+        tokens = set(list(tokens)[:PM_WS_MAX_SUBSCRIPTIONS])
+    if tokens != _PM_WS_DESIRED_TOKENS:
+        _PM_WS_DESIRED_TOKENS = tokens
+        if _pm_ws_reconnect_event is not None:
+            _pm_ws_reconnect_event.set()
+
+
+def _apply_live_prices_to_comparisons(comparisons: list[dict]) -> int:
+    """For each outcome with a fresh live price, override poly_prob and
+    recompute the dependent fields. Returns the count of outcomes updated.
+
+    Called by /api/data so each request returns the freshest possible
+    snapshot, and by the WS handler so dashboard_data also stays current.
+    """
+    now = time.time()
+    updated = 0
+    for comp in comparisons or []:
+        comp_signal_changed = False
+        for oc in comp.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if not tid:
+                continue
+            live = _LIVE_POLY_PRICES.get(tid)
+            if not live:
+                continue
+            if (now - live["ts"]) > PM_WS_PRICE_FRESH_SECONDS:
+                continue
+            new_poly_prob = round(float(live["price"]) * 100.0, 2)
+            if new_poly_prob == oc.get("poly_prob"):
+                continue
+            # Update poly side
+            sharp_prob = oc.get("sharp_prob") or 0
+            # Use de-vigged divergence if we have it; fall back to raw
+            # subtraction otherwise. The original signal_quality call ran
+            # against the full event consensus, which we no longer have
+            # here — we keep the de-vig ratio from the original divergence
+            # vs raw divergence and apply the same ratio to the live one.
+            old_poly = oc.get("poly_prob") or 0
+            old_raw = oc.get("divergence_raw")
+            old_dev = oc.get("divergence")
+            if old_raw and old_dev and old_raw != 0:
+                ratio = old_dev / old_raw  # how much vig got stripped originally
+            else:
+                ratio = 1.0
+            new_raw = round(sharp_prob - new_poly_prob, 2)
+            new_dev = round(new_raw * ratio, 2)
+            oc["poly_prob"] = new_poly_prob
+            oc["poly_price"] = new_poly_prob / 100.0
+            oc["divergence_raw"] = new_raw
+            oc["divergence"] = new_dev
+            oc["divergence_pct"] = new_dev
+            oc["abs_divergence"] = round(abs(new_dev), 2)
+            oc["cheap_on"] = "Polymarket" if new_dev > 0 else "Bookmaker"
+            oc["live_updated_at"] = live["ts"]
+            was_signal = bool(oc.get("is_signal"))
+            # Re-evaluate the threshold; gate flags carry over from the
+            # last full poll since they depend on data not in the WS feed
+            # (sharp consensus, liquidity, staleness).
+            new_signal = (
+                abs(new_dev) >= DIVERGENCE_THRESHOLD
+                and bool(oc.get("sharp_consensus_ok"))
+                and bool(oc.get("liquidity_ok"))
+                and bool(oc.get("not_stale"))
+            )
+            oc["is_signal"] = new_signal
+            updated += 1
+            if was_signal != new_signal:
+                comp_signal_changed = True
+        if comp.get("outcomes"):
+            comp["has_signal"] = any(o.get("is_signal") for o in comp["outcomes"])
+            comp["max_divergence"] = max(
+                (abs(o.get("divergence", 0) or 0) for o in comp["outcomes"]),
+                default=0,
+            )
+        comp["_signal_changed_live"] = comp_signal_changed
+    return updated
+
+
+async def _broadcast_live_update(changed: list[dict]) -> None:
+    """Push a delta to all connected dashboard WS clients."""
+    if not changed or not connected_ws:
+        return
+    payload = json.dumps({"type": "live_update", "comparisons": changed})
+    dead = []
+    for ws in list(connected_ws):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        connected_ws.discard(ws)
+
+
+async def _handle_pm_ws_message(raw: str) -> None:
+    """Parse one WS frame, update live price map, and broadcast deltas
+    if any signal state flipped."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return
+    # Some frames are arrays (batch updates), some are single events
+    events = data if isinstance(data, list) else [data]
+    affected_ids: set[str] = set()
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        asset_id = ev.get("asset_id") or ev.get("token_id")
+        if not asset_id:
+            continue
+        # Polymarket emits price_change, tick_size_change, last_trade_price, etc.
+        # All of these carry an updated price we want.
+        price_raw = ev.get("price") or ev.get("last_trade_price") or ev.get("mid_price")
+        if price_raw is None:
+            continue
+        try:
+            price = float(price_raw)
+        except (TypeError, ValueError):
+            continue
+        if not (0.0 < price < 1.0):
+            continue
+        _LIVE_POLY_PRICES[asset_id] = {"price": price, "ts": time.time()}
+        affected_ids.add(asset_id)
+        M_WS_PRICE_EVENTS.inc()
+
+        # Capture large fills for the live tape. price_change events on
+        # the Polymarket WS carry `size` (shares) and `side` (BUY/SELL);
+        # USD value = price * size. Only buffer above PM_FILL_MIN_USD so
+        # we don't drown in dust trades.
+        size_raw = ev.get("size") or ev.get("matched_amount")
+        side = (ev.get("side") or "").upper()
+        if size_raw is not None and side in ("BUY", "SELL"):
+            try:
+                size = float(size_raw)
+            except (TypeError, ValueError):
+                size = 0.0
+            usd = price * size
+            if usd >= PM_FILL_MIN_USD:
+                fill = {
+                    "ts": time.time(),
+                    "asset_id": asset_id,
+                    "price": round(price, 4),
+                    "size": round(size, 2),
+                    "usd": round(usd, 2),
+                    "side": side,
+                    "market": ev.get("market") or ev.get("condition_id") or "",
+                }
+                with _LIVE_POLY_FILLS_LOCK:
+                    _LIVE_POLY_FILLS.append(fill)
+                    if len(_LIVE_POLY_FILLS) > PM_FILL_BUFFER_MAX:
+                        del _LIVE_POLY_FILLS[: -PM_FILL_BUFFER_MAX]
+                M_PM_FILLS_CAPTURED.labels(side=side).inc()
+    M_WS_LIVE_PRICES.set(len(_LIVE_POLY_PRICES))
+
+    if not affected_ids:
+        return
+
+    # Re-apply against current dashboard_data and broadcast any changes
+    async with _data_lock:
+        comparisons = dashboard_data.get("comparisons") or []
+        affected_comps = [
+            c for c in comparisons
+            if any((oc.get("poly_token_id") in affected_ids)
+                   for oc in (c.get("outcomes") or []))
+        ]
+        if affected_comps:
+            _apply_live_prices_to_comparisons(affected_comps)
+
+    if affected_comps:
+        await _broadcast_live_update(affected_comps)
+
+
+# ── Polymarket WS circuit breaker ───────────────────────────────────────────
+# After PM_WS_CIRCUIT_THRESHOLD consecutive failures, open the circuit
+# and sleep PM_WS_CIRCUIT_OPEN_SECONDS before the next attempt. Open
+# duration doubles on each subsequent failed probe, capped at the max.
+# This keeps a wedged Polymarket from triggering 1000+ failed connect
+# attempts per hour while still recovering automatically.
+PM_WS_CIRCUIT_THRESHOLD = 5         # failures before circuit opens
+PM_WS_CIRCUIT_OPEN_SECONDS = 300    # 5 min initial cooldown
+PM_WS_CIRCUIT_MAX_SECONDS = 3600    # 1 h cap
+
+_pm_ws_failure_count = 0
+_pm_ws_circuit_open_seconds = PM_WS_CIRCUIT_OPEN_SECONDS
+
+
+def _pm_ws_record_failure() -> tuple[int, float]:
+    """Increment the failure counter and compute the next sleep.
+
+    Returns (consecutive_failures, sleep_seconds). Below the threshold
+    we use short exponential backoff (1s -> 60s). At threshold we open
+    the circuit and sleep longer; subsequent failures double the open
+    duration up to the cap.
+    """
+    global _pm_ws_failure_count, _pm_ws_circuit_open_seconds
+    _pm_ws_failure_count += 1
+    if _pm_ws_failure_count < PM_WS_CIRCUIT_THRESHOLD:
+        # Exponential backoff: 1, 2, 4, 8s for failures 1-4
+        sleep = min(2.0 ** (_pm_ws_failure_count - 1), 60.0)
+    else:
+        # Circuit open. Double duration each failure past threshold.
+        sleep = _pm_ws_circuit_open_seconds
+        _pm_ws_circuit_open_seconds = min(
+            _pm_ws_circuit_open_seconds * 2,
+            PM_WS_CIRCUIT_MAX_SECONDS,
+        )
+    M_PM_WS_FAILURES.set(_pm_ws_failure_count)
+    return _pm_ws_failure_count, sleep
+
+
+def _pm_ws_record_success() -> None:
+    """Reset the circuit on a successful connection."""
+    global _pm_ws_failure_count, _pm_ws_circuit_open_seconds
+    _pm_ws_failure_count = 0
+    _pm_ws_circuit_open_seconds = PM_WS_CIRCUIT_OPEN_SECONDS
+    M_PM_WS_FAILURES.set(0)
+
+
+async def _polymarket_ws_loop() -> None:
+    """Maintain a persistent WS connection. Reconnects with exponential
+    backoff on transient failures, then opens a circuit breaker if
+    Polymarket stays unreachable to avoid hammering their endpoint."""
+    global _pm_ws_reconnect_event
+    _pm_ws_reconnect_event = asyncio.Event()
+    try:
+        import websockets
+    except ImportError:
+        log.warning("websockets package missing — live PM feed disabled")
+        return
+
+    while True:
+        if not _PM_WS_DESIRED_TOKENS:
+            # Nothing to subscribe to yet — wait for the first poll to populate.
+            try:
+                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                pass
+            _pm_ws_reconnect_event.clear()
+            continue
+
+        subscribed = set(_PM_WS_DESIRED_TOKENS)  # snapshot for this connection
+        try:
+            M_WS_RECONNECTS.inc()
+            async with websockets.connect(
+                PM_WS_URL,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=5,
+                max_size=2_000_000,
+            ) as ws:
+                await ws.send(json.dumps({
+                    "type": "MARKET",
+                    "assets_ids": list(subscribed),
+                }))
+                _pm_ws_record_success()
+                log.info("Polymarket WS connected, subscribed=%d", len(subscribed))
+
+                # Race: incoming messages vs. reconnect signal
+                while True:
+                    if _PM_WS_DESIRED_TOKENS != subscribed:
+                        log.info("PM WS subscription set changed, reconnecting")
+                        break
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=30)
+                    except asyncio.TimeoutError:
+                        continue  # No traffic for 30s; loop again
+                    await _handle_pm_ws_message(msg)
+        except Exception as e:
+            failures, sleep = _pm_ws_record_failure()
+            if failures >= PM_WS_CIRCUIT_THRESHOLD:
+                log.warning(
+                    "PM WS circuit OPEN after %d failures: %s "
+                    "(cooling down %.0fs)",
+                    failures, e, sleep,
+                )
+            else:
+                log.warning("PM WS error: %s (retry in %.1fs)", e, sleep)
+            try:
+                await asyncio.wait_for(_pm_ws_reconnect_event.wait(), timeout=sleep)
+                _pm_ws_reconnect_event.clear()
+            except asyncio.TimeoutError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -3975,6 +6764,7 @@ def _build_esports_comparisons(poly_markets: list[dict]) -> list[dict]:
             "confidence_score": 0,
             "kalshi_event": None,
             "kalshi_volume": 0,
+            **_build_trade_urls(pm["slug"]),
         })
 
     comparisons.sort(key=lambda x: -x["poly_volume"])
@@ -4057,6 +6847,7 @@ def _build_kalshi_comparisons(kalshi_parsed: list[dict], poly_markets: list[dict
             "confidence_score": 0,
             "kalshi_event": km["event_ticker"],
             "kalshi_volume": km["total_volume"],
+            **_build_trade_urls(None, km["event_ticker"]),
         })
 
     comparisons.sort(key=lambda x: -x["kalshi_volume"])
@@ -4077,6 +6868,7 @@ async def data_updater():
         return
     _updater_running = True
     while True:
+        loop_start = time.monotonic()
         async with _data_lock:
             sport = dashboard_data["active_sport"]
         try:
@@ -4177,11 +6969,14 @@ async def data_updater():
 
             comparisons.sort(key=lambda x: (-x["has_signal"], -x["max_divergence"]))
             signals = [c for c in comparisons if c["has_signal"]]
+            M_COMPARISONS.labels(sport=sport).inc(len(comparisons))
+            M_SIGNALS.labels(sport=sport).inc(len(signals))
 
             # Attach historical head-to-head + recent form to each comparison
             try:
                 await asyncio.to_thread(_attach_h2h_to_comparisons, sport, comparisons)
             except Exception as h2h_err:
+                M_POLL_ERRORS.labels(stage="h2h_attach").inc()
                 print(f"H2H attach error: {h2h_err}", flush=True)
 
             # Attach top-10 Polymarket trader positions (joined on conditionId)
@@ -4224,7 +7019,22 @@ async def data_updater():
             try:
                 await asyncio.to_thread(_send_alerts, sport, signals)
             except Exception as alert_err:
+                M_POLL_ERRORS.labels(stage="send_alerts").inc()
                 print(f"Alert send error: {alert_err}", flush=True)
+
+            # Watchlist alerts: per-user pinned markets that crossed their threshold
+            try:
+                await asyncio.to_thread(_send_watchlist_alerts, sport, comparisons)
+            except Exception as wl_err:
+                M_POLL_ERRORS.labels(stage="send_watchlist_alerts").inc()
+                print(f"Watchlist alert error: {wl_err}", flush=True)
+
+            # Rule-based alerts: structured per-user rules over the signal feed.
+            try:
+                await asyncio.to_thread(_eval_alert_rules, sport, signals)
+            except Exception as rule_err:
+                M_POLL_ERRORS.labels(stage="alert_rules").inc()
+                print(f"Alert rule error: {rule_err}", flush=True)
 
             # Build complete update in a local dict, then swap atomically
             update = {
@@ -4247,6 +7057,14 @@ async def data_updater():
                 if dashboard_data["active_sport"] == sport:
                     dashboard_data.update(update)
 
+            # Update Polymarket WS subscription set so live prices follow
+            # the markets we're actually showing.
+            try:
+                _update_pm_ws_subscriptions(comparisons)
+            except Exception as ws_err:
+                M_POLL_ERRORS.labels(stage="ws_subscribe").inc()
+                log.warning("PM WS subscribe update failed: %s", ws_err)
+
             # Save signals to file (deduplicated)
             if signals:
                 save_signals(signals)
@@ -4260,9 +7078,12 @@ async def data_updater():
                   flush=True)
 
         except Exception as e:
+            M_POLL_ERRORS.labels(stage="main_loop").inc()
             async with _data_lock:
                 dashboard_data["error"] = str(e)
             print(f"Update error: {e}", flush=True)
+        finally:
+            M_POLL_DURATION.observe(time.monotonic() - loop_start)
 
         # Periodic: auto-resolve edges every ~30 min
         _resolve_counter += 1
@@ -4271,6 +7092,7 @@ async def data_updater():
             try:
                 await asyncio.to_thread(_run_score_resolution, sport)
             except Exception as res_err:
+                M_POLL_ERRORS.labels(stage="score_resolution").inc()
                 print(f"Auto-resolve error: {res_err}", flush=True)
 
         # Periodic: background multi-sport scan every ~20 min
@@ -4279,10 +7101,17 @@ async def data_updater():
             _bg_scan_counter = 0
             _spawn_bg(_background_multi_sport_scan())
 
+        # Adaptive poll interval — see _compute_poll_interval for the policy.
+        # Combines pre-game proximity with quota-aware throttling so we poll
+        # fast when a game is about to start and slow down when the Odds API
+        # quota is low.
+        interval = _compute_poll_interval(comparisons, odds_quota_remaining())
+        M_POLL_INTERVAL.set(interval)
+
         # Wait for poll interval OR immediate rescan trigger
         _scan_event.clear()
         try:
-            await asyncio.wait_for(_scan_event.wait(), timeout=POLL_INTERVAL)
+            await asyncio.wait_for(_scan_event.wait(), timeout=interval)
         except asyncio.TimeoutError:
             pass
 
@@ -4399,9 +7228,105 @@ def save_signals(signals: list[dict]):
 # Startup
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
-async def startup():
+def _config_check() -> list[dict]:
+    """Inventory of every important env var / config knob, returned as a
+    structured list of {key, status, effect, remediation} dicts.
+
+    status:
+      "ok"   — configured
+      "warn" — missing but the service still works (degraded feature)
+      "fail" — missing in a way that breaks core functionality
+
+    Single source of truth for both the startup-log warning summary
+    and the /api/diagnostics/config-check endpoint, so the two never
+    drift apart.
+    """
+    items: list[dict] = []
+
+    def _ok(key, effect=""):
+        items.append({"key": key, "status": "ok", "effect": effect, "remediation": ""})
+
+    def _warn(key, effect, remediation):
+        items.append({"key": key, "status": "warn", "effect": effect,
+                       "remediation": remediation})
+
+    def _fail(key, effect, remediation):
+        items.append({"key": key, "status": "fail", "effect": effect,
+                       "remediation": remediation})
+
+    # Core auth — fail closed in production
+    if _BEHIND_GATEWAY:
+        _ok("GATEWAY_SSO_SECRET", "gateway SSO middleware active")
+    elif _DEV_MODE:
+        _warn("DEV_MODE", "auth bypassed for local dev",
+                "set GATEWAY_SSO_SECRET in production")
+    else:
+        _fail("GATEWAY_SSO_SECRET",
+                "no auth and DEV_MODE not set — every request will 503",
+                "set GATEWAY_SSO_SECRET to match gateway/.env, OR DEV_MODE=1")
+
+    # Odds API — needed for h2h + spreads + totals + player props
+    if ODDS_API_KEY:
+        _ok("ODDS_API_KEY", "bookmaker odds available")
+    else:
+        _warn("ODDS_API_KEY",
+                "bookmaker odds will be unavailable — only Polymarket + Kalshi feeds will work",
+                "get a key at https://the-odds-api.com (free tier 500 req/mo)")
+
+    # Anthropic — needed for /api/signals/explain
+    if ANTHROPIC_API_KEY:
+        _ok("ANTHROPIC_API_KEY", "AI signal explanations enabled")
+    else:
+        _warn("ANTHROPIC_API_KEY",
+                "/api/signals/explain returns 503; everything else works",
+                "set ANTHROPIC_API_KEY to enable explanations")
+
+    # Web Push / VAPID
+    if VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY:
+        if _PUSH_AVAILABLE:
+            _ok("VAPID_PUBLIC_KEY/PRIVATE_KEY", "Web Push delivery enabled")
+        else:
+            _warn("pywebpush",
+                    "VAPID keys set but pywebpush not installed",
+                    "pip install pywebpush==2.0.0")
+    else:
+        _warn("VAPID_PUBLIC_KEY/PRIVATE_KEY",
+                "Web Push subscriptions stored but no notifications are delivered",
+                "generate keys with `pywebpush vapid_key` and set both env vars")
+
+    # Polymarket WS — implicit; flag if connection has been failing
+    if _pm_ws_failure_count >= PM_WS_CIRCUIT_THRESHOLD:
+        _fail("polymarket_ws",
+                f"WS circuit breaker OPEN after {_pm_ws_failure_count} failures",
+                "check Polymarket status; check outbound network to "
+                "wss://ws-subscriptions-clob.polymarket.com")
+    else:
+        _ok("polymarket_ws", "WS subscriber healthy")
+
+    return items
+
+
+def _print_config_check() -> None:
+    """Pretty-print the config check at startup. One line per issue;
+    silent on `ok` entries to keep the boot log clean."""
+    issues = [i for i in _config_check() if i["status"] != "ok"]
+    if not issues:
+        print("Config check: all systems nominal")
+        return
+    print(f"Config check: {len(issues)} issue(s) — see below")
+    for i in issues:
+        marker = "FAIL" if i["status"] == "fail" else "WARN"
+        print(f"  [{marker}] {i['key']}: {i['effect']}")
+        if i.get("remediation"):
+            print(f"         → {i['remediation']}")
+
+
+async def _run_startup_tasks():
+    """Body of the original startup hook. Kept as a plain async function
+    so it's easy to call from a lifespan context manager OR from a test
+    that wants to drive the startup path directly."""
     _spawn_bg(data_updater())
+    _spawn_bg(_polymarket_ws_loop())
     # Backfill historical markets in background thread (non-blocking)
     async def _backfill_wrapper():
         try:
@@ -4547,6 +7472,25 @@ async def startup():
         print(f"⚠ CRITICAL keys missing: {', '.join(_missing_critical)} — core features will silently return empty.")
         print("  → add them to /home/julianhabbig/Polymarket/gateway/.env.production and restart polymarket-sports.")
     print("────────────────────────")
+    _print_config_check()
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    """FastAPI lifespan handler. Runs startup tasks, then yields control
+    to the request-handling loop. No shutdown cleanup — background tasks
+    are daemon-style and exit with the process."""
+    await _run_startup_tasks()
+    yield
+
+
+# Attach the lifespan post-construction. We can't pass `lifespan=` to
+# `FastAPI(...)` at construction because that line is hundreds of lines
+# above where the helpers it calls (data_updater, _polymarket_ws_loop,
+# etc.) are defined — reordering would mean moving every @app decorator
+# below the helpers. Setting lifespan_context after the fact has the
+# same effect and is supported by FastAPI >= 0.100.
+app.router.lifespan_context = _app_lifespan
 
 
 # ---------------------------------------------------------------------------
@@ -4772,6 +7716,12 @@ async def api_data(request: Request):
     async with _data_lock:
         active_sport = dashboard_data.get("active_sport")
         snapshot = copy.deepcopy(dashboard_data)
+    # Apply live Polymarket prices to the snapshot so the API always
+    # returns the freshest possible state, even between poll loops.
+    try:
+        _apply_live_prices_to_comparisons(snapshot.get("comparisons") or [])
+    except Exception as live_err:
+        log.warning("apply_live_prices failed: %s", live_err)
     if requested_sport and requested_sport != active_sport:
         return JSONResponse(
             {"status": "switching", "active_sport": active_sport,
@@ -4872,6 +7822,42 @@ async def get_subscription(request: Request):
 # Trades (profit tracker) endpoints
 # ---------------------------------------------------------------------------
 
+def _compute_trade_clv(trade: dict) -> tuple[float | None, float | None]:
+    """Look up the closing line for this trade from sports_market_snapshots.
+
+    Returns (closing_book_prob_pct, clv_pp). The CLV is computed relative
+    to the bet direction:
+      - If entry_price represents YES (over), CLV = closing - entry
+      - If under/no, CLV = entry - closing
+    Since we store entry_price as cents (0-100) on the YES side, we treat
+    everything as YES-direction and let the user interpret negative
+    values as "line moved against me".
+    """
+    home = trade.get("home_team") or ""
+    away = trade.get("away_team") or ""
+    event_name = home + (f" vs {away}" if away else "")
+    outcome = trade.get("outcome") or ""
+    sport = trade.get("sport") or ""
+    commence = trade.get("commence_time") or trade.get("resolved_at") or ""
+    created = trade.get("created_at") or ""
+    if not event_name or not outcome or not commence:
+        return None, None
+    with _get_db() as conn:
+        row = conn.execute(
+            """SELECT poly_prob FROM sports_market_snapshots
+               WHERE sport = ? AND event_name = ? AND outcome = ?
+                     AND snapshot_at <= ? AND snapshot_at >= ?
+               ORDER BY snapshot_at DESC LIMIT 1""",
+            (sport, event_name, outcome, commence, created),
+        ).fetchone()
+    if not row or row["poly_prob"] is None:
+        return None, None
+    closing = float(row["poly_prob"])
+    entry = float(trade.get("entry_price") or 0)
+    clv = round(closing - entry, 2)
+    return closing, clv
+
+
 @app.post("/api/trades")
 async def create_trade(request: Request):
     user = get_current_user(request)
@@ -4887,10 +7873,32 @@ async def create_trade(request: Request):
         return JSONResponse({"error": "entry_price and amount must be valid numbers"}, status_code=400)
     if not market_name or entry_price <= 0 or amount <= 0:
         return JSONResponse({"error": "market_name, entry_price > 0, and amount > 0 required"}, status_code=400)
+    # Optional enriched fields
+    sport = (body.get("sport") or "")[:40]
+    book = (body.get("book") or "")[:40]
+    market_type = (body.get("market_type") or "h2h")[:20]
+    home_team = (body.get("home_team") or "")[:80]
+    away_team = (body.get("away_team") or "")[:80]
+    commence_time = body.get("commence_time") or ""
+    source = (body.get("source") or "manual")[:20]
+    notes = (body.get("notes") or "")[:500]
+    line = None
+    if body.get("line") not in (None, ""):
+        try:
+            line = float(body["line"])
+        except (TypeError, ValueError):
+            pass
+
     with _get_db() as conn:
         cur = conn.execute(
-            "INSERT INTO sports_trades (user_id, market_name, outcome, entry_price, amount) VALUES (?, ?, ?, ?, ?)",
-            (user["id"], market_name, outcome, entry_price, amount),
+            """INSERT INTO sports_trades
+               (user_id, market_name, outcome, entry_price, amount,
+                sport, book, market_type, line, commence_time, source, notes,
+                home_team, away_team)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user["id"], market_name, outcome, entry_price, amount,
+             sport, book, market_type, line, commence_time, source, notes,
+             home_team, away_team),
         )
         trade_id = cur.lastrowid
     log_activity(user["id"], "create_trade", f"Trade #{trade_id}: {market_name}")
@@ -4902,11 +7910,23 @@ async def list_trades(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport_filter = request.query_params.get("sport")
+    status_filter = request.query_params.get("status")
+    book_filter = request.query_params.get("book")
+    where = ["user_id = ?"]
+    params: list = [user["id"]]
+    if sport_filter:
+        where.append("sport = ?")
+        params.append(sport_filter)
+    if status_filter:
+        where.append("status = ?")
+        params.append(status_filter)
+    if book_filter:
+        where.append("book = ?")
+        params.append(book_filter)
+    sql = "SELECT * FROM sports_trades WHERE " + " AND ".join(where) + " ORDER BY created_at DESC"
     with _get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM sports_trades WHERE user_id = ? ORDER BY created_at DESC",
-            (user["id"],),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return JSONResponse({"trades": [dict(r) for r in rows]})
 
 
@@ -4930,18 +7950,62 @@ async def resolve_trade(trade_id: int, request: Request):
         if not row:
             return JSONResponse({"error": "Trade not found"}, status_code=404)
         trade = dict(row)
-        # Prices are stored in cents (0-100) as entered by the user via
-        # the create_trade endpoint.  Shares = amount / (entry_price/100),
-        # so PnL = (exit_cents/100 - entry_cents/100) * shares
-        #        = (exit - entry) * amount / entry   (cents cancel out).
         entry = trade["entry_price"]
         pnl = round((exit_price - entry) * trade["amount"] / entry, 2)
+        # Compute CLV from snapshot history (returns (None, None) when we
+        # don't have enough data — that's fine, it just stays unfilled).
+        closing_prob, clv_pp = _compute_trade_clv(trade)
         conn.execute(
-            "UPDATE sports_trades SET status = 'closed', exit_price = ?, pnl = ?, resolved_at = ? WHERE id = ?",
-            (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id),
+            """UPDATE sports_trades
+               SET status = 'closed', exit_price = ?, pnl = ?,
+                   resolved_at = ?, closing_book_prob = ?, clv_pp = ?
+               WHERE id = ?""",
+            (exit_price, pnl, datetime.now(timezone.utc).isoformat(),
+             closing_prob, clv_pp, trade_id),
         )
     log_activity(user["id"], "resolve_trade", f"Trade #{trade_id}: PnL={pnl}")
-    return JSONResponse({"status": "ok", "pnl": pnl})
+    return JSONResponse({"status": "ok", "pnl": pnl, "clv_pp": clv_pp,
+                          "closing_book_prob": closing_prob})
+
+
+@app.delete("/api/trades/{trade_id}")
+async def delete_trade(trade_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_trades WHERE id = ? AND user_id = ?",
+            (trade_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+def _trade_stats_summary(trades: list[dict]) -> dict:
+    """Common stats for a slice of trades. Used both at top level and per-group."""
+    closed = [t for t in trades if t.get("status") == "closed"]
+    open_trades = [t for t in trades if t.get("status") == "open"]
+    total_pnl = round(sum((t.get("pnl") or 0) for t in closed), 2)
+    wins = sum(1 for t in closed if (t.get("pnl") or 0) > 0)
+    win_rate = round(wins / len(closed), 4) if closed else 0.0
+    total_invested = sum((t.get("amount") or 0) for t in closed)
+    roi = round(total_pnl / total_invested * 100, 3) if total_invested > 0 else 0.0
+    # CLV summary: average over closed trades that have a clv_pp value
+    clv_vals = [t.get("clv_pp") for t in closed if t.get("clv_pp") is not None]
+    mean_clv = round(sum(clv_vals) / len(clv_vals), 3) if clv_vals else None
+    return {
+        "n_closed": len(closed),
+        "n_open": len(open_trades),
+        "n_total": len(trades),
+        "total_pnl": total_pnl,
+        "total_staked": round(total_invested, 2),
+        "win_rate": win_rate,
+        "roi_pct": roi,
+        "mean_clv_pp": mean_clv,
+        "n_with_clv": len(clv_vals),
+    }
 
 
 @app.get("/api/trades/stats")
@@ -4954,20 +8018,778 @@ async def trade_stats(request: Request):
             "SELECT * FROM sports_trades WHERE user_id = ?", (user["id"],)
         ).fetchall()
     trades = [dict(r) for r in rows]
-    closed = [t for t in trades if t["status"] == "closed"]
-    open_trades = [t for t in trades if t["status"] == "open"]
-    total_pnl = round(sum(t.get("pnl") or 0 for t in closed), 2)
-    wins = sum(1 for t in closed if (t.get("pnl") or 0) > 0)
-    win_rate = round(wins / len(closed) * 100, 1) if closed else 0.0
-    total_invested = sum(t["amount"] for t in closed) if closed else 0
-    roi = round(total_pnl / total_invested * 100, 2) if total_invested > 0 else 0.0
+    overall = _trade_stats_summary(trades)
+
+    # Group by sport / book / market_type
+    def _group_by(key: str) -> dict:
+        groups: dict[str, list[dict]] = {}
+        for t in trades:
+            k = t.get(key) or "(unset)"
+            groups.setdefault(k, []).append(t)
+        return {k: _trade_stats_summary(g) for k, g in groups.items()}
+
     return JSONResponse({
-        "total_pnl": total_pnl,
-        "win_rate": win_rate,
-        "open_count": len(open_trades),
-        "closed_count": len(closed),
-        "roi": roi,
+        "overall": overall,
+        "by_sport": _group_by("sport"),
+        "by_book": _group_by("book"),
+        "by_market_type": _group_by("market_type"),
     })
+
+
+@app.get("/api/trades/csv")
+async def trade_csv(request: Request):
+    """Export the user's trade history as CSV. Includes CLV columns."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_trades WHERE user_id = ? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    cols = ["id", "created_at", "sport", "book", "market_type", "home_team",
+            "away_team", "market_name", "outcome", "line", "entry_price",
+            "amount", "exit_price", "pnl", "closing_book_prob", "clv_pp",
+            "status", "resolved_at", "source", "notes"]
+    writer = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({c: dict(r).get(c) for c in cols})
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trades.csv"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bankroll + Kelly stake suggestions (T4.3)
+# ---------------------------------------------------------------------------
+
+DEFAULT_KELLY_FRACTION = 0.5      # half-Kelly is the de-facto retail standard
+DEFAULT_MAX_PER_BET_PCT = 5.0     # never risk more than 5% of bankroll per bet
+DEFAULT_DRAWDOWN_ALERT_PCT = 10.0  # alert when down 10% from starting
+
+
+# ---------------------------------------------------------------------------
+# Bettor calculators — pure math, no external state, used by /calculators
+# ---------------------------------------------------------------------------
+#
+# Standalone tools every sharp bettor needs:
+#   - odds_convert: American ↔ Decimal ↔ implied probability
+#   - arb_calculator: split a stake across opposing prices to lock in profit
+#   - hedge_calculator: given an existing bet, what stake on the other side?
+#   - promo_conversion: convert a "free bet" or boosted-odds offer to cash
+#   - devig: strip vig from a 2-way market to estimate the fair line
+#
+# Implemented as pure functions over `dict` inputs (matches the rest of the
+# file's style) so each is trivially testable with no fixtures.
+
+def calc_odds_convert(value: float | int, fmt: str) -> dict:
+    """Convert between odds formats. `fmt` is the input format:
+    'american' | 'decimal' | 'implied_pct' | 'implied_frac'.
+
+    Returns all four representations + the canonical decimal price.
+    """
+    fmt = (fmt or "").lower()
+    v = float(value)
+
+    if fmt == "american":
+        if v == 0 or v == -100 or v == 100:
+            raise ValueError("American odds cannot be 0 or ±100 exactly")
+        if v > 0:
+            decimal = 1.0 + (v / 100.0)
+        else:
+            decimal = 1.0 + (100.0 / abs(v))
+    elif fmt == "decimal":
+        if v <= 1.0:
+            raise ValueError("Decimal odds must be > 1.0")
+        decimal = v
+    elif fmt == "implied_pct":
+        if not (0.0 < v < 100.0):
+            raise ValueError("Implied % must be in (0, 100)")
+        decimal = 100.0 / v
+    elif fmt == "implied_frac":
+        if not (0.0 < v < 1.0):
+            raise ValueError("Implied fraction must be in (0, 1)")
+        decimal = 1.0 / v
+    else:
+        raise ValueError(f"unknown format: {fmt!r}")
+
+    implied_frac = 1.0 / decimal
+    implied_pct = implied_frac * 100.0
+    # American — symmetric inverse of the input conversion above.
+    # At exactly 50% (decimal 2.00 / evens), convention is +100, not -100,
+    # so the > here is strict, not >=.
+    if implied_frac > 0.5:
+        american = -100.0 * implied_frac / (1.0 - implied_frac)
+    else:
+        american = (1.0 - implied_frac) / implied_frac * 100.0
+
+    return {
+        "decimal": round(decimal, 4),
+        "american": round(american, 0),
+        "implied_pct": round(implied_pct, 3),
+        "implied_frac": round(implied_frac, 5),
+    }
+
+
+def calc_arbitrage(decimal_odds_a: float, decimal_odds_b: float,
+                   total_stake: float = 100.0) -> dict:
+    """Given two opposing decimal odds, split `total_stake` so payout is
+    identical regardless of outcome.
+
+    profit > 0 = guaranteed arbitrage; profit == 0 = no edge; profit < 0
+    = no arb exists. We return the breakdown anyway so the UI can show
+    "this combination has -1.2% hold" instead of refusing to compute.
+    """
+    if decimal_odds_a <= 1.0 or decimal_odds_b <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if total_stake <= 0:
+        raise ValueError("total_stake must be > 0")
+
+    implied_a = 1.0 / decimal_odds_a
+    implied_b = 1.0 / decimal_odds_b
+    total_implied = implied_a + implied_b
+
+    stake_a = total_stake * implied_a / total_implied
+    stake_b = total_stake - stake_a
+    payout = stake_a * decimal_odds_a   # same as stake_b * decimal_odds_b
+    profit = payout - total_stake
+    margin_pct = (1.0 / total_implied - 1.0) * 100.0
+    is_arb = total_implied < 1.0
+
+    return {
+        "stake_a": round(stake_a, 2),
+        "stake_b": round(stake_b, 2),
+        "payout": round(payout, 2),
+        "profit": round(profit, 2),
+        "profit_margin_pct": round(margin_pct, 3),
+        "total_implied_pct": round(total_implied * 100.0, 3),
+        "is_arbitrage": is_arb,
+    }
+
+
+def calc_hedge(original_decimal: float, original_stake: float,
+               hedge_decimal: float, mode: str = "equal") -> dict:
+    """Compute the hedge stake against an existing position.
+
+    modes:
+      'equal'     — equal payout regardless of outcome (guarantees a
+                    specific profit/loss)
+      'breakeven' — hedge just enough to recover the original stake;
+                    keep upside on the original
+      'no_hedge'  — return zero stake; useful for showing the no-hedge
+                    P&L side-by-side
+    """
+    if original_decimal <= 1.0 or hedge_decimal <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if original_stake <= 0:
+        raise ValueError("original_stake must be > 0")
+
+    original_payout = original_stake * original_decimal
+
+    if mode == "equal":
+        # Solve S' such that hedge_decimal * S' == original_payout
+        hedge_stake = original_payout / hedge_decimal
+    elif mode == "breakeven":
+        # Solve S' such that hedge_decimal * S' == original_stake + S'
+        # → S' * (hedge_decimal - 1) = original_stake
+        # → S' = original_stake / (hedge_decimal - 1)
+        hedge_stake = original_stake / (hedge_decimal - 1.0)
+    elif mode == "no_hedge":
+        hedge_stake = 0.0
+    else:
+        raise ValueError(f"unknown hedge mode: {mode!r}")
+
+    # Payouts in each scenario (net of all stakes)
+    total_outlay = original_stake + hedge_stake
+    payout_original_wins = original_payout - total_outlay
+    payout_hedge_wins = (hedge_stake * hedge_decimal) - total_outlay
+
+    return {
+        "mode": mode,
+        "hedge_stake": round(hedge_stake, 2),
+        "total_outlay": round(total_outlay, 2),
+        "profit_if_original_wins": round(payout_original_wins, 2),
+        "profit_if_hedge_wins": round(payout_hedge_wins, 2),
+        "guaranteed_min_profit": round(
+            min(payout_original_wins, payout_hedge_wins), 2,
+        ),
+    }
+
+
+def calc_promo_conversion(free_bet_amount: float, free_bet_decimal: float,
+                          hedge_decimal: float,
+                          stake_returned: bool = False) -> dict:
+    """Convert a "free bet" / boosted-odds offer to expected cash via
+    hedging the opposite side at a real book.
+
+    stake_returned=False (standard "free bet"): you win (decimal-1)*amount
+    if the free bet wins, 0 otherwise.
+    stake_returned=True (boosted-odds bet placed with your own money):
+    you win decimal*amount if it wins.
+
+    Returns the hedge stake that maximizes the worst-case payout, plus
+    the conversion rate (cash returned / face value).
+    """
+    if free_bet_decimal <= 1.0 or hedge_decimal <= 1.0:
+        raise ValueError("decimal odds must be > 1.0")
+    if free_bet_amount <= 0:
+        raise ValueError("free_bet_amount must be > 0")
+
+    # Payout if free bet wins (does NOT include the stake when not returned)
+    free_bet_payout_if_win = (
+        free_bet_amount * free_bet_decimal
+        if stake_returned
+        else free_bet_amount * (free_bet_decimal - 1.0)
+    )
+
+    # Maximize worst-case: hedge_stake * hedge_decimal - hedge_stake
+    #                     == free_bet_payout_if_win - hedge_stake
+    # → hedge_stake * hedge_decimal == free_bet_payout_if_win
+    # → hedge_stake = free_bet_payout_if_win / hedge_decimal
+    hedge_stake = free_bet_payout_if_win / hedge_decimal
+
+    # Guaranteed cash either way (the same in both scenarios after the maximize)
+    guaranteed_cash = free_bet_payout_if_win - hedge_stake
+    conversion_rate = guaranteed_cash / free_bet_amount
+
+    return {
+        "hedge_stake": round(hedge_stake, 2),
+        "guaranteed_cash": round(guaranteed_cash, 2),
+        "conversion_rate_pct": round(conversion_rate * 100.0, 3),
+        "free_bet_amount": float(free_bet_amount),
+        "stake_returned": stake_returned,
+    }
+
+
+def calc_devig(prob_a_pct: float, prob_b_pct: float) -> dict:
+    """Strip vig from a 2-way market. Returns fair probability for each
+    side + the implied vig percentage. Several methods exist; we use
+    the standard proportional method (the dashboard's matcher uses
+    the same approach for de-vigged divergence).
+    """
+    if not (0.0 < prob_a_pct < 100.0) or not (0.0 < prob_b_pct < 100.0):
+        raise ValueError("probabilities must be in (0, 100)")
+    total = prob_a_pct + prob_b_pct
+    fair_a = prob_a_pct / total * 100.0
+    fair_b = prob_b_pct / total * 100.0
+    vig = (total - 100.0)
+    return {
+        "fair_prob_a_pct": round(fair_a, 3),
+        "fair_prob_b_pct": round(fair_b, 3),
+        "vig_pct": round(vig, 3),
+        "total_implied_pct": round(total, 3),
+    }
+
+
+def _kelly_suggested_stake(bankroll: dict, kelly_pct: float | None) -> dict:
+    """Compute a Kelly-adjusted stake suggestion for a single bet.
+
+    Inputs:
+      bankroll: row from sports_bankroll (or defaults). We use
+        current_bankroll, kelly_fraction, max_per_bet_pct.
+      kelly_pct: full-Kelly fraction in percent (0-100), as already
+        computed by match_and_compare (`kelly_pct` field on outcomes).
+
+    Returns dict with the suggested stake in USD plus the ceiling that
+    bound it (helpful for the UI to explain WHY the suggestion is what
+    it is — capped by max-per-bet, by available bankroll, or zero).
+    """
+    current = float(bankroll.get("current_bankroll") or 0)
+    frac = float(bankroll.get("kelly_fraction") or DEFAULT_KELLY_FRACTION)
+    cap_pct = float(bankroll.get("max_per_bet_pct") or DEFAULT_MAX_PER_BET_PCT)
+
+    if current <= 0 or kelly_pct is None or kelly_pct <= 0:
+        return {"stake_usd": 0.0, "kelly_pct": 0.0, "capped_by": "no_edge"}
+
+    # match_and_compare already applies half-Kelly. If the user wants
+    # something different (full Kelly = 1.0, quarter-Kelly = 0.25), we
+    # rescale: stored kelly_pct = full_kelly * 0.5, so full_kelly = kelly_pct * 2.
+    full_kelly_pct = float(kelly_pct) * 2.0
+    fractional_pct = full_kelly_pct * frac
+
+    # Two ceilings: user's max-per-bet, and the bankroll itself.
+    stake_from_kelly = current * (fractional_pct / 100.0)
+    stake_from_cap = current * (cap_pct / 100.0)
+
+    if stake_from_kelly <= stake_from_cap:
+        capped_by = "kelly"
+        stake = stake_from_kelly
+    else:
+        capped_by = "max_per_bet_pct"
+        stake = stake_from_cap
+
+    return {
+        "stake_usd": round(stake, 2),
+        "kelly_pct": round(fractional_pct, 3),
+        "capped_by": capped_by,
+    }
+
+
+def _get_user_bankroll(user_id: str) -> dict | None:
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM sports_bankroll WHERE user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _annotate_bankroll(bankroll: dict | None) -> dict | None:
+    """Add computed fields the UI cares about: pnl, return%, drawdown
+    flag. Returns None when no bankroll is configured."""
+    if not bankroll:
+        return None
+    starting = float(bankroll.get("starting_bankroll") or 0)
+    current = float(bankroll.get("current_bankroll") or 0)
+    pnl = round(current - starting, 2)
+    return_pct = round((pnl / starting) * 100, 3) if starting > 0 else 0.0
+    dd_threshold = float(bankroll.get("drawdown_alert_pct")
+                          or DEFAULT_DRAWDOWN_ALERT_PCT)
+    in_drawdown = (starting > 0) and (return_pct <= -dd_threshold)
+    out = dict(bankroll)
+    out["pnl"] = pnl
+    out["return_pct"] = return_pct
+    out["in_drawdown"] = in_drawdown
+    return out
+
+
+@app.get("/api/bankroll")
+async def api_get_bankroll(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    return JSONResponse({"bankroll": _annotate_bankroll(row)})
+
+
+@app.put("/api/bankroll")
+async def api_put_bankroll(request: Request):
+    """Create or replace the user's bankroll config.
+
+    Body: {"starting_bankroll": float, "current_bankroll": float?,
+    "kelly_fraction": float?, "max_per_bet_pct": float?,
+    "drawdown_alert_pct": float?}. If current_bankroll is omitted, it
+    defaults to starting_bankroll (initial setup case).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    try:
+        starting = float(body.get("starting_bankroll", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "starting_bankroll must be a number"}, status_code=400)
+    if starting <= 0 or starting > 10_000_000:
+        return JSONResponse({"error": "starting_bankroll must be 0 < x <= 10,000,000"},
+                             status_code=400)
+    current = body.get("current_bankroll", starting)
+    try:
+        current = float(current)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "current_bankroll must be a number"}, status_code=400)
+    if current < 0:
+        return JSONResponse({"error": "current_bankroll must be >= 0"}, status_code=400)
+
+    def _clamp_float(name: str, default: float, lo: float, hi: float) -> float:
+        if name not in body:
+            return default
+        try:
+            v = float(body[name])
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a number")
+        if not (lo <= v <= hi):
+            raise ValueError(f"{name} out of range")
+        return v
+
+    try:
+        kelly = _clamp_float("kelly_fraction", DEFAULT_KELLY_FRACTION, 0.0, 1.0)
+        cap = _clamp_float("max_per_bet_pct", DEFAULT_MAX_PER_BET_PCT, 0.1, 100.0)
+        dd = _clamp_float("drawdown_alert_pct", DEFAULT_DRAWDOWN_ALERT_PCT, 0.5, 100.0)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    with _get_db() as conn:
+        conn.execute(
+            "INSERT INTO sports_bankroll "
+            "(user_id, starting_bankroll, current_bankroll, kelly_fraction, "
+            " max_per_bet_pct, drawdown_alert_pct, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "  starting_bankroll = excluded.starting_bankroll, "
+            "  current_bankroll = excluded.current_bankroll, "
+            "  kelly_fraction = excluded.kelly_fraction, "
+            "  max_per_bet_pct = excluded.max_per_bet_pct, "
+            "  drawdown_alert_pct = excluded.drawdown_alert_pct, "
+            "  updated_at = excluded.updated_at",
+            (user["id"], starting, current, kelly, cap, dd),
+        )
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    return JSONResponse({"bankroll": _annotate_bankroll(row)})
+
+
+# ---------------------------------------------------------------------------
+# API tokens — Bearer auth for programmatic clients (T5.1)
+# ---------------------------------------------------------------------------
+
+import secrets as _secrets
+
+
+@app.post("/api/webhooks/signing-key")
+async def api_rotate_webhook_signing_key(request: Request):
+    """Generate a new HMAC signing key for this user's webhook payloads.
+
+    Returns the plaintext ONCE; the user must record it. The key is
+    encrypted at rest via the same Fernet key used for Telegram tokens.
+    Rotating invalidates the previous key.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot rotate webhook keys"},
+            status_code=403,
+        )
+    plaintext = "whsec_" + _secrets.token_urlsafe(32)
+    encrypted = _encrypt_field(plaintext)
+    with _get_db() as conn:
+        # Ensure a row exists in sports_alert_config; PUT-like upsert.
+        conn.execute(
+            "INSERT INTO sports_alert_config (user_id, webhook_signing_key) "
+            "VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "  webhook_signing_key = excluded.webhook_signing_key",
+            (user["id"], encrypted),
+        )
+    return JSONResponse({
+        "signing_key": plaintext,
+        "warning": ("Save this key now — it's encrypted at rest and "
+                    "not retrievable later. Use it to verify "
+                    "X-Sharpe-Signature on incoming webhooks."),
+    })
+
+
+@app.delete("/api/webhooks/signing-key")
+async def api_revoke_webhook_signing_key(request: Request):
+    """Clear the user's signing key — future webhooks fire unsigned."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot revoke webhook keys"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE sports_alert_config SET webhook_signing_key = '' "
+            "WHERE user_id = ?",
+            (user["id"],),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/webhooks/test")
+async def api_test_webhook(request: Request):
+    """Fire a test webhook to the user's configured webhook_url, signed
+    with their current key if one is set. Useful for verifying the
+    signature flow before relying on it for production alerts."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT webhook_url FROM sports_alert_config WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+    if not row or not row["webhook_url"]:
+        return JSONResponse({"error": "no webhook_url configured"}, status_code=400)
+    key = _get_webhook_signing_key(user["id"])
+    payload = {
+        "kind": "test",
+        "ts": int(time.time()),
+        "message": "Sharpe webhook test — if you can verify this signature, you're good to go.",
+    }
+    ok = await asyncio.to_thread(_signed_webhook_post, row["webhook_url"], payload, key)
+    return JSONResponse({"status": "ok" if ok else "failed", "signed": bool(key)})
+
+
+@app.get("/api/auth/tokens")
+async def api_list_tokens(request: Request):
+    """List the current user's API tokens. Plaintext tokens are never
+    returned — only metadata + prefix for visual identification."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        # A Bearer token can't list itself / other tokens — that's a
+        # session-only operation.
+        return JSONResponse(
+            {"error": "Bearer tokens cannot manage tokens; use a session"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, token_prefix, scopes, created_at, last_used_at, "
+            "       revoked_at "
+            "FROM sports_api_tokens WHERE user_id = ? ORDER BY id DESC",
+            (user["id"],),
+        ).fetchall()
+    return JSONResponse({"tokens": [dict(r) for r in rows]})
+
+
+@app.post("/api/auth/tokens")
+async def api_create_token(request: Request):
+    """Create a new API token. Returns the plaintext token ONCE.
+
+    Body: {"name": str (optional), "scopes": list[str] (optional)}.
+    The plaintext token is generated server-side and never persisted —
+    only the SHA-256 hash + a short prefix for visual identification.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot create tokens; use a session"},
+            status_code=403,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    name = (body.get("name") or "")[:80]
+    raw_scopes = body.get("scopes") or []
+    if not isinstance(raw_scopes, list) or not all(isinstance(s, str) for s in raw_scopes):
+        return JSONResponse({"error": "scopes must be a list of strings"}, status_code=400)
+    scopes = json.dumps(raw_scopes)
+
+    # Token format: "shrp_" + 40 url-safe chars. ~240 bits of entropy.
+    plaintext = "shrp_" + _secrets.token_urlsafe(30)
+    token_hash = _hash_api_token(plaintext)
+    prefix = plaintext[:8]
+
+    with _get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO sports_api_tokens "
+            "(user_id, name, token_hash, token_prefix, scopes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user["id"], name, token_hash, prefix, scopes),
+        )
+        token_id = cur.lastrowid
+
+    return JSONResponse({
+        "id": token_id,
+        "name": name,
+        "token": plaintext,  # only time the plaintext is returned
+        "token_prefix": prefix,
+        "scopes": raw_scopes,
+        "warning": ("Save this token now — it is not retrievable later. "
+                    "Use as Authorization: Bearer <token>"),
+    })
+
+
+@app.delete("/api/auth/tokens/{token_id}")
+async def api_revoke_token(token_id: int, request: Request):
+    """Revoke a token. Idempotent — revoking an already-revoked token
+    returns 200 (Bearer auth fails immediately for revoked rows)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if user.get("_bearer_token_id"):
+        return JSONResponse(
+            {"error": "Bearer tokens cannot revoke tokens; use a session"},
+            status_code=403,
+        )
+    with _get_db() as conn:
+        cur = conn.execute(
+            "UPDATE sports_api_tokens SET revoked_at = datetime('now') "
+            "WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+            (token_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            # Either doesn't exist or already revoked — return 404 only
+            # if no row matches the user at all
+            exists = conn.execute(
+                "SELECT 1 FROM sports_api_tokens WHERE id = ? AND user_id = ?",
+                (token_id, user["id"]),
+            ).fetchone()
+            if not exists:
+                return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/bankroll/suggest-stake")
+async def api_bankroll_suggest_stake(request: Request):
+    """Return a Kelly-adjusted stake suggestion for a given kelly_pct.
+
+    Body: {"kelly_pct": float}. Uses the user's current bankroll config;
+    returns 404 if no bankroll is set so the UI can prompt the user to
+    configure one before showing suggestions.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    kelly_pct = body.get("kelly_pct")
+    try:
+        kelly_pct = float(kelly_pct) if kelly_pct is not None else None
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "kelly_pct must be a number"}, status_code=400)
+
+    row = await asyncio.to_thread(_get_user_bankroll, user["id"])
+    if not row:
+        return JSONResponse({"error": "no bankroll configured"}, status_code=404)
+    suggestion = _kelly_suggested_stake(row, kelly_pct)
+    annotated = _annotate_bankroll(row)
+    return JSONResponse({
+        "suggestion": suggestion,
+        "in_drawdown": annotated.get("in_drawdown", False) if annotated else False,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Calculators (public — pure math, no auth needed)
+# ---------------------------------------------------------------------------
+
+def _float_or_400(body: dict, key: str) -> tuple[float, JSONResponse | None]:
+    """Coerce body[key] to float; return (value, None) or (0.0, response)."""
+    if key not in body:
+        return 0.0, JSONResponse(
+            {"error": f"missing required field: {key}"}, status_code=400,
+        )
+    try:
+        return float(body[key]), None
+    except (TypeError, ValueError):
+        return 0.0, JSONResponse(
+            {"error": f"{key} must be a number"}, status_code=400,
+        )
+
+
+@app.post("/api/calc/odds-convert")
+async def api_calc_odds_convert(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    value, err = _float_or_400(body, "value")
+    if err:
+        return err
+    fmt = (body.get("format") or "").strip()
+    try:
+        return JSONResponse(calc_odds_convert(value, fmt))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/arbitrage")
+async def api_calc_arbitrage(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    a, err = _float_or_400(body, "decimal_odds_a")
+    if err:
+        return err
+    b, err = _float_or_400(body, "decimal_odds_b")
+    if err:
+        return err
+    stake = body.get("total_stake", 100.0)
+    try:
+        stake = float(stake)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "total_stake must be a number"}, status_code=400)
+    try:
+        return JSONResponse(calc_arbitrage(a, b, stake))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/hedge")
+async def api_calc_hedge(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    orig_dec, err = _float_or_400(body, "original_decimal")
+    if err:
+        return err
+    orig_stake, err = _float_or_400(body, "original_stake")
+    if err:
+        return err
+    hedge_dec, err = _float_or_400(body, "hedge_decimal")
+    if err:
+        return err
+    mode = (body.get("mode") or "equal").lower()
+    try:
+        return JSONResponse(calc_hedge(orig_dec, orig_stake, hedge_dec, mode))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/promo-conversion")
+async def api_calc_promo_conversion(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    amt, err = _float_or_400(body, "free_bet_amount")
+    if err:
+        return err
+    fb_dec, err = _float_or_400(body, "free_bet_decimal")
+    if err:
+        return err
+    hedge_dec, err = _float_or_400(body, "hedge_decimal")
+    if err:
+        return err
+    stake_returned = bool(body.get("stake_returned", False))
+    try:
+        return JSONResponse(
+            calc_promo_conversion(amt, fb_dec, hedge_dec, stake_returned),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/calc/devig")
+async def api_calc_devig(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    a, err = _float_or_400(body, "prob_a_pct")
+    if err:
+        return err
+    b, err = _float_or_400(body, "prob_b_pct")
+    if err:
+        return err
+    try:
+        return JSONResponse(calc_devig(a, b))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/calculators", response_class=HTMLResponse)
+async def calculators_page(request: Request):
+    """Public page with the standalone bettor calculators."""
+    return HTMLResponse(_load_template("calculators"))
 
 
 # ---------------------------------------------------------------------------
@@ -5025,6 +8847,679 @@ async def list_watchlist(request: Request):
             (user["id"],),
         ).fetchall()
     return JSONResponse({"watchlist": [dict(r) for r in rows]})
+
+
+@app.patch("/api/watchlist/{item_id}")
+async def update_watchlist_threshold(item_id: int, request: Request):
+    """Set or clear the divergence-threshold (in pp) for a watchlist item.
+
+    POST body: {"alert_threshold_pp": 5.0} or {"alert_threshold_pp": null}.
+    A null/0/missing threshold disables per-item alerting (the item still
+    appears in the watchlist; broadcast alerts via /api/alerts still apply
+    if configured).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = body.get("alert_threshold_pp")
+    if raw is None or raw == "":
+        threshold = None
+    else:
+        try:
+            threshold = float(raw)
+            if threshold <= 0 or threshold > 100:
+                threshold = None
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid threshold"}, status_code=400)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "UPDATE sports_watchlist SET alert_threshold_pp = ? WHERE id = ? AND user_id = ?",
+            (threshold, item_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok", "alert_threshold_pp": threshold})
+
+
+# ---------------------------------------------------------------------------
+# Rule-based alerts CRUD
+# ---------------------------------------------------------------------------
+
+_ALLOWED_MARKET_TYPES = {"h2h", "spreads", "totals", "futures", "props"}
+_ALLOWED_CHANNELS = {"telegram", "webhook", "push", "both"}
+
+
+def _validate_rule_body(body: dict) -> tuple[dict | None, str | None]:
+    """Coerce + validate a rule POST/PATCH body. Returns (clean_dict, error_msg).
+    Only fields that are present in `body` are returned so PATCH can do
+    partial updates."""
+    out: dict = {}
+    if "name" in body:
+        out["name"] = str(body.get("name") or "")[:80]
+    if "enabled" in body:
+        out["enabled"] = 1 if body.get("enabled") else 0
+    if "sports" in body:
+        sports = body.get("sports") or []
+        if not isinstance(sports, list) or not all(isinstance(s, str) for s in sports):
+            return None, "sports must be a list of strings"
+        out["sports"] = json.dumps(sports)
+    if "market_types" in body:
+        mts = body.get("market_types") or []
+        if not isinstance(mts, list):
+            return None, "market_types must be a list"
+        if not all(m in _ALLOWED_MARKET_TYPES for m in mts):
+            return None, f"market_types must be a subset of {sorted(_ALLOWED_MARKET_TYPES)}"
+        out["market_types"] = json.dumps(mts)
+    if "min_divergence_pp" in body:
+        try:
+            v = float(body["min_divergence_pp"])
+            if not (0 <= v <= 100):
+                return None, "min_divergence_pp out of range"
+            out["min_divergence_pp"] = v
+        except (TypeError, ValueError):
+            return None, "min_divergence_pp must be a number"
+    if "min_volume" in body:
+        raw = body["min_volume"]
+        if raw is None or raw == "":
+            out["min_volume"] = None
+        else:
+            try:
+                out["min_volume"] = max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return None, "min_volume must be a number"
+    if "max_time_to_event_hours" in body:
+        raw = body["max_time_to_event_hours"]
+        if raw is None or raw == "":
+            out["max_time_to_event_hours"] = None
+        else:
+            try:
+                out["max_time_to_event_hours"] = max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return None, "max_time_to_event_hours must be a number"
+    for flag in ("require_sharp_consensus", "require_not_stale", "require_liquidity_ok"):
+        if flag in body:
+            out[flag] = 1 if body.get(flag) else 0
+    if "channel" in body:
+        ch = (body.get("channel") or "telegram").lower()
+        if ch not in _ALLOWED_CHANNELS:
+            return None, f"channel must be one of {sorted(_ALLOWED_CHANNELS)}"
+        out["channel"] = ch
+    for hr_field in ("quiet_hours_start", "quiet_hours_end"):
+        if hr_field in body:
+            raw = body[hr_field]
+            if raw is None or raw == "":
+                out[hr_field] = None
+            else:
+                try:
+                    h = int(raw)
+                    if not (0 <= h <= 23):
+                        return None, f"{hr_field} must be 0-23"
+                    out[hr_field] = h
+                except (TypeError, ValueError):
+                    return None, f"{hr_field} must be an integer 0-23"
+    if "cooldown_secs" in body:
+        try:
+            v = int(body["cooldown_secs"])
+            if not (10 <= v <= 86400):
+                return None, "cooldown_secs must be 10..86400"
+            out["cooldown_secs"] = v
+        except (TypeError, ValueError):
+            return None, "cooldown_secs must be an integer"
+    return out, None
+
+
+@app.get("/api/alert-rules")
+async def list_alert_rules(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sports_alert_rules WHERE user_id = ? ORDER BY id ASC",
+            (user["id"],),
+        ).fetchall()
+    rules = []
+    for r in rows:
+        d = dict(r)
+        # Parse JSON fields back so the client doesn't have to
+        try:
+            d["sports"] = json.loads(d.get("sports") or "[]")
+        except (TypeError, ValueError):
+            d["sports"] = []
+        try:
+            d["market_types"] = json.loads(d.get("market_types") or "[]")
+        except (TypeError, ValueError):
+            d["market_types"] = []
+        rules.append(d)
+    return JSONResponse({"rules": rules})
+
+
+@app.post("/api/alert-rules")
+async def create_alert_rule(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields, err = _validate_rule_body(body)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    fields.setdefault("name", "")
+    fields.setdefault("enabled", 1)
+    fields.setdefault("sports", "[]")
+    fields.setdefault("market_types", "[]")
+    fields.setdefault("min_divergence_pp", 5.0)
+    fields.setdefault("require_sharp_consensus", 1)
+    fields.setdefault("require_not_stale", 1)
+    fields.setdefault("require_liquidity_ok", 1)
+    fields.setdefault("channel", "telegram")
+    fields.setdefault("cooldown_secs", 300)
+    cols = ["user_id"] + list(fields.keys())
+    placeholders = ",".join("?" for _ in cols)
+    values = [user["id"]] + list(fields.values())
+    with _get_db() as conn:
+        cur = conn.execute(
+            f"INSERT INTO sports_alert_rules ({','.join(cols)}) VALUES ({placeholders})",
+            values,
+        )
+        rule_id = cur.lastrowid
+    return JSONResponse({"status": "ok", "id": rule_id})
+
+
+@app.patch("/api/alert-rules/{rule_id}")
+async def update_alert_rule(rule_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields, err = _validate_rule_body(body)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    if not fields:
+        return JSONResponse({"error": "no fields to update"}, status_code=400)
+    set_clause = ",".join(f"{k} = ?" for k in fields.keys())
+    with _get_db() as conn:
+        cur = conn.execute(
+            f"UPDATE sports_alert_rules SET {set_clause} WHERE id = ? AND user_id = ?",
+            list(fields.values()) + [rule_id, user["id"]],
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+@app.delete("/api/alert-rules/{rule_id}")
+async def delete_alert_rule(rule_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_alert_rules WHERE id = ? AND user_id = ?",
+            (rule_id, user["id"]),
+        )
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Web Push: subscription CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/push/vapid-public-key")
+async def push_vapid_public_key():
+    """Public key the browser needs to register a subscription. Anonymous —
+    the key is public by design. Returns 503 if push isn't configured."""
+    if not VAPID_PUBLIC_KEY:
+        return JSONResponse(
+            {"error": "Web Push not configured (VAPID_PUBLIC_KEY unset)"},
+            status_code=503,
+        )
+    return JSONResponse({"public_key": VAPID_PUBLIC_KEY,
+                          "push_available": _PUSH_AVAILABLE})
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    """Persist a PushManager.subscribe() result. Idempotent on
+    (user_id, endpoint)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    endpoint = body.get("endpoint") or ""
+    keys = body.get("keys") or {}
+    p256dh = keys.get("p256dh") or ""
+    auth = keys.get("auth") or ""
+    if not (endpoint and p256dh and auth):
+        return JSONResponse({"error": "endpoint + keys.p256dh + keys.auth required"}, status_code=400)
+    if not endpoint.startswith("https://"):
+        return JSONResponse({"error": "endpoint must be HTTPS"}, status_code=400)
+    ua = (request.headers.get("user-agent") or "")[:200]
+    with _get_db() as conn:
+        # Upsert by (user_id, endpoint) — keys can rotate
+        conn.execute(
+            """INSERT INTO sports_push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, endpoint) DO UPDATE SET
+                 p256dh = excluded.p256dh,
+                 auth = excluded.auth,
+                 user_agent = excluded.user_agent""",
+            (user["id"], endpoint, p256dh, auth, ua),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.delete("/api/push/subscribe")
+async def push_unsubscribe(request: Request):
+    """Remove a push subscription by its endpoint."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    endpoint = body.get("endpoint") or ""
+    if not endpoint:
+        return JSONResponse({"error": "endpoint required"}, status_code=400)
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_push_subscriptions WHERE user_id = ? AND endpoint = ?",
+            (user["id"], endpoint),
+        )
+    return JSONResponse({"status": "ok", "deleted": cur.rowcount})
+
+
+@app.post("/api/push/test")
+async def push_test(request: Request):
+    """Fire a test push notification to the current user. Useful for
+    debugging the subscription flow without waiting for a real signal."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    delivered = _send_web_push(user["id"], {
+        "title": "Sharpe — test push",
+        "body": "If you see this, push is wired up correctly.",
+        "tag": "sharpe-test",
+        "data": {"url": "/"},
+    })
+    return JSONResponse({"status": "ok", "delivered": delivered,
+                          "push_available": _PUSH_AVAILABLE})
+
+
+# ---------------------------------------------------------------------------
+# AI-explained signals (Claude)
+# ---------------------------------------------------------------------------
+#
+# For every flagged signal, generate a plain-English "why this is mispriced"
+# explanation via Claude. Two layers of caching keep cost down:
+#   1. Prompt caching: the system prompt is identical across all calls, so
+#      we mark it with cache_control and Anthropic serves repeated requests
+#      at ~10% the normal input price.
+#   2. DB cache: we hash the signal's identity (event + outcome + divergence
+#      rounded to 0.1pp + sport) and cache the explanation for 30 min, so
+#      multiple users viewing the same signal cost one API call total.
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+EXPLAIN_MODEL = os.getenv("EXPLAIN_MODEL", "claude-opus-4-7")
+EXPLAIN_CACHE_TTL_SECONDS = int(os.getenv("EXPLAIN_CACHE_TTL_SECONDS", "1800"))
+
+_anthropic_client = None
+
+_EXPLAIN_SYSTEM_PROMPT = """You are a sharp sports-betting analyst writing concise plain-English explanations of why a specific market divergence exists between a bookmaker consensus and a prediction-market venue (Polymarket or Kalshi).
+
+Each user message is a single JSON object describing ONE comparison: event, outcome, sharp bookmaker probability, prediction-market price, divergence in percentage points, plus context (vig, liquidity, time-to-event, books present).
+
+Write a clear explanation for experienced bettors. Cover, in order:
+1. WHICH side is mispricing (book consensus vs prediction market) and by how much.
+2. WHY this gap likely exists — slow-to-react market, retail vs sharp money mix, low liquidity, recent news catalyst, vig differences.
+3. WHAT would close it — a steam move on the slow venue, a liquidity event, or resolution.
+
+Constraints:
+- Maximum 3 sentences total.
+- No financial-advice disclaimers, no emoji, no markdown formatting.
+- If |divergence| < 3pp, note that fees likely eat the edge.
+- Don't recommend specific stake sizes or guarantee outcomes.
+- Use specific numbers from the input — vague generalities fail this task.
+"""
+
+
+def _get_anthropic_client():
+    """Lazy-init the Anthropic client. Returns None if SDK or API key is missing."""
+    global _anthropic_client
+    if _anthropic_client is not None:
+        return _anthropic_client
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        log.warning("anthropic SDK not installed — /api/signals/explain disabled")
+        return None
+    _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def _signal_cache_key(signal: dict) -> str:
+    """Stable hash for the signal's identity.
+
+    Rounded to 0.1pp on divergence so tiny line wobbles don't cause cache
+    misses on what's effectively the same signal. SHA-256 truncated to 32
+    hex chars — collision probability is negligible at our volumes.
+    """
+    parts = (
+        (signal.get("home_team") or "").strip().lower(),
+        (signal.get("away_team") or "").strip().lower(),
+        (signal.get("outcome") or signal.get("outcome_name") or "").strip().lower(),
+        round(float(signal.get("divergence") or signal.get("divergence_pct") or 0), 1),
+        (signal.get("sport") or "").strip().lower(),
+    )
+    raw = "|".join(str(p) for p in parts)
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _get_cached_explanation(cache_key: str) -> str | None:
+    """Return cached explanation if within TTL; None otherwise.
+
+    SQLite's `datetime('now')` writes `YYYY-MM-DD HH:MM:SS` (no timezone,
+    space separator) — we format the cutoff to match so lexicographic
+    comparison in the WHERE clause works correctly. Don't use
+    `datetime.isoformat()` here: its 'T' separator sorts ABOVE space and
+    causes every cached row to look stale.
+    """
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(seconds=EXPLAIN_CACHE_TTL_SECONDS))
+    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT explanation FROM sports_signal_explanations "
+            "WHERE cache_key = ? AND created_at >= ? LIMIT 1",
+            (cache_key, cutoff_str),
+        ).fetchone()
+    return row["explanation"] if row else None
+
+
+def _store_explanation(cache_key: str, signal: dict, explanation: str, model: str) -> None:
+    summary = json.dumps({
+        "event": f"{signal.get('home_team', '')} vs {signal.get('away_team', '')}",
+        "outcome": signal.get("outcome") or signal.get("outcome_name"),
+        "divergence": signal.get("divergence"),
+        "sport": signal.get("sport"),
+    }, separators=(",", ":"))
+    with _get_db() as conn:
+        conn.execute(
+            "INSERT INTO sports_signal_explanations "
+            "(cache_key, signal_summary, explanation, model) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(cache_key) DO UPDATE SET "
+            "  explanation = excluded.explanation, "
+            "  model = excluded.model, "
+            "  created_at = datetime('now')",
+            (cache_key, summary, explanation, model),
+        )
+
+
+def _build_explain_payload(signal: dict) -> dict:
+    """Project a comparison/signal dict into the fields the prompt cares about."""
+    return {
+        "sport": signal.get("sport") or "unknown",
+        "event": _event_name(signal.get("home_team"), signal.get("away_team")),
+        "outcome": signal.get("outcome") or signal.get("outcome_name") or "",
+        "sharp_book_prob_pct": signal.get("sharp_prob"),
+        "consensus_devigged_pct": (signal.get("consensus_over_devigged")
+                                    or signal.get("true_prob_no_vig")
+                                    or signal.get("consensus_prob")),
+        "polymarket_price_pct": signal.get("poly_prob"),
+        "kalshi_price_pct": signal.get("kalshi_prob"),
+        "divergence_pp": signal.get("divergence") or signal.get("divergence_pct"),
+        "vig_pct": signal.get("vig_pct") or signal.get("implied_vig"),
+        "books_present": signal.get("sharp_books_present") or [],
+        "poly_volume_usd": signal.get("poly_volume"),
+        "poly_spread_pct": signal.get("spread_pct") or signal.get("poly_spread"),
+        "time_to_event_hours": signal.get("time_to_event_hours"),
+        "kelly_pct": signal.get("kelly_pct"),
+    }
+
+
+def _explain_signal_via_claude(signal: dict) -> str:
+    """Generate a plain-English explanation via Claude. Returns empty string
+    if the SDK or API key isn't configured.
+
+    Uses prompt caching on the system prompt so repeated calls in the same
+    5-min window share a cached prefix (~10% cost on the system tokens).
+    No streaming — outputs are short (≤300 tokens) and we want the full
+    string in one go for the API response.
+    """
+    client = _get_anthropic_client()
+    if client is None:
+        return ""
+
+    response = client.messages.create(
+        model=EXPLAIN_MODEL,
+        max_tokens=300,
+        thinking={"type": "disabled"},  # 2-3 sentence task, no reasoning needed
+        system=[{
+            "type": "text",
+            "text": _EXPLAIN_SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{
+            "role": "user",
+            "content": json.dumps(_build_explain_payload(signal),
+                                    separators=(",", ":"), sort_keys=True),
+        }],
+    )
+    for block in response.content:
+        if block.type == "text":
+            return block.text.strip()
+    return ""
+
+
+@app.post("/api/signals/explain")
+async def api_explain_signal(request: Request):
+    """Return a plain-English explanation of why a signal is mispriced.
+
+    POST body: a comparison/signal dict (home_team, away_team, outcome,
+    sharp_prob, poly_prob, divergence, sport, ...). Returns
+    {"explanation": str, "cached": bool}. Cached for EXPLAIN_CACHE_TTL_SECONDS
+    by signal identity (event + outcome + divergence rounded to 0.1pp + sport).
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        signal = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(signal, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    # Require at least an outcome OR home_team so we have something identifying
+    if not (signal.get("outcome") or signal.get("outcome_name") or signal.get("home_team")):
+        return JSONResponse({"error": "signal missing event/outcome"}, status_code=400)
+
+    cache_key = _signal_cache_key(signal)
+    cached = await asyncio.to_thread(_get_cached_explanation, cache_key)
+    if cached:
+        M_EXPLAIN_REQUESTS.labels(result="cache_hit").inc()
+        return JSONResponse({"explanation": cached, "cached": True})
+
+    if not ANTHROPIC_API_KEY:
+        M_EXPLAIN_REQUESTS.labels(result="disabled").inc()
+        return JSONResponse(
+            {"error": "AI explanations not configured (ANTHROPIC_API_KEY unset)",
+             "explanation": None, "cached": False},
+            status_code=503,
+        )
+
+    try:
+        explanation = await asyncio.to_thread(_explain_signal_via_claude, signal)
+    except Exception as e:
+        M_EXPLAIN_REQUESTS.labels(result="error").inc()
+        log.warning("Claude explanation error: %s", e)
+        return JSONResponse({"error": f"explanation failed: {e}"}, status_code=502)
+
+    if not explanation:
+        M_EXPLAIN_REQUESTS.labels(result="error").inc()
+        return JSONResponse({"error": "empty explanation from model"}, status_code=502)
+
+    await asyncio.to_thread(_store_explanation, cache_key, signal, explanation, EXPLAIN_MODEL)
+    M_EXPLAIN_REQUESTS.labels(result="api_call").inc()
+    return JSONResponse({"explanation": explanation, "cached": False})
+
+
+# ---------------------------------------------------------------------------
+# Smart-money mirror — Polymarket top-trader positions on sports markets
+# ---------------------------------------------------------------------------
+#
+# We already fetch top_trader_positions for the leaderboard wallets every
+# 10 minutes via _refresh_top_trader_positions. Each row in that table is
+# (wallet, condition_id, outcome, net_size, avg_price, ...). We also
+# already attach matching positions to every comparison via
+# _attach_top_traders_to_comparisons. What was missing: a dedicated UI
+# surface that says "of the top 50 Polymarket whales, N of them hold
+# position X on this market" — a powerful conversion signal because
+# nobody else surfaces this for sports.
+
+def _smart_money_for_comparisons(comparisons: list[dict]) -> list[dict]:
+    """For each comparison with at least one matching whale position,
+    return an enriched row: condition_id, event, outcome, top-trader
+    wallets in/against the position, aggregate USD exposure, and the
+    most-recent timestamp."""
+    out: list[dict] = []
+    for c in comparisons or []:
+        positions = c.get("top_trader_positions") or []
+        if not positions:
+            continue
+
+        # Group by outcome side
+        by_outcome: dict[str, list[dict]] = {}
+        for p in positions:
+            outcome = p.get("outcome") or ""
+            by_outcome.setdefault(outcome, []).append(p)
+
+        sides = []
+        for outcome, ps in by_outcome.items():
+            net_usd = sum(float(p.get("net_usd") or 0) for p in ps)
+            if abs(net_usd) < 50:  # ignore dust positions
+                continue
+            avg_entry = (
+                sum(float(p.get("avg_price") or 0) * abs(float(p.get("net_size") or 0))
+                    for p in ps)
+                / max(sum(abs(float(p.get("net_size") or 0)) for p in ps), 1.0)
+            )
+            top_wallets = sorted(
+                ps,
+                key=lambda x: -abs(float(x.get("net_usd") or 0)),
+            )[:5]
+            most_recent = max(
+                (int(p.get("last_traded_ts") or 0) for p in ps),
+                default=0,
+            )
+            sides.append({
+                "outcome": outcome,
+                "n_whales": len(ps),
+                "net_usd": round(net_usd, 2),
+                "avg_entry_price": round(avg_entry, 4),
+                "last_trade_ts": most_recent,
+                "top_wallets": [
+                    {
+                        "wallet": w.get("wallet"),
+                        "pseudonym": w.get("pseudonym") or "",
+                        "name": w.get("name") or "",
+                        "rank": w.get("rank"),
+                        "net_usd": round(float(w.get("net_usd") or 0), 2),
+                        "net_size": round(float(w.get("net_size") or 0), 2),
+                        "avg_price": round(float(w.get("avg_price") or 0), 4),
+                        "last_side": w.get("last_side") or "",
+                    } for w in top_wallets
+                ],
+            })
+
+        if not sides:
+            continue
+
+        # Sort sides by absolute USD exposure (biggest conviction first)
+        sides.sort(key=lambda s: -abs(s["net_usd"]))
+
+        out.append({
+            "event": _event_name(c.get("home_team"), c.get("away_team")),
+            "home_team": c.get("home_team", ""),
+            "away_team": c.get("away_team", ""),
+            "sport": c.get("sport"),  # may be None on legacy comparisons
+            "commence_time": c.get("commence_time", ""),
+            "condition_id": c.get("condition_id", ""),
+            "poly_slug": c.get("poly_slug"),
+            "poly_question": c.get("poly_question"),
+            "trade_poly_url": c.get("trade_poly_url"),
+            "has_signal": bool(c.get("has_signal")),
+            "max_divergence": c.get("max_divergence"),
+            "sides": sides,
+            "total_whales": sum(s["n_whales"] for s in sides),
+            "total_usd": round(sum(abs(s["net_usd"]) for s in sides), 2),
+        })
+
+    # Sort by total whale exposure desc
+    out.sort(key=lambda r: -r["total_usd"])
+    return out
+
+
+@app.get("/api/smart-money")
+async def api_smart_money(request: Request):
+    """Smart-money positions overlaid on current sports comparisons.
+
+    For each market with at least one top-50-wallet position, returns the
+    aggregated whale exposure by side, the top-5 wallets per side, and
+    the most-recent trade timestamp.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    requested_sport = request.query_params.get("sport")
+    async with _data_lock:
+        active_sport = dashboard_data.get("active_sport")
+        snapshot = copy.deepcopy(dashboard_data.get("comparisons") or [])
+
+    if requested_sport and requested_sport != active_sport:
+        return JSONResponse(
+            {"status": "switching", "active_sport": active_sport,
+             "requested_sport": requested_sport, "rows": []},
+            status_code=202,
+        )
+
+    rows = _smart_money_for_comparisons(snapshot)
+    return JSONResponse({
+        "sport": active_sport,
+        "n_markets": len(rows),
+        "n_whales_unique": len({
+            w["wallet"]
+            for r in rows for s in r["sides"] for w in s["top_wallets"]
+            if w.get("wallet")
+        }),
+        "rows": rows,
+    })
+
+
+@app.get("/smart-money", response_class=HTMLResponse)
+async def smart_money_page(request: Request):
+    """UI for smart-money positions overlaid on sports comparisons."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("smart_money"))
 
 
 # ---------------------------------------------------------------------------
@@ -5375,6 +9870,674 @@ async def edge_stats(request: Request):
         "pending": pending,
         "win_rate": win_rate,
     })
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — match-engine near-rejects + Odds API quota
+# ---------------------------------------------------------------------------
+
+@app.get("/api/diagnostics/match-rejects")
+async def api_match_rejects(request: Request):
+    """Recent fuzzy-match near-rejects (admin only). Used to tune team aliases."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    return JSONResponse({
+        "total": len(_NEAR_REJECTS),
+        "max": _NEAR_REJECTS_MAX,
+        "items": list(reversed(_NEAR_REJECTS)),  # newest first
+    })
+
+
+@app.get("/api/diagnostics/odds-quota")
+async def api_odds_quota(request: Request):
+    """Latest Odds API quota counters (admin only)."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    return JSONResponse(dict(_ODDS_QUOTA))
+
+
+@app.get("/api/diagnostics/config-check")
+async def api_config_check(request: Request):
+    """Structured config-check report. Surfaces every important env var
+    and configuration knob with status + remediation. Admin-only —
+    the report names env vars that an attacker would want to
+    fingerprint."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    items = _config_check()
+    n_fail = sum(1 for i in items if i["status"] == "fail")
+    n_warn = sum(1 for i in items if i["status"] == "warn")
+    return JSONResponse({
+        "n_total": len(items),
+        "n_fail": n_fail,
+        "n_warn": n_warn,
+        "items": items,
+    })
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus scrape endpoint. No auth — bind behind a private network."""
+    if not _PROM_ENABLED:
+        return Response("# prometheus_client not installed\n", media_type="text/plain")
+    return Response(_prom_generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ---------------------------------------------------------------------------
+# Track-record endpoints (CLV, P&L simulation, calibration)
+# ---------------------------------------------------------------------------
+
+@app.get("/track-record", response_class=HTMLResponse)
+async def track_record_page(request: Request):
+    """Public proof-of-edge page. No auth — this is the conversion surface.
+
+    Anonymous viewers see the aggregated CLV / P&L / calibration that
+    we'd otherwise hide behind login. The signal *list* is still private.
+    """
+    return HTMLResponse(_load_template("track_record"))
+
+
+@app.get("/player-props", response_class=HTMLResponse)
+async def player_props_page(request: Request):
+    """Kalshi player-prop browser."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("player_props"))
+
+
+@app.get("/api/track-record/clv")
+async def api_track_record_clv(request: Request):
+    """Closing line value across resolved signals.
+
+    Query params: sport (optional), days (default 30, capped to 365).
+    Anonymous endpoint — this is the conversion proof. We expose
+    aggregates only (no per-signal detail).
+    """
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "30"))))
+    except ValueError:
+        days = 30
+    return JSONResponse(await asyncio.to_thread(_compute_clv, sport, days))
+
+
+@app.get("/api/track-record/pnl")
+async def api_track_record_pnl(request: Request):
+    """Replay signals at a given threshold and stake. Returns total PnL,
+    win rate, ROI, Sharpe, max drawdown, and the per-bet equity curve.
+    Anonymous — see /api/track-record/clv docstring."""
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "90"))))
+    except ValueError:
+        days = 90
+    try:
+        threshold = max(0.0, min(50.0, float(request.query_params.get("threshold", "5"))))
+    except ValueError:
+        threshold = 5.0
+    try:
+        stake = max(1.0, min(10000.0, float(request.query_params.get("stake", "100"))))
+    except ValueError:
+        stake = 100.0
+    return JSONResponse(
+        await asyncio.to_thread(_compute_pnl_simulation, sport, days, threshold, stake)
+    )
+
+
+@app.get("/api/track-record/calibration")
+async def api_track_record_calibration(request: Request):
+    """Calibration plot data: win rate per divergence bucket vs predicted.
+    Anonymous — see /api/track-record/clv docstring."""
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "180"))))
+    except ValueError:
+        days = 180
+    return JSONResponse(await asyncio.to_thread(_compute_calibration, sport, days))
+
+
+# ---------------------------------------------------------------------------
+# Public CLV leaderboard (T4.7) — opt-in social proof / virality lever
+# ---------------------------------------------------------------------------
+#
+# Users who opt in see their (display_name, n_resolved_trades, mean_clv,
+# total_pnl) on a public ranking page. Distinct from /track-record:
+#   - /track-record is the AGGREGATE proof across all signals (dashboard-
+#     level).
+#   - /leaderboard is the per-user roster — sharp bettors aspire to be
+#     on it, which surfaces them to other users and creates social proof.
+# Both pages are anonymous-readable. Opting in requires auth.
+
+LEADERBOARD_MIN_TRADES = int(os.getenv("LEADERBOARD_MIN_TRADES", "10"))
+
+
+def _compute_clv_leaderboard(days: int = 90, limit: int = 50) -> list[dict]:
+    """Aggregate per-user CLV from sports_trades for users who opted in.
+
+    Only counts closed trades with a non-null clv_pp. A user must have
+    at least LEADERBOARD_MIN_TRADES qualifying trades to appear —
+    keeps the list out of "1 lucky bet" territory.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _get_db() as conn:
+        rows = conn.execute(
+            """SELECT o.user_id, o.display_name,
+                      COUNT(t.id) AS n_trades,
+                      AVG(t.clv_pp) AS mean_clv,
+                      SUM(t.pnl) AS total_pnl,
+                      SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END) AS wins
+               FROM sports_clv_leaderboard_optin o
+               JOIN sports_trades t ON t.user_id = o.user_id
+               WHERE t.status = 'closed'
+                 AND t.clv_pp IS NOT NULL
+                 AND t.resolved_at >= ?
+               GROUP BY o.user_id, o.display_name
+               HAVING COUNT(t.id) >= ?
+               ORDER BY mean_clv DESC
+               LIMIT ?""",
+            (cutoff, LEADERBOARD_MIN_TRADES, limit),
+        ).fetchall()
+
+    out: list[dict] = []
+    for rank, r in enumerate(rows, start=1):
+        n = r["n_trades"] or 0
+        wins = r["wins"] or 0
+        out.append({
+            "rank": rank,
+            "display_name": r["display_name"],
+            "n_trades": n,
+            "mean_clv_pp": round(float(r["mean_clv"] or 0), 3),
+            "total_pnl": round(float(r["total_pnl"] or 0), 2),
+            "win_rate": round(wins / n, 4) if n > 0 else 0.0,
+        })
+    return out
+
+
+@app.get("/api/leaderboard/clv")
+async def api_leaderboard_clv(request: Request):
+    """Public CLV leaderboard — anonymous-readable. Same docstring
+    rationale as /api/track-record/clv: this is the conversion surface."""
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "90"))))
+    except ValueError:
+        days = 90
+    try:
+        limit = max(1, min(200, int(request.query_params.get("limit", "50"))))
+    except ValueError:
+        limit = 50
+    rows = await asyncio.to_thread(_compute_clv_leaderboard, days, limit)
+    return JSONResponse({
+        "days": days, "min_trades": LEADERBOARD_MIN_TRADES,
+        "n_users": len(rows), "rows": rows,
+    })
+
+
+@app.get("/api/leaderboard/optin")
+async def api_get_optin(request: Request):
+    """Return the user's current opt-in status (display_name or null)."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT display_name, joined_at FROM sports_clv_leaderboard_optin "
+            "WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+    return JSONResponse({"optin": dict(row) if row else None})
+
+
+_LEADERBOARD_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_\-. ]{1,29}$")
+
+
+@app.put("/api/leaderboard/optin")
+async def api_put_optin(request: Request):
+    """Join the public leaderboard with a display name.
+
+    Body: {"display_name": str}. Names must be 2-30 chars, start with
+    alphanumeric/underscore, and contain only [A-Za-z0-9_-. ]. Display
+    name must be unique across all opted-in users (case-insensitive)
+    to prevent impersonation.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = (body.get("display_name") or "").strip()
+    if not _LEADERBOARD_NAME_RE.match(name):
+        return JSONResponse(
+            {"error": "display_name must be 2-30 chars, alphanumeric + _-. and space"},
+            status_code=400,
+        )
+    with _get_db() as conn:
+        # Reject names already taken by another user (case-insensitive)
+        existing = conn.execute(
+            "SELECT user_id FROM sports_clv_leaderboard_optin "
+            "WHERE LOWER(display_name) = LOWER(?) AND user_id != ? LIMIT 1",
+            (name, user["id"]),
+        ).fetchone()
+        if existing:
+            return JSONResponse(
+                {"error": "display_name already taken"}, status_code=409
+            )
+        conn.execute(
+            "INSERT INTO sports_clv_leaderboard_optin (user_id, display_name) "
+            "VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name",
+            (user["id"], name),
+        )
+    return JSONResponse({"status": "ok", "display_name": name})
+
+
+@app.delete("/api/leaderboard/optin")
+async def api_delete_optin(request: Request):
+    """Leave the public leaderboard."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    with _get_db() as conn:
+        conn.execute(
+            "DELETE FROM sports_clv_leaderboard_optin WHERE user_id = ?",
+            (user["id"],),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+async def leaderboard_page(request: Request):
+    """Public CLV leaderboard page. Anonymous-readable (matches the
+    /track-record conversion strategy)."""
+    return HTMLResponse(_load_template("leaderboard"))
+
+
+@app.post("/api/backtest/replay")
+async def api_backtest_replay(request: Request):
+    """Replay a hypothetical alert rule against resolved historical signals.
+
+    Body: {"rule": {...same shape as /api/alert-rules...}, "days": int,
+    "stake": float}. Returns aggregate stats + equity curve + first 200
+    matched signals. Auth required — backtests can be a paid feature
+    later but logic is shared.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+
+    raw_rule = body.get("rule") or {}
+    if not isinstance(raw_rule, dict):
+        return JSONResponse({"error": "rule must be an object"}, status_code=400)
+
+    # Validate + coerce through the same path the CRUD endpoints use so the
+    # backtest behaves identically to a live rule.
+    fields, err = _validate_rule_body(raw_rule)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    # _signal_matches_rule reads the JSON-encoded fields directly, so build
+    # a rule dict the same shape rows have when read from sqlite (sports
+    # and market_types are JSON strings, flags are 0/1 ints).
+    rule = {
+        "sports": fields.get("sports", "[]"),
+        "market_types": fields.get("market_types", "[]"),
+        "min_divergence_pp": fields.get("min_divergence_pp", 5.0),
+        "min_volume": fields.get("min_volume"),
+        "max_time_to_event_hours": fields.get("max_time_to_event_hours"),
+        "require_sharp_consensus": fields.get("require_sharp_consensus", 1),
+        "require_not_stale": fields.get("require_not_stale", 1),
+        "require_liquidity_ok": fields.get("require_liquidity_ok", 1),
+    }
+    try:
+        days = max(1, min(365, int(body.get("days", 90))))
+    except (TypeError, ValueError):
+        days = 90
+    try:
+        stake = max(1.0, min(10000.0, float(body.get("stake", 100))))
+    except (TypeError, ValueError):
+        stake = 100.0
+
+    result = await asyncio.to_thread(_simulate_alert_rule, rule, days, stake)
+    return JSONResponse(result)
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest_page(request: Request):
+    """Backtest replay UI — tune a rule, see what would have triggered."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("backtest"))
+
+
+@app.get("/api/steam-moves")
+async def api_steam_moves(request: Request):
+    """Recent sharp-book line moves above the steam threshold.
+
+    Query params:
+      sport: optional sport key filter
+      hours: lookback in hours (default 24, max 168)
+      min_delta_pp: minimum |swing| in pp (default 2)
+      window_min: max minutes between snapshots to qualify (default 30)
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        hours = max(1, min(168, int(request.query_params.get("hours", "24"))))
+    except ValueError:
+        hours = 24
+    try:
+        min_d = max(0.5, min(50.0, float(request.query_params.get("min_delta_pp", STEAM_MIN_DELTA_PP))))
+    except ValueError:
+        min_d = STEAM_MIN_DELTA_PP
+    try:
+        window = max(1, min(240, int(request.query_params.get("window_min", STEAM_WINDOW_MINUTES))))
+    except ValueError:
+        window = STEAM_WINDOW_MINUTES
+
+    rows = await asyncio.to_thread(_detect_steam_moves, sport, hours, min_d, window)
+    return JSONResponse({
+        "sport": sport, "hours": hours,
+        "min_delta_pp": min_d, "window_min": window,
+        "n_moves": len(rows), "moves": rows,
+    })
+
+
+@app.get("/api/closing-lines")
+async def api_closing_lines(request: Request):
+    """Sharp-book closing line per (event, outcome) over the recent window."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport")
+    try:
+        days = max(1, min(60, int(request.query_params.get("days", "7"))))
+    except ValueError:
+        days = 7
+    rows = await asyncio.to_thread(_compute_closing_lines, sport, days)
+    return JSONResponse({"sport": sport, "days": days,
+                          "n_events": len(rows), "rows": rows})
+
+
+@app.get("/steam-moves", response_class=HTMLResponse)
+async def steam_moves_page(request: Request):
+    """Sharp-book line-move feed."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("steam_moves"))
+
+
+@app.get("/api/poly-fills")
+async def api_poly_fills(request: Request):
+    """Recent large Polymarket fills captured from the live WS feed.
+
+    Joins each fill to its asset's market context (event, outcome) using
+    the current comparison set. Capped at PM_FILL_BUFFER_MAX (~500)
+    rows in memory — older fills age out as new ones arrive.
+
+    Query params:
+      min_usd: USD floor (default = PM_FILL_MIN_USD env var or 1000)
+      side: BUY | SELL (optional filter)
+      limit: max rows to return (default 100, max 500)
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        min_usd = max(0.0, float(request.query_params.get("min_usd", PM_FILL_MIN_USD)))
+    except ValueError:
+        min_usd = PM_FILL_MIN_USD
+    side_filter = (request.query_params.get("side") or "").upper() or None
+    try:
+        limit = max(1, min(PM_FILL_BUFFER_MAX, int(request.query_params.get("limit", "100"))))
+    except ValueError:
+        limit = 100
+
+    # Build a token_id → (event, outcome) lookup from current comparisons
+    async with _data_lock:
+        comparisons = dashboard_data.get("comparisons") or []
+    token_lookup: dict[str, dict] = {}
+    for c in comparisons:
+        event_name = _event_name(c.get("home_team"), c.get("away_team"))
+        for oc in c.get("outcomes") or []:
+            tid = oc.get("poly_token_id")
+            if tid:
+                token_lookup[tid] = {
+                    "event": event_name,
+                    "outcome": oc.get("outcome") or oc.get("outcome_name", ""),
+                    "condition_id": c.get("condition_id"),
+                    "trade_poly_url": c.get("trade_poly_url"),
+                }
+
+    # Snapshot the ring buffer
+    with _LIVE_POLY_FILLS_LOCK:
+        all_fills = list(_LIVE_POLY_FILLS)
+
+    out: list[dict] = []
+    for f in reversed(all_fills):  # newest first
+        if f["usd"] < min_usd:
+            continue
+        if side_filter and f["side"] != side_filter:
+            continue
+        ctx = token_lookup.get(f["asset_id"])
+        row = dict(f)
+        if ctx:
+            row.update(ctx)
+        out.append(row)
+        if len(out) >= limit:
+            break
+
+    return JSONResponse({
+        "n_buffer": len(all_fills),
+        "min_usd": min_usd,
+        "limit": limit,
+        "fills": out,
+    })
+
+
+@app.get("/poly-fills", response_class=HTMLResponse)
+async def poly_fills_page(request: Request):
+    """Live Polymarket fills tape."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("poly_fills"))
+
+
+# ---------------------------------------------------------------------------
+# Kalshi player-prop surface (NBA pts/3pt/ast/reb today; extensible)
+# ---------------------------------------------------------------------------
+
+def _format_player_props(parsed_kalshi: list[dict]) -> list[dict]:
+    """Reshape parse_kalshi_markets output to a player-prop friendly schema."""
+    props: list[dict] = []
+    for ev in parsed_kalshi:
+        if ev.get("market_type") != "props":
+            continue
+        for player_name, data in (ev.get("teams") or {}).items():
+            props.append({
+                "event": ev.get("title", ""),
+                "ticker": data.get("ticker", ""),
+                "player": player_name,
+                "yes_bid": data.get("yes_bid"),
+                "yes_ask": data.get("yes_ask"),
+                "mid_price": data.get("mid_price"),
+                "implied_prob": data.get("implied_prob"),
+                "volume": data.get("volume", 0),
+            })
+    # Sort by volume desc — most-traded props are the actionable ones.
+    props.sort(key=lambda p: -(p.get("volume") or 0))
+    return props
+
+
+@app.get("/api/kalshi/player-props")
+async def api_kalshi_player_props(request: Request):
+    """Kalshi-only player-prop feed. Kept for backwards compatibility;
+    new clients should use /api/player-props/cross-venue."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    if sport not in KALSHI_SERIES:
+        return JSONResponse({"error": "unknown sport", "sport": sport}, status_code=400)
+    raw = await asyncio.to_thread(fetch_kalshi_markets, sport)
+    parsed = parse_kalshi_markets(raw)
+    return JSONResponse({
+        "sport": sport,
+        "props": _format_player_props(parsed),
+    })
+
+
+def _build_cross_venue_player_props(sport: str) -> dict:
+    """Fetch book player-props for imminent games, join against Kalshi
+    and Polymarket prop markets, return the cross-venue table.
+
+    Cost-controlled: only fetches book props for events starting in the
+    next PROP_EVENT_LOOKAHEAD_HOURS, and only N events per request to
+    cap quota burn. Cached per event at PROP_CACHE_TTL_SECONDS.
+    """
+    if sport not in PROP_MARKETS_BY_SPORT:
+        return {"sport": sport, "props": [], "error": "sport not configured for props"}
+
+    # Always-available: Kalshi side (no per-event call)
+    kalshi_raw = fetch_kalshi_markets(sport)
+    kalshi_parsed = parse_kalshi_markets(kalshi_raw)
+    kalshi_props = parse_kalshi_player_props(kalshi_parsed)
+
+    # Polymarket: use cached poly markets we already fetched in the main loop
+    global _poly_cache
+    poly_markets = parse_polymarket_events(_poly_cache.get("_global", []))
+
+    # Book side: imminent events only
+    events = fetch_imminent_events(sport)
+    # Cap to 12 events per call to bound quota burn (12 NBA games × 1 call = 12)
+    events = events[:12]
+
+    all_book_props: list[dict] = []
+    for ev in events:
+        ev_id = ev.get("id")
+        if not ev_id:
+            continue
+        raw, _remaining = fetch_player_props_for_event(sport, ev_id)
+        if not raw:
+            continue
+        all_book_props.extend(parse_player_props(raw))
+
+    rows = match_player_props_cross_venue(all_book_props, kalshi_props, poly_markets)
+    return {
+        "sport": sport,
+        "n_events_fetched": len(events),
+        "n_book_props": len(all_book_props),
+        "n_kalshi_props": len(kalshi_props),
+        "props": rows,
+        # Surface a Kalshi-only fallback so the page still works if the
+        # user has no Odds API key (props will be Kalshi-side only).
+        "kalshi_only_props": _format_player_props(kalshi_parsed),
+    }
+
+
+def _build_cross_book_arbitrage(sport: str) -> dict:
+    """Pull current h2h + spreads + totals odds for the sport, run both
+    arb scanners, return everything in one payload."""
+    if not ODDS_API_KEY:
+        return {"sport": sport, "low_holds": [], "middles": [],
+                "error": "ODDS_API_KEY not configured"}
+
+    h2h_raw, _ = fetch_odds(sport, markets="h2h")
+    spreads_raw, _ = fetch_odds(sport, markets="spreads")
+    totals_raw, _ = fetch_odds(sport, markets="totals")
+
+    h2h_events = parse_odds_events(h2h_raw, "h2h")
+    spreads_events = parse_odds_events(spreads_raw, "spreads")
+    totals_events = parse_odds_events(totals_raw, "totals")
+    all_events = h2h_events + spreads_events + totals_events
+
+    return {
+        "sport": sport,
+        "low_holds": find_low_hold_opportunities(all_events),
+        "middles": find_middle_opportunities(all_events),
+        "n_events": len(h2h_events),
+    }
+
+
+@app.get("/api/cross-book-arbitrage")
+async def api_cross_book_arbitrage(request: Request):
+    """Pure book-vs-book +EV: low-hold (negative vig) + middling opportunities.
+
+    No Polymarket / Kalshi involved — this is the table-stakes feature
+    that OddsJam-class tools have and ours didn't.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    return JSONResponse(await asyncio.to_thread(_build_cross_book_arbitrage, sport))
+
+
+# ── PWA: serve manifest and service worker from root paths so the worker
+# can control the whole origin (browsers scope sw.js to its own directory).
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    return FileResponse(str(_STATIC_DIR / "manifest.json"), media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def pwa_service_worker():
+    return FileResponse(str(_STATIC_DIR / "sw.js"), media_type="application/javascript",
+                         headers={"Service-Worker-Allowed": "/"})
+
+
+@app.get("/favicon.png")
+async def favicon():
+    return FileResponse(str(_STATIC_DIR / "favicon.png"), media_type="image/png")
+
+
+@app.get("/trades", response_class=HTMLResponse)
+async def trades_page(request: Request):
+    """Bet tracker: log placed bets, track P&L + CLV over time."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("trades"))
+
+
+@app.get("/cross-book-arbitrage", response_class=HTMLResponse)
+async def cross_book_arbitrage_page(request: Request):
+    """Cross-book arb table (low-hold + middles)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(_load_template("cross_book_arbitrage"))
+
+
+@app.get("/api/player-props/cross-venue")
+async def api_player_props_cross_venue(request: Request):
+    """Cross-venue player-prop comparison: book consensus vs Kalshi vs Polymarket.
+
+    Joins on (player, market, line). Books use continuous half-integer
+    lines; Kalshi uses discrete tiers (T(N) maps to book over N-0.5);
+    Polymarket prop questions are extracted by regex.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    sport = request.query_params.get("sport", "basketball_nba")
+    return JSONResponse(await asyncio.to_thread(_build_cross_venue_player_props, sport))
 
 
 # ---------------------------------------------------------------------------
@@ -5858,6 +11021,140 @@ async def websocket_endpoint(ws: WebSocket):
 # Dashboard HTML
 # ---------------------------------------------------------------------------
 
+@app.get("/healthz")
+async def healthz():
+    """Liveness probe. Returns 200 immediately as long as the process
+    is up — does not check downstream APIs (Odds API, Polymarket, etc.)
+    so a third-party outage doesn't fail the LB health check."""
+    return JSONResponse({
+        "status": "ok",
+        "service": "sports-dashboard",
+        "polymarket_ws_failures": _pm_ws_failure_count,
+        "odds_quota_remaining": odds_quota_remaining(),
+    })
+
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness probe. 503 if critical subsystems aren't ready yet
+    (data updater hasn't run, DB unreachable). Use this as the gate
+    for adding the pod to load balancing."""
+    issues: list[str] = []
+    # DB reachable?
+    try:
+        with _get_db() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except Exception as e:
+        issues.append(f"db: {e}")
+    # Data updater has produced at least one comparison set?
+    try:
+        async with _data_lock:
+            has_data = bool(dashboard_data.get("last_update"))
+    except Exception as e:
+        issues.append(f"data_lock: {e}")
+        has_data = False
+    if not has_data:
+        issues.append("data_updater has not run yet")
+    status = "ready" if not issues else "not_ready"
+    return JSONResponse({"status": status, "issues": issues},
+                          status_code=200 if not issues else 503)
+
+
+@app.get("/changelog", response_class=HTMLResponse)
+async def changelog_page(request: Request):
+    """What's new in Sharpe. Public — same conversion rationale as
+    /features and /track-record."""
+    return HTMLResponse(_load_template("changelog"))
+
+
+def _compute_signal_history(sport: str | None, days: int, limit: int,
+                              resolved_only: bool) -> list[dict]:
+    """Pull recent flagged signals from sports_edge_history.
+
+    Per-signal log — distinct from /track-record (aggregate). This is
+    the public receipt: "here's exactly what fired and what happened."
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    where = ["detected_at >= ?"]
+    params: list = [cutoff]
+    if sport:
+        where.append("sport = ?")
+        params.append(sport)
+    if resolved_only:
+        where.append("resolved = 1")
+        where.append("resolution IN ('correct', 'incorrect')")
+
+    sql = (
+        "SELECT sport, home_team, away_team, outcome, "
+        "       sharp_prob, poly_prob, divergence, kelly_pct, "
+        "       resolved, resolution, detected_at, commence_time, market_type "
+        "FROM sports_edge_history "
+        "WHERE " + " AND ".join(where) + " "
+        "ORDER BY detected_at DESC LIMIT ?"
+    )
+    params.append(int(limit))
+    with _get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return rows
+
+
+@app.get("/api/signal-history")
+async def api_signal_history(request: Request):
+    """Public per-signal ledger.
+
+    Query params:
+      sport: optional sport key
+      days: lookback (default 30, max 365)
+      limit: max rows (default 100, max 500)
+      resolved_only: '1' to only return signals with a final resolution
+    """
+    try:
+        days = max(1, min(365, int(request.query_params.get("days", "30"))))
+    except ValueError:
+        days = 30
+    try:
+        limit = max(1, min(500, int(request.query_params.get("limit", "100"))))
+    except ValueError:
+        limit = 100
+    sport = request.query_params.get("sport")
+    resolved_only = request.query_params.get("resolved_only") == "1"
+    rows = await asyncio.to_thread(
+        _compute_signal_history, sport, days, limit, resolved_only,
+    )
+    # Tally for the summary card
+    n_total = len(rows)
+    n_resolved = sum(1 for r in rows if r.get("resolved"))
+    n_correct = sum(1 for r in rows if r.get("resolution") == "correct")
+    win_rate = round(n_correct / n_resolved, 4) if n_resolved else 0.0
+    return JSONResponse({
+        "sport": sport,
+        "days": days,
+        "n_total": n_total,
+        "n_resolved": n_resolved,
+        "n_correct": n_correct,
+        "win_rate": win_rate,
+        "rows": rows,
+    })
+
+
+@app.get("/signal-history", response_class=HTMLResponse)
+async def signal_history_page(request: Request):
+    """Public per-signal ledger page."""
+    return HTMLResponse(_load_template("signal_history"))
+
+
+@app.get("/features", response_class=HTMLResponse)
+async def features_page(request: Request):
+    """Command-center index page that lists every dashboard surface.
+
+    Anonymous-readable: shows the same map but with login CTAs on the
+    auth-gated pages. The main /dashboard is huge and predates most of
+    these features, so this is the discoverability surface that ties
+    them together.
+    """
+    return HTMLResponse(_load_template("features"))
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     user = get_current_user(request)
@@ -5882,4509 +11179,25 @@ async def dashboard(request: Request):
     return HTMLResponse(html)
 
 
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sharpe — Sports Market Intelligence</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0c0d10;
-    --surface: #131417;
-    --surface2: #18191e;
-    --surface3: #1f2027;
-    --border: rgba(255,255,255,0.06);
-    --border-light: rgba(255,255,255,0.08);
-    --text: #ebebef;
-    --text-secondary: #8b8d98;
-    --muted: #5c5e6a;
-    --accent: #818cf8;
-    --accent-dim: rgba(99,102,241,0.10);
-    --green: #34d399;
-    --green-dim: rgba(52,211,153,0.08);
-    --green-mid: rgba(52,211,153,0.14);
-    --red: #f87171;
-    --red-dim: rgba(248,113,113,0.08);
-    --yellow: #fbbf24;
-    --yellow-dim: rgba(251,191,36,0.08);
-    --blue: #818cf8;
-    --blue-dim: rgba(99,102,241,0.08);
-    --purple: #a78bfa;
-    --purple-dim: rgba(167,139,250,0.08);
-    --orange: #fb923c;
-    --orange-dim: rgba(251,146,60,0.08);
-    --gold: #fbbf24;
-    --gold-dim: rgba(251,191,36,0.08);
-    --radius: 12px;
-    --radius-sm: 8px;
-    --radius-xs: 6px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.2);
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.15);
-    --positive: #34d399;
-    --negative: #f87171;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    overflow-x: hidden;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    font-weight: 400;
-  }
-  a { color: var(--text); text-decoration: none; }
-  a:hover { opacity: 0.6; }
-
-  /* ---- Scrollbar ---- */
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border-light); }
-
-  /* ---- Nav ---- */
-  .nav {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 32px; height: 52px;
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; z-index: 100;
-  }
-  .nav-left { display: flex; align-items: center; gap: 16px; }
-  .nav-logo {
-    width: 28px; height: 28px;
-    background: var(--text); color: var(--surface);
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 600; font-size: 14px;
-  }
-  .nav-brand { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
-  .nav-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-  .status-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--positive); animation: pulse 2s infinite;
-  }
-  .status-dot.error { background: var(--negative); }
-  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-  .nav-right { display: flex; align-items: center; gap: 8px; }
-  .nav-link {
-    font-size: 12px; color: var(--text-secondary); cursor: pointer;
-    padding: 6px 10px; transition: opacity .15s;
-    background: none; border: none; font-family: inherit; font-weight: 400;
-  }
-  .nav-link:hover { opacity: 0.6; }
-  .nav-link.admin { display: none; }
-  .btn-upgrade {
-    background: var(--text); color: var(--surface);
-    font-weight: 500; font-size: 11px; letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding: 6px 14px; border: none;
-    cursor: pointer; display: none; transition: opacity .15s;
-  }
-  .btn-upgrade:hover { opacity: 0.8; }
-
-  /* ---- Main Tabs ---- */
-  .main-tabs {
-    display: flex; gap: 0; background: var(--surface);
-    border-bottom: 1px solid var(--border); padding: 0 32px;
-  }
-  .main-tab {
-    padding: 12px 20px; font-size: 12px; font-weight: 500;
-    color: var(--muted); cursor: pointer; border: none; background: none;
-    border-bottom: 1px solid transparent; transition: all .15s;
-    font-family: inherit; text-transform: uppercase; letter-spacing: 0.06em;
-  }
-  .main-tab:hover { color: var(--text-secondary); }
-  .main-tab.active { color: var(--text); border-bottom-color: var(--text); }
-
-  /* ---- Sport Tabs ---- */
-  .sport-tabs {
-    background: var(--surface); padding: 0;
-  }
-  .category-row {
-    display: flex; gap: 0; padding: 0 32px;
-    border-bottom: 1px solid var(--border);
-  }
-  .category-btn {
-    padding: 10px 20px; font-size: 12px; font-weight: 500;
-    background: none; border: none; border-bottom: 1px solid transparent;
-    color: var(--muted); cursor: pointer; transition: all .15s;
-    text-transform: uppercase; letter-spacing: 0.06em;
-  }
-  .category-btn:hover { color: var(--text-secondary); }
-  .category-btn.active { color: var(--text); border-bottom-color: var(--text); }
-  .subcategory-row {
-    display: flex; gap: 0; padding: 0 32px;
-    overflow-x: auto; flex-wrap: nowrap;
-    border-bottom: 1px solid var(--border);
-  }
-  .sport-tab {
-    padding: 8px 16px; font-size: 12px; font-weight: 400;
-    background: none; border: none; border-bottom: 1px solid transparent;
-    color: var(--muted); cursor: pointer; white-space: nowrap;
-    transition: all .15s;
-  }
-  .sport-tab:hover { color: var(--text-secondary); }
-  .sport-tab.active { color: var(--text); border-bottom-color: var(--text); }
-
-  /* ---- Container ---- */
-  .container { max-width: 1100px; margin: 0 auto; padding: 32px 32px 80px; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
-
-  /* ---- Hero Banner ---- */
-  .hero {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    padding: 32px; margin-bottom: 32px; position: relative;
-  }
-  .hero-dismiss {
-    position: absolute; top: 12px; right: 16px;
-    background: none; border: none; color: var(--muted); cursor: pointer;
-    font-size: 18px; line-height: 1;
-  }
-  .hero-dismiss:hover { color: var(--text); }
-  .hero h2 { font-size: 18px; font-weight: 500; margin-bottom: 20px; letter-spacing: -0.01em; }
-  .hero-steps { display: flex; gap: 32px; flex-wrap: wrap; }
-  .hero-step {
-    flex: 1; min-width: 200px; display: flex; gap: 12px; align-items: flex-start;
-  }
-  .hero-step-num {
-    width: 24px; height: 24px;
-    background: var(--text); color: var(--surface);
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 500; font-size: 12px; flex-shrink: 0;
-  }
-  .hero-step-text { font-size: 13px; color: var(--text-secondary); line-height: 1.6; font-weight: 300; }
-  .hero-step-text strong { color: var(--text); font-weight: 500; }
-
-  /* ---- Top Opportunities ---- */
-  .top-opps { display: flex; gap: 1px; margin-bottom: 32px; flex-wrap: wrap; background: var(--border); }
-  .top-opp {
-    flex: 1; min-width: 220px; padding: 20px;
-    background: var(--surface); cursor: pointer; transition: opacity .2s;
-  }
-  .top-opp:hover { opacity: 0.7; }
-  .top-opp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .top-opp-edge { font-size: 20px; font-weight: 300; color: var(--positive); }
-  .top-opp-team { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
-  .top-opp-sub { font-size: 11px; color: var(--muted); font-weight: 300; }
-
-  /* ---- Stats Row ---- */
-  .stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; margin-bottom: 32px; background: var(--border); }
-  .stat-card {
-    background: var(--surface); padding: 20px; text-align: left;
-  }
-  .stat-value { font-size: 24px; font-weight: 300; letter-spacing: -0.02em; }
-  .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 400; }
-  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 300; }
-
-  /* ---- Toolbar ---- */
-  .toolbar {
-    display: flex; align-items: center; gap: 12px;
-    margin-bottom: 24px; flex-wrap: wrap;
-  }
-  .toolbar input[type="text"] {
-    flex: 1; min-width: 200px; padding: 8px 0;
-    background: transparent; border: none; border-bottom: 1px solid var(--border);
-    color: var(--text); font-size: 13px; outline: none; font-family: inherit; font-weight: 300;
-  }
-  .toolbar input[type="text"]:focus { border-bottom-color: var(--text); }
-  .toolbar input[type="text"]::placeholder { color: var(--muted); }
-  .toolbar select {
-    padding: 8px 0; background: transparent;
-    border: none; border-bottom: 1px solid var(--border);
-    color: var(--text); font-size: 13px; font-family: inherit; cursor: pointer; font-weight: 400;
-  }
-  .toolbar .toggle-wrap {
-    display: flex; align-items: center; gap: 6px; font-size: 12px;
-    color: var(--text-secondary); cursor: pointer; user-select: none; font-weight: 400;
-  }
-  .toolbar .toggle-wrap input { accent-color: var(--text); }
-  .btn-sm {
-    padding: 6px 14px; font-size: 12px; font-weight: 400;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--text-secondary); cursor: pointer; font-family: inherit;
-    transition: all .15s; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .btn-sm:hover { border-color: var(--text); color: var(--text); }
-
-  /* ---- Event Cards ---- */
-  .cards-grid { display: flex; flex-direction: column; gap: 12px; }
-  .card {
-    background: var(--surface); overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-sm);
-    transition: border-color .15s, box-shadow .15s;
-    animation: fadeIn .3s ease both;
-  }
-  .card:hover { border-color: var(--border-light); box-shadow: var(--shadow); }
-  .card:nth-child(1) { animation-delay: 0s; }
-  .card:nth-child(2) { animation-delay: .03s; }
-  .card:nth-child(3) { animation-delay: .06s; }
-  .card:nth-child(4) { animation-delay: .09s; }
-  .card:nth-child(5) { animation-delay: .12s; }
-  @keyframes fadeIn { from { opacity:0; transform: translateY(2px); } to { opacity:1; transform: translateY(0); } }
-
-  .card-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 22px; cursor: pointer; gap: 12px;
-    border-radius: var(--radius) var(--radius) 0 0;
-  }
-  .card-header:hover { background: var(--surface2); }
-  .card-teams { font-size: 14px; font-weight: 500; flex: 1; letter-spacing: -0.01em; }
-  .card-teams span.vs { color: var(--muted); font-weight: 300; margin: 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .card-time { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 300; }
-  .card-meta { display: flex; align-items: center; gap: 10px; }
-  .signal-badge {
-    font-size: 10px; font-weight: 600; padding: 4px 10px;
-    text-transform: uppercase; letter-spacing: 0.06em;
-    border-radius: 999px;
-  }
-  .signal-badge.buy { background: var(--green-mid); color: var(--positive); }
-  .signal-badge.sell { background: var(--red-dim); color: var(--negative); }
-  .signal-badge.neutral { background: var(--surface3); color: var(--muted); }
-  .confidence-stars { display: inline-flex; gap: 1px; font-size: 12px; }
-  .star-filled { color: var(--text); }
-  .star-empty { color: var(--border); }
-
-  .card-action-hint {
-    margin: 0 22px 14px;
-    padding: 10px 14px;
-    font-size: 12px; color: var(--positive); font-weight: 500;
-    background: var(--green-dim);
-    border: 1px solid rgba(52,211,153,0.2);
-    border-radius: var(--radius-sm);
-  }
-
-  .outcome-chips {
-    display: flex; gap: 8px; padding: 0 22px 14px; flex-wrap: wrap;
-  }
-  .outcome-chip {
-    padding: 5px 12px; font-size: 11px; font-weight: 500;
-    background: var(--surface2); border: 1px solid var(--border);
-    text-transform: uppercase; letter-spacing: 0.02em;
-    border-radius: 999px;
-    display: inline-flex; align-items: center; gap: 6px;
-  }
-  .outcome-chip.pos { background: var(--green-dim); border-color: rgba(52,211,153,0.25); color: var(--positive); }
-  .outcome-chip.neg { background: var(--red-dim); border-color: rgba(220,38,38,0.25); color: var(--negative); }
-
-  /* Card Detail (expandable) */
-  .card-detail { display: none; padding: 6px 22px 24px; }
-  .card-detail.open { display: block; }
-
-  .prob-compare { margin-bottom: 20px; }
-  .prob-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
-  .prob-label { width: 120px; font-weight: 400; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .prob-bars { flex: 1; display: flex; gap: 3px; align-items: center; }
-  .prob-bar { height: 4px; transition: width .3s; }
-  .prob-bar.book { background: var(--text); }
-  .prob-bar.poly { background: var(--muted); }
-  .prob-bar.kalshi { background: var(--text-secondary); }
-  .prob-legend { display: flex; gap: 16px; font-size: 10px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .prob-legend span::before { content: ''; display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
-  .prob-legend .leg-book::before { background: var(--text); }
-  .prob-legend .leg-poly::before { background: var(--muted); }
-  .prob-legend .leg-kalshi::before { background: var(--text-secondary); }
-  .btn-action.kalshi-btn { background: var(--text); color: var(--surface); }
-  .btn-action.kalshi-btn:hover { opacity: 0.8; }
-
-  /* Market Intel Grid */
-  .intel-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 1px; margin-bottom: 20px; background: var(--border);
-  }
-  .intel-item {
-    background: var(--surface); padding: 12px 14px; font-size: 12px;
-  }
-  .intel-item-label {
-    color: var(--muted); font-size: 10px; margin-bottom: 4px;
-    display: flex; align-items: center; gap: 4px;
-    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 400;
-  }
-  .intel-item-value { font-weight: 500; font-size: 14px; }
-  .info-i {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 14px; height: 14px;
-    background: var(--surface2); color: var(--muted);
-    font-size: 9px; font-weight: 500; cursor: help;
-    position: relative;
-  }
-  .info-i .tooltip {
-    display: none; position: absolute; bottom: 120%; left: 50%;
-    transform: translateX(-50%); background: var(--text);
-    color: var(--surface); border: none;
-    padding: 8px 12px; font-size: 11px; font-weight: 300;
-    width: 220px; line-height: 1.5;
-    z-index: 50; white-space: normal;
-  }
-  .info-i:hover .tooltip { display: block; }
-
-  /* Outcome Table */
-  .outcome-table-wrap { overflow-x: auto; margin-bottom: 20px; }
-  .outcome-table {
-    width: 100%; border-collapse: collapse; font-size: 12px;
-  }
-  .outcome-table th {
-    text-align: left; padding: 8px 10px; font-weight: 500;
-    color: var(--muted); font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.06em; border-bottom: 1px solid var(--border);
-  }
-  .outcome-table td {
-    padding: 10px 10px; border-bottom: 1px solid var(--border); font-weight: 300;
-  }
-  .outcome-table tr:last-child td { border-bottom: none; }
-
-  /* Head-to-head section */
-  .h2h-section {
-    margin-bottom: 20px; padding: 18px 20px;
-    background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
-    border: 1px solid var(--border-light);
-    border-radius: var(--radius);
-  }
-  .h2h-header {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 10px; color: var(--text-secondary); text-transform: uppercase;
-    letter-spacing: 0.08em; margin-bottom: 14px; font-weight: 600;
-  }
-  .h2h-header::before {
-    content: ''; width: 4px; height: 4px; border-radius: 50%;
-    background: var(--accent); display: inline-block;
-  }
-  .h2h-record {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; margin-bottom: 12px;
-  }
-  .h2h-team { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
-  .h2h-team.away { text-align: right; }
-  .h2h-score {
-    font-size: 26px; font-weight: 600; color: var(--text);
-    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
-    padding: 6px 16px; background: var(--surface3);
-    border-radius: var(--radius-sm);
-    display: inline-flex; align-items: baseline;
-  }
-  .h2h-dash { font-size: 18px; color: var(--muted); margin: 0 6px; }
-  .h2h-meta {
-    display: flex; gap: 16px; font-size: 11px; color: var(--muted);
-    flex-wrap: wrap; padding-top: 4px;
-  }
-  .h2h-meta-item { display: flex; align-items: center; gap: 5px; }
-  .h2h-form-row {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; margin-top: 14px; padding-top: 14px;
-    border-top: 1px solid var(--border);
-  }
-  .h2h-form-label {
-    font-size: 10px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.06em;
-    margin-bottom: 6px; font-weight: 500;
-  }
-  .h2h-form-pills { display: flex; gap: 4px; }
-  .h2h-form-pill {
-    width: 20px; height: 20px; display: inline-flex;
-    align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 700;
-    background: var(--surface2); color: var(--muted);
-    border-radius: 5px;
-  }
-  .h2h-form-pill.W { background: var(--green); color: var(--bg); }
-  .h2h-form-pill.L { background: var(--red); color: var(--bg); }
-  .h2h-form-pill.D { background: var(--text-secondary); color: var(--surface); }
-  .h2h-empty { font-size: 11px; color: var(--muted); font-style: italic; padding: 6px 0; }
-  .h2h-toggle-recent {
-    background: none; border: none; color: var(--text-secondary); cursor: pointer;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-    padding: 8px 0 0; margin: 0; font-family: inherit; font-weight: 500;
-  }
-  .h2h-toggle-recent:hover { color: var(--text); }
-  .h2h-recent-list { display: none; margin-top: 10px; padding: 8px 12px; background: var(--surface); border-radius: var(--radius-sm); }
-  .h2h-recent-list.open { display: block; }
-  .h2h-recent-item {
-    display: flex; justify-content: space-between; align-items: center; gap: 12px;
-    padding: 8px 0; font-size: 11px; color: var(--text-secondary);
-    border-bottom: 1px solid var(--border);
-  }
-  .h2h-recent-item:last-child { border-bottom: none; }
-  .h2h-recent-date { color: var(--muted); white-space: nowrap; min-width: 80px; }
-  .h2h-recent-winner { color: var(--text); font-weight: 500; }
-
-  /* Team strength bars + chemistry */
-  .team-stats-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
-  }
-  .team-stats-card {
-    background: var(--surface); padding: 12px 14px;
-    border-radius: var(--radius-sm); border: 1px solid var(--border);
-  }
-  .team-stats-name {
-    font-size: 12px; font-weight: 600; color: var(--text);
-    margin-bottom: 8px; letter-spacing: -0.01em;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .team-stats-record {
-    font-size: 18px; font-weight: 600; color: var(--text);
-    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
-    display: flex; align-items: baseline; gap: 8px;
-  }
-  .team-stats-record .pct { font-size: 11px; color: var(--muted); font-weight: 400; }
-  .team-stats-rank {
-    font-size: 10px; color: var(--text-secondary); margin-top: 4px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .team-stats-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-  .stat-bar-row { display: flex; align-items: center; gap: 8px; font-size: 10px; }
-  .stat-bar-label { color: var(--muted); width: 56px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; }
-  .stat-bar-track {
-    flex: 1; height: 4px; background: var(--surface3);
-    border-radius: 2px; overflow: hidden;
-  }
-  .stat-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
-  .stat-bar-fill.good { background: var(--green); }
-  .stat-bar-fill.mid { background: var(--accent); }
-  .stat-bar-fill.bad { background: var(--red); }
-  .stat-bar-value {
-    font-variant-numeric: tabular-nums; color: var(--text);
-    width: 36px; text-align: right; font-weight: 500;
-  }
-
-  /* Chemistry indicator */
-  .chemistry-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 12px; background: var(--surface);
-    border-radius: var(--radius-sm); margin-top: 8px;
-    border: 1px solid var(--border);
-  }
-  .chemistry-label {
-    font-size: 10px; color: var(--muted); text-transform: uppercase;
-    letter-spacing: 0.06em; flex-shrink: 0; font-weight: 500;
-  }
-  .chemistry-meter {
-    flex: 1; height: 6px; background: var(--surface3);
-    border-radius: 3px; overflow: hidden; position: relative;
-  }
-  .chemistry-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--red) 0%, var(--yellow) 50%, var(--green) 100%);
-    border-radius: 3px;
-  }
-  .chemistry-value { font-size: 11px; font-weight: 600; color: var(--text); min-width: 32px; text-align: right; }
-
-  /* Player cards */
-  .players-section {
-    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
-  }
-  .players-section-title {
-    font-size: 10px; color: var(--text-secondary);
-    text-transform: uppercase; letter-spacing: 0.08em;
-    margin-bottom: 10px; font-weight: 600;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .players-section-title::before {
-    content: ''; width: 4px; height: 4px; border-radius: 50%;
-    background: var(--accent); display: inline-block;
-  }
-  .players-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-  }
-  .player-team-block { display: flex; flex-direction: column; gap: 8px; }
-  .player-team-label {
-    font-size: 10px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500;
-  }
-  .player-card {
-    background: var(--surface); padding: 10px 12px;
-    border-radius: var(--radius-sm); border: 1px solid var(--border);
-    transition: border-color .15s;
-  }
-  .player-card:hover { border-color: var(--border-light); }
-  .player-name {
-    font-size: 12px; font-weight: 600; color: var(--text);
-    letter-spacing: -0.01em; margin-bottom: 2px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .player-pos {
-    font-size: 10px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.04em;
-    margin-bottom: 6px;
-  }
-  .player-stats {
-    display: flex; gap: 8px; font-size: 11px; color: var(--text-secondary);
-    font-variant-numeric: tabular-nums; flex-wrap: wrap;
-  }
-  .player-stat strong { color: var(--text); font-weight: 600; }
-  .player-tags {
-    display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
-  }
-  .player-tag {
-    font-size: 9px; padding: 2px 7px; border-radius: 999px;
-    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
-  }
-  .player-tag.strength { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
-  .player-tag.weakness { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
-  @media (max-width: 600px) {
-    .team-stats-grid, .players-grid { grid-template-columns: 1fr; }
-  }
-
-  /* ---- Top Polymarket Traders ---- */
-  .top-traders-section {
-    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
-  }
-  .top-traders-title {
-    font-size: 10px; color: var(--text-secondary);
-    text-transform: uppercase; letter-spacing: 0.08em;
-    margin-bottom: 10px; font-weight: 600;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .top-traders-title::before {
-    content: ''; width: 4px; height: 4px; border-radius: 50%;
-    background: #f5b942; display: inline-block;
-  }
-  .top-traders-list {
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  .top-trader-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    transition: border-color .15s;
-  }
-  .top-trader-row:hover { border-color: var(--border-light); }
-  .top-trader-rank {
-    font-size: 10px; font-weight: 700; color: var(--muted);
-    background: rgba(0,0,0,0.04); width: 22px; height: 22px;
-    border-radius: 999px; display: flex; align-items: center;
-    justify-content: center; flex-shrink: 0;
-    font-variant-numeric: tabular-nums;
-  }
-  .top-trader-name {
-    font-size: 12px; font-weight: 600; color: var(--text);
-    letter-spacing: -0.01em; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .top-trader-vol {
-    font-size: 10px; color: var(--muted);
-    font-variant-numeric: tabular-nums; flex-shrink: 0;
-  }
-  .top-trader-bet {
-    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-  }
-  .top-trader-side {
-    font-size: 9px; padding: 2px 7px; border-radius: 999px;
-    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
-  }
-  .top-trader-side.long { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
-  .top-trader-side.short { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
-  .top-trader-outcome {
-    font-size: 11px; font-weight: 600; color: var(--text);
-    max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .top-trader-usd {
-    font-size: 11px; font-weight: 600; color: var(--text);
-    font-variant-numeric: tabular-nums; min-width: 50px; text-align: right;
-  }
-  .top-trader-badge {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-size: 9px; padding: 2px 8px; border-radius: 999px;
-    background: rgba(245,185,66,0.12); color: #c08214;
-    border: 1px solid rgba(245,185,66,0.35);
-    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
-    margin-left: 8px;
-  }
-  .top-trader-badge::before {
-    content: '★'; font-size: 10px;
-  }
-
-  /* Bookmaker Breakdown */
-  .bookie-toggle {
-    font-size: 11px; color: var(--muted); cursor: pointer;
-    background: none; border: none; font-family: inherit;
-    margin-bottom: 8px; display: flex; align-items: center; gap: 4px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .bookie-toggle:hover { color: var(--text-secondary); }
-  .bookie-section { display: none; margin-bottom: 12px; }
-  .bookie-section.open { display: block; }
-  .bookie-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .bookie-table th {
-    text-align: left; padding: 6px 8px; font-weight: 500;
-    color: var(--muted); font-size: 10px; border-bottom: 1px solid var(--border);
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .bookie-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 300; }
-
-  /* Card Actions */
-  .card-actions {
-    display: flex; gap: 8px; align-items: center; padding-top: 16px;
-    border-top: 1px solid var(--border); flex-wrap: wrap;
-  }
-  .btn-action {
-    padding: 7px 14px; font-size: 11px; font-weight: 500;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--text-secondary); cursor: pointer; font-family: inherit;
-    transition: all .15s; display: inline-flex; align-items: center; gap: 6px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .btn-action:hover { border-color: var(--text); color: var(--text); }
-  .btn-action.primary {
-    background: var(--text); border-color: var(--text); color: var(--surface);
-  }
-  .btn-action.primary:hover { opacity: 0.8; }
-  .btn-watchlist.active { color: var(--text); border-color: var(--text); }
-
-  /* ---- Free Tier Gate ---- */
-  .gate-overlay { position: relative; }
-  .gate-blur { filter: blur(6px); pointer-events: none; user-select: none; opacity: 0.5; }
-  .gate-cta {
-    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    z-index: 10; background: rgba(250,250,250,0.85);
-  }
-  .gate-cta h3 { font-size: 16px; font-weight: 500; margin-bottom: 16px; }
-  .gate-cta .btn-upgrade-big {
-    background: var(--text); color: var(--surface);
-    font-weight: 500; font-size: 12px; letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding: 10px 28px; border: none; cursor: pointer;
-  }
-  .gate-cta .btn-upgrade-big:hover { opacity: 0.8; }
-
-  /* ---- Profit Tracker ---- */
-  .profit-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin-bottom: 32px; background: var(--border); }
-  .profit-card { background: var(--surface); padding: 20px; text-align: left; }
-  .profit-value { font-size: 22px; font-weight: 300; }
-  .profit-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .trades-table-wrap { overflow-x: auto; }
-  .trades-table { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--surface); }
-  .trades-table th { text-align: left; padding: 10px 12px; font-weight: 500; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--surface2); }
-  .trades-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 300; }
-  .trades-table tr:last-child td { border-bottom: none; }
-
-  /* ---- Watchlist ---- */
-  .watchlist-list { display: flex; flex-direction: column; gap: 1px; background: var(--border); }
-  .watchlist-item {
-    display: flex; justify-content: space-between; align-items: center;
-    background: var(--surface); padding: 16px 20px;
-  }
-  .watchlist-item-info { display: flex; flex-direction: column; gap: 4px; }
-  .watchlist-item-name { font-weight: 500; font-size: 14px; }
-  .watchlist-item-edge { font-size: 12px; font-weight: 300; }
-  .watchlist-remove {
-    background: none; border: 1px solid var(--border);
-    color: var(--negative); font-size: 11px; padding: 6px 12px;
-    cursor: pointer; font-family: inherit; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .watchlist-remove:hover { border-color: var(--negative); }
-  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 13px; font-weight: 300; }
-
-  /* ---- History ---- */
-  .history-table-wrap { overflow-x: auto; }
-  .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .history-table th {
-    text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
-    border-bottom: 1px solid var(--border);
-  }
-  .history-table td {
-    padding: 10px 12px; border-bottom: 1px solid var(--border);
-    font-weight: 300;
-  }
-  .history-table tr:hover td { background: var(--bg); }
-  .history-res { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
-  .history-res.yes { color: var(--positive); }
-  .history-res.no { color: var(--negative); }
-
-  /* ---- Modals ---- */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0; z-index: 200;
-    background: rgba(250,250,250,0.9);
-    align-items: center; justify-content: center;
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 32px; max-width: 560px; width: 90%; max-height: 85vh; overflow-y: auto;
-  }
-  .modal h2 { font-size: 18px; font-weight: 500; margin-bottom: 20px; letter-spacing: -0.01em; }
-  .modal-close {
-    float: right; background: none; border: none;
-    color: var(--muted); font-size: 18px; cursor: pointer;
-  }
-  .modal-close:hover { color: var(--text); }
-
-  /* Customize Modal */
-  .customize-section { margin-bottom: 24px; }
-  .customize-section h3 { font-size: 11px; font-weight: 500; margin-bottom: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .customize-check {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
-    font-size: 13px; color: var(--text-secondary); cursor: pointer; font-weight: 300;
-  }
-  .customize-check input { accent-color: var(--text); }
-
-  /* Upgrade Modal */
-  .upgrade-content { text-align: center; }
-  .upgrade-price { font-size: 32px; font-weight: 300; color: var(--text); margin: 20px 0; }
-  .upgrade-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
-  .upgrade-features { text-align: left; margin: 24px 0; }
-  .upgrade-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 300; }
-  .upgrade-row:last-child { border-bottom: none; }
-  .upgrade-check { color: var(--positive); }
-  .upgrade-cross { color: var(--muted); }
-
-  /* Glossary */
-  .glossary-item { margin-bottom: 16px; }
-  .glossary-item dt { font-weight: 500; font-size: 13px; color: var(--text); margin-bottom: 4px; }
-  .glossary-item dd { font-size: 13px; color: var(--text-secondary); line-height: 1.6; font-weight: 300; }
-
-  /* Trade Modal Form */
-  .trade-form { display: flex; flex-direction: column; gap: 16px; }
-  .trade-form label { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .trade-form input, .trade-form select {
-    width: 100%; padding: 8px 0; background: transparent;
-    border: none; border-bottom: 1px solid var(--border);
-    color: var(--text); font-size: 13px; font-family: inherit; font-weight: 300;
-  }
-  .trade-form input:focus { border-bottom-color: var(--text); outline: none; }
-  .btn-primary {
-    padding: 10px 20px; background: var(--text); color: var(--surface);
-    font-weight: 500; font-size: 12px; border: none; cursor: pointer;
-    font-family: inherit; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .btn-primary:hover { opacity: 0.8; }
-
-  /* ---- Trend Indicators ---- */
-  .trend-arrow { font-size: 11px; font-weight: 600; margin-left: 4px; }
-  .trend-arrow.widening { color: var(--green); }
-  .trend-arrow.narrowing { color: var(--red); }
-  .trend-arrow.stable { color: var(--muted); }
-  .trend-arrow.new { color: var(--blue); }
-  .trend-change { font-size: 10px; color: var(--muted); margin-left: 4px; }
-  .sparkline { display: inline-block; vertical-align: middle; margin-left: 6px; }
-  .sparkline canvas { display: block; }
-
-  /* ---- Market Type Badge ---- */
-  .market-type-badge {
-    font-size: 9px; font-weight: 600; padding: 2px 6px;
-    text-transform: uppercase; letter-spacing: 0.06em;
-    background: var(--surface3); color: var(--muted);
-    margin-left: 8px;
-  }
-  .market-type-badge.spreads { background: var(--purple-dim); color: var(--purple); }
-  .market-type-badge.totals { background: var(--orange-dim); color: var(--orange); }
-  .market-type-badge.futures { background: var(--gold-dim); color: var(--gold); }
-
-  /* ---- Cross-Sport Ticker ---- */
-  .cross-sport-ticker {
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 16px 20px; margin-bottom: 24px; overflow: hidden;
-  }
-  .cross-sport-ticker h3 {
-    font-size: 11px; font-weight: 500; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
-  }
-  .ticker-items { display: flex; gap: 1px; overflow-x: auto; background: var(--border); }
-  .ticker-item {
-    flex-shrink: 0; min-width: 200px; padding: 12px 16px;
-    background: var(--surface); cursor: pointer;
-  }
-  .ticker-item:hover { background: var(--surface2); }
-  .ticker-sport { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .ticker-teams { font-size: 12px; font-weight: 500; margin: 4px 0; }
-  .ticker-edge { font-size: 14px; font-weight: 300; color: var(--green); }
-
-  /* ---- Edge Stats Tab ---- */
-  .sharpe-chart-wrap {
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 24px; margin-bottom: 24px;
-  }
-  .sharpe-chart-wrap h3 {
-    font-size: 14px; font-weight: 500; margin-bottom: 16px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .sharpe-big { font-size: 36px; font-weight: 300; margin-bottom: 4px; }
-  .sharpe-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .perf-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 24px; background: var(--border); }
-  .perf-card { background: var(--surface); padding: 20px; text-align: left; }
-  .perf-value { font-size: 22px; font-weight: 300; }
-  .perf-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-
-  /* ---- Alerts Tab ---- */
-  .alert-form { max-width: 500px; }
-  .alert-form .field { margin-bottom: 20px; }
-  .alert-form label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
-  .alert-form input[type="text"], .alert-form input[type="number"] {
-    width: 100%; padding: 8px 0; background: transparent;
-    border: none; border-bottom: 1px solid var(--border);
-    color: var(--text); font-size: 13px; font-family: inherit; font-weight: 300;
-  }
-  .alert-form input:focus { border-bottom-color: var(--text); outline: none; }
-  .alert-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin-bottom: 16px; }
-
-  /* ---- Flag Match ---- */
-  .btn-flag {
-    padding: 5px 10px; font-size: 10px; font-weight: 400;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer; font-family: inherit;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .btn-flag:hover { border-color: var(--yellow); color: var(--yellow); }
-
-  /* ---- Depth Indicator ---- */
-  .depth-badge {
-    font-size: 10px; padding: 2px 6px;
-    background: var(--surface3); color: var(--text-secondary);
-  }
-  .depth-badge.deep { background: var(--green-dim); color: var(--green); }
-  .depth-badge.thin { background: var(--yellow-dim); color: var(--yellow); }
-
-  /* ---- Responsive (enhanced) ---- */
-  @media (max-width: 768px) {
-    .nav { padding: 0 12px; height: 48px; }
-    .nav-brand { font-size: 14px; }
-    .nav-status { display: none; }
-    .container { padding: 16px 12px 60px; }
-    .stats-row { grid-template-columns: repeat(2, 1fr); }
-    .stats-row .stat-card:last-child { grid-column: span 2; }
-    .profit-summary { grid-template-columns: repeat(2, 1fr); }
-    .profit-summary .profit-card:last-child { grid-column: span 2; }
-    .hero-steps { flex-direction: column; }
-    .hero { padding: 20px; margin-bottom: 20px; }
-    .top-opps { flex-direction: column; }
-    .intel-grid { grid-template-columns: repeat(2, 1fr); }
-    .toolbar { flex-direction: column; gap: 8px; }
-    .toolbar input[type="text"] { width: 100%; }
-    .card-header { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
-    .card-teams { font-size: 13px; }
-    .card-detail { padding: 0 14px 20px; }
-    .card-actions { flex-wrap: wrap; gap: 6px; }
-    .btn-action { padding: 6px 10px; font-size: 10px; }
-    .main-tabs { padding: 0 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .main-tab { padding: 10px 14px; font-size: 11px; white-space: nowrap; }
-    .category-row { padding: 0 12px; }
-    .subcategory-row { padding: 0 12px; }
-    .stat-value { font-size: 20px; }
-    .stat-card { padding: 14px; }
-    .cross-sport-ticker { padding: 12px 14px; margin-bottom: 16px; }
-    .perf-grid { grid-template-columns: repeat(2, 1fr); }
-    .sharpe-chart-wrap { padding: 16px; }
-    .outcome-table { font-size: 11px; }
-    .outcome-table th, .outcome-table td { padding: 6px 6px; }
-    .prob-row { flex-wrap: wrap; }
-    .prob-label { width: 80px; font-size: 11px; }
-    .modal { padding: 20px; max-width: 95%; }
-  }
-  @media (max-width: 480px) {
-    .nav-right { gap: 4px; }
-    .nav-link { padding: 4px 6px; font-size: 11px; }
-    .btn-upgrade { padding: 4px 10px; font-size: 10px; }
-    .stats-row { grid-template-columns: 1fr; }
-    .stats-row .stat-card:last-child { grid-column: span 1; }
-    .profit-summary { grid-template-columns: 1fr; }
-    .profit-summary .profit-card:last-child { grid-column: span 1; }
-    .intel-grid { grid-template-columns: 1fr; }
-    .main-tabs { overflow-x: auto; }
-    .nav-right .nav-link span.hide-mobile { display: none; }
-    .card-meta { flex-wrap: wrap; gap: 4px; }
-    .signal-badge { font-size: 9px; padding: 2px 6px; }
-    .outcome-chips { gap: 4px; }
-    .outcome-chip { font-size: 10px; padding: 2px 6px; }
-    .ticker-item { min-width: 160px; padding: 10px 12px; }
-    .perf-grid { grid-template-columns: 1fr; }
-    .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
-  }
-  /* Quota-exhausted banner — only shown when /api/health flags
-     degraded-quota-exhausted, otherwise stays display:none. Sits above the
-     nav so the bookmaker-odds gap is acknowledged before users see empty
-     edge cards. Polymarket + Kalshi cross-venue signals continue working. */
-  .quota-banner {
-    display: none;
-    background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
-    border-bottom: 1px solid rgba(251,191,36,0.4);
-    color: #fbbf24;
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    text-align: center;
-    line-height: 1.4;
-  }
-  .quota-banner b { color: #fde68a; }
-  .quota-banner .quota-banner-detail {
-    color: rgba(253,230,138,0.7);
-    font-size: 12px;
-    font-weight: 400;
-    margin-top: 2px;
-  }
-</style>
-</head>
-<body>
-
-<!-- ===== QUOTA BANNER (server-rendered: shown only when breaker is open) ===== -->
-<div class="quota-banner" id="quotaBanner" style="display:__QUOTA_BANNER_DISPLAY__;">
-  <b>Bookmaker odds temporarily unavailable</b> — the-odds-api monthly quota exhausted; falling back to Polymarket↔Kalshi cross-venue signals below.
-  <div class="quota-banner-detail">Auto-probes again in ~__QUOTA_BANNER_HOURS__h, or restored instantly when ODDS_API_KEY is rotated/upgraded.</div>
-</div>
-
-<!-- ===== NAV ===== -->
-<nav class="nav">
-  <div class="nav-left">
-    <div class="nav-logo">S</div>
-    <span class="nav-brand">Sharpe</span>
-    <div class="nav-status">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Connecting</span>
-      <span id="lastUpdate" style="margin-left:8px;font-size:11px;color:var(--muted)"></span>
-      <span id="countdown" style="margin-left:4px;font-size:11px;color:var(--muted)"></span>
-    </div>
-  </div>
-  <div class="nav-right">
-    <button class="btn-upgrade" id="btnUpgradeNav" onclick="openUpgrade()" data-i18n="nav.upgrade">Upgrade to Pro</button>
-    <button class="nav-link" onclick="openGlossary()" data-i18n="nav.howItWorks">How It Works</button>
-    <a class="nav-link" href="/settings"><span class="hide-mobile" data-i18n="nav.settings">Settings </span>&#9881;</a>
-    <a class="nav-link admin" id="adminLink" href="/admin" data-i18n="nav.admin">Admin</a>
-  </div>
-</nav>
-
-<!-- ===== MAIN TABS ===== -->
-<div class="main-tabs">
-  <button class="main-tab active" onclick="switchTab('dashboard')" id="tabBtnDashboard" data-i18n="tab.dashboard">Dashboard</button>
-  <button class="main-tab" onclick="switchTab('profit')" id="tabBtnProfit" data-i18n="tab.profitTracker">Profit Tracker</button>
-  <button class="main-tab" onclick="switchTab('watchlist')" id="tabBtnWatchlist" data-i18n="tab.watchlist">Watchlist</button>
-  <button class="main-tab" onclick="switchTab('edgestats')" id="tabBtnEdgestats">Edge Stats</button>
-  <button class="main-tab" onclick="switchTab('alerts')" id="tabBtnAlerts">Alerts</button>
-  <button class="main-tab" onclick="switchTab('history')" id="tabBtnHistory">History</button>
-</div>
-
-<!-- ===== SPORT TABS ===== -->
-<div class="sport-tabs" id="sportTabs"></div>
-
-<!-- ===== CONTENT ===== -->
-<div class="container">
-
-  <!-- DASHBOARD TAB -->
-  <div class="tab-content active" id="tabDashboard">
-
-    <!-- Hero Banner -->
-    <div class="hero" id="heroBanner" style="display:none;">
-      <button class="hero-dismiss" onclick="dismissHero()">&times;</button>
-      <h2>Find Mispriced Bets Before the Market Corrects</h2>
-      <div class="hero-steps">
-        <div class="hero-step">
-          <div class="hero-step-num">1</div>
-          <div class="hero-step-text"><strong>We scan sportsbooks</strong> and aggregate sharp odds from top bookmakers worldwide.</div>
-        </div>
-        <div class="hero-step">
-          <div class="hero-step-num">2</div>
-          <div class="hero-step-text"><strong>We compare to Polymarket</strong> prices in real time to find probability divergences.</div>
-        </div>
-        <div class="hero-step">
-          <div class="hero-step-num">3</div>
-          <div class="hero-step-text"><strong>You see the edge</strong> — when Polymarket is cheaper, you buy before the price corrects.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Cross-Sport Ticker -->
-    <div class="cross-sport-ticker" id="crossSportTicker" style="display:none;">
-      <h3>Top Edges Across All Sports</h3>
-      <div class="ticker-items" id="tickerItems"></div>
-    </div>
-
-    <!-- Top Opportunities -->
-    <div class="top-opps" id="topOpps"></div>
-
-    <!-- Stats Row -->
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-value" id="statScanned">-</div>
-        <div class="stat-label">Events Scanned</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statPolyListed">-</div>
-        <div class="stat-label">Polymarket Listed</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statKalshi" style="color:var(--text)">-</div>
-        <div class="stat-label">Kalshi Markets</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statMatched">-</div>
-        <div class="stat-label">Matched</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statOpps" style="color:var(--text)">-</div>
-        <div class="stat-label">Opportunities</div>
-        <div class="stat-sub">&ge; <span id="threshDisplay">__USER_THRESHOLD__</span>% edge</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statBestEdge" style="color:var(--text)">-</div>
-        <div class="stat-label">Best Edge</div>
-      </div>
-    </div>
-
-    <!-- Toolbar -->
-    <div class="toolbar">
-      <input type="text" id="searchInput" placeholder="Search events..." oninput="render()">
-      <select id="sortSelect" onchange="render()">
-        <option value="edge">Sort: Edge %</option>
-        <option value="confidence">Sort: Confidence</option>
-        <option value="time">Sort: Time to Event</option>
-        <option value="volume">Sort: Volume</option>
-        <option value="kelly">Sort: Kelly Size</option>
-        <option value="book_agreement">Sort: Book Agreement</option>
-      </select>
-      <select id="marketTypeFilter" onchange="render()" style="border:none;border-bottom:1px solid var(--border);background:transparent;font-size:12px;padding:4px 8px;font-family:inherit;color:var(--text);">
-        <option value="all">All Markets</option>
-        <option value="h2h">Moneyline</option>
-        <option value="spreads">Spreads</option>
-        <option value="totals">Totals</option>
-        <option value="futures">Futures</option>
-      </select>
-      <label class="toggle-wrap">
-        <input type="checkbox" id="signalsToggle" onchange="signalsOnly=this.checked;render()">
-        Opportunities Only
-      </label>
-      <label class="toggle-wrap" title="Show only events where one of the top 10 Polymarket traders has an open position">
-        <input type="checkbox" id="topTraderToggle" onchange="topTraderOnly=this.checked;render()">
-        Top Trader Bets
-      </label>
-      <button class="btn-sm" onclick="openCustomize()">Customize</button>
-    </div>
-
-    <!-- Cards -->
-    <div class="cards-grid" id="cardsGrid"></div>
-  </div>
-
-  <!-- PROFIT TRACKER TAB -->
-  <div class="tab-content" id="tabProfit">
-    <div class="profit-summary" id="profitSummary"></div>
-    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-      <button class="btn-primary" onclick="openTradeModal()">+ Log Trade</button>
-    </div>
-    <div class="trades-table-wrap">
-      <table class="trades-table" id="tradesTable">
-        <thead><tr><th>Market</th><th>Outcome</th><th>Entry</th><th>Amount</th><th>Status</th><th>P&amp;L</th><th>Date</th></tr></thead>
-        <tbody id="tradesBody"></tbody>
-      </table>
-    </div>
-    <div class="empty-state" id="tradesEmpty" style="display:none;">No trades logged yet. Start tracking your trades!</div>
-  </div>
-
-  <!-- WATCHLIST TAB -->
-  <div class="tab-content" id="tabWatchlist">
-    <div class="watchlist-list" id="watchlistList"></div>
-    <div class="empty-state" id="watchlistEmpty" style="display:none;">Your watchlist is empty. Star events from the dashboard to track them.</div>
-  </div>
-
-  <!-- EDGE STATS TAB -->
-  <div class="tab-content" id="tabEdgestats">
-    <div class="perf-grid" id="perfGrid"></div>
-    <div class="sharpe-chart-wrap">
-      <h3>Rolling Edge Performance</h3>
-      <div style="display:flex;align-items:flex-end;gap:32px;margin-bottom:24px;">
-        <div>
-          <div class="sharpe-big" id="sharpeValue">-</div>
-          <div class="sharpe-label">Sharpe Ratio (Annualized)</div>
-        </div>
-        <div>
-          <div class="sharpe-big" id="overallWinRate" style="font-size:28px;">-</div>
-          <div class="sharpe-label">Overall Win Rate</div>
-        </div>
-      </div>
-      <canvas id="sharpeChart" width="800" height="200" style="width:100%;height:200px;"></canvas>
-    </div>
-    <div class="empty-state" id="edgeStatsEmpty" style="display:none;">Not enough resolved edges yet. Data builds over time as events complete.</div>
-  </div>
-
-  <!-- ALERTS TAB -->
-  <div class="tab-content" id="tabAlerts">
-    <div style="max-width:560px;">
-      <h2 style="font-size:18px;font-weight:500;margin-bottom:24px;">Alert Settings</h2>
-      <div class="alert-form">
-        <label class="alert-toggle">
-          <input type="checkbox" id="alertEnabled" style="accent-color:var(--text);">
-          Enable Alerts
-        </label>
-        <div class="field">
-          <label>Minimum Edge % (only alert above this)</label>
-          <input type="number" id="alertMinEdge" value="5" min="1" max="50" step="0.5">
-        </div>
-        <div class="field">
-          <label>Telegram Bot Token</label>
-          <input type="text" id="alertTgToken" placeholder="123456:ABC-DEF...">
-        </div>
-        <div class="field">
-          <label>Telegram Chat ID</label>
-          <input type="text" id="alertTgChat" placeholder="e.g. -1001234567890">
-        </div>
-        <div class="field">
-          <label>Webhook URL (optional, e.g. Slack/Discord)</label>
-          <input type="text" id="alertWebhook" placeholder="https://hooks.slack.com/...">
-        </div>
-        <div style="display:flex;gap:8px;margin-top:24px;">
-          <button class="btn-primary" onclick="saveAlerts()">Save Alerts</button>
-          <button class="btn-sm" onclick="testAlert()">Test Alert</button>
-        </div>
-        <div id="alertStatus" style="margin-top:12px;font-size:12px;color:var(--muted);"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- HISTORY TAB (Pro only) -->
-  <div class="tab-content" id="tabHistory">
-    <div id="historyGate" style="display:none;">
-      <div class="empty-state">
-        <div style="font-size:14px;font-weight:500;margin-bottom:8px;">Historical data is a Pro feature</div>
-        <div style="color:var(--muted);font-size:13px;margin-bottom:16px;">Unlock 1 year of resolved market data, price snapshots, and performance tracking.</div>
-        <button class="btn-upgrade" style="display:inline-block;" onclick="openUpgrade()">Upgrade to Pro</button>
-      </div>
-    </div>
-    <div id="historyContent" style="display:none;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <div style="font-size:14px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;">Resolved Markets</div>
-        <select id="historySportFilter" onchange="loadHistory()" style="border:none;border-bottom:1px solid var(--border);background:transparent;font-size:12px;padding:4px 8px;font-family:inherit;">
-          <option value="">All Sports</option>
-        </select>
-      </div>
-      <div class="history-table-wrap">
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>Event</th>
-              <th>Outcome</th>
-              <th>Final Price</th>
-              <th>Volume</th>
-              <th>Resolution</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody id="historyBody"></tbody>
-        </table>
-      </div>
-      <div class="empty-state" id="historyEmpty" style="display:none;">No historical data available yet. Data accumulates over time.</div>
-      <div style="margin-top:32px;">
-        <div style="font-size:14px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:16px;">Recent Price Snapshots</div>
-        <div class="history-table-wrap">
-          <table class="history-table">
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>Outcome</th>
-                <th>Book</th>
-                <th>Poly</th>
-                <th>Kalshi</th>
-                <th>Divergence</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="snapshotBody"></tbody>
-          </table>
-        </div>
-        <div class="empty-state" id="snapshotEmpty" style="display:none;">No snapshots yet. Price data is captured every update cycle.</div>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<!-- ===== GLOSSARY MODAL ===== -->
-<div class="modal-overlay" id="glossaryModal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('glossaryModal')">&times;</button>
-    <h2>How It Works &mdash; Glossary</h2>
-    <dl>
-      <div class="glossary-item"><dt>Edge %</dt><dd>The percentage difference between the sportsbook consensus probability and the Polymarket price. A positive edge means Polymarket is cheaper.</dd></div>
-      <div class="glossary-item"><dt>Confidence Score (1-5)</dt><dd>How confident the system is in this signal, based on book agreement, volume, spread, and time to event.</dd></div>
-      <div class="glossary-item"><dt>Book Agreement (1-5)</dt><dd>How closely the sportsbooks agree with each other. 5 = near-unanimous consensus.</dd></div>
-      <div class="glossary-item"><dt>Sharp Book</dt><dd>The bookmaker with the sharpest (most accurate) odds, weighted by market reputation.</dd></div>
-      <div class="glossary-item"><dt>Implied Vig</dt><dd>The bookmaker margin (overround) baked into the odds. Lower vig = cleaner probability estimate.</dd></div>
-      <div class="glossary-item"><dt>True Prob (No Vig)</dt><dd>The de-vigged consensus probability &mdash; the market's best guess at the true probability.</dd></div>
-      <div class="glossary-item"><dt>Book Range</dt><dd>The spread between the highest and lowest bookmaker probabilities for an outcome.</dd></div>
-      <div class="glossary-item"><dt>Median Book Prob</dt><dd>The median probability across all bookmakers, more robust to outliers than the mean.</dd></div>
-      <div class="glossary-item"><dt>Kelly Bet Size</dt><dd>Suggested bet size as % of bankroll using the Kelly Criterion, based on edge and probability.</dd></div>
-      <div class="glossary-item"><dt>Vol/Liquidity Ratio</dt><dd>Polymarket volume divided by liquidity. Higher ratios indicate more active trading relative to available depth.</dd></div>
-      <div class="glossary-item"><dt>Spread %</dt><dd>The bid-ask spread on Polymarket as a percentage. Tighter spreads mean lower execution cost.</dd></div>
-      <div class="glossary-item"><dt>Edge Direction</dt><dd>BUY if Polymarket is underpriced vs books; SELL if overpriced.</dd></div>
-      <div class="glossary-item"><dt>Time to Event</dt><dd>Hours until the event starts. Edges closer to event time are more actionable.</dd></div>
-      <div class="glossary-item"><dt>Best/Worst Odds</dt><dd>The best and worst decimal odds offered across bookmakers for the top outcome.</dd></div>
-      <div class="glossary-item"><dt>Match Confidence</dt><dd>How well the Polymarket question matched to the sportsbook event (string matching score).</dd></div>
-      <div class="glossary-item"><dt>Kalshi Price</dt><dd>The Kalshi prediction market mid-price for an outcome. Kalshi is a US-regulated prediction exchange (CFTC). Comparing both Polymarket and Kalshi gives you two independent market signals.</dd></div>
-    </dl>
-  </div>
-</div>
-
-<!-- ===== CUSTOMIZE MODAL ===== -->
-<div class="modal-overlay" id="customizeModal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('customizeModal')">&times;</button>
-    <h2>Customize Dashboard</h2>
-    <div class="customize-section">
-      <h3>Widgets</h3>
-      <label class="customize-check"><input type="checkbox" data-widget="hero" checked> Hero Banner</label>
-      <label class="customize-check"><input type="checkbox" data-widget="top_opps" checked> Top Opportunities</label>
-      <label class="customize-check"><input type="checkbox" data-widget="stats" checked> Stats Row</label>
-      <label class="customize-check"><input type="checkbox" data-widget="events" checked> Event Cards</label>
-    </div>
-    <div class="customize-section">
-      <h3>Card Data Points</h3>
-      <label class="customize-check"><input type="checkbox" data-dp="volume" checked> Volume Traded</label>
-      <label class="customize-check"><input type="checkbox" data-dp="spread" checked> Bid-Ask Spread</label>
-      <label class="customize-check"><input type="checkbox" data-dp="bookmakers" checked> Bookmakers</label>
-      <label class="customize-check"><input type="checkbox" data-dp="sharp_book" checked> Sharp Book</label>
-      <label class="customize-check"><input type="checkbox" data-dp="price_change" checked> 24h Price Change</label>
-      <label class="customize-check"><input type="checkbox" data-dp="match_confidence" checked> Match Confidence</label>
-      <label class="customize-check"><input type="checkbox" data-dp="book_agreement"> Book Agreement</label>
-      <label class="customize-check"><input type="checkbox" data-dp="book_range"> Book Range</label>
-      <label class="customize-check"><input type="checkbox" data-dp="median_book_prob"> Median Book Prob</label>
-      <label class="customize-check"><input type="checkbox" data-dp="book_std_dev"> Book Std Dev</label>
-      <label class="customize-check"><input type="checkbox" data-dp="implied_vig"> Implied Vig</label>
-      <label class="customize-check"><input type="checkbox" data-dp="true_prob_no_vig"> True Prob (No Vig)</label>
-      <label class="customize-check"><input type="checkbox" data-dp="best_odds"> Best Odds</label>
-      <label class="customize-check"><input type="checkbox" data-dp="worst_odds"> Worst Odds</label>
-      <label class="customize-check"><input type="checkbox" data-dp="vol_liquidity_ratio"> Vol/Liquidity Ratio</label>
-      <label class="customize-check"><input type="checkbox" data-dp="spread_pct"> Spread %</label>
-      <label class="customize-check"><input type="checkbox" data-dp="edge_direction"> Edge Direction</label>
-      <label class="customize-check"><input type="checkbox" data-dp="time_to_event"> Time to Event</label>
-    </div>
-    <div class="customize-section">
-      <label class="customize-check"><input type="checkbox" id="expandDefault"> Expand cards by default</label>
-    </div>
-    <button class="btn-primary" onclick="saveLayout()" style="width:100%;">Save Preferences</button>
-  </div>
-</div>
-
-<!-- ===== UPGRADE MODAL ===== -->
-<div class="modal-overlay" id="upgradeModal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('upgradeModal')">&times;</button>
-    <div class="upgrade-content">
-      <h2>Sharpe Pro</h2>
-      <div class="upgrade-price">$24.99<span>/mo</span></div>
-      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px;">Unlock the full power of market intelligence.</p>
-      <div class="upgrade-features">
-        <div class="upgrade-row"><span>Feature</span><span style="display:flex;gap:40px;"><span>Free</span><span>Pro</span></span></div>
-        <div class="upgrade-row"><span>Live edge signals</span><span style="display:flex;gap:40px;"><span>3 cards</span><span class="upgrade-check">Unlimited</span></span></div>
-        <div class="upgrade-row"><span>Confidence scores</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
-        <div class="upgrade-row"><span>Profit tracker</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
-        <div class="upgrade-row"><span>Watchlist</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
-        <div class="upgrade-row"><span>Advanced data points</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
-        <div class="upgrade-row"><span>Custom layout</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
-      </div>
-      <a href="mailto:support@sharpe.app?subject=Upgrade%20to%20Pro" class="btn-primary" style="display:inline-block;margin-top:16px;text-decoration:none;">Contact Us to Upgrade</a>
-    </div>
-  </div>
-</div>
-
-<!-- ===== TRADE MODAL ===== -->
-<div class="modal-overlay" id="tradeModal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('tradeModal')">&times;</button>
-    <h2>Log Trade</h2>
-    <div class="trade-form">
-      <div><label>Market</label><input type="text" id="tradeMarket" placeholder="e.g. Lakers vs Celtics"></div>
-      <div><label>Outcome</label><input type="text" id="tradeOutcome" placeholder="e.g. Lakers Win"></div>
-      <div><label>Entry Price (cents)</label><input type="number" id="tradePrice" min="1" max="99" placeholder="e.g. 45"></div>
-      <div><label>Amount ($)</label><input type="number" id="tradeAmount" min="1" placeholder="e.g. 100"></div>
-      <button class="btn-primary" onclick="submitTrade()">Log Trade</button>
-    </div>
-  </div>
-</div>
-
-<script>
-/* ===== Constants ===== */
-const POLL = """ + str(POLL_INTERVAL) + """;
-const THRESH = __USER_THRESHOLD__;
-const DEFAULT_THRESH = """ + str(DIVERGENCE_THRESHOLD) + """;
-const USER_SPORT = '__USER_SPORT__';
-const USERNAME = '__USERNAME__';
-let data = null, sports = {}, activeSport = '', signalsOnly = false, topTraderOnly = false;
-let refreshCountdown = POLL, ws = null;
-let userLayout = { visible_widgets: ['hero','top_opps','stats','events'], visible_data_points: ['volume','spread','bookmakers','sharp_book','price_change','match_confidence'], card_expanded_default: false };
-let userTier = 'free';
-let watchlistIds = new Set();
-
-/* ===== Localization: i18n + Currency / Units (narve_currency, narve_units, narve_language) ===== */
-const NARVE_LANGUAGES = [
-  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
-  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
-  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
-  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
-  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
-];
-const NARVE_I18N = {
-  en: {'pref.title':'Preferences','pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.save':'Save','pref.cancel':'Cancel','pref.close':'Close','pref.savedOk':'Saved','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','nav.dashboard':'Dashboard','nav.settings':'Settings','nav.signOut':'Sign Out','common.loading':'Loading...','common.error':'Error','common.refresh':'Refresh','common.search':'Search','nav.upgrade':'Upgrade to Pro','nav.howItWorks':'How It Works','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Profit Tracker','tab.watchlist':'Watchlist'},
-  es: {'pref.title':'Preferencias','pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.save':'Guardar','pref.cancel':'Cancelar','pref.close':'Cerrar','pref.savedOk':'Guardado','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n','nav.signOut':'Cerrar sesi\u00f3n','common.loading':'Cargando...','common.error':'Error','common.refresh':'Actualizar','common.search':'Buscar','nav.upgrade':'Actualizar a Pro','nav.howItWorks':'C\u00f3mo funciona','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'Seguidor de ganancias','tab.watchlist':'Lista de seguimiento'},
-  de: {'pref.title':'Einstellungen','pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.save':'Speichern','pref.cancel':'Abbrechen','pref.close':'Schlie\u00dfen','pref.savedOk':'Gespeichert','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen','nav.signOut':'Abmelden','common.loading':'Wird geladen...','common.error':'Fehler','common.refresh':'Aktualisieren','common.search':'Suchen','nav.upgrade':'Auf Pro upgraden','nav.howItWorks':'Funktionsweise','nav.admin':'Admin','tab.dashboard':'\u00dcbersicht','tab.profitTracker':'Gewinn-Tracker','tab.watchlist':'Beobachtungsliste'},
-  fr: {'pref.title':'Pr\u00e9f\u00e9rences','pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.save':'Enregistrer','pref.cancel':'Annuler','pref.close':'Fermer','pref.savedOk':'Enregistr\u00e9','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer les modifications','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres','nav.signOut':'D\u00e9connexion','common.loading':'Chargement...','common.error':'Erreur','common.refresh':'Actualiser','common.search':'Rechercher','nav.upgrade':'Passer \u00e0 Pro','nav.howItWorks':'Comment \u00e7a marche','nav.admin':'Admin','tab.dashboard':'Tableau de bord','tab.profitTracker':'Suivi des profits','tab.watchlist':'Liste de suivi'},
-  it: {'pref.title':'Preferenze','pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.save':'Salva','pref.cancel':'Annulla','pref.close':'Chiudi','pref.savedOk':'Salvato','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','nav.dashboard':'Pannello','nav.settings':'Impostazioni','nav.signOut':'Esci','common.loading':'Caricamento...','common.error':'Errore','common.refresh':'Aggiorna','common.search':'Cerca','nav.upgrade':'Passa a Pro','nav.howItWorks':'Come funziona','nav.admin':'Admin','tab.dashboard':'Pannello','tab.profitTracker':'Tracker dei profitti','tab.watchlist':'Lista di osservazione'},
-  pt: {'pref.title':'Prefer\u00eancias','pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.save':'Salvar','pref.cancel':'Cancelar','pref.close':'Fechar','pref.savedOk':'Salvo','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es','nav.signOut':'Sair','common.loading':'Carregando...','common.error':'Erro','common.refresh':'Atualizar','common.search':'Pesquisar','nav.upgrade':'Atualizar para Pro','nav.howItWorks':'Como funciona','nav.admin':'Admin','tab.dashboard':'Painel','tab.profitTracker':'Rastreador de lucros','tab.watchlist':'Lista de observa\u00e7\u00e3o'},
-  nl: {'pref.title':'Voorkeuren','pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.save':'Opslaan','pref.cancel':'Annuleren','pref.close':'Sluiten','pref.savedOk':'Opgeslagen','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','nav.dashboard':'Dashboard','nav.settings':'Instellingen','nav.signOut':'Afmelden','common.loading':'Laden...','common.error':'Fout','common.refresh':'Vernieuwen','common.search':'Zoeken','nav.upgrade':'Upgraden naar Pro','nav.howItWorks':'Hoe het werkt','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Winst-tracker','tab.watchlist':'Volglijst'},
-  pl: {'pref.title':'Preferencje','pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.save':'Zapisz','pref.cancel':'Anuluj','pref.close':'Zamknij','pref.savedOk':'Zapisano','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','nav.dashboard':'Panel','nav.settings':'Ustawienia','nav.signOut':'Wyloguj','common.loading':'\u0141adowanie...','common.error':'B\u0142\u0105d','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','nav.upgrade':'Przejd\u017a na Pro','nav.howItWorks':'Jak to dzia\u0142a','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'\u015aledzenie zysk\u00f3w','tab.watchlist':'Lista obserwowanych'},
-  ja: {'pref.title':'\u8a2d\u5b9a','pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.save':'\u4fdd\u5b58','pref.cancel':'\u30ad\u30e3\u30f3\u30bb\u30eb','pref.close':'\u9589\u3058\u308b','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a','nav.signOut':'\u30b5\u30a4\u30f3\u30a2\u30a6\u30c8','common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.error':'\u30a8\u30e9\u30fc','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','nav.upgrade':'Pro\u306b\u30a2\u30c3\u30d7\u30b0\u30ec\u30fc\u30c9','nav.howItWorks':'\u4f7f\u3044\u65b9','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','tab.profitTracker':'\u5229\u76ca\u30c8\u30e9\u30c3\u30ab\u30fc','tab.watchlist':'\u30a6\u30a9\u30c3\u30c1\u30ea\u30b9\u30c8'},
-  ko: {'pref.title':'\ud658\uacbd\uc124\uc815','pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.save':'\uc800\uc7a5','pref.cancel':'\ucde8\uc18c','pref.close':'\ub2eb\uae30','pref.savedOk':'\uc800\uc7a5\ub428','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815','nav.signOut':'\ub85c\uadf8\uc544\uc6c3','common.loading':'\ub85c\ub529 \uc911...','common.error':'\uc624\ub958','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','nav.upgrade':'Pro\ub85c \uc5c5\uadf8\ub808\uc774\ub4dc','nav.howItWorks':'\uc0ac\uc6a9 \ubc29\ubc95','nav.admin':'\uad00\ub9ac\uc790','tab.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','tab.profitTracker':'\uc218\uc775 \ucd94\uc801\uae30','tab.watchlist':'\uad00\uc2ec \ubaa9\ub85d'},
-  zh: {'pref.title':'\u504f\u597d\u8bbe\u7f6e','pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.save':'\u4fdd\u5b58','pref.cancel':'\u53d6\u6d88','pref.close':'\u5173\u95ed','pref.savedOk':'\u5df2\u4fdd\u5b58','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e','nav.signOut':'\u9000\u51fa','common.loading':'\u52a0\u8f7d\u4e2d...','common.error':'\u9519\u8bef','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','nav.upgrade':'\u5347\u7ea7\u5230 Pro','nav.howItWorks':'\u5de5\u4f5c\u539f\u7406','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u4eea\u8868\u677f','tab.profitTracker':'\u5229\u6da6\u8ddf\u8e2a','tab.watchlist':'\u5173\u6ce8\u5217\u8868'},
-  ru: {'pref.title':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443 (\u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u0435 \u043a\u0443\u0440\u0441\u044b \u0415\u0426\u0411)','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.save':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.cancel':'\u041e\u0442\u043c\u0435\u043d\u0430','pref.close':'\u0417\u0430\u043a\u0440\u044b\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','nav.signOut':'\u0412\u044b\u0439\u0442\u0438','common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','nav.upgrade':'\u041f\u0435\u0440\u0435\u0439\u0442\u0438 \u043d\u0430 Pro','nav.howItWorks':'\u041a\u0430\u043a \u044d\u0442\u043e \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442','nav.admin':'\u0410\u0434\u043c\u0438\u043d','tab.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','tab.profitTracker':'\u041e\u0442\u0441\u043b\u0435\u0436\u0438\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0438\u0431\u044b\u043b\u0438','tab.watchlist':'\u0421\u043f\u0438\u0441\u043e\u043a \u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f'},
-  hi: {'pref.title':'\u092a\u094d\u0930\u093e\u0925\u092e\u093f\u0915\u0924\u093e\u090f\u0901','pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.save':'\u0938\u0939\u0947\u091c\u0947\u0902','pref.cancel':'\u0930\u0926\u094d\u0926 \u0915\u0930\u0947\u0902','pref.close':'\u092c\u0902\u0926 \u0915\u0930\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','nav.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','nav.settings':'\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938','nav.signOut':'\u0938\u093e\u0907\u0928 \u0906\u0909\u091f','common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.error':'\u0924\u094d\u0930\u0941\u091f\u093f','common.refresh':'\u0930\u093f\u092b\u093c\u094d\u0930\u0947\u0936 \u0915\u0930\u0947\u0902','common.search':'\u0916\u094b\u091c\u0947\u0902','nav.upgrade':'Pro \u092e\u0947\u0902 \u0905\u092a\u0917\u094d\u0930\u0947\u0921 \u0915\u0930\u0947\u0902','nav.howItWorks':'\u092f\u0939 \u0915\u0948\u0938\u0947 \u0915\u093e\u092e \u0915\u0930\u0924\u093e \u0939\u0948','nav.admin':'\u090f\u0921\u092e\u093f\u0928','tab.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','tab.profitTracker':'\u0932\u093e\u092d \u091f\u094d\u0930\u0948\u0915\u0930','tab.watchlist':'\u0935\u0949\u091a\u0932\u093f\u0938\u094d\u091f'},
-  ar: {'pref.title':'\u0627\u0644\u062a\u0641\u0636\u064a\u0644\u0627\u062a','pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.save':'\u062d\u0641\u0638','pref.cancel':'\u0625\u0644\u063a\u0627\u0621','pref.close':'\u0625\u063a\u0644\u0627\u0642','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','nav.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','nav.settings':'\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a','nav.signOut':'\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c','common.loading':'\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.error':'\u062e\u0637\u0623','common.refresh':'\u062a\u062d\u062f\u064a\u062b','common.search':'\u0628\u062d\u062b','nav.upgrade':'\u0627\u0644\u062a\u0631\u0642\u064a\u0629 \u0625\u0644\u0649 Pro','nav.howItWorks':'\u0643\u064a\u0641 \u064a\u0639\u0645\u0644','nav.admin':'\u0627\u0644\u0645\u0633\u0624\u0648\u0644','tab.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','tab.profitTracker':'\u0645\u062a\u062a\u0628\u0639 \u0627\u0644\u0623\u0631\u0628\u0627\u062d','tab.watchlist':'\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0631\u0627\u0642\u0628\u0629'},
-  bn: {'pref.title':'\u09aa\u09cd\u09b0\u09be\u09a7\u09be\u09a8\u09cd\u09af\u09a4\u09be','pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.save':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.cancel':'\u09ac\u09be\u09a4\u09bf\u09b2','pref.close':'\u09ac\u09a8\u09cd\u09a7 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','nav.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','nav.settings':'\u09b8\u09c7\u099f\u09bf\u0982\u09b8','nav.signOut':'\u09b8\u09be\u0987\u09a8 \u0986\u0989\u099f','common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.error':'\u09a4\u09cd\u09b0\u09c1\u099f\u09bf','common.refresh':'\u09b0\u09bf\u09ab\u09cd\u09b0\u09c7\u09b6 \u0995\u09b0\u09c1\u09a8','common.search':'\u0985\u09a8\u09c1\u09b8\u09a8\u09cd\u09a7\u09be\u09a8','nav.upgrade':'Pro \u09a4\u09c7 \u0986\u09aa\u0997\u09cd\u09b0\u09c7\u09a1 \u0995\u09b0\u09c1\u09a8','nav.howItWorks':'\u098f\u099f\u09bf \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u0995\u09be\u099c \u0995\u09b0\u09c7','nav.admin':'\u0985\u09cd\u09af\u09be\u09a1\u09ae\u09bf\u09a8','tab.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','tab.profitTracker':'\u09b2\u09be\u09ad \u099f\u09cd\u09b0\u09cd\u09af\u09be\u0995\u09be\u09b0','tab.watchlist':'\u0993\u09af\u09bc\u09be\u099a\u09b2\u09bf\u09b8\u09cd\u099f'},
-  ur: {'pref.title':'\u062a\u0631\u062c\u06cc\u062d\u0627\u062a','pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.save':'\u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.cancel':'\u0645\u0646\u0633\u0648\u062e','pref.close':'\u0628\u0646\u062f \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','nav.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','nav.settings':'\u0633\u06cc\u0679\u0646\u06af\u0632','nav.signOut':'\u0633\u0627\u0626\u0646 \u0622\u0624\u0679','common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.error':'\u062e\u0631\u0627\u0628\u06cc','common.refresh':'\u0631\u06cc\u0641\u0631\u06cc\u0634 \u06a9\u0631\u06cc\u0646','common.search':'\u062a\u0644\u0627\u0634 \u06a9\u0631\u06cc\u0646','nav.upgrade':'Pro \u0645\u06cc\u0646 \u0627\u067e\u06af\u0631\u06cc\u0688 \u06a9\u0631\u06cc\u0646','nav.howItWorks':'\u06cc\u06c1 \u06a9\u06cc\u0633\u06d2 \u06a9\u0627\u0645 \u06a9\u0631\u062a\u0627 \u06c1\u06d2','nav.admin':'\u0627\u06cc\u0688\u0645\u0646','tab.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','tab.profitTracker':'\u0645\u0646\u0627\u0641\u0639 \u0679\u0631\u06cc\u06a9\u0631','tab.watchlist':'\u0648\u0627\u0686 \u0644\u0633\u0679'},
-  id: {'pref.title':'Preferensi','pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.save':'Simpan','pref.cancel':'Batal','pref.close':'Tutup','pref.savedOk':'Tersimpan','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan','nav.signOut':'Keluar','common.loading':'Memuat...','common.error':'Kesalahan','common.refresh':'Segarkan','common.search':'Cari','nav.upgrade':'Tingkatkan ke Pro','nav.howItWorks':'Cara Kerja','nav.admin':'Admin','tab.dashboard':'Dasbor','tab.profitTracker':'Pelacak Keuntungan','tab.watchlist':'Daftar Pantau'},
-  tr: {'pref.title':'Tercihler','pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.save':'Kaydet','pref.cancel':'\u0130ptal','pref.close':'Kapat','pref.savedOk':'Kaydedildi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','nav.dashboard':'Pano','nav.settings':'Ayarlar','nav.signOut':'\u00c7\u0131k\u0131\u015f','common.loading':'Y\u00fckleniyor...','common.error':'Hata','common.refresh':'Yenile','common.search':'Ara','nav.upgrade':'Pro\u2019ya Y\u00fckseltin','nav.howItWorks':'Nas\u0131l \u00c7al\u0131\u015f\u0131r','nav.admin':'Y\u00f6netici','tab.dashboard':'Pano','tab.profitTracker':'K\u00e2r Takip\u00e7isi','tab.watchlist':'\u0130zleme Listesi'},
-  vi: {'pref.title':'T\u00f9y ch\u1ecdn','pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.save':'L\u01b0u','pref.cancel':'H\u1ee7y','pref.close':'\u0110\u00f3ng','pref.savedOk':'\u0110\u00e3 l\u01b0u','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','nav.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','nav.settings':'C\u00e0i \u0111\u1eb7t','nav.signOut':'\u0110\u0103ng xu\u1ea5t','common.loading':'\u0110ang t\u1ea3i...','common.error':'L\u1ed7i','common.refresh':'L\u00e0m m\u1edbi','common.search':'T\u00ecm ki\u1ebfm','nav.upgrade':'N\u00e2ng c\u1ea5p l\u00ean Pro','nav.howItWorks':'C\u00e1ch ho\u1ea1t \u0111\u1ed9ng','nav.admin':'Qu\u1ea3n tr\u1ecb','tab.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','tab.profitTracker':'Theo d\u00f5i l\u1ee3i nhu\u1eadn','tab.watchlist':'Danh s\u00e1ch theo d\u00f5i'},
-  th: {'pref.title':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.save':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.cancel':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01','pref.close':'\u0e1b\u0e34\u0e14','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','nav.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','nav.settings':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','nav.signOut':'\u0e2d\u0e2d\u0e01\u0e08\u0e32\u0e01\u0e23\u0e30\u0e1a\u0e1a','common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.error':'\u0e02\u0e49\u0e2d\u0e1c\u0e34\u0e14\u0e1e\u0e25\u0e32\u0e14','common.refresh':'\u0e23\u0e35\u0e40\u0e1f\u0e23\u0e0a','common.search':'\u0e04\u0e49\u0e19\u0e2b\u0e32','nav.upgrade':'\u0e2d\u0e31\u0e1b\u0e40\u0e01\u0e23\u0e14\u0e40\u0e1b\u0e47\u0e19 Pro','nav.howItWorks':'\u0e27\u0e34\u0e18\u0e35\u0e01\u0e32\u0e23\u0e17\u0e33\u0e07\u0e32\u0e19','nav.admin':'\u0e1c\u0e39\u0e49\u0e14\u0e39\u0e41\u0e25\u0e23\u0e30\u0e1a\u0e1a','tab.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','tab.profitTracker':'\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21\u0e01\u0e33\u0e44\u0e23','tab.watchlist':'\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21'},
-};
-let _narveLang = localStorage.getItem('narve_language') || 'en';
-function t(key) {
-  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
-  return dict[key] || NARVE_I18N.en[key] || key;
-}
-function applyTranslations(root) {
-  const scope = root || document;
-  scope.querySelectorAll('[data-i18n]').forEach(el => {
-    const k = el.getAttribute('data-i18n');
-    el.textContent = t(k);
-  });
-  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
-  });
-  scope.querySelectorAll('[data-i18n-title]').forEach(el => {
-    el.title = t(el.getAttribute('data-i18n-title'));
-  });
-}
-function setNarveLanguage(code) {
-  _narveLang = code;
-  localStorage.setItem('narve_language', code);
-  document.documentElement.lang = code;
-  applyTranslations();
-}
-
-const NARVE_FX_FALLBACK = {
-  USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
-  HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
-  INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
-  IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
-};
-let _narveFxRates = NARVE_FX_FALLBACK;
-let _narveCurrency = localStorage.getItem('narve_currency') || 'USD';
-let _narveUnits = localStorage.getItem('narve_units') || 'american';
-function _narveLocale() { return _narveUnits === 'european' ? 'de-DE' : 'en-US'; }
-function _narveRate(code) {
-  if (!code || code === 'USD') return 1;
-  return _narveFxRates[code] || NARVE_FX_FALLBACK[code] || 1;
-}
-function _narveSymbol(code) {
-  try {
-    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
-    const sym = parts.find(p => p.type === 'currency');
-    if (sym) return sym.value;
-  } catch (e) {}
-  return code;
-}
-function _narveSymFirst(code) {
-  try {
-    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
-    const cIdx = parts.findIndex(p => p.type === 'currency');
-    const nIdx = parts.findIndex(p => p.type === 'integer');
-    return cIdx < nIdx;
-  } catch (e) { return true; }
-}
-// Format an amount given in USD into the user's chosen currency.
-function fmtMoney(usdValue, decimals) {
-  if (usdValue == null || isNaN(Number(usdValue))) return '-';
-  const v = Number(usdValue) * _narveRate(_narveCurrency);
-  const sym = _narveSymbol(_narveCurrency);
-  const symFirst = _narveSymFirst(_narveCurrency);
-  const dec = decimals == null ? 2 : decimals;
-  const formatted = v.toLocaleString(_narveLocale(), {
-    minimumFractionDigits: dec, maximumFractionDigits: dec,
-  });
-  return symFirst ? sym + formatted : formatted + ' ' + sym;
-}
-async function ensureNarveFxRates() {
-  try {
-    const cached = JSON.parse(localStorage.getItem('narve_fx_rates') || 'null');
-    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {
-      _narveFxRates = cached.rates; return _narveFxRates;
-    }
-  } catch (e) {}
-  try {
-    const r = await fetch('/api/fx-rates', { credentials: 'same-origin' });
-    if (r.ok) {
-      const data = await r.json();
-      _narveFxRates = data.rates || NARVE_FX_FALLBACK;
-      _narveFxRates.USD = 1.0;
-      try { localStorage.setItem('narve_fx_rates', JSON.stringify({ rates: _narveFxRates, fetched_at: Date.now() })); } catch (e) {}
-    }
-  } catch (e) {}
-  return _narveFxRates;
-}
-
-/* ===== Utilities ===== */
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-function fmt(n, d) { return n != null ? Number(n).toFixed(d === undefined ? 1 : d) : '-'; }
-function fmtPct(n) { return n != null ? (n >= 0 ? '+' : '') + Number(n).toFixed(1) + '%' : '-'; }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-
-/* ===== Confidence Stars ===== */
-function renderConfidenceStars(score) {
-  const s = Math.round(Number(score) || 0);
-  let h = '<span class="confidence-stars">';
-  for (let i = 1; i <= 5; i++) h += i <= s ? '<span class="star-filled">&#9733;</span>' : '<span class="star-empty">&#9734;</span>';
-  return h + '</span>';
-}
-
-/* ===== WebSocket ===== */
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws');
-  ws.onopen = () => {
-    document.getElementById('statusText').textContent = 'Live';
-    document.getElementById('statusDot').classList.remove('error');
-  };
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'update') {
-        // Always update cross-sport edges even if sport doesn't match
-        if (msg.data.cross_sport_edges) {
-          data = data || {};
-          data.cross_sport_edges = msg.data.cross_sport_edges;
-        }
-        if (msg.data.active_sport && msg.data.active_sport !== activeSport) {
-          renderCrossSportTicker();
-          return;
-        }
-        data = msg.data;
-        refreshCountdown = POLL;
-        render();
-      }
-    } catch(err) { console.warn('WS parse error:', err); }
-  };
-  ws.onclose = (e) => {
-    if (e.code === 4001) { window.location.href = '/login'; return; }
-    document.getElementById('statusText').textContent = 'Reconnecting...';
-    document.getElementById('statusDot').classList.add('error');
-    setTimeout(connectWS, 5000);
-  };
-  ws.onerror = () => ws.close();
-}
-
-/* ===== Load Sports ===== */
-let sportCategories = [];
-let activeCategory = 'Sports';
-
-function loadSports() {
-  fetch('/api/sports', { credentials: 'same-origin' }).then(r => r.json()).then(resp => {
-    sportCategories = resp.categories || [];
-    sports = {};
-    sportCategories.forEach(cat => {
-      cat.sports.forEach(s => { sports[s.key] = s; });
-    });
-    // Determine active category from active sport
-    if (activeSport) {
-      for (const cat of sportCategories) {
-        if (cat.sports.some(s => s.key === activeSport)) {
-          activeCategory = cat.name;
-          break;
-        }
-      }
-    }
-    renderSportTabs();
-  }).catch(() => {});
-}
-
-function renderSportTabs() {
-  const wrap = document.getElementById('sportTabs');
-  wrap.innerHTML = '';
-  // Category header row
-  const catRow = document.createElement('div');
-  catRow.className = 'category-row';
-  sportCategories.forEach(cat => {
-    const btn = document.createElement('button');
-    btn.className = 'category-btn' + (cat.name === activeCategory ? ' active' : '');
-    btn.textContent = cat.name;
-    btn.onclick = () => {
-      activeCategory = cat.name;
-      // Switch to first sport in this category
-      if (cat.sports.length > 0) {
-        switchSport(cat.sports[0].key);
-      }
-      renderSportTabs();
-    };
-    catRow.appendChild(btn);
-  });
-  wrap.appendChild(catRow);
-  // Subcategory row for active category
-  const activeCat = sportCategories.find(c => c.name === activeCategory);
-  if (activeCat) {
-    const subRow = document.createElement('div');
-    subRow.className = 'subcategory-row';
-    activeCat.sports.forEach(s => {
-      const btn = document.createElement('button');
-      btn.className = 'sport-tab' + (s.key === activeSport ? ' active' : '');
-      btn.textContent = s.title;
-      btn.onclick = () => switchSport(s.key);
-      subRow.appendChild(btn);
-    });
-    wrap.appendChild(subRow);
-  }
-}
-
-function switchSport(key) {
-  activeSport = key;
-  // Update active category
-  for (const cat of sportCategories) {
-    if (cat.sports.some(s => s.key === key)) {
-      activeCategory = cat.name;
-      break;
-    }
-  }
-  renderSportTabs();
-  fetch('/api/data?sport=' + encodeURIComponent(key), { credentials: 'same-origin' })
-    .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
-}
-
-/* ===== Load Layout ===== */
-function loadLayout() {
-  fetch('/api/layout', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
-    if (d) {
-      if (d.visible_widgets) userLayout.visible_widgets = d.visible_widgets;
-      if (d.visible_data_points) userLayout.visible_data_points = d.visible_data_points;
-      if (d.card_expanded_default !== undefined) userLayout.card_expanded_default = d.card_expanded_default;
-      applyLayoutToUI();
-    }
-  }).catch(() => {});
-}
-
-function applyLayoutToUI() {
-  document.querySelectorAll('[data-widget]').forEach(el => {
-    el.querySelector('input').checked = userLayout.visible_widgets.includes(el.querySelector('input').dataset.widget);
-  });
-  document.querySelectorAll('[data-dp]').forEach(el => {
-    el.querySelector('input').checked = userLayout.visible_data_points.includes(el.querySelector('input').dataset.dp);
-  });
-  document.getElementById('expandDefault').checked = userLayout.card_expanded_default;
-}
-
-function saveLayout() {
-  const widgets = [];
-  document.querySelectorAll('[data-widget] input:checked').forEach(el => widgets.push(el.dataset.widget));
-  const dps = [];
-  document.querySelectorAll('[data-dp] input:checked').forEach(el => dps.push(el.dataset.dp));
-  const expanded = document.getElementById('expandDefault').checked;
-  userLayout = { visible_widgets: widgets, visible_data_points: dps, card_expanded_default: expanded };
-  fetch('/api/layout', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(userLayout)
-  }).then(() => { closeModal('customizeModal'); render(); }).catch(() => {});
-}
-
-/* ===== Load Subscription ===== */
-function loadSubscription() {
-  fetch('/api/subscription', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
-    if (d && d.tier) {
-      userTier = d.tier;
-      if (userTier === 'free') {
-        document.getElementById('btnUpgradeNav').style.display = 'inline-block';
-      }
-    }
-  }).catch(() => {});
-}
-
-/* ===== Load User Info ===== */
-function loadUserInfo() {
-  fetch('/api/me', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
-    if (d && d.is_admin) {
-      document.getElementById('adminLink').style.display = 'inline-block';
-    }
-  }).catch(() => {});
-}
-
-/* ===== Main Render ===== */
-function render() {
-  if (!data) return;
-  const comps = data.comparisons || [];
-
-  // Stats
-  document.getElementById('statScanned').textContent = data.odds_events_count || '-';
-  document.getElementById('statPolyListed').textContent = data.poly_events_count || '-';
-  document.getElementById('statKalshi').textContent = data.kalshi_markets_count || '-';
-  document.getElementById('statMatched').textContent = comps.length;
-  const opps = comps.filter(c => c.outcomes && c.outcomes.some(o => Math.abs(o.divergence_pct || 0) >= THRESH));
-  document.getElementById('statOpps').textContent = opps.length;
-  const edges = comps.flatMap(c => (c.outcomes || []).map(o => Math.abs(o.divergence_pct || 0)));
-  document.getElementById('statBestEdge').textContent = edges.length ? fmt(Math.max(...edges)) + '%' : '-';
-  document.getElementById('lastUpdate').textContent = data.last_update ? 'Updated ' + new Date(data.last_update).toLocaleTimeString() : '';
-
-  // Top Opportunities
-  renderTopOpps(comps);
-
-  // Cards
-  renderCards(comps);
-
-  // Widget visibility
-  document.getElementById('heroBanner').style.display = userLayout.visible_widgets.includes('hero') && !localStorage.getItem('sharpe_hero_dismissed') ? '' : 'none';
-  document.getElementById('topOpps').style.display = userLayout.visible_widgets.includes('top_opps') ? '' : 'none';
-  document.querySelector('.stats-row').style.display = userLayout.visible_widgets.includes('stats') ? '' : 'none';
-
-  // Cross-sport ticker
-  renderCrossSportTicker();
-
-  // Draw sparklines after DOM is updated
-  requestAnimationFrame(drawSparklines);
-}
-
-/* ===== Top Opportunities ===== */
-function renderTopOpps(comps) {
-  const wrap = document.getElementById('topOpps');
-  const sorted = comps.filter(c => c.outcomes && c.outcomes.some(o => (o.divergence_pct || 0) >= THRESH))
-    .map(c => {
-      const best = c.outcomes.reduce((a, b) => (Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0)) ? b : a, c.outcomes[0]);
-      return { ...c, _bestEdge: Math.abs(best.divergence_pct || 0), _bestOutcome: best };
-    })
-    .sort((a, b) => b._bestEdge - a._bestEdge)
-    .slice(0, 3);
-
-  if (!sorted.length) { wrap.innerHTML = ''; return; }
-  wrap.innerHTML = sorted.map((c, i) => {
-    const dir = (c.edge_direction || (c._bestOutcome.divergence_pct > 0 ? 'BUY' : 'SELL'));
-    return '<div class="top-opp" onclick="scrollToCard(' + i + ')">' +
-      '<div class="top-opp-header"><span class="top-opp-edge">' + fmtPct(c._bestEdge) + '</span>' + renderConfidenceStars(c.confidence_score) + '</div>' +
-      '<div class="top-opp-team">' + esc(c.home_team || '') + ' vs ' + esc(c.away_team || '') + '</div>' +
-      '<div class="top-opp-sub">' + esc(c._bestOutcome.outcome_name || '') + ' &mdash; ' + dir + '</div>' +
-      '</div>';
-  }).join('');
-}
-
-function scrollToCard(idx) {
-  const cards = document.querySelectorAll('.card');
-  if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-/* ===== Render Cards ===== */
-function renderCards(comps) {
-  const grid = document.getElementById('cardsGrid');
-  const search = (document.getElementById('searchInput').value || '').toLowerCase();
-  const sortBy = document.getElementById('sortSelect').value;
-
-  const marketFilter = document.getElementById('marketTypeFilter').value;
-  let filtered = comps.filter(c => {
-    if (signalsOnly && !(c.outcomes || []).some(o => Math.abs(o.divergence_pct || 0) >= THRESH)) return false;
-    if (topTraderOnly && !(c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length))) return false;
-    if (marketFilter !== 'all' && (c.market_type || 'h2h') !== marketFilter) return false;
-    if (search) {
-      const hay = ((c.home_team || '') + ' ' + (c.away_team || '')).toLowerCase();
-      if (!hay.includes(search)) return false;
-    }
-    return true;
-  });
-
-  filtered.sort((a, b) => {
-    const eA = Math.max(...(a.outcomes||[]).map(o => Math.abs(o.divergence_pct||0)), 0);
-    const eB = Math.max(...(b.outcomes||[]).map(o => Math.abs(o.divergence_pct||0)), 0);
-    if (sortBy === 'edge') return eB - eA;
-    if (sortBy === 'confidence') return (b.confidence_score||0) - (a.confidence_score||0);
-    if (sortBy === 'time') return (a.time_to_event_hours||9999) - (b.time_to_event_hours||9999);
-    if (sortBy === 'volume') return (b.poly_volume||0) - (a.poly_volume||0);
-    if (sortBy === 'kelly') {
-      const kA = Math.max(...(a.outcomes||[]).map(o => Math.abs(o.kelly_fraction||0)), 0);
-      const kB = Math.max(...(b.outcomes||[]).map(o => Math.abs(o.kelly_fraction||0)), 0);
-      return kB - kA;
-    }
-    if (sortBy === 'book_agreement') return (b.book_agreement||0) - (a.book_agreement||0);
-    return eB - eA;
-  });
-
-  if (!filtered.length) { grid.innerHTML = '<div class="empty-state">No events match your filters.</div>'; return; }
-
-  const FREE_LIMIT = 3;
-  let html = '';
-  filtered.forEach((c, idx) => {
-    const isFreeGated = userTier === 'free' && idx >= FREE_LIMIT;
-    const bestOutcome = (c.outcomes||[]).reduce((a, b) => Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0) ? b : a, (c.outcomes||[])[0] || {});
-    const isSignal = (c.outcomes||[]).some(o => Math.abs(o.divergence_pct||0) >= THRESH);
-    const dir = c.edge_direction || (bestOutcome.divergence_pct > 0 ? 'BUY' : 'SELL');
-    const badgeCls = isSignal ? (dir === 'BUY' ? 'buy' : 'sell') : 'neutral';
-    const expanded = userLayout.card_expanded_default && !isFreeGated;
-    const cardId = 'card-' + idx;
-
-    if (isFreeGated && idx === FREE_LIMIT) {
-      html += '<div class="gate-overlay"><div class="gate-blur">';
-    }
-
-    html += '<div class="card" id="' + cardId + '">';
-    // Header
-    html += '<div class="card-header" onclick="toggleCard(\\'' + cardId + '\\')">';
-    html += '<div class="card-teams">' + esc(c.home_team || 'Unknown') + '<span class="vs">vs</span>' + esc(c.away_team || '');
-    const mtype = c.market_type || 'h2h';
-    if (mtype !== 'h2h') html += '<span class="market-type-badge ' + mtype + '">' + mtype + '</span>';
-    html += '</div>';
-    html += '<div class="card-meta">';
-    if (c.time_to_event_hours != null) html += '<span class="card-time">' + (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') + '</span>';
-    html += '<span class="signal-badge ' + badgeCls + '">' + (isSignal ? dir + ' ' + fmt(Math.abs(bestOutcome.divergence_pct || 0)) + '%' : 'No Edge') + '</span>';
-    if (c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length)) {
-      const tCount = (c.top_trader_positions || []).length;
-      html += '<span class="top-trader-badge" title="' + tCount + ' of the top 10 Polymarket traders have a position on this market">Top ' + tCount + '</span>';
-    }
-    // Trend arrow
-    const bestTrend = bestOutcome.trend || {};
-    const trendDir = bestTrend.direction || 'new';
-    const trendIcon = trendDir === 'widening' ? '&#9650;' : trendDir === 'narrowing' ? '&#9660;' : trendDir === 'stable' ? '&#8212;' : '&#9679;';
-    html += '<span class="trend-arrow ' + trendDir + '" title="Edge ' + trendDir + '">' + trendIcon + '</span>';
-    if (bestTrend.change_2h) html += '<span class="trend-change">' + (bestTrend.change_2h > 0 ? '+' : '') + fmt(bestTrend.change_2h, 1) + '/2h</span>';
-    html += renderConfidenceStars(c.confidence_score);
-    html += '</div></div>';
-
-    // Action hint
-    if (isSignal && bestOutcome.outcome_name) {
-      const polyPrice = bestOutcome.poly_price != null ? Math.round(bestOutcome.poly_price * 100) : null;
-      const kalshiPrice = bestOutcome.kalshi_prob != null ? Math.round(bestOutcome.kalshi_prob) : null;
-      let hintPlatforms = '';
-      if (polyPrice != null && kalshiPrice != null) hintPlatforms = 'Polymarket (' + polyPrice + 'c) / Kalshi (' + kalshiPrice + 'c)';
-      else if (polyPrice != null) hintPlatforms = 'Polymarket (' + polyPrice + 'c)';
-      else if (kalshiPrice != null) hintPlatforms = 'Kalshi (' + kalshiPrice + 'c)';
-      html += '<div class="card-action-hint">' + esc(bestOutcome.outcome_name) + ' is ' + fmt(Math.abs(bestOutcome.divergence_pct||0)) + '% cheaper on ' + hintPlatforms + ' &mdash; ' + dir + '</div>';
-    }
-
-    // Outcome chips
-    if (c.outcomes && c.outcomes.length) {
-      html += '<div class="outcome-chips">';
-      c.outcomes.forEach((o, oi) => {
-        const d = o.divergence_pct || 0;
-        const cls = Math.abs(d) >= THRESH ? (d > 0 ? 'pos' : 'neg') : '';
-        const t = o.trend || {};
-        const sparkId = cardId + '-spark-' + oi;
-        html += '<span class="outcome-chip ' + cls + '">' + esc(o.outcome_name || '?') + ' ' + fmtPct(d);
-        if (t.points && t.points.length > 2) html += '<span class="sparkline"><canvas id="' + sparkId + '" width="40" height="16"></canvas></span>';
-        html += '</span>';
-      });
-      html += '</div>';
-    }
-
-    // Detail
-    html += '<div class="card-detail' + (expanded ? ' open' : '') + '" id="detail-' + cardId + '">';
-
-    // Probability comparison bars
-    if (c.outcomes && c.outcomes.length) {
-      html += '<div class="prob-compare">';
-      html += '<div class="prob-legend"><span class="leg-book">Book Consensus</span><span class="leg-poly">Polymarket</span><span class="leg-kalshi">Kalshi</span></div>';
-      c.outcomes.forEach(o => {
-        const bp = (o.sharp_prob || o.consensus_prob || 0) * 100;
-        const pp = (o.poly_price || 0) * 100;
-        const kp = o.kalshi_prob || 0;
-        html += '<div class="prob-row"><div class="prob-label">' + esc(o.outcome_name || '') + '</div><div class="prob-bars">' +
-          '<div class="prob-bar book" style="width:' + bp + '%"></div>' +
-          '<div class="prob-bar poly" style="width:' + pp + '%"></div>' +
-          (kp > 0 ? '<div class="prob-bar kalshi" style="width:' + kp + '%"></div>' : '') +
-          '</div><span style="font-size:11px;color:var(--muted);white-space:nowrap">' + fmt(bp,0) + '% / ' + fmt(pp,0) + '%' + (kp > 0 ? ' / ' + fmt(kp,0) + '%' : '') + '</span></div>';
-      });
-      html += '</div>';
-    }
-
-    // Head-to-head historical record
-    html += buildH2HSection(c, cardId);
-
-    // Top 10 Polymarket trader positions on this market
-    html += buildTopTradersSection(c);
-
-    // Market Intel Grid
-    html += buildIntelGrid(c);
-
-    // Outcome Table
-    if (c.outcomes && c.outcomes.length) {
-      html += '<div class="outcome-table-wrap"><table class="outcome-table"><thead><tr><th>Outcome</th><th>Sharp%</th><th>Consensus%</th><th>Poly%</th><th>Kalshi%</th><th>Edge</th><th>Cheaper On</th><th>Bet Size</th></tr></thead><tbody>';
-      c.outcomes.forEach(o => {
-        const d = o.divergence_pct || 0;
-        const col = Math.abs(d) >= THRESH ? (d > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text)';
-        const kp = o.kalshi_prob;
-        html += '<tr><td>' + esc(o.outcome_name || '') + '</td><td>' + fmt((o.sharp_prob||0)*100,1) + '%</td><td>' + fmt((o.consensus_prob||0)*100,1) + '%</td><td>' + fmt((o.poly_price||0)*100,1) + '%</td><td style="color:var(--text)">' + (kp != null ? fmt(kp,1) + '%' : '-') + '</td><td style="color:' + col + ';font-weight:600">' + fmtPct(d) + '</td><td>' + (d > 0 ? 'Poly' : d < 0 ? 'Books' : '-') + '</td><td>' + (o.kelly_fraction != null ? fmt(o.kelly_fraction * 100, 1) + '%' : '-') + '</td></tr>';
-      });
-      html += '</tbody></table></div>';
-    }
-
-    // Bookmaker Breakdown
-    if (c.bookmaker_breakdown && Object.keys(c.bookmaker_breakdown).length) {
-      html += '<button class="bookie-toggle" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\\'open\\')">&#9660; Bookmaker Breakdown (' + Object.keys(c.bookmaker_breakdown).length + ')</button>';
-      html += '<div class="bookie-section"><table class="bookie-table"><thead><tr><th>Book</th><th>Outcome</th><th>Prob</th><th>Odds</th></tr></thead><tbody>';
-      Object.entries(c.bookmaker_breakdown).forEach(([bk, outcomes]) => {
-        (Array.isArray(outcomes) ? outcomes : []).forEach((o, oi) => {
-          html += '<tr><td>' + (oi === 0 ? esc(bk) : '') + '</td><td>' + esc(o.outcome || '') + '</td><td>' + fmt((o.implied_prob||0)*100,1) + '%</td><td>' + fmt(o.decimal_odds, 2) + '</td></tr>';
-        });
-      });
-      html += '</tbody></table></div>';
-    }
-
-    // Card actions
-    const wKey = esc((c.home_team||'') + ' vs ' + (c.away_team||''));
-    html += '<div class="card-actions">';
-    if (c.poly_url) html += '<a href="' + esc(c.poly_url) + '" target="_blank" class="btn-action primary">Trade on Polymarket</a>';
-    if (c.kalshi_event) html += '<a href="https://kalshi.com/events/' + esc(c.kalshi_event) + '" target="_blank" class="btn-action kalshi-btn">Trade on Kalshi</a>';
-    html += '<button class="btn-action btn-watchlist' + (watchlistIds.has(wKey) ? ' active' : '') + '" onclick="event.stopPropagation();toggleWatchlist(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\')">&#9733; Watchlist</button>';
-    html += '<button class="btn-action" onclick="event.stopPropagation();logTrade(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc((bestOutcome.outcome_name||'')).replace(/'/g,"\\\\'") + '\\',' + Math.round((bestOutcome.poly_price||0)*100) + ')">Log Trade</button>';
-    html += '<button class="btn-flag" onclick="event.stopPropagation();flagMatch(\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.poly_question||'').replace(/'/g,"\\\\'") + '\\')" title="Report bad match">&#9873; Flag</button>';
-    html += '</div>';
-
-    html += '</div>'; // card-detail
-    html += '</div>'; // card
-  });
-
-  // Close gate overlay
-  if (userTier === 'free' && filtered.length > FREE_LIMIT) {
-    html += '</div>'; // gate-blur
-    html += '<div class="gate-cta"><h3>Upgrade to Pro to see all ' + filtered.length + ' edges</h3><button class="btn-upgrade-big" onclick="openUpgrade()">Unlock All Signals</button></div>';
-    html += '</div>'; // gate-overlay
-  }
-
-  grid.innerHTML = html;
-}
-
-/* ===== Head-to-Head Builder ===== */
-function buildH2HSection(c, cardId) {
-  const h2h = c.h2h;
-  const homeForm = c.home_form;
-  const awayForm = c.away_form;
-  const homeInfo = c.home_info;
-  const awayInfo = c.away_info;
-  const homePlayers = c.home_players || [];
-  const awayPlayers = c.away_players || [];
-  const homeChem = c.home_chemistry;
-  const awayChem = c.away_chemistry;
-  // Skip entirely for futures or when we have no historical data at all
-  if (c.is_futures) return '';
-  if (!h2h && !homeForm && !awayForm && !homeInfo && !awayInfo && !homePlayers.length && !awayPlayers.length) return '';
-  const home = c.home_team || '';
-  const away = c.away_team || '';
-  let html = '<div class="h2h-section">';
-  html += '<div class="h2h-header">Head-to-Head History</div>';
-  if (h2h && h2h.total_games > 0) {
-    html += '<div class="h2h-record">';
-    html += '<div class="h2h-team home">' + esc(home) + '</div>';
-    html += '<div class="h2h-score">' + h2h.team_a_wins + '<span class="h2h-dash">-</span>' + h2h.team_b_wins + (h2h.draws ? '<span class="h2h-dash">-</span>' + h2h.draws : '') + '</div>';
-    html += '<div class="h2h-team away">' + esc(away) + '</div>';
-    html += '</div>';
-    html += '<div class="h2h-meta">';
-    html += '<div class="h2h-meta-item">Last ' + h2h.total_games + ' meeting' + (h2h.total_games === 1 ? '' : 's') + '</div>';
-    if (h2h.last_meeting && h2h.last_meeting.date) {
-      html += '<div class="h2h-meta-item">Last: ' + esc(h2h.last_meeting.date) + ' &middot; ' + esc(h2h.last_meeting.score || '') + '</div>';
-    }
-    html += '</div>';
-    if (h2h.recent && h2h.recent.length > 1) {
-      const listId = cardId + '-h2h-recent';
-      html += '<button class="h2h-toggle-recent" onclick="event.stopPropagation();document.getElementById(\\'' + listId + '\\').classList.toggle(\\'open\\')">&#9660; Show all ' + h2h.recent.length + ' meetings</button>';
-      html += '<div class="h2h-recent-list" id="' + listId + '">';
-      h2h.recent.forEach(m => {
-        const winner = m.winner || '';
-        html += '<div class="h2h-recent-item">' +
-          '<span class="h2h-recent-date">' + esc(m.date || '') + '</span>' +
-          '<span>' + esc(m.home || '') + ' ' + (m.home_score != null ? m.home_score : '') + '-' + (m.away_score != null ? m.away_score : '') + ' ' + esc(m.away || '') + '</span>' +
-          '<span style="color:var(--muted)">' + esc(winner) + '</span>' +
-          '</div>';
-      });
-      html += '</div>';
-    }
-  } else if (!homeInfo && !awayInfo) {
-    html += '<div class="h2h-empty">No prior meetings found in our records.</div>';
-  }
-  // Recent form pills for both teams
-  if (homeForm || awayForm) {
-    html += '<div class="h2h-form-row">';
-    if (homeForm) {
-      html += '<div><div class="h2h-form-label">' + esc(home) + ' &middot; last ' + homeForm.last_n + '</div>';
-      html += '<div class="h2h-form-pills">' + (homeForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
-    } else {
-      html += '<div></div>';
-    }
-    if (awayForm) {
-      html += '<div style="text-align:right"><div class="h2h-form-label">' + esc(away) + ' &middot; last ' + awayForm.last_n + '</div>';
-      html += '<div class="h2h-form-pills" style="justify-content:flex-end">' + (awayForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
-    }
-    html += '</div>';
-  }
-
-  // Team stats grid (W/L record + key indicators)
-  if (homeInfo || awayInfo) {
-    html += '<div class="team-stats-grid">';
-    html += renderTeamStatsCard(home, homeInfo);
-    html += renderTeamStatsCard(away, awayInfo);
-    html += '</div>';
-  }
-
-  // Chemistry meters (team momentum / cohesion)
-  if (homeChem || awayChem) {
-    if (homeChem) html += renderChemistryRow(home, homeChem);
-    if (awayChem) html += renderChemistryRow(away, awayChem);
-  }
-
-  // Top players with strengths and weaknesses
-  if (homePlayers.length || awayPlayers.length) {
-    html += '<div class="players-section">';
-    html += '<div class="players-section-title">Key Players</div>';
-    html += '<div class="players-grid">';
-    html += '<div class="player-team-block">';
-    html += '<div class="player-team-label">' + esc(home) + '</div>';
-    if (homePlayers.length) {
-      homePlayers.forEach(p => { html += renderPlayerCard(p); });
-    } else {
-      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
-    }
-    html += '</div>';
-    html += '<div class="player-team-block">';
-    html += '<div class="player-team-label">' + esc(away) + '</div>';
-    if (awayPlayers.length) {
-      awayPlayers.forEach(p => { html += renderPlayerCard(p); });
-    } else {
-      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
-    }
-    html += '</div>';
-    html += '</div>';
-    html += '</div>';
-  }
-
-  html += '</div>';
-  return html;
-}
-
-function renderTeamStatsCard(name, info) {
-  if (!info) {
-    return '<div class="team-stats-card"><div class="team-stats-name">' + esc(name) + '</div><div style="color:var(--muted);font-size:11px;">No team data</div></div>';
-  }
-  const wins = info.wins || 0;
-  const losses = info.losses || 0;
-  const draws = info.draws || 0;
-  const winPct = (info.win_pct || 0) * 100;
-  const recordStr = draws > 0 ? wins + '-' + losses + '-' + draws : wins + '-' + losses;
-  let html = '<div class="team-stats-card">';
-  html += '<div class="team-stats-name">' + esc(info.name || name) + '</div>';
-  html += '<div class="team-stats-record">' + recordStr + ' <span class="pct">' + winPct.toFixed(1) + '%</span></div>';
-  if (info.rank) {
-    html += '<div class="team-stats-rank">League Rank #' + info.rank + (info.conference_rank ? ' &middot; Conf #' + info.conference_rank : '') + '</div>';
-  } else if (info.conference_rank) {
-    html += '<div class="team-stats-rank">Conference Rank #' + info.conference_rank + '</div>';
-  }
-  html += '<div class="team-stats-bars">';
-  // Win pct bar
-  const winCls = winPct >= 60 ? 'good' : winPct >= 45 ? 'mid' : 'bad';
-  html += '<div class="stat-bar-row"><div class="stat-bar-label">Win %</div><div class="stat-bar-track"><div class="stat-bar-fill ' + winCls + '" style="width:' + Math.max(2, Math.min(100, winPct)) + '%"></div></div><div class="stat-bar-value">' + winPct.toFixed(0) + '%</div></div>';
-  // Last 10 (parse e.g. "7-3" -> percentage)
-  if (info.last_10) {
-    const m = String(info.last_10).match(/^(\\d+)-(\\d+)/);
-    if (m) {
-      const lw = parseInt(m[1], 10);
-      const ll = parseInt(m[2], 10);
-      const lp = (lw + ll) > 0 ? (lw / (lw + ll)) * 100 : 0;
-      const lcls = lp >= 60 ? 'good' : lp >= 45 ? 'mid' : 'bad';
-      html += '<div class="stat-bar-row"><div class="stat-bar-label">L10</div><div class="stat-bar-track"><div class="stat-bar-fill ' + lcls + '" style="width:' + Math.max(2, Math.min(100, lp)) + '%"></div></div><div class="stat-bar-value">' + lw + '-' + ll + '</div></div>';
-    }
-  }
-  // Streak
-  if (info.streak) {
-    let s = parseInt(info.streak, 10);
-    if (!isNaN(s)) {
-      const sAbs = Math.min(Math.abs(s), 10);
-      const sPct = (sAbs / 10) * 100;
-      const sCls = s > 0 ? 'good' : s < 0 ? 'bad' : 'mid';
-      const sLabel = s > 0 ? 'W' + s : s < 0 ? 'L' + Math.abs(s) : '-';
-      html += '<div class="stat-bar-row"><div class="stat-bar-label">Streak</div><div class="stat-bar-track"><div class="stat-bar-fill ' + sCls + '" style="width:' + Math.max(2, sPct) + '%"></div></div><div class="stat-bar-value">' + sLabel + '</div></div>';
-    }
-  }
-  // Points differential bar (basketball/hockey/football)
-  if (info.points_for && info.points_against) {
-    const pf = info.points_for;
-    const pa = info.points_against;
-    const diff = pf - pa;
-    // Map -10..+10 to 0..100
-    const dPct = Math.max(0, Math.min(100, 50 + (diff / 10) * 50));
-    const dCls = diff > 1 ? 'good' : diff < -1 ? 'bad' : 'mid';
-    const sign = diff > 0 ? '+' : '';
-    html += '<div class="stat-bar-row"><div class="stat-bar-label">Pt Diff</div><div class="stat-bar-track"><div class="stat-bar-fill ' + dCls + '" style="width:' + dPct + '%"></div></div><div class="stat-bar-value">' + sign + diff.toFixed(1) + '</div></div>';
-  }
-  html += '</div></div>';
-  return html;
-}
-
-function renderChemistryRow(name, chem) {
-  if (!chem) return '';
-  const score = chem.score || 0;
-  const label = chem.label || '';
-  let html = '<div class="chemistry-row">';
-  html += '<div class="chemistry-label">' + esc(name) + ' Chemistry</div>';
-  html += '<div class="chemistry-meter"><div class="chemistry-fill" style="width:' + Math.max(2, Math.min(100, score)) + '%"></div></div>';
-  html += '<div class="chemistry-value">' + score.toFixed(0) + ' &middot; ' + esc(label) + '</div>';
-  html += '</div>';
-  return html;
-}
-
-function renderPlayerCard(p) {
-  if (!p) return '';
-  const stats = p.stats || {};
-  const statKeys = Object.keys(stats);
-  let statHtml = '';
-  if (statKeys.length) {
-    statHtml = '<div class="player-stats">';
-    statKeys.slice(0, 4).forEach(k => {
-      const v = stats[k];
-      if (v == null || v === '') return;
-      const vs = (typeof v === 'number') ? (v % 1 === 0 ? v.toString() : v.toFixed(1)) : String(v);
-      statHtml += '<span class="player-stat">' + esc(k) + ' <strong>' + esc(vs) + '</strong></span>';
-    });
-    statHtml += '</div>';
-  }
-  let tagHtml = '';
-  const strengths = p.strengths || [];
-  const weaknesses = p.weaknesses || [];
-  if (strengths.length || weaknesses.length) {
-    tagHtml = '<div class="player-tags">';
-    strengths.slice(0, 3).forEach(s => { tagHtml += '<span class="player-tag strength">' + esc(s) + '</span>'; });
-    weaknesses.slice(0, 2).forEach(w => { tagHtml += '<span class="player-tag weakness">' + esc(w) + '</span>'; });
-    tagHtml += '</div>';
-  }
-  let html = '<div class="player-card">';
-  html += '<div class="player-name">' + esc(p.name || '') + (p.jersey ? ' <span style="color:var(--muted);font-weight:400">#' + esc(p.jersey) + '</span>' : '') + '</div>';
-  if (p.position) html += '<div class="player-pos">' + esc(p.position) + '</div>';
-  html += statHtml;
-  html += tagHtml;
-  html += '</div>';
-  return html;
-}
-
-/* ===== Top Polymarket Traders Section =====
-   Renders an at-a-glance list of which top-10 Polymarket traders (by lifetime
-   volume) currently hold a position on this market, what side they took,
-   their average buy price, and their net dollar exposure. */
-function buildTopTradersSection(c) {
-  const positions = c.top_trader_positions || [];
-  if (!positions.length) return '';
-  let html = '<div class="top-traders-section">';
-  html += '<div class="top-traders-title">Top 10 Polymarket Traders &mdash; Positions on this Market <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;margin-left:6px">(' + positions.length + ' active)</span></div>';
-  html += '<div class="top-traders-list">';
-  positions.forEach(p => {
-    const sideCls = p.side === 'LONG' ? 'long' : 'short';
-    const sideLabel = p.side === 'LONG' ? 'Long' : 'Short';
-    const displayName = p.pseudonym || p.name || (p.wallet ? p.wallet.slice(0, 6) + '\u2026' + p.wallet.slice(-4) : 'Unknown');
-    const usd = Math.abs(p.net_usd || 0);
-    const usdStr = usd >= 1000 ? '$' + (usd / 1000).toFixed(usd >= 10000 ? 0 : 1) + 'k' : '$' + usd.toFixed(0);
-    const lifetimeVol = p.lifetime_volume || 0;
-    const lifetimeStr = lifetimeVol >= 1e6 ? '$' + (lifetimeVol / 1e6).toFixed(1) + 'M' : '$' + (lifetimeVol / 1000).toFixed(0) + 'k';
-    const avgPriceStr = p.avg_price > 0 ? Math.round(p.avg_price * 100) + 'c' : '';
-    html += '<div class="top-trader-row">';
-    html += '<span class="top-trader-rank">#' + (p.rank || '?') + '</span>';
-    html += '<span class="top-trader-name" title="' + esc(displayName) + ' &middot; lifetime ' + lifetimeStr + '">' + esc(displayName) + '</span>';
-    html += '<span class="top-trader-vol" title="Lifetime trading volume">' + lifetimeStr + '</span>';
-    html += '<div class="top-trader-bet">';
-    html += '<span class="top-trader-side ' + sideCls + '">' + sideLabel + '</span>';
-    html += '<span class="top-trader-outcome" title="' + esc(p.outcome || '') + '">' + esc(p.outcome || '') + '</span>';
-    if (avgPriceStr) html += '<span class="top-trader-vol">@ ' + avgPriceStr + '</span>';
-    html += '<span class="top-trader-usd">' + usdStr + '</span>';
-    html += '</div>';
-    html += '</div>';
-  });
-  html += '</div>';
-  html += '</div>';
-  return html;
-}
-
-/* ===== Intel Grid Builder ===== */
-function buildIntelGrid(c) {
-  const dp = userLayout.visible_data_points;
-  const items = [];
-  const tooltips = {
-    volume: 'Total volume traded on Polymarket for this event.',
-    spread: 'Bid-ask spread on Polymarket. Lower = tighter market.',
-    bookmakers: 'Number of sportsbooks quoting this event.',
-    sharp_book: 'The sharpest bookmaker with most accurate odds.',
-    price_change: 'Polymarket price change in the last 24 hours.',
-    match_confidence: 'How well the Polymarket market matched to book event.',
-    book_agreement: 'How closely books agree (1-5). Higher = stronger consensus.',
-    book_range: 'Spread between highest and lowest book probabilities.',
-    median_book_prob: 'Median probability across all bookmakers.',
-    book_std_dev: 'Standard deviation of book probabilities. Lower = tighter.',
-    implied_vig: 'Bookmaker margin (overround) in the odds.',
-    true_prob_no_vig: 'De-vigged true probability estimate.',
-    best_odds: 'Best decimal odds offered across bookmakers.',
-    worst_odds: 'Worst decimal odds offered across bookmakers.',
-    vol_liquidity_ratio: 'Volume / Liquidity. Higher = more actively traded.',
-    spread_pct: 'Polymarket spread as a percentage.',
-    edge_direction: 'BUY if Polymarket underpriced, SELL if overpriced.',
-    time_to_event: 'Hours until event starts.',
-    kalshi_price: 'Kalshi prediction market implied probability for the best outcome.',
-    kalshi_volume: 'Total contracts traded on Kalshi for this game.'
-  };
-
-  if (dp.includes('volume')) items.push({ label: 'Volume Traded', value: c.poly_volume != null ? fmtMoney(c.poly_volume, 0) : '-', key: 'volume' });
-  if (dp.includes('spread')) items.push({ label: 'Bid-Ask Spread', value: c.poly_spread != null ? fmt(c.poly_spread, 2) : '-', key: 'spread' });
-  if (dp.includes('bookmakers')) items.push({ label: 'Bookmakers', value: c.num_bookmakers || '-', key: 'bookmakers' });
-  if (dp.includes('sharp_book')) items.push({ label: 'Sharp Book', value: c.sharp_book || '-', key: 'sharp_book' });
-  if (dp.includes('price_change')) items.push({ label: '24h Change', value: c.poly_one_day_change != null ? fmtPct(c.poly_one_day_change) : '-', key: 'price_change' });
-  if (dp.includes('match_confidence')) items.push({ label: 'Match Confidence', value: c.match_score != null ? fmt(c.match_score, 0) + '%' : '-', key: 'match_confidence' });
-  if (dp.includes('book_agreement')) items.push({ label: 'Book Agreement', value: c.book_agreement != null ? renderConfidenceStars(c.book_agreement) : '-', key: 'book_agreement' });
-  if (dp.includes('book_range')) items.push({ label: 'Book Range', value: c.book_range != null ? fmt(c.book_range * 100, 1) + '%' : '-', key: 'book_range' });
-  if (dp.includes('median_book_prob')) items.push({ label: 'Median Book Prob', value: c.median_book_prob != null ? fmt(c.median_book_prob * 100, 1) + '%' : '-', key: 'median_book_prob' });
-  if (dp.includes('book_std_dev')) items.push({ label: 'Book Std Dev', value: c.book_std_dev != null ? fmt(c.book_std_dev * 100, 2) + '%' : '-', key: 'book_std_dev' });
-  if (dp.includes('implied_vig')) items.push({ label: 'Implied Vig', value: c.implied_vig != null ? fmt(c.implied_vig * 100, 1) + '%' : '-', key: 'implied_vig' });
-  if (dp.includes('true_prob_no_vig')) items.push({ label: 'True Prob (No Vig)', value: c.true_prob_no_vig != null ? fmt(c.true_prob_no_vig * 100, 1) + '%' : '-', key: 'true_prob_no_vig' });
-  if (dp.includes('best_odds')) items.push({ label: 'Best Odds', value: c.best_decimal_odds != null ? fmt(c.best_decimal_odds, 2) : '-', key: 'best_odds' });
-  if (dp.includes('worst_odds')) items.push({ label: 'Worst Odds', value: c.worst_decimal_odds != null ? fmt(c.worst_decimal_odds, 2) : '-', key: 'worst_odds' });
-  if (dp.includes('vol_liquidity_ratio')) items.push({ label: 'Vol/Liq Ratio', value: c.volume_liquidity_ratio != null ? fmt(c.volume_liquidity_ratio, 2) : '-', key: 'vol_liquidity_ratio' });
-  if (dp.includes('spread_pct')) items.push({ label: 'Spread %', value: c.spread_pct != null ? fmt(c.spread_pct, 2) + '%' : '-', key: 'spread_pct' });
-  if (dp.includes('edge_direction')) items.push({ label: 'Edge Direction', value: c.edge_direction || '-', key: 'edge_direction' });
-  if (dp.includes('time_to_event')) items.push({ label: 'Time to Event', value: c.time_to_event_hours != null ? (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') : '-', key: 'time_to_event' });
-  if (dp.includes('kalshi_price')) {
-    const bestO = (c.outcomes||[]).reduce((a,b) => Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0) ? b : a, (c.outcomes||[])[0]||{});
-    items.push({ label: 'Kalshi Price', value: bestO.kalshi_prob != null ? fmt(bestO.kalshi_prob, 1) + '%' : 'N/A', key: 'kalshi_price' });
-  }
-  if (dp.includes('kalshi_volume')) items.push({ label: 'Kalshi Volume', value: c.kalshi_volume ? Number(c.kalshi_volume).toLocaleString() : '-', key: 'kalshi_volume' });
-
-  if (!items.length) return '';
-  let h = '<div class="intel-grid">';
-  items.forEach(it => {
-    h += '<div class="intel-item"><div class="intel-item-label">' + esc(it.label) + ' <span class="info-i">i<span class="tooltip">' + esc(tooltips[it.key] || '') + '</span></span></div><div class="intel-item-value">' + it.value + '</div></div>';
-  });
-  return h + '</div>';
-}
-
-/* ===== Toggle Card Detail ===== */
-function toggleCard(id) {
-  const d = document.getElementById('detail-' + id);
-  if (d) d.classList.toggle('open');
-}
-
-/* ===== Tab Switching ===== */
-function switchTab(tab) {
-  document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.getElementById('tabBtn' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
-
-  if (tab === 'dashboard') { document.getElementById('tabDashboard').classList.add('active'); }
-  else if (tab === 'profit') { document.getElementById('tabProfit').classList.add('active'); renderProfitTracker(); }
-  else if (tab === 'watchlist') { document.getElementById('tabWatchlist').classList.add('active'); renderWatchlist(); }
-  else if (tab === 'edgestats') { document.getElementById('tabEdgestats').classList.add('active'); loadEdgePerformance(); }
-  else if (tab === 'alerts') { document.getElementById('tabAlerts').classList.add('active'); loadAlertConfig(); }
-  else if (tab === 'history') { document.getElementById('tabHistory').classList.add('active'); initHistory(); }
-}
-
-/* ===== Profit Tracker ===== */
-function renderProfitTracker() {
-  fetch('/api/trades/stats', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).then(stats => {
-    const wrap = document.getElementById('profitSummary');
-    const pnl = stats.total_pnl || 0;
-    const pnlCol = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    wrap.innerHTML =
-      '<div class="profit-card"><div class="profit-value" style="color:' + pnlCol + '">' + fmtMoney(pnl, 2) + '</div><div class="profit-label">Total P&amp;L</div></div>' +
-      '<div class="profit-card"><div class="profit-value">' + fmt(stats.win_rate || 0, 0) + '%</div><div class="profit-label">Win Rate</div></div>' +
-      '<div class="profit-card"><div class="profit-value">' + (stats.open_trades || 0) + '</div><div class="profit-label">Open Trades</div></div>' +
-      '<div class="profit-card"><div class="profit-value">' + (stats.closed_trades || 0) + '</div><div class="profit-label">Closed Trades</div></div>' +
-      '<div class="profit-card"><div class="profit-value">' + fmt(stats.roi || 0, 1) + '%</div><div class="profit-label">ROI</div></div>';
-  }).catch(() => {});
-
-  fetch('/api/trades', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).then(trades => {
-    const body = document.getElementById('tradesBody');
-    const empty = document.getElementById('tradesEmpty');
-    if (!trades.length) { body.innerHTML = ''; empty.style.display = ''; return; }
-    empty.style.display = 'none';
-    body.innerHTML = trades.map(t => {
-      const pnlCol = (t.pnl||0) >= 0 ? 'var(--green)' : 'var(--red)';
-      return '<tr><td>' + esc(t.market_name||'') + '</td><td>' + esc(t.outcome||'') + '</td><td>' + fmt(t.entry_price,0) + 'c</td><td>' + fmtMoney(t.amount,2) + '</td><td>' + esc(t.status||'open') + '</td><td style="color:' + pnlCol + '">' + fmtMoney(t.pnl||0,2) + '</td><td>' + (t.created_at ? new Date(t.created_at).toLocaleDateString() : '-') + '</td></tr>';
-    }).join('');
-  }).catch(() => {});
-}
-
-/* ===== Watchlist ===== */
-function renderWatchlist() {
-  fetch('/api/watchlist', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).then(items => {
-    const wrap = document.getElementById('watchlistList');
-    const empty = document.getElementById('watchlistEmpty');
-    watchlistIds = new Set(items.map(i => i.market_key || (i.home_team + ' vs ' + i.away_team)));
-    if (!items.length) { wrap.innerHTML = ''; empty.style.display = ''; return; }
-    empty.style.display = 'none';
-    wrap.innerHTML = items.map(i => {
-      const edge = i.current_edge != null ? fmtPct(i.current_edge) : '-';
-      const edgeCol = (i.current_edge||0) >= THRESH ? 'var(--green)' : 'var(--text-secondary)';
-      return '<div class="watchlist-item"><div class="watchlist-item-info"><div class="watchlist-item-name">' + esc(i.market_name || (i.home_team + ' vs ' + i.away_team)) + '</div><div class="watchlist-item-edge" style="color:' + edgeCol + '">Edge: ' + edge + '</div></div><button class="watchlist-remove" onclick="removeWatchlist(' + i.id + ')">Remove</button></div>';
-    }).join('');
-  }).catch(() => {});
-}
-
-function toggleWatchlist(key, home, away) {
-  if (userTier === 'free') { openUpgrade(); return; }
-  fetch('/api/watchlist', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ market_key: key, home_team: home, away_team: away })
-  }).then(r => r.json()).then(() => { renderWatchlist(); render(); }).catch(() => {});
-}
-
-function removeWatchlist(id) {
-  fetch('/api/watchlist/' + id, { method: 'DELETE', credentials: 'same-origin' })
-    .then(() => renderWatchlist()).catch(() => {});
-}
-
-/* ===== History (Pro only) ===== */
-let historyInitialized = false;
-function initHistory() {
-  const gate = document.getElementById('historyGate');
-  const content = document.getElementById('historyContent');
-  if (userTier !== 'pro') {
-    gate.style.display = '';
-    content.style.display = 'none';
-    return;
-  }
-  gate.style.display = 'none';
-  content.style.display = '';
-  if (!historyInitialized) {
-    // Populate sport filter dropdown
-    const sel = document.getElementById('historySportFilter');
-    Object.entries(sports).forEach(([k, s]) => {
-      const opt = document.createElement('option');
-      opt.value = k; opt.textContent = s.title || k;
-      sel.appendChild(opt);
-    });
-    historyInitialized = true;
-  }
-  loadHistory();
-}
-
-function loadHistory() {
-  const sport = document.getElementById('historySportFilter').value;
-  const qs = sport ? '?sport=' + encodeURIComponent(sport) + '&limit=200' : '?limit=200';
-  fetch('/api/history' + qs, { credentials: 'same-origin' }).then(r => {
-    if (r.status === 403) { document.getElementById('historyGate').style.display = ''; document.getElementById('historyContent').style.display = 'none'; return null; }
-    return r.ok ? r.json() : null;
-  }).then(data => {
-    if (!data) return;
-    renderHistorical(data.historical || []);
-    renderSnapshots(data.snapshots || []);
-  }).catch(() => {});
-}
-
-function renderHistorical(rows) {
-  const body = document.getElementById('historyBody');
-  const empty = document.getElementById('historyEmpty');
-  if (!rows.length) { body.innerHTML = ''; empty.style.display = ''; return; }
-  empty.style.display = 'none';
-  body.innerHTML = rows.map(r => {
-    const res = (r.resolution || '').toLowerCase();
-    const resCls = res === 'yes' ? 'yes' : (res === 'no' ? 'no' : '');
-    const vol = r.volume ? fmtMoney(r.volume, 0) : '-';
-    const price = r.final_price != null ? fmtPct(r.final_price * 100) : '-';
-    const date = r.end_date ? new Date(r.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-    return '<tr>' +
-      '<td>' + esc(r.event_title || '') + '</td>' +
-      '<td>' + esc(r.outcome || r.market_question || '') + '</td>' +
-      '<td>' + price + '</td>' +
-      '<td>' + vol + '</td>' +
-      '<td><span class="history-res ' + resCls + '">' + esc(r.resolution || '-') + '</span></td>' +
-      '<td>' + date + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-function renderSnapshots(rows) {
-  const body = document.getElementById('snapshotBody');
-  const empty = document.getElementById('snapshotEmpty');
-  if (!rows.length) { body.innerHTML = ''; empty.style.display = ''; return; }
-  empty.style.display = 'none';
-  body.innerHTML = rows.map(r => {
-    const bp = r.book_prob != null ? fmtPct(r.book_prob) : '-';
-    const pp = r.poly_prob != null ? fmtPct(r.poly_prob) : '-';
-    const kp = r.kalshi_prob != null ? fmtPct(r.kalshi_prob) : '-';
-    const div = r.divergence != null ? fmtPct(r.divergence) : '-';
-    const time = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
-    return '<tr>' +
-      '<td>' + esc(r.event_name || '') + '</td>' +
-      '<td>' + esc(r.outcome || '') + '</td>' +
-      '<td>' + bp + '</td>' +
-      '<td>' + pp + '</td>' +
-      '<td>' + kp + '</td>' +
-      '<td>' + div + '</td>' +
-      '<td>' + time + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-/* ===== Trade Logging ===== */
-function logTrade(market, outcome, price) {
-  if (userTier === 'free') { openUpgrade(); return; }
-  document.getElementById('tradeMarket').value = market || '';
-  document.getElementById('tradeOutcome').value = outcome || '';
-  document.getElementById('tradePrice').value = price || '';
-  document.getElementById('tradeAmount').value = '';
-  openModal('tradeModal');
-}
-
-function openTradeModal() {
-  if (userTier === 'free') { openUpgrade(); return; }
-  document.getElementById('tradeMarket').value = '';
-  document.getElementById('tradeOutcome').value = '';
-  document.getElementById('tradePrice').value = '';
-  document.getElementById('tradeAmount').value = '';
-  openModal('tradeModal');
-}
-
-function submitTrade() {
-  const market = document.getElementById('tradeMarket').value.trim();
-  const outcome = document.getElementById('tradeOutcome').value.trim();
-  const price = parseInt(document.getElementById('tradePrice').value, 10);
-  const amount = parseFloat(document.getElementById('tradeAmount').value);
-  if (!market || !outcome || !price || !amount) return;
-  fetch('/api/trades', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ market_name: market, outcome: outcome, entry_price: price, amount: amount })
-  }).then(r => { if (r.ok) { closeModal('tradeModal'); renderProfitTracker(); } }).catch(() => {});
-}
-
-/* ===== Modals ===== */
-function openGlossary() { openModal('glossaryModal'); }
-function openCustomize() { applyLayoutToUI(); openModal('customizeModal'); }
-function openUpgrade() { openModal('upgradeModal'); }
-
-function dismissHero() {
-  localStorage.setItem('sharpe_hero_dismissed', '1');
-  document.getElementById('heroBanner').style.display = 'none';
-}
-
-/* ===== Cross-Sport Ticker ===== */
-function renderCrossSportTicker() {
-  const edges = (data && data.cross_sport_edges) || [];
-  const wrap = document.getElementById('crossSportTicker');
-  const items = document.getElementById('tickerItems');
-  if (!edges.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
-  items.innerHTML = edges.slice(0, 10).map(e =>
-    '<div class="ticker-item" onclick="switchSport(\\'' + (Object.entries(sports).find(([k,s]) => s.title === e.sport_name)?.[0] || '') + '\\')">' +
-    '<div class="ticker-sport">' + esc(e.sport_name) + '</div>' +
-    '<div class="ticker-teams">' + esc(e.home_team) + ' vs ' + esc(e.away_team) + '</div>' +
-    '<div class="ticker-edge">' + fmtPct(Math.abs(e.divergence)) + ' &mdash; ' + esc(e.outcome) + '</div>' +
-    '</div>'
-  ).join('');
-}
-
-/* ===== Sparkline Drawing ===== */
-function drawSparklines() {
-  if (!data || !data.comparisons) return;
-  data.comparisons.forEach((c, ci) => {
-    (c.outcomes || []).forEach((o, oi) => {
-      const t = o.trend || {};
-      if (!t.points || t.points.length < 3) return;
-      const cvs = document.getElementById('card-' + ci + '-spark-' + oi);
-      if (!cvs) return;
-      const ctx = cvs.getContext('2d');
-      const w = cvs.width, h = cvs.height;
-      const pts = t.points;
-      const mn = Math.min(...pts), mx = Math.max(...pts);
-      const range = mx - mn || 1;
-      ctx.clearRect(0, 0, w, h);
-      ctx.beginPath();
-      ctx.strokeStyle = t.direction === 'widening' ? '#34d399' : t.direction === 'narrowing' ? '#f87171' : '#5c5e6a';
-      ctx.lineWidth = 1.5;
-      pts.forEach((v, i) => {
-        const x = (i / (pts.length - 1)) * w;
-        const y = h - ((v - mn) / range) * (h - 4) - 2;
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-    });
-  });
-}
-
-/* ===== Flag Match ===== */
-function flagMatch(home, away, polyQ) {
-  const reason = prompt('Why is this match incorrect? (optional)');
-  if (reason === null) return;
-  fetch('/api/flag-match', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ home_team: home, away_team: away, poly_question: polyQ, reason: reason })
-  }).then(r => {
-    if (r.ok) alert('Match flagged. Thank you!');
-    else alert('Failed to flag match.');
-  }).catch(() => alert('Error flagging match.'));
-}
-
-/* ===== Edge Performance / Sharpe ===== */
-function loadEdgePerformance() {
-  fetch('/api/edge-performance', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
-    if (!d) return;
-    const empty = document.getElementById('edgeStatsEmpty');
-    if (!d.weekly || !d.weekly.length) { empty.style.display = ''; return; }
-    empty.style.display = 'none';
-
-    // Performance grid
-    const grid = document.getElementById('perfGrid');
-    const s = d.sharpe_ratio || 0;
-    const sCol = s >= 1 ? 'var(--green)' : s >= 0 ? 'var(--text)' : 'var(--red)';
-    grid.innerHTML =
-      '<div class="perf-card"><div class="perf-value" style="color:' + sCol + '">' + fmt(s, 2) + '</div><div class="perf-label">Sharpe Ratio</div></div>' +
-      '<div class="perf-card"><div class="perf-value">' + fmt(d.overall_win_rate, 1) + '%</div><div class="perf-label">Win Rate</div></div>' +
-      '<div class="perf-card"><div class="perf-value">' + (d.total_resolved || 0) + '</div><div class="perf-label">Resolved Edges</div></div>' +
-      '<div class="perf-card"><div class="perf-value">' + (d.total_correct || 0) + '</div><div class="perf-label">Correct Calls</div></div>';
-
-    document.getElementById('sharpeValue').textContent = fmt(s, 2);
-    document.getElementById('sharpeValue').style.color = sCol;
-    document.getElementById('overallWinRate').textContent = fmt(d.overall_win_rate, 1) + '%';
-
-    // Draw chart
-    drawSharpeChart(d.weekly);
-  }).catch(() => {});
-}
-
-function drawSharpeChart(weekly) {
-  const cvs = document.getElementById('sharpeChart');
-  if (!cvs || !weekly.length) return;
-  const ctx = cvs.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  cvs.width = cvs.offsetWidth * dpr;
-  cvs.height = 200 * dpr;
-  ctx.scale(dpr, dpr);
-  const w = cvs.offsetWidth, h = 200;
-  const pad = { top: 20, right: 20, bottom: 30, left: 50 };
-  const plotW = w - pad.left - pad.right;
-  const plotH = h - pad.top - pad.bottom;
-
-  // Data
-  const winRates = weekly.map(w => w.win_rate);
-  const mn = Math.min(...winRates, 0);
-  const mx = Math.max(...winRates, 100);
-  const range = mx - mn || 1;
-
-  // Background
-  ctx.fillStyle = '#131417';
-  ctx.fillRect(0, 0, w, h);
-
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + (plotH / 4) * i;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
-    ctx.fillStyle = '#5c5e6a'; ctx.font = '10px Inter'; ctx.textAlign = 'right';
-    ctx.fillText(fmt(mx - (range / 4) * i, 0) + '%', pad.left - 8, y + 3);
-  }
-
-  // 50% reference line
-  const y50 = pad.top + plotH * (1 - (50 - mn) / range);
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(pad.left, y50); ctx.lineTo(w - pad.right, y50); ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Win rate line
-  ctx.beginPath();
-  ctx.strokeStyle = '#34d399';
-  ctx.lineWidth = 2;
-  weekly.forEach((wk, i) => {
-    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
-    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // Points
-  weekly.forEach((wk, i) => {
-    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
-    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
-    ctx.beginPath();
-    ctx.arc(x, y, 3, 0, Math.PI * 2);
-    ctx.fillStyle = wk.win_rate >= 50 ? '#34d399' : '#f87171';
-    ctx.fill();
-  });
-
-  // X-axis labels
-  ctx.fillStyle = '#5c5e6a'; ctx.font = '9px Inter'; ctx.textAlign = 'center';
-  const step = Math.max(1, Math.floor(weekly.length / 8));
-  weekly.forEach((wk, i) => {
-    if (i % step !== 0 && i !== weekly.length - 1) return;
-    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
-    ctx.fillText(wk.week || '', x, h - 8);
-  });
-}
-
-/* ===== Alerts Config ===== */
-function loadAlertConfig() {
-  fetch('/api/alerts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
-    if (!d) return;
-    document.getElementById('alertEnabled').checked = !!d.enabled;
-    document.getElementById('alertMinEdge').value = d.min_edge || 5;
-    document.getElementById('alertTgToken').value = d.telegram_bot_token || '';
-    document.getElementById('alertTgChat').value = d.telegram_chat_id || '';
-    document.getElementById('alertWebhook').value = d.webhook_url || '';
-  }).catch(() => {});
-}
-
-function saveAlerts() {
-  const body = {
-    enabled: document.getElementById('alertEnabled').checked ? 1 : 0,
-    min_edge: parseFloat(document.getElementById('alertMinEdge').value) || 5,
-    telegram_bot_token: document.getElementById('alertTgToken').value.trim(),
-    telegram_chat_id: document.getElementById('alertTgChat').value.trim(),
-    webhook_url: document.getElementById('alertWebhook').value.trim(),
-    sports: [],
-  };
-  fetch('/api/alerts', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  }).then(r => {
-    const el = document.getElementById('alertStatus');
-    if (r.ok) el.textContent = 'Saved!'; else el.textContent = 'Error saving.';
-    setTimeout(() => el.textContent = '', 3000);
-  }).catch(() => {});
-}
-
-function testAlert() {
-  fetch('/api/alerts/test', { method: 'POST', credentials: 'same-origin' })
-    .then(r => r.json()).then(d => {
-      const el = document.getElementById('alertStatus');
-      if (d.status === 'ok') el.textContent = 'Test alert sent!';
-      else el.textContent = d.error || 'Error';
-      setTimeout(() => el.textContent = '', 5000);
-    }).catch(() => {});
-}
-
-/* ===== Countdown Timer ===== */
-setInterval(() => {
-  if (refreshCountdown > 0) refreshCountdown--;
-  const el = document.getElementById('countdown');
-  if (el) el.textContent = '(next scan in ' + refreshCountdown + 's)';
-}, 1000);
-
-/* ===== Init ===== */
-activeSport = USER_SPORT || '';
-if (!localStorage.getItem('sharpe_hero_dismissed')) {
-  document.getElementById('heroBanner').style.display = '';
-}
-document.documentElement.lang = _narveLang;
-applyTranslations();
-connectWS();
-loadSports();
-loadLayout();
-loadSubscription();
-loadUserInfo();
-// Refresh FX rates in the background, then re-render so amounts use the latest rates.
-ensureNarveFxRates().then(() => { try { if (data) render(); } catch (e) {} }).catch(() => {});
-
-fetch('/api/data' + (activeSport ? '?sport=' + encodeURIComponent(activeSport) : ''), { credentials: 'same-origin' })
-  .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
-</script>
-</body>
-</html>"""
-
-# (Auth HTML removed — all auth handled by gateway via narve.ai/login)
-
-
-_REMOVED_AUTH_HTML = """removed
-  .auth-logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 600;
-    font-size: 1.2em;
-    letter-spacing: -0.02em;
-    margin-bottom: 8px;
-    justify-content: center;
-  }
-  .auth-logo-icon {
-    width: 32px; height: 32px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 15px; font-weight: 600;
-    border-radius: 8px;
-  }
-  .auth-tagline {
-    text-align: center;
-    color: #8b8d98;
-    font-size: 13px;
-    font-weight: 300;
-    margin-bottom: 40px;
-  }
-  .auth-card {
-    background: #131417;
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 12px;
-    padding: 32px;
-  }
-  .auth-tabs {
-    display: flex;
-    gap: 0;
-    margin-bottom: 28px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-  }
-  .auth-tab {
-    flex: 1;
-    padding: 12px;
-    text-align: center;
-    font-weight: 500;
-    font-size: 12px;
-    cursor: pointer;
-    color: #5c5e6a;
-    border-bottom: 2px solid transparent;
-    transition: all 0.15s;
-    background: none;
-    border-top: none; border-left: none; border-right: none;
-    font-family: inherit;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .auth-tab:hover { color: #8b8d98; }
-  .auth-tab.active {
-    color: #ebebef;
-    border-bottom-color: #6366f1;
-  }
-  .auth-form { display: none; }
-  .auth-form.active { display: block; }
-  .form-group {
-    margin-bottom: 20px;
-  }
-  .form-group label {
-    display: block;
-    font-size: 10px;
-    font-weight: 500;
-    color: #5c5e6a;
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .form-group input {
-    width: 100%;
-    padding: 10px 14px;
-    background: #0c0d10;
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 8px;
-    color: #ebebef;
-    font-family: inherit;
-    font-size: 14px;
-    font-weight: 400;
-    transition: border-color 0.15s;
-  }
-  .form-group input:focus {
-    outline: none;
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99,102,241,0.10);
-  }
-  .form-group input::placeholder { color: #5c5e6a; }
-  .auth-btn {
-    width: 100%;
-    padding: 12px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s, transform 0.15s;
-    margin-top: 8px;
-    letter-spacing: 0.02em;
-  }
-  .auth-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-  .auth-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
-  .auth-error {
-    background: rgba(248,113,113,0.06);
-    border: 1px solid rgba(248,113,113,0.15);
-    border-radius: 8px;
-    color: #f87171;
-    padding: 10px 14px;
-    font-size: 12px;
-    font-weight: 400;
-    margin-bottom: 16px;
-    display: none;
-  }
-  .auth-footer {
-    text-align: center;
-    margin-top: 28px;
-    color: #5c5e6a;
-    font-size: 11px;
-    font-weight: 300;
-  }
-</style>
-</head>
-<body>
-<div class="auth-container">
-  <div class="auth-logo">
-    <div class="auth-logo-icon">S</div>
-    <span>Sharpe</span>
-  </div>
-  <div class="auth-tagline">Find mispriced bets before the market corrects</div>
-
-  <div class="auth-card">
-    <div class="auth-tabs">
-      <button class="auth-tab active" onclick="showTab('login')">Sign In</button>
-      <button class="auth-tab" onclick="showTab('register')">Create Account</button>
-    </div>
-
-    <div id="authError" class="auth-error"></div>
-
-    <!-- Login Form -->
-    <form class="auth-form active" id="loginForm" onsubmit="handleLogin(event)">
-      <div class="form-group">
-        <label>Username or Email</label>
-        <input type="text" id="loginEmail" placeholder="username or you@example.com" required />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="loginPassword" placeholder="Your password" required />
-      </div>
-      <button class="auth-btn" type="submit">Sign In</button>
-    </form>
-
-    <!-- Register Form -->
-    <form class="auth-form" id="registerForm" onsubmit="handleRegister(event)">
-      <div class="form-group">
-        <label>Username</label>
-        <input type="text" id="regUsername" placeholder="Pick a username" required />
-      </div>
-      <div class="form-group">
-        <label>Email</label>
-        <input type="email" id="regEmail" placeholder="you@example.com" required />
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="regPassword" placeholder="At least 6 characters" required minlength="6" />
-      </div>
-      <button class="auth-btn" type="submit">Create Account</button>
-    </form>
-  </div>
-
-  <div class="auth-footer">
-    Sharpe is an informational tool only. Not financial advice.
-  </div>
-</div>
-
-<script>
-function showTab(tab) {
-  document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
-  if (tab === 'login') {
-    document.querySelector('.auth-tab:first-child').classList.add('active');
-    document.getElementById('loginForm').classList.add('active');
-  } else {
-    document.querySelector('.auth-tab:last-child').classList.add('active');
-    document.getElementById('registerForm').classList.add('active');
-  }
-  document.getElementById('authError').style.display = 'none';
-}
-
-function showError(msg) {
-  const el = document.getElementById('authError');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-async function handleLogin(e) {
-  e.preventDefault();
-  const btn = e.target.querySelector('.auth-btn');
-  btn.disabled = true;
-  btn.textContent = 'Signing in...';
-  try {
-    const r = await fetch('/api/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        email: document.getElementById('loginEmail').value,
-        password: document.getElementById('loginPassword').value,
-      })
-    });
-    const d = await r.json();
-    if (r.ok) {
-      window.location.href = '/';
-    } else {
-      showError(d.error || 'Login failed');
-    }
-  } catch(err) {
-    showError('Connection error. Please try again.');
-  }
-  btn.disabled = false;
-  btn.textContent = 'Sign In';
-}
-
-async function handleRegister(e) {
-  e.preventDefault();
-  const btn = e.target.querySelector('.auth-btn');
-  btn.disabled = true;
-  btn.textContent = 'Creating account...';
-  try {
-    const r = await fetch('/api/register', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        username: document.getElementById('regUsername').value,
-        email: document.getElementById('regEmail').value,
-        password: document.getElementById('regPassword').value,
-      })
-    });
-    const d = await r.json();
-    if (r.ok) {
-      window.location.href = '/';
-    } else {
-      showError(d.error || 'Registration failed');
-    }
-  } catch(err) {
-    showError('Connection error. Please try again.');
-  }
-  btn.disabled = false;
-  btn.textContent = 'Create Account';
-}
-</script>
-</body>
-</html>"""
-
+DASHBOARD_HTML = _load_template("dashboard")
 
 # ---------------------------------------------------------------------------
-# Users HTML (admin-only user directory)
-# ---------------------------------------------------------------------------
 
-USERS_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sharpe — Users</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-  :root { --bg: #0a0a0f; --surface: #13131a; --border: #1e1e2e; --text: #e4e4e7; --muted: #71717a; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; --accent: #a78bfa; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-  .top-bar { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
-  .top-bar h1 { font-size: 20px; font-weight: 700; }
-  .top-bar h1 span { color: var(--accent); }
-  .nav-links { display: flex; gap: 12px; }
-  .nav-links a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 12px; border-radius: 6px; transition: all .2s; }
-  .nav-links a:hover, .nav-links a.active { color: var(--text); background: var(--border); }
-  .container { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
-  .stats-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; flex: 1; min-width: 120px; }
-  .stat-val { font-size: 28px; font-weight: 800; }
-  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-  .search-bar { margin-bottom: 16px; }
-  .search-bar input { width: 100%; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; }
-  .search-bar input:focus { border-color: var(--accent); }
-  .users-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-  .users-table th { background: var(--border); padding: 10px 14px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); cursor: pointer; user-select: none; white-space: nowrap; }
-  .users-table th:hover { color: var(--text); }
-  .users-table td { padding: 10px 14px; border-top: 1px solid var(--border); font-size: 13px; white-space: nowrap; }
-  .users-table tr:hover td { background: rgba(167,139,250,0.05); }
-  .tier-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
-  .tier-badge.pro { background: rgba(34,197,94,0.15); color: var(--green); }
-  .tier-badge.free { background: rgba(113,113,122,0.15); color: var(--muted); }
-  .tier-badge.admin { background: rgba(167,139,250,0.15); color: var(--accent); }
-  .btn-tier { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 11px; cursor: pointer; margin-left: 4px; }
-  .btn-tier:hover { background: var(--border); }
-  .btn-tier.upgrade { border-color: var(--green); color: var(--green); }
-  .btn-tier.downgrade { border-color: var(--red); color: var(--red); }
-  .export-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-  .export-btn { padding: 8px 16px; background: var(--accent); color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .export-btn:hover { opacity: 0.9; }
-  .user-count { font-size: 13px; color: var(--muted); }
-  @media (max-width: 768px) {
-    .users-table { font-size: 12px; display: block; overflow-x: auto; }
-    .stats-row { gap: 8px; }
-    .stat-card { min-width: 80px; padding: 10px 12px; }
-    .stat-val { font-size: 22px; }
-  }
-</style>
-</head>
-<body>
-<div class="top-bar">
-  <h1><span>Sharpe</span> Users</h1>
-  <div class="nav-links">
-    <a href="/">Dashboard</a>
-    <a href="/users" class="active">Users</a>
-    <a href="/admin">Admin</a>
-    <a href="/settings">Settings</a>
-  </div>
-</div>
-
-<div class="container">
-  <div class="stats-row">
-    <div class="stat-card"><div class="stat-val" id="totalUsers">-</div><div class="stat-label">Total Users</div></div>
-    <div class="stat-card"><div class="stat-val" id="proUsers" style="color:var(--text)">-</div><div class="stat-label">Pro Users</div></div>
-    <div class="stat-card"><div class="stat-val" id="freeUsers">-</div><div class="stat-label">Free Users</div></div>
-    <div class="stat-card"><div class="stat-val" id="activeToday" style="color:var(--blue)">-</div><div class="stat-label">Active Today</div></div>
-    <div class="stat-card"><div class="stat-val" id="totalLogins">-</div><div class="stat-label">Total Logins</div></div>
-  </div>
-
-  <div class="export-bar">
-    <span class="user-count" id="userCount"></span>
-    <div>
-      <button class="export-btn" onclick="exportCSV()">Export CSV</button>
-    </div>
-  </div>
-
-  <div class="search-bar">
-    <input type="text" id="searchInput" placeholder="Search by username, email, tier..." oninput="renderTable()" />
-  </div>
-
-  <table class="users-table" id="usersTable">
-    <thead>
-      <tr>
-        <th onclick="sortTable('id')">ID</th>
-        <th onclick="sortTable('username')">Username</th>
-        <th onclick="sortTable('email')">Email</th>
-        <th onclick="sortTable('tier')">Tier</th>
-        <th onclick="sortTable('created_at')">Signed Up</th>
-        <th onclick="sortTable('last_login')">Last Login</th>
-        <th onclick="sortTable('login_count')">Logins</th>
-        <th onclick="sortTable('default_sport')">Sport</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody id="usersBody"></tbody>
-  </table>
-</div>
-
-<script>
-let users = [];
-let sortCol = 'created_at';
-let sortDir = -1;
-
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-async function loadUsers() {
-  try {
-    const r = await fetch('/api/admin/users', { credentials: 'same-origin' });
-    if (!r.ok) { if (r.status === 401) window.location.href = '/login'; return; }
-    const d = await r.json();
-    users = d.users || [];
-
-    const today = new Date().toISOString().slice(0, 10);
-    const pro = users.filter(u => (u.tier || 'free') === 'pro').length;
-    document.getElementById('totalUsers').textContent = users.length;
-    document.getElementById('proUsers').textContent = pro;
-    document.getElementById('freeUsers').textContent = users.length - pro;
-    document.getElementById('activeToday').textContent = users.filter(u => u.last_login && u.last_login.slice(0,10) === today).length;
-    document.getElementById('totalLogins').textContent = users.reduce((a, u) => a + (u.login_count || 0), 0);
-
-    renderTable();
-  } catch(e) { console.error(e); }
-}
-
-function renderTable() {
-  const search = (document.getElementById('searchInput').value || '').toLowerCase();
-  let filtered = users.filter(u => {
-    if (!search) return true;
-    return (u.username||'').toLowerCase().includes(search) ||
-           (u.email||'').toLowerCase().includes(search) ||
-           (u.tier||'').toLowerCase().includes(search) ||
-           (u.default_sport||'').toLowerCase().includes(search);
-  });
-
-  filtered.sort((a, b) => {
-    let va = a[sortCol], vb = b[sortCol];
-    if (va == null) va = '';
-    if (vb == null) vb = '';
-    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sortDir;
-    return String(va).localeCompare(String(vb)) * sortDir;
-  });
-
-  document.getElementById('userCount').textContent = filtered.length + ' of ' + users.length + ' users';
-
-  const tbody = document.getElementById('usersBody');
-  tbody.innerHTML = filtered.map(u => {
-    const tier = u.tier || 'free';
-    const tierCls = u.is_admin ? 'admin' : tier;
-    const tierLabel = u.is_admin ? 'ADMIN' : tier.toUpperCase();
-    const created = u.created_at ? new Date(u.created_at).toLocaleDateString() : '-';
-    const lastLogin = u.last_login ? new Date(u.last_login).toLocaleString() : 'Never';
-    const toggleTier = tier === 'pro' ? 'free' : 'pro';
-    const toggleCls = tier === 'pro' ? 'downgrade' : 'upgrade';
-    const toggleLabel = tier === 'pro' ? 'Downgrade' : 'Upgrade';
-    return '<tr>' +
-      '<td>' + u.id + '</td>' +
-      '<td><strong>' + esc(u.username || '-') + '</strong></td>' +
-      '<td>' + esc(u.email || '-') + '</td>' +
-      '<td><span class="tier-badge ' + tierCls + '">' + tierLabel + '</span></td>' +
-      '<td>' + created + '</td>' +
-      '<td>' + lastLogin + '</td>' +
-      '<td>' + (u.login_count || 0) + '</td>' +
-      '<td>' + esc(u.default_sport || '-') + '</td>' +
-      '<td><button class="btn-tier ' + toggleCls + '" onclick="setTier(' + u.id + ',\\'' + toggleTier + '\\')">' + toggleLabel + '</button></td>' +
-      '</tr>';
-  }).join('');
-}
-
-function sortTable(col) {
-  if (sortCol === col) sortDir *= -1;
-  else { sortCol = col; sortDir = 1; }
-  renderTable();
-}
-
-async function setTier(userId, tier) {
-  if (!confirm('Set user ' + userId + ' to ' + tier + '?')) return;
-  const r = await fetch('/api/admin/set-tier', {
-    method: 'POST', credentials: 'same-origin',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ user_id: userId, tier: tier })
-  });
-  if (r.ok) loadUsers();
-  else alert('Failed to update tier');
-}
-
-function exportCSV() {
-  const headers = ['ID','Username','Email','Tier','Admin','Signed Up','Last Login','Logins','Sport','Threshold'];
-  const rows = users.map(u => [
-    u.id, u.username||'', u.email||'', u.tier||'free', u.is_admin?'Yes':'No',
-    u.created_at||'', u.last_login||'', u.login_count||0, u.default_sport||'', u.divergence_threshold||5
-  ]);
-  let csv = headers.join(',') + '\\n' + rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'sharpe_users_' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
-}
-
-loadUsers();
-</script>
-</body>
-</html>"""
+USERS_HTML = _load_template("users")
 
 
 # ---------------------------------------------------------------------------
 # Settings HTML
 # ---------------------------------------------------------------------------
 
-SETTINGS_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sharpe — Settings</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #08090e;
-    --surface: #12141c;
-    --surface2: #1a1d2b;
-    --border: #2a2d42;
-    --border-light: #363a52;
-    --text: #f0f0f8;
-    --text-secondary: #a0a3b8;
-    --muted: #6b6f8a;
-    --green: #22c55e;
-    --green-dim: rgba(34,197,94,0.12);
-    --blue: #3b82f6;
-    --blue-dim: rgba(59,130,246,0.12);
-    --purple: #8b5cf6;
-    --red: #ef4444;
-    --radius: 12px;
-    --radius-sm: 8px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-  }
-  .settings-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 24px;
-    background: rgba(18,20,28,0.85);
-    border-bottom: 1px solid var(--border);
-    backdrop-filter: blur(12px);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-  .settings-nav-logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 800;
-    font-size: 1.2em;
-    letter-spacing: -0.5px;
-    text-decoration: none;
-    color: var(--text);
-  }
-  .settings-nav-logo-icon {
-    width: 32px; height: 32px;
-    background: linear-gradient(135deg, var(--green), var(--blue));
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px;
-  }
-  .settings-nav-links {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-  }
-  .settings-nav-links a {
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-size: 0.85em;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-  .settings-nav-links a:hover { color: var(--text); }
-  .settings-nav-links a.active { color: var(--blue); }
-
-  .settings-container {
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 32px 20px;
-  }
-  .settings-header {
-    margin-bottom: 32px;
-  }
-  .settings-header h1 {
-    font-size: 1.5em;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    margin-bottom: 4px;
-  }
-  .settings-header p {
-    color: var(--text-secondary);
-    font-size: 0.88em;
-  }
-
-  .settings-section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 24px;
-    margin-bottom: 20px;
-  }
-  .settings-section-title {
-    font-size: 0.72em;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--muted);
-    margin-bottom: 20px;
-  }
-  .setting-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .setting-row:last-child { border-bottom: none; }
-  .setting-info {
-    flex: 1;
-  }
-  .setting-name {
-    font-weight: 600;
-    font-size: 0.9em;
-    margin-bottom: 2px;
-  }
-  .setting-desc {
-    font-size: 0.78em;
-    color: var(--muted);
-  }
-  .setting-control {
-    flex-shrink: 0;
-    margin-left: 20px;
-  }
-  .setting-control select, .setting-control input[type="number"] {
-    padding: 8px 12px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text);
-    font-family: inherit;
-    font-size: 0.85em;
-    min-width: 140px;
-  }
-  .setting-control select:focus, .setting-control input:focus {
-    outline: none;
-    border-color: var(--blue);
-  }
-
-  /* Toggle switch */
-  .toggle {
-    position: relative;
-    width: 44px;
-    height: 24px;
-  }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider {
-    position: absolute;
-    inset: 0;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 24px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .toggle-slider::before {
-    content: '';
-    position: absolute;
-    left: 3px;
-    top: 3px;
-    width: 16px;
-    height: 16px;
-    background: var(--muted);
-    border-radius: 50%;
-    transition: all 0.2s;
-  }
-  .toggle input:checked + .toggle-slider {
-    background: var(--blue-dim);
-    border-color: var(--blue);
-  }
-  .toggle input:checked + .toggle-slider::before {
-    transform: translateX(20px);
-    background: var(--blue);
-  }
-
-  .save-bar {
-    position: sticky;
-    bottom: 20px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 -4px 24px rgba(0,0,0,0.3);
-    opacity: 0;
-    transform: translateY(20px);
-    transition: all 0.3s;
-    pointer-events: none;
-  }
-  .save-bar.visible {
-    opacity: 1;
-    transform: translateY(0);
-    pointer-events: all;
-  }
-  .save-bar-text {
-    font-size: 0.85em;
-    color: var(--text-secondary);
-  }
-  .save-btn {
-    padding: 10px 24px;
-    background: var(--green);
-    color: #000;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 0.85em;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .save-btn:hover { opacity: 0.9; }
-
-  .user-section {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 16px 0;
-  }
-  .user-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--blue), var(--purple));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 1.1em;
-  }
-  .user-info { flex: 1; }
-  .user-name { font-weight: 700; font-size: 1em; }
-  .user-email { font-size: 0.82em; color: var(--muted); }
-
-  .logout-btn {
-    padding: 8px 16px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--red);
-    font-family: inherit;
-    font-size: 0.82em;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .logout-btn:hover { background: rgba(239,68,68,0.1); border-color: var(--red); }
-</style>
-</head>
-<body>
-
-<nav class="settings-nav">
-  <a class="settings-nav-logo" href="/">
-    <div class="settings-nav-logo-icon">S</div>
-    <span>Sharpe</span>
-  </a>
-  <div class="settings-nav-links">
-    <a href="/">Dashboard</a>
-    <a href="/settings" class="active">Settings</a>
-  </div>
-</nav>
-
-<div class="settings-container">
-  <div class="settings-header">
-    <h1>Settings</h1>
-    <p>Customize your Sharpe experience</p>
-  </div>
-
-  <!-- Account -->
-  <div class="settings-section">
-    <div class="settings-section-title">Account</div>
-    <div class="user-section">
-      <div class="user-avatar" id="userAvatar">?</div>
-      <div class="user-info">
-        <div class="user-name" id="userName">Loading...</div>
-        <div class="user-email" id="userEmail"></div>
-      </div>
-      <a class="logout-btn" href="/api/logout">Sign Out</a>
-    </div>
-  </div>
-
-  <!-- Trading Preferences -->
-  <div class="settings-section">
-    <div class="settings-section-title">Trading Preferences</div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name">Default Sport</div>
-        <div class="setting-desc">Which sport to load when you open Sharpe</div>
-      </div>
-      <div class="setting-control">
-        <select id="defaultSport">
-          <option value="basketball_nba">NBA</option>
-          <option value="americanfootball_nfl">NFL</option>
-          <option value="icehockey_nhl">NHL</option>
-          <option value="baseball_mlb">MLB</option>
-          <option value="soccer_epl">EPL</option>
-          <option value="soccer_spain_la_liga">La Liga</option>
-          <option value="soccer_germany_bundesliga">Bundesliga</option>
-          <option value="soccer_italy_serie_a">Serie A</option>
-          <option value="soccer_france_ligue_one">Ligue 1</option>
-          <option value="soccer_uefa_champs_league">Champions League</option>
-          <option value="soccer_uefa_europa_league">Europa League</option>
-          <option value="mma_mixed_martial_arts">MMA</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name">Edge Threshold</div>
-        <div class="setting-desc">Minimum edge % to flag as an opportunity (default: 5%)</div>
-      </div>
-      <div class="setting-control">
-        <input type="number" id="threshold" min="1" max="50" step="0.5" value="5" style="width:80px" />
-      </div>
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name">Opportunity Alerts</div>
-        <div class="setting-desc">Get notified when new edges are found</div>
-      </div>
-      <div class="setting-control">
-        <label class="toggle">
-          <input type="checkbox" id="notifications" checked />
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- Appearance -->
-  <div class="settings-section">
-    <div class="settings-section-title">Appearance</div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name">Theme</div>
-        <div class="setting-desc">Choose your preferred color scheme</div>
-      </div>
-      <div class="setting-control">
-        <select id="theme">
-          <option value="dark">Dark</option>
-          <option value="light" disabled>Light (Coming Soon)</option>
-        </select>
-      </div>
-    </div>
-  </div>
-
-  <!-- Display & Language (units, conversions, language) -->
-  <div class="settings-section">
-    <div class="settings-section-title" data-i18n="pref.localization">Display &amp; Language</div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name" data-i18n="pref.language">Language</div>
-        <div class="setting-desc" data-i18n="pref.languageDesc">Interface language for menus and labels</div>
-      </div>
-      <div class="setting-control">
-        <select id="displayLanguage"></select>
-      </div>
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name" data-i18n="pref.numberFormat">Number Format</div>
-        <div class="setting-desc" data-i18n="pref.formatDesc">How numbers are punctuated</div>
-      </div>
-      <div class="setting-control">
-        <select id="unitSystem">
-          <option value="american" data-i18n="pref.american">American (1,234.56)</option>
-          <option value="european" data-i18n="pref.european">European (1.234,56)</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-name" data-i18n="pref.currency">Display Currency</div>
-        <div class="setting-desc" data-i18n="pref.currencyDesc">Convert market values to your preferred currency (live ECB rates)</div>
-      </div>
-      <div class="setting-control">
-        <select id="displayCurrency"></select>
-      </div>
-    </div>
-  </div>
-
-  <!-- Save bar -->
-  <div class="save-bar" id="saveBar">
-    <span class="save-bar-text" data-i18n="pref.unsaved">You have unsaved changes</span>
-    <button class="save-btn" onclick="saveSettings()" data-i18n="pref.saveChanges">Save Changes</button>
-  </div>
-</div>
-
-<script>
-const NARVE_CURRENCIES = [
-  ['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['JPY','Japanese Yen'],
-  ['AUD','Australian Dollar'],['CAD','Canadian Dollar'],['CHF','Swiss Franc'],['CNY','Chinese Yuan'],
-  ['HKD','Hong Kong Dollar'],['NZD','New Zealand Dollar'],['SEK','Swedish Krona'],['KRW','South Korean Won'],
-  ['SGD','Singapore Dollar'],['NOK','Norwegian Krone'],['MXN','Mexican Peso'],['INR','Indian Rupee'],
-  ['ZAR','South African Rand'],['TRY','Turkish Lira'],['BRL','Brazilian Real'],['DKK','Danish Krone'],
-  ['PLN','Polish Zloty'],['THB','Thai Baht'],['IDR','Indonesian Rupiah'],['HUF','Hungarian Forint'],
-  ['CZK','Czech Koruna'],['ILS','Israeli Shekel'],['PHP','Philippine Peso'],['MYR','Malaysian Ringgit'],
-  ['RON','Romanian Leu'],['ISK','Icelandic Krona'],
-];
-const NARVE_LANGUAGES = [
-  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
-  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
-  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
-  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
-  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
-];
-const NARVE_I18N = {
-  en: {'pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','pref.savedOk':'Saved!'},
-  es: {'pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','pref.savedOk':'\u00a1Guardado!'},
-  de: {'pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','pref.savedOk':'Gespeichert!'},
-  fr: {'pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer','pref.savedOk':'Enregistr\u00e9 !'},
-  it: {'pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','pref.savedOk':'Salvato!'},
-  pt: {'pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','pref.savedOk':'Salvo!'},
-  nl: {'pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','pref.savedOk':'Opgeslagen!'},
-  pl: {'pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','pref.savedOk':'Zapisano!'},
-  ja: {'pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f\uff01'},
-  ko: {'pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','pref.savedOk':'\uc800\uc7a5\ub428!'},
-  zh: {'pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','pref.savedOk':'\u5df2\u4fdd\u5b58\uff01'},
-  ru: {'pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e!'},
-  hi: {'pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e!'},
-  ar: {'pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638!'},
-  bn: {'pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4!'},
-  ur: {'pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627!'},
-  id: {'pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','pref.savedOk':'Tersimpan!'},
-  tr: {'pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','pref.savedOk':'Kaydedildi!'},
-  vi: {'pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','pref.savedOk':'\u0110\u00e3 l\u01b0u!'},
-  th: {'pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27!'},
-};
-let _narveLang = localStorage.getItem('narve_language') || 'en';
-function t(key) {
-  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
-  return dict[key] || NARVE_I18N.en[key] || key;
-}
-function applyTranslations(root) {
-  const scope = root || document;
-  scope.querySelectorAll('[data-i18n]').forEach(el => {
-    el.textContent = t(el.getAttribute('data-i18n'));
-  });
-}
-
-function populateCurrencyPicker() {
-  const sel = document.getElementById('displayCurrency');
-  if (!sel) return;
-  sel.innerHTML = NARVE_CURRENCIES.map(c =>
-    '<option value="' + c[0] + '">' + c[0] + ' \u2014 ' + c[1] + '</option>'
-  ).join('');
-  const saved = localStorage.getItem('narve_currency') || 'USD';
-  sel.value = saved;
-  const us = document.getElementById('unitSystem');
-  if (us) us.value = localStorage.getItem('narve_units') || 'american';
-}
-
-function populateLanguagePicker() {
-  const sel = document.getElementById('displayLanguage');
-  if (!sel) return;
-  sel.innerHTML = NARVE_LANGUAGES.map(l =>
-    '<option value="' + l[0] + '">' + l[1] + '</option>'
-  ).join('');
-  sel.value = _narveLang;
-}
-
-let originalSettings = {};
-let currentSettings = {};
-
-async function loadSettings() {
-  try {
-    const r = await fetch('/api/me');
-    if (!r.ok) { window.location.href = '/login'; return; }
-    const d = await r.json();
-
-    document.getElementById('userName').textContent = d.username;
-    document.getElementById('userEmail').textContent = d.email;
-    document.getElementById('userAvatar').textContent = d.username.charAt(0).toUpperCase();
-
-    const s = d.settings;
-    document.getElementById('defaultSport').value = s.default_sport;
-    document.getElementById('threshold').value = s.divergence_threshold;
-    document.getElementById('notifications').checked = !!s.notifications_enabled;
-    document.getElementById('theme').value = s.theme || 'dark';
-
-    populateCurrencyPicker();
-    populateLanguagePicker();
-    document.documentElement.lang = _narveLang;
-    applyTranslations();
-    originalSettings = getFormSettings();
-  } catch(e) {
-    console.error(e);
-  }
-}
-
-function getFormSettings() {
-  return {
-    default_sport: document.getElementById('defaultSport').value,
-    divergence_threshold: parseFloat(document.getElementById('threshold').value),
-    notifications_enabled: document.getElementById('notifications').checked ? 1 : 0,
-    theme: document.getElementById('theme').value,
-    _narve_currency: document.getElementById('displayCurrency').value,
-    _narve_units: document.getElementById('unitSystem').value,
-    _narve_language: document.getElementById('displayLanguage').value,
-  };
-}
-
-function checkChanges() {
-  currentSettings = getFormSettings();
-  const changed = JSON.stringify(currentSettings) !== JSON.stringify(originalSettings);
-  document.getElementById('saveBar').classList.toggle('visible', changed);
-}
-
-// Live language switch (no save needed — instant feedback)
-document.addEventListener('change', e => {
-  if (e.target && e.target.id === 'displayLanguage') {
-    _narveLang = e.target.value;
-    localStorage.setItem('narve_language', _narveLang);
-    document.documentElement.lang = _narveLang;
-    applyTranslations();
-  }
-});
-
-async function saveSettings() {
-  const btn = document.querySelector('.save-btn');
-  const savingLabel = (NARVE_I18N[_narveLang] && NARVE_I18N[_narveLang]['pref.saveChanges']) || 'Saving...';
-  btn.textContent = savingLabel + '...';
-  try {
-    const formData = getFormSettings();
-    // Persist client-only display preferences locally.
-    localStorage.setItem('narve_currency', formData._narve_currency || 'USD');
-    localStorage.setItem('narve_units', formData._narve_units || 'american');
-    localStorage.setItem('narve_language', formData._narve_language || 'en');
-    // Strip them from the server payload.
-    const serverPayload = Object.assign({}, formData);
-    delete serverPayload._narve_currency;
-    delete serverPayload._narve_units;
-    delete serverPayload._narve_language;
-    const r = await fetch('/api/settings', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(serverPayload)
-    });
-    if (r.ok) {
-      originalSettings = getFormSettings();
-      document.getElementById('saveBar').classList.remove('visible');
-      btn.textContent = t('pref.savedOk');
-      setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 1500);
-    }
-  } catch(e) {
-    btn.textContent = 'Error \u2014 try again';
-    setTimeout(() => { btn.textContent = t('pref.saveChanges'); }, 2000);
-  }
-}
-
-// Listen for changes
-document.querySelectorAll('select, input').forEach(el => {
-  el.addEventListener('change', checkChanges);
-  el.addEventListener('input', checkChanges);
-});
-
-loadSettings();
-</script>
-</body>
-</html>"""
+SETTINGS_HTML = _load_template("settings")
 
 
 # ---------------------------------------------------------------------------
 # Admin HTML
 # ---------------------------------------------------------------------------
 
-ADMIN_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sharpe — Admin</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #08090e;
-    --surface: #12141c;
-    --surface2: #1a1d2b;
-    --surface3: #222538;
-    --border: #2a2d42;
-    --border-light: #363a52;
-    --text: #f0f0f8;
-    --text-secondary: #a0a3b8;
-    --muted: #6b6f8a;
-    --green: #22c55e;
-    --green-dim: rgba(34,197,94,0.12);
-    --blue: #3b82f6;
-    --blue-dim: rgba(59,130,246,0.12);
-    --purple: #8b5cf6;
-    --purple-dim: rgba(139,92,246,0.12);
-    --red: #ef4444;
-    --red-dim: rgba(239,68,68,0.12);
-    --yellow: #eab308;
-    --yellow-dim: rgba(234,179,8,0.12);
-    --orange: #f97316;
-    --radius: 12px;
-    --radius-sm: 8px;
-    --shadow: 0 4px 24px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-    line-height: 1.5;
-  }
-
-  /* Nav */
-  .admin-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 24px;
-    background: rgba(18,20,28,0.85);
-    border-bottom: 1px solid var(--border);
-    backdrop-filter: blur(12px);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-  .admin-nav-logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 800;
-    font-size: 1.2em;
-    letter-spacing: -0.5px;
-    text-decoration: none;
-    color: var(--text);
-  }
-  .admin-nav-logo-icon {
-    width: 32px; height: 32px;
-    background: linear-gradient(135deg, var(--green), var(--blue));
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px; color: #fff; font-weight: 800;
-  }
-  .admin-badge {
-    font-size: 0.6em;
-    font-weight: 700;
-    background: var(--purple);
-    color: #fff;
-    padding: 2px 8px;
-    border-radius: 100px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .admin-nav-links {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-  }
-  .admin-nav-links a {
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-size: 0.85em;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-  .admin-nav-links a:hover { color: var(--text); }
-  .admin-nav-links a.active { color: var(--purple); }
-
-  /* Container */
-  .admin-container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 24px 20px;
-  }
-  .admin-header {
-    margin-bottom: 24px;
-  }
-  .admin-header h1 {
-    font-size: 1.5em;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-  }
-  .admin-header p {
-    color: var(--text-secondary);
-    font-size: 0.88em;
-    margin-top: 2px;
-  }
-
-  /* Stat cards */
-  .admin-stats {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 14px;
-    margin-bottom: 20px;
-  }
-  .admin-stats-4 {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    margin-bottom: 20px;
-  }
-  @media (max-width: 1100px) {
-    .admin-stats { grid-template-columns: repeat(3, 1fr); }
-    .admin-stats-4 { grid-template-columns: repeat(2, 1fr); }
-  }
-  @media (max-width: 700px) {
-    .admin-stats { grid-template-columns: repeat(2, 1fr); }
-    .admin-stats-4 { grid-template-columns: repeat(2, 1fr); }
-  }
-  .admin-stat {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px;
-    transition: border-color 0.2s, transform 0.15s;
-  }
-  .admin-stat:hover { border-color: var(--border-light); transform: translateY(-1px); }
-  .admin-stat-label {
-    font-size: 0.7em;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
-  .admin-stat-value {
-    font-size: 1.9em;
-    font-weight: 800;
-    letter-spacing: -1px;
-  }
-  .admin-stat-sub {
-    font-size: 0.75em;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-
-  /* Sections */
-  .admin-section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    margin-bottom: 20px;
-  }
-  .admin-section-header {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .admin-section-title {
-    font-size: 0.9em;
-    font-weight: 700;
-  }
-  .admin-section-count {
-    font-size: 0.75em;
-    color: var(--muted);
-    background: var(--surface2);
-    padding: 2px 10px;
-    border-radius: 100px;
-  }
-
-  /* Search */
-  .search-box {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 8px 14px;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 0.82em;
-    outline: none;
-    width: 240px;
-    transition: border-color 0.2s;
-  }
-  .search-box::placeholder { color: var(--muted); }
-  .search-box:focus { border-color: var(--blue); }
-
-  /* Table */
-  .admin-table-wrap {
-    overflow-x: auto;
-  }
-  .admin-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82em;
-  }
-  .admin-table th {
-    text-align: left;
-    font-size: 0.7em;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--muted);
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface2);
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-    transition: color 0.2s;
-  }
-  .admin-table th:hover { color: var(--text-secondary); }
-  .admin-table th .sort-arrow { margin-left: 4px; font-size: 0.9em; opacity: 0.4; }
-  .admin-table th.sorted .sort-arrow { opacity: 1; color: var(--blue); }
-  .admin-table td {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .admin-table tr:last-child td { border-bottom: none; }
-  .admin-table tr:hover td { background: rgba(255,255,255,0.015); }
-
-  .user-avatar-sm {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--blue), var(--purple));
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 0.7em;
-    margin-right: 10px;
-    vertical-align: middle;
-    flex-shrink: 0;
-    color: #fff;
-  }
-  .user-name-cell {
-    display: flex;
-    align-items: center;
-    min-width: 200px;
-  }
-  .user-name-info { display: flex; flex-direction: column; }
-  .user-email { font-size: 0.85em; color: var(--muted); }
-
-  /* Badges */
-  .badge-pro {
-    font-size: 0.65em;
-    font-weight: 700;
-    background: var(--green-dim);
-    color: var(--green);
-    padding: 3px 8px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .badge-free {
-    font-size: 0.65em;
-    font-weight: 700;
-    background: var(--surface3);
-    color: var(--muted);
-    padding: 3px 8px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .badge-admin {
-    font-size: 0.65em;
-    font-weight: 700;
-    background: var(--purple-dim);
-    color: var(--purple);
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 6px;
-  }
-  .badge-new {
-    font-size: 0.65em;
-    font-weight: 700;
-    background: var(--green-dim);
-    color: var(--green);
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 6px;
-  }
-
-  /* Buttons */
-  .btn-sm {
-    font-family: inherit;
-    font-size: 0.72em;
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-    white-space: nowrap;
-  }
-  .btn-sm:hover { opacity: 0.85; }
-  .btn-sm:active { transform: scale(0.97); }
-  .btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-upgrade {
-    background: var(--green);
-    color: #fff;
-  }
-  .btn-downgrade {
-    background: var(--red);
-    color: #fff;
-  }
-
-  /* Two column bottom layout */
-  .admin-bottom-grid {
-    display: grid;
-    grid-template-columns: 1fr 380px;
-    gap: 20px;
-  }
-  @media (max-width: 1000px) {
-    .admin-bottom-grid { grid-template-columns: 1fr; }
-  }
-
-  /* Activity feed */
-  .activity-feed {
-    max-height: 520px;
-    overflow-y: auto;
-  }
-  .activity-feed::-webkit-scrollbar { width: 4px; }
-  .activity-feed::-webkit-scrollbar-track { background: transparent; }
-  .activity-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-  .activity-item {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-  }
-  .activity-item:last-child { border-bottom: none; }
-  .activity-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-top: 6px;
-    flex-shrink: 0;
-  }
-  .activity-dot.login { background: var(--blue); }
-  .activity-dot.register { background: var(--green); }
-  .activity-dot.settings { background: var(--yellow); }
-  .activity-dot.other { background: var(--purple); }
-  .activity-text {
-    font-size: 0.82em;
-    flex: 1;
-    color: var(--text-secondary);
-  }
-  .activity-text strong { color: var(--text); }
-  .activity-time {
-    font-size: 0.72em;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  /* Signup chart */
-  .chart-container {
-    padding: 16px 20px;
-    height: 140px;
-    display: flex;
-    align-items: flex-end;
-    gap: 3px;
-  }
-  .chart-bar {
-    flex: 1;
-    background: var(--blue);
-    border-radius: 3px 3px 0 0;
-    min-height: 2px;
-    position: relative;
-    transition: all 0.3s;
-    cursor: default;
-  }
-  .chart-bar:hover {
-    background: var(--purple);
-  }
-  .chart-bar:hover::after {
-    content: attr(data-label);
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--surface3);
-    border: 1px solid var(--border-light);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    white-space: nowrap;
-    z-index: 10;
-    color: var(--text);
-    pointer-events: none;
-  }
-
-  /* Edge performance */
-  .edge-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    padding: 20px;
-  }
-  @media (max-width: 700px) {
-    .edge-grid { grid-template-columns: repeat(2, 1fr); }
-  }
-  .edge-item {
-    text-align: center;
-  }
-  .edge-item-value {
-    font-size: 1.6em;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-  }
-  .edge-item-label {
-    font-size: 0.72em;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-top: 2px;
-  }
-
-  /* Loading */
-  .loading-center {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--muted);
-  }
-  .loading-spinner {
-    width: 28px; height: 28px;
-    border: 3px solid var(--border);
-    border-top-color: var(--blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 0 auto 12px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
-</style>
-</head>
-<body>
-
-<nav class="admin-nav">
-  <a class="admin-nav-logo" href="/">
-    <div class="admin-nav-logo-icon">S</div>
-    <span>Sharpe</span>
-    <span class="admin-badge">Admin</span>
-  </a>
-  <div class="admin-nav-links">
-    <a href="/">Dashboard</a>
-    <a href="/settings">Settings</a>
-    <a href="/admin" class="active">Admin</a>
-  </div>
-</nav>
-
-<div class="admin-container">
-  <div class="admin-header">
-    <h1>Admin Dashboard</h1>
-    <p>Revenue, user management, and platform analytics</p>
-  </div>
-
-  <!-- Revenue & Growth Cards (6) -->
-  <div class="admin-stats" id="revenueCards">
-    <div class="admin-stat">
-      <div class="admin-stat-label">MRR</div>
-      <div class="admin-stat-value" style="color:var(--text)" id="statMrr">--</div>
-      <div class="admin-stat-sub">Monthly recurring revenue</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Total Users</div>
-      <div class="admin-stat-value" id="statTotalUsers">--</div>
-      <div class="admin-stat-sub">Registered accounts</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Pro Users</div>
-      <div class="admin-stat-value" style="color:var(--purple)" id="statProUsers">--</div>
-      <div class="admin-stat-sub">Paying subscribers</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Free Users</div>
-      <div class="admin-stat-value" id="statFreeUsers">--</div>
-      <div class="admin-stat-sub">Free tier</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Conversion Rate</div>
-      <div class="admin-stat-value" style="color:var(--orange)" id="statConversion">--</div>
-      <div class="admin-stat-sub">Free to Pro</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Active Today</div>
-      <div class="admin-stat-value" style="color:var(--text)" id="statActiveToday">--</div>
-      <div class="admin-stat-sub">Logged in today</div>
-    </div>
-  </div>
-
-  <!-- Engagement Cards (4) -->
-  <div class="admin-stats-4" id="engagementCards">
-    <div class="admin-stat">
-      <div class="admin-stat-label">DAU</div>
-      <div class="admin-stat-value" style="color:var(--blue)" id="statDau">--</div>
-      <div class="admin-stat-sub">Daily active users</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">WAU</div>
-      <div class="admin-stat-value" style="color:var(--blue)" id="statWau">--</div>
-      <div class="admin-stat-sub">Weekly active users</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">MAU</div>
-      <div class="admin-stat-value" style="color:var(--blue)" id="statMau">--</div>
-      <div class="admin-stat-sub">Monthly active users</div>
-    </div>
-    <div class="admin-stat">
-      <div class="admin-stat-label">Avg Logins/User</div>
-      <div class="admin-stat-value" style="color:var(--purple)" id="statAvgLogins">--</div>
-      <div class="admin-stat-sub">Engagement rate</div>
-    </div>
-  </div>
-
-  <!-- Signup Chart -->
-  <div class="admin-section">
-    <div class="admin-section-header">
-      <span class="admin-section-title">Signups (Last 30 Days)</span>
-      <span class="admin-section-count" id="signupTotal">0 total</span>
-    </div>
-    <div class="chart-container" id="signupChart">
-      <div class="loading-center" style="width:100%"><div class="loading-spinner"></div></div>
-    </div>
-  </div>
-
-  <!-- Edge Performance -->
-  <div class="admin-section">
-    <div class="admin-section-header">
-      <span class="admin-section-title">Edge Performance</span>
-    </div>
-    <div class="edge-grid" id="edgeStats">
-      <div class="edge-item">
-        <div class="edge-item-value" id="edgeTotal">--</div>
-        <div class="edge-item-label">Total Edges</div>
-      </div>
-      <div class="edge-item">
-        <div class="edge-item-value" style="color:var(--text)" id="edgeCorrect">--</div>
-        <div class="edge-item-label">Correct</div>
-      </div>
-      <div class="edge-item">
-        <div class="edge-item-value" style="color:var(--red)" id="edgeIncorrect">--</div>
-        <div class="edge-item-label">Incorrect</div>
-      </div>
-      <div class="edge-item">
-        <div class="edge-item-value" style="color:var(--blue)" id="edgeWinRate">--</div>
-        <div class="edge-item-label">Win Rate</div>
-      </div>
-    </div>
-    <div style="padding:0 20px 16px;text-align:center">
-      <span style="font-size:0.78em;color:var(--muted)">Pending: <span id="edgePending">--</span></span>
-    </div>
-  </div>
-
-  <!-- Users Table + Activity Feed side by side -->
-  <div class="admin-bottom-grid">
-    <div class="admin-section" style="margin-bottom:0">
-      <div class="admin-section-header">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span class="admin-section-title">Users</span>
-          <span class="admin-section-count" id="userCount">0</span>
-        </div>
-        <input type="text" class="search-box" placeholder="Search users..." id="userSearch" oninput="searchUsers(this.value)">
-      </div>
-      <div class="admin-table-wrap">
-        <table class="admin-table" id="usersTable">
-          <thead>
-            <tr>
-              <th data-sort="username" onclick="sortTable('username')">User <span class="sort-arrow">&#8597;</span></th>
-              <th data-sort="tier" onclick="sortTable('tier')">Tier <span class="sort-arrow">&#8597;</span></th>
-              <th data-sort="created_at" onclick="sortTable('created_at')">Joined <span class="sort-arrow">&#8597;</span></th>
-              <th data-sort="last_login" onclick="sortTable('last_login')">Last Login <span class="sort-arrow">&#8597;</span></th>
-              <th data-sort="login_count" onclick="sortTable('login_count')">Logins <span class="sort-arrow">&#8597;</span></th>
-              <th data-sort="default_sport" onclick="sortTable('default_sport')">Sport <span class="sort-arrow">&#8597;</span></th>
-              <th>Threshold</th>
-              <th>Referral</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="usersBody">
-            <tr><td colspan="9" class="loading-center"><div class="loading-spinner"></div>Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="admin-section" style="margin-bottom:0">
-      <div class="admin-section-header">
-        <span class="admin-section-title">Recent Activity</span>
-      </div>
-      <div class="activity-feed" id="activityFeed">
-        <div class="loading-center"><div class="loading-spinner"></div>Loading...</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-const SPORT_NAMES = {
-  basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL',
-  baseball_mlb: 'MLB', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga',
-  soccer_germany_bundesliga: 'Bundesliga', soccer_italy_serie_a: 'Serie A',
-  soccer_france_ligue_one: 'Ligue 1', soccer_uefa_champs_league: 'UCL',
-  soccer_uefa_europa_league: 'UEL', mma_mixed_martial_arts: 'MMA'
-};
-
-let allUsers = [];
-let currentSort = { key: 'created_at', dir: 'desc' };
-
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s || '';
-  return d.innerHTML;
-}
-
-function timeAgo(dateStr) {
-  if (!dateStr) return 'Never';
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = (now - d) / 1000;
-  if (diff < 60) return 'Just now';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-  if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-  return d.toLocaleDateString();
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '--';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function renderUsers(users) {
-  const tbody = document.getElementById('usersBody');
-  if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">No users found</td></tr>';
-    return;
-  }
-  tbody.innerHTML = users.map(u => {
-    const initial = (u.username || '?').charAt(0).toUpperCase();
-    const isNew = (new Date() - new Date(u.created_at)) < 86400000;
-    const isPro = u.tier === 'pro';
-    const tierBadge = isPro
-      ? '<span class="badge-pro">PRO</span>'
-      : '<span class="badge-free">FREE</span>';
-    const actionBtn = isPro
-      ? '<button class="btn-sm btn-downgrade" onclick="setTier(' + u.id + ', \\'free\\')">Downgrade</button>'
-      : '<button class="btn-sm btn-upgrade" onclick="setTier(' + u.id + ', \\'pro\\')">Upgrade to Pro</button>';
-    return '<tr>' +
-      '<td><div class="user-name-cell">' +
-        '<div class="user-avatar-sm">' + esc(initial) + '</div>' +
-        '<div class="user-name-info">' +
-          '<span>' + esc(u.username) +
-            (u.is_admin ? '<span class="badge-admin">Admin</span>' : '') +
-            (isNew ? '<span class="badge-new">New</span>' : '') +
-          '</span>' +
-          '<span class="user-email">' + esc(u.email) + '</span>' +
-        '</div>' +
-      '</div></td>' +
-      '<td>' + tierBadge + '</td>' +
-      '<td>' + formatDate(u.created_at) + '</td>' +
-      '<td>' + (u.last_login ? timeAgo(u.last_login) : '<span style="color:var(--muted)">Never</span>') + '</td>' +
-      '<td style="font-weight:700">' + (u.login_count || 0) + '</td>' +
-      '<td><span style="color:var(--blue)">' + esc(SPORT_NAMES[u.default_sport] || u.default_sport || '--') + '</span></td>' +
-      '<td>' + (u.divergence_threshold || 5) + '%</td>' +
-      '<td><span class="mono">' + esc(u.referral_code || '--') + '</span></td>' +
-      '<td>' + actionBtn + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-function searchUsers(query) {
-  const q = query.toLowerCase().trim();
-  if (!q) {
-    renderUsers(allUsers);
-    return;
-  }
-  const filtered = allUsers.filter(u =>
-    (u.username || '').toLowerCase().includes(q) ||
-    (u.email || '').toLowerCase().includes(q)
-  );
-  renderUsers(filtered);
-}
-
-function sortTable(key) {
-  if (currentSort.key === key) {
-    currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    currentSort.key = key;
-    currentSort.dir = 'asc';
-  }
-  // Update header UI
-  document.querySelectorAll('.admin-table th').forEach(th => th.classList.remove('sorted'));
-  const activeTh = document.querySelector('.admin-table th[data-sort="' + key + '"]');
-  if (activeTh) activeTh.classList.add('sorted');
-
-  allUsers.sort((a, b) => {
-    let va = a[key] || '';
-    let vb = b[key] || '';
-    if (key === 'login_count') { va = Number(va) || 0; vb = Number(vb) || 0; }
-    if (typeof va === 'string') va = va.toLowerCase();
-    if (typeof vb === 'string') vb = vb.toLowerCase();
-    if (va < vb) return currentSort.dir === 'asc' ? -1 : 1;
-    if (va > vb) return currentSort.dir === 'asc' ? 1 : -1;
-    return 0;
-  });
-
-  const q = document.getElementById('userSearch').value;
-  searchUsers(q);
-}
-
-async function setTier(userId, tier) {
-  try {
-    const r = await fetch('/api/admin/set-tier', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, tier: tier })
-    });
-    if (!r.ok) {
-      alert('Failed to update tier');
-      return;
-    }
-    await loadAdmin();
-  } catch (e) {
-    console.error(e);
-    alert('Error updating tier');
-  }
-}
-
-async function loadAdmin() {
-  try {
-    const r = await fetch('/api/admin/stats');
-    if (r.status === 403) {
-      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#08090e"><h1 style="color:#ef4444;font-family:Inter,sans-serif">Access Denied</h1></div>';
-      return;
-    }
-    if (!r.ok) { window.location.href = '/login'; return; }
-    const d = await r.json();
-
-    // Revenue & Growth cards
-    document.getElementById('statMrr').textContent = '$' + (Number(d.mrr) || 0).toFixed(2);
-    document.getElementById('statTotalUsers').textContent = d.total_users || 0;
-    document.getElementById('statProUsers').textContent = d.pro_users || 0;
-    document.getElementById('statFreeUsers').textContent = d.free_users || 0;
-    document.getElementById('statConversion').textContent = (Number(d.conversion_rate) || 0).toFixed(1) + '%';
-    document.getElementById('statActiveToday').textContent = d.active_today || 0;
-
-    // Engagement cards
-    document.getElementById('statDau').textContent = d.dau || 0;
-    document.getElementById('statWau').textContent = d.wau || 0;
-    document.getElementById('statMau').textContent = d.mau || 0;
-    const avgLogins = d.total_users > 0 ? (d.total_logins / d.total_users).toFixed(1) : '0';
-    document.getElementById('statAvgLogins').textContent = avgLogins;
-
-    // Edge Performance
-    const es = d.edge_stats || {};
-    document.getElementById('edgeTotal').textContent = es.total || 0;
-    document.getElementById('edgeCorrect').textContent = es.correct || 0;
-    document.getElementById('edgeIncorrect').textContent = es.incorrect || 0;
-    document.getElementById('edgeWinRate').textContent = (Number(es.win_rate) || 0).toFixed(1) + '%';
-    document.getElementById('edgePending').textContent = es.pending || 0;
-
-    // Users
-    allUsers = d.users || [];
-    document.getElementById('userCount').textContent = allUsers.length;
-    const q = document.getElementById('userSearch').value;
-    if (q) { searchUsers(q); } else { renderUsers(allUsers); }
-
-    // Activity feed
-    const feed = document.getElementById('activityFeed');
-    const activity = d.activity || [];
-    if (!activity.length) {
-      feed.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">No activity yet</div>';
-    } else {
-      feed.innerHTML = activity.map(a => {
-        const dotClass = a.action === 'login' ? 'login'
-          : a.action === 'register' ? 'register'
-          : a.action === 'settings' ? 'settings'
-          : 'other';
-        const actionText = a.action === 'login' ? 'logged in'
-          : a.action === 'register' ? 'created account'
-          : a.action === 'settings' ? 'updated settings'
-          : esc(a.action);
-        return '<div class="activity-item">' +
-          '<div class="activity-dot ' + dotClass + '"></div>' +
-          '<div class="activity-text"><strong>' + esc(a.username) + '</strong> ' + actionText + (a.detail ? ' -- ' + esc(a.detail) : '') + '</div>' +
-          '<div class="activity-time">' + timeAgo(a.created_at) + '</div>' +
-        '</div>';
-      }).join('');
-    }
-
-    // Signup chart
-    const chart = document.getElementById('signupChart');
-    const signups = d.signups_by_day || [];
-    if (signups.length) {
-      const totalSignups = signups.reduce((s, x) => s + x.count, 0);
-      document.getElementById('signupTotal').textContent = totalSignups + ' total';
-      const maxCount = Math.max(...signups.map(s => s.count));
-      chart.innerHTML = signups.map(s => {
-        const pct = maxCount > 0 ? (s.count / maxCount * 100) : 0;
-        return '<div class="chart-bar" style="height:' + Math.max(pct, 3) + '%" data-label="' + esc(s.day) + ': ' + s.count + ' signup' + (s.count !== 1 ? 's' : '') + '"></div>';
-      }).join('');
-    } else {
-      chart.innerHTML = '<div style="text-align:center;color:var(--muted);width:100%;padding:20px">No signups in last 30 days</div>';
-      document.getElementById('signupTotal').textContent = '0 total';
-    }
-
-  } catch (e) {
-    console.error('Admin load error:', e);
-  }
-}
-
-loadAdmin();
-// Auto-refresh every 30s
-setInterval(loadAdmin, 30000);
-</script>
-</body>
-</html>"""
+ADMIN_HTML = _load_template("admin")
 
 
 # ---------------------------------------------------------------------------
@@ -10393,4 +11206,6 @@ setInterval(loadAdmin, 30000);
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8888, log_level="info")
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8888"))
+    uvicorn.run(app, host=host, port=port, log_level="info")
