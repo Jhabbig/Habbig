@@ -228,6 +228,40 @@
   .subscribe-msg { font-size: 11px; }
   .subscribe-msg.ok  { color: #56d364; }
   .subscribe-msg.err { color: #f85149; }
+  /* v2.6 — search-term highlighting */
+  mark.hl { background: #ffeb3b; color: #0e1117; padding: 0 2px;
+            border-radius: 2px; font-weight: 600; }
+  /* v2.6 — item-details modal */
+  .modal { position: fixed; inset: 0; z-index: 100; display: none;
+           align-items: flex-start; justify-content: center; padding-top: 40px; }
+  .modal.open { display: flex; }
+  .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.72); }
+  .modal-content { position: relative; background: var(--panel);
+                   border: 1px solid var(--grid); border-radius: 8px;
+                   padding: 24px 28px; max-width: 760px; width: 92%;
+                   max-height: 80vh; overflow-y: auto;
+                   box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  .modal-close { position: absolute; top: 10px; right: 14px; background: transparent;
+                 color: var(--muted); border: none; font-size: 24px; cursor: pointer;
+                 line-height: 1; }
+  .modal-close:hover { color: var(--fg); }
+  .modal h3 { margin: 0 0 6px; font-size: 16px; }
+  .modal .meta { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .modal section { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .modal section:last-child { border-bottom: 0; }
+  .modal section h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted);
+                      text-transform: uppercase; letter-spacing: 0.05em; }
+  .modal .kv { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .modal .kv span.k { color: var(--muted); display: inline-block; min-width: 110px; }
+  .details-btn { background: transparent; border: 1px solid var(--grid);
+                 color: var(--muted); padding: 2px 8px; border-radius: 4px;
+                 font-size: 11px; cursor: pointer; margin-left: 8px; }
+  .details-btn:hover { color: var(--fg); border-color: var(--accent); }
+  tbody tr.kbd-selected { background: #1f2933; }
+  .kbd-hint { font-size: 10px; color: var(--muted); margin-left: 12px; }
+  .kbd-hint code { background: #21262d; padding: 1px 5px; border-radius: 3px;
+                   font-family: ui-monospace, SFMono-Regular, monospace;
+                   font-size: 10px; color: var(--fg); }
   .src { color: var(--muted); font-size: 11px; white-space: nowrap; }
   .title a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .title a:hover { text-decoration: underline; }
@@ -246,6 +280,9 @@
 <header>
   <h1>Regulators Tracker</h1>
   <span class="meta" id="meta">loading…</span>
+  <span class="kbd-hint">
+    <code>/</code> search · <code>j</code>/<code>k</code> navigate · <code>Enter</code> details · <code>Esc</code> close
+  </span>
 </header>
 <main>
   <section class="panel heatmap" id="heatmap-panel">
@@ -349,8 +386,37 @@
   </section>
 </main>
 
+<div class="modal" id="item-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close (Esc)">×</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
 <script>
 let state = { jurisdiction: "", tag: "", sev: "", topic: "", hasMarket: false, q: "" };
+
+// v2.6 — keep the currently-rendered items keyed by id so the modal and
+// keyboard navigation can look them up without re-parsing the DOM.
+let currentItems = [];
+let currentItemsById = {};
+let kbdSelectedIndex = -1;  // -1 = no row selected
+
+function highlightSearch(text, needle) {
+  // Wrap case-insensitive matches in <mark class="hl">. text is the raw
+  // (un-escaped) string; caller passes us pre-escaped HTML so we only
+  // need to find/wrap the (also-escaped) needle.
+  if (!needle) return text;
+  const safeText = text;
+  const safeNeedle = escapeHtml(needle);
+  try {
+    const rx = new RegExp(safeNeedle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    return safeText.replace(rx, m => `<mark class="hl">${m}</mark>`);
+  } catch (e) {
+    return safeText;
+  }
+}
 
 const TAG_COLORS = {
   enforcement: "#f85149",
@@ -779,6 +845,146 @@ async function loadSdn() {
   }
 }
 
+// ── v2.6 — item-details modal ───────────────────────────────────────────
+function renderItemDetails(it) {
+  const dt = (it.published || "").slice(0, 19).replace("T", " ");
+  const link = it.link
+    ? `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.link)}</a>`
+    : '<span class="meta">(no link)</span>';
+
+  const matched = it.matched_phrases || {};
+  const allMatchedRows = Object.entries(matched)
+    .filter(([_, phrases]) => phrases && phrases.length)
+    .map(([cat, phrases]) =>
+      `<div class="kv"><span class="k">${escapeHtml(cat)}:</span> ${phrases.map(p => escapeHtml(p)).join(", ")}</div>`)
+    .join("");
+
+  const sev = it.severity;
+  let sevSection = "";
+  if (sev) {
+    const ccy = escapeHtml(sev.currency || "");
+    const native = sev.amount_native != null ? sev.amount_native.toLocaleString() : "—";
+    const usd = sev.amount_usd != null ? Math.round(sev.amount_usd).toLocaleString() : "—";
+    sevSection = `
+      <section>
+        <h4>Severity</h4>
+        <div class="kv"><span class="k">Bucket:</span> ${escapeHtml(sev.bucket || "")}</div>
+        <div class="kv"><span class="k">Native:</span> ${escapeHtml(native)} ${ccy}</div>
+        <div class="kv"><span class="k">USD-equiv:</span> $${escapeHtml(usd)}</div>
+        <div class="kv"><span class="k">Matched on:</span> ${escapeHtml(sev.context_word || "")} (${escapeHtml(sev.amount_text || "")})</div>
+      </section>`;
+  }
+
+  let topicSection = "";
+  if (it.topics && it.topics.length) {
+    const mtp = it.matched_topic_phrases || {};
+    topicSection = `
+      <section>
+        <h4>Topics</h4>
+        ${it.topics.map(t => `<div class="kv"><span class="k">${escapeHtml(t)}:</span> ${(mtp[t] || []).map(p => escapeHtml(p)).join(", ") || "—"}</div>`).join("")}
+      </section>`;
+  }
+
+  let marketsSection = "";
+  if (it.markets && it.markets.length) {
+    marketsSection = `
+      <section>
+        <h4>Prediction-market matches</h4>
+        ${it.markets.map(m => {
+          const yes = m.yes_price != null ? Math.round(m.yes_price * 100) + "¢" : "—";
+          return `<div class="kv">
+            <span class="k">${escapeHtml(m.source)}:</span>
+            <a href="${escapeHtml(m.url || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(m.question)}</a>
+            — yes ${escapeHtml(yes)} · score ${m.match_score} · shared [${m.match_tokens.join(", ")}]
+          </div>`;
+        }).join("")}
+      </section>`;
+  }
+
+  return `
+    <h3 id="modal-title">${escapeHtml(it.title || "(untitled)")}</h3>
+    <div class="meta">${escapeHtml(it.source)} · ${escapeHtml(it.jurisdiction || "")} · ${escapeHtml(dt)}</div>
+    ${it.summary ? `<section><h4>Summary</h4><div class="kv">${escapeHtml(it.summary)}</div></section>` : ""}
+    <section>
+      <h4>Classification</h4>
+      <div class="kv"><span class="k">Primary tag:</span> ${escapeHtml(it.primary_tag || "other")}</div>
+      <div class="kv"><span class="k">All tags:</span> ${(it.tags || []).join(", ") || "—"}</div>
+      ${allMatchedRows ? `<div class="kv" style="margin-top:6px"><span class="k">Matched phrases:</span></div>${allMatchedRows}` : ""}
+    </section>
+    ${sevSection}
+    ${topicSection}
+    ${marketsSection}
+    <section>
+      <h4>Source link</h4>
+      <div class="kv">${link}</div>
+      <div class="kv"><span class="k">Item ID:</span> ${escapeHtml(it.id || "—")}</div>
+    </section>`;
+}
+
+function openItemModal(item) {
+  document.getElementById("modal-body").innerHTML = renderItemDetails(item);
+  document.getElementById("item-modal").classList.add("open");
+}
+
+function closeItemModal() {
+  document.getElementById("item-modal").classList.remove("open");
+}
+
+document.querySelector(".modal-close").addEventListener("click", closeItemModal);
+document.querySelector(".modal-backdrop").addEventListener("click", closeItemModal);
+
+// ── v2.6 — keyboard navigation ──────────────────────────────────────────
+function setKbdSelection(idx) {
+  document.querySelectorAll("#rows tr").forEach(r => r.classList.remove("kbd-selected"));
+  if (idx < 0 || idx >= currentItems.length) {
+    kbdSelectedIndex = -1;
+    return;
+  }
+  kbdSelectedIndex = idx;
+  const row = document.querySelector(`#rows tr[data-item-idx="${idx}"]`);
+  if (row) {
+    row.classList.add("kbd-selected");
+    row.scrollIntoView({block: "nearest", behavior: "smooth"});
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  // Don't intercept while the user is typing in the search box (except Esc).
+  const inSearch = document.activeElement &&
+                   document.activeElement.id === "q";
+  const modalOpen = document.getElementById("item-modal").classList.contains("open");
+
+  if (e.key === "Escape") {
+    if (modalOpen) { closeItemModal(); e.preventDefault(); return; }
+    if (inSearch) { document.getElementById("q").blur(); return; }
+    if (kbdSelectedIndex !== -1) { setKbdSelection(-1); return; }
+  }
+
+  if (modalOpen || inSearch) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  // Skip when focus is on any text input / select
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+
+  if (e.key === "/") {
+    e.preventDefault();
+    const search = document.getElementById("q");
+    if (search) { search.focus(); search.select(); }
+  } else if (e.key === "j") {
+    e.preventDefault();
+    setKbdSelection(Math.min((kbdSelectedIndex < 0 ? -1 : kbdSelectedIndex) + 1, currentItems.length - 1));
+  } else if (e.key === "k") {
+    e.preventDefault();
+    setKbdSelection(Math.max(kbdSelectedIndex - 1, 0));
+  } else if (e.key === "Enter") {
+    if (kbdSelectedIndex >= 0 && kbdSelectedIndex < currentItems.length) {
+      e.preventDefault();
+      openItemModal(currentItems[kbdSelectedIndex]);
+    }
+  }
+});
+
 function renderHearings(data) {
   const body = document.getElementById("hearings-body");
   const items = data.items || [];
@@ -1032,17 +1238,23 @@ async function load() {
   const ts = new Date(data.fetched_at * 1000).toISOString().replace("T", " ").slice(0, 16);
   meta.textContent = `${data.count} actions · last ${data.since_days} days · fetched ${ts} UTC`;
 
+  // v2.6 — keep an in-memory index for modal lookups + keyboard nav.
+  currentItems = data.items;
+  currentItemsById = Object.fromEntries(data.items.map(it => [it.id, it]));
+  kbdSelectedIndex = -1;
+
   if (!data.items.length) {
     rows.innerHTML = '<tr><td colspan="5" class="empty">No actions match the current filter.</td></tr>';
   } else {
-    rows.innerHTML = data.items.map(it => {
-      const jxCls = ["US","UK","EU"].includes(it.jurisdiction) ? it.jurisdiction : "OTHER";
+    rows.innerHTML = data.items.map((it, idx) => {
+      const jxCls = (it.jurisdiction && document.querySelector(`.jx.${it.jurisdiction}`)) ? it.jurisdiction : "OTHER";
       const jx = escapeHtml(it.jurisdiction || "—");
+      const titleHtml = highlightSearch(escapeHtml(it.title), state.q);
       const link = it.link
-        ? `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title)}</a>`
-        : escapeHtml(it.title);
+        ? `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer">${titleHtml}</a>`
+        : titleHtml;
       const summary = it.summary
-        ? `<div class="summary">${escapeHtml(it.summary)}</div>`
+        ? `<div class="summary">${highlightSearch(escapeHtml(it.summary), state.q)}</div>`
         : "";
 
       const primary = it.primary_tag || "other";
@@ -1102,15 +1314,26 @@ async function load() {
         sevEl = `<span class="sev ${escapeHtml(s.bucket)}" title="${escapeHtml(tip)}">${escapeHtml(s.bucket)}</span>`;
       }
 
+      const detailsBtn = `<button class="details-btn" data-item-id="${escapeHtml(it.id || '')}" data-item-idx="${idx}" title="Show classification details">⋯</button>`;
+
       return `
-        <tr>
+        <tr data-item-id="${escapeHtml(it.id || '')}" data-item-idx="${idx}">
           <td class="date">${escapeHtml(fmtDate(it.published))}</td>
           <td><span class="jx ${jxCls}">${jx}</span></td>
-          <td class="src">${escapeHtml(it.source)}</td>
+          <td class="src">${escapeHtml(it.source)}${detailsBtn}</td>
           <td>${primaryChip}${extraEl}${sevEl}</td>
           <td class="title">${link}${summary}${topicsEl}${marketsEl}</td>
         </tr>`;
     }).join("");
+
+    // Wire details-button clicks for the freshly-rendered rows.
+    document.querySelectorAll("#rows .details-btn").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const id = btn.dataset.itemId;
+        if (id && currentItemsById[id]) openItemModal(currentItemsById[id]);
+      });
+    });
   }
 
   status.innerHTML = data.sources.map(s => {
