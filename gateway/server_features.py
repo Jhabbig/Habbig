@@ -444,132 +444,18 @@ if(pw) pw.addEventListener('input', check);
 
 
 # ── FEATURE 3: Waitlist position numbers + referrals ─────────────────────
-
-
-def _new_referral_code() -> str:
-    """8-char uppercase alphanumeric code."""
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no ambiguous chars
-    return "".join(secrets.choice(alphabet) for _ in range(8))
-
-
-@app.post("/api/newsletter")
-async def api_newsletter_v2(request: Request, email: str = Form(""), ref: str = Form("")):
-    """Waitlist signup — assigns a sequential position + referral code.
-
-    Overrides any earlier signup handler because FastAPI dispatches to the
-    most-recently-added matching route.
-    """
-    email = (email or "").strip().lower()
-    ref = (ref or "").strip().upper() or None
-    if not email or "@" not in email:
-        return JSONResponse({"error": "Invalid email"}, status_code=400)
-
-    # Rate limit — reuse existing gateway helper.
-    if server._is_rate_limited(f"nl:{_get_client_ip(request)}", limit=5, window=60):
-        return JSONResponse({"error": "Too many requests"}, status_code=429)
-
-    with db.conn() as c:
-        existing = c.execute(
-            "SELECT * FROM newsletter_subscribers WHERE email = ?", (email,)
-        ).fetchone()
-        if existing and existing["position"]:
-            return JSONResponse({
-                "success": True,
-                "already": True,
-                "position": existing["display_position"] or existing["position"],
-                "referral_code": existing["referral_code"],
-                "share_url": f"{_APP_URL}?ref={existing['referral_code']}",
-            })
-
-        # Assign next position atomically.
-        row = c.execute("SELECT COALESCE(MAX(position), 0) + 1 AS next FROM newsletter_subscribers").fetchone()
-        next_pos = row["next"]
-        code = _new_referral_code()
-        # Retry if we happened to collide (extremely unlikely).
-        while c.execute("SELECT 1 FROM newsletter_subscribers WHERE referral_code = ?", (code,)).fetchone():
-            code = _new_referral_code()
-
-        if existing:
-            c.execute(
-                "UPDATE newsletter_subscribers SET position = ?, display_position = ?, referral_code = ?, referred_by_code = ? WHERE id = ?",
-                (next_pos, next_pos, code, ref, existing["id"]),
-            )
-        else:
-            c.execute(
-                "INSERT INTO newsletter_subscribers (email, subscribed_at, source, position, display_position, referral_code, referred_by_code) "
-                "VALUES (?, ?, 'prerelease', ?, ?, ?, ?)",
-                (email, int(time.time()), next_pos, next_pos, code, ref),
-            )
-    # newsletter_subscribers.id is internal — the public identifier we
-    # report back to the user is the assigned waiting-list position.
-
-    # If they came through a ref link, move the referrer up by 5 positions.
-    if ref:
-        try:
-            await _apply_referral_bump(ref)
-        except Exception as e:
-            log.warning("referral bump failed: %s", e)
-
-    return JSONResponse({
-        "success": True,
-        "position": next_pos,
-        "referral_code": code,
-        "share_url": f"{_APP_URL}?ref={code}",
-    })
-
-
-async def _apply_referral_bump(ref: str) -> None:
-    """Move the referrer up by 5 display positions (never below 1) and send
-    an email confirming the jump."""
-    with db.conn() as c:
-        row = c.execute(
-            "SELECT * FROM newsletter_subscribers WHERE referral_code = ?", (ref,)
-        ).fetchone()
-        if not row:
-            return
-        new_disp = max(1, (row["display_position"] or row["position"]) - 5)
-        c.execute(
-            "UPDATE newsletter_subscribers SET display_position = ? WHERE id = ?",
-            (new_disp, row["id"]),
-        )
-    # Best-effort email. Template is simple text inside welcome layout — skip if no SMTP.
-    try:
-        await enqueue_email(
-            to=row["email"],
-            template="welcome",
-            context={
-                "display_name": row["email"].split("@")[0],
-                "tier": "waitlist",
-            },
-            tags=["referral_bump"],
-        )
-    except Exception:
-        pass
-
-
-@app.get("/api/newsletter/position")
-async def api_newsletter_position(request: Request, email: str = ""):
-    email = (email or "").strip().lower()
-    if not email:
-        return JSONResponse({"error": "email required"}, status_code=400)
-    if server._is_rate_limited(f"pos:{_get_client_ip(request)}", limit=5, window=60):
-        return JSONResponse({"error": "Too many requests"}, status_code=429)
-    with db.conn() as c:
-        row = c.execute(
-            "SELECT position, display_position, referral_code FROM newsletter_subscribers WHERE email = ?",
-            (email,),
-        ).fetchone()
-        if not row:
-            return JSONResponse({"error": "Not found"}, status_code=404)
-        referrals = c.execute(
-            "SELECT COUNT(*) AS n FROM newsletter_subscribers WHERE referred_by_code = ?",
-            (row["referral_code"],),
-        ).fetchone()
-    return JSONResponse({
-        "position": row["display_position"] or row["position"],
-        "referral_code": row["referral_code"],
-        "referrals_count": referrals["n"] if referrals else 0,
-    })
+#
+# REMOVED 2026-05-29 — the `/api/newsletter` (POST) and
+# `/api/newsletter/position` (GET) handlers that lived here were dead
+# duplicates of the hardened, anti-enumeration versions in
+# public_routes.py. public_routes.register(app) runs earlier in server.py
+# (~line 6670) than `import server_features` (~line 8385), so FastAPI's
+# first-match routing always dispatched to the public_routes versions.
+# These raw-SQL copies leaked `already: true` (an enumeration oracle) and
+# would have silently re-activated if the registration order ever flipped.
+# Deleted along with their dupe-only helpers `_new_referral_code` and
+# `_apply_referral_bump`. The canonical waitlist logic lives in
+# queries/newsletter.py + public_routes.py.
 
 
 # ── FEATURE 6: Account deletion with 30-day recovery ─────────────────────
@@ -794,76 +680,18 @@ async def public_source_profile(request: Request, handle: str):
     )
 
 
-@app.get("/sitemap.xml")
-async def sitemap_xml(request: Request):
-    # Sub-brand subdomains get their own minimal sitemap canonical to
-    # themselves — each subdomain is a separate Google property and the
-    # branded landing is the only public URL there today.
-    sub = server.get_subdomain(request)
-    if sub:
-        from subproduct import SUBPRODUCTS as _SP
-        if sub in _SP:
-            base = f"https://{sub}.narve.ai"
-            parts = [
-                '<?xml version="1.0" encoding="UTF-8"?>',
-                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-                f"<url><loc>{base}/</loc><priority>1.0</priority><changefreq>weekly</changefreq></url>",
-                "</urlset>",
-            ]
-            return Response(content="\n".join(parts), media_type="application/xml")
-    # Prefer the generated file on disk (written by the generate_sitemap job).
-    sitemap_path = server.STATIC_DIR / "sitemap.xml"
-    if sitemap_path.exists():
-        return Response(content=sitemap_path.read_text(), media_type="application/xml")
-    # Fall back to a live-generated sitemap when no cron run has happened yet.
-    parts = ['<?xml version="1.0" encoding="UTF-8"?>']
-    parts.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
-    for url, p, cf in [("/", "1.0", "daily"), ("/terms", "0.5", "monthly"),
-                       ("/privacy", "0.5", "monthly"), ("/pricing", "0.8", "weekly")]:
-        parts.append(f"<url><loc>{_APP_URL}{url}</loc><priority>{p}</priority><changefreq>{cf}</changefreq></url>")
-    try:
-        sources = db.list_all_source_credibilities() if hasattr(db, "list_all_source_credibilities") else []
-        for s in sources:
-            if s["accuracy_unlocked"]:
-                parts.append(
-                    f"<url><loc>{_APP_URL}/sources/{s['source_handle']}</loc>"
-                    f"<priority>0.7</priority><changefreq>weekly</changefreq></url>"
-                )
-    except Exception:
-        pass
-    parts.append("</urlset>")
-    return Response(content="\n".join(parts), media_type="application/xml")
-
-
-@app.get("/robots.txt")
-async def robots_txt(request: Request):
-    sub = server.get_subdomain(request)
-    if sub:
-        from subproduct import SUBPRODUCTS as _SP
-        if sub in _SP:
-            body = (
-                "User-agent: *\n"
-                "Allow: /\n"
-                "Disallow: /admin/\n"
-                "Disallow: /api/\n"
-                "Disallow: /dashboard/\n"
-                "Disallow: /gate\n"
-                f"Sitemap: https://{sub}.narve.ai/sitemap.xml\n"
-            )
-            return PlainTextResponse(body)
-    body = (
-        "User-agent: *\n"
-        "Allow: /\n"
-        "Allow: /sources/\n"
-        "Allow: /terms\n"
-        "Allow: /privacy\n"
-        "Disallow: /admin/\n"
-        "Disallow: /api/\n"
-        "Disallow: /dashboard/\n"
-        "Disallow: /gate\n"
-        f"Sitemap: {_APP_URL}/sitemap.xml\n"
-    )
-    return PlainTextResponse(body)
+# NOTE: /sitemap.xml and /robots.txt are NOT defined here anymore.
+#
+# The canonical handlers live in server.py (seo_sitemap_xml / seo_robots_txt).
+# The sitemap is served at an obscure, non-guessable URL (server._SITEMAP_PATH,
+# currently /497951413996680578.xml) and submitted directly in Google Search
+# Console rather than advertised — so we must NOT register a /sitemap.xml route
+# that would hand out the full public-page roadmap to any anonymous fetch.
+#
+# These previously duplicated server.py's routes; server.py's registered first
+# and won /robots.txt, while this module's /sitemap.xml shadowed server.py's.
+# Both are removed so server.py is the single source of truth and no roadmap is
+# exposed at the guessable /sitemap.xml path.
 
 
 # ── FEATURE 8: Market view tracking (enqueues resolution notifications) ──
