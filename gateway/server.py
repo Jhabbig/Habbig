@@ -3623,34 +3623,52 @@ async def seo_robots_txt(request: Request):
 
 
 # Public pages included in the apex sitemap. Priorities are hand-tuned to
-# match crawl-importance: homepage highest, legal pages lowest, source/
-# calendar pages in between since they change frequently.
+# match crawl-importance: homepage highest, legal pages lowest, content
+# pages in between.
 #
-# NOTE: sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) are
-# DELIBERATELY excluded from this list. Each sub-brand is registered as
-# its own Google property and serves its own subdomain-scoped sitemap
-# from the same /sitemap.xml route below (see the get_subdomain() branch).
-# Do not add subdomain root URLs here — that would cross-link properties
-# and dilute the per-subdomain canonical signals.
+# EVERY path here MUST be anonymously crawlable — i.e. present in
+# _PUBLIC_PATHS (or under a _PUBLIC_PREFIXES prefix) so GateMiddleware lets
+# an unauthenticated Googlebot through with a 200. Gated routes
+# (/landing, /pricing, /calendar, /dashboards, …) are DELIBERATELY absent:
+# behind the gate they 302 to /gate for anon crawlers, which Search Console
+# files as soft-404s and which would also leak the existence of authed
+# surfaces. Do not add a path here without first whitelisting it as public.
 #
 # There is no static gateway/static/sitemap.xml; the dynamic route below
 # is the single source of truth (StaticFiles is mounted at
 # /_gateway_static/, so a file at that path would not be served anyway).
 _SITEMAP_ENTRIES = [
     ("/",               "weekly",  "1.0"),
-    ("/landing",        "weekly",  "0.9"),
-    ("/pricing",        "monthly", "0.8"),
     ("/about",          "monthly", "0.8"),
     ("/how-it-works",   "monthly", "0.8"),
     ("/methodology",    "monthly", "0.7"),
     ("/faq",            "monthly", "0.7"),
+    ("/team",           "monthly", "0.6"),
+    ("/press",          "monthly", "0.6"),
     ("/changelog",      "weekly",  "0.7"),
     ("/narve",          "monthly", "0.7"),
-    ("/calendar",       "hourly",  "0.7"),
+    ("/status",         "daily",   "0.5"),
+    ("/api/docs",       "monthly", "0.6"),
     ("/terms",          "yearly",  "0.3"),
     ("/privacy",        "yearly",  "0.3"),
     ("/dpa",            "yearly",  "0.3"),
 ]
+
+# Sub-brand landing pages, one per narve.ai subdomain product. Each is a
+# fully public marketing page (sports.narve.ai/, crypto.narve.ai/, …) and
+# is the single crawl-worthy URL on its host. We surface them in the apex
+# sitemap so the apex property exposes the full public-page graph; each
+# subdomain additionally serves its own subdomain-scoped sitemap from the
+# get_subdomain() branch below. Order follows SUBPRODUCTS insertion order.
+def _subdomain_landing_entries():
+    try:
+        from subproduct import SUBPRODUCTS as _SP
+    except Exception:
+        return []
+    return [
+        (f"https://{slug}.narve.ai/", "weekly", "0.8")
+        for slug in _SP
+    ]
 
 
 @app.get("/sitemap.xml")
@@ -3702,6 +3720,15 @@ async def seo_sitemap_xml(request: Request):
     for path, freq, priority in _SITEMAP_ENTRIES:
         parts.append(
             f"<url><loc>https://{apex}{path}</loc>"
+            f"<lastmod>{today}</lastmod>"
+            f"<changefreq>{freq}</changefreq>"
+            f"<priority>{priority}</priority></url>"
+        )
+    # Sub-brand landing pages live on their own subdomains; loc is already
+    # an absolute URL, so it is emitted verbatim rather than apex-prefixed.
+    for loc, freq, priority in _subdomain_landing_entries():
+        parts.append(
+            f"<url><loc>{loc}</loc>"
             f"<lastmod>{today}</lastmod>"
             f"<changefreq>{freq}</changefreq>"
             f"<priority>{priority}</priority></url>"
