@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ChevronDown, TrendingUp, Zap, Coins } from 'lucide-react';
 
 export interface Asset {
@@ -41,24 +41,31 @@ const ASSETS: Asset[] = [
   { id: 'ada', symbol: 'ADA', name: 'Cardano', type: 'crypto', exchange: 'Crypto', price: 0.82 },
 ];
 
-export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onAssetChange }) => {
+const AssetSelectorComponent: React.FC<AssetSelectorProps> = ({ selectedAsset, onAssetChange }) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
 
-  const filteredAssets = ASSETS.filter(
-    (asset) =>
-      asset.symbol.toLowerCase().includes(search.toLowerCase()) ||
-      asset.name.toLowerCase().includes(search.toLowerCase())
+  const filteredAssets = useMemo(
+    () =>
+      ASSETS.filter(
+        (asset) =>
+          asset.symbol.toLowerCase().includes(search.toLowerCase()) ||
+          asset.name.toLowerCase().includes(search.toLowerCase())
+      ),
+    [search]
   );
 
-  const groupedAssets = {
-    stock: filteredAssets.filter((a) => a.type === 'stock'),
-    future: filteredAssets.filter((a) => a.type === 'future'),
-    forex: filteredAssets.filter((a) => a.type === 'forex'),
-    crypto: filteredAssets.filter((a) => a.type === 'crypto'),
-  };
+  const groupedAssets = useMemo(
+    () => ({
+      stock: filteredAssets.filter((a) => a.type === 'stock'),
+      future: filteredAssets.filter((a) => a.type === 'future'),
+      forex: filteredAssets.filter((a) => a.type === 'forex'),
+      crypto: filteredAssets.filter((a) => a.type === 'crypto'),
+    }),
+    [filteredAssets]
+  );
 
-  const getTypeIcon = (type: string) => {
+  const getTypeIcon = useCallback((type: string) => {
     switch (type) {
       case 'stock':
         return <TrendingUp className="w-4 h-4 text-blue-400" />;
@@ -69,9 +76,9 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onA
       case 'crypto':
         return <Coins className="w-4 h-4 text-orange-400" />;
     }
-  };
+  }, []);
 
-  const getTypeBadge = (type: string) => {
+  const getTypeBadge = useCallback((type: string) => {
     const colors = {
       stock: 'bg-blue-900/30 text-blue-300',
       future: 'bg-yellow-900/30 text-yellow-300',
@@ -79,7 +86,7 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onA
       crypto: 'bg-orange-900/30 text-orange-300',
     };
     return colors[type as keyof typeof colors] || colors.stock;
-  };
+  }, []);
 
   return (
     <div className="relative">
@@ -166,3 +173,5 @@ export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onA
     </div>
   );
 };
+
+export const AssetSelector = React.memo(AssetSelectorComponent);
