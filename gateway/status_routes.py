@@ -295,6 +295,33 @@ async def api_status_subscribe(request: Request):
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="invalid email")
 
+    # Rate limits (AUDIT gap): this endpoint is gate-exempt and writes a
+    # status_subscriptions row per unique email. The 600/min/IP global cap
+    # is too coarse. Mirror the subproduct-signup pattern: per-IP 5/hour
+    # and per-email 3/day, both via the gateway-wide rate store. Email is
+    # parsed above so the per-email key is available here.
+    try:
+        ip = server._get_client_ip(request)
+        if server._is_rate_limited(f"status-sub-ip:{ip}", 5, 3600):
+            log.info("status-subscribe: per-IP cap hit ip=%s", ip)
+            return JSONResponse(
+                {"error": "Too many subscription attempts from your network. Try again in an hour."},
+                status_code=429,
+                headers={"Retry-After": "3600"},
+            )
+        if server._is_rate_limited(f"status-sub-email:{email}", 3, 86400):
+            log.info("status-subscribe: per-email cap hit email=%s", email)
+            return JSONResponse(
+                {"error": "Too many attempts for this email. Try again tomorrow."},
+                status_code=429,
+                headers={"Retry-After": "86400"},
+            )
+    except Exception:
+        # Rate-limit infra down (Redis + in-memory both unreachable) —
+        # fail-open rather than blocking legitimate subscribers; the
+        # global per-IP middleware limit still bounds the blast radius.
+        log.exception("status-subscribe: rate-limit check failed")
+
     if isinstance(components, list):
         for c in components:
             if c not in COMPONENT_KEYS:
@@ -317,6 +344,21 @@ async def api_status_subscribe(request: Request):
 
 @app.post("/api/status/unsubscribe", include_in_schema=False)
 async def api_status_unsubscribe(request: Request):
+    # Rate limit (AUDIT gap): token-guarded (404 on miss) makes this a
+    # token-probing surface. Cap per-IP at 20/hour via the gateway-wide
+    # rate store. Fail-open if the rate infra is down.
+    try:
+        ip = server._get_client_ip(request)
+        if server._is_rate_limited(f"status-unsub-ip:{ip}", 20, 3600):
+            log.info("status-unsubscribe: per-IP cap hit ip=%s", ip)
+            return JSONResponse(
+                {"error": "Too many requests from your network. Try again in an hour."},
+                status_code=429,
+                headers={"Retry-After": "3600"},
+            )
+    except Exception:
+        log.exception("status-unsubscribe: rate-limit check failed")
+
     body = await _read_json(request)
     token = (body.get("token") or "").strip()
     if not token:
