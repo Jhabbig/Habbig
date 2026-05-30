@@ -1259,19 +1259,22 @@ _CSRF_EXEMPT_POST_PREFIXES = (
 
 @app.get("/favicon.ico")
 async def favicon():
-    """Return the narve.ai logo as the root-level favicon.
+    """Return the narve.ai brand icon as the root-level favicon.
 
-    Browsers hit /favicon.ico automatically for every tab. We short-circuit
-    to static/img/logo.png (PNG is fine — modern browsers don't require ICO).
+    Browsers + Googlebot hit /favicon.ico automatically. We serve the 192x192
+    app icon (a multiple of 48px, per Google's favicon size guidance) so the
+    brand mark — not the generic globe — is what Search shows. logo.png was
+    128x128 (square but NOT a 48-multiple); falls back to it if 192 is absent.
     """
     from fastapi.responses import FileResponse
-    logo_path = STATIC_DIR / "img" / "logo.png"
-    if logo_path.exists():
-        return FileResponse(
-            logo_path,
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=604800"},
-        )
+    for _name in ("icon-192.png", "logo.png"):
+        _p = STATIC_DIR / "img" / _name
+        if _p.exists():
+            return FileResponse(
+                _p,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=604800"},
+            )
     raise HTTPException(status_code=404)
 
 # ── PWA: manifest + service worker ──────────────────────────────────
