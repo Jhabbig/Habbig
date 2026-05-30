@@ -1273,7 +1273,9 @@ async def favicon():
             return FileResponse(
                 _p,
                 media_type="image/png",
-                headers={"Cache-Control": "public, max-age=604800"},
+                # 1-day TTL (was 7d): a long edge cache previously pinned a
+                # stale 128px favicon at Cloudflare after we swapped to 192px.
+                headers={"Cache-Control": "public, max-age=86400"},
             )
     raise HTTPException(status_code=404)
 
