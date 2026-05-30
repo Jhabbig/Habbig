@@ -1501,7 +1501,7 @@ _PUBLIC_PATHS = frozenset({
     "/offline",
     # Public SEO content pages — see seo_routes.py
     "/about", "/how-it-works", "/methodology", "/faq",
-    "/team", "/press", "/changelog", "/changelog.rss", "/narve",
+    "/team", "/press", "/changelog", "/changelog.rss",
     # Developer docs — public page describing /api/public/v1/* for SEO.
     "/api/docs",
     # Machine-readable OpenAPI schema referenced from /api/docs.
@@ -3676,7 +3676,6 @@ async def seo_robots_txt(request: Request):
         "Allow: /how-it-works\n"
         "Allow: /methodology\n"
         "Allow: /faq\n"
-        "Allow: /narve\n"
         "Disallow: /admin/\n"
         "Disallow: /api/\n"
         "Disallow: /auth/\n"
@@ -3719,7 +3718,6 @@ _SITEMAP_ENTRIES = [
     ("/team",           "monthly", "0.6"),
     ("/press",          "monthly", "0.6"),
     ("/changelog",      "weekly",  "0.7"),
-    ("/narve",          "monthly", "0.7"),
     ("/status",         "daily",   "0.5"),
     ("/api/docs",       "monthly", "0.6"),
     ("/terms",          "yearly",  "0.3"),
@@ -3863,16 +3861,6 @@ async def seo_sitemap_xml(request: Request):
         )
     parts.append('</urlset>')
     return Response("".join(parts), media_type="application/xml; charset=utf-8")
-
-
-@app.get("/narve", response_class=HTMLResponse)
-async def seo_narve_page(request: Request):
-    """Brand-query landing page. URL+H1+title all contain "narve" so Google's
-    brand-disambiguation signals point here for the query "narve"."""
-    sub = get_subdomain(request)
-    if sub:
-        return await proxy_request(request, "/narve")
-    return render_page("narve-brand", request=request)
 
 
 @app.get("/landing", response_class=HTMLResponse)
