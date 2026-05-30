@@ -3694,16 +3694,13 @@ async def seo_robots_txt(request: Request):
 # match crawl-importance: homepage highest, legal pages lowest, content
 # pages in between.
 #
-# This is the PUBLIC tier: every path here is anonymously crawlable — present
-# in _PUBLIC_PATHS (or under a _PUBLIC_PREFIXES prefix) so GateMiddleware lets
+# EVERY path here MUST be anonymously crawlable — i.e. present in
+# _PUBLIC_PATHS (or under a _PUBLIC_PREFIXES prefix) so GateMiddleware lets
 # an unauthenticated Googlebot through with a 200. Gated product pages
-# (/dashboards, /settings, /billing, …) are NO LONGER excluded — they are
-# added separately at request time by _gated_page_entries() so the obscure
-# sitemap is a COMPLETE inventory of the site (product decision 2026-05-29).
-# Those gated pages 302->/gate for anon crawlers (Google soft-404s them); that
-# tradeoff was accepted to keep one complete map. Admin/auth internals stay
-# excluded. Add public marketing/legal pages here; gated pages are discovered
-# automatically — do not hand-list them.
+# (/dashboards, /settings, /billing, …) are DELIBERATELY absent: behind the
+# gate they 302 to /gate for anon crawlers, which Search Console files as
+# soft-404s and which can never become sitelinks. Do not add a path here
+# without first whitelisting it as public.
 #
 # There is no static gateway/static/sitemap.xml; the dynamic route below
 # is the single source of truth (StaticFiles is mounted at
@@ -3749,61 +3746,6 @@ def _subdomain_landing_entries():
 _SITEMAP_PATH = "/497951413996680578.xml"
 
 
-# Gated product pages are auto-discovered from the live route table and added
-# to the COMPLETE apex sitemap (product decision 2026-05-29). We exclude the
-# API, static assets, auth endpoints, admin/superadmin internals, and
-# parametrised utility routes — even at an obscure URL we never advertise the
-# admin surface. Anything not skipped here is treated as a user-facing page.
-_GATED_SITEMAP_SKIP_PREFIXES = (
-    "/api", "/_gateway_static", "/og/", "/auth/", "/admin", "/static",
-    "/.well-known", "/embed", "/s/", "/connect/", "/extension/", "/tools/",
-    "/preview/", "/invite/", "/sources/", "/u/", "/predictions/",
-    # Ops / health / metrics probes — registered GET routes but not pages.
-    "/health", "/healthz", "/readyz", "/livez", "/metrics", "/debug",
-)
-_GATED_SITEMAP_SKIP_EXACT = frozenset({
-    "/", "/gate", "/offline", "/landing", "/health", "/robots.txt",
-    "/favicon.ico", "/login", "/signup", "/register", "/logout",
-    "/forgot-password", "/reset-password", "/unsubscribe",
-    "/status/unsubscribe", "/changelog.rss", "/status/feed.xml",
-    "/sw.js", "/manifest.json",
-})
-
-
-def _gated_page_entries():
-    """Auto-discovered gated product pages — one per static GET HTML route.
-
-    Walks the live FastAPI route table and returns (path, changefreq,
-    priority) for every GET page that isn't already public (in
-    _SITEMAP_ENTRIES), isn't admin/auth/api/static, and has no path
-    parameters. New product pages land in the sitemap automatically. These
-    302->/gate for an anonymous crawler (Google soft-404s them); they're here
-    so the obscure sitemap is a single complete inventory of the site.
-    """
-    public = {p for (p, _f, _pr) in _SITEMAP_ENTRIES}
-    seen = set()
-    out = []
-    for r in app.routes:
-        methods = getattr(r, "methods", None)
-        path = getattr(r, "path", "")
-        if not methods or "GET" not in methods:
-            continue
-        if not path or "{" in path:
-            continue
-        if path in _GATED_SITEMAP_SKIP_EXACT or path in public:
-            continue
-        if path == _SITEMAP_PATH or "cancel-flow" in path:
-            continue
-        if any(path.startswith(p) for p in _GATED_SITEMAP_SKIP_PREFIXES):
-            continue
-        if path in seen:
-            continue
-        seen.add(path)
-        out.append((path, "weekly", "0.5"))
-    out.sort()
-    return out
-
-
 def _dynamic_source_entries(limit: int = 5000):
     """Public /sources/<handle> profile pages for accuracy-unlocked sources.
 
@@ -3837,14 +3779,12 @@ def _dynamic_source_entries(limit: int = 5000):
 async def seo_sitemap_xml(request: Request):
     """Auto-generated sitemap served at an obscure path (see _SITEMAP_PATH).
 
-    Called on each crawl; cheap enough to render live. The apex sitemap is a
-    COMPLETE inventory of the site's own pages (product decision 2026-05-29):
-    the public marketing/legal pages (_SITEMAP_ENTRIES), the per-subdomain
-    brand landings, every gated product page (_gated_page_entries — dashboards,
-    settings, billing, …), and dynamic public source profiles. Admin/superadmin
-    internals, auth endpoints, the API and static assets are excluded. Gated
-    pages 302->/gate for anonymous crawlers (Google soft-404s them); they are
-    listed deliberately so this obscure URL is a single complete site map.
+    Called on each crawl; cheap enough to render live. Contains ONLY public,
+    anonymously-crawlable pages — the marketing/legal pages (_SITEMAP_ENTRIES),
+    the per-subdomain brand landings, and dynamic public /sources/<handle>
+    profiles. Gated product pages, auth, admin, and the API are excluded so
+    every URL here returns 200 to Googlebot (no soft-404s) — which keeps the
+    property eligible for rich results / sitelinks.
 
     Sub-brand subdomains (sports.narve.ai, crypto.narve.ai, …) return a
     minimal sitemap canonical to the subdomain itself. The sub-brand
@@ -3904,11 +3844,12 @@ async def seo_sitemap_xml(request: Request):
             f"<changefreq>{freq}</changefreq>"
             f"<priority>{priority}</priority></url>"
         )
-    # Gated product pages + dynamic public content. Per the 2026-05-29 product
-    # decision the obscure sitemap is a COMPLETE inventory of the site's own
-    # pages, not just the public SEO surface (see _gated_page_entries). Both
-    # return apex-relative paths, so prefix with the apex host.
-    for path, freq, priority in (_gated_page_entries() + _dynamic_source_entries()):
+    # Dynamic PUBLIC content only — /sources/<handle> for accuracy-unlocked
+    # sources (0 today; gate-exempt via the /sources/ prefix, so genuinely
+    # crawlable). Gated product pages are DELIBERATELY excluded: they
+    # 302->/gate for an anonymous crawler, so Google soft-404s them and they
+    # can never become sitelinks. The submitted sitemap stays 100% crawlable.
+    for path, freq, priority in _dynamic_source_entries():
         parts.append(
             f"<url><loc>https://{apex}{path}</loc>"
             f"<lastmod>{today}</lastmod>"
