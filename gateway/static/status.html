@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="index,follow">
   <title>Status · narve.ai</title>
   <meta name="description" content="Live service status, 90-day uptime history, and recent incidents for narve.ai.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Status · narve.ai">
+  <meta property="og:description" content="Live service status, 90-day uptime history, and recent incidents for narve.ai.">
+  <meta property="og:url" content="https://narve.ai/status">
+  <meta property="og:site_name" content="narve.ai">
+  <meta property="og:image" content="https://narve.ai/_gateway_static/img/logo.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="alternate" type="application/rss+xml" title="narve.ai status feed" href="/status/feed.xml">
   <link rel="stylesheet" href="{{ static: gateway.css }}">
   <link rel="stylesheet" href="{{ static: components.css }}">
@@ -22,6 +30,9 @@
     "isPartOf": {"@type": "WebSite", "name": "narve.ai", "url": "https://narve.ai"},
     "inLanguage": "en"
   }
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Organization","name":"narve.ai","alternateName":["narve","narveai"],"url":"https://narve.ai","logo":"https://narve.ai/_gateway_static/img/logo.png"}
   </script>
 </head>
 <body>
