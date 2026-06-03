@@ -40,7 +40,15 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "whale-tracker@narve.ai")
+
+# SMS via Twilio. Per-rule channel_config supplies {"to": "+15551234567"};
+# global credentials are env-based so they aren't checked into the DB.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN  = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM        = os.environ.get("TWILIO_FROM", "")
+
 _DEFAULT_TIMEOUT = 10.0
+_VALID_CHANNELS = ("webhook", "slack", "discord", "email", "sms", "pagerduty")
 
 
 # ─── Watchlist CRUD ──────────────────────────────────────────────────
@@ -109,7 +117,7 @@ def create_rule(watchlist_id: int, *, name: str | None, condition_type: str,
                 cooldown_minutes: int = 60) -> dict:
     if condition_type not in ("synthesis_threshold", "new_signal", "high_skill_filer"):
         raise ValueError(f"bad condition_type: {condition_type}")
-    if channel not in ("webhook", "slack", "discord", "email"):
+    if channel not in _VALID_CHANNELS:
         raise ValueError(f"bad channel: {channel}")
     with db.connect() as cx:
         cur = cx.execute(
@@ -365,6 +373,10 @@ async def _deliver(rule: dict, ticker: str, payload: dict) -> None:
             await _deliver_discord(cfg, payload)
         elif rule["channel"] == "email":
             await _deliver_email(cfg, payload)
+        elif rule["channel"] == "sms":
+            await _deliver_sms(cfg, payload)
+        elif rule["channel"] == "pagerduty":
+            await _deliver_pagerduty(cfg, payload)
         else:
             err = f"unknown channel {rule['channel']}"
     except Exception as e:
@@ -414,6 +426,51 @@ async def _deliver_discord(cfg: dict, payload: dict) -> None:
     }]}
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as cx:
         r = await cx.post(url, json=body)
+        r.raise_for_status()
+
+
+async def _deliver_sms(cfg: dict, payload: dict) -> None:
+    """Twilio SMS. Per-rule cfg: {"to": "+15551234567"}.
+
+    Global credentials from env: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+    TWILIO_FROM. The message body is the human-readable summary line.
+    """
+    to = cfg.get("to")
+    if not to:
+        raise ValueError("sms 'to' not configured")
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
+        raise ValueError("Twilio creds not set (TWILIO_ACCOUNT_SID/_AUTH_TOKEN/_FROM)")
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+    body = payload.get("summary") or (
+        f"{payload.get('ticker')} score {payload.get('score')} - {payload.get('rule')}"
+    )
+    data = {"To": to, "From": TWILIO_FROM, "Body": body[:1600]}
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT,
+                                 auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)) as cx:
+        r = await cx.post(url, data=data)
+        r.raise_for_status()
+
+
+async def _deliver_pagerduty(cfg: dict, payload: dict) -> None:
+    """PagerDuty Events API v2. Per-rule cfg: {"routing_key": "...", "severity": "info"}."""
+    routing_key = cfg.get("routing_key")
+    if not routing_key:
+        raise ValueError("pagerduty routing_key not configured")
+    severity = cfg.get("severity") or "info"
+    body = {
+        "routing_key":  routing_key,
+        "event_action": "trigger",
+        "dedup_key":    f"whale-{payload.get('rule')}-{payload.get('ticker')}",
+        "payload": {
+            "summary":   (payload.get("summary") or
+                          f"{payload.get('ticker')} {payload.get('rule')}")[:1024],
+            "source":    "narve.ai whale-tracker",
+            "severity":  severity,
+            "custom_details": payload,
+        },
+    }
+    async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as cx:
+        r = await cx.post("https://events.pagerduty.com/v2/enqueue", json=body)
         r.raise_for_status()
 
 

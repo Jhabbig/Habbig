@@ -693,6 +693,36 @@ async def _backfill_cusip_tickers_into_holdings(cusips: list[str]) -> int:
     return updated
 
 
+async def bulk_backfill_range(start_year: int, end_year: int,
+                              form_types: list[str],
+                              max_per_form: int = 1000,
+                              start_quarter: int = 1,
+                              end_quarter: int = 4) -> dict[str, dict[str, int]]:
+    """Iterate `bulk_backfill_quarter` across every quarter in [start, end].
+
+    Returns a nested dict {YYYY-QN: {form: count}}. Caller can use this for
+    progress reporting / equity-curve style coverage charts later.
+    """
+    if start_year > end_year:
+        raise ValueError("start_year must be <= end_year")
+    results: dict[str, dict[str, int]] = {}
+    for year in range(int(start_year), int(end_year) + 1):
+        for q in range(1, 5):
+            if year == start_year and q < start_quarter:
+                continue
+            if year == end_year and q > end_quarter:
+                break
+            tag = f"{year}-Q{q}"
+            try:
+                res = await bulk_backfill_quarter(year, q, form_types, max_per_form=max_per_form)
+                results[tag] = res
+                log.info("bulk range %s: %s", tag, res)
+            except Exception as e:
+                log.exception("bulk range %s failed: %s", tag, e)
+                results[tag] = {"error": str(e)[:200]}
+    return results
+
+
 async def bulk_backfill_quarter(year: int, quarter: int,
                                 form_types: list[str],
                                 max_per_form: int = 1000) -> dict[str, int]:

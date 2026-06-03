@@ -33,6 +33,7 @@ import db
 import events
 import identity as identity_mod
 import ingest
+import options_flow_ws
 import signals as signals_mod
 import skill as skill_mod
 import uk as uk_mod
@@ -118,10 +119,53 @@ async def _startup():
     db.init_db()
     # Warm the CIK→ticker map so the very first request gets enriched data.
     asyncio.create_task(cik_ticker.ensure_loaded())
+
     if os.environ.get("DISABLE_INGEST", "").strip() == "1":
         log.warning("ingest disabled via DISABLE_INGEST=1")
         return
     asyncio.create_task(ingest.loop_forever())
+
+    # Real-time WebSocket subscriber for options flow + dark pool. No-op
+    # if UNUSUAL_WHALES_API_KEY isn't set; runs alongside the HTTP poller
+    # (DB upserts dedupe by alert_id / print_id).
+    if options_flow_ws.is_configured():
+        asyncio.create_task(options_flow_ws.run_forever())
+
+    # First-run auto bulk backfill — fires only if the DB is empty AND
+    # AUTO_BULK_BACKFILL is on. Defaults to the last 4 quarters so the
+    # skill model has enough history to start producing posteriors.
+    if os.environ.get("AUTO_BULK_BACKFILL", "").strip() == "1":
+        asyncio.create_task(_maybe_first_run_backfill())
+
+
+async def _maybe_first_run_backfill() -> None:
+    """If the database is empty (no insider txns), pull the last 4 quarters.
+
+    Cheap guard so multi-replica deployments don't re-pull on every boot.
+    """
+    counts = db.counts()
+    if (counts.get("insider_txn") or 0) > 0:
+        return
+    log.warning("first-run auto bulk backfill starting…")
+    import datetime as _dt
+    today = _dt.date.today()
+    start = today - _dt.timedelta(days=365)
+    start_year, start_q = start.year, (start.month - 1) // 3 + 1
+    end_year, end_q     = today.year, (today.month - 1) // 3 + 1
+    forms = os.environ.get(
+        "AUTO_BULK_BACKFILL_FORMS", "4,SC 13D,SC 13G,8-K,13F-HR"
+    ).split(",")
+    max_per_form = int(os.environ.get("AUTO_BULK_BACKFILL_MAX_PER_FORM", "1000"))
+    try:
+        res = await ingest.bulk_backfill_range(
+            start_year=start_year, end_year=end_year,
+            start_quarter=start_q, end_quarter=end_q,
+            form_types=[f.strip() for f in forms if f.strip()],
+            max_per_form=max_per_form,
+        )
+        log.warning("first-run backfill complete: %s", res)
+    except Exception as e:
+        log.exception("first-run backfill failed: %s", e)
 
 
 # ─── routes ───────────────────────────────────────────────────────────
@@ -488,6 +532,31 @@ async def api_admin_bulk_backfill(
     )
     _cache.clear()
     return {"inserted": res, "counts": db.counts()}
+
+
+@app.post("/api/admin/bulk-backfill-range")
+async def api_admin_bulk_backfill_range(
+    start_year: int = Query(..., ge=2000, le=2100),
+    end_year: int = Query(..., ge=2000, le=2100),
+    forms: str = Query("4,SC 13D,SC 13G,8-K,13F-HR"),
+    max_per_form: int = Query(1000, ge=1, le=10000),
+    start_quarter: int = Query(1, ge=1, le=4),
+    end_quarter: int = Query(4, ge=1, le=4),
+):
+    """Iterate quarterly bulk backfill across a year range. DEV_MODE only.
+
+    Useful for spinning a fresh DB up to multi-year coverage in one call.
+    """
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    form_list = [f.strip() for f in forms.split(",") if f.strip()]
+    res = await ingest.bulk_backfill_range(
+        start_year=start_year, end_year=end_year,
+        start_quarter=start_quarter, end_quarter=end_quarter,
+        form_types=form_list, max_per_form=max_per_form,
+    )
+    _cache.clear()
+    return {"per_quarter": res, "counts": db.counts()}
 
 
 @app.post("/api/admin/llm-extract")

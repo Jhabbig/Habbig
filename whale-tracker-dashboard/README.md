@@ -209,7 +209,7 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
     `POST /api/admin/llm-extract` for manual runs. UI: Activist tab
     shows extracted intent pill + summary; M&A Feed shows target ←
     acquirer, deal type, consideration, expected close, implied premium.
-- Phase 7 shipped (this version):
+- Phase 7 shipped:
   - Synthesis score explainability — every score now carries a
     `synthesis_breakdown` per-signal contribution dict (`insider`,
     `activist`, `ma`, `congress`, `fund`, `options`, `dark_pool`).
@@ -227,7 +227,20 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
   - UK Companies House PSC integration. Watchlist of UK company numbers;
     PSC fetched every 6h (`UK_INTERVAL_S`) when `UK_COMPANIES_HOUSE_API_KEY`
     is set. UK tab with company watchlist + PSC notices.
-- Phase 8 candidates: more foreign filings (EU Transparency Directive 5%
+- Phase 8 shipped (this version):
+  - unusual_whales **WebSocket** subscriber (`options_flow_ws.py`)
+    replaces the 2-min poll with sub-second push. Exponential-backoff
+    reconnect, broadcasts every event over the existing SSE stream.
+    Runs alongside the HTTP poller; DB upserts dedupe by id.
+  - Bulk backfill **range** + **first-run auto** — `POST /api/admin/
+    bulk-backfill-range?start_year=&end_year=&forms=&max_per_form=`
+    iterates per-quarter so multi-year history lands in one call.
+    `AUTO_BULK_BACKFILL=1` on first start (empty DB) pulls the
+    trailing 4 quarters automatically.
+  - Alert delivery channels added: **SMS** (Twilio) + **PagerDuty**
+    (Events API v2). Per-rule channel_config supplies destination;
+    global credentials via env.
+- Phase 9 candidates: more foreign filings (EU Transparency Directive 5%
   notifications, HKEx, ASX); WebSocket push from unusual_whales for true
   real-time alerting; volume-weighted fund-skill (today's binary win/loss
   treats a $1B and a $1M position equally); LLM-driven manager bio

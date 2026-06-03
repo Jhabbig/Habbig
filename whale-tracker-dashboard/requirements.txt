@@ -1,3 +1,6 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27
+# Optional — used only when UNUSUAL_WHALES_API_KEY is set for realtime push.
+# Falls back to the HTTP poller cleanly if not installed.
+websockets>=12.0
