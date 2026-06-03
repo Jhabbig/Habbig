@@ -27,6 +27,7 @@ from analysis import alerts as alerts_analysis
 from analysis import clark_fisher as world_analysis
 from analysis import elections as election_analysis
 from analysis import eras as era_analysis
+from analysis import exports as csv_exports
 from analysis import mood_index
 from analysis import narrative as narrative_analysis
 from analysis import regional_mood as regional_mood_analysis
@@ -42,6 +43,8 @@ app = FastAPI(title="Voter Pulse Dashboard")
 
 HTML_PATH = Path(__file__).parent / "index.html"
 METHODOLOGY_PATH = Path(__file__).parent / "methodology.html"
+WELCOME_PATH = Path(__file__).parent / "welcome.html"
+EMBED_PATH = Path(__file__).parent / "embed.html"
 
 # Series we surface in the "by administration" comparison table.
 ERA_SERIES = ["CPIAUCSL", "UNRATE", "UMCSENT", "MORTGAGE30US", "GASREGW"]
@@ -56,13 +59,12 @@ if not _sso_secret and not _DEV_MODE:
     log.warning("GATEWAY_SSO_SECRET unset and DEV_MODE off — all requests will 503")
 
 
-# Paths that bypass the gateway-SSO middleware. /share/* is intentionally
-# public so anyone can unfurl a card on Twitter / Slack / etc; /healthz
-# stays public so the container healthcheck can hit it. Email signup +
-# unsubscribe are also public — lead-gen surfaces only work if anonymous
-# visitors can submit them.
-PUBLIC_PATHS = {"/healthz", "/api/subscribe", "/subscribe", "/unsubscribe"}
-PUBLIC_PREFIXES = ("/share/",)
+# Paths that bypass the gateway-SSO middleware. /share/* and /embed/* are
+# intentionally public so links unfurl + iframes work for anyone; /welcome
+# is the marketing landing page; /api/subscribe + /unsubscribe are lead-gen
+# surfaces; /api/export/* gives researchers raw CSVs without auth.
+PUBLIC_PATHS = {"/healthz", "/welcome", "/api/subscribe", "/subscribe", "/unsubscribe"}
+PUBLIC_PREFIXES = ("/share/", "/share-data/", "/embed/", "/api/export/")
 
 
 @app.middleware("http")
@@ -79,17 +81,28 @@ async def security_and_auth(request: Request, call_next):
 
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'"
-    )
+    # Embeds are designed to be iframed; everything else stays locked down.
+    if path.startswith("/embed/"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors *"
+        )
+    else:
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'"
+        )
     if _sso_secret:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
@@ -103,6 +116,69 @@ async def index() -> HTMLResponse:
 @app.get("/methodology", response_class=HTMLResponse)
 async def methodology() -> HTMLResponse:
     return HTMLResponse(METHODOLOGY_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/welcome", response_class=HTMLResponse)
+async def welcome() -> HTMLResponse:
+    return HTMLResponse(WELCOME_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/embed/mood", response_class=HTMLResponse)
+async def embed_mood() -> HTMLResponse:
+    return HTMLResponse(EMBED_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/share-data/mood.json")
+async def share_data_mood() -> JSONResponse:
+    """Tiny JSON the embed widget hydrates from — bypasses SSO."""
+    life = fred_client.get_cached(force=False)
+    composed = mood_index.compose(life["series"])
+    composed["label"] = mood_index.label_for(composed["overall"])
+    return JSONResponse({
+        "overall": composed.get("overall"),
+        "label":   composed.get("label"),
+    }, headers={"Cache-Control": "public, max-age=900"})
+
+
+# ── CSV exports (public; researcher utility) ─────────────────────────────────
+
+
+def _csv_response(payload: tuple[str, str], filename: str) -> Response:
+    body, ctype = payload
+    return Response(content=body, media_type=ctype, headers={
+        "Cache-Control": "public, max-age=900",
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    })
+
+
+@app.get("/api/export/mood.csv")
+async def export_mood_csv() -> Response:
+    bt = _backtest_payload(force=False)
+    return _csv_response(csv_exports.mood_history_csv(bt.get("history") or []),
+                         "voter_pulse_mood_history.csv")
+
+
+@app.get("/api/export/life.csv")
+async def export_life_csv() -> Response:
+    life = fred_client.get_cached(force=False)
+    return _csv_response(csv_exports.life_long_csv(life.get("series") or []),
+                         "voter_pulse_life_indicators.csv")
+
+
+@app.get("/api/export/states.csv")
+async def export_states_csv() -> Response:
+    raw = states_client.get_cached(force=False)
+    annotated = state_mood_analysis.compose(raw).get("states") or []
+    return _csv_response(csv_exports.states_csv(annotated),
+                         "voter_pulse_states.csv")
+
+
+@app.get("/api/export/world.csv")
+async def export_world_csv() -> Response:
+    raw = worldbank_client.get_cached(force=False)
+    summarised = world_analysis.summarise(raw["countries"]).get("countries") or []
+    return _csv_response(csv_exports.world_csv(summarised),
+                         "voter_pulse_world.csv")
 
 
 @app.get("/api/life")

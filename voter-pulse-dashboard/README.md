@@ -164,7 +164,10 @@ existing `ruff` lint.
 
 ## Endpoints
 
-- `GET /` — the dashboard page
+- `GET /` — the dashboard page (gated)
+- `GET /welcome` — public landing/marketing page (bypasses SSO)
+- `GET /embed/mood` — public, iframable mood gauge widget (CSP `frame-ancestors *`)
+- `GET /share-data/mood.json` — public JSON the embed widget hydrates from
 - `GET /methodology` — full sources + formulas page
 - `GET /api/summary` — single page-load payload (mood + life + markets + polls + eras)
 - `GET /api/mood` — composite mood score and sub-scores
@@ -179,6 +182,10 @@ existing `ruff` lint.
 - `GET /unsubscribe?email=...&token=...` — public, HMAC-signed unsubscribe URL
 - `POST /admin/check-and-send?force=...` — authed; fires alert emails if the mood moved more than the threshold since last send
 - `GET /admin/subscriber-count` — authed; current active-subscriber count
+- `GET /api/export/mood.csv` — monthly mood-index history, CSV (public)
+- `GET /api/export/life.csv` — every FRED indicator, long-format CSV (public)
+- `GET /api/export/states.csv` — current state unemployment + deltas, CSV (public)
+- `GET /api/export/world.csv` — country-level sector composition + Clark–Fisher stage, CSV (public)
 - `GET /api/world` — sector-employment by country with Clark–Fisher stage + ternary coords
 - `GET /api/country/{iso3}` — full per-country profile: latest inflation, unemployment, GDP growth, life expectancy, population + annual sector trajectory on the Clark–Fisher arc
 - `GET /api/narrative` — 3-sentence AI summary of the current snapshot

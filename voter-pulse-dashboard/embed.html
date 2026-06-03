@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voter Pulse — embedded mood</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0e1117; --fg: #e6edf3; --muted: #8b949e; --accent: #ec4899; --grid: #30363d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+               font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+               overflow: hidden; }
+  .wrap {
+    padding: 16px; display: flex; align-items: center; gap: 18px;
+    border: 1px solid var(--grid); border-radius: 8px;
+    background: linear-gradient(135deg, #1a1320 0%, #161b22 60%);
+    height: 100vh; max-height: 220px;
+  }
+  .gauge { position: relative; width: 140px; height: 140px; flex-shrink: 0; }
+  .gauge svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+  .gauge .track { stroke: var(--grid); }
+  .gauge .fill  { stroke-linecap: round; }
+  .gauge-label { position: absolute; inset: 0; display: flex; flex-direction: column;
+                 align-items: center; justify-content: center; }
+  .gauge-label .num { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .gauge-label .word { color: var(--muted); margin-top: 4px; font-size: 10px;
+                       letter-spacing: 0.06em; text-transform: uppercase; }
+  .right { flex: 1; min-width: 0; }
+  .tag { color: var(--accent); font-weight: 700; letter-spacing: 0.08em;
+         text-transform: uppercase; font-size: 9px; }
+  h1 { margin: 4px 0 6px; font-size: 14px; }
+  .desc { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+  a { color: var(--accent); text-decoration: none; font-size: 11px; font-weight: 600; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="gauge">
+    <svg viewBox="0 0 100 100">
+      <circle class="track" cx="50" cy="50" r="42" stroke-width="10" fill="none" />
+      <circle class="fill"  cx="50" cy="50" r="42" stroke-width="10" fill="none"
+              stroke="url(#g)" stroke-dasharray="263.89" stroke-dashoffset="263.89" id="gaugeFill" />
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"  stop-color="#f85149"/>
+          <stop offset="50%" stop-color="#d29922"/>
+          <stop offset="100%" stop-color="#56d364"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <div class="gauge-label">
+      <div class="num" id="num">—</div>
+      <div class="word" id="word">loading</div>
+    </div>
+  </div>
+  <div class="right">
+    <div class="tag">Voter Pulse · narve.ai</div>
+    <h1>National mood index</h1>
+    <p class="desc" id="desc">A non-partisan composite of pocketbook, jobs, and sentiment signals.</p>
+    <a href="/" target="_blank" rel="noopener">Open the full dashboard →</a>
+  </div>
+</div>
+<script>
+fetch("/share-data/mood.json").then(r => r.json()).then(d => {
+  const v = d.overall;
+  document.getElementById("num").textContent = v == null ? "—" : Math.round(v);
+  document.getElementById("word").textContent = (d.label || "—").toUpperCase();
+  const fill = document.getElementById("gaugeFill");
+  const C = 2 * Math.PI * 42;
+  const off = v == null ? C : C * (1 - Math.max(0, Math.min(100, v)) / 100);
+  fill.setAttribute("stroke-dasharray", String(C));
+  fill.setAttribute("stroke-dashoffset", String(off));
+}).catch(() => {});
+</script>
+</body>
+</html>

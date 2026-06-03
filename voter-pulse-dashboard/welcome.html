@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voter Pulse — how voters feel, by the numbers</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A non-partisan dashboard that tracks how voters feel and how their lives are going — composite mood index, pocketbook indicators, polling, election backtest, and a per-country Clark–Fisher view.">
+<meta property="og:title" content="Voter Pulse — how voters feel">
+<meta property="og:description" content="A non-partisan dashboard that tracks how voters feel and how their lives are going.">
+<meta property="og:image" content="/share/mood.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Voter Pulse · narve.ai">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Voter Pulse — how voters feel">
+<meta name="twitter:description" content="Composite mood index, life indicators, polling, election backtest, Clark–Fisher arc.">
+<meta name="twitter:image" content="/share/mood.png">
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --fg: #e6edf3;
+    --muted: #8b949e; --accent: #ec4899; --grid: #30363d;
+    --good: #56d364; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--grid);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header .tag { color: var(--accent); font-weight: 600; letter-spacing: 0.06em;
+                text-transform: uppercase; font-size: 11px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 13px; }
+  main { max-width: 980px; margin: 0 auto; padding: 48px 24px; }
+
+  .hero { text-align: center; padding: 24px 0 32px; }
+  .hero h2 {
+    font-size: clamp(36px, 6vw, 60px); margin: 0 0 18px;
+    font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+  }
+  .hero .sub { color: var(--muted); font-size: 17px; max-width: 640px; margin: 0 auto; }
+  .hero .cta { margin-top: 28px; display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .btn {
+    padding: 12px 22px; border-radius: 6px; font-weight: 600;
+    border: 1px solid transparent; display: inline-block;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.1); text-decoration: none; }
+  .btn-ghost   { color: var(--fg); border-color: var(--grid); }
+  .btn-ghost:hover { border-color: var(--accent); text-decoration: none; }
+
+  .preview { margin: 32px 0; text-align: center; }
+  .preview img {
+    max-width: 100%; width: 760px; border: 1px solid var(--grid);
+    border-radius: 10px; display: inline-block;
+  }
+  .preview .cap { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+  .features {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 56px 0;
+  }
+  @media (max-width: 800px) { .features { grid-template-columns: 1fr; } }
+  .feature {
+    background: var(--panel); border: 1px solid var(--grid);
+    border-radius: 10px; padding: 22px;
+  }
+  .feature h3 {
+    margin: 0 0 10px; font-size: 15px; font-weight: 700;
+  }
+  .feature p { color: var(--muted); margin: 0; font-size: 13px; line-height: 1.55; }
+
+  .subscribe-block {
+    background: linear-gradient(135deg, #1a1320 0%, #161b22 60%);
+    border: 1px solid var(--grid); border-radius: 12px;
+    padding: 32px; text-align: center; margin: 56px 0;
+  }
+  .subscribe-block h3 { margin: 0 0 6px; font-size: 22px; }
+  .subscribe-block p  { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+  .subscribe-form {
+    display: flex; gap: 10px; max-width: 500px; margin: 0 auto;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .subscribe-form input[type=email] {
+    flex: 1; min-width: 220px; padding: 12px 14px;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--grid); border-radius: 6px; font: inherit;
+  }
+  .subscribe-form input[type=email]:focus { outline: none; border-color: var(--accent); }
+  .subscribe-form button {
+    padding: 12px 22px; background: var(--accent); color: #fff; border: 0;
+    border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .subscribe-form button:disabled { opacity: 0.6; }
+  .sub-msg { font-size: 12px; color: var(--muted); margin-top: 12px; }
+  .sub-msg.ok { color: var(--good); }
+  .sub-msg.err { color: var(--bad); }
+
+  footer {
+    border-top: 1px solid var(--grid); padding: 24px;
+    color: var(--muted); font-size: 12px; text-align: center;
+  }
+  footer a { color: var(--muted); }
+  .pillrow { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 16px; }
+  .pill {
+    background: var(--panel); border: 1px solid var(--grid);
+    color: var(--muted); padding: 4px 10px; border-radius: 999px;
+    font-size: 11px; letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="tag">narve.ai</span>
+  <h1>Voter Pulse</h1>
+  <nav>
+    <a href="/methodology">Methodology</a>
+    <a href="/">Live dashboard</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>How voters feel, by the numbers.</h2>
+    <p class="sub">
+      A non-partisan dashboard that turns inflation, jobs, sentiment surveys,
+      polling, and prediction markets into one composite read on the country.
+      Updated daily. Sourced entirely from public data.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="/">Open the dashboard →</a>
+      <a class="btn btn-ghost" href="/methodology">Read the methodology</a>
+    </div>
+    <div class="pillrow">
+      <span class="pill">FRED · BLS · BEA</span>
+      <span class="pill">UMich Survey of Consumers</span>
+      <span class="pill">Polymarket</span>
+      <span class="pill">FiveThirtyEight archive</span>
+      <span class="pill">World Bank Indicators</span>
+    </div>
+  </section>
+
+  <div class="preview">
+    <img src="/share/mood.png" alt="The national mood gauge from Voter Pulse">
+    <div class="cap">The live mood gauge updates whenever a new BLS, BEA, or UMich release lands.</div>
+  </div>
+
+  <section class="features">
+    <div class="feature">
+      <h3>Composite mood index</h3>
+      <p>Equal-weight blend of pocketbook (CPI / gas / mortgage / home prices), jobs (UNRATE / real wages / payrolls / disposable income), and sentiment (UMich CSI). 0 = bleak, 100 = good. Every band cutoff is public and unfitted.</p>
+    </div>
+    <div class="feature">
+      <h3>Election backtest</h3>
+      <p>We rebuild the mood index for every month since 1978 using only data available at that point, then ask whether it would have called every presidential election from 1980 onward. No retuning — same formula the live gauge uses.</p>
+    </div>
+    <div class="feature">
+      <h3>Across America</h3>
+      <p>A 50-state tile-map coloured by current unemployment. Click any state for its 1-year and 4-year deltas. Regional cuts (Northeast / Midwest / South / West) carry the same mood formula with regional inputs.</p>
+    </div>
+    <div class="feature">
+      <h3>World jobs — Clark–Fisher arc</h3>
+      <p>Every country plotted on a sector-employment ternary (agriculture / industry / services), with the five Clark–Fisher development stages shaded behind them. Click any country for its full 1991→today sector trajectory.</p>
+    </div>
+    <div class="feature">
+      <h3>Polling aggregate</h3>
+      <p>Monthly mean of every public presidential-approval poll and the generic congressional ballot, aggregated from the archived FiveThirtyEight CSV dataset. Cached, charted, comparable.</p>
+    </div>
+    <div class="feature">
+      <h3>AI narrative + share cards</h3>
+      <p>A 3-sentence summary regenerated whenever the data moves. Every panel has a public shareable URL that unfurls into a 1200×630 OG image on Twitter, Slack, and Discord.</p>
+    </div>
+  </section>
+
+  <section class="subscribe-block">
+    <h3>Tell me when something moves</h3>
+    <p>We'll email you when the composite mood index moves more than 5 points. No marketing, no daily noise.</p>
+    <form class="subscribe-form" id="subForm">
+      <input type="email" id="subEmail" placeholder="you@example.com" required>
+      <button id="subBtn" type="submit">Get the alert</button>
+    </form>
+    <div class="sub-msg" id="subMsg"></div>
+  </section>
+</main>
+
+<footer>
+  <div>
+    Voter Pulse is built and operated by narve.ai · all data is public ·
+    <a href="/methodology">methodology</a> ·
+    <a href="/">live dashboard</a>
+  </div>
+</footer>
+
+<script>
+"use strict";
+(function() {
+  const f = document.getElementById("subForm");
+  const e = document.getElementById("subEmail");
+  const b = document.getElementById("subBtn");
+  const msg = document.getElementById("subMsg");
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const email = (e.value || "").trim();
+    msg.className = "sub-msg"; msg.textContent = "";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      msg.classList.add("err"); msg.textContent = "Please enter a valid email."; return;
+    }
+    b.disabled = true; const orig = b.textContent; b.textContent = "Subscribing…";
+    try {
+      const r = await fetch("/api/subscribe", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({email}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.ok) {
+        msg.classList.add("ok"); msg.textContent = "You're in. Watch your inbox for the next big move.";
+        e.value = "";
+      } else {
+        msg.classList.add("err"); msg.textContent = data.error || "Subscription failed.";
+      }
+    } catch (err) {
+      msg.classList.add("err"); msg.textContent = "Network error. Try again.";
+    } finally {
+      b.disabled = false; b.textContent = orig;
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -305,6 +305,27 @@
     the rest of the dashboard renders normally.
   </p>
 
+  <h2>Embeddable widget (<code>/embed/mood</code>)</h2>
+  <p>
+    A minimal iframable version of the gauge lives at <code>/embed/mood</code>.
+    The CSP for embed routes carries <code>frame-ancestors *</code> so any
+    site can drop it in with <code>&lt;iframe src="//pulse.narve.ai/embed/mood"&gt;</code>.
+    The widget pulls its value from <code>/share-data/mood.json</code> —
+    the smallest payload that lets the gauge animate without revealing
+    anything proprietary.
+  </p>
+
+  <h2>CSV exports (<code>/api/export/*.csv</code>)</h2>
+  <p>
+    Raw data behind every panel is available as RFC-4180 CSV with no auth:
+    <code>mood.csv</code> (monthly mood-index history), <code>life.csv</code>
+    (every FRED indicator in long format), <code>states.csv</code>, and
+    <code>world.csv</code>. Cached for 15 minutes at the response layer.
+    For programmatic use, scripts should prefer the equivalent
+    <code>/api/*</code> JSON endpoints — the CSVs are for humans pulling
+    data into spreadsheets.
+  </p>
+
   <h2>Shareable cards (the /share/* URLs)</h2>
   <p>
     Every major panel has a public sharable URL:
