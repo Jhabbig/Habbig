@@ -9,9 +9,24 @@ Port: **7070**. Lives behind the gateway at `culture.narve.ai` in production.
 
 ```bash
 cd culture-dashboard
+./run.sh
+# http://localhost:7070
+```
+
+`run.sh` is the one-liner local-mode entrypoint: creates a virtualenv on
+first run, installs requirements, sources `.env` if present, and boots
+the dashboard with `DEV_MODE=1` (no gateway, no SSO, no enquire flow —
+all data lives in `culture.db` in this directory).
+
+Override the port: `PORT=8888 ./run.sh`.
+
+Manual setup if you'd rather:
+
+```bash
+cd culture-dashboard
 cp .env.example .env       # all keys optional — missing keys disable that source
 pip install -r requirements.txt
-python3 server.py
+DEV_MODE=1 python3 server.py
 # http://localhost:7070
 ```
 
@@ -267,7 +282,22 @@ Click any source name in the source-quality leaderboard. Page shows the
 to (linked to each topic permalink), and the source's currently-cached
 items.
 
-### Watch rules / predicates (`/api/predicates`)
+### Anomaly index
+
+`anomaly.py` computes a single number quantifying how unusual today is
+against the trailing 30-day distribution. For each section, the current
+score's z-score against the trailing mean + stddev; the overall anomaly
+is the Euclidean norm across sections.
+
+Reading: `0-1` normal, `1-2` mild, `2-3` high, `3+` rare. The dashboard
+shows a colour-coded badge in the header (grey / amber / red / pink)
+with the per-section z-scores in the hover tooltip.
+
+Tunable via `CULTURE_ANOMALY_WINDOW_HOURS` (default 720 = 30 days) and
+`CULTURE_ANOMALY_MIN_POINTS` (default 12). Returns null until the index
+history has accumulated enough points.
+
+### Watch rules / predicates (`/api/predicates` + `/predicates/edit`)
 
 `predicates.json` (next to the dashboard) holds a list of `{name, type,
 conditions, cooldown_hours}` rules. The predicate worker (inside the
@@ -281,7 +311,11 @@ Supported field set for `type: "topic"` rules is enumerated at the top of
 
 UI: a "Watch rules" panel on the main dashboard shows the loaded rules
 side-by-side with the last 7 days of matches (linking each match to its
-topic permalink).
+topic permalink). A separate `/predicates/edit` page provides a
+form-based rule builder — field/op dropdowns sourced from
+`predicates.supported_fields()` / `supported_ops()`, JSON-encoded value
+inputs, atomic-write save back to `predicates.json` via
+`POST /api/predicates`.
 
 ### Source-quality leaderboard (`/api/source_quality`)
 
@@ -376,8 +410,11 @@ the dashboard is already surfacing.
 | `GET /api/source_quality?days=30` | Per-source hit rate from topic snapshots × matched-market velocity. |
 | `GET /api/source/{name}?days=30` | Source detail: quality stats, topic contributions, recent items. |
 | `GET /source/{name}` | HTML source-detail page. |
-| `GET /api/predicates` | Loaded watch rules (from predicates.json). |
+| `GET /api/predicates` | Loaded watch rules + supported fields/ops (for the editor UI). |
+| `POST /api/predicates` | Replace the rule set atomically; writes back to predicates.json. |
+| `GET /predicates/edit` | HTML editor: form-based rule builder with field/op dropdowns. |
 | `GET /api/predicates/matches?days=7` | Recent predicate matches with payloads. |
+| `GET /api/anomaly` | Multi-section anomaly score (Euclidean norm of per-section z-scores). |
 | `GET /api/export` | List exportable data types. |
 | `GET /api/export?type=X&days=30&format=csv` | Streaming CSV of one table (or `format=json` for the full result set). |
 | `GET /export` | HTML page with download links for every export type, with a window selector. |

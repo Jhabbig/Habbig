@@ -480,6 +480,92 @@
                                       font-size: 11px; color: var(--muted);
                                       text-transform: uppercase;
                                       letter-spacing: 0.06em; }
+
+  /* Anomaly badge in header */
+  .anomaly-badge { display: inline-flex; align-items: center; gap: 6px;
+                    padding: 4px 10px; border-radius: 999px;
+                    background: var(--panel-2); border: 1px solid var(--border);
+                    font-size: 11px; font-variant-numeric: tabular-nums;
+                    margin-left: 10px; cursor: help; }
+  .anomaly-badge .label { color: var(--muted); text-transform: uppercase;
+                           letter-spacing: 0.06em; font-size: 9px; }
+  .anomaly-badge .value { font-weight: 700; font-size: 13px; }
+  .anomaly-badge.normal { border-color: var(--border); }
+  .anomaly-badge.normal .value { color: var(--muted); }
+  .anomaly-badge.mild { border-color: var(--warn); }
+  .anomaly-badge.mild .value { color: var(--warn); }
+  .anomaly-badge.high { border-color: var(--bad); }
+  .anomaly-badge.high .value { color: var(--bad); }
+  .anomaly-badge.rare { border-color: var(--accent);
+                         background: rgba(236, 72, 153, 0.1); }
+  .anomaly-badge.rare .value { color: var(--accent); }
+
+  /* Predicate editor */
+  .editor-page { max-width: 900px; margin: 0 auto; }
+  .editor-page-head { display: flex; align-items: baseline; gap: 16px;
+                       margin-bottom: 18px; flex-wrap: wrap; }
+  .editor-page-head h1 { margin: 0; font-size: 28px; font-weight: 700; }
+  .editor-page-head .back { color: var(--muted); text-decoration: none;
+                             font-size: 13px; }
+  .editor-page-head .save-status { color: var(--muted); font-size: 12px;
+                                     margin-left: auto; }
+  .editor-page-head .save-status.ok { color: var(--good); }
+  .editor-page-head .save-status.err { color: var(--bad); }
+  .editor-rule { background: var(--panel); border: 1px solid var(--border);
+                  border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .editor-rule-head { display: flex; gap: 8px; align-items: center;
+                        margin-bottom: 8px; flex-wrap: wrap; }
+  .editor-rule-head input[type=text] { flex: 1; min-width: 160px;
+                                          background: var(--panel-2);
+                                          color: var(--fg); padding: 6px 10px;
+                                          border: 1px solid var(--border);
+                                          border-radius: 4px; font-size: 14px;
+                                          font-weight: 600; }
+  .editor-rule-head select, .editor-rule-head input[type=number] {
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; font-size: 12px;
+  }
+  .editor-rule-head .rule-rm {
+    background: transparent; color: var(--bad); border: 1px solid var(--bad);
+    border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px;
+  }
+  .editor-cond { display: flex; gap: 8px; align-items: center;
+                  margin-bottom: 6px; }
+  .editor-cond select, .editor-cond input[type=text] {
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; font-size: 12px;
+  }
+  .editor-cond select.field { flex: 0 0 180px; }
+  .editor-cond select.op { flex: 0 0 130px; }
+  .editor-cond input[type=text] { flex: 1; font-family: monospace; }
+  .editor-cond button.cond-rm {
+    background: transparent; color: var(--muted); border: none;
+    cursor: pointer; font-size: 16px; padding: 4px 8px;
+  }
+  .editor-cond button.cond-rm:hover { color: var(--bad); }
+  .editor-rule-foot { display: flex; gap: 8px; margin-top: 8px; }
+  .editor-rule-foot button {
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px;
+  }
+  .editor-actions { display: flex; gap: 12px; margin-top: 16px;
+                     justify-content: flex-end; }
+  .editor-actions button {
+    padding: 8px 18px; border-radius: 6px; font-weight: 600;
+    font-size: 13px; cursor: pointer;
+  }
+  .editor-actions .add-rule {
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+  }
+  .editor-actions .save {
+    background: var(--accent); color: var(--bg); border: none;
+  }
+  .editor-help { color: var(--muted); font-size: 12px; margin-bottom: 16px;
+                  background: var(--panel-2); padding: 10px 14px; border-radius: 6px; }
+  .editor-help code { background: var(--panel); padding: 1px 5px;
+                       border-radius: 3px; font-size: 11px; }
   .bars { display: grid; gap: 8px; }
   .bar-row { display: grid; grid-template-columns: 130px 1fr 60px;
              gap: 10px; align-items: center; font-size: 13px; }
@@ -527,6 +613,8 @@
 <header role="banner">
   <a href="/" style="color: inherit; text-decoration: none;"><h1>State of Culture</h1></a>
   <span class="sub" id="updated" aria-live="polite">loading…</span>
+  <span id="anomaly-badge"></span>
+  <a href="/predicates/edit" style="color: var(--muted); text-decoration: none; font-size: 12px; margin-left: 12px;">Watch rules ⚙</a>
   <a href="/export" style="color: var(--muted); text-decoration: none; font-size: 12px; margin-left: 12px;">Export ↓</a>
   <button id="refresh" aria-label="Refresh all data now">Refresh now</button>
 </header>
@@ -663,6 +751,7 @@
   <div id="source-view" class="source-page" hidden></div>
   <div id="compare-view" class="compare-page" hidden></div>
   <div id="export-view" class="export-page" hidden></div>
+  <div id="editor-view" class="editor-page" hidden></div>
 </main>
 
 <script>
@@ -1130,6 +1219,28 @@ async function loadSourceQuality() {
     ${rows}`;
 }
 
+async function loadAnomaly() {
+  const r = await fetch("/api/anomaly");
+  const data = await r.json();
+  const el = document.getElementById("anomaly-badge");
+  if (!el) return;
+  if (data.anomaly == null) {
+    el.innerHTML = `<span class="anomaly-badge normal" title="Anomaly index — needs ${data.needs_at_least || 12} history points; have ${data.history_points}.">
+      <span class="label">anomaly</span><span class="value">—</span>
+    </span>`;
+    return;
+  }
+  const a = data.anomaly;
+  const cls = a < 1 ? "normal" : a < 2 ? "mild" : a < 3 ? "high" : "rare";
+  const labelText = cls === "rare" ? "rare day" : cls;
+  const tip = Object.entries(data.components || {})
+    .filter(([_, v]) => v != null)
+    .map(([k, v]) => `${k} z=${v.toFixed(1)}`).join(" · ");
+  el.innerHTML = `<span class="anomaly-badge ${cls}" title="Anomaly = Euclidean norm of per-section z-scores. ${tip}">
+    <span class="label">${labelText}</span><span class="value">${a.toFixed(1)}</span>
+  </span>`;
+}
+
 async function loadPredicates() {
   const [rRules, rMatches] = await Promise.all([
     fetch("/api/predicates"),
@@ -1310,7 +1421,8 @@ async function loadHealth() {
 async function refreshAll() {
   document.getElementById("updated").textContent = "refreshing…";
   await Promise.all([
-    loadDigest(), loadIndex(), loadSurges(), loadEdges(), loadBacktest(),
+    loadDigest(), loadIndex(), loadAnomaly(),
+    loadSurges(), loadEdges(), loadBacktest(),
     loadHeadlines(), loadSourceQuality(), loadPredicates(),
     loadTopics(), loadSections(), loadHealth(),
   ]);
@@ -1338,6 +1450,7 @@ function routeFromPath() {
     return { kind: "compare", slugs };
   }
   if (path === "/export") return { kind: "export" };
+  if (path === "/predicates/edit") return { kind: "editor" };
   return { kind: "main" };
 }
 
@@ -1347,6 +1460,150 @@ function hideAllViews() {
   document.getElementById("source-view").hidden = true;
   document.getElementById("compare-view").hidden = true;
   document.getElementById("export-view").hidden = true;
+  document.getElementById("editor-view").hidden = true;
+}
+
+function showEditorView() {
+  hideAllViews();
+  const root = document.getElementById("editor-view");
+  root.hidden = false;
+  loadEditorPage();
+}
+
+async function loadEditorPage() {
+  const root = document.getElementById("editor-view");
+  const r = await fetch("/api/predicates");
+  const meta = await r.json();
+  const fields = meta.supported_fields || {};
+  const ops = meta.supported_ops || [];
+
+  let rules = (meta.rules || []).map(r => ({...r,
+    conditions: (r.conditions || []).map(c => ({...c}))}));
+
+  function render() {
+    const fieldOptions = Object.keys(fields).map(f =>
+      `<option value="${f}">${f} (${fields[f]})</option>`).join("");
+    const opOptions = ops.map(o => `<option value="${o}">${o}</option>`).join("");
+
+    const ruleHtml = (rule, idx) => {
+      const conds = rule.conditions.map((c, ci) => `
+        <div class="editor-cond" data-rule="${idx}" data-cond="${ci}">
+          <select class="field">${fieldOptions.replace(`value="${c.field}"`,
+            `value="${c.field}" selected`)}</select>
+          <select class="op">${opOptions.replace(`value="${c.op}"`,
+            `value="${c.op}" selected`)}</select>
+          <input type="text" class="value" value="${escapeHtml(JSON.stringify(c.value))}">
+          <button type="button" class="cond-rm" aria-label="Remove condition">×</button>
+        </div>`).join("");
+      return `<div class="editor-rule" data-rule="${idx}">
+        <div class="editor-rule-head">
+          <input type="text" class="rule-name" value="${escapeHtml(rule.name)}" placeholder="Rule name">
+          <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">cooldown
+            <input type="number" class="rule-cooldown" value="${rule.cooldown_hours}" min="0" step="0.5" style="width:60px"> h
+          </label>
+          <button type="button" class="rule-rm">Delete rule</button>
+        </div>
+        <div class="rule-conditions">${conds}</div>
+        <div class="editor-rule-foot">
+          <button type="button" class="add-cond">+ Condition</button>
+        </div>
+      </div>`;
+    };
+
+    root.innerHTML = `
+      <div class="editor-page-head">
+        <a class="back" href="/">← Back to dashboard</a>
+        <h1>Watch rules</h1>
+        <span class="save-status" id="save-status"></span>
+      </div>
+      <div class="editor-help">
+        Each rule fires when <em>all</em> conditions pass against a current
+        topic cluster. Values are JSON: numbers as <code>3</code>, strings as
+        <code>"x"</code>, lists as <code>["a","b"]</code>, booleans as
+        <code>true</code> / <code>false</code>. Saved to <code>${meta.path}</code>.
+      </div>
+      <div id="rules-list">${rules.map(ruleHtml).join("")}</div>
+      <div class="editor-actions">
+        <button type="button" class="add-rule" id="add-rule">+ New rule</button>
+        <button type="button" class="save" id="save-rules">Save changes</button>
+      </div>`;
+  }
+
+  function syncFromDom() {
+    const ruleEls = root.querySelectorAll(".editor-rule");
+    rules = Array.from(ruleEls).map(re => {
+      const name = re.querySelector(".rule-name").value.trim();
+      const cooldown = parseFloat(re.querySelector(".rule-cooldown").value) || 6;
+      const conditions = Array.from(re.querySelectorAll(".editor-cond")).map(ce => {
+        let v;
+        try { v = JSON.parse(ce.querySelector(".value").value); }
+        catch (e) { v = ce.querySelector(".value").value; }
+        return {
+          field: ce.querySelector(".field").value,
+          op: ce.querySelector(".op").value,
+          value: v,
+        };
+      });
+      return {name: name || "(unnamed)", type: "topic",
+              cooldown_hours: cooldown, conditions};
+    });
+  }
+
+  function showStatus(text, kind) {
+    const el = document.getElementById("save-status");
+    el.textContent = text;
+    el.className = "save-status" + (kind ? " " + kind : "");
+    if (kind === "ok") setTimeout(() => { el.textContent = ""; el.className = "save-status"; }, 3000);
+  }
+
+  root.addEventListener("click", async (ev) => {
+    if (ev.target.matches(".cond-rm")) {
+      ev.preventDefault();
+      syncFromDom();
+      const c = ev.target.closest(".editor-cond");
+      const re = c.closest(".editor-rule");
+      const ridx = parseInt(re.dataset.rule, 10);
+      const cidx = Array.from(re.querySelectorAll(".editor-cond")).indexOf(c);
+      rules[ridx].conditions.splice(cidx, 1);
+      render();
+    } else if (ev.target.matches(".add-cond")) {
+      ev.preventDefault();
+      syncFromDom();
+      const re = ev.target.closest(".editor-rule");
+      const ridx = parseInt(re.dataset.rule, 10);
+      rules[ridx].conditions.push({field: "spread", op: ">=", value: 3});
+      render();
+    } else if (ev.target.matches(".rule-rm")) {
+      ev.preventDefault();
+      syncFromDom();
+      const ridx = parseInt(ev.target.closest(".editor-rule").dataset.rule, 10);
+      rules.splice(ridx, 1);
+      render();
+    } else if (ev.target.matches("#add-rule")) {
+      ev.preventDefault();
+      syncFromDom();
+      rules.push({name: "New rule", type: "topic", cooldown_hours: 6,
+        conditions: [{field: "spread", op: ">=", value: 3}]});
+      render();
+    } else if (ev.target.matches("#save-rules")) {
+      ev.preventDefault();
+      syncFromDom();
+      showStatus("saving…", null);
+      try {
+        const resp = await fetch("/api/predicates", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({rules}),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        showStatus(`Saved ${rules.length} rules ✓`, "ok");
+      } catch (e) {
+        showStatus(`Save failed: ${e.message || e}`, "err");
+      }
+    }
+  });
+
+  render();
 }
 
 function showSourceView(name) {
@@ -1695,6 +1952,8 @@ if (initial.kind === "topic") {
   showCompareView(initial.slugs);
 } else if (initial.kind === "export") {
   showExportView();
+} else if (initial.kind === "editor") {
+  showEditorView();
 } else {
   showMainView();
   setInterval(refreshAll, 5 * 60 * 1000);
@@ -1707,6 +1966,7 @@ window.addEventListener("popstate", () => {
   else if (r.kind === "source") showSourceView(r.name);
   else if (r.kind === "compare") showCompareView(r.slugs);
   else if (r.kind === "export") showExportView();
+  else if (r.kind === "editor") showEditorView();
   else showMainView();
 });
 </script>

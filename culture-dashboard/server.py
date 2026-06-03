@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fastapi import FastAPI, HTTPException, Request           # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # noqa: E402
 
+import anomaly                                                 # noqa: E402
 import backtest                                                # noqa: E402
 import cache                                                   # noqa: E402
 import dedup                                                   # noqa: E402
@@ -260,8 +261,36 @@ async def api_source_quality(days: int = 30) -> JSONResponse:
 
 @app.get("/api/predicates")
 async def api_predicates() -> JSONResponse:
-    return JSONResponse({"rules": predicates.load_rules(),
-                         "path": str(predicates._config_path())})
+    return JSONResponse({
+        "rules": predicates.load_rules(),
+        "path": str(predicates._config_path()),
+        "supported_fields": predicates.supported_fields(),
+        "supported_ops": predicates.supported_ops(),
+    })
+
+
+@app.post("/api/predicates")
+async def api_predicates_save(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "request body must be JSON")
+    rules = body.get("rules") if isinstance(body, dict) else None
+    if not isinstance(rules, list):
+        raise HTTPException(400, "rules must be a list")
+    path = predicates.save_rules(rules)
+    return JSONResponse({"saved": True, "path": path,
+                         "count": len(rules)})
+
+
+@app.get("/predicates/edit", response_class=HTMLResponse)
+async def predicates_edit_page() -> HTMLResponse:
+    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/api/anomaly")
+async def api_anomaly() -> JSONResponse:
+    return JSONResponse(anomaly.compute())
 
 
 @app.get("/api/predicates/matches")

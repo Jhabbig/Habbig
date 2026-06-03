@@ -84,6 +84,52 @@ def load_rules() -> list[dict]:
         return []
 
 
+def save_rules(rules: list[dict]) -> str:
+    """Atomically replace the rule set at the configured path."""
+    path = _config_path()
+    cleaned = [_validate_for_save(r) for r in rules if isinstance(r, dict)]
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"rules": cleaned}, f, indent=2)
+        f.write("\n")
+    tmp.replace(path)
+    log.info("predicates: saved %d rules to %s", len(cleaned), path)
+    return str(path)
+
+
+def _validate_for_save(rule: dict) -> dict:
+    """Lossy normalisation + minimal structural validation for incoming rules."""
+    out = _normalise(rule)
+    out["conditions"] = [
+        {"field": str(c.get("field", "")),
+         "op": str(c.get("op", "")),
+         "value": c.get("value")}
+        for c in out["conditions"]
+        if isinstance(c, dict) and c.get("op") in _OPS
+    ]
+    return out
+
+
+def supported_fields() -> dict[str, str]:
+    """Field reference for `type: "topic"` rules — used by the UI editor."""
+    return {
+        "label": "string",
+        "spread": "int",
+        "surge_signal": "float|null",
+        "sources": "list[string]",
+        "sections": "list[string]",
+        "markets_count": "int",
+        "market_slugs": "list[string]",
+        "has_market": "bool",
+        "min_abs_velocity": "float|null",
+        "mispricing_score": "float|null",
+    }
+
+
+def supported_ops() -> list[str]:
+    return list(_OPS.keys())
+
+
 def _normalise(rule: dict) -> dict:
     return {
         "name": str(rule.get("name") or "(unnamed)"),

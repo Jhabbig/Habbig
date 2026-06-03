@@ -1,5 +1,5 @@
 {
-  "_comment": "Predicate rules — drop new entries here and they take effect on the next surge-worker cycle. See predicates.py for field reference + supported operators.",
+  "_comment": "Predicate rules — drop new entries here and they take effect on the next surge-worker cycle. See predicates.py for field reference + supported operators. The /predicates/edit page is a form-based editor that writes back here via POST /api/predicates.",
   "rules": [
     {
       "name": "Cross-platform surge with matched market",
