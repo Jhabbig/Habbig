@@ -159,6 +159,22 @@ const MOCK_RESPONSES = {
       co2: { scenario: "SSP2-4.5", distance_ppm: 5.0, scenario_value_ppm: 430.0, observed_value_ppm: 425.0, position: "between", year: 2025 },
     },
   },
+  "/api/dashboard.json": {
+    schema_version: "1", commit: "test", fetched_at: new Date().toISOString(),
+    gistemp: { latest_annual: { year: 2024, anomaly_c: 1.29 } },
+    co2: { latest: { year: 2025, month: 8, ppm: 425.3 } },
+    forcing: { total_wm2: 3.04, effective_co2_ppm: 491 },
+    carbon_budget: {
+      anchor_year: 2020, latest_year: 2024,
+      cumulative_since_anchor_gt: 188, latest_annual_gt: 38.6,
+      budgets: [
+        { label: "+1.5°C (50% chance)", target_c: 1.5, probability: 0.50, remaining_gt: 312, years_at_current_rate: 8.1, exhausted: false },
+        { label: "+1.5°C (67% chance)", target_c: 1.5, probability: 0.67, remaining_gt: 212, years_at_current_rate: 5.5, exhausted: false },
+        { label: "+2.0°C (67% chance)", target_c: 2.0, probability: 0.67, remaining_gt: 962, years_at_current_rate: 24.9, exhausted: false },
+      ],
+    },
+    regime: { state: "Neutral", latest: { year: 2025, month: 7, oni: 0.3 } },
+  },
   "/api/carbon-budget": {
     anchor_year: 2020,
     latest_year: 2024,
@@ -227,6 +243,7 @@ setTimeout(() => {
   const oppsHTML = dom.window.document.getElementById("opps").innerHTML;
   const highlightsHTML = dom.window.document.getElementById("highlights").innerHTML;
   const emittersHTML = dom.window.document.getElementById("emitters-card").innerHTML;
+  const heroHTML = dom.window.document.getElementById("hero").innerHTML;
 
   console.log("Errors:    " + errors.length);
   errors.forEach(e => console.log("  - " + e));
@@ -238,6 +255,7 @@ setTimeout(() => {
 
   console.log("");
   console.log("Render lengths:");
+  console.log("  hero:       " + heroHTML.length + (heroHTML.length > 100 ? " ✓" : " ✗ EMPTY"));
   console.log("  cards:      " + cardsHTML.length + (cardsHTML.length > 100 ? " ✓" : " ✗ EMPTY"));
   console.log("  markets:    " + marketsHTML.length + (marketsHTML.length > 100 ? " ✓" : " ✗ EMPTY"));
   console.log("  opps:       " + oppsHTML.length + (oppsHTML.length > 100 ? " ✓" : " ✗ EMPTY"));
@@ -255,7 +273,7 @@ setTimeout(() => {
     console.log("\nFAILED — " + errors.length + " error(s)");
     process.exit(1);
   }
-  if (cardsHTML.length < 100 || marketsHTML.length < 100 || emittersHTML.length < 100) {
+  if (cardsHTML.length < 100 || marketsHTML.length < 100 || emittersHTML.length < 100 || heroHTML.length < 100) {
     console.log("\nFAILED — empty render");
     process.exit(1);
   }

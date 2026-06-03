@@ -84,6 +84,56 @@
     background: var(--bg-2);
     color: var(--text-2);
   }
+
+  .hero {
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 18px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 18px;
+  }
+  .hero-stat { min-width: 0; }
+  .hero-stat .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .hero-stat .big {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-stat .big .unit {
+    font-size: 14px;
+    color: var(--text-2);
+    font-weight: 500;
+    margin-left: 3px;
+  }
+  .hero-stat .sub {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+  .hero-stat.alert .big { color: var(--accent-2); }
+  .hero-stat.warn  .big { color: var(--warn); }
+  .hero-stat.good  .big { color: var(--good); }
+  .hero-stat.nina  .big { color: #60a5fa; }
+  .hero-stat.nino  .big { color: var(--accent-2); }
+
+  @media (max-width: 600px) {
+    .hero { padding: 14px 16px; gap: 12px; }
+    .hero-stat .big { font-size: 24px; }
+  }
   .pill.hot { background: rgba(248, 113, 113, 0.15); color: var(--accent-2); }
   .pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
   .pill.good { background: rgba(52, 211, 153, 0.15); color: var(--good); }
@@ -642,6 +692,7 @@
   <h1>Climate Change <span style="font-size:11px;color:var(--text-3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-left:6px">v4</span></h1>
   <div class="sub">Long-horizon climate markets · NASA GISTEMP · NOAA Mauna Loa CO₂ · NOAA GML CH₄ + N₂O + SF₆ · NSIDC sea ice · NOAA NCEI OHC · NOAA STAR sea level · OWID emissions · ENSO · IPCC SSPs · <a href="/methodology" style="color:var(--accent);text-decoration:none">methodology</a> · <a href="/status" style="color:var(--accent);text-decoration:none">status</a> · <a href="/feed.xml" style="color:var(--accent);text-decoration:none">RSS</a> · <a href="/snapshot.txt" style="color:var(--accent);text-decoration:none">text snapshot</a></div>
   <nav class="quicknav" aria-label="Page navigation">
+    <a href="#hero">Today</a>
     <a href="#highlights">Highlights</a>
     <a href="#cards">Indicators</a>
     <a href="#emitters-card">Emitters</a>
@@ -654,6 +705,8 @@
   </nav>
 </header>
 <main>
+
+<section id="hero" class="hero" aria-label="Climate today" style="display:none"></section>
 
 <div id="regime" class="regime" style="display:none" role="region" aria-label="Current ENSO regime"></div>
 
@@ -1191,6 +1244,108 @@ async function getJSON(url) {
 }
 
 let _emittersPayload = null;
+// ─── Hero panel ──────────────────────────────────────────────────────────────
+//
+// Five most-important climate numbers in big type at the top of the page,
+// so a user opening the dashboard sees the headline state in 1 second.
+// Single fetch against the /api/dashboard.json firehose.
+async function loadHero() {
+  const root = document.getElementById("hero");
+  if (!root) return;
+  const d = await getJSON("/api/dashboard.json");
+  if (!d) { root.style.display = "none"; return; }
+  const tiles = [];
+
+  // Temperature anomaly (vs 1850-1900 baseline — IPCC convention)
+  if (d.gistemp?.latest_annual) {
+    const gistempC = d.gistemp.latest_annual.anomaly_c;
+    const piC = gistempC + 0.2;
+    const yr = d.gistemp.latest_annual.year;
+    let cls = "good";
+    if (piC >= 1.5) cls = "alert";
+    else if (piC >= 1.2) cls = "warn";
+    tiles.push(`
+      <div class="hero-stat ${cls}">
+        <div class="label">Global temperature</div>
+        <div class="big">+${piC.toFixed(2)}<span class="unit">°C</span></div>
+        <div class="sub">${yr} annual mean, vs 1850-1900 baseline</div>
+      </div>
+    `);
+  }
+
+  // Atmospheric CO2
+  if (d.co2?.latest) {
+    const ppm = d.co2.latest.ppm;
+    let cls = "warn";
+    if (ppm >= 430) cls = "alert";
+    tiles.push(`
+      <div class="hero-stat ${cls}">
+        <div class="label">CO₂</div>
+        <div class="big">${ppm.toFixed(1)}<span class="unit">ppm</span></div>
+        <div class="sub">${MONTH[d.co2.latest.month - 1]} ${d.co2.latest.year}, Mauna Loa</div>
+      </div>
+    `);
+  }
+
+  // Radiative forcing — the climate-relevant W/m² number
+  if (d.forcing?.total_wm2 != null) {
+    tiles.push(`
+      <div class="hero-stat warn">
+        <div class="label">GHG forcing</div>
+        <div class="big">+${d.forcing.total_wm2.toFixed(2)}<span class="unit">W/m²</span></div>
+        <div class="sub">Eff. CO₂ ${Math.round(d.forcing.effective_co2_ppm)} ppm vs pre-industrial</div>
+      </div>
+    `);
+  }
+
+  // Years left for 1.5°C 67% target (the tightest one — the most striking)
+  if (d.carbon_budget?.budgets) {
+    const tightest = d.carbon_budget.budgets.find(b => b.target_c === 1.5 && b.probability === 0.67);
+    if (tightest) {
+      let cls = "alert";
+      if (tightest.exhausted) {
+        tiles.push(`
+          <div class="hero-stat alert">
+            <div class="label">1.5°C budget</div>
+            <div class="big">Exhausted</div>
+            <div class="sub">67% chance target, at today's rate</div>
+          </div>
+        `);
+      } else {
+        if (tightest.years_at_current_rate > 20) cls = "good";
+        else if (tightest.years_at_current_rate > 10) cls = "warn";
+        tiles.push(`
+          <div class="hero-stat ${cls}">
+            <div class="label">1.5°C budget</div>
+            <div class="big">~${tightest.years_at_current_rate}<span class="unit">yrs</span></div>
+            <div class="sub">67% chance target, at today's rate (~${tightest.remaining_gt} GtCO₂)</div>
+          </div>
+        `);
+      }
+    }
+  }
+
+  // ENSO state
+  if (d.regime?.state) {
+    let cls = "good";
+    if (d.regime.state === "El Niño") cls = "nino";
+    else if (d.regime.state === "La Niña") cls = "nina";
+    const oni = d.regime.latest?.oni;
+    tiles.push(`
+      <div class="hero-stat ${cls}">
+        <div class="label">ENSO</div>
+        <div class="big">${d.regime.state}</div>
+        <div class="sub">ONI ${oni != null ? (oni >= 0 ? "+" : "") + oni.toFixed(2) : "—"} (${d.regime.latest?.year ?? "—"})</div>
+      </div>
+    `);
+  }
+
+  if (tiles.length) {
+    root.style.display = "grid";
+    root.innerHTML = tiles.join("");
+  }
+}
+
 async function loadCarbonBudget() {
   const root = document.getElementById("budget-card");
   if (!root) return;
@@ -2467,6 +2622,7 @@ document.getElementById("export-backtest").addEventListener("click", () => {
 });
 
 loadRegime();
+loadHero();
 loadHighlights();
 loadCards();
 loadEmitters();
