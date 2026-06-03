@@ -63,6 +63,7 @@ from mark_to_market import MarkToMarketWorker
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from customer_bot import LeadsPoller  # noqa: E402
+from customer_bot import email_out as leads_email_out  # noqa: E402
 from customer_bot import store as leads_store  # noqa: E402
 from customer_bot.config import topic_by_key  # noqa: E402
 
@@ -2802,12 +2803,25 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
         + '</div>'
     )
 
+    if leads_email_out.autosend_enabled():
+        autosend_n = leads_store.autosent_today()
+        autosend_cap = leads_email_out.daily_cap()
+        autosend_min = leads_email_out.min_score()
+        autosend_chip = (
+            f'<span style="color:var(--green)">autosend ON</span> '
+            f'<span>·</span> sent <strong style="color:var(--text-primary)">{autosend_n}/{autosend_cap}</strong> today '
+            f'<span>·</span> min-score <strong style="color:var(--text-primary)">{autosend_min}</strong>'
+        )
+    else:
+        autosend_chip = '<span style="color:var(--text-muted)">autosend off</span> · set LEADS_AUTOSEND_ENABLED=1 to enable'
+
     metrics = (
         '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text-muted)">'
         f'  <span>signed-up <strong style="color:var(--green)">{signed_up_n}</strong></span>'
         f'  <span>replied <strong style="color:var(--text-primary)">{replied_n}</strong></span>'
         f'  <span>no-reply <strong style="color:var(--text-primary)">{no_reply_n}</strong></span>'
         f'  <span>conversion <strong style="color:var(--text-primary)">{conv_pct}</strong></span>'
+        f'  <span>{autosend_chip}</span>'
         '  <span style="margin-left:auto">Reddit posts + comments · HN · Polymarket · polls every 30 min, read-only.</span>'
         '</div>'
     )
@@ -2894,6 +2908,16 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
                 f'<span class="badge" style="background:var(--surface);color:var(--text-muted);font-family:monospace">ref {ref}</span>'
                 if ref else ""
             )
+            lead_email = (r["email"] if "email" in r.keys() else "") or ""
+            email_badge = (
+                f'<span class="badge" style="background:var(--surface);color:var(--text-secondary)" title="{html.escape(lead_email)}">📧 email</span>'
+                if lead_email else ""
+            )
+            auto_sent = r["auto_sent_at"] if "auto_sent_at" in r.keys() else None
+            auto_badge = (
+                f'<span class="badge" style="background:var(--green-bg);color:var(--green)">auto-emailed</span>'
+                if auto_sent else ""
+            )
 
             parts.append(
                 f'<div class="admin-row lead-row" data-source="{source_esc}" data-dashboard="{html.escape(r["dashboard_key"])}" style="flex-direction:column;align-items:stretch;gap:10px">'
@@ -2903,6 +2927,8 @@ def _build_leads_panel(csrf_token: str = "", status_view: str = "new") -> str:
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">→ {html.escape(dash_name)}</span>'
                 f'    <span class="badge" style="background:var(--surface);color:var(--text-secondary)">score {score}</span>'
                 f'    {ref_badge}'
+                f'    {email_badge}'
+                f'    {auto_badge}'
                 f'    {outcome_badge}'
                 f'    <span style="font-size:12px;color:var(--text-muted);margin-left:auto">{author} · {posted}</span>'
                 f'  </div>'
@@ -3493,6 +3519,44 @@ async def admin_lead_outcome(request: Request, lead_id: int):
         raise HTTPException(status_code=400, detail="Invalid outcome")
     leads_store.set_outcome(lead_id, outcome)
     return RedirectResponse(url="/admin?leads_status=contacted#leads", status_code=303)
+
+
+@app.get("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe_get(request: Request):
+    """One-click unsubscribe landing page.
+
+    Honoured for any ?ref=<code> regardless of auth — RFC 8058 requires
+    that one-click unsubscribe work without prompting the recipient to
+    log in or fill anything out.
+    """
+    ref = request.query_params.get("ref", "").strip()
+    email_addr = ""
+    if ref:
+        lead = leads_store.get_lead_by_ref(ref)
+        if lead and lead["email"]:
+            email_addr = lead["email"]
+            leads_store.add_suppression(email_addr, reason="unsubscribe-get")
+            log.info("Unsubscribe (GET) honoured for %s via ref %s", email_addr, ref)
+    msg = "You're unsubscribed." if email_addr else "Unsubscribed."
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>Unsubscribed</title>"
+        f"<style>body{{font-family:system-ui;max-width:520px;margin:80px auto;padding:0 24px;color:#222}}</style>"
+        f"<h1>{html.escape(msg)}</h1>"
+        f"<p>You will not receive any further outreach from narve.ai.</p>"
+        f"<p><a href=\"https://narve.ai/\">narve.ai</a></p>"
+    )
+
+
+@app.post("/unsubscribe")
+async def unsubscribe_post(request: Request):
+    """RFC 8058 List-Unsubscribe-Post target. No body required, no auth."""
+    ref = request.query_params.get("ref", "").strip()
+    if ref:
+        lead = leads_store.get_lead_by_ref(ref)
+        if lead and lead["email"]:
+            leads_store.add_suppression(lead["email"], reason="unsubscribe-post")
+            log.info("Unsubscribe (POST/one-click) honoured for %s via ref %s", lead["email"], ref)
+    return Response(status_code=200)
 
 
 @app.post("/admin/leads/bulk")

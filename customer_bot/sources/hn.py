@@ -7,7 +7,7 @@ Docs: https://hn.algolia.com/api — no auth required. We use
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -16,6 +16,37 @@ from customer_bot.lead import RawLead
 log = logging.getLogger("customer_bot.hn")
 
 API_URL = "https://hn.algolia.com/api/v1/search_by_date"
+USER_API_URL = "https://hacker-news.firebaseio.com/v0/user/{id}.json"
+
+# Per-cycle cache of fetched HN profiles. HN's free API tolerates the
+# load comfortably, but no reason to refetch the same handle 5 times.
+_user_cache: dict[str, dict] = {}
+
+
+async def fetch_user_about(client: httpx.AsyncClient, username: str) -> Optional[str]:
+    """Return the raw `about` HTML for an HN user, or None.
+
+    HN profiles often contain a contact email in plain text, since the
+    crowd skews toward people who want to be reachable. Combined with
+    email_extract.extract_email(), this is the main outreach channel.
+    """
+    if not username:
+        return None
+    if username in _user_cache:
+        return _user_cache[username].get("about")
+    try:
+        r = await client.get(USER_API_URL.format(id=username), timeout=10.0)
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        d = r.json() or {}
+    except ValueError:
+        return None
+    _user_cache[username] = d
+    return d.get("about") or None
+
 
 
 async def fetch(client: httpx.AsyncClient, query: str, limit: int = 25) -> AsyncIterator[RawLead]:

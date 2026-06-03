@@ -179,7 +179,15 @@ CREATE TABLE IF NOT EXISTS leads (
     ref_code        TEXT NOT NULL DEFAULT '',
     outcome         TEXT NOT NULL DEFAULT '',
     outcome_at      INTEGER,
-    archived_at     INTEGER
+    archived_at     INTEGER,
+    email           TEXT NOT NULL DEFAULT '',
+    auto_sent_at    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS lead_email_suppressions (
+    email          TEXT PRIMARY KEY,
+    reason         TEXT NOT NULL DEFAULT 'unsubscribe',
+    suppressed_at  INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status, score);
@@ -281,6 +289,10 @@ def init_db() -> None:
                 c.execute("ALTER TABLE leads ADD COLUMN outcome_at INTEGER")
             if "archived_at" not in lead_cols:
                 c.execute("ALTER TABLE leads ADD COLUMN archived_at INTEGER")
+            if "email" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            if "auto_sent_at" not in lead_cols:
+                c.execute("ALTER TABLE leads ADD COLUMN auto_sent_at INTEGER")
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────

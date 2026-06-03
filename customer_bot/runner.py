@@ -15,9 +15,10 @@ import time
 
 import httpx
 
-from customer_bot import llm, store
-from customer_bot.config import ALL_SUBREDDITS, TOPICS, topic_for_text, topic_by_key
+from customer_bot import email_out, llm, store
+from customer_bot.config import ALL_SUBREDDITS, TOPICS, topic_by_key, topic_for_text
 from customer_bot.drafter import draft_for, ref_code, score_for
+from customer_bot.email_extract import extract_email
 from customer_bot.lead import RawLead
 from customer_bot.sources import hn as hn_source
 from customer_bot.sources import polymarket as pm_source
@@ -117,6 +118,10 @@ class LeadsPoller:
             inserted, rejected, low_quality,
         )
 
+        # Auto-email pass — off by default, hard-gated on env var.
+        if email_out.autosend_enabled():
+            await self._autosend_pass()
+
     async def _ingest(self, raw: RawLead, hinted_topic=None, lift_map: dict | None = None) -> str:
         """Return 'ok' / 'reject' / 'low_quality' / 'skip'."""
         text = f"{raw.title}\n{raw.body}"
@@ -141,8 +146,16 @@ class LeadsPoller:
             if not reddit_source.is_quality_author(info):
                 return "low_quality"
 
+        # Email discovery — try the post body first, then the author's
+        # platform profile (HN only — Reddit profiles never contain emails).
+        email = extract_email(raw.body) or extract_email(raw.title) or ""
+        if not email and raw.source == "hn" and raw.author:
+            assert self._client is not None
+            about = await hn_source.fetch_user_about(self._client, raw.author)
+            if about:
+                email = extract_email(about) or ""
+
         draft = draft_for(raw, topic)
-        # LLM polish if available — falls back to template internally on any error.
         if llm.is_available():
             draft = await llm.polish_draft(draft, raw, topic)
 
@@ -159,5 +172,55 @@ class LeadsPoller:
             draft=draft,
             posted_at=raw.posted_at or int(time.time()),
             ref_code=ref_code(raw.source_id),
+            email=email,
         )
         return "ok" if ok else "skip"
+
+    async def _autosend_pass(self) -> None:
+        """Send cold emails to qualifying leads, throttled by daily cap.
+
+        Hard gates (every send must clear all of these):
+          • LEADS_AUTOSEND_ENABLED=1 (already checked by caller)
+          • score >= LEADS_AUTOSEND_MIN_SCORE (default 70)
+          • lead has a usable email
+          • recipient not on suppression list
+          • this address has never been emailed before (cross-lead dedup)
+          • we're under LEADS_AUTOSEND_DAILY_CAP for the rolling 24h
+        """
+        cap = email_out.daily_cap()
+        sent_today = store.autosent_today()
+        budget = max(0, cap - sent_today)
+        if budget <= 0:
+            log.info("Autosend skipped — daily cap reached (%d/%d)", sent_today, cap)
+            return
+
+        candidates = store.autosend_candidates(min_score=email_out.min_score(), limit=budget * 2)
+        if not candidates:
+            return
+
+        sent = 0
+        for lead in candidates:
+            if sent >= budget:
+                break
+            # Final per-recipient safety check (race-safe).
+            if store.is_suppressed(lead["email"]):
+                continue
+            topic = topic_by_key(lead["dashboard_key"])
+            if topic is None:
+                continue
+            ok = email_out.send(
+                to_email=lead["email"],
+                ref_code=lead["ref_code"] or "",
+                source=lead["source"],
+                topic_display=topic.key.replace("_", " "),
+                body_text=lead["draft"] or "",
+            )
+            if ok:
+                store.mark_auto_sent(lead["id"])
+                sent += 1
+                # Polite spacing between sends — 5s gap is well under any
+                # reasonable SMTP rate limit and avoids burst-flagging by
+                # downstream filters.
+                await asyncio.sleep(5.0)
+        log.info("Autosend pass complete — sent %d/%d (cap %d, used %d/%d today)",
+                 sent, len(candidates), cap, sent_today + sent, cap)

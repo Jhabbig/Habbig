@@ -49,6 +49,7 @@ def upsert_lead(
     draft: str,
     posted_at: int,
     ref_code: str = "",
+    email: str = "",
 ) -> bool:
     """Insert a lead if (source, source_id) is new. Returns True if inserted."""
     now = int(time.time())
@@ -59,15 +60,97 @@ def upsert_lead(
                 INSERT INTO leads
                     (source, source_id, url, author, title, snippet,
                      dashboard_key, score, draft, status, posted_at,
-                     discovered_at, updated_at, ref_code)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)
+                     discovered_at, updated_at, ref_code, email)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)
                 """,
                 (source, source_id, url, author, title, snippet,
-                 dashboard_key, score, draft, posted_at, now, now, ref_code),
+                 dashboard_key, score, draft, posted_at, now, now, ref_code, email.lower().strip()),
             )
             return True
         except sqlite3.IntegrityError:
             return False
+
+
+def is_suppressed(email: str) -> bool:
+    if not email:
+        return False
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM lead_email_suppressions WHERE email = ?",
+            (email.lower().strip(),),
+        ).fetchone()
+    return row is not None
+
+
+def add_suppression(email: str, reason: str = "unsubscribe") -> bool:
+    if not email or "@" not in email:
+        return False
+    now = int(time.time())
+    with _conn() as c:
+        c.execute(
+            "INSERT OR IGNORE INTO lead_email_suppressions (email, reason, suppressed_at) VALUES (?, ?, ?)",
+            (email.lower().strip(), reason, now),
+        )
+    return True
+
+
+def get_lead_by_ref(ref_code: str) -> Optional[sqlite3.Row]:
+    if not ref_code:
+        return None
+    with _conn() as c:
+        return c.execute(
+            "SELECT * FROM leads WHERE ref_code = ? ORDER BY id DESC LIMIT 1",
+            (ref_code,),
+        ).fetchone()
+
+
+def autosend_candidates(min_score: int, limit: int = 50) -> list[sqlite3.Row]:
+    """'new'-status leads with a usable email, above threshold, not yet sent
+    to that recipient, and not on the suppression list. Ordered by score."""
+    with _conn() as c:
+        return list(c.execute(
+            """
+            SELECT * FROM leads
+            WHERE status = 'new'
+              AND email != ''
+              AND auto_sent_at IS NULL
+              AND score >= ?
+              AND email NOT IN (SELECT email FROM lead_email_suppressions)
+              AND email NOT IN (
+                  SELECT email FROM leads
+                  WHERE auto_sent_at IS NOT NULL AND email != ''
+              )
+            ORDER BY score DESC, posted_at DESC
+            LIMIT ?
+            """,
+            (min_score, limit),
+        ).fetchall())
+
+
+def autosent_today() -> int:
+    """Count of leads auto-sent in the last 24h. Used for daily cap."""
+    cutoff = int(time.time()) - 86400
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM leads WHERE auto_sent_at IS NOT NULL AND auto_sent_at > ?",
+            (cutoff,),
+        ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def mark_auto_sent(lead_id: int) -> bool:
+    now = int(time.time())
+    with _conn() as c:
+        cur = c.execute(
+            """
+            UPDATE leads
+            SET auto_sent_at = ?, status = 'contacted',
+                status_note = 'auto-emailed', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, lead_id),
+        )
+        return cur.rowcount > 0
 
 
 def list_leads(
