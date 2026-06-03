@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 
 interface Greeks3DData {
   strike: number;
@@ -15,18 +15,17 @@ interface GreeksSurface3DProps {
   optionType?: 'call' | 'put';
 }
 
-// Standard normal CDF (Abramowitz & Stegun via tanh approximation) and PDF.
 const normCDF = (x: number) =>
   0.5 * (1 + Math.tanh(0.7978845608 * (x + 0.044715 * Math.pow(x, 3))));
 const normPDF = (x: number) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 
-export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({
+const GreeksSurface3DComponent: React.FC<GreeksSurface3DProps> = ({
   spotPrice,
   selectedGreek = 'delta',
   optionType = 'call',
 }) => {
-  const [greekType, setGreekType] = React.useState<'delta' | 'gamma' | 'vega' | 'theta'>(selectedGreek);
-  const [side, setSide] = React.useState<'call' | 'put'>(optionType);
+  const [greekType, setGreekType] = useState<'delta' | 'gamma' | 'vega' | 'theta'>(selectedGreek);
+  const [side, setSide] = useState<'call' | 'put'>(optionType);
 
   // Black-Scholes Greeks across a strike/DTE grid.
   // d1 = [ln(S/K) + (r + σ²/2)·T] / (σ·√T)
@@ -61,28 +60,31 @@ export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({
     return data;
   }, [spotPrice, side]);
 
-  // Get value range for color mapping
-  const getValueRange = (type: string) => {
-    const values = greeksData.map((d) => d[type as keyof Greeks3DData] as number);
+  const valueRange = useMemo(() => {
+    const values = greeksData.map((d) => d[greekType as keyof Greeks3DData] as number);
     return { min: Math.min(...values), max: Math.max(...values) };
-  };
+  }, [greeksData, greekType]);
 
-  const valueRange = getValueRange(greekType);
-
-  // Color mapping function
-  const getColor = (value: number): string => {
+  const getColor = useCallback((value: number): string => {
     const normalized = (value - valueRange.min) / (valueRange.max - valueRange.min + 0.001);
     if (normalized < 0.33) {
-      return `rgb(239, 68, 68)`; // Red
+      return `rgb(239, 68, 68)`;
     } else if (normalized < 0.66) {
-      return `rgb(251, 191, 36)`; // Yellow
+      return `rgb(251, 191, 36)`;
     } else {
-      return `rgb(34, 197, 94)`; // Green
+      return `rgb(34, 197, 94)`;
     }
-  };
+  }, [valueRange]);
 
-  const strikes = Array.from(new Set(greeksData.map((d) => d.strike))).sort((a, b) => a - b);
-  const expirations = Array.from(new Set(greeksData.map((d) => d.daysToExpiration))).sort((a, b) => a - b);
+  const strikes = useMemo(
+    () => Array.from(new Set(greeksData.map((d) => d.strike))).sort((a, b) => a - b),
+    [greeksData]
+  );
+
+  const expirations = useMemo(
+    () => Array.from(new Set(greeksData.map((d) => d.daysToExpiration))).sort((a, b) => a - b),
+    [greeksData]
+  );
 
   return (
     <div className="space-y-4">
@@ -191,3 +193,5 @@ export const GreeksSurface3D: React.FC<GreeksSurface3DProps> = ({
     </div>
   );
 };
+
+export const GreeksSurface3D = React.memo(GreeksSurface3DComponent);
