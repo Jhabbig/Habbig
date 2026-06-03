@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bar, IndicatorValues, WebSocketMessage } from '../types';
 
 interface UseWebSocketReturn {
@@ -8,46 +8,103 @@ interface UseWebSocketReturn {
   error: string | null;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_BARS = 500;
+
 export function useWebSocket(ticker: string): UseWebSocketReturn {
   const [bars, setBars] = useState<Bar[]>([]);
   const [indicators, setIndicators] = useState<IndicatorValues | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ws = useRef<WebSocket | null>(null);
-  const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 5;
 
-  const connect = useCallback(() => {
-    if (ws.current?.readyState === WebSocket.OPEN) return;
+  // We re-create connect() per ticker so callbacks always see the current
+  // ticker. Pending reconnect timers and a "cancelled" flag are tracked in
+  // refs so the effect cleanup can stop in-flight reconnect attempts.
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tokenRef = useRef<string | null>(null);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/${ticker}`;
+  useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
 
-    try {
-      ws.current = new WebSocket(wsUrl);
+    setBars([]);          // discard previous ticker's bars
+    setIndicators(null);
 
-      ws.current.onopen = () => {
-        console.log(`Connected to ${ticker}`);
+    const clearReconnect = () => {
+      if (reconnectTimer.current !== null) {
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = null;
+      }
+    };
+
+    const fetchToken = async (): Promise<string | null> => {
+      try {
+        const response = await fetch('/api/session-token');
+        if (!response.ok) throw new Error('Failed to fetch token');
+        const data = await response.json();
+        return data.token;
+      } catch (e) {
+        console.error('Failed to get session token:', e);
+        return null;
+      }
+    };
+
+    const connect = async () => {
+      if (cancelled) return;
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+
+      // Get a fresh token if we don't have one
+      if (!tokenRef.current) {
+        tokenRef.current = await fetchToken();
+        if (!tokenRef.current) {
+          if (!cancelled) setError('Failed to authenticate');
+          return;
+        }
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/${ticker}?token=${encodeURIComponent(tokenRef.current)}`;
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (e) {
+        console.error('Failed to create WebSocket:', e);
+        if (!cancelled) setError('Failed to connect');
+        return;
+      }
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (cancelled) return;
         setConnected(true);
         setError(null);
-        reconnectAttempts.current = 0;
+        attempts = 0;
       };
 
-      ws.current.onmessage = (event) => {
+      ws.onmessage = (event) => {
+        if (cancelled) return;
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
-
           if (message.type === 'initial_bar' || message.type === 'bar') {
             if (message.bar) {
+              const incoming = message.bar;
               setBars((prev) => {
-                const updated = [...prev, message.bar!];
-                // Keep only last 500 bars in memory
-                return updated.slice(-500);
+                // Update-in-place if the last bar has the same timestamp
+                // (server may re-emit an in-progress bar); otherwise append
+                // and cap the buffer to MAX_BARS.
+                if (prev.length > 0 && prev[prev.length - 1].timestamp === incoming.timestamp) {
+                  const next = prev.slice(0, -1);
+                  next.push(incoming);
+                  return next;
+                }
+                const next = [...prev, incoming];
+                if (next.length > MAX_BARS) return next.slice(-MAX_BARS);
+                return next;
               });
             }
-            if (message.indicators) {
-              setIndicators(message.indicators);
-            }
+            if (message.indicators) setIndicators(message.indicators);
           } else if (message.type === 'error') {
             setError(message.error || 'Unknown error');
           }
@@ -56,41 +113,45 @@ export function useWebSocket(ticker: string): UseWebSocketReturn {
         }
       };
 
-      ws.current.onerror = (event) => {
-        console.error('WebSocket error:', event);
+      ws.onerror = (event) => {
+        if (cancelled) return;
+        console.error('WebSocket error:', event, 'readyState:', ws.readyState, 'url:', wsUrl);
         setError('Connection error');
         setConnected(false);
       };
 
-      ws.current.onclose = () => {
-        console.log(`Disconnected from ${ticker}`);
+      ws.onclose = () => {
+        if (cancelled) return;
         setConnected(false);
-
-        // Attempt reconnect with exponential backoff
-        if (reconnectAttempts.current < maxReconnectAttempts) {
-          const delay = 1000 * Math.pow(2, reconnectAttempts.current);
-          reconnectAttempts.current += 1;
-          console.log(`Reconnecting in ${delay}ms...`);
-          setTimeout(connect, delay);
+        if (attempts < MAX_RECONNECT_ATTEMPTS) {
+          const delay = 1000 * Math.pow(2, attempts);
+          attempts += 1;
+          reconnectTimer.current = setTimeout(() => connect(), delay);
         } else {
           setError('Max reconnect attempts reached');
         }
       };
-    } catch (e) {
-      console.error('Failed to create WebSocket:', e);
-      setError('Failed to connect');
-    }
-  }, [ticker]);
+    };
 
-  useEffect(() => {
     connect();
 
     return () => {
-      if (ws.current) {
-        ws.current.close();
+      cancelled = true;
+      clearReconnect();
+      const ws = wsRef.current;
+      if (ws) {
+        // Detach handlers so a late onclose can't schedule another reconnect.
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
       }
+      wsRef.current = null;
     };
-  }, [ticker, connect]);
+  }, [ticker]);
 
   return { bars, indicators, connected, error };
 }

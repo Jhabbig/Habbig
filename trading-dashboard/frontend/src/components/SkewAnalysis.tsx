@@ -6,29 +6,33 @@ interface SkewAnalysisProps {
   expirationDays?: number;
 }
 
-export const SkewAnalysis: React.FC<SkewAnalysisProps> = ({ spotPrice, expirationDays = 30 }) => {
-  // Generate skew data
+export const SkewAnalysis: React.FC<SkewAnalysisProps> = ({ spotPrice, expirationDays: _expirationDays = 30 }) => {
+  // Generate skew data using realistic IV skew model
   const skewData = useMemo(() => {
     const strikes = Array.from({ length: 15 }, (_, i) => spotPrice - 70 + i * 10);
+    const baseIV = 0.25;
+    const skewSlope = 0.15; // How aggressive the skew is
 
     return strikes.map((strike) => {
-      // Simplified skew calculation
-      const moneyness = strike / spotPrice;
-      const baseIV = 0.25;
+      const logMoneyness = Math.log(strike / spotPrice);
 
-      // Put skew: OTM puts have higher IV (tail risk premium)
-      const putSkew = Math.exp(-Math.pow((moneyness - 1) * 2, 2) / 2) * 0.15;
-      const putIV = baseIV + putSkew * (1 - Math.abs(moneyness - 1));
+      // Volatility smirk model: IV rises for both ITM/OTM, peaks at extremes
+      // For equity options, typically put skew dominates (puts more expensive)
+      const baseVolSmirk = baseIV * (1 + 0.3 * Math.abs(logMoneyness));
 
-      // Call skew: OTM calls have lower IV
-      const callSkew = Math.exp(-Math.pow((moneyness - 1) * 2, 2) / 2) * 0.08;
-      const callIV = baseIV - callSkew * Math.max(0, 1 - moneyness);
+      // Additional put skew: OTM puts (negative logMoneyness) get premium for tail risk
+      const putTailPremium = Math.max(0, -logMoneyness) * skewSlope;
+      const putIV = baseVolSmirk + putTailPremium;
+
+      // Calls: slight smile, less aggressive than puts
+      const callSmile = baseVolSmirk - Math.max(0, logMoneyness) * (skewSlope * 0.4);
+      const callIV = callSmile;
 
       const skew = putIV - callIV;
 
       return {
         strike,
-        moneyness,
+        moneyness: strike / spotPrice,
         callIV: Math.max(0.05, callIV),
         putIV: Math.max(0.05, putIV),
         skew,

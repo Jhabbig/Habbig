@@ -272,9 +272,186 @@ class SimpleBacktestEngine:
         slow_period: int = 26,
         position_size_pct: float = 0.1,
     ) -> BacktestResult:
-        """Moving average crossover strategy."""
-        # TODO: Implement MA crossover
-        pass
+        """
+        Run moving average crossover strategy:
+        - Buy when fast MA crosses above slow MA
+        - Sell when fast MA crosses below slow MA (or exit with 2% stop)
+        """
+        self.open_position = None
+        self.trades = []
+        self.equity_history = [(0, self.initial_capital)]
+        current_equity = self.initial_capital
+
+        indicators = StreamingIndicators()
+        sizing = PositionSizer()
+
+        for idx, bar in enumerate(bars):
+            indicator_vals = indicators.add_bar(
+                open=bar['open'],
+                high=bar['high'],
+                low=bar['low'],
+                close=bar['close'],
+                volume=bar['volume'],
+                timestamp=bar['timestamp']
+            )
+
+            # Get moving averages
+            fast_ma = indicator_vals.ema_12 if indicator_vals else None
+            slow_ma = indicator_vals.ema_26 if indicator_vals else None
+
+            if fast_ma is None or slow_ma is None:
+                self.equity_history.append((idx, current_equity))
+                continue
+
+            # Exit signal
+            if self.open_position:
+                entry_idx, entry_price = self.open_position
+                current_price = bar['close']
+                pnl = (current_price - entry_price) * self.open_position_qty
+
+                # Exit conditions
+                exit_signal = False
+                reason = ""
+
+                if fast_ma < slow_ma:
+                    exit_signal = True
+                    reason = "MA crossover down"
+
+                if current_price < entry_price * 0.98:  # 2% stop loss
+                    exit_signal = True
+                    reason = "Stop loss hit"
+
+                if exit_signal:
+                    self.trades.append(
+                        BacktestTrade(
+                            entry_index=entry_idx,
+                            entry_price=entry_price,
+                            entry_time=bars[entry_idx]['timestamp'],
+                            exit_index=idx,
+                            exit_price=current_price,
+                            exit_time=bar['timestamp'],
+                            quantity=self.open_position_qty,
+                            pnl=pnl,
+                            pnl_pct=(pnl / (entry_price * self.open_position_qty)) * 100,
+                            reason=reason
+                        )
+                    )
+                    current_equity += pnl
+                    self.open_position = None
+                    self.open_position_qty = 0
+
+            # Entry signal
+            if not self.open_position and fast_ma > slow_ma:
+                entry_price = bar['close']
+                position_value = current_equity * position_size_pct
+                qty = int(position_value / entry_price)
+
+                if qty > 0:
+                    self.open_position = (idx, entry_price)
+                    self.open_position_qty = qty
+
+            # Track equity
+            if self.open_position:
+                current_price = bar['close']
+                unrealized_pnl = (current_price - self.open_position[1]) * self.open_position_qty
+                self.equity_history.append((idx, current_equity + unrealized_pnl))
+            else:
+                self.equity_history.append((idx, current_equity))
+
+        # Close final position if open
+        if self.open_position:
+            final_bar = bars[-1]
+            entry_idx, entry_price = self.open_position
+            exit_price = final_bar['close']
+            pnl = (exit_price - entry_price) * self.open_position_qty
+
+            self.trades.append(
+                BacktestTrade(
+                    entry_index=entry_idx,
+                    entry_price=entry_price,
+                    entry_time=bars[entry_idx]['timestamp'],
+                    exit_index=len(bars) - 1,
+                    exit_price=exit_price,
+                    exit_time=final_bar['timestamp'],
+                    quantity=self.open_position_qty,
+                    pnl=pnl,
+                    pnl_pct=(pnl / (entry_price * self.open_position_qty)) * 100,
+                    reason="End of backtest"
+                )
+            )
+            current_equity += pnl
+
+        # Calculate metrics
+        analyzer = PerformanceAnalyzer()
+        trade_list = [
+            {
+                'pnl': t.pnl,
+                'pnl_pct': t.pnl_pct,
+                'hold_duration_minutes': (t.exit_time - t.entry_time) // 60
+            }
+            for t in self.trades
+        ]
+        metrics = analyzer.analyze_trades(trade_list) if trade_list else None
+
+        # Build equity curve
+        equity_curve = [
+            {
+                'time': bars[idx]['timestamp'],
+                'value': equity
+            }
+            for idx, equity in self.equity_history
+        ]
+
+        # Build trade list
+        trades_output = [
+            {
+                'entry_time': t.entry_time,
+                'entry_price': t.entry_price,
+                'exit_time': t.exit_time,
+                'exit_price': t.exit_price,
+                'quantity': t.quantity,
+                'pnl': t.pnl,
+                'pnl_pct': t.pnl_pct,
+                'reason': t.reason
+            }
+            for t in self.trades
+        ]
+
+        return BacktestResult(
+            ticker="AAPL",
+            strategy="MA_CROSSOVER",
+            start_date=datetime.fromtimestamp(bars[0]['timestamp']).isoformat(),
+            end_date=datetime.fromtimestamp(bars[-1]['timestamp']).isoformat(),
+            initial_capital=self.initial_capital,
+            final_equity=current_equity,
+            total_return_pct=((current_equity - self.initial_capital) / self.initial_capital) * 100,
+            total_trades=len(self.trades),
+            winning_trades=sum(1 for t in self.trades if t.pnl > 0),
+            losing_trades=sum(1 for t in self.trades if t.pnl < 0),
+            win_rate=metrics.win_rate if metrics else 0,
+            avg_win=metrics.avg_winner if metrics else 0,
+            avg_loss=metrics.avg_loser if metrics else 0,
+            profit_factor=metrics.profit_factor if metrics else 0,
+            sharpe_ratio=metrics.sharpe_ratio if metrics else 0,
+            sortino_ratio=metrics.sortino_ratio if metrics else 0,
+            calmar_ratio=metrics.calmar_ratio if metrics else 0,
+            max_drawdown_pct=metrics.max_drawdown_pct if metrics else 0,
+            avg_drawdown_pct=metrics.avg_drawdown_pct if metrics else 0,
+            equity_curve=equity_curve,
+            trades=trades_output,
+            bar_count=len(bars),
+            bars=[
+                {
+                    'timestamp': b['timestamp'],
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                    'volume': b['volume']
+                }
+                for b in bars
+            ]
+        )
 
 
 def demo():

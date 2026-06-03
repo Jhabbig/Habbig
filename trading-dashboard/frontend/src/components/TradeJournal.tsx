@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { TrendingUp, TrendingDown, BookOpen } from 'lucide-react';
 import type { Trade } from './OrderForm';
 
@@ -6,8 +6,11 @@ interface TradeJournalProps {
   trades: Trade[];
 }
 
-export const TradeJournal: React.FC<TradeJournalProps> = ({ trades }) => {
-  const closedTrades = trades.filter((t) => t.exitPrice).sort((a, b) => (b.exitTime || 0) - (a.exitTime || 0));
+const TradeJournalComponent: React.FC<TradeJournalProps> = ({ trades }) => {
+  const closedTrades = useMemo(
+    () => trades.filter((t) => t.exitPrice).sort((a, b) => (b.exitTime || 0) - (a.exitTime || 0)),
+    [trades]
+  );
 
   if (closedTrades.length === 0) {
     return (
@@ -24,11 +27,13 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({ trades }) => {
     );
   }
 
-  // Calculate summary stats
-  const winningTrades = closedTrades.filter((t) => (t.pnl || 0) > 0);
-  const losingTrades = closedTrades.filter((t) => (t.pnl || 0) < 0);
-  const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const winRate = (winningTrades.length / closedTrades.length) * 100;
+  const summaryStats = useMemo(() => {
+    const winningTrades = closedTrades.filter((t) => (t.pnl || 0) > 0);
+    const losingTrades = closedTrades.filter((t) => (t.pnl || 0) < 0);
+    const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
+    return { winningTrades, losingTrades, totalPnl, winRate };
+  }, [closedTrades]);
 
   return (
     <div className="space-y-4">
@@ -40,18 +45,18 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({ trades }) => {
         </div>
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
           <div className="text-sm text-gray-400 mb-1">Win Rate</div>
-          <div className="text-2xl font-bold text-gray-100">{winRate.toFixed(1)}%</div>
+          <div className="text-2xl font-bold text-gray-100">{summaryStats.winRate.toFixed(1)}%</div>
         </div>
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
           <div className="text-sm text-gray-400 mb-1">Avg Win</div>
-          <div className={`text-2xl font-bold ${winningTrades.length > 0 ? 'text-green-400' : 'text-gray-400'}`}>
-            ${winningTrades.length > 0 ? (winningTrades.reduce((sum, t) => sum + (t.pnl || 0), 0) / winningTrades.length).toFixed(2) : '0.00'}
+          <div className={`text-2xl font-bold ${summaryStats.winningTrades.length > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+            ${summaryStats.winningTrades.length > 0 ? (summaryStats.winningTrades.reduce((sum, t) => sum + (t.pnl || 0), 0) / summaryStats.winningTrades.length).toFixed(2) : '0.00'}
           </div>
         </div>
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
           <div className="text-sm text-gray-400 mb-1">Total P&L</div>
-          <div className={`text-2xl font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+          <div className={`text-2xl font-bold ${summaryStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {summaryStats.totalPnl >= 0 ? '+' : ''}${summaryStats.totalPnl.toFixed(2)}
           </div>
         </div>
       </div>
@@ -123,3 +128,5 @@ export const TradeJournal: React.FC<TradeJournalProps> = ({ trades }) => {
     </div>
   );
 };
+
+export const TradeJournal = React.memo(TradeJournalComponent);

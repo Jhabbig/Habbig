@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Bell, AlertTriangle, Zap, TrendingUp, Volume2, X } from 'lucide-react';
 
 export interface Alert {
@@ -16,7 +16,7 @@ interface AlertManagerProps {
   alerts?: Alert[];
 }
 
-export const AlertManager: React.FC<AlertManagerProps> = ({ alerts: initialAlerts = [] }) => {
+const AlertManagerComponent: React.FC<AlertManagerProps> = ({ alerts: initialAlerts = [] }) => {
   const [alerts, setAlerts] = useState<Alert[]>(initialAlerts);
   const [expanded, setExpanded] = useState(false);
 
@@ -64,9 +64,9 @@ export const AlertManager: React.FC<AlertManagerProps> = ({ alerts: initialAlert
     return () => clearInterval(interval);
   }, []);
 
-  const unreadCount = alerts.filter((a) => !a.read).length;
+  const unreadCount = useMemo(() => alerts.filter((a) => !a.read).length, [alerts]);
 
-  const getAlertIcon = (type: Alert['type']) => {
+  const getAlertIcon = useCallback((type: Alert['type']) => {
     switch (type) {
       case 'signal':
         return <TrendingUp className="w-4 h-4" />;
@@ -77,9 +77,9 @@ export const AlertManager: React.FC<AlertManagerProps> = ({ alerts: initialAlert
       case 'trade':
         return <Zap className="w-4 h-4" />;
     }
-  };
+  }, []);
 
-  const getSeverityColor = (severity: Alert['severity']) => {
+  const getSeverityColor = useCallback((severity: Alert['severity']) => {
     switch (severity) {
       case 'high':
         return 'bg-red-900/20 border-red-700/50 text-red-100';
@@ -88,15 +88,15 @@ export const AlertManager: React.FC<AlertManagerProps> = ({ alerts: initialAlert
       case 'low':
         return 'bg-yellow-900/20 border-yellow-700/50 text-yellow-100';
     }
-  };
+  }, []);
 
-  const handleDismiss = (id: string) => {
-    setAlerts(alerts.filter((a) => a.id !== id));
-  };
+  const handleDismiss = useCallback((id: string) => {
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
+  }, []);
 
-  const handleMarkRead = (id: string) => {
-    setAlerts(alerts.map((a) => (a.id === id ? { ...a, read: true } : a)));
-  };
+  const handleMarkRead = useCallback((id: string) => {
+    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, read: true } : a)));
+  }, []);
 
   return (
     <div className="fixed bottom-4 right-4 z-50 space-y-2">
@@ -198,3 +198,5 @@ export const AlertManager: React.FC<AlertManagerProps> = ({ alerts: initialAlert
     </div>
   );
 };
+
+export const AlertManager = React.memo(AlertManagerComponent);

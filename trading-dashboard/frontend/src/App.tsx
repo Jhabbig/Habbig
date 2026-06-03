@@ -288,7 +288,7 @@ export function App() {
         {activePage === 'trading' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-white mb-4">Paper Trading</h2>
-            <TradingLive currentPrice={currentPrice} />
+            <TradingLive selectedTicker={selectedTicker} currentPrice={currentPrice} />
           </div>
         )}
 

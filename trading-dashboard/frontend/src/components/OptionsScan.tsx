@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { AlertTriangle, TrendingUp, TrendingDown, Filter } from 'lucide-react';
 
 export interface ScanResult {
@@ -15,7 +15,7 @@ interface OptionsScanProps {
   ticker: string;
 }
 
-export const OptionsScan: React.FC<OptionsScanProps> = ({ ticker }) => {
+const OptionsScanComponent: React.FC<OptionsScanProps> = ({ ticker }) => {
   const [results, setResults] = useState<ScanResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
@@ -59,11 +59,21 @@ export const OptionsScan: React.FC<OptionsScanProps> = ({ ticker }) => {
     }
   };
 
-  const filteredResults = results.filter(
-    (r) => severityFilter === 'all' || r.severity === severityFilter
+  const filteredResults = useMemo(
+    () => results.filter((r) => severityFilter === 'all' || r.severity === severityFilter),
+    [results, severityFilter]
   );
 
-  const severityColor = (severity: string) => {
+  const severityCounts = useMemo(
+    () => ({
+      high: results.filter((r) => r.severity === 'high').length,
+      medium: results.filter((r) => r.severity === 'medium').length,
+      low: results.filter((r) => r.severity === 'low').length,
+    }),
+    [results]
+  );
+
+  const severityColor = useCallback((severity: string) => {
     switch (severity) {
       case 'high':
         return 'text-red-400 bg-red-900/20';
@@ -74,7 +84,7 @@ export const OptionsScan: React.FC<OptionsScanProps> = ({ ticker }) => {
       default:
         return 'text-gray-400';
     }
-  };
+  }, []);
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
@@ -187,15 +197,15 @@ export const OptionsScan: React.FC<OptionsScanProps> = ({ ticker }) => {
             </div>
             <div>
               <div className="text-gray-400 text-xs">High Severity</div>
-              <div className="text-red-400 font-semibold">{results.filter((r) => r.severity === 'high').length}</div>
+              <div className="text-red-400 font-semibold">{severityCounts.high}</div>
             </div>
             <div>
               <div className="text-gray-400 text-xs">Medium Severity</div>
-              <div className="text-orange-400 font-semibold">{results.filter((r) => r.severity === 'medium').length}</div>
+              <div className="text-orange-400 font-semibold">{severityCounts.medium}</div>
             </div>
             <div>
               <div className="text-gray-400 text-xs">Low Severity</div>
-              <div className="text-yellow-400 font-semibold">{results.filter((r) => r.severity === 'low').length}</div>
+              <div className="text-yellow-400 font-semibold">{severityCounts.low}</div>
             </div>
           </div>
         </div>
@@ -203,3 +213,5 @@ export const OptionsScan: React.FC<OptionsScanProps> = ({ ticker }) => {
     </div>
   );
 };
+
+export const OptionsScan = React.memo(OptionsScanComponent);

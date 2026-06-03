@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GreeksChain } from '../types';
 
 interface GreeksHeatmapProps {
@@ -6,7 +6,7 @@ interface GreeksHeatmapProps {
   spotPrice: number;
 }
 
-export const GreeksHeatmap: React.FC<GreeksHeatmapProps> = ({ ticker, spotPrice }) => {
+const GreeksHeatmapComponent: React.FC<GreeksHeatmapProps> = ({ ticker, spotPrice }) => {
   const [greeks, setGreeks] = useState<GreeksChain[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -29,31 +29,27 @@ export const GreeksHeatmap: React.FC<GreeksHeatmapProps> = ({ ticker, spotPrice 
     fetchGreeks();
   }, [ticker, spotPrice]);
 
-  const getColor = (value: number, type: string): string => {
+  const getColor = useCallback((value: number, type: string): string => {
     if (type === 'delta') {
-      // Delta: -1 to +1
-      const normalized = (value + 1) / 2; // 0 to 1
+      const normalized = (value + 1) / 2;
       if (normalized > 0.65) return 'bg-green-900';
       if (normalized > 0.35) return 'bg-gray-800';
       return 'bg-red-900';
     } else if (type === 'gamma') {
-      // Gamma: higher is more volatile
       if (value > 0.02) return 'bg-yellow-900';
       if (value > 0.01) return 'bg-gray-800';
       return 'bg-blue-900';
     } else if (type === 'vega') {
-      // Vega: sensitivity to volatility
       if (value > 0.15) return 'bg-purple-900';
       if (value > 0.08) return 'bg-gray-800';
       return 'bg-gray-700';
     } else if (type === 'theta') {
-      // Theta: time decay
       if (value < -0.02) return 'bg-red-900';
       if (value < -0.01) return 'bg-gray-800';
       return 'bg-green-900';
     }
     return 'bg-gray-800';
-  };
+  }, []);
 
   if (loading) {
     return (
@@ -141,3 +137,5 @@ export const GreeksHeatmap: React.FC<GreeksHeatmapProps> = ({ ticker, spotPrice 
     </div>
   );
 };
+
+export const GreeksHeatmap = React.memo(GreeksHeatmapComponent);
