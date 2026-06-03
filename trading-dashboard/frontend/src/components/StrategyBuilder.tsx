@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { Plus, X, Save, Play, Copy } from 'lucide-react';
 
 export interface StrategyCondition {
@@ -40,7 +40,7 @@ interface StrategyBuilderProps {
   onTest?: (rule: StrategyRule) => void;
 }
 
-export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest }) => {
+const StrategyBuilderComponent: React.FC<StrategyBuilderProps> = ({ onSave, onTest }) => {
   const [rules, setRules] = useState<StrategyRule[]>([
     {
       id: '1',
@@ -63,7 +63,7 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
   const [editingRule, setEditingRule] = useState<StrategyRule | null>(null);
   const [newRuleName, setNewRuleName] = useState('');
 
-  const createNewRule = () => {
+  const createNewRule = useCallback(() => {
     const rule: StrategyRule = {
       id: Math.random().toString(36).substr(2, 9),
       name: newRuleName || 'New Strategy',
@@ -72,14 +72,14 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
       enabled: true,
       createdAt: Date.now(),
     };
-    setRules([...rules, rule]);
+    setRules((prev) => [...prev, rule]);
     setNewRuleName('');
     setEditingRule(rule);
-  };
+  }, [newRuleName]);
 
-  const addCondition = (ruleId: string) => {
-    setRules(
-      rules.map((r) => {
+  const addCondition = useCallback((ruleId: string) => {
+    setRules((prev) =>
+      prev.map((r) => {
         if (r.id === ruleId) {
           return {
             ...r,
@@ -92,11 +92,11 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
         return r;
       })
     );
-  };
+  }, []);
 
-  const removeCondition = (ruleId: string, conditionId: string) => {
-    setRules(
-      rules.map((r) => {
+  const removeCondition = useCallback((ruleId: string, conditionId: string) => {
+    setRules((prev) =>
+      prev.map((r) => {
         if (r.id === ruleId) {
           return {
             ...r,
@@ -106,11 +106,11 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
         return r;
       })
     );
-  };
+  }, []);
 
-  const updateCondition = (ruleId: string, conditionId: string, field: string, value: any) => {
-    setRules(
-      rules.map((r) => {
+  const updateCondition = useCallback((ruleId: string, conditionId: string, field: string, value: any) => {
+    setRules((prev) =>
+      prev.map((r) => {
         if (r.id === ruleId) {
           return {
             ...r,
@@ -125,25 +125,23 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
         return r;
       })
     );
-  };
+  }, []);
 
-  const updateRule = (ruleId: string, field: string, value: any) => {
-    setRules(
-      rules.map((r) => {
+  const updateRule = useCallback((ruleId: string, field: string, value: any) => {
+    setRules((prev) =>
+      prev.map((r) => {
         if (r.id === ruleId) {
           return { ...r, [field]: value };
         }
         return r;
       })
     );
-  };
+  }, []);
 
-  const deleteRule = (ruleId: string) => {
-    setRules(rules.filter((r) => r.id !== ruleId));
-    if (editingRule?.id === ruleId) {
-      setEditingRule(null);
-    }
-  };
+  const deleteRule = useCallback((ruleId: string) => {
+    setRules((prev) => prev.filter((r) => r.id !== ruleId));
+    setEditingRule((prev) => (prev?.id === ruleId ? null : prev));
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -385,3 +383,5 @@ export const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onTest
     </div>
   );
 };
+
+export const StrategyBuilder = React.memo(StrategyBuilderComponent);
