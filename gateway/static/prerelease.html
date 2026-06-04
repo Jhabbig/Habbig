@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>narve.ai — Prediction Market Intelligence</title>
-  <meta name="description" content="narve.ai tracks social media predictions, scores source credibility, and surfaces high-EV opportunities on Polymarket and Kalshi. Invite-only intelligence for serious traders.">
+  <meta name="description" content="narve.ai scores who's actually right on social media and cross-references their track record with live Polymarket and Kalshi odds to surface high-EV bets.">
   <meta name="keywords" content="narve, narve.ai, prediction markets, Polymarket, Kalshi, trading intelligence, prediction market analytics">
   <link rel="canonical" href="https://narve.ai/">
   <meta property="og:type" content="website">
@@ -37,6 +37,16 @@
     "alternateName": "narve",
     "url": "https://narve.ai"
   }
+  </script>
+  <script type="application/ld+json">
+  [
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":1,"name":"How it works","url":"https://narve.ai/how-it-works"},
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":2,"name":"Methodology","url":"https://narve.ai/methodology"},
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":3,"name":"Pricing","url":"https://narve.ai/pricing"},
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":4,"name":"FAQ","url":"https://narve.ai/faq"},
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":5,"name":"About","url":"https://narve.ai/about"},
+    {"@context":"https://schema.org","@type":"SiteNavigationElement","position":6,"name":"API","url":"https://narve.ai/api/docs"}
+  ]
   </script>
   <script type="application/ld+json">
   {
@@ -107,10 +117,16 @@
       </div>
     </div>
   </main>
-  <div style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--text-tertiary);z-index:5">
-    <a href="/terms" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Terms</a> ·
+  <nav aria-label="Site" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:2px 0;max-width:min(640px,92vw);font-size:10px;color:var(--text-tertiary);z-index:5">
+    <a href="/how-it-works" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">How it works</a>
+    <a href="/methodology" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Methodology</a>
+    <a href="/pricing" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Pricing</a>
+    <a href="/faq" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">FAQ</a>
+    <a href="/about" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">About</a>
+    <a href="/api/docs" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">API</a>
+    <a href="/terms" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Terms</a>
     <a href="/privacy" style="color:var(--text-tertiary);margin:0 8px;text-decoration:none">Privacy</a>
-  </div>
+  </nav>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
