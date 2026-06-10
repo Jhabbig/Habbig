@@ -27,23 +27,7 @@ services:
         condition: service_healthy
       midterm:
         condition: service_healthy
-      top-traders:
-        condition: service_healthy
       weather:
-        condition: service_healthy
-      sports:
-        condition: service_healthy
-      world:
-        condition: service_healthy
-      centralbank:
-        condition: service_healthy
-      airace:
-        condition: service_healthy
-      crypto-trackers:
-        condition: service_healthy
-      religion:
-        condition: service_healthy
-      whale:
         condition: service_healthy
 
   crypto:
@@ -84,18 +68,6 @@ services:
       timeout: 5s
       retries: 3
 
-  top-traders:
-    build: ./top-traders-dashboard
-    expose:
-      - "8052"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8052/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   weather:
     build: ./polymarket_weather_dashboard
     expose:
@@ -108,100 +80,13 @@ services:
       timeout: 5s
       retries: 3
 
-  sports:
-    build: ./sports-dashboard
-    expose:
-      - "8888"
-    env_file: ./sports-dashboard/.env
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  world:
-    build: ./world-state-dashboard
-    expose:
-      - "7050"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7050/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   # climate + disasters were merged into the weather service: they run as
   # tabs of the weather dashboard with APIs under /api/climate/* and
-  # /api/disasters/*. Their old directories remain in the repo as legacy.
-
-  centralbank:
-    build: ./centralbank-dashboard
-    expose:
-      - "7060"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7060/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  airace:
-    build: ./ai-race-dashboard
-    expose:
-      - "7070"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7070/api/health',timeout=4).status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  crypto-trackers:
-    build: ./crypto-trackers-dashboard
-    expose:
-      - "7054"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7054/healthz',timeout=4).status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  religion:
-    build: ./religion-dashboard
-    expose:
-      - "7062"
-    env_file: ./gateway/.env.production
-    volumes:
-      - religion-data:/app/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7062/api/health',timeout=4).status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  whale:
-    build: ./whale-dashboard
-    expose:
-      - "8053"
-    env_file: ./gateway/.env.production
-    volumes:
-      - whale-data:/app/backend
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8053/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+  # /api/disasters/*. Parked dashboards (sports, world, top-traders,
+  # centralbank, airace, crypto-trackers, religion, whale) are no longer
+  # composed at all — the gateway serves a parked notice on their
+  # subdomains and /admin/fleet tracks the effects.
 
 volumes:
   gateway-data:
   crypto-data:
-  religion-data:
-  whale-data:

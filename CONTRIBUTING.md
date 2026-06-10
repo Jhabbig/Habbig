@@ -64,10 +64,12 @@ cp crypto-dashboard/.env.example crypto-dashboard/.env
 
 The storefront currently lists three products — Weather, Climate & Disasters;
 Midterm Predictor; and Market Edge (stocks + crypto under one subscription).
-Every other dashboard is delisted via `"hidden": true` in `gateway/config.json`
-but keeps running and stays reachable by direct subdomain; flip the flag to
-relist one. `climate-dashboard/` and `disasters-dashboard/` are legacy copies
-of code that now lives inside the weather service.
+Every other dashboard is **parked**: delisted via `"hidden": true` and not
+deployed via `"parked": true` in `gateway/config.json` — compose/start/deploy
+scripts skip them and their subdomains show a parked notice. The admin Fleet
+dashboard (`/admin/fleet`) tracks all of this live. `climate-dashboard/` and
+`disasters-dashboard/` are legacy copies of code that now lives inside the
+weather service.
 
 ## Branch workflow
 

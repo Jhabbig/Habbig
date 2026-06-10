@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet — narve.ai</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 6px; }
+    .stat-value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .warn-banner { display: none; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.4); color: #f59e0b; border-radius: var(--radius-sm); padding: 12px 18px; margin-bottom: 22px; font-size: 13px; }
+    .fleet-section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); margin: 26px 0 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .fleet-table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+    table.fleet { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 880px; }
+    table.fleet th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); padding: 12px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.fleet td { padding: 12px 16px; border-bottom: 1px solid var(--border-light); vertical-align: middle; white-space: nowrap; }
+    table.fleet tr:last-child td { border-bottom: none; }
+    .svc-name { display: flex; align-items: center; gap: 9px; font-weight: 600; color: var(--text-primary); }
+    .svc-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .svc-meta { font-size: 11px; color: var(--text-muted); font-weight: 400; }
+    .badge-state { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.03em; }
+    .badge-state.live { background: rgba(16,185,129,0.12); color: #10b981; }
+    .badge-state.companion { background: rgba(99,102,241,0.12); color: #818cf8; }
+    .badge-state.delisted { background: rgba(148,163,184,0.15); color: var(--text-secondary); }
+    .badge-state.parked { background: rgba(245,158,11,0.12); color: #f59e0b; }
+    .badge-state.merged { background: rgba(59,130,246,0.12); color: #3b82f6; }
+    .health { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+    .health-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .health-dot.up { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,0.7); }
+    .health-dot.down { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.7); }
+    .health-dot.na { background: var(--border); }
+    .num { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--text-muted); }
+    .fleet-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+    .effects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    .effect-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+    .effect-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+    .effect-row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 5px 0; border-bottom: 1px solid var(--border-light); }
+    .effect-row:last-child { border-bottom: none; }
+    .effect-row b { font-variant-numeric: tabular-nums; }
+    .effect-empty { font-size: 12.5px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <header class="gw-header">
+    <a href="/dashboards" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <nav class="gw-tabs">{{ raw_dashboard_tabs }}</nav>
+    <div class="gw-spacer"></div>
+    <nav class="gw-nav">
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      <a href="/admin/fleet" class="active">Fleet</a>
+      <a href="/admin">Admin</a>
+    </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+  </header>
+
+  <div class="gw-main">
+    <h1 class="gw-page-title" style="margin-bottom:6px">Fleet</h1>
+    <p style="font-size:13px;color:var(--text-muted);margin:0 0 24px">
+      Live state of every service in the suite, and the lasting effects of the storefront trim —
+      traffic captured from retired subdomains, demand hitting parked dashboards, and subscriptions
+      still attached to them.
+    </p>
+
+    <div id="warn-parked-subs" class="warn-banner"></div>
+
+    <div class="stat-grid" id="stat-grid">
+      <div class="stat-card"><div class="stat-label">Products listed</div><div class="stat-value" id="t-products">—</div><div class="stat-sub">on the storefront</div></div>
+      <div class="stat-card"><div class="stat-label">Live services</div><div class="stat-value" id="t-live">—</div><div class="stat-sub">deployed &amp; probed</div></div>
+      <div class="stat-card"><div class="stat-label">Parked</div><div class="stat-value" id="t-parked">—</div><div class="stat-sub">services stopped</div></div>
+      <div class="stat-card"><div class="stat-label">Merged</div><div class="stat-value" id="t-merged">—</div><div class="stat-sub">absorbed dashboards</div></div>
+      <div class="stat-card"><div class="stat-label">Active subs</div><div class="stat-value" id="t-subs">—</div><div class="stat-sub">across all products</div></div>
+      <div class="stat-card"><div class="stat-label">Run-rate</div><div class="stat-value" id="t-mrr">—</div><div class="stat-sub">monthly, at list price</div></div>
+      <div class="stat-card"><div class="stat-label">Redirects captured</div><div class="stat-value" id="t-redirects">—</div><div class="stat-sub">retired → live, lifetime</div></div>
+      <div class="stat-card"><div class="stat-label">Parked visits</div><div class="stat-value" id="t-parked-visits">—</div><div class="stat-sub">demand signal, lifetime</div></div>
+    </div>
+
+    <div class="fleet-section-title">Services</div>
+    <div class="fleet-table-wrap">
+      <table class="fleet">
+        <thead>
+          <tr>
+            <th>Service</th><th>State</th><th>Health</th><th>Port</th>
+            <th>Subs</th><th>Run-rate</th><th>Stripe</th><th>Effects</th><th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="fleet-body">
+          <tr><td colspan="9" class="muted" style="text-align:center;padding:28px">Loading fleet…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="fleet-section-title">Perennial effects</div>
+    <div class="effects-grid">
+      <div class="effect-card">
+        <div class="effect-title">Traffic captured from retired subdomains</div>
+        <div id="fx-redirects" class="effect-empty">No redirects recorded yet.</div>
+      </div>
+      <div class="effect-card">
+        <div class="effect-title">Demand still hitting parked dashboards</div>
+        <div id="fx-parked" class="effect-empty">No parked visits recorded yet.</div>
+      </div>
+      <div class="effect-card">
+        <div class="effect-title">Gateway</div>
+        <div id="fx-gateway" class="effect-empty">—</div>
+      </div>
+    </div>
+
+    <div class="fleet-foot">
+      <span id="foot-updated">Refreshing…</span>
+      <span>Auto-refreshes every 10s · probes run every <span id="foot-interval">15</span>s</span>
+    </div>
+  </div>
+
+<script>
+const STATE_LABEL = {
+  live: 'LIVE', companion: 'COMPANION', delisted: 'DELISTED',
+  parked: 'PARKED', merged: 'MERGED',
+};
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function money(cents) {
+  return '$' + (cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function ago(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  return Math.round(s / 3600) + 'h ago';
+}
+
+function uptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function healthCell(s) {
+  if (s.state === 'parked') return '<span class="health"><span class="health-dot na"></span><span class="muted">stopped</span></span>';
+  if (s.state === 'merged') return '<span class="health"><span class="health-dot na"></span><span class="muted">redirects</span></span>';
+  if (s.healthy === true) {
+    const lat = s.latency_ms != null ? ` · ${s.latency_ms}ms` : '';
+    return `<span class="health"><span class="health-dot up"></span>up${lat}</span>`;
+  }
+  if (s.healthy === false) {
+    const seen = s.last_ok ? ` · last ok ${ago(s.last_ok)}` : '';
+    return `<span class="health"><span class="health-dot down"></span>down${seen}</span>`;
+  }
+  return '<span class="health"><span class="health-dot na"></span><span class="muted">probing…</span></span>';
+}
+
+function effectsCell(s) {
+  const bits = [];
+  if (s.state === 'merged' && s.legacy_redirects) bits.push(`${s.legacy_redirects} redirects`);
+  if (s.state === 'parked' && s.parked_visits) bits.push(`${s.parked_visits} visits`);
+  return bits.length ? bits.join(' · ') : '<span class="muted">—</span>';
+}
+
+function notesCell(s) {
+  if (s.merged_into) return `merged into <b>${esc(s.merged_into)}</b>`;
+  if (s.access_alias) return `unlocked by a <b>${esc(s.access_alias)}</b> sub`;
+  if (!s.listed && s.state !== 'parked') return 'hidden from storefront';
+  return '<span class="muted">—</span>';
+}
+
+function render(data) {
+  const t = data.totals;
+  document.getElementById('t-products').textContent = t.products_listed;
+  document.getElementById('t-live').textContent = t.live_services;
+  document.getElementById('t-parked').textContent = t.parked;
+  document.getElementById('t-merged').textContent = t.merged;
+  document.getElementById('t-subs').textContent = t.active_subs;
+  document.getElementById('t-mrr').textContent = money(t.run_rate_cents);
+  document.getElementById('t-redirects').textContent = t.legacy_redirects;
+  document.getElementById('t-parked-visits').textContent = t.parked_visits;
+
+  const warn = document.getElementById('warn-parked-subs');
+  if (t.parked_subs > 0) {
+    warn.style.display = 'block';
+    warn.innerHTML = `⚠ <b>${t.parked_subs}</b> active subscription${t.parked_subs === 1 ? ' is' : 's are'} still attached to parked dashboards — holders can cancel from billing; consider pausing or refunding them in Stripe.`;
+  } else {
+    warn.style.display = 'none';
+  }
+
+  const order = { live: 0, companion: 1, delisted: 2, merged: 3, parked: 4 };
+  const rows = data.services
+    .slice()
+    .sort((a, b) => (order[a.state] - order[b.state]) || a.display_name.localeCompare(b.display_name))
+    .map(s => `
+      <tr>
+        <td><div class="svc-name"><span class="svc-dot" style="background:${esc(s.accent)}"></span>
+          <span>${esc(s.display_name)}<div class="svc-meta">${esc(s.key)} · ${esc(s.subdomain)}.narve.ai</div></span></div></td>
+        <td><span class="badge-state ${esc(s.state)}">${STATE_LABEL[s.state] || esc(s.state)}</span></td>
+        <td>${healthCell(s)}</td>
+        <td class="num muted">${s.state === 'merged' || s.state === 'parked' ? '—' : ':' + esc(s.port)}</td>
+        <td class="num">${s.subs.total}${s.subs.total ? ` <span class="muted">(${s.subs.monthly}m/${s.subs.annual}a)</span>` : ''}</td>
+        <td class="num">${s.run_rate_cents ? money(s.run_rate_cents) + '/mo' : '<span class="muted">—</span>'}</td>
+        <td>${s.state === 'merged' || s.state === 'parked' ? '<span class="muted">—</span>' : (s.stripe_ready ? '✓' : '<span class="muted">not set</span>')}</td>
+        <td class="num">${effectsCell(s)}</td>
+        <td>${notesCell(s)}</td>
+      </tr>`);
+  document.getElementById('fleet-body').innerHTML = rows.join('');
+
+  const redirectRows = data.services.filter(s => s.legacy_redirects > 0)
+    .map(s => `<div class="effect-row"><span>${esc(s.subdomain)}.narve.ai → ${esc(s.merged_into || 'live product')}</span><b>${s.legacy_redirects}</b></div>`);
+  document.getElementById('fx-redirects').innerHTML = redirectRows.length
+    ? redirectRows.join('') : '<span class="effect-empty">No redirects recorded yet.</span>';
+
+  const parkedRows = data.services.filter(s => s.state === 'parked')
+    .map(s => `<div class="effect-row"><span>${esc(s.display_name)}${s.subs.total ? ` · ${s.subs.total} sub${s.subs.total === 1 ? '' : 's'}` : ''}</span><b>${s.parked_visits} visit${s.parked_visits === 1 ? '' : 's'}</b></div>`);
+  document.getElementById('fx-parked').innerHTML = parkedRows.length
+    ? parkedRows.join('') : '<span class="effect-empty">Nothing is parked.</span>';
+
+  document.getElementById('fx-gateway').innerHTML =
+    `<div class="effect-row"><span>Uptime</span><b>${uptime(data.gateway.uptime_seconds)}</b></div>` +
+    `<div class="effect-row"><span>Live SSE connections</span><b>${t.sse_connections}</b></div>` +
+    `<div class="effect-row"><span>Ports freed by trim</span><b>${data.services.filter(s => s.state === 'merged' || s.state === 'parked').length}</b></div>`;
+
+  document.getElementById('foot-interval').textContent = data.gateway.health_interval_s;
+  document.getElementById('foot-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/admin/api/fleet', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById('foot-updated').textContent = 'Refresh failed — retrying…';
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

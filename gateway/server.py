@@ -341,6 +341,10 @@ _health_task: Optional[asyncio.Task] = None
 _HEALTH_CHECK_INTERVAL = 15  # seconds
 _HEALTH_CHECK_TIMEOUT = 3.0  # seconds per probe
 _upstream_health: dict[str, bool] = {}  # dashboard_key → healthy?
+# Per-dashboard probe stats for the fleet dashboard: latency of the last
+# successful probe, when it last succeeded, and when it was last checked.
+_upstream_stats: dict[str, dict] = {}
+GATEWAY_STARTED_AT = time.time()
 
 
 async def _health_check_loop():
@@ -349,12 +353,19 @@ async def _health_check_loop():
     try:
         while True:
             for key, cfg in DASHBOARDS.items():
-                if cfg.get("merged_into"):
-                    continue  # retired backend — requests redirect, nothing to probe
+                if cfg.get("merged_into") or cfg.get("parked"):
+                    continue  # retired/parked backend — nothing deployed to probe
                 port = cfg["target"]
+                started = time.time()
+                stats = _upstream_stats.setdefault(key, {})
+                stats["last_check"] = started
                 try:
                     resp = await probe_client.get(f"http://127.0.0.1:{port}/")
-                    _upstream_health[key] = resp.status_code < 500
+                    healthy = resp.status_code < 500
+                    _upstream_health[key] = healthy
+                    if healthy:
+                        stats["latency_ms"] = round((time.time() - started) * 1000, 1)
+                        stats["last_ok"] = time.time()
                 except Exception:
                     _upstream_health[key] = False
             await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
@@ -3241,6 +3252,95 @@ async def admin_get_available_dashboards(request: Request):
     return JSONResponse({"dashboards": dashboards})
 
 
+# ── Fleet dashboard ────────────────────────────────────────────────────────────
+# Admin ops view of the whole suite: which services are live / parked / merged,
+# live health + latency, subscriber attachment per product, and the lasting
+# effects of the storefront trim (redirects captured from retired subdomains,
+# visits to parked dashboards, subscriptions still attached to parked
+# products).
+
+
+@app.get("/admin/fleet", response_class=HTMLResponse)
+async def admin_fleet_page(request: Request):
+    user = _require_admin_user(request)
+    return render_page(
+        "fleet", request=request,
+        email=user["email"], username=user.get("username", user["email"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+    )
+
+
+@app.get("/admin/api/fleet")
+async def admin_api_fleet(request: Request):
+    _require_admin_user(request)
+    counters = db.get_fleet_counters()
+    subs = db.active_subscription_counts()
+    now = time.time()
+
+    services = []
+    for key, cfg in DASHBOARDS.items():
+        merged_into = cfg.get("merged_into")
+        parked = bool(cfg.get("parked"))
+        hidden = bool(cfg.get("hidden"))
+        alias = cfg.get("access_alias")
+        if merged_into:
+            state = "merged"
+        elif parked:
+            state = "parked"
+        elif hidden and alias:
+            state = "companion"  # hidden half of a visible merged product
+        elif hidden:
+            state = "delisted"  # hidden from storefront but still deployed
+        else:
+            state = "live"
+        stats = _upstream_stats.get(key, {})
+        sub_info = subs.get(key, {"total": 0, "monthly": 0, "annual": 0})
+        run_rate = (sub_info["monthly"] * cfg.get("monthly_cents", 0)
+                    + sub_info["annual"] * cfg.get("annual_cents", 0) / 12)
+        price_id = cfg.get("stripe_price_monthly") or ""
+        services.append({
+            "key": key,
+            "display_name": cfg.get("display_name", key),
+            "subdomain": cfg.get("subdomain"),
+            "port": cfg.get("target"),
+            "accent": cfg.get("accent", "#6366f1"),
+            "state": state,
+            "listed": not hidden,
+            "merged_into": merged_into,
+            "access_alias": alias,
+            "healthy": _upstream_health.get(key) if state not in ("merged", "parked") else None,
+            "latency_ms": stats.get("latency_ms"),
+            "last_ok": stats.get("last_ok"),
+            "subs": sub_info,
+            "run_rate_cents": round(run_rate),
+            "stripe_ready": price_id.startswith("price_"),
+            "parked_visits": counters.get(f"parked_visit:{key}", {}).get("count", 0),
+            "legacy_redirects": counters.get(f"legacy_redirect:{cfg.get('subdomain')}", {}).get("count", 0),
+        })
+
+    return JSONResponse({
+        "services": services,
+        "totals": {
+            "products_listed": len(VISIBLE_DASHBOARDS),
+            "live_services": sum(1 for s in services if s["state"] not in ("merged", "parked")),
+            "parked": sum(1 for s in services if s["state"] == "parked"),
+            "merged": sum(1 for s in services if s["state"] == "merged"),
+            "active_subs": sum(s["subs"]["total"] for s in services),
+            "run_rate_cents": sum(s["run_rate_cents"] for s in services),
+            "parked_subs": sum(s["subs"]["total"] for s in services if s["state"] == "parked"),
+            "legacy_redirects": sum(v["count"] for k, v in counters.items() if k.startswith("legacy_redirect:")),
+            "parked_visits": sum(v["count"] for k, v in counters.items() if k.startswith("parked_visit:")),
+            "sse_connections": active_connection_count(),
+        },
+        "gateway": {
+            "started_at": GATEWAY_STARTED_AT,
+            "uptime_seconds": round(now - GATEWAY_STARTED_AT),
+            "health_interval_s": _HEALTH_CHECK_INTERVAL,
+        },
+        "generated_at": now,
+    })
+
+
 @app.post("/admin/api/templates")
 async def admin_create_template(
     request: Request,
@@ -4429,6 +4529,43 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
 # ── Reverse proxy for dashboard subdomains ────────────────────────────────────
 
 
+def _bump_fleet_counter_safe(key: str) -> None:
+    """Persist a fleet tally without ever letting a DB hiccup break a request."""
+    try:
+        db.bump_fleet_counter(key)
+    except Exception as e:
+        log.debug("fleet counter %s not recorded: %s", key, e)
+
+
+def _render_parked_page(dash_cfg: dict, apex: str) -> str:
+    """Notice page for dashboards whose services are intentionally stopped."""
+    name = html.escape(dash_cfg.get("display_name", "This dashboard"))
+    accent = dash_cfg.get("accent", "#6366f1")
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — parked</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0b0e14; color:#e6e8ee; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
+  .card {{ max-width:430px; padding:40px 44px; background:#11151f; border:1px solid #232938;
+          border-radius:16px; text-align:center; }}
+  .dot {{ width:12px; height:12px; border-radius:50%; background:{accent}; display:inline-block; margin-bottom:14px; }}
+  h1 {{ font-size:20px; margin:0 0 10px; }}
+  p {{ font-size:14px; line-height:1.65; color:#9aa3b5; margin:0 0 22px; }}
+  a {{ display:inline-block; padding:10px 22px; background:{accent}; color:#fff; border-radius:8px;
+      text-decoration:none; font-size:14px; font-weight:600; }}
+</style></head><body>
+<div class="card">
+  <span class="dot"></span>
+  <h1>{name} is parked</h1>
+  <p>This dashboard has been taken out of the active line-up and its service is
+  not currently running. Any subscription you hold can be managed from billing,
+  and the live products are one click away.</p>
+  <a href="{apex}/dashboards">Go to your dashboards</a>
+</div>
+</body></html>"""
+
+
 async def proxy_request(request: Request, forced_path: Optional[str] = None) -> Response:
     """Reverse-proxy the current request to the backend matching its subdomain."""
     sub = get_subdomain(request)
@@ -4443,6 +4580,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         target_key = LEGACY_SUBDOMAIN_REDIRECTS[sub]
         target_cfg = DASHBOARDS.get(target_key)
         if target_cfg:
+            _bump_fleet_counter_safe(f"legacy_redirect:{sub}")
             return RedirectResponse(
                 f"{scheme}://{target_cfg['subdomain']}.{base}{port_suffix}/", status_code=301
             )
@@ -4456,10 +4594,18 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     merged_into = dash_cfg.get("merged_into")
     if merged_into and merged_into in DASHBOARDS:
         # This dashboard was absorbed by another one — send visitors there.
+        _bump_fleet_counter_safe(f"legacy_redirect:{sub}")
         target_cfg = DASHBOARDS[merged_into]
         return RedirectResponse(
             f"{scheme}://{target_cfg['subdomain']}.{base}{port_suffix}/", status_code=301
         )
+
+    if dash_cfg.get("parked"):
+        # Service intentionally not deployed. Show a parked notice instead of
+        # the circuit breaker's "recovering soon" lie, and tally the visit so
+        # the fleet dashboard shows whether demand for it still exists.
+        _bump_fleet_counter_safe(f"parked_visit:{key}")
+        return HTMLResponse(_render_parked_page(dash_cfg, apex), status_code=200)
 
     # Check for superuser key (investor mode)
     superuser_key = _get_superuser_key_from_request(request)

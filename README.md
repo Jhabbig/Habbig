@@ -9,9 +9,15 @@ See `CONTRIBUTING.md` for the contributor quick-start (Docker + manual).
 
 ## Storefront
 
-The gateway lists **three products**; everything else is delisted
-(`"hidden": true` in `gateway/config.json`) but keeps running and stays
-reachable by direct subdomain — flip the flag to relist a dashboard.
+The gateway lists **three products**; everything else is **parked** —
+delisted (`"hidden": true` in `gateway/config.json`) *and* no longer deployed
+(`"parked": true`): docker-compose, `start_dashboards.sh`, `deploy.sh`, and
+the systemd units only run the live products, while the gateway serves a
+parked notice on retired subdomains. The admin **Fleet dashboard**
+(`/admin/fleet`) shows live health for every service plus the lasting
+effects of the trim: redirects captured from merged subdomains, visits still
+hitting parked dashboards, and subscriptions still attached to them. Reviving
+a dashboard = remove the two flags + re-add its service to deploy.
 
 | Product | Services | What it is |
 |---|---|---|
