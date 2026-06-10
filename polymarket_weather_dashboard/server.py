@@ -368,6 +368,41 @@ def require_admin(f):
     return wrapper
 
 
+# ── Merged sections: disasters + climate ride on the weather service ─────────
+# The standalone disasters (7053) and climate (7052) dashboards were merged
+# into this app. Their data layers live untouched in the vendored
+# ingestion/, analysis/, and climate_app/ packages; their route tables in
+# disasters_routes.py / climate_routes.py (namespaced /api/disasters/* and
+# /api/climate/*); their UIs are tabs of this dashboard backed by
+# /disasters and /climate pages.
+from disasters_routes import disasters_bp, start_prefetch as start_disasters_prefetch
+from climate_routes import climate_bp
+
+
+def _section_auth():
+    """Gateway-SSO gate for the merged disasters/climate APIs.
+
+    Mirrors require_auth: behind the gateway every request must carry the
+    shared secret; locally (no GATEWAY_SSO_SECRET) everything is open. The
+    standalone climate dashboard shipped with no auth at all, so the merge
+    is a strict security upgrade for those endpoints.
+    """
+    user = _get_user_from_request()
+    if not user:
+        if not _is_behind_gateway():
+            user = {"id": "local", "username": "local", "email": "", "is_admin": 1}
+        else:
+            return jsonify({"error": "unauthorized"}), 401
+    request.user = user
+    return None
+
+
+disasters_bp.before_request(_section_auth)
+climate_bp.before_request(_section_auth)
+app.register_blueprint(disasters_bp)
+app.register_blueprint(climate_bp)
+
+
 def log_activity(user_id: str, action: str, detail: str = None):
     try:
         with _get_conn() as conn:
@@ -2506,6 +2541,23 @@ def icon_512():
     return send_from_directory("static", "icon-512.png")
 
 
+# ── Merged section pages (embedded as tabs of the main UI) ───────────────────
+
+@app.route("/disasters")
+def disasters_page():
+    return send_from_directory("static", "disasters.html")
+
+
+@app.route("/climate")
+def climate_page():
+    return send_from_directory("static", "climate.html")
+
+
+@app.route("/climate/methodology")
+def climate_methodology_page():
+    return send_from_directory("static", "climate-methodology.html")
+
+
 def _parse_market(m):
     """Parse a raw market into a structured dict (no forecast data)."""
     question = m.get("question", "") or m.get("title", "")
@@ -4375,9 +4427,11 @@ def _bias_pairing_loop():
 @app.after_request
 def _add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # SAMEORIGIN (not DENY): the Disasters and Climate tabs embed /disasters
+    # and /climate in same-origin iframes. Cross-origin framing stays blocked.
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'"
     if _is_behind_gateway():
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
@@ -4403,4 +4457,5 @@ if __name__ == "__main__":
         ip = threading.Thread(target=_intraday_poll_loop, daemon=True)
         ip.start()
         logger.info("Intraday running-max poller started (every 5 min)")
+        start_disasters_prefetch()  # no-op unless DISASTERS_PREFETCH=1
     app.run(host=bind_host, port=5050, debug=_debug)

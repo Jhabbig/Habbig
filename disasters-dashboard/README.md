@@ -1,3 +1,5 @@
+> **MERGED — LEGACY CODE.** This dashboard was merged into `polymarket_weather_dashboard/` (the *Weather, Climate & Disasters* product): its data layer was vendored there, its API now lives under `/api/disasters/*` on the weather service, and its UI is the *Disasters* tab. The old subdomain 301-redirects via the gateway. This directory is kept for reference and is no longer deployed.
+
 # Major Disasters Dashboard
 
 Live tracker for natural disasters + Polymarket prediction-market edges,

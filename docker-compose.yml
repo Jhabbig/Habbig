@@ -35,13 +35,9 @@ services:
         condition: service_healthy
       world:
         condition: service_healthy
-      climate:
-        condition: service_healthy
       centralbank:
         condition: service_healthy
       airace:
-        condition: service_healthy
-      disasters:
         condition: service_healthy
       crypto-trackers:
         condition: service_healthy
@@ -136,17 +132,9 @@ services:
       timeout: 5s
       retries: 3
 
-  climate:
-    build: ./climate-dashboard
-    expose:
-      - "7052"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7052/api/health',timeout=4).status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+  # climate + disasters were merged into the weather service: they run as
+  # tabs of the weather dashboard with APIs under /api/climate/* and
+  # /api/disasters/*. Their old directories remain in the repo as legacy.
 
   centralbank:
     build: ./centralbank-dashboard
@@ -168,18 +156,6 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7070/api/health',timeout=4).status==200 else 1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  disasters:
-    build: ./disasters-dashboard
-    expose:
-      - "7053"
-    env_file: ./gateway/.env.production
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7053/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
