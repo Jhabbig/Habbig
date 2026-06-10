@@ -4727,16 +4727,21 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
     }
 
-    # Inject dashboard switcher into HTML responses.
-    body = _inject_switcher(
-        upstream.content,
-        upstream.headers.get("content-type", ""),
-        key,
-        user["user_id"],
-        username=user.get("username", ""),
-        csrf_token=_get_csrf_token(request),
-        request=request,
-    )
+    # Inject dashboard switcher into HTML responses. Superuser/investor
+    # visits can carry no session (user is None) — they get the page as-is,
+    # since the switcher needs a user to build subscription tabs from.
+    if user:
+        body = _inject_switcher(
+            upstream.content,
+            upstream.headers.get("content-type", ""),
+            key,
+            user["user_id"],
+            username=user.get("username", ""),
+            csrf_token=_get_csrf_token(request),
+            request=request,
+        )
+    else:
+        body = upstream.content
     # Update Content-Length since injection may have changed the body size.
     if body is not upstream.content:
         resp_headers.pop("content-length", None)
