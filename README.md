@@ -7,22 +7,35 @@ access by per-dashboard subscription.
 
 See `CONTRIBUTING.md` for the contributor quick-start (Docker + manual).
 
+## Storefront
+
+The gateway lists **three products**; everything else is delisted
+(`"hidden": true` in `gateway/config.json`) but keeps running and stays
+reachable by direct subdomain — flip the flag to relist a dashboard.
+
+| Product | Services | What it is |
+|---|---|---|
+| **Weather, Climate & Disasters** | `polymarket_weather_dashboard/` (5050) | Weather-market edges plus the merged-in Disasters and Climate tabs (`/api/disasters/*`, `/api/climate/*`). |
+| **Midterm Predictor** | `midterm-dashboard/` (8051) | US election predictions aggregating 6 sources (FastAPI + React). |
+| **Market Edge — Stocks & Crypto** | `crypto-dashboard/` (8000) + `stock-dashboard/` (8050) | One subscription, two apps: CryptoEdge ML signals and the StockSignal stock desk, cross-linked. |
+
 ## Layout
 
 | Directory | Port | What it is |
 |---|---|---|
 | `gateway/` | 7000 | Central auth + reverse proxy. The single entry point. |
-| `crypto-dashboard/` | 8000 | BTC/crypto signals + ML ensemble (CryptoEdge). |
-| `stock-dashboard/` | 8050 | Stock market signal dashboard (StockSignal). |
+| `crypto-dashboard/` | 8000 | Market Edge: BTC/crypto signals + ML ensemble (CryptoEdge). |
+| `stock-dashboard/` | 8050 | Market Edge: StockSignal stock desk (one sub with crypto via `access_alias`). |
 | `midterm-dashboard/` | 8051 | US midterm election predictions (FastAPI + React). |
-| `top-traders-dashboard/` | 8052 | Polymarket whale tracking + insider detection. |
-| `polymarket_weather_dashboard/` | 5050 | Weather-market dashboard UI (Flask + PWA). |
-| `sports-dashboard/` | 8888 | Sports arbitrage signals (The Odds API vs Polymarket). |
-| `world-state-dashboard/` | 7050 | Geopolitical feed + infrastructure map. |
-| `disasters-dashboard/` | 7053 | Hurricanes, earthquakes, wildfires & severe-weather edges (NHC + USGS + EONET + NWS). |
-| `crypto-trackers-dashboard/` | 7054 | Every-coin trackers: multi-exchange spot+perps, cross-exchange arb, funding rates, DeFi TVL, F&G. |
-| `religion-dashboard/` | 7062 | World religions, NRM/cult watchlist, USCIRF designations, Polymarket religion markets. |
-| `Dashboard-x-truth-research-prediction/` | 18789 | X / TruthSocial prediction-mining dashboard. |
+| `top-traders-dashboard/` | 8052 | *(hidden)* Polymarket whale tracking + insider detection. |
+| `polymarket_weather_dashboard/` | 5050 | Weather, Climate & Disasters (Flask + PWA; disasters + climate merged in). |
+| `sports-dashboard/` | 8888 | *(hidden)* Sports arbitrage signals (The Odds API vs Polymarket). |
+| `world-state-dashboard/` | 7050 | *(hidden)* Geopolitical feed + infrastructure map. |
+| `disasters-dashboard/` | — | **Legacy** — merged into the weather service; subdomain redirects. |
+| `climate-dashboard/` | — | **Legacy** — merged into the weather service; subdomain redirects. |
+| `crypto-trackers-dashboard/` | 7054 | *(hidden)* Every-coin trackers: multi-exchange spot+perps, cross-exchange arb, funding rates, DeFi TVL, F&G. |
+| `religion-dashboard/` | 7062 | *(hidden)* World religions, NRM/cult watchlist, USCIRF designations, Polymarket religion markets. |
+| `Dashboard-x-truth-research-prediction/` | 18789 | *(hidden)* X / TruthSocial prediction-mining dashboard. |
 | `polymarket_weather_bot/` | — | Headless weather-market trading bot (no UI). |
 | `polymarket-bot/` | — | 5-minute up/down trading bot (single file, tightly coupled to crypto-dashboard). |
 | `deploy/` | — | Systemd unit files for the Ubuntu production box. |
