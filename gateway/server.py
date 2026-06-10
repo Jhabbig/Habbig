@@ -985,6 +985,31 @@ def set_session_cookie(response: Response, token: str, request: Request) -> None
     response.set_cookie(**kwargs)
 
 
+# Investor/superuser keys arrive on a link as ?superuser_key=… but the
+# dashboards' own JS fetches /api/* without it. Persisting the key in an
+# apex-wide cookie on first use makes the whole site work from one link;
+# the key is still validated against the DB on every request, so revoking
+# it cuts access immediately regardless of the cookie.
+SUPERUSER_COOKIE = "narve_su_key"
+_SUPERUSER_COOKIE_TTL = 30 * 86400  # re-presented links refresh it
+
+
+def set_superuser_cookie(response: Response, key: str, request: Request) -> None:
+    kwargs = dict(
+        key=SUPERUSER_COOKIE,
+        value=key,
+        max_age=_SUPERUSER_COOKIE_TTL,
+        httponly=True,
+        samesite="lax",
+        secure=IS_PRODUCTION,
+        path="/",
+    )
+    domain = cookie_domain_for(request)
+    if domain:
+        kwargs["domain"] = domain
+    response.set_cookie(**kwargs)
+
+
 def clear_session_cookie(response: Response, request: Request) -> None:
     kwargs = dict(key=COOKIE_NAME, path="/")
     domain = cookie_domain_for(request)
@@ -1038,7 +1063,8 @@ def _is_sub_active(sub_row, is_admin: bool = False) -> bool:
 
 
 def _get_superuser_key_from_request(request: Request) -> Optional[str]:
-    """Extract superuser key from URL query param or Authorization header."""
+    """Extract superuser key from URL query param, Authorization header, or
+    the persistence cookie set on first use."""
     # Check URL query parameter
     if "superuser_key" in request.query_params:
         return request.query_params["superuser_key"]
@@ -1046,6 +1072,10 @@ def _get_superuser_key_from_request(request: Request) -> Optional[str]:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[7:]
+    # Check the cookie persisted by a previous ?superuser_key= visit
+    cookie_key = request.cookies.get(SUPERUSER_COOKIE)
+    if cookie_key:
+        return cookie_key
     return None
 
 
@@ -4765,11 +4795,16 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         resp_headers.pop("content-length", None)
         resp_headers["content-length"] = str(len(body))
 
-    return Response(
+    resp = Response(
         content=body,
         status_code=upstream.status_code,
         headers=resp_headers,
     )
+    # A valid key presented in the URL gets persisted so the dashboard's own
+    # /api fetches (which never carry the query param) keep working.
+    if has_superuser_access and request.query_params.get("superuser_key") == superuser_key:
+        set_superuser_cookie(resp, superuser_key, request)
+    return resp
 
 
 # ── SSE stream endpoint ────────────────────────────────────────────────────────
@@ -4864,10 +4899,18 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         ws_host = ws.headers.get("host", "").split(":")[0].lower()
         if ws_host in ("localhost", "127.0.0.1") or ws_host.endswith(".localhost"):
             user_id = ensure_dev_user()
+
+    # Investor/superuser keys get live updates too: accept the persistence
+    # cookie or an explicit ?superuser_key= on the WS URL.
+    has_superuser_ws = False
     if not user_id:
+        su_key = ws.query_params.get("superuser_key") or ws.cookies.get(SUPERUSER_COOKIE)
+        if su_key and db.has_superuser_key_access(su_key, key):
+            has_superuser_ws = True
+    if not user_id and not has_superuser_ws:
         await ws.close(code=1008, reason="Not authenticated")
         return
-    if not cached_has_subscription(user_id, key):
+    if not has_superuser_ws and not cached_has_subscription(user_id, key):
         await ws.close(code=1008, reason="No active subscription")
         return
 
