@@ -1,8 +1,11 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. Flags: 'hidden': true removes a dashboard from every storefront surface (landing, hub, tour, billing, settings) while keeping proxying and existing subscriptions working — flip it back to relist. 'access_alias': '<key>' means a subscription to that other key unlocks this dashboard too (merged products sold under one key). 'merged_into': '<key>' marks a retired dashboard whose subdomain now 301-redirects to the absorbing dashboard; pair it with a 'legacy_grants' entry so old subscribers keep access to the merged product.",
   "domain": "narve.ai",
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
+  "legacy_grants": {
+    "weather": ["disasters", "climate"]
+  },
   "dashboards": {
     "sports": {
       "subdomain": "sports",
@@ -13,14 +16,15 @@
       "monthly_cents": 1999,
       "annual_cents": 19900,
       "supports_websocket": true,
+      "hidden": true,
       "stripe_price_monthly": "price_1TJXuZQq4pCmZ517QOsgoeAg",
       "stripe_price_annual": "price_1TJXuaQq4pCmZ517TerWA5ET"
     },
     "weather": {
       "subdomain": "weather",
       "target": 5050,
-      "display_name": "Polymarket Weather",
-      "description": "Weather market mispricings & rain forecasts",
+      "display_name": "Weather, Climate & Disasters",
+      "description": "Weather market edges · hurricanes, quakes & wildfires · long-horizon climate",
       "accent": "#3b82f6",
       "monthly_cents": 799,
       "annual_cents": 7900,
@@ -37,20 +41,35 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": "price_1TJXudQq4pCmZ517r5kGGPg8",
       "stripe_price_annual": "price_1TJXueQq4pCmZ517BA5k30Tc"
     },
     "crypto": {
       "subdomain": "crypto",
       "target": 8000,
-      "display_name": "Crypto Edge",
-      "description": "BTC & crypto signals, ensemble ML predictor",
+      "display_name": "Market Edge — Stocks & Crypto",
+      "description": "BTC & crypto ensemble ML signals + pro stock desk: Kelly sizing, Greeks, risk engine",
       "accent": "#f59e0b",
       "monthly_cents": 999,
       "annual_cents": 9900,
       "supports_websocket": true,
       "stripe_price_monthly": "price_1TJXufQq4pCmZ517hcTl3rsK",
       "stripe_price_annual": "price_1TJXugQq4pCmZ517oI08QMkS"
+    },
+    "stocks": {
+      "subdomain": "stocks",
+      "target": 8050,
+      "display_name": "Market Edge — Stock Desk",
+      "description": "StockSignal: real-time stock signals, position sizing, options Greeks (included with Market Edge)",
+      "accent": "#f59e0b",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": false,
+      "hidden": true,
+      "access_alias": "crypto",
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     },
     "midterm": {
       "subdomain": "midterm",
@@ -73,6 +92,7 @@
       "monthly_cents": 1299,
       "annual_cents": 12900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
       "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
     },
@@ -80,11 +100,13 @@
       "subdomain": "climate",
       "target": 7052,
       "display_name": "Climate Change",
-      "description": "Long-horizon climate markets — GISTEMP, CO₂, sea ice, SST, ENSO",
+      "description": "Merged into Weather, Climate & Disasters",
       "accent": "#34d399",
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "hidden": true,
+      "merged_into": "weather",
       "stripe_price_monthly": null,
       "stripe_price_annual": null
     },
@@ -97,6 +119,7 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
     },
@@ -109,6 +132,7 @@
       "monthly_cents": 1499,
       "annual_cents": 14900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": "TODO_TRUTH_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_TRUTH_STRIPE_ANNUAL"
     },
@@ -121,6 +145,7 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
     },
@@ -128,13 +153,15 @@
       "subdomain": "disasters",
       "target": 7053,
       "display_name": "Major Disasters",
-      "description": "Hurricanes · earthquakes · wildfires · severe-weather edges",
+      "description": "Merged into Weather, Climate & Disasters",
       "accent": "#f97316",
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "stripe_price_monthly": "TODO_DISASTERS_STRIPE_MONTHLY",
-      "stripe_price_annual": "TODO_DISASTERS_STRIPE_ANNUAL"
+      "hidden": true,
+      "merged_into": "weather",
+      "stripe_price_monthly": null,
+      "stripe_price_annual": null
     },
     "crypto_trackers": {
       "subdomain": "trackers",
@@ -145,6 +172,7 @@
       "monthly_cents": 1499,
       "annual_cents": 14900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": "TODO_TRACKERS_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_TRACKERS_STRIPE_ANNUAL"
     },
@@ -157,6 +185,7 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
+      "hidden": true,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
     },
@@ -169,6 +198,7 @@
       "monthly_cents": 1799,
       "annual_cents": 17900,
       "supports_websocket": true,
+      "hidden": true,
       "stripe_price_monthly": "TODO_set_stripe_price_id",
       "stripe_price_annual": "TODO_set_stripe_price_id"
     }
