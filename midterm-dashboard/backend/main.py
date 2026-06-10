@@ -256,24 +256,37 @@ async def data_refresh_loop():
     while True:
         try:
             logger.info("Starting data refresh cycle")
-            async def with_timeout(coro, name, seconds=60):
-                try:
-                    return await asyncio.wait_for(coro, timeout=seconds)
-                except asyncio.TimeoutError:
-                    logger.warning(f"{name} fetch timed out after {seconds}s")
-                    raise asyncio.TimeoutError(f"{name} timed out")
+            async def with_timeout(factory, name, seconds=60, attempts=2, backoff=2.0):
+                """Await a fresh coroutine from `factory` with a timeout, retrying
+                once after a short backoff so a transient upstream hiccup doesn't
+                cost the full 5-minute cycle. wait_for cancels the coroutine on
+                timeout, which is why a factory (not a coroutine) is taken."""
+                last_exc: Exception = asyncio.TimeoutError(f"{name} timed out")
+                for attempt in range(attempts):
+                    try:
+                        return await asyncio.wait_for(factory(), timeout=seconds)
+                    except Exception as e:
+                        last_exc = e
+                        label = (f"timed out after {seconds}s"
+                                 if isinstance(e, asyncio.TimeoutError) else f"failed: {e}")
+                        if attempt + 1 < attempts:
+                            logger.warning(f"{name} fetch {label} — retrying in {backoff:.0f}s")
+                            await asyncio.sleep(backoff)
+                        else:
+                            logger.warning(f"{name} fetch {label} ({attempts} attempts)")
+                raise last_exc
 
             # Fetch sources in parallel (except Kalshi world which reuses Kalshi's cache)
             results = await asyncio.gather(
-                with_timeout(state.polymarket.fetch_election_markets(), "Polymarket", seconds=120),
-                with_timeout(state.kalshi.fetch_election_markets(), "Kalshi", seconds=180),
-                with_timeout(state.predictit.fetch_election_markets(), "PredictIt"),
-                with_timeout(state.polling.fetch_all_polls(), "Polling", seconds=30),
-                with_timeout(state.polymarket.fetch_world_election_markets(), "Polymarket-World", seconds=120),
-                with_timeout(state.manifold.fetch_election_markets(), "Manifold", seconds=60),
-                with_timeout(state.manifold.fetch_world_election_markets(), "Manifold-World", seconds=60),
-                with_timeout(state.metaculus.fetch_election_markets(), "Metaculus", seconds=60),
-                with_timeout(state.metaculus.fetch_world_election_markets(), "Metaculus-World", seconds=60),
+                with_timeout(lambda: state.polymarket.fetch_election_markets(), "Polymarket", seconds=120),
+                with_timeout(lambda: state.kalshi.fetch_election_markets(), "Kalshi", seconds=180),
+                with_timeout(lambda: state.predictit.fetch_election_markets(), "PredictIt"),
+                with_timeout(lambda: state.polling.fetch_all_polls(), "Polling", seconds=30),
+                with_timeout(lambda: state.polymarket.fetch_world_election_markets(), "Polymarket-World", seconds=120),
+                with_timeout(lambda: state.manifold.fetch_election_markets(), "Manifold", seconds=60),
+                with_timeout(lambda: state.manifold.fetch_world_election_markets(), "Manifold-World", seconds=60),
+                with_timeout(lambda: state.metaculus.fetch_election_markets(), "Metaculus", seconds=60),
+                with_timeout(lambda: state.metaculus.fetch_world_election_markets(), "Metaculus-World", seconds=60),
                 return_exceptions=True,
             )
             (
@@ -285,7 +298,7 @@ async def data_refresh_loop():
             # Kalshi world uses cached data from the midterm fetch above
             try:
                 kalshi_world = await with_timeout(
-                    state.kalshi.fetch_world_election_markets(), "Kalshi-World", seconds=30
+                    lambda: state.kalshi.fetch_world_election_markets(), "Kalshi-World", seconds=30
                 )
             except Exception as e:
                 logger.error(f"Kalshi-World fetch error: {e}")

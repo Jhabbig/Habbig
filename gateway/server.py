@@ -75,6 +75,21 @@ DOMAIN: str = CONFIG["domain"]
 GATEWAY_PORT: int = int(os.environ.get("GATEWAY_PORT") or CONFIG["gateway_port"])
 DASHBOARDS: dict = CONFIG["dashboards"]
 
+# Storefront visibility: dashboards flagged "hidden": true in config.json are
+# removed from every marketing/listing surface (landing, hub, tour, billing,
+# settings) but keep their subdomain proxying, subscriptions, and direct
+# access fully working — hiding is a one-line, reversible config flip.
+VISIBLE_DASHBOARDS: dict = {k: cfg for k, cfg in DASHBOARDS.items() if not cfg.get("hidden")}
+
+# Merged products. A dashboard with "access_alias": "<key>" is unlocked by a
+# subscription to that other key (e.g. stocks+crypto sold as one product).
+# "legacy_grants" maps a live dashboard to retired keys whose old
+# subscriptions still count (e.g. disasters/climate subs unlock the merged
+# weather dashboard), and "legacy_subdomain_redirects" sends retired
+# subdomains to the dashboard that absorbed them.
+LEGACY_GRANTS: dict = CONFIG.get("legacy_grants", {})
+LEGACY_SUBDOMAIN_REDIRECTS: dict = CONFIG.get("legacy_subdomain_redirects", {})
+
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
 
@@ -127,24 +142,24 @@ DASHBOARD_PREVIEWS = {
         ],
     },
     "weather": {
-        "tagline": "Beat the weather markets with better data. Combine forecast models with market prices to spot mispricings on rain, temperature, and storm events.",
+        "tagline": "Weather, climate, and natural disasters in one place. Combine forecast models, hazard feeds, and long-horizon climate data with market prices to spot mispricings before they close.",
         "features": [
             {"icon": "\U0001f327\ufe0f", "title": "Forecast vs. Market", "desc": "Multi-model weather forecasts overlaid with current Polymarket prices to highlight divergence."},
             {"icon": "\U0001f4c8", "title": "Mispricing Heatmap", "desc": "Visual grid showing which weather markets are furthest from model consensus fair value."},
-            {"icon": "\U0001f30e", "title": "City-Level Coverage", "desc": "Granular data for every city with an active weather market on Polymarket."},
+            {"icon": "\U0001f32a\ufe0f", "title": "Disaster Watch", "desc": "Hurricanes, earthquakes, wildfires, tornadoes, and floods from NHC, USGS, EONET, and NWS \u2014 with year-end projection models."},
+            {"icon": "\U0001f321\ufe0f", "title": "Climate Markets", "desc": "Long-horizon GISTEMP, CO2, sea-ice, and ENSO trackers matched against Polymarket climate markets."},
             {"icon": "\u2705", "title": "Accuracy Leaderboard", "desc": "Track which forecast models and which markets have the best historical calibration."},
-            {"icon": "\u23f0", "title": "Settlement Countdown", "desc": "Timers and probability curves that update as resolution deadlines approach."},
             {"icon": "\U0001f4ca", "title": "Ensemble Model View", "desc": "Aggregated probability from GFS, ECMWF, and other models weighted by recent accuracy."},
         ],
         "includes": [
             "Ensemble forecasts from 4+ weather models",
+            "Live hazard feeds: NHC, USGS, EONET, SPC, GDACS, FEMA",
+            "Long-horizon climate indicators and projections",
             "Automatic mispricing detection",
             "City-by-city market breakdown",
-            "Accuracy tracking for all active markets",
-            "Historical resolution data and calibration curves",
+            "Accuracy tracking and calibration curves",
             "Daily email digest of top opportunities",
-            "Mobile-friendly responsive layout",
-            "All data updated every 15 minutes",
+            "All data updated every 5\u201315 minutes",
         ],
     },
     "world": {
@@ -169,23 +184,23 @@ DASHBOARD_PREVIEWS = {
         ],
     },
     "crypto": {
-        "tagline": "Quantitative crypto signals powered by ensemble machine learning. Cut through the noise with data-driven BTC and altcoin predictions.",
+        "tagline": "Stocks and crypto under one roof. Ensemble machine-learning signals for BTC and altcoins, plus a professional stock desk with Kelly position sizing, options Greeks, and institutional-grade risk tools.",
         "features": [
-            {"icon": "\U0001f916", "title": "Ensemble ML Predictor", "desc": "Six independent models vote on direction and magnitude, giving you a confidence-weighted signal."},
-            {"icon": "\U0001f4c9", "title": "Market Sentiment Index", "desc": "Aggregated fear/greed score from on-chain data, social media, and funding rates."},
-            {"icon": "\U0001f50d", "title": "Whale Activity Monitor", "desc": "Track large wallet movements and exchange inflows/outflows that precede price action."},
+            {"icon": "\U0001f916", "title": "Ensemble ML Predictor", "desc": "Independent models vote on direction and magnitude for BTC, ETH, SOL, and more, giving you a confidence-weighted signal."},
+            {"icon": "\U0001f4c8", "title": "Stock Signal Desk", "desc": "Real-time Alpaca data, 10+ streaming indicators, and ML stock predictions in the companion stocks view."},
+            {"icon": "\U0001f6e1\ufe0f", "title": "Pro Risk Engine", "desc": "Fractional-Kelly position sizing, 7 stop-loss strategies, sector heat limits, and circuit breakers."},
+            {"icon": "\U0001f9ee", "title": "Options Greeks", "desc": "Black-Scholes delta, gamma, vega, theta, and implied volatility for every tracked underlying."},
             {"icon": "\u26a1", "title": "Real-Time Signals", "desc": "WebSocket-powered price feeds and model updates so you never miss a regime change."},
-            {"icon": "\U0001f4ca", "title": "Backtest Dashboard", "desc": "Full transparency into model performance with walk-forward backtests over 3+ years."},
-            {"icon": "\U0001f6e1\ufe0f", "title": "Risk Management", "desc": "Position sizing guidance and drawdown alerts based on current volatility regime."},
+            {"icon": "\U0001f4ca", "title": "Backtest & Accuracy", "desc": "Full transparency into model performance with historical win rates and walk-forward backtests."},
         ],
         "includes": [
             "Ensemble ML signals for BTC, ETH, and top altcoins",
+            "Stock dashboard with live Alpaca + yfinance data",
+            "One subscription unlocks both the crypto and stocks apps",
+            "Kelly position sizing and portfolio heat tracking",
+            "Options Greeks and implied-volatility calculator",
             "Real-time WebSocket price and signal feed",
-            "On-chain analytics and whale alerts",
-            "Sentiment aggregation across social and on-chain data",
-            "3+ year backtest with walk-forward validation",
-            "Configurable risk and position-size calculator",
-            "Model confidence breakdowns per prediction",
+            "Sharpe, Sortino, Calmar, and drawdown analytics",
             "Data refreshed every 60 seconds",
         ],
     },
@@ -326,6 +341,10 @@ _health_task: Optional[asyncio.Task] = None
 _HEALTH_CHECK_INTERVAL = 15  # seconds
 _HEALTH_CHECK_TIMEOUT = 3.0  # seconds per probe
 _upstream_health: dict[str, bool] = {}  # dashboard_key → healthy?
+# Per-dashboard probe stats for the fleet dashboard: latency of the last
+# successful probe, when it last succeeded, and when it was last checked.
+_upstream_stats: dict[str, dict] = {}
+GATEWAY_STARTED_AT = time.time()
 
 
 async def _health_check_loop():
@@ -334,10 +353,19 @@ async def _health_check_loop():
     try:
         while True:
             for key, cfg in DASHBOARDS.items():
+                if cfg.get("merged_into") or cfg.get("parked"):
+                    continue  # retired/parked backend — nothing deployed to probe
                 port = cfg["target"]
+                started = time.time()
+                stats = _upstream_stats.setdefault(key, {})
+                stats["last_check"] = started
                 try:
                     resp = await probe_client.get(f"http://127.0.0.1:{port}/")
-                    _upstream_health[key] = resp.status_code < 500
+                    healthy = resp.status_code < 500
+                    _upstream_health[key] = healthy
+                    if healthy:
+                        stats["latency_ms"] = round((time.time() - started) * 1000, 1)
+                        stats["last_ok"] = time.time()
                 except Exception:
                     _upstream_health[key] = False
             await asyncio.sleep(_HEALTH_CHECK_INTERVAL)
@@ -766,7 +794,10 @@ def ensure_dev_user() -> int:
     else:
         user_id = db.create_user(DEV_USER_EMAIL, DEV_USER_PASSWORD, username="dev", is_admin=True)
     # Auto-subscribe to every dashboard so the dashboards page shows full access.
-    for key in DASHBOARDS.keys():
+    # Alias/merged entries are skipped — access flows through their primary key.
+    for key, _cfg in DASHBOARDS.items():
+        if _cfg.get("access_alias") or _cfg.get("merged_into"):
+            continue
         if not db.has_active_subscription(user_id, key):
             db.upsert_subscription(
                 user_id=user_id,
@@ -837,24 +868,60 @@ _SUB_CACHE_TTL = 120  # seconds
 _SUB_CACHE_MAX = 1000
 
 
+def _entitlement_keys(dashboard_key: str) -> tuple[str, ...]:
+    """All subscription keys whose active subscription unlocks `dashboard_key`.
+
+    Always includes the key itself, plus its "access_alias" (merged products
+    sold under one key) and any retired keys listed in legacy_grants.
+    """
+    keys = [dashboard_key]
+    alias = DASHBOARDS.get(dashboard_key, {}).get("access_alias")
+    if alias:
+        keys.append(alias)
+    keys.extend(LEGACY_GRANTS.get(dashboard_key, ()))
+    return tuple(keys)
+
+
 def cached_has_subscription(user_id: int, dashboard_key: str) -> bool:
-    """Cached wrapper around db.has_active_subscription."""
+    """Cached wrapper around db.has_active_subscription (alias-aware)."""
     now = time.time()
     cache_key = (user_id, dashboard_key)
     entry = _SUB_CACHE.get(cache_key)
     if entry and now - entry[0] < _SUB_CACHE_TTL:
         _SUB_CACHE.move_to_end(cache_key)
         return entry[1]
-    result = db.has_active_subscription(user_id, dashboard_key)
+    result = any(db.has_active_subscription(user_id, k) for k in _entitlement_keys(dashboard_key))
     if len(_SUB_CACHE) >= _SUB_CACHE_MAX:
         _SUB_CACHE.popitem(last=False)
     _SUB_CACHE[cache_key] = (now, result)
     return result
 
 
+def _is_navigable(cfg: dict) -> bool:
+    """Whether a dashboard belongs in nav/switcher/default-dashboard lists.
+
+    Visible dashboards qualify, and so does the hidden secondary half of a
+    visible merged product (access_alias) — e.g. the stock desk that ships
+    with the crypto subscription. Retired (merged_into) entries never do.
+    """
+    if cfg.get("merged_into"):
+        return False
+    if not cfg.get("hidden"):
+        return True
+    alias = cfg.get("access_alias")
+    return bool(alias) and not DASHBOARDS.get(alias, {}).get("hidden", False)
+
+
 def cached_active_dashboard_keys(user_id: int) -> list[str]:
-    """Return list of dashboard keys the user has active access to (cached)."""
-    return [k for k in DASHBOARDS if cached_has_subscription(user_id, k)]
+    """Return list of dashboard keys the user has active access to (cached).
+
+    Only navigable dashboards are returned, so switcher tabs and nav
+    surface the visible line-up (plus merged-product companions).
+    """
+    return [
+        k for k, cfg in DASHBOARDS.items()
+        if _is_navigable(cfg) and cached_has_subscription(user_id, k)
+    ]
 
 
 def invalidate_sub_cache_for_user(user_id: int) -> None:
@@ -1039,7 +1106,7 @@ def _render_landing() -> HTMLResponse:
     # Build feature cards from the configured dashboards so marketing copy
     # always matches what's actually live.
     card_html_parts = []
-    for _key, cfg in DASHBOARDS.items():
+    for _key, cfg in VISIBLE_DASHBOARDS.items():
         card_html_parts.append(f"""
         <div class="landing-dash" style="--accent: {cfg['accent']}">
           <div class="landing-dash-dot"></div>
@@ -1050,7 +1117,7 @@ def _render_landing() -> HTMLResponse:
         """)
     return render_page(
         "landing",
-        dashboard_count=str(len(DASHBOARDS)),
+        dashboard_count=str(len(VISIBLE_DASHBOARDS)),
         dashboard_cards="".join(card_html_parts),
     )
 
@@ -1395,7 +1462,12 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
     req_scheme, req_base, req_port = _request_base_domain(request)
     cards_html = []
     for key, cfg in DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user)
+        # Hidden/merged dashboards never get a hub card — direct URLs and
+        # billing keep working for existing subscribers, but the hub only
+        # advertises the visible product line-up.
+        if cfg.get("merged_into") or cfg.get("hidden"):
+            continue
+        has_sub = _is_sub_active(subs.get(key), is_admin_user) or cached_has_subscription(user["user_id"], key)
         active_badge = (
             '<span class="badge badge-active">Active</span>' if has_sub
             else '<span class="badge badge-locked">Locked</span>'
@@ -1439,7 +1511,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
 
     # ── Build onboarding tour steps ─────────────────────────────────
     tour_steps_html = []
-    for i, (key, cfg) in enumerate(DASHBOARDS.items()):
+    for i, (key, cfg) in enumerate(VISIBLE_DASHBOARDS.items()):
         preview = DASHBOARD_PREVIEWS.get(key, {})
         tagline = html.escape(preview.get("tagline", cfg["description"]))
         features = preview.get("features", [])[:4]
@@ -1470,7 +1542,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             f'</div>'
         )
 
-    total_steps = len(DASHBOARDS) + 2  # welcome + each dashboard + finish
+    total_steps = len(VISIBLE_DASHBOARDS) + 2  # welcome + each dashboard + finish
     tour_html = "".join(tour_steps_html)
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
@@ -1512,6 +1584,10 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
+        # Hidden dashboards aren't offered for sale; keep the row only for
+        # users with an existing subscription record so they can manage it.
+        if cfg.get("hidden") and not s:
+            continue
         is_active = _is_sub_active(s, is_admin_user)
         if is_admin_user and not s:
             status_label = '<span style="color:var(--green)">Active (admin)</span>'
@@ -1523,12 +1599,22 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
             status_label = '<span style="color:var(--red)">Cancelled</span>'
         else:
             status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
-        monthly_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
-        )
-        annual_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
-        )
+        if cfg.get("merged_into"):
+            # Retired product — no new purchases, only cancellation of the
+            # remaining subscription. Access continues via the merged product.
+            absorbed_by = DASHBOARDS.get(cfg["merged_into"], {}).get("display_name", cfg["merged_into"])
+            monthly_btn = (
+                f'<span style="color:var(--text-muted);font-size:12px">Now part of '
+                f'{html.escape(absorbed_by)} — your subscription keeps working there.</span>'
+            )
+            annual_btn = ""
+        else:
+            monthly_btn = (
+                f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
+            )
+            annual_btn = (
+                f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
+            )
         cancel_btn = (
             f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
             if is_active and not is_admin_user else ""
@@ -1594,6 +1680,16 @@ async def billing_action(request: Request, action: str = Form(...)):
     # ── Subscribe to a single dashboard ────────────────────────────────────
     if parts[0] == "sub" and len(parts) == 3:
         _, key, plan = parts
+        if key in DASHBOARDS and DASHBOARDS[key].get("access_alias"):
+            # Alias entries are part of a merged product — sell the real key.
+            return RedirectResponse(
+                f"/billing?dashboard={DASHBOARDS[key]['access_alias']}", status_code=302
+            )
+        if key in DASHBOARDS and DASHBOARDS[key].get("merged_into"):
+            # Retired product — point the buyer at the one that absorbed it.
+            return RedirectResponse(
+                f"/billing?dashboard={DASHBOARDS[key]['merged_into']}", status_code=302
+            )
         if key in DASHBOARDS and plan in ("monthly", "annual"):
             if not STRIPE_SECRET_KEY:
                 # Dev/fallback: placeholder mode (no real payment)
@@ -1679,7 +1775,9 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
     if not STRIPE_SECRET_KEY:
         # Dev/fallback: placeholder mode
         duration = 30 if interval == "monthly" else 365
-        for key in DASHBOARDS:
+        for key, _cfg in DASHBOARDS.items():
+            if _cfg.get("access_alias") or _cfg.get("merged_into"):
+                continue  # access flows through the primary product key
             db.upsert_subscription(
                 user_id=user["user_id"],
                 dashboard_key=key,
@@ -1801,7 +1899,9 @@ async def stripe_webhook(request: Request):
             if interval not in ("monthly", "annual"):
                 interval = "monthly"
             duration = 30 if interval == "monthly" else 365
-            for key in DASHBOARDS:
+            for key, _cfg in DASHBOARDS.items():
+                if _cfg.get("access_alias") or _cfg.get("merged_into"):
+                    continue  # access flows through the primary product key
                 db.upsert_subscription(
                     user_id=user_id,
                     dashboard_key=key,
@@ -2583,8 +2683,9 @@ def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", c
     pw_field = f'<input name="password" type="password" placeholder="Your password" {pw_style} required>'
     user_rows = []
     dash_opts = "".join(
-        f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
+        f'<option value="{k}">{html.escape(cfg["display_name"])}{" (hidden)" if cfg.get("hidden") else ""}</option>'
         for k, cfg in DASHBOARDS.items()
+        if not cfg.get("merged_into")
     )
     sel_style = 'style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto"'
 
@@ -2674,8 +2775,9 @@ def _build_admin_context(new_token_str: str = "", new_superuser_key: str = "", c
                 dash_checks = "".join(
                     f'<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);cursor:pointer">'
                     f'<input type="checkbox" name="dashboard_keys" value="{k}" style="accent-color:var(--green);cursor:pointer">'
-                    f'{html.escape(cfg["display_name"])}</label>'
+                    f'{html.escape(cfg["display_name"])}{" (hidden)" if cfg.get("hidden") else ""}</label>'
                     for k, cfg in DASHBOARDS.items()
+                    if not cfg.get("merged_into")
                 )
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/grant" onclick="event.stopPropagation()" '
@@ -3143,10 +3245,100 @@ async def admin_disable_superuser_key(request: Request, key_id: int):
 async def admin_get_available_dashboards(request: Request):
     user = _require_admin_user(request)
     dashboards = [
-        {"key": key, "display_name": cfg.get("display_name", key)}
+        {"key": key, "display_name": cfg.get("display_name", key), "hidden": bool(cfg.get("hidden"))}
         for key, cfg in DASHBOARDS.items()
+        if not cfg.get("merged_into")
     ]
     return JSONResponse({"dashboards": dashboards})
+
+
+# ── Fleet dashboard ────────────────────────────────────────────────────────────
+# Admin ops view of the whole suite: which services are live / parked / merged,
+# live health + latency, subscriber attachment per product, and the lasting
+# effects of the storefront trim (redirects captured from retired subdomains,
+# visits to parked dashboards, subscriptions still attached to parked
+# products).
+
+
+@app.get("/admin/fleet", response_class=HTMLResponse)
+async def admin_fleet_page(request: Request):
+    user = _require_admin_user(request)
+    return render_page(
+        "fleet", request=request,
+        email=user["email"], username=user.get("username", user["email"]),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+    )
+
+
+@app.get("/admin/api/fleet")
+async def admin_api_fleet(request: Request):
+    _require_admin_user(request)
+    counters = db.get_fleet_counters()
+    subs = db.active_subscription_counts()
+    now = time.time()
+
+    services = []
+    for key, cfg in DASHBOARDS.items():
+        merged_into = cfg.get("merged_into")
+        parked = bool(cfg.get("parked"))
+        hidden = bool(cfg.get("hidden"))
+        alias = cfg.get("access_alias")
+        if merged_into:
+            state = "merged"
+        elif parked:
+            state = "parked"
+        elif hidden and alias:
+            state = "companion"  # hidden half of a visible merged product
+        elif hidden:
+            state = "delisted"  # hidden from storefront but still deployed
+        else:
+            state = "live"
+        stats = _upstream_stats.get(key, {})
+        sub_info = subs.get(key, {"total": 0, "monthly": 0, "annual": 0})
+        run_rate = (sub_info["monthly"] * cfg.get("monthly_cents", 0)
+                    + sub_info["annual"] * cfg.get("annual_cents", 0) / 12)
+        price_id = cfg.get("stripe_price_monthly") or ""
+        services.append({
+            "key": key,
+            "display_name": cfg.get("display_name", key),
+            "subdomain": cfg.get("subdomain"),
+            "port": cfg.get("target"),
+            "accent": cfg.get("accent", "#6366f1"),
+            "state": state,
+            "listed": not hidden,
+            "merged_into": merged_into,
+            "access_alias": alias,
+            "healthy": _upstream_health.get(key) if state not in ("merged", "parked") else None,
+            "latency_ms": stats.get("latency_ms"),
+            "last_ok": stats.get("last_ok"),
+            "subs": sub_info,
+            "run_rate_cents": round(run_rate),
+            "stripe_ready": price_id.startswith("price_"),
+            "parked_visits": counters.get(f"parked_visit:{key}", {}).get("count", 0),
+            "legacy_redirects": counters.get(f"legacy_redirect:{cfg.get('subdomain')}", {}).get("count", 0),
+        })
+
+    return JSONResponse({
+        "services": services,
+        "totals": {
+            "products_listed": len(VISIBLE_DASHBOARDS),
+            "live_services": sum(1 for s in services if s["state"] not in ("merged", "parked")),
+            "parked": sum(1 for s in services if s["state"] == "parked"),
+            "merged": sum(1 for s in services if s["state"] == "merged"),
+            "active_subs": sum(s["subs"]["total"] for s in services),
+            "run_rate_cents": sum(s["run_rate_cents"] for s in services),
+            "parked_subs": sum(s["subs"]["total"] for s in services if s["state"] == "parked"),
+            "legacy_redirects": sum(v["count"] for k, v in counters.items() if k.startswith("legacy_redirect:")),
+            "parked_visits": sum(v["count"] for k, v in counters.items() if k.startswith("parked_visit:")),
+            "sse_connections": active_connection_count(),
+        },
+        "gateway": {
+            "started_at": GATEWAY_STARTED_AT,
+            "uptime_seconds": round(now - GATEWAY_STARTED_AT),
+            "health_interval_s": _HEALTH_CHECK_INTERVAL,
+        },
+        "generated_at": now,
+    })
 
 
 @app.post("/admin/api/templates")
@@ -3566,7 +3758,9 @@ async def settings_page(request: Request, saved: Optional[str] = None):
 
     option_html = ['<option value="">Always show the dashboards hub</option>']
     for key, cfg in DASHBOARDS.items():
-        has_access = _is_sub_active(subs.get(key), is_admin)
+        if not _is_navigable(cfg):
+            continue  # only the visible line-up makes sense as a default
+        has_access = _is_sub_active(subs.get(key), is_admin) or cached_has_subscription(user["user_id"], key)
         if not has_access:
             continue
         selected = " selected" if key == current_pref else ""
@@ -4335,6 +4529,43 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
 # ── Reverse proxy for dashboard subdomains ────────────────────────────────────
 
 
+def _bump_fleet_counter_safe(key: str) -> None:
+    """Persist a fleet tally without ever letting a DB hiccup break a request."""
+    try:
+        db.bump_fleet_counter(key)
+    except Exception as e:
+        log.debug("fleet counter %s not recorded: %s", key, e)
+
+
+def _render_parked_page(dash_cfg: dict, apex: str) -> str:
+    """Notice page for dashboards whose services are intentionally stopped."""
+    name = html.escape(dash_cfg.get("display_name", "This dashboard"))
+    accent = dash_cfg.get("accent", "#6366f1")
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — parked</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0b0e14; color:#e6e8ee; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
+  .card {{ max-width:430px; padding:40px 44px; background:#11151f; border:1px solid #232938;
+          border-radius:16px; text-align:center; }}
+  .dot {{ width:12px; height:12px; border-radius:50%; background:{accent}; display:inline-block; margin-bottom:14px; }}
+  h1 {{ font-size:20px; margin:0 0 10px; }}
+  p {{ font-size:14px; line-height:1.65; color:#9aa3b5; margin:0 0 22px; }}
+  a {{ display:inline-block; padding:10px 22px; background:{accent}; color:#fff; border-radius:8px;
+      text-decoration:none; font-size:14px; font-weight:600; }}
+</style></head><body>
+<div class="card">
+  <span class="dot"></span>
+  <h1>{name} is parked</h1>
+  <p>This dashboard has been taken out of the active line-up and its service is
+  not currently running. Any subscription you hold can be managed from billing,
+  and the live products are one click away.</p>
+  <a href="{apex}/dashboards">Go to your dashboards</a>
+</div>
+</body></html>"""
+
+
 async def proxy_request(request: Request, forced_path: Optional[str] = None) -> Response:
     """Reverse-proxy the current request to the backend matching its subdomain."""
     sub = get_subdomain(request)
@@ -4344,11 +4575,37 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     scheme, base, port_suffix = _request_base_domain(request)
     apex = f"{scheme}://{base}{port_suffix}"
 
+    if not key and sub in LEGACY_SUBDOMAIN_REDIRECTS:
+        # Retired subdomain whose dashboard was merged into another one.
+        target_key = LEGACY_SUBDOMAIN_REDIRECTS[sub]
+        target_cfg = DASHBOARDS.get(target_key)
+        if target_cfg:
+            _bump_fleet_counter_safe(f"legacy_redirect:{sub}")
+            return RedirectResponse(
+                f"{scheme}://{target_cfg['subdomain']}.{base}{port_suffix}/", status_code=301
+            )
+
     if not key:
         # Unknown subdomain — redirect to apex.
         return RedirectResponse(f"{apex}/", status_code=302)
 
     dash_cfg = DASHBOARDS[key]
+
+    merged_into = dash_cfg.get("merged_into")
+    if merged_into and merged_into in DASHBOARDS:
+        # This dashboard was absorbed by another one — send visitors there.
+        _bump_fleet_counter_safe(f"legacy_redirect:{sub}")
+        target_cfg = DASHBOARDS[merged_into]
+        return RedirectResponse(
+            f"{scheme}://{target_cfg['subdomain']}.{base}{port_suffix}/", status_code=301
+        )
+
+    if dash_cfg.get("parked"):
+        # Service intentionally not deployed. Show a parked notice instead of
+        # the circuit breaker's "recovering soon" lie, and tally the visit so
+        # the fleet dashboard shows whether demand for it still exists.
+        _bump_fleet_counter_safe(f"parked_visit:{key}")
+        return HTMLResponse(_render_parked_page(dash_cfg, apex), status_code=200)
 
     # Check for superuser key (investor mode)
     superuser_key = _get_superuser_key_from_request(request)

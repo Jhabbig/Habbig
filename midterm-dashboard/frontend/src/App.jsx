@@ -169,6 +169,47 @@ function ProtectedRoute({ children, tier }) {
   return children
 }
 
+function NotFound() {
+  return (
+    <div className="text-center py-24">
+      <div className="text-5xl font-semibold text-stone-300 mb-3">404</div>
+      <p className="text-stone-500 mb-6">That page doesn't exist.</p>
+      <Link to="/" className="btn-primary text-sm">Back to the dashboard</Link>
+    </div>
+  )
+}
+
+// Catches render errors anywhere in the page tree so a bad payload on one
+// page degrades to a message instead of a blank screen.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Unhandled render error:', error, info)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="text-center py-24">
+          <div className="text-2xl font-semibold text-stone-700 mb-3">Something went wrong</div>
+          <p className="text-stone-500 mb-6 text-sm">The page hit an unexpected error. Reloading usually fixes it.</p>
+          <button onClick={() => { this.setState({ error: null }); window.location.reload() }}
+            className="btn-primary text-sm">Reload</button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // Embed routes are rendered without the nav shell so they iframe cleanly
 // into newsroom articles. We detect the embed prefix and short-circuit
 // the layout chrome.
@@ -202,23 +243,26 @@ export default function App() {
       <div className="min-h-screen bg-stone-50">
         <Nav />
         <main className="max-w-6xl mx-auto px-6 py-8">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/races" element={<Races />} />
-            <Route path="/race/:raceKey" element={<RaceDetail />} />
-            <Route path="/divergence" element={<Divergence />} />
-            <Route path="/world" element={<WorldElections />} />
-            <Route path="/historical" element={<Historical />} />
-            <Route path="/backtest" element={<Backtest />} />
-            <Route path="/map" element={<MapPage />} />
-            <Route path="/election-night" element={<ElectionNight />} />
-            <Route path="/methodology" element={<Methodology />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute tier="admin"><AdminDashboard /></ProtectedRoute>} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/races" element={<Races />} />
+              <Route path="/race/:raceKey" element={<RaceDetail />} />
+              <Route path="/divergence" element={<Divergence />} />
+              <Route path="/world" element={<WorldElections />} />
+              <Route path="/historical" element={<Historical />} />
+              <Route path="/backtest" element={<Backtest />} />
+              <Route path="/map" element={<MapPage />} />
+              <Route path="/election-night" element={<ElectionNight />} />
+              <Route path="/methodology" element={<Methodology />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedRoute tier="admin"><AdminDashboard /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </ErrorBoundary>
         </main>
         <footer className="border-t border-stone-200/60 mt-16 py-8 text-center text-stone-400 text-sm">
           <span className="text-stone-500">MidtermEdge</span> &middot; Prediction market data for informational purposes only.

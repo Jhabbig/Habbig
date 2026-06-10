@@ -110,7 +110,7 @@ export default function Backtest() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-5">
               <h2 className="text-sm font-semibold text-stone-800 mb-3">Brier score</h2>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-stone-400">
                     <th className="font-normal pb-2">Source</th>
@@ -148,12 +148,12 @@ export default function Backtest() {
                       )
                     })}
                 </tbody>
-              </table>
+              </table></div>
             </div>
 
             <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-5">
               <h2 className="text-sm font-semibold text-stone-800 mb-3">Coverage</h2>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-stone-400">
                     <th className="font-normal pb-2">Source</th>
@@ -178,7 +178,7 @@ export default function Backtest() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <p className="text-xs text-stone-400 mt-3">
                 Total snapshots in window: {data.snapshots_total}
               </p>
@@ -275,7 +275,7 @@ export default function Backtest() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-                <table className="w-full text-xs mt-4">
+                <div className="overflow-x-auto"><table className="w-full text-xs mt-4">
                   <thead>
                     <tr className="text-left text-stone-400">
                       <th className="font-normal pb-2">Source</th>
@@ -301,7 +301,7 @@ export default function Backtest() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </>
             )}
           </div>
@@ -336,7 +336,7 @@ function CalibrationPanel({ calib }) {
         For each forecast-probability bucket, what fraction of races actually resolved D.
         A perfectly-calibrated forecast has realized rate ≈ bucket centre.
       </p>
-      <table className="w-full text-xs">
+      <div className="overflow-x-auto"><table className="w-full text-xs">
         <thead>
           <tr className="text-left text-stone-400">
             <th className="font-normal pb-2">Bucket</th>
@@ -390,7 +390,7 @@ function CalibrationPanel({ calib }) {
             )
           })}
         </tbody>
-      </table>
+      </table></div>
       {calib.over_time?.windows?.length > 1 && (
         <div className="mt-4 pt-3 border-t border-stone-100">
           <div className="text-xs text-stone-400 mb-2">Brier score over time (lower is better)</div>

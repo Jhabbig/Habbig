@@ -54,13 +54,22 @@ cp crypto-dashboard/.env.example crypto-dashboard/.env
 | Directory | Port | Description |
 |-----------|------|-------------|
 | `gateway/` | 7000 | Central auth + reverse proxy |
-| `crypto-dashboard/` | 8000 | BTC/crypto signals + ML |
-| `stock-dashboard/` | 8050 | Stock market dashboard |
+| `crypto-dashboard/` | 8000 | Market Edge: BTC/crypto signals + ML (paired with stock-dashboard) |
+| `stock-dashboard/` | 8050 | Market Edge: StockSignal stock desk (paired with crypto-dashboard) |
 | `midterm-dashboard/` | 8051 | Election predictions |
-| `top-traders-dashboard/` | 8052 | Whale tracking |
-| `polymarket_weather_dashboard/` | 5050 | Weather bot UI |
-| `sports-dashboard/` | 8888 | Sports arbitrage |
-| `world-state-dashboard/` | 7050 | Geopolitical feed |
+| `top-traders-dashboard/` | 8052 | Whale tracking (hidden from storefront) |
+| `polymarket_weather_dashboard/` | 5050 | Weather, Climate & Disasters (climate + disasters merged in) |
+| `sports-dashboard/` | 8888 | Sports arbitrage (hidden from storefront) |
+| `world-state-dashboard/` | 7050 | Geopolitical feed (hidden from storefront) |
+
+The storefront currently lists three products — Weather, Climate & Disasters;
+Midterm Predictor; and Market Edge (stocks + crypto under one subscription).
+Every other dashboard is **parked**: delisted via `"hidden": true` and not
+deployed via `"parked": true` in `gateway/config.json` — compose/start/deploy
+scripts skip them and their subdomains show a parked notice. The admin Fleet
+dashboard (`/admin/fleet`) tracks all of this live. `climate-dashboard/` and
+`disasters-dashboard/` are legacy copies of code that now lives inside the
+weather service.
 
 ## Branch workflow
 

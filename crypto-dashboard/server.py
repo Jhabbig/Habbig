@@ -1017,6 +1017,23 @@ async def favicon_ico():
     return Response(status_code=404)
 
 
+def _companion_stocks_url(request: Request) -> str:
+    """URL of the StockSignal stock desk — the other half of the merged
+    Market Edge product (one subscription unlocks both apps).
+
+    Behind the gateway the apps live on sibling subdomains
+    (crypto.<domain> ⇄ stocks.<domain>), so swap the prefix and keep any
+    port. Outside the gateway fall back to the local stock-dashboard port.
+    """
+    host = request.headers.get("host", "")
+    name, _, port = host.partition(":")
+    if name.lower().startswith("crypto."):
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+        stocks_host = "stocks." + name[len("crypto."):]
+        return f"{scheme}://{stocks_host}{':' + port if port else ''}"
+    return "http://localhost:8050"
+
+
 @app.get("/")
 async def root(request: Request):
     """Serve the live crypto dashboard."""
@@ -1074,6 +1091,7 @@ async def root(request: Request):
         if has_creds else
         '<a href="/settings#polymarket" style="color:var(--yellow);font-size:0.7em;text-decoration:none;" title="Connect Polymarket wallet">&#9888; CONNECT WALLET</a>'
     )
+    stocks_url = _companion_stocks_url(request)
     nav_html = f"""
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:8px 0;border-bottom:1px solid var(--border);">
   <div style="display:flex;gap:12px;align-items:center;font-size:0.8em;">
@@ -1083,6 +1101,7 @@ async def root(request: Request):
   </div>
   <div style="display:flex;gap:12px;align-items:center;font-size:0.8em;">
     <button onclick="dashTradePrompt()" style="background:#a371f7;color:#000;border:none;padding:5px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.85em;">Trade Polymarket</button>
+    <a href="{stocks_url}" style="color:var(--yellow);text-decoration:none;font-weight:700;" title="StockSignal stock desk — included in your Market Edge subscription">&#8646; Stocks</a>
     <a href="/kalshi" style="color:var(--muted);text-decoration:none;">Kalshi</a>
     <a href="/trade" style="color:var(--blue);text-decoration:none;font-weight:600;">All Markets</a>
     <a href="/polybot" style="color:var(--muted);text-decoration:none;">Bot</a>
