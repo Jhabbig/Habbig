@@ -1494,6 +1494,9 @@ _PUBLIC_PATHS = frozenset({
     # page and the destination every dashboard-teardown 302 points at.
     # It must clear the gate so the redirect can't loop on a gated host.
     "/markets/active",
+    # Its read-only accuracy/proof API — same single-page surface, must be
+    # gate-exempt or the page's fetch 302s to /gate and hangs.
+    "/api/analytics/prediction-accuracy",
     # Token-first auth entry points (public because they bootstrap the flow)
     "/register", "/login", "/signup",
     "/auth/register", "/auth/login", "/auth/logout",
