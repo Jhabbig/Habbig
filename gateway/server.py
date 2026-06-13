@@ -1497,6 +1497,11 @@ _PUBLIC_PATHS = frozenset({
     # Its read-only accuracy/proof API — same single-page surface, must be
     # gate-exempt or the page's fetch 302s to /gate and hangs.
     "/api/analytics/prediction-accuracy",
+    # Scraper service → gateway ingest. Server-to-server with no gate cookie;
+    # protected by its own Authorization: Bearer <SCRAPER_API_KEY> handler
+    # (scraper_routes.py). Must be gate-exempt or the gate 302s it to /gate
+    # before the Bearer check ever runs.
+    "/api/scraper/ingest",
     # Token-first auth entry points (public because they bootstrap the flow)
     "/register", "/login", "/signup",
     "/auth/register", "/auth/login", "/auth/logout",
