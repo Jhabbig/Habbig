@@ -495,6 +495,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.exception("job queue start failed: %s", e)
 
+    # Midterm market-price snapshot job (jobs/market_price_jobs.py). It is
+    # NOT listed in jobs/__init__.py, so its module-level register_cron()
+    # would never fire and the 5-minute snapshot cron would never schedule.
+    # Import it here — before register_all() below snapshots cron_jobs —
+    # so its register_cron lands in the registry in time to be wired into
+    # APScheduler. Defensive: a missing/broken module must not abort startup.
+    try:
+        import jobs.market_price_jobs  # noqa: F401 — side-effect: register_cron
+    except Exception as e:  # pragma: no cover
+        log.warning("market_price_jobs import failed: %s", e)
+
     # Start the APScheduler-backed recurring scheduler. Separate concern
     # from ``jobs/backend.py``: this drives the *scheduled* recurring
     # jobs (health checks, weekly reports, etc.) and writes ``job_runs``.
@@ -1237,6 +1248,13 @@ _CSRF_EXEMPT_POSTS = frozenset({
     # and a strict SUBPRODUCTS slug whitelist. See
     # subproduct_signup_routes.subproduct_signup for the full posture.
     "/subproduct-signup",
+    # Scraper service → main gateway push of freshly scraped posts
+    # (scraper_routes.py). Authenticated server-to-server via the
+    # Authorization: Bearer <SCRAPER_API_KEY> header (constant-time compare,
+    # fails closed). The scraper runs as a separate process/host with no
+    # browser session or CSRF cookie, so double-submit CSRF can't apply; a
+    # forged cross-origin request can't read or replay the Bearer secret.
+    "/api/scraper/ingest",
 })
 
 # Prefix-matched POST exemptions for endpoints with dynamic path segments.
@@ -1472,6 +1490,10 @@ def _csrf_field(request) -> str:
 # Routes that are fully public (no gate cookie needed)
 _PUBLIC_PATHS = frozenset({
     "/", "/gate", "/health",
+    # Single-page pivot (2026-06-09): /markets/active is the one product
+    # page and the destination every dashboard-teardown 302 points at.
+    # It must clear the gate so the redirect can't loop on a gated host.
+    "/markets/active",
     # Token-first auth entry points (public because they bootstrap the flow)
     "/register", "/login", "/signup",
     "/auth/register", "/auth/login", "/auth/logout",
@@ -2151,6 +2173,60 @@ def get_subdomain(request: Request) -> Optional[str]:
         return host[: -len(".localhost")]
     # Unknown host — treat as apex
     return ""
+
+
+# ── 2026-06-09 founder-meeting pivot: single-page teardown ──────────────
+#
+# The dashboard *system* is being removed in favour of ONE main page at
+# /markets/active (US-politics / midterm only). This teardown is REVERSIBLE
+# — no proxy/landing/switcher code is deleted; we just stop ROUTING into it
+# and bounce every legacy surface to the single page with a 302.
+#
+# _TEARDOWN_SUBDOMAINS: every sub-brand subdomain that used to reverse-proxy
+# to its own dashboard. These are the *subdomain* labels (config "subdomain"
+# values, e.g. "cb", "traders", "health"), NOT the internal dashboard keys.
+# midterm is INCLUDED on purpose: the single page is the product now, so even
+# midterm.<apex> bounces to the apex /markets/active (per the meeting notes).
+# Built from the subproduct catalogue so it can't silently drift from the
+# real subdomain list; falls back to a hardcoded set if the import fails.
+SINGLE_PAGE_PATH = "/markets/active"
+
+try:
+    from subproduct import SUBPRODUCTS as _TEARDOWN_SP  # noqa: E402
+    _TEARDOWN_SUBDOMAINS: frozenset[str] = frozenset(_TEARDOWN_SP.keys())
+except Exception:  # pragma: no cover - defensive
+    _TEARDOWN_SUBDOMAINS = frozenset({
+        "sports", "weather", "world", "crypto", "midterm", "traders",
+        "whale", "voters", "climate", "disasters", "cb", "health", "love",
+    })
+
+# /dashboard/<slug> paths to bounce. Same slug universe as the subdomains.
+_TEARDOWN_DASHBOARD_SLUGS: frozenset[str] = _TEARDOWN_SUBDOMAINS
+
+
+def _is_teardown_subdomain(request: Request) -> bool:
+    """True if this request arrived on a torn-down sub-brand subdomain.
+
+    Used by the root/catch-all/proxy handlers to 302 sub-brand hosts to the
+    single page instead of proxying to a (now decommissioned) dashboard.
+    """
+    sub = get_subdomain(request)
+    return bool(sub) and sub in _TEARDOWN_SUBDOMAINS
+
+
+def _single_page_redirect(request: Request) -> RedirectResponse:
+    """302 to the apex single page the visitor's host belongs to.
+
+    Cross-host safe: always lands on the apex the request came from
+    (narve.ai / habbig.com) so a sub-brand host doesn't pin the user on
+    a dead subdomain. Falls back to a relative redirect for apex/local
+    requests where there's no foreign host to escape.
+    """
+    apex = _request_apex(request)
+    host = _request_host(request)
+    if apex and host and host != apex:
+        return RedirectResponse(f"https://{apex}{SINGLE_PAGE_PATH}", status_code=302)
+    return RedirectResponse(SINGLE_PAGE_PATH, status_code=302)
 
 
 def is_local_host(request: Request) -> bool:
@@ -3426,9 +3502,11 @@ async def prerelease_page(request: Request):
     """
     sub = get_subdomain(request)
     if sub:
-        from subproduct import SUBPRODUCTS as _SP
-        if sub in _SP and current_user(request) is None:
-            return _render_subproduct_landing(request, sub)
+        # 2026-06-09 pivot: sub-brand subdomains are torn down. Bounce any
+        # request on a sub-brand host to the apex single page instead of
+        # rendering the branded landing or proxying to the dead dashboard.
+        if sub in _TEARDOWN_SUBDOMAINS:
+            return _single_page_redirect(request)
         return await proxy_request(request, "/")
     return render_page("prerelease", request=request)
 
@@ -4299,6 +4377,10 @@ def _subscription_pause_status(user_id: int, now_ts: int) -> dict:
 
 @app.get("/dashboards", response_class=HTMLResponse)
 async def my_dashboards(request: Request):
+    # 2026-06-09 pivot: the dashboard hub is retired. /dashboards now 302s
+    # to the single product page regardless of host (apex or sub-brand).
+    # The original hub renderer below is kept intact for reversibility.
+    return _single_page_redirect(request)
     sub = get_subdomain(request)
     if sub:
         return await proxy_request(request, "/dashboards")
@@ -6708,6 +6790,70 @@ except Exception as _exc:  # pragma: no cover
     log.exception("market_routes.register failed: %s", _exc)
 
 
+# ── Single-page pivot: /markets/active + prediction-accuracy API ────────
+#
+# 2026-06-09 founder-meeting pivot. markets_routes.py serves the ONE main
+# page (/markets/active) that replaces the whole dashboard hub, plus
+# /api/analytics/prediction-accuracy. /markets/active is added to
+# _PUBLIC_PATHS above so it stays reachable as the post-teardown redirect
+# target (a redirect into a gate-blocked page would loop).
+
+try:
+    import markets_routes as _markets_routes  # noqa: E402
+    _markets_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("markets_routes.register failed: %s", _exc)
+
+
+# ── Scraper ingest endpoint ─────────────────────────────────────────────
+#
+# scraper_routes.py mounts POST /api/scraper/ingest (Bearer SCRAPER_API_KEY,
+# already CSRF-exempt). Receives RawPost batches from the scraper service.
+
+try:
+    import scraper_routes as _scraper_routes  # noqa: E402
+    _scraper_routes.register(app)
+except Exception as _exc:  # pragma: no cover
+    log.exception("scraper_routes.register failed: %s", _exc)
+
+
+# ── 2026-06-09 pivot: /dashboard/<slug> teardown redirects ──────────────
+#
+# The per-subproduct dashboard shells (/dashboard/sports, /dashboard/midterm,
+# …) are retired in favour of the single /markets/active page. We register
+# an explicit 302 for each torn-down slug HERE — before
+# subproduct_dashboard_routes.register() runs further below — so FastAPI's
+# first-match-wins ordering routes the legacy slug to the redirect instead
+# of the (still-on-disk, reversible) dashboard shell. Literal per-slug
+# paths only, so real apex routes like /dashboard/backtest,
+# /dashboard/insider, /dashboard/models, /dashboard/best-bets are untouched.
+def _install_dashboard_teardown_redirects() -> None:
+    def _make_handler():
+        async def _legacy_dashboard_redirect(request: Request):
+            return RedirectResponse(SINGLE_PAGE_PATH, status_code=302)
+        return _legacy_dashboard_redirect
+
+    for _slug in sorted(_TEARDOWN_DASHBOARD_SLUGS):
+        app.add_api_route(
+            f"/dashboard/{_slug}",
+            _make_handler(),
+            methods=["GET"],
+            include_in_schema=False,
+        )
+        app.add_api_route(
+            f"/dashboard/{_slug}/{{tab}}",
+            _make_handler(),
+            methods=["GET"],
+            include_in_schema=False,
+        )
+
+
+try:
+    _install_dashboard_teardown_redirects()
+except Exception as _exc:  # pragma: no cover
+    log.exception("dashboard teardown redirects install failed: %s", _exc)
+
+
 # ── Public profile (/u/{handle}) + opt-in settings + follow graph ──
 #
 # Routes live in profile_routes.py. /u/ is whitelisted in
@@ -8109,6 +8255,13 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
 
 async def proxy_request(request: Request, forced_path: Optional[str] = None) -> Response:
     """Reverse-proxy the current request to the backend matching its subdomain."""
+    # 2026-06-09 pivot: every sub-brand subdomain is torn down. Bounce the
+    # request to the apex single page BEFORE any proxy/auth logic. This
+    # covers midterm.<apex> too — the single page is the product now, so
+    # even the one surviving config entry's subdomain does not proxy.
+    # The proxy machinery below is intentionally left intact (reversible).
+    if _is_teardown_subdomain(request):
+        return _single_page_redirect(request)
     # Route everything back to the apex the visitor actually came from
     # (habbig.com / narve.ai / …). Falling back to DOMAIN only protects
     # against entirely unknown hosts.
@@ -8739,8 +8892,16 @@ except Exception as _exc:  # pragma: no cover
 # ``register(app)`` function so server.py stays free of business logic.
 # Same defensive try/except pattern as the rest of this section — one
 # missing module should never take the whole gateway down.
+#
+# 2026-06-09 pivot: "subproduct_signup_routes" is INTENTIONALLY NOT
+# registered — the per-sub-brand signup flow is part of the retired
+# dashboard system (single-page pivot). The module stays on disk so this
+# is reversible; just un-comment the line below to bring it back. Its
+# routes (e.g. /signup/<slug>) now fall through to the catch-all → 404.
+# subproduct_dashboard_routes IS still registered, but its /dashboard/<slug>
+# shells are dead-shadowed by the teardown redirects installed earlier.
 for _mod_name in (
-    "subproduct_signup_routes",
+    # "subproduct_signup_routes",  # disabled: dashboard-system teardown
     "subproduct_dashboard_routes",
     "portfolio.routes",
     "extension_routes",

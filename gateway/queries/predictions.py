@@ -64,7 +64,40 @@ def create_prediction(
             (source_handle, market_id, category, direction,
              predicted_probability, content, source_url, now),
         )
-        return cur.lastrowid
+        prediction_id = cur.lastrowid
+        # Stamp the contemporaneous market price (column added by migration
+        # 202). The backtester scores edge/P&L against the price *as of* when
+        # the prediction was made. market_snapshots is keyed on market_slug,
+        # so we match this prediction's market_id against snapshots.market_slug,
+        # preferring the newest snapshot at or before extracted_at, falling
+        # back to the newest snapshot otherwise. If no snapshot exists (or any
+        # error occurs), leave market_price_at_prediction NULL. This is
+        # additive — a failure here must never break prediction creation.
+        if market_id:
+            try:
+                snap = c.execute(
+                    "SELECT yes_price FROM market_snapshots "
+                    "WHERE market_slug = ? AND snapshotted_at <= ? "
+                    "ORDER BY snapshotted_at DESC LIMIT 1",
+                    (market_id, now),
+                ).fetchone()
+                if snap is None:
+                    snap = c.execute(
+                        "SELECT yes_price FROM market_snapshots "
+                        "WHERE market_slug = ? "
+                        "ORDER BY snapshotted_at DESC LIMIT 1",
+                        (market_id,),
+                    ).fetchone()
+                if snap is not None and snap["yes_price"] is not None:
+                    c.execute(
+                        "UPDATE predictions SET market_price_at_prediction = ? "
+                        "WHERE id = ?",
+                        (snap["yes_price"], prediction_id),
+                    )
+            except Exception:
+                # Never let snapshot stamping break prediction creation.
+                pass
+        return prediction_id
 
 
 def get_unresolved_market_ids() -> list[str]:
@@ -97,7 +130,28 @@ def resolve_predictions_for_market(market_id: str, outcome_yes: bool) -> int:
             "WHERE market_id = ? AND resolved = 0",
             (now, 1 if outcome_yes else 0, 0 if outcome_yes else 1, market_id),
         )
-        return c.execute("SELECT changes()").fetchone()[0]
+        changed = c.execute("SELECT changes()").fetchone()[0]
+        # Dual-write: append a durable audit row to market_resolutions so the
+        # backtest has provenance for *when*/*which outcome*/*how* a market
+        # settled. This is additive — a failure here must NEVER break the
+        # primary resolution above (which has already committed the flips on
+        # predictions). The market_resolutions table is created by migration
+        # 201; columns: market_id, market_slug, resolved_outcome, resolved_at,
+        # resolved_via, source_data, created_at. We only have market_id +
+        # outcome at this call site, so market_slug / source_data stay NULL.
+        try:
+            c.execute(
+                "INSERT INTO market_resolutions "
+                "(market_id, market_slug, resolved_outcome, resolved_at, "
+                " resolved_via, source_data, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (market_id, None, 1 if outcome_yes else 0, now,
+                 "cron", None, now),
+            )
+        except Exception:
+            # Never let audit-row failure break resolution.
+            pass
+        return changed
 
 
 def get_predictions_for_market(market_id: str) -> list[sqlite3.Row]:

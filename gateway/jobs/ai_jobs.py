@@ -47,60 +47,79 @@ async def run_extract_for_recent_posts(
     posts: list[dict] | None = None,
     limit: int = EXTRACTION_CHUNK_SIZE,
 ) -> dict[str, Any]:
-    """Run Claude extraction on a batch of freshly-scraped posts.
+    """Drain freshly-scraped posts into the extraction pipeline.
 
-    Accepts a list of {content, author_handle, post_id, source_url?}
-    dicts via the *posts* argument. The pipeline job calls us directly
-    with the batch the scraper just transmitted — keeping the ingest
-    shape decoupled from any specific raw-post table name in the gateway
-    schema.
+    Reality of the ingest path (verified, not assumed): the standalone
+    scraper service keeps its raw posts in its OWN local SQLite DB
+    (``scraper/storage/db.py`` -> ``SCRAPER_DB_PATH``) and pushes batches
+    over HTTP to ``POST /api/scraper/ingest`` (``scraper_routes.py``).
+    That endpoint extracts **synchronously** — it awaits
+    ``queries.scraper_ingest.ingest_and_extract`` -> per post
+    ``pipeline.extract_step.process_post`` — and writes predictions
+    inline before returning 200 to the scraper.
 
-    Each post is passed through `extract_predictions_from_post`, which
-    is cache-aware — re-runs are cheap. Whenever extraction confirms a
-    prediction, a `predictions` row is created so the rest of the
-    credibility pipeline picks it up.
+    Consequence: there is NO gateway-side store of "recently-ingested,
+    not-yet-extracted" posts for this cron to query. The main DB has no
+    ``raw_posts`` / ``social_posts`` table (the only ``raw_posts`` table
+    lives in the scraper's local DB, on a different process/host). So
+    when this job fires on its cron with no explicit batch, the honest
+    answer is: there is nothing to do. We log that and return rather than
+    pretending to have processed work.
+
+    The job still accepts an explicit ``posts`` batch (a list of
+    ``{content, author_handle, post_id?, source_url?}`` dicts) so a direct
+    caller can drive extraction on demand. When given one, we route each
+    post through the SAME entrypoint the live ingest uses —
+    ``pipeline.extract_step.process_post`` — so the behaviour is identical
+    to the synchronous ingest path (no divergent second extractor).
 
     Returns a counter dict for the admin AI-usage panel.
     """
-    import db
-    from intelligence.prediction_extractor import extract_predictions_from_post
-
     batch = list(posts or [])[: int(limit)]
 
-    created = 0
-    cache_hits = 0
-    skipped_not_prediction = 0
+    if not batch:
+        # No gateway-side queue of unprocessed posts exists; ingest already
+        # extracted everything inline. Nothing for the cron to do.
+        result = {
+            "considered": 0,
+            "predictions_written": 0,
+            "errors": 0,
+            "noop_reason": "no_explicit_batch_and_ingest_extracts_inline",
+        }
+        log.info("extractor pass: nothing to do (%s)", result)
+        return result
+
+    # Explicit batch supplied — extract via the canonical ingest entrypoint.
+    from pipeline.extract_step import process_post
+
+    considered = 0
+    predictions_written = 0
+    errors = 0
     for post in batch:
         content = post.get("content") or ""
         handle = post.get("author_handle") or ""
         if not content.strip() or not handle:
             continue
-        payload = await extract_predictions_from_post({
-            "post_id": post.get("post_id") or post.get("id"),
-            "content": content,
-            "author_handle": handle,
-        })
-        # generated_at older than ~5s means we served this from cache.
-        if payload.get("generated_at", 0) < int(time.time()) - 5:
-            cache_hits += 1
-        if not payload.get("is_prediction"):
-            skipped_not_prediction += 1
-            continue
-        db.create_prediction(
-            source_handle=payload.get("source_handle") or handle,
-            content=payload.get("claim") or content,
-            category=payload.get("category") or "other",
-            direction=(payload.get("direction") or "").upper() or None,
-            predicted_probability=payload.get("explicit_probability"),
-            source_url=post.get("source_url"),
-        )
-        created += 1
+        considered += 1
+        try:
+            r = await process_post({
+                "post_id": post.get("post_id") or post.get("id"),
+                "content": content,
+                "author_handle": handle,
+                "source_url": post.get("source_url"),
+            })
+            predictions_written += int(r.get("predictions_written", 0) or 0)
+        except Exception:  # one bad post must not fail the batch
+            log.exception(
+                "extraction failed for post %s",
+                post.get("post_id") or post.get("id"),
+            )
+            errors += 1
 
     result = {
-        "considered": len(batch),
-        "predictions_created": created,
-        "cache_hits": cache_hits,
-        "skipped_not_prediction": skipped_not_prediction,
+        "considered": considered,
+        "predictions_written": predictions_written,
+        "errors": errors,
     }
     log.info("extractor pass: %s", result)
     return result
