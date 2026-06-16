@@ -1502,11 +1502,13 @@ _PUBLIC_PATHS = frozenset({
     # (scraper_routes.py). Must be gate-exempt or the gate 302s it to /gate
     # before the Bearer check ever runs.
     "/api/scraper/ingest",
-    # Token-first auth entry points (public because they bootstrap the flow)
-    "/register", "/login", "/signup",
-    "/auth/register", "/auth/login", "/auth/logout",
-    "/auth/forgot-password", "/auth/reset-password",
-    "/forgot-password", "/reset-password",
+    # Auth surfaces are DELIBERATELY NOT public pre-launch. Before the site
+    # is released the ONLY un-gated entry is /gate itself (admin enters the
+    # shared SITE_ACCESS_TOKEN there → gets the gate cookie → may then reach
+    # /login and the rest of the app). Listing /login/register/auth/* here
+    # was a perimeter BYPASS: clicking "Admin Login" reached a working login
+    # page without ever passing the gate. Removed 2026-06-13. When the token
+    # system is retired at public launch, re-add the public auth entry points.
     # Legal + marketing
     "/terms", "/privacy", "/dpa",
     "/unsubscribe",
@@ -1540,7 +1542,14 @@ _PUBLIC_PATHS = frozenset({
 # The gate is bypassed on these prefixes. The public developer API
 # (/api/public/v1/*) uses Bearer-token auth and has no gate cookie, so
 # we whitelist the whole prefix rather than enumerate every endpoint.
-_PUBLIC_PREFIXES = ("/_gateway_static", "/sources/", "/auth/",
+_PUBLIC_PREFIXES = ("/_gateway_static",
+                    # NOTE: "/auth/" was REMOVED 2026-06-13. Making the whole
+                    # auth prefix gate-exempt let /auth/login (+register/reset)
+                    # be hit without the gate cookie — the same perimeter
+                    # bypass as the /login page. Post-gate users carry the
+                    # cookie, so auth POSTs pass the gate normally. Re-add at
+                    # public launch when the token gate is retired.
+                    "/sources/",
                     "/predictions/public/", "/api/public/v1/",
                     # OG card endpoints need to be crawler-reachable so
                     # Twitter / Slack / Discord can fetch social previews
