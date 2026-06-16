@@ -1487,80 +1487,65 @@ def _csrf_field(request) -> str:
 
 # ── Pre-release gate middleware ────────────────────────────────────────────
 
-# Routes that are fully public (no gate cookie needed)
+# Routes that are fully public (no gate cookie needed).
+#
+# ── PRE-LAUNCH LOCKDOWN (2026-06-13) ────────────────────────────────────────
+# Before public release the site is gated. The ONLY things public are:
+#   1. the gate itself (/gate) + the pre-release waitlist page (/),
+#   2. the waitlist's own form/email mechanics + anonymous analytics beacon,
+#   3. browser/crawler/PWA infra (favicon, robots, sitemap, manifest, sw),
+#   4. static assets the gate + pre-release pages load (/_gateway_static).
+# EVERYTHING else — marketing, legal, product, docs, status, public API,
+# source/profile/prediction pages — now requires the gate cookie. Each was a
+# perimeter leak: anon visitors could read real content past the gate.
+# Verified live 2026-06-13: /about /privacy /terms /methodology /markets/active
+# /api/docs all served 200 to anonymous requests. When the token gate is
+# retired at launch, restore the SEO/legal/product paths below.
 _PUBLIC_PATHS = frozenset({
     "/", "/gate", "/health",
-    # Single-page pivot (2026-06-09): /markets/active is the one product
-    # page and the destination every dashboard-teardown 302 points at.
-    # It must clear the gate so the redirect can't loop on a gated host.
-    "/markets/active",
-    # Its read-only accuracy/proof API — same single-page surface, must be
-    # gate-exempt or the page's fetch 302s to /gate and hangs.
-    "/api/analytics/prediction-accuracy",
-    # Scraper service → gateway ingest. Server-to-server with no gate cookie;
-    # protected by its own Authorization: Bearer <SCRAPER_API_KEY> handler
-    # (scraper_routes.py). Must be gate-exempt or the gate 302s it to /gate
-    # before the Bearer check ever runs.
+    # Scraper service → gateway ingest. Server-to-server, Bearer-auth in its
+    # own handler (scraper_routes.py); not a browsable content surface.
     "/api/scraper/ingest",
-    # Auth surfaces are DELIBERATELY NOT public pre-launch. Before the site
-    # is released the ONLY un-gated entry is /gate itself (admin enters the
-    # shared SITE_ACCESS_TOKEN there → gets the gate cookie → may then reach
-    # /login and the rest of the app). Listing /login/register/auth/* here
-    # was a perimeter BYPASS: clicking "Admin Login" reached a working login
-    # page without ever passing the gate. Removed 2026-06-13. When the token
-    # system is retired at public launch, re-add the public auth entry points.
-    # Legal + marketing
-    "/terms", "/privacy", "/dpa",
+    # Waitlist mechanics — the pre-release form + double-opt-in + unsubscribe.
     "/unsubscribe",
-    # Public API endpoints called from the prerelease page
     "/api/newsletter", "/api/newsletter/position",
-    # Double-opt-in confirmation + footer unsubscribe (no session by design).
     "/api/newsletter/confirm", "/api/newsletter/unsubscribe",
-    # Anonymous analytics beacon (POST) — fires from landing/dashboards
-    # before any session exists. See analytics.js + the
-    # /api/analytics/event handler near _hash_ip.
+    # Anonymous analytics beacon — fires from the pre-release page before any
+    # session exists. See analytics.js + the /api/analytics/event handler.
     "/api/analytics/event",
-    # Obscure sitemap path (not /sitemap.xml) — see _SITEMAP_PATH / seo_sitemap_xml.
+    # Crawler / browser infra.
     "/497951413996680578.xml", "/robots.txt",
     "/favicon.ico",
     "/.well-known/security.txt",
-    # Public status page (incidents, uptime, component health, RSS, subscribe)
-    "/status", "/status/feed.xml", "/status/unsubscribe",
-    "/api/status", "/api/status/subscribe", "/api/status/unsubscribe",
-    # PWA: fetched by browsers/OS installers before any session exists
+    # PWA infra (fetched by browsers/OS installers before any session).
     "/manifest.json", "/sw.js",
-    # PWA offline shell (SW falls back here on cold-start network failure)
+    # PWA offline shell (SW cold-start fallback).
     "/offline",
-    # Public SEO content pages — see seo_routes.py
-    "/about", "/how-it-works", "/methodology", "/faq",
-    "/team", "/press", "/changelog", "/changelog.rss",
-    # Developer docs — public page describing /api/public/v1/* for SEO.
-    "/api/docs",
-    # Machine-readable OpenAPI schema referenced from /api/docs.
-    "/api/openapi.json",
+    # ── GATED pre-launch (was public; restore at launch) ────────────────
+    # Auth: /login /register /signup /auth/* /forgot-password /reset-password
+    #   — removed 2026-06-13 (the "Admin Login" → /login bypass). Admin enters
+    #   the token at /gate → gets the cookie → THEN /login works.
+    # Legal: /terms /privacy /dpa — gated per the pre-launch lockdown.
+    # Marketing/SEO: /about /how-it-works /methodology /faq /team /press
+    #   /changelog /changelog.rss
+    # Product/docs: /markets/active /api/analytics/prediction-accuracy
+    #   /api/docs /api/openapi.json
+    # Status: /status /status/feed.xml /status/unsubscribe /api/status*
+    # Docs: /api/docs /api/openapi.json
+    # Prefixes: /sources/ /predictions/public/ /api/public/v1/ /u/
+    #   (kept /og/ so shares of the pre-release page still render previews)
 })
-# The gate is bypassed on these prefixes. The public developer API
-# (/api/public/v1/*) uses Bearer-token auth and has no gate cookie, so
-# we whitelist the whole prefix rather than enumerate every endpoint.
-_PUBLIC_PREFIXES = ("/_gateway_static",
-                    # NOTE: "/auth/" was REMOVED 2026-06-13. Making the whole
-                    # auth prefix gate-exempt let /auth/login (+register/reset)
-                    # be hit without the gate cookie — the same perimeter
-                    # bypass as the /login page. Post-gate users carry the
-                    # cookie, so auth POSTs pass the gate normally. Re-add at
-                    # public launch when the token gate is retired.
-                    "/sources/",
-                    "/predictions/public/", "/api/public/v1/",
-                    # OG card endpoints need to be crawler-reachable so
-                    # Twitter / Slack / Discord can fetch social previews
-                    # for public URLs. No sensitive data — every card is
-                    # computed from already-public model output.
-                    "/og/",
-                    # Public-profile pages (/u/{handle}) are opt-in and
-                    # designed to be crawled. The handler returns 404 for
-                    # any user that hasn't opted in (existence-hide), so
-                    # exposure here is bounded to consenting users.
-                    "/u/")
+# Gate-bypass prefixes. PRE-LAUNCH LOCKDOWN (2026-06-13): trimmed to the two
+# that the gate + pre-release pages actually need. Everything else is gated.
+#   - "/auth/"  REMOVED — made /auth/login (+register/reset) reachable without
+#     the gate cookie (same bypass as the /login page). Post-gate users carry
+#     the cookie so auth POSTs pass normally.
+#   - "/sources/", "/predictions/public/", "/api/public/v1/", "/u/" REMOVED —
+#     browsable content / public API; gated until launch.
+# Kept: "/_gateway_static" (gate + pre-release page assets) and "/og/" (so
+# social shares of the pre-release link still render preview cards).
+# Restore the removed prefixes when the token gate is retired at launch.
+_PUBLIC_PREFIXES = ("/_gateway_static", "/og/")
 
 
 class GateMiddleware(BaseHTTPMiddleware):
