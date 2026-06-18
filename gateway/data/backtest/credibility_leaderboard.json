@@ -1,0 +1,2127 @@
+{
+  "meta": {
+    "source": "polymarket-goldsky/marketProfit",
+    "generated_at_note": "deterministic from on-chain realized P&L; NOT directional accuracy",
+    "rows_pulled": 8000,
+    "resolved_decisive_profit_rows": 7308,
+    "wallets_ranked": 302,
+    "min_markets": 5,
+    "limitation": "marketProfit rows return in id order -> this is a SAMPLE of traders, not the global top. Sample size stated; full ranking needs deep pagination."
+  },
+  "leaderboard": [
+    {
+      "wallet": "0x000aa2ca95bc3223253656e52bfd488eca924ba4",
+      "total_profit": 8551.97,
+      "markets": 5,
+      "profitable_markets": 3,
+      "hit_rate": 0.6
+    },
+    {
+      "wallet": "0x00100d838cb5dcba3515704f17bcf1c0198c908d",
+      "total_profit": 4954.75,
+      "markets": 15,
+      "profitable_markets": 4,
+      "hit_rate": 0.2667
+    },
+    {
+      "wallet": "0x000e82e39c383d0b810b1902545a0faf5b148f8f",
+      "total_profit": 4634.54,
+      "markets": 13,
+      "profitable_markets": 5,
+      "hit_rate": 0.3846
+    },
+    {
+      "wallet": "0x000da5c4606f0c03bbe4dcbafc4458bdd10e54e0",
+      "total_profit": 136.62,
+      "markets": 21,
+      "profitable_markets": 7,
+      "hit_rate": 0.3333
+    },
+    {
+      "wallet": "0x00064138bab1d8d08f0688c0ecc9dd26eb6e2725",
+      "total_profit": 58.14,
+      "markets": 19,
+      "profitable_markets": 3,
+      "hit_rate": 0.1579
+    },
+    {
+      "wallet": "0x0002d8afff68772167ae927b0c5392c36bef047d",
+      "total_profit": 9.85,
+      "markets": 8,
+      "profitable_markets": 2,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x0000e78a359eb7c497551fe46cb81271dc4ecc86",
+      "total_profit": 6.29,
+      "markets": 14,
+      "profitable_markets": 2,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x000ba710a7a20c63ccdc79551fbddc0f1d641aa2",
+      "total_profit": 5.56,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x00124e36921de3cb63b6bf27fd8621968d537bc0",
+      "total_profit": 1.58,
+      "markets": 20,
+      "profitable_markets": 10,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x0001c98790282fdbf3b0da268e9d220dad24a30b",
+      "total_profit": 1.2,
+      "markets": 11,
+      "profitable_markets": 3,
+      "hit_rate": 0.2727
+    },
+    {
+      "wallet": "0x00046bf835ace97dc08cd1d00802779c5248cb70",
+      "total_profit": 0.97,
+      "markets": 5,
+      "profitable_markets": 2,
+      "hit_rate": 0.4
+    },
+    {
+      "wallet": "0x0010f845902741455f7bcf2a1192637a1d6b8ada",
+      "total_profit": 0.46,
+      "markets": 9,
+      "profitable_markets": 1,
+      "hit_rate": 0.1111
+    },
+    {
+      "wallet": "0x0002f066b474fbbb2b67aec275364510f58d11da",
+      "total_profit": 0.33,
+      "markets": 5,
+      "profitable_markets": 1,
+      "hit_rate": 0.2
+    },
+    {
+      "wallet": "0x0010b52a869451c97dbc2ba2aa0c13a99f99941c",
+      "total_profit": 0.33,
+      "markets": 12,
+      "profitable_markets": 3,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x0009f32b161c3e5036366c9eebf168e2fe1e2021",
+      "total_profit": 0.0,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000a0384e6ccedab80fbe870e86f9134d2b22572",
+      "total_profit": 0.0,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000100c19b3bf2968787b6acba78d18575215243",
+      "total_profit": -0.03,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x0007961e874e09fb60f1063c7fae7a9fe44bdf17",
+      "total_profit": -0.04,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000e668f97e811b42c7e3aa5bd25578b24986233",
+      "total_profit": -0.04,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0002ac172afa5b6e814522ed98bc27e29c82858a",
+      "total_profit": -0.05,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000621a2b048335ca0ad5029500cee6fca994aa7",
+      "total_profit": -0.05,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000af49d51a628fa7b4110571396e8a0655a951a",
+      "total_profit": -0.05,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000097db7768500ba85638e8f319c2a925a846e7",
+      "total_profit": -0.06,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0002e181b352ab4de8973236eacdb1cb2579061b",
+      "total_profit": -0.06,
+      "markets": 6,
+      "profitable_markets": 3,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x00036fe0876ed23b2bdeaf09365f1c14bf6785df",
+      "total_profit": -0.06,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0008a2bebd7acfce5dabc516d53f4ee1ae6f5e30",
+      "total_profit": -0.06,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00064864987843af87ab3d2b98f26378442ef25b",
+      "total_profit": -0.08,
+      "markets": 14,
+      "profitable_markets": 4,
+      "hit_rate": 0.2857
+    },
+    {
+      "wallet": "0x0010558a3ba9091fa7a02c92103e5211ff845548",
+      "total_profit": -0.1,
+      "markets": 9,
+      "profitable_markets": 2,
+      "hit_rate": 0.2222
+    },
+    {
+      "wallet": "0x000c98de8a2bfe8c23ac10955a830d950f942204",
+      "total_profit": -0.13,
+      "markets": 11,
+      "profitable_markets": 2,
+      "hit_rate": 0.1818
+    },
+    {
+      "wallet": "0x00074a05cd6f2f2675e9a2cedbd9a6bfd9a23e84",
+      "total_profit": -0.18,
+      "markets": 10,
+      "profitable_markets": 1,
+      "hit_rate": 0.1
+    },
+    {
+      "wallet": "0x000df053f74b4ec2098fad8c89580f57ffda18ef",
+      "total_profit": -0.19,
+      "markets": 35,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000475396be3283587a622bbfbcff8d513d61148",
+      "total_profit": -0.2,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00115bc91215e0f373f3963176e7d63d14967bdb",
+      "total_profit": -0.25,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0011710b514f09e89a9e4e39897786ac38a1ac6c",
+      "total_profit": -0.25,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x000162e398ed0850b5f58d1a5cb2ab83c446c6ae",
+      "total_profit": -0.29,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b6c26b34b57826cb625c0802b14a13bc5387a",
+      "total_profit": -0.31,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007b4c04529629658f6ba7ff4a38a177ebab18c",
+      "total_profit": -0.32,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00055e7b9d64262b198808955092f85f4513ae7d",
+      "total_profit": -0.33,
+      "markets": 8,
+      "profitable_markets": 2,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x001109eb794b65c98c3bad80570b9587f2d5218c",
+      "total_profit": -0.37,
+      "markets": 11,
+      "profitable_markets": 1,
+      "hit_rate": 0.0909
+    },
+    {
+      "wallet": "0x00018daaa480d86b6f1c06e8179164a26c86c958",
+      "total_profit": -0.39,
+      "markets": 11,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000670c623c092668cabec29a1ef0ce562ef57f9",
+      "total_profit": -0.39,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x001188cf14bcd894aad2908126c5c6528cd4eab3",
+      "total_profit": -0.4,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0008f40e9743ee78db79fcc8cff4ae2664c43815",
+      "total_profit": -0.41,
+      "markets": 14,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000a97c5f1db09cdf9637e9e8bc5da23b17da39c",
+      "total_profit": -0.41,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b222d615d639330551419018f8f705d2c4c98",
+      "total_profit": -0.41,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007eb91e672f4a6d9abb2b94f9b513e8ff527e2",
+      "total_profit": -0.45,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000732edfa0a0398b05561a35c289a298835799a",
+      "total_profit": -0.49,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d5149b3c0453dc41010650d49f26bba8b8f7b",
+      "total_profit": -0.49,
+      "markets": 11,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00056f2be6885b310311af7ac14908fa449f77cd",
+      "total_profit": -0.51,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0005ccd0b64b119241d947a432255a66985c4d21",
+      "total_profit": -0.51,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00069cba2011b31b9efeb80911bca522d7c745b8",
+      "total_profit": -0.52,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x000ef34a65cda1512bb9a7772f961e57f98a0e5c",
+      "total_profit": -0.52,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000e6f89be03a4f4853990c2f041dbe88b0775ff",
+      "total_profit": -0.55,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001723a7866636053c75a1f881560dbb86ff53c",
+      "total_profit": -0.56,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006b25dd7cbce25ff06fef38ba23e58246262c9",
+      "total_profit": -0.57,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000bbec5624fd38341843fb97e852628da8fa27e",
+      "total_profit": -0.58,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000a79d9e0b5631b32d312b247312a5dd699b84b",
+      "total_profit": -0.59,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000431e4a63904693bd94f369243baa52017a720",
+      "total_profit": -0.6,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006bff5c932bb0e46542f895ccdbee942a8f423",
+      "total_profit": -0.6,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000105f09b6f79f1ce32558820b0575730fb35ad",
+      "total_profit": -0.77,
+      "markets": 7,
+      "profitable_markets": 1,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x001191b590004fb732dce89157e1b19d9606ed2b",
+      "total_profit": -0.82,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0009fc951d643d9860affebca9a1ecb372621547",
+      "total_profit": -0.83,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004dcbd301912e17f83b38d916a84c27c9c923a",
+      "total_profit": -0.85,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x000f07f443187a9eb7148a954941f335f9649ad6",
+      "total_profit": -0.92,
+      "markets": 12,
+      "profitable_markets": 1,
+      "hit_rate": 0.0833
+    },
+    {
+      "wallet": "0x000da6d2e860eca4b003e4b899ee3159e1707991",
+      "total_profit": -1.01,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000cef4f7726406083945d86e564abada20b5d0d",
+      "total_profit": -1.11,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00076d935330865d492618568e9dd9c01f0ae24d",
+      "total_profit": -1.18,
+      "markets": 15,
+      "profitable_markets": 1,
+      "hit_rate": 0.0667
+    },
+    {
+      "wallet": "0x001031d2c7a9482e9144fb079543e998e853d483",
+      "total_profit": -1.19,
+      "markets": 22,
+      "profitable_markets": 3,
+      "hit_rate": 0.1364
+    },
+    {
+      "wallet": "0x0000c0e7332687a47d3067bec1699d2900dcda7e",
+      "total_profit": -1.42,
+      "markets": 11,
+      "profitable_markets": 1,
+      "hit_rate": 0.0909
+    },
+    {
+      "wallet": "0x000829aa60a09446ff75067bdc80b94348319008",
+      "total_profit": -1.54,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x00107ffd4879e6cb6cefd797c325c3d1e88ac9c7",
+      "total_profit": -1.59,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c2dbb49b95bfd7797660415fcb5b3f305f32a",
+      "total_profit": -1.83,
+      "markets": 14,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000e67b9b8f654faa166eeb19fcae2c660c12f6c",
+      "total_profit": -1.88,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00019bd0371f14258095ce94e20e62d9ea70f1d5",
+      "total_profit": -1.91,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0005f3d3df24bb66425870bb0354a6d68a3b8216",
+      "total_profit": -2.1,
+      "markets": 26,
+      "profitable_markets": 4,
+      "hit_rate": 0.1538
+    },
+    {
+      "wallet": "0x0005902b0241f92f741a88ced0126b258d45c67d",
+      "total_profit": -2.14,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00027363a05d30a99df475c91b2f47b5544df126",
+      "total_profit": -2.59,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000224b9f6ac4f5dab531f7e9190f400c8cb2fed",
+      "total_profit": -3.26,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00028d040ba74abd0284d0e168bcec03d9b916c2",
+      "total_profit": -3.28,
+      "markets": 45,
+      "profitable_markets": 6,
+      "hit_rate": 0.1333
+    },
+    {
+      "wallet": "0x0010b9737d2727bb8f0324e795269e9132298eb9",
+      "total_profit": -3.38,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d88c9bc2d042805f96f4ebd5fab659a46c317",
+      "total_profit": -3.58,
+      "markets": 34,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d586397edad1223bb8ab9368a7b7a9f9967b1",
+      "total_profit": -3.77,
+      "markets": 12,
+      "profitable_markets": 3,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x0004e40af13069880d7a8cda2bfc1ecec80d5f38",
+      "total_profit": -3.97,
+      "markets": 11,
+      "profitable_markets": 1,
+      "hit_rate": 0.0909
+    },
+    {
+      "wallet": "0x0002f4f1f0d4143abab12b53ed053f6e9bacad18",
+      "total_profit": -4.15,
+      "markets": 9,
+      "profitable_markets": 2,
+      "hit_rate": 0.2222
+    },
+    {
+      "wallet": "0x000714fc5d93c1a2af23fe72d764d606b9399a95",
+      "total_profit": -4.18,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b818e313ac1aa9fe5cc45a8d90492fa872947",
+      "total_profit": -4.63,
+      "markets": 21,
+      "profitable_markets": 9,
+      "hit_rate": 0.4286
+    },
+    {
+      "wallet": "0x000ebc20fcfd3b9b508bdc9559048babdd72073d",
+      "total_profit": -4.71,
+      "markets": 14,
+      "profitable_markets": 3,
+      "hit_rate": 0.2143
+    },
+    {
+      "wallet": "0x000238a99495b9bca5be914850808b41baa04bf9",
+      "total_profit": -4.87,
+      "markets": 28,
+      "profitable_markets": 3,
+      "hit_rate": 0.1071
+    },
+    {
+      "wallet": "0x000772758c14ad0263a76a840aaa6988e2bc153e",
+      "total_profit": -5.2,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000dd46f43f8d0436350324374b5b051d0a09664",
+      "total_profit": -5.3,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000cecafcedc31d9cef3480d20169bfe7c9250f3",
+      "total_profit": -5.48,
+      "markets": 30,
+      "profitable_markets": 3,
+      "hit_rate": 0.1
+    },
+    {
+      "wallet": "0x00000000d1e5cf1790f4ab99b1e2b1cf87ad9574",
+      "total_profit": -6.0,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001bacf21967e1a26449ba2e6c13791cff5e64e",
+      "total_profit": -6.21,
+      "markets": 13,
+      "profitable_markets": 5,
+      "hit_rate": 0.3846
+    },
+    {
+      "wallet": "0x00071abcc1c3fc31240cd7f1070bb5ae0588c6c2",
+      "total_profit": -6.62,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00032ff6fbdbcc4680f58d07685ff948f13ae47a",
+      "total_profit": -7.27,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000f014541be66d3009acc07ea16727a8c4277fc",
+      "total_profit": -7.51,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006eab886be6aa4343128c052ee774e32e75d3f",
+      "total_profit": -7.73,
+      "markets": 26,
+      "profitable_markets": 3,
+      "hit_rate": 0.1154
+    },
+    {
+      "wallet": "0x000c3e6a7d569f505df6930ccfbac42f738931ca",
+      "total_profit": -7.8,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b143b6e62a0d31a6f7485ee6b60adf1467c90",
+      "total_profit": -7.96,
+      "markets": 22,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00102b8733ead7d9e84c866e3edb0e5cef8f1725",
+      "total_profit": -7.97,
+      "markets": 85,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0008bc51ddebbe83fe4f2e77e215182f916b71c5",
+      "total_profit": -8.9,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c18046108e48be5593387a1134b4f67ed975b",
+      "total_profit": -9.0,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004035f5500d9b1a77348a6b10ae38e3bb2bfd8",
+      "total_profit": -9.08,
+      "markets": 19,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c42087217b4ada9e76e68bd088cb036fd7bb1",
+      "total_profit": -9.18,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000ea7a2d2e22ddb24cd60d283f2a4a544628828",
+      "total_profit": -9.3,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x000bf5fb223c454971e34c181940a9366d528cf9",
+      "total_profit": -10.11,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000dbf8d6cc9e6942b261048f45ea872d68ca07f",
+      "total_profit": -10.11,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0005f804fdf635632c1434ca8e134cd3058d0e76",
+      "total_profit": -10.28,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b5560291ecf42e5860040543cb07e1abb5d1f",
+      "total_profit": -10.51,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b895e165eab675142a4d6a4e6050367e53b4b",
+      "total_profit": -10.57,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00002c5cfc7e21a32a8a9d01a39447d132856ed7",
+      "total_profit": -10.99,
+      "markets": 9,
+      "profitable_markets": 1,
+      "hit_rate": 0.1111
+    },
+    {
+      "wallet": "0x000f5c8afd7b66caaac845c7b25e836abd8d1001",
+      "total_profit": -12.95,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b5785c986a3051fefb0c4d29e3756d34c4fb7",
+      "total_profit": -13.0,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00081c10cf1c09e469fd64f938ac9e585c48cd65",
+      "total_profit": -13.57,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000bb45dd20caf89f1e5d4c87ea00bf7ab50891b",
+      "total_profit": -14.08,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000008f5286b28d9447c488fe3c6ee9bac4e9d64",
+      "total_profit": -14.21,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c48f441be975370a93746725d8040647d49b9",
+      "total_profit": -14.53,
+      "markets": 12,
+      "profitable_markets": 3,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x0002f30da50533770d7a70787347facfc354f0b4",
+      "total_profit": -14.66,
+      "markets": 8,
+      "profitable_markets": 1,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x0011a50bb96db3b5103e75510dbaefe7bdf8e537",
+      "total_profit": -14.95,
+      "markets": 7,
+      "profitable_markets": 1,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x001042eac9a4d919880824b3b6cd8b2337ba69b0",
+      "total_profit": -15.53,
+      "markets": 5,
+      "profitable_markets": 1,
+      "hit_rate": 0.2
+    },
+    {
+      "wallet": "0x00053e9c793a78e31e5e13e0c3be94e0b1183754",
+      "total_profit": -15.58,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00059f3ce287c42519d555ba539efcc4e907e85e",
+      "total_profit": -15.87,
+      "markets": 5,
+      "profitable_markets": 1,
+      "hit_rate": 0.2
+    },
+    {
+      "wallet": "0x0009c205c8d4003478993f8c48594b0ce8740986",
+      "total_profit": -16.13,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004098c3eb3e7286728f0b7c077503845cef07b",
+      "total_profit": -16.74,
+      "markets": 28,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d9f3c44601b70f6556916b4a994604d584801",
+      "total_profit": -17.66,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000322b9cbc4e2f1ee815fb7e0f158bb076389bc",
+      "total_profit": -17.8,
+      "markets": 119,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000a17ea74e6ef7312a68c2fa2d3eebf0efcfddf",
+      "total_profit": -18.16,
+      "markets": 16,
+      "profitable_markets": 8,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x000eb42d96824d0c89c5bb1dda1c2d49ca7b7c4c",
+      "total_profit": -18.16,
+      "markets": 20,
+      "profitable_markets": 2,
+      "hit_rate": 0.1
+    },
+    {
+      "wallet": "0x0006eb90c57713347c71b777d472c066e73f9bbc",
+      "total_profit": -18.35,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004b0ebe871c0852e64385847c112ed86e9906c",
+      "total_profit": -19.18,
+      "markets": 5,
+      "profitable_markets": 1,
+      "hit_rate": 0.2
+    },
+    {
+      "wallet": "0x000fa06d5b1f90a8c3877eaee57d2dba1306b8c0",
+      "total_profit": -20.2,
+      "markets": 21,
+      "profitable_markets": 1,
+      "hit_rate": 0.0476
+    },
+    {
+      "wallet": "0x000e83de0564b323ee346d28c86372d6595ac21d",
+      "total_profit": -20.21,
+      "markets": 19,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d991be70f6127de5cfe2ddc8549bb09fe294f",
+      "total_profit": -20.94,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00039b7d1aef45cd8244195b1c11ab7b49127c6e",
+      "total_profit": -21.68,
+      "markets": 14,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007f413a4315c925d80ec5372683c809a81bd8c",
+      "total_profit": -21.98,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00104e23535ae28b4d5a04d14e2c4f57b58ea696",
+      "total_profit": -22.62,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0009b875103e40ca0783c49917b4c1905a7921e7",
+      "total_profit": -23.0,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006e7c911455ed9cb7a0929172ab91114cbcc98",
+      "total_profit": -25.93,
+      "markets": 22,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00037ce7ef04e7f8e6b65b00617660426f155d4d",
+      "total_profit": -26.04,
+      "markets": 28,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0003034472452a77ff9dc006859ddd33f1a1e2cd",
+      "total_profit": -26.75,
+      "markets": 19,
+      "profitable_markets": 7,
+      "hit_rate": 0.3684
+    },
+    {
+      "wallet": "0x001032b173c8371f9eb0b5c3cc25184f3a8a5cb8",
+      "total_profit": -26.93,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007d9fc005c5a0653b3b1374afed08986a89ba9",
+      "total_profit": -28.18,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00014360376ac79266292f354fd113af3d3debbd",
+      "total_profit": -29.31,
+      "markets": 10,
+      "profitable_markets": 3,
+      "hit_rate": 0.3
+    },
+    {
+      "wallet": "0x000044dfcd0911300bc743c0b4c9ac2c3043bfec",
+      "total_profit": -30.7,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000e7fe5f51c5668e348b0de5cbafd1595ba7c29",
+      "total_profit": -31.38,
+      "markets": 7,
+      "profitable_markets": 2,
+      "hit_rate": 0.2857
+    },
+    {
+      "wallet": "0x00089a43de1392d28033d33ff36901dea37ddbbf",
+      "total_profit": -31.57,
+      "markets": 21,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x001029a8efafe88a9ebd4322b81760b4acd78eea",
+      "total_profit": -32.35,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000605a2e7e6d429f61d761b73a0c3b1b86e0eb7",
+      "total_profit": -32.72,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00109464423fbe3ba65860e7ae742259c25ffc07",
+      "total_profit": -32.86,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00008b62e46ebac37cb8ff11ffc82c882dab45a5",
+      "total_profit": -32.97,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c20bff78bd5b9cc82affacdacb8b7c6888319",
+      "total_profit": -33.62,
+      "markets": 7,
+      "profitable_markets": 1,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x000f1134f8591609a1e727d5e794bd20bb7d1c03",
+      "total_profit": -34.36,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x000dcb9486f6b7aa9850534aad417855ed6089e1",
+      "total_profit": -34.47,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0002e0fb8941533790589ce8fc8c16040076475c",
+      "total_profit": -34.63,
+      "markets": 9,
+      "profitable_markets": 1,
+      "hit_rate": 0.1111
+    },
+    {
+      "wallet": "0x000df878126fbd4cae97bdcb1862470a51368f9b",
+      "total_profit": -35.72,
+      "markets": 17,
+      "profitable_markets": 2,
+      "hit_rate": 0.1176
+    },
+    {
+      "wallet": "0x00038c70934f761aa9b0f824423c92a6285cabff",
+      "total_profit": -40.03,
+      "markets": 31,
+      "profitable_markets": 8,
+      "hit_rate": 0.2581
+    },
+    {
+      "wallet": "0x00089d3552cc48ab194552af24dc1b7c12114c42",
+      "total_profit": -41.23,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000580e137cef0106f0e33ec8797774653a3a1e2",
+      "total_profit": -41.77,
+      "markets": 38,
+      "profitable_markets": 14,
+      "hit_rate": 0.3684
+    },
+    {
+      "wallet": "0x000f30e463c2102e90a57b765ce3e740fa7131c3",
+      "total_profit": -41.84,
+      "markets": 14,
+      "profitable_markets": 1,
+      "hit_rate": 0.0714
+    },
+    {
+      "wallet": "0x000d467e15130c39c54d4323e40c4cb6de7385a0",
+      "total_profit": -42.62,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00107a04377c39402237f34dc776b6563946212d",
+      "total_profit": -42.88,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001a0e9d6f7e75ef058782511907dca72567840",
+      "total_profit": -43.0,
+      "markets": 21,
+      "profitable_markets": 8,
+      "hit_rate": 0.381
+    },
+    {
+      "wallet": "0x00079644d95ca65aae2b86022503ffd8a0f9eb2c",
+      "total_profit": -43.04,
+      "markets": 21,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x001069230053f1c6c0fce0d131e8da9344c7a000",
+      "total_profit": -43.55,
+      "markets": 14,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00028fd357d51d7e778d0dc882f169af3d15b2a8",
+      "total_profit": -44.37,
+      "markets": 61,
+      "profitable_markets": 6,
+      "hit_rate": 0.0984
+    },
+    {
+      "wallet": "0x000d76e3e1d30a7c403d8440d7f3f50697667f1a",
+      "total_profit": -46.19,
+      "markets": 22,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007e5aef3fdab20d0027518d51a52ad19f7a28f",
+      "total_profit": -46.92,
+      "markets": 7,
+      "profitable_markets": 1,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x000d46eae2a7ca03e59db3617e3fe325dc7369b5",
+      "total_profit": -47.04,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0003da1d2b2756c9424c480d379eeb3ba99fddec",
+      "total_profit": -48.73,
+      "markets": 26,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0005cdec45ea642430d8e4c626ac637a64d9ad99",
+      "total_profit": -49.67,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00088297ebe9d40e65e151676b0efa21e872df53",
+      "total_profit": -51.73,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00045b87d649968e48fe7c32441a7257ef9e1f2c",
+      "total_profit": -52.64,
+      "markets": 8,
+      "profitable_markets": 1,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x0002a340455a3e96a4e08b1e6517d8508cac6277",
+      "total_profit": -52.96,
+      "markets": 8,
+      "profitable_markets": 1,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x000f60700a3709ce63809175a058448e7f8d4025",
+      "total_profit": -55.06,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00100c51a1cb6836fba2c4349381700d9a8fee04",
+      "total_profit": -55.73,
+      "markets": 14,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006da3ed8589a20c34c942dcc55f47bd39b6759",
+      "total_profit": -56.67,
+      "markets": 26,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0003d8cfa33f4e57e8308f377e6a2b9f0313fa3d",
+      "total_profit": -62.16,
+      "markets": 20,
+      "profitable_markets": 5,
+      "hit_rate": 0.25
+    },
+    {
+      "wallet": "0x000379ab83f766f5336380fed2ba9beba12b6d2d",
+      "total_profit": -64.17,
+      "markets": 56,
+      "profitable_markets": 2,
+      "hit_rate": 0.0357
+    },
+    {
+      "wallet": "0x000ac215c1e471e8782d34805165d349808a0cc8",
+      "total_profit": -65.63,
+      "markets": 18,
+      "profitable_markets": 1,
+      "hit_rate": 0.0556
+    },
+    {
+      "wallet": "0x0003327ef9b56117ea81104d86cf1020255bebcc",
+      "total_profit": -65.81,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000ea7774007b17161bb6e4d9aa29bdd0059304d",
+      "total_profit": -66.05,
+      "markets": 9,
+      "profitable_markets": 2,
+      "hit_rate": 0.2222
+    },
+    {
+      "wallet": "0x000510566725dc63d7ad00c1c38e8d4eb91bc179",
+      "total_profit": -76.04,
+      "markets": 7,
+      "profitable_markets": 2,
+      "hit_rate": 0.2857
+    },
+    {
+      "wallet": "0x00006cef9dfbfa944b99be85e8e896790f2572db",
+      "total_profit": -76.84,
+      "markets": 6,
+      "profitable_markets": 3,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x00002981563121d523c198f6fe26e1360d3f0fe3",
+      "total_profit": -79.72,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b69e1996431281998871b9d5db88bd8f033ae",
+      "total_profit": -82.06,
+      "markets": 53,
+      "profitable_markets": 1,
+      "hit_rate": 0.0189
+    },
+    {
+      "wallet": "0x0000aee881949d97082fdfdfdbb3f32c42175e36",
+      "total_profit": -82.27,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000dbac602fbd34a1f2b11d111e928533d7b4e79",
+      "total_profit": -82.86,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00091c24ed6d58f1b20b3880969a269a403e6138",
+      "total_profit": -83.56,
+      "markets": 58,
+      "profitable_markets": 7,
+      "hit_rate": 0.1207
+    },
+    {
+      "wallet": "0x000ca250d54ddb3491155b6d26a605992cae0e75",
+      "total_profit": -86.36,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0003bec1f4cbba9efafa8f34a5cd144138f853bf",
+      "total_profit": -87.15,
+      "markets": 5,
+      "profitable_markets": 1,
+      "hit_rate": 0.2
+    },
+    {
+      "wallet": "0x001004fc8b0e8f9adc91f463dc28f3f1ebafd1d3",
+      "total_profit": -89.48,
+      "markets": 21,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000ce4408c63f3d5ff153bf42e7bc004bef01a5d",
+      "total_profit": -90.61,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0002dc85d5caf8023bf47ed19f81f9f0dcbb2bcb",
+      "total_profit": -90.92,
+      "markets": 12,
+      "profitable_markets": 2,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x001132788f034c063ad57d8164af425f90fc79f2",
+      "total_profit": -91.56,
+      "markets": 50,
+      "profitable_markets": 5,
+      "hit_rate": 0.1
+    },
+    {
+      "wallet": "0x000079b4e4f4675e496978f9598abedc9fddeab4",
+      "total_profit": -95.61,
+      "markets": 6,
+      "profitable_markets": 1,
+      "hit_rate": 0.1667
+    },
+    {
+      "wallet": "0x00042f0a59ad055b195fde296e4f6ad9ce45bf18",
+      "total_profit": -97.5,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000cfb1e66d14686cc00bad55e2cd34f37b39df5",
+      "total_profit": -97.91,
+      "markets": 44,
+      "profitable_markets": 3,
+      "hit_rate": 0.0682
+    },
+    {
+      "wallet": "0x000f12c8c933ea2352dad973200d0056ff2c29f7",
+      "total_profit": -98.05,
+      "markets": 18,
+      "profitable_markets": 2,
+      "hit_rate": 0.1111
+    },
+    {
+      "wallet": "0x0003ce15737e8b27b58fd8ca4799ab34f501e34f",
+      "total_profit": -99.21,
+      "markets": 59,
+      "profitable_markets": 8,
+      "hit_rate": 0.1356
+    },
+    {
+      "wallet": "0x0005044dd717d3e5d1525c98b39cbfd3956fdfc0",
+      "total_profit": -99.27,
+      "markets": 7,
+      "profitable_markets": 3,
+      "hit_rate": 0.4286
+    },
+    {
+      "wallet": "0x000240e74181ed3108516e25953f65ff1a41adaf",
+      "total_profit": -100.26,
+      "markets": 22,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001d0f9ab13ff232b66c8bc1f57621fdfb186db",
+      "total_profit": -103.23,
+      "markets": 20,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004f68ba2a77804a6084d1166c2bf2cf975734d",
+      "total_profit": -105.36,
+      "markets": 33,
+      "profitable_markets": 9,
+      "hit_rate": 0.2727
+    },
+    {
+      "wallet": "0x0006f44c1696117faaaa8c12c41343f8fe4a8e55",
+      "total_profit": -105.72,
+      "markets": 22,
+      "profitable_markets": 5,
+      "hit_rate": 0.2273
+    },
+    {
+      "wallet": "0x000b6d0ee8147e81561da088ab9124c47429b712",
+      "total_profit": -107.8,
+      "markets": 14,
+      "profitable_markets": 1,
+      "hit_rate": 0.0714
+    },
+    {
+      "wallet": "0x0001c6d67fb41548720b9ddb3d0bf88ffcae088a",
+      "total_profit": -108.8,
+      "markets": 6,
+      "profitable_markets": 3,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x00083b7bd0c24c850e5511a1c583acd250f72fcc",
+      "total_profit": -109.23,
+      "markets": 87,
+      "profitable_markets": 2,
+      "hit_rate": 0.023
+    },
+    {
+      "wallet": "0x00119b7aeb7e2baad7c3b77e640b7fb5126911c6",
+      "total_profit": -118.78,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000243e904c065ff07f14b4637a0ad415c1c6aff",
+      "total_profit": -121.63,
+      "markets": 69,
+      "profitable_markets": 17,
+      "hit_rate": 0.2464
+    },
+    {
+      "wallet": "0x000ae9f3c179f2f9454df4fc4113116c91746df9",
+      "total_profit": -122.01,
+      "markets": 25,
+      "profitable_markets": 4,
+      "hit_rate": 0.16
+    },
+    {
+      "wallet": "0x001121f10334f7a93698551de98b263661d897b1",
+      "total_profit": -130.77,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00076886828fdcc8730af72df99b212c997b9dec",
+      "total_profit": -132.5,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001540049c66ed5c2a16f8a2278bfa3efcde862",
+      "total_profit": -133.7,
+      "markets": 20,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000af02a431116e443f6c8c61ca1e8cecabba015",
+      "total_profit": -137.6,
+      "markets": 11,
+      "profitable_markets": 1,
+      "hit_rate": 0.0909
+    },
+    {
+      "wallet": "0x000ebe47a349dc49a20ff3ab79340e53cc2395f8",
+      "total_profit": -138.5,
+      "markets": 25,
+      "profitable_markets": 3,
+      "hit_rate": 0.12
+    },
+    {
+      "wallet": "0x0007341d3f4e9406e80cedd86e3d84e056700c0a",
+      "total_profit": -140.95,
+      "markets": 29,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0010554d2fdca72de2d4f9ebbfb40760c0d6a812",
+      "total_profit": -151.11,
+      "markets": 27,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00040639459aab01fc8c6f688b547ab943a096b0",
+      "total_profit": -152.23,
+      "markets": 13,
+      "profitable_markets": 3,
+      "hit_rate": 0.2308
+    },
+    {
+      "wallet": "0x000e4ead976846849a1caaa9d54f67c3042be6f2",
+      "total_profit": -152.62,
+      "markets": 25,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000ac5084f6f4a2cd8eb762e0d4ae710e2d6bb3f",
+      "total_profit": -153.31,
+      "markets": 16,
+      "profitable_markets": 1,
+      "hit_rate": 0.0625
+    },
+    {
+      "wallet": "0x000dde0d66b74b64fe12305ba22e1c07e67b8c9d",
+      "total_profit": -155.24,
+      "markets": 19,
+      "profitable_markets": 3,
+      "hit_rate": 0.1579
+    },
+    {
+      "wallet": "0x0001fd7036d48cb2f62d3558b956651cecd84061",
+      "total_profit": -156.91,
+      "markets": 16,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007d88e80b00779dc521a9c773eb79bea887075",
+      "total_profit": -165.67,
+      "markets": 18,
+      "profitable_markets": 8,
+      "hit_rate": 0.4444
+    },
+    {
+      "wallet": "0x0006d2b09b35bde1a1542a6c60652dd922326616",
+      "total_profit": -167.61,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00061707080cc568f5ab76304b82c9dab2402caf",
+      "total_profit": -170.66,
+      "markets": 7,
+      "profitable_markets": 1,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x0007403e2da0a56d8465650aded15db7f6b964fe",
+      "total_profit": -174.5,
+      "markets": 25,
+      "profitable_markets": 2,
+      "hit_rate": 0.08
+    },
+    {
+      "wallet": "0x0011834f003d2d7856e058eb6f01882ead31486d",
+      "total_profit": -177.16,
+      "markets": 21,
+      "profitable_markets": 1,
+      "hit_rate": 0.0476
+    },
+    {
+      "wallet": "0x00041e6c5117f0bb79eb2d8a3d299f8c4d5711bf",
+      "total_profit": -179.64,
+      "markets": 11,
+      "profitable_markets": 1,
+      "hit_rate": 0.0909
+    },
+    {
+      "wallet": "0x00109ef26078b504584a49f93537e8eec85b73b7",
+      "total_profit": -196.34,
+      "markets": 21,
+      "profitable_markets": 4,
+      "hit_rate": 0.1905
+    },
+    {
+      "wallet": "0x00035e0d85439cc6f7894e73a205fa92752a5342",
+      "total_profit": -196.62,
+      "markets": 18,
+      "profitable_markets": 11,
+      "hit_rate": 0.6111
+    },
+    {
+      "wallet": "0x0001dfd5f5732b6b9e5dc721e156647415cc80bd",
+      "total_profit": -214.71,
+      "markets": 20,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0005b1385b2776b568e153ed217bb0addd5d31ca",
+      "total_profit": -217.8,
+      "markets": 40,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000572898bf281d5f0cfb72b67c46dd590c82514",
+      "total_profit": -231.41,
+      "markets": 26,
+      "profitable_markets": 1,
+      "hit_rate": 0.0385
+    },
+    {
+      "wallet": "0x000e4dc993cc481d720678a772fd2ee8623205e2",
+      "total_profit": -255.13,
+      "markets": 16,
+      "profitable_markets": 2,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x000bdc19a86a6a7fb279806997b1505d829f0300",
+      "total_profit": -257.4,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0008c2f331735ce5ee052adb6e2c9bf6e037b448",
+      "total_profit": -272.61,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d08e8f73ff655bcdf96dd1f55cd58a9968a1e",
+      "total_profit": -275.88,
+      "markets": 31,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007d3e7203796eee5f6ba4b768cbd1e2f7d01bd",
+      "total_profit": -299.14,
+      "markets": 15,
+      "profitable_markets": 1,
+      "hit_rate": 0.0667
+    },
+    {
+      "wallet": "0x0002732a4f7f3e8f0d2bd088dd17f101d4504775",
+      "total_profit": -305.42,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00077aa24ff6d89fd7a305bd8f0ed83c089c620f",
+      "total_profit": -321.5,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0011a50275d93ad8a70e9c193b2f1cb575000188",
+      "total_profit": -330.52,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0001c7d116fd33b0edc523b56d36d9a2f47b93e0",
+      "total_profit": -338.14,
+      "markets": 21,
+      "profitable_markets": 3,
+      "hit_rate": 0.1429
+    },
+    {
+      "wallet": "0x00092ba6edbaf8ed897fd1b49cabf44a27b2b47f",
+      "total_profit": -338.98,
+      "markets": 18,
+      "profitable_markets": 1,
+      "hit_rate": 0.0556
+    },
+    {
+      "wallet": "0x0010e92f6a3172c860d9443904f8242dac7d3697",
+      "total_profit": -350.23,
+      "markets": 35,
+      "profitable_markets": 1,
+      "hit_rate": 0.0286
+    },
+    {
+      "wallet": "0x00058a931b829d6f96839dca2fd4ea97d348a71c",
+      "total_profit": -353.08,
+      "markets": 36,
+      "profitable_markets": 3,
+      "hit_rate": 0.0833
+    },
+    {
+      "wallet": "0x000cc0365b3aa999f5cd55e4f01b44ce24d9dda2",
+      "total_profit": -374.09,
+      "markets": 30,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0003a12aef1cfa1371d0cb3b4e7bb311e4b70916",
+      "total_profit": -416.32,
+      "markets": 73,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d3914343fb591371f49fcf7d4d39cefc03641",
+      "total_profit": -428.66,
+      "markets": 18,
+      "profitable_markets": 4,
+      "hit_rate": 0.2222
+    },
+    {
+      "wallet": "0x000c217d5b7fed924bc3cd737a00b2a4b6cda49b",
+      "total_profit": -432.79,
+      "markets": 10,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000442ae3643b4c36bbc7275c04ecfd7f64b4a07",
+      "total_profit": -443.43,
+      "markets": 49,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0002def538e3dc6e331a31b00aec57e4d2072bdd",
+      "total_profit": -459.54,
+      "markets": 24,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000e240efd7198a680ed73f278bdc9f0e0c3d8d8",
+      "total_profit": -460.95,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000f0adbfbff2b4f6660710d1cdfd8788b8abf30",
+      "total_profit": -467.03,
+      "markets": 140,
+      "profitable_markets": 2,
+      "hit_rate": 0.0143
+    },
+    {
+      "wallet": "0x000e60fd96311fa798ab7d4296eb9c5ad3e0b3d8",
+      "total_profit": -470.09,
+      "markets": 40,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b8731539039bea2ec1261f518e4d64dcbe5db",
+      "total_profit": -471.25,
+      "markets": 21,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0010159f1426f562222e9343d0a22f401be71389",
+      "total_profit": -479.44,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0006ac245f1dd5e852889a1566234c63b09b5906",
+      "total_profit": -511.65,
+      "markets": 34,
+      "profitable_markets": 1,
+      "hit_rate": 0.0294
+    },
+    {
+      "wallet": "0x00010be773281d07a05ad92eb8503a7322916191",
+      "total_profit": -519.64,
+      "markets": 5,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x001085978bf36613e9712c31bb00ca52cd982450",
+      "total_profit": -595.22,
+      "markets": 64,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000b2b11abe50505f729b69e9da05f318552ea4f",
+      "total_profit": -617.31,
+      "markets": 25,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000fb5fc27b7337498735fd5078fdc4133a704ac",
+      "total_profit": -692.06,
+      "markets": 39,
+      "profitable_markets": 8,
+      "hit_rate": 0.2051
+    },
+    {
+      "wallet": "0x0011ce23d83416ecec959f16702868df6d25aa02",
+      "total_profit": -722.67,
+      "markets": 8,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0000e8596ab3052f454bccdb5a0c1cc3dc6b41ea",
+      "total_profit": -725.44,
+      "markets": 11,
+      "profitable_markets": 2,
+      "hit_rate": 0.1818
+    },
+    {
+      "wallet": "0x000b88e5ff8880d41f87070a7bd8bab414220872",
+      "total_profit": -726.3,
+      "markets": 137,
+      "profitable_markets": 60,
+      "hit_rate": 0.438
+    },
+    {
+      "wallet": "0x0010ce3011468b161cb5f47677dab8e1d9412fc0",
+      "total_profit": -800.42,
+      "markets": 41,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000cbbd4ce20ce60618f875cfb9b35cd29210d5f",
+      "total_profit": -820.44,
+      "markets": 51,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00127775415eb3e8015f52d6d2838abd04513d6c",
+      "total_profit": -867.88,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00045b26c38807910a688a1fd23dc69303d159cf",
+      "total_profit": -869.35,
+      "markets": 8,
+      "profitable_markets": 4,
+      "hit_rate": 0.5
+    },
+    {
+      "wallet": "0x00054b161fb9d5bcf05416921af5d1eef2c5bd0f",
+      "total_profit": -880.57,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00104794a587de3e68d813e53570e8a72fe99336",
+      "total_profit": -886.33,
+      "markets": 31,
+      "profitable_markets": 2,
+      "hit_rate": 0.0645
+    },
+    {
+      "wallet": "0x000b95ad4c4954075ac5b9d9f7c5fc64c5912423",
+      "total_profit": -1095.41,
+      "markets": 76,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000edc4d28b9751d1b5101058098b04bac1ce7f6",
+      "total_profit": -1167.8,
+      "markets": 35,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000d184173848c5cd787bfc95c901e74cc3e59b2",
+      "total_profit": -1280.08,
+      "markets": 32,
+      "profitable_markets": 4,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x0010f179324e8883d3186f4c8a4db54e25e70d44",
+      "total_profit": -1320.86,
+      "markets": 58,
+      "profitable_markets": 2,
+      "hit_rate": 0.0345
+    },
+    {
+      "wallet": "0x0007a11439c3c836667aa8dc7dbafb6ce02d434e",
+      "total_profit": -1559.43,
+      "markets": 24,
+      "profitable_markets": 3,
+      "hit_rate": 0.125
+    },
+    {
+      "wallet": "0x00000f27e5cc48331f6992ac339c149fef9b324f",
+      "total_profit": -1568.55,
+      "markets": 21,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00113e75c6b045f3d21103008b908c047e3374f0",
+      "total_profit": -1645.6,
+      "markets": 193,
+      "profitable_markets": 3,
+      "hit_rate": 0.0155
+    },
+    {
+      "wallet": "0x00041bcd345ff9a1c22fd8b53a2cf9e395d2f2ff",
+      "total_profit": -1787.35,
+      "markets": 71,
+      "profitable_markets": 1,
+      "hit_rate": 0.0141
+    },
+    {
+      "wallet": "0x000ce5298e550d110fb716a0ddd9ccdd5c6f5fbb",
+      "total_profit": -1812.42,
+      "markets": 15,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00050708884b3ecc9884da403fa7b113791202af",
+      "total_profit": -1893.28,
+      "markets": 18,
+      "profitable_markets": 1,
+      "hit_rate": 0.0556
+    },
+    {
+      "wallet": "0x000ad83263eab099d5cd5ebcc06df845f654d9bf",
+      "total_profit": -2010.15,
+      "markets": 159,
+      "profitable_markets": 1,
+      "hit_rate": 0.0063
+    },
+    {
+      "wallet": "0x0002de6af3deee168fb8105e823a32fb39e8a4d7",
+      "total_profit": -2095.25,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000106a2eae5690327e6a495ea3eabe85189d1eb",
+      "total_profit": -2329.9,
+      "markets": 27,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0009ad3249a4de680739f53e3c37bd0e57335de3",
+      "total_profit": -2400.29,
+      "markets": 9,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x000c4b23c7afe76db6ffdaa9f3c210f6383baf35",
+      "total_profit": -2610.14,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0004bcbbaeb6da6bf73a64126506f6f4955cef4c",
+      "total_profit": -2773.01,
+      "markets": 100,
+      "profitable_markets": 33,
+      "hit_rate": 0.33
+    },
+    {
+      "wallet": "0x0002d2919242860551b74dc688c48958a25260ae",
+      "total_profit": -3284.74,
+      "markets": 15,
+      "profitable_markets": 6,
+      "hit_rate": 0.4
+    },
+    {
+      "wallet": "0x00027c9ef773d5818bd9208fcd596c4b40235e91",
+      "total_profit": -3597.05,
+      "markets": 51,
+      "profitable_markets": 4,
+      "hit_rate": 0.0784
+    },
+    {
+      "wallet": "0x000e43e467f0f77e65784f3d6a450f7f6c55e70e",
+      "total_profit": -3661.5,
+      "markets": 6,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00046b741e19e9296863121475df84cc656b3746",
+      "total_profit": -3957.8,
+      "markets": 7,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00087c69e3c3ba8c2df28290cf19dc35fd005c9b",
+      "total_profit": -5513.52,
+      "markets": 12,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0011b10ab19890abee454e7a3cb1af66e0fb3e0e",
+      "total_profit": -6269.18,
+      "markets": 13,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0010d4b9fc653f80a936e20684eafea9486461a9",
+      "total_profit": -6385.97,
+      "markets": 27,
+      "profitable_markets": 2,
+      "hit_rate": 0.0741
+    },
+    {
+      "wallet": "0x000335e87e828296af7c59678792487128b3dccc",
+      "total_profit": -6609.74,
+      "markets": 31,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x0007ddfb98be3c5cb58c77bb9be1d2c84c0d23b5",
+      "total_profit": -7222.78,
+      "markets": 17,
+      "profitable_markets": 3,
+      "hit_rate": 0.1765
+    },
+    {
+      "wallet": "0x000bfa07d4d004e56b0fff15fca36d3d1d4e33de",
+      "total_profit": -10007.04,
+      "markets": 75,
+      "profitable_markets": 67,
+      "hit_rate": 0.8933
+    },
+    {
+      "wallet": "0x00000eb427b4f293ee8b7ebfb37033d6250cba57",
+      "total_profit": -17077.06,
+      "markets": 39,
+      "profitable_markets": 0,
+      "hit_rate": 0.0
+    },
+    {
+      "wallet": "0x00034663f8c94440fc8e1d0466fb244ef54c857a",
+      "total_profit": -20873.53,
+      "markets": 48,
+      "profitable_markets": 17,
+      "hit_rate": 0.3542
+    },
+    {
+      "wallet": "0x001251e3ca847f96f8242e90d85af890e621fbb1",
+      "total_profit": -26000.24,
+      "markets": 16,
+      "profitable_markets": 1,
+      "hit_rate": 0.0625
+    },
+    {
+      "wallet": "0x00090e8b4fa8f88dc9c1740e460dd0f670021d43",
+      "total_profit": -324483.65,
+      "markets": 43,
+      "profitable_markets": 1,
+      "hit_rate": 0.0233
+    },
+    {
+      "wallet": "0x000f6dc1bf7bac1349123caefff3fde8e6bdfa77",
+      "total_profit": -1128774.84,
+      "markets": 111,
+      "profitable_markets": 82,
+      "hit_rate": 0.7387
+    },
+    {
+      "wallet": "0x000d257d2dc7616feaef4ae0f14600fdf50a758e",
+      "total_profit": -32883319.36,
+      "markets": 890,
+      "profitable_markets": 93,
+      "hit_rate": 0.1045
+    }
+  ]
+}
