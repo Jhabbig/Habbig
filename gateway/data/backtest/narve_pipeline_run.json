@@ -1,0 +1,405 @@
+{
+  "generated_at": "2026-06-18T17:21:45.035442+00:00",
+  "mode": "offline-heuristic",
+  "forecast_model": null,
+  "data_provenance": {
+    "outcomes": "REAL — live Polymarket gamma resolved markets (answer key)",
+    "info_items": "REAL — live Reddit/HN/NPR/The Hill feeds",
+    "probability": "OFFLINE HEURISTIC (labelled keyword scan) — NOT the model; proves the pipeline runs on real info + real outcomes"
+  },
+  "caveats": [
+    "Market price is the answer key + edge benchmark only; it is NEVER blended into narve's probability.",
+    "Free real-time feeds have no deep historical search reachable here, so for already-resolved markets the info is current and post-dates resolution. This is a present-time plumbing/eval harness; the same ingest->forecast->grade loop runs unchanged on live, unresolved markets at point-in-time.",
+    "Probability is the OFFLINE keyword heuristic, not the model — directional accuracy/Brier below reflect the pipeline + heuristic, not narve's true forecasting skill. Re-run live for that."
+  ],
+  "n_events": 12,
+  "n_skipped": 0,
+  "skipped": [],
+  "grade": {
+    "n": 12,
+    "accuracy": 0.25,
+    "brier": 0.630601,
+    "calibration": 0.0,
+    "reliability_bins": [
+      {
+        "bin_lo": 0.0,
+        "bin_hi": 0.1,
+        "count": 0,
+        "predicted_avg": 0.05,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.1,
+        "bin_hi": 0.2,
+        "count": 0,
+        "predicted_avg": 0.15,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.2,
+        "bin_hi": 0.3,
+        "count": 0,
+        "predicted_avg": 0.25,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.3,
+        "bin_hi": 0.4,
+        "count": 0,
+        "predicted_avg": 0.35,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.4,
+        "bin_hi": 0.5,
+        "count": 0,
+        "predicted_avg": 0.45,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.5,
+        "bin_hi": 0.6,
+        "count": 0,
+        "predicted_avg": 0.55,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.6,
+        "bin_hi": 0.7,
+        "count": 0,
+        "predicted_avg": 0.65,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.7,
+        "bin_hi": 0.8,
+        "count": 0,
+        "predicted_avg": 0.75,
+        "actual_accuracy": 0.0,
+        "is_overconfident": false,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.8,
+        "bin_hi": 0.9,
+        "count": 3,
+        "predicted_avg": 0.8737,
+        "actual_accuracy": 0.3333,
+        "is_overconfident": true,
+        "is_underconfident": false,
+        "is_calibrated": false
+      },
+      {
+        "bin_lo": 0.9,
+        "bin_hi": 1.0,
+        "count": 9,
+        "predicted_avg": 0.9301,
+        "actual_accuracy": 0.2222,
+        "is_overconfident": true,
+        "is_underconfident": false,
+        "is_calibrated": false
+      }
+    ],
+    "vs_coinflip": -0.380601
+  },
+  "events": [
+    {
+      "market_id": "will-kim-kardashian-and-kanye-west-divorce-before-jan-1-2021",
+      "question": "Will Kim Kardashian and Kanye West divorce before Jan 1, 2021?",
+      "search_query": "Kim Kardashian Kanye West divorce Jan 1 2021",
+      "n_info_items": 34,
+      "narve_probability_yes": 0.8856,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 34 info item(s); p=0.8856. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.3529,
+        "news": 0.6471
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-01-02T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-coinbase-begin-publicly-trading-before-jan-1-2021",
+      "question": "Will Coinbase begin publicly trading before Jan 1, 2021?",
+      "search_query": "Coinbase begin publicly trading Jan 1 2021",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-01-02T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-trump-win-the-2020-us-presidential-election",
+      "question": "Will Trump win the 2020 U.S. presidential election?",
+      "search_query": "Trump 2020 U.S. presidential election",
+      "n_info_items": 23,
+      "narve_probability_yes": 0.9048,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 23 info item(s); p=0.9048. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2020-11-20T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-there-be-a-federal-charge-filed-against-hunter-biden-before-2021",
+      "question": "Will there be a federal charge filed against Hunter Biden before 2021?",
+      "search_query": "there federal charge filed against Hunter Biden 2021",
+      "n_info_items": 34,
+      "narve_probability_yes": 0.8466,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 34 info item(s); p=0.8466. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.3529,
+        "news": 0.6471
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-01-02T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "which-party-will-win-arizona-in-the-2020-presidential-election",
+      "question": "Which party will win Arizona in the 2020 Presidential Election?",
+      "search_query": "party Arizona 2020 Presidential Election",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 1,
+      "resolved_label": "Democratic",
+      "resolved_at": null,
+      "narve_correct": true
+    },
+    {
+      "market_id": "will-donald-trump-tweet-announcing-that-he-won-the-election-before-november-5th-2020",
+      "question": "Will Donald Trump tweet announcing that he won the election before November 5th 2020?",
+      "search_query": "Donald Trump tweet announcing he won election November",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2020-11-05T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-the-ethereum-20-genesis-event-happen-successfully-on-december-1st-2020",
+      "question": "Will the Ethereum 2.0 Genesis Event happen successfully on December 1st, 2020?",
+      "search_query": "Ethereum 2.0 Genesis Event happen successfully December 1st",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 1,
+      "resolved_label": "Yes",
+      "resolved_at": "2020-12-02T00:00:00Z",
+      "narve_correct": true
+    },
+    {
+      "market_id": "will-btc-break-20k-before-2021",
+      "question": "Will $BTC break $20k before 2021?",
+      "search_query": "$BTC break $20k 2021",
+      "n_info_items": 23,
+      "narve_probability_yes": 0.8889,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 23 info item(s); p=0.8889. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 1,
+      "resolved_label": "Yes",
+      "resolved_at": "2021-01-01T00:00:00Z",
+      "narve_correct": true
+    },
+    {
+      "market_id": "will-donald-trump-formally-concede-the-2020-us-election-before-december-1st-2020",
+      "question": "Will Donald Trump formally concede the 2020 US Election before December 1st, 2020?",
+      "search_query": "Donald Trump formally concede 2020 US Election December",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2020-12-01T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-donald-trump-attend-joe-biden-s-inauguration-ceremony-in-person",
+      "question": "Will Donald Trump attend Joe Biden’s inauguration ceremony in person?",
+      "search_query": "Donald Trump attend Joe Biden s inauguration ceremony",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-02-01T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-donald-trump-be-inaugurated-for-his-second-term-as-president-of-the-usa-on-inauguration-day-january-20th-2021",
+      "question": "Will Donald Trump be inaugurated for his second term as President of the USA on Inauguration Day, January 20th, 2021?",
+      "search_query": "Donald Trump inaugurated second term President USA Inauguration",
+      "n_info_items": 22,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 22 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-02-01T00:00:00Z",
+      "narve_correct": false
+    },
+    {
+      "market_id": "will-trump-win-any-of-pennsylvania-arizona-or-georgia",
+      "question": "Will Trump win any of Pennsylvania, Arizona or Georgia?",
+      "search_query": "Trump any Pennsylvania Arizona Georgia",
+      "n_info_items": 23,
+      "narve_probability_yes": 0.9333,
+      "narve_confidence": 0.5,
+      "digest": "[OFFLINE HEURISTIC — NOT the real model] Probability derived from a transparent positive/negative keyword scan over 23 info item(s); p=0.9333. For pipeline plumbing and tests only.",
+      "drivers": [
+        "offline keyword-sentiment heuristic (NARVE_OFFLINE=1)"
+      ],
+      "source_spread": {
+        "x": 0.0,
+        "truthsocial": 0.0,
+        "reddit": 0.0,
+        "news": 1.0
+      },
+      "political_lean": "offline-heuristic",
+      "resolved_outcome": 0,
+      "resolved_label": "No",
+      "resolved_at": "2021-01-23T00:00:00Z",
+      "narve_correct": false
+    }
+  ]
+}
