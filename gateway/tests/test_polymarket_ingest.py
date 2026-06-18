@@ -86,3 +86,64 @@ def test_build_market_record_drops_lookahead_forecasts():
     future = [{"proxyWallet": "0xLATE", "outcome": "Yes", "side": "BUY",
                "size": 10, "price": 0.7, "timestamp": 1800000000}]  # year 2027, after 2024 resolution
     assert build_market_record(market, future) is None
+
+# ── C1 + I1: date-level lookahead cutoff (must match loader's DATE granularity) ──
+
+def _resolved_market(end_date="2024-01-01T18:00:00Z"):
+    return {"id": 3, "slug": "z", "question": "q", "conditionId": "0x",
+            "endDate": end_date,
+            "outcomes": '["Yes","No"]', "outcomePrices": '["0.9999","0.0001"]',
+            "lastTradePrice": "0.8"}
+
+def _ts_for(iso):
+    # epoch seconds (UTC) for an ISO8601 string ending in Z
+    import datetime as _dt
+    return int(_dt.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
+              .replace(tzinfo=_dt.timezone.utc).timestamp())
+
+def test_same_date_forecast_is_dropped():
+    # forecast at 05:00 on resolution DATE (resolved 18:00 same day). As a raw
+    # string this is < resolved_at and would survive, but the loader compares
+    # DATES and made_at_date == resolved_at_date -> must be dropped here.
+    market = _resolved_market("2024-01-01T18:00:00Z")
+    trades = [{"proxyWallet": "0xSAMEDAY", "outcome": "Yes", "side": "BUY",
+               "size": 10, "price": 0.7, "timestamp": _ts_for("2024-01-01T05:00:00Z")}]
+    # only forecast is same-date -> dropped -> record is None
+    assert build_market_record(market, trades) is None
+
+def test_earlier_date_forecast_is_kept():
+    market = _resolved_market("2024-01-01T18:00:00Z")
+    trades = [{"proxyWallet": "0xEARLY", "outcome": "Yes", "side": "BUY",
+               "size": 10, "price": 0.7, "timestamp": _ts_for("2023-12-31T23:00:00Z")}]
+    rec = build_market_record(market, trades)
+    assert rec is not None
+    handles = {f["source_handle"] for f in rec["forecasts"]}
+    assert handles == {"0xEARLY"}
+
+# ── I2: tight resolved_at fallback — no updatedAt fallback ──
+
+def test_missing_enddate_returns_none_even_with_updatedat():
+    market = {"id": 4, "slug": "w", "question": "q", "conditionId": "0x",
+              "updatedAt": "2024-01-05T00:00:00Z",  # present but must NOT be used
+              "outcomes": '["Yes","No"]', "outcomePrices": '["0.9999","0.0001"]',
+              "lastTradePrice": "0.8"}
+    trades = [{"proxyWallet": "0xW", "outcome": "Yes", "side": "BUY",
+               "size": 10, "price": 0.7, "timestamp": _ts_for("2023-12-31T23:00:00Z")}]
+    assert build_market_record(market, trades) is None
+
+# ── M1: reject non-positive size ──
+
+def test_negative_size_is_ignored():
+    assert wallet_prediction([_trade("Yes", "BUY", -100, 0.60, 1000)]) is None
+
+# ── M2: missing lastTradePrice falls back to neutral 0.5, not the resolved price ──
+
+def test_missing_last_trade_price_uses_neutral_half():
+    market = {"id": 5, "slug": "v", "question": "q", "conditionId": "0x",
+              "endDate": "2024-01-01T18:00:00Z",
+              "outcomes": '["Yes","No"]', "outcomePrices": '["0.9999","0.0001"]'}
+    trades = [{"proxyWallet": "0xV", "outcome": "Yes", "side": "BUY",
+               "size": 10, "price": 0.7, "timestamp": _ts_for("2023-12-31T23:00:00Z")}]
+    rec = build_market_record(market, trades)
+    assert rec is not None
+    assert rec["price_timeline"][0]["yes_price"] == 0.5

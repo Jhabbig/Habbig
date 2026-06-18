@@ -36,6 +36,10 @@ def _yes_signed(trade) -> Optional[tuple[float, float, int]]:
         ts = int(trade.get("timestamp"))
     except (TypeError, ValueError):
         return None
+    # M1: a non-positive size is malformed; a negative size would silently
+    # invert the YES-exposure sign and flip the prediction. Reject it.
+    if size <= 0:
+        return None
     label = str(trade.get("outcome", "")).strip().lower()
     side = str(trade.get("side", "")).strip().upper()
     if side not in ("BUY", "SELL") or label not in ("yes", "no"):
@@ -73,6 +77,16 @@ import datetime as _dt
 def _ts_to_iso(ts: int) -> str:
     return _dt.datetime.fromtimestamp(int(ts), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def _iso_to_date(s: str) -> Optional[_dt.date]:
+    """Parse the DATE component of an ISO8601 string, matching the loader's
+    granularity (gateway/backtest_dataset.parse_iso_date -> date.fromisoformat(s[:10])).
+    Returns None if the first 10 chars aren't a parseable ISO date, so callers
+    can drop the record safely rather than crash the loader downstream."""
+    try:
+        return _dt.date.fromisoformat(str(s)[:10])
+    except (TypeError, ValueError):
+        return None
+
 def build_market_record(market: dict, trades: list[dict]) -> Optional[dict]:
     """Build one SCHEMA.md market record from a resolved market + its trades.
     Returns None if the market isn't decisively resolved (guard #2) or has no
@@ -82,8 +96,18 @@ def build_market_record(market: dict, trades: list[dict]) -> Optional[dict]:
     if dec is None:
         return None
     resolved_outcome, _win = dec
-    resolved_at = str(market.get("endDate") or market.get("updatedAt") or "")
+    # I2: resolve ONLY from endDate. updatedAt is a mutation time that for a
+    # resolved market is usually AFTER resolution -> a loose (wrong-direction)
+    # lookahead cutoff. Dropping a market is safe; a loose cutoff is not.
+    resolved_at = str(market.get("endDate") or "")
     if not resolved_at:
+        return None
+    # C1 + I1: compare DATES at the loader's granularity. The loader hard-fails
+    # the dataset when made_at_date >= resolved_at_date, so we must drop at the
+    # same level here (a forecast at 05:00Z on the resolution DATE would survive
+    # a raw-string compare but crash the loader).
+    resolved_date = _iso_to_date(resolved_at)
+    if resolved_date is None:
         return None
     by_wallet: dict[str, list[dict]] = {}
     for t in trades:
@@ -96,7 +120,10 @@ def build_market_record(market: dict, trades: list[dict]) -> Optional[dict]:
         if pred is None:
             continue
         made_at = _ts_to_iso(pred["made_at_ts"])
-        if made_at >= resolved_at:
+        made_at_date = _iso_to_date(made_at)
+        # Keep ONLY if the forecast's DATE is strictly before the resolution
+        # DATE (matches the loader). Unparseable dates drop the forecast.
+        if made_at_date is None or made_at_date >= resolved_date:
             continue
         forecasts.append({
             "source_handle": wallet,
@@ -109,8 +136,10 @@ def build_market_record(market: dict, trades: list[dict]) -> Optional[dict]:
     try:
         last = float(market.get("lastTradePrice"))
     except (TypeError, ValueError):
-        op = _as_list(market.get("outcomePrices")) or [0.5, 0.5]
-        last = float(op[0])
+        # M2: fall back to a NEUTRAL 0.5, never outcomePrices[0]. At resolution
+        # the resolved price is ~0.9999, which would plant a near-certain
+        # baseline into the timeline and flatter the market vs. our forecasters.
+        last = 0.5
     price_timeline = [{"date": resolved_at[:10], "yes_price": max(0.0, min(1.0, last))}]
     return {
         "market_id": str(market.get("slug") or market.get("id")),
