@@ -67,3 +67,56 @@ def wallet_prediction(trades: list[dict]) -> Optional[dict]:
     made_at_ts = min(ts for _, _, ts in side_legs)
     return {"direction": direction, "predicted_probability": round(pred_yes, 6),
             "made_at_ts": made_at_ts}
+
+import datetime as _dt
+
+def _ts_to_iso(ts: int) -> str:
+    return _dt.datetime.fromtimestamp(int(ts), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def build_market_record(market: dict, trades: list[dict]) -> Optional[dict]:
+    """Build one SCHEMA.md market record from a resolved market + its trades.
+    Returns None if the market isn't decisively resolved (guard #2) or has no
+    usable forecasts. Forecasts whose made_at is not strictly before resolution
+    are dropped (lookahead-safe)."""
+    dec = decisive_outcome(market.get("outcomePrices"), market.get("outcomes"))
+    if dec is None:
+        return None
+    resolved_outcome, _win = dec
+    resolved_at = str(market.get("endDate") or market.get("updatedAt") or "")
+    if not resolved_at:
+        return None
+    by_wallet: dict[str, list[dict]] = {}
+    for t in trades:
+        w = t.get("proxyWallet")
+        if w:
+            by_wallet.setdefault(w, []).append(t)
+    forecasts = []
+    for wallet, wtr in by_wallet.items():
+        pred = wallet_prediction(wtr)
+        if pred is None:
+            continue
+        made_at = _ts_to_iso(pred["made_at_ts"])
+        if made_at >= resolved_at:
+            continue
+        forecasts.append({
+            "source_handle": wallet,
+            "predicted_probability": pred["predicted_probability"],
+            "made_at": made_at,
+            "url": f"https://polymarket.com/market/{market.get('slug','')}",
+        })
+    if not forecasts:
+        return None
+    try:
+        last = float(market.get("lastTradePrice"))
+    except (TypeError, ValueError):
+        op = _as_list(market.get("outcomePrices")) or [0.5, 0.5]
+        last = float(op[0])
+    price_timeline = [{"date": resolved_at[:10], "yes_price": max(0.0, min(1.0, last))}]
+    return {
+        "market_id": str(market.get("slug") or market.get("id")),
+        "question": str(market.get("question", "")),
+        "resolved_outcome": resolved_outcome,
+        "resolved_at": resolved_at,
+        "price_timeline": price_timeline,
+        "forecasts": forecasts,
+    }
