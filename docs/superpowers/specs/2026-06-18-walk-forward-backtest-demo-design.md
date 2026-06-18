@@ -180,3 +180,37 @@ for the demo. Just: dataset → harness → number → report → page.
 
 - **User provides:** the forecaster list + their specific real dated predictions.
   Build can start on the synthetic fixture immediately and drop real calls in.
+
+## ⚠️ UPDATE 2 — REST API dead-end, Goldsky subgraph is the real source (2026-06-18)
+
+Task 5 (build real dataset) proved the **free REST API cannot connect a resolved
+market to its historical trades** — `data-api /trades?conditionId=` / `?market=`
+/ `?asset=` all silently ignore the filter and return the global recent feed;
+`?user=` only surfaces recent activity (HFT bots on OPEN markets); CLOB /trades is
+auth-walled. The integrity guards correctly produced 0 markets rather than a fake
+number. (The earlier spike was fooled because the broken `?conditionId=` returned
+the global feed, which *looked* like it worked.)
+
+**THE REAL SOURCE (verified reachable from here, no auth, no key):** the Polymarket
+Goldsky subgraph —
+`https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/polymarket-orderbook-resync/prod/gn`
+(GraphQL POST). Key entities:
+- `condition` → `payoutNumerators`, `payoutDenominator`, `resolutionTimestamp`
+  = the resolved outcome + when (decisive payouts like `['0','1']`).
+- `marketProfit` → `user`, `condition`, `profit`/`scaledProfit` = per-wallet
+  per-resolved-market realized P&L. **This is the join** — "wallet X was
+  right/wrong on resolved market Y, by this much." Pre-computed, no lookahead.
+- `enrichedOrderFilled` → `timestamp, maker, taker, market, side, size, price`
+  = timestamped fills, for walk-forward entry timing.
+- `marketPosition` → `user, market, netQuantity, valueBought/Sold` (FPMM-era).
+Both `marketProfits` and resolved `conditions` paginate 1000/page across the full
+ledger. Verified: marketProfit→condition→payout join returns real scoreable rows.
+
+**Plan impact:** rewrite `integrations/polymarket_api.py` to query the subgraph
+(GraphQL) instead of the broken REST endpoints; rewrite the ingest to build the
+dataset from `marketProfit` + `condition` (credibility from realized P&L on
+resolved markets) + `enrichedOrderFilled` (entry timing for no-lookahead). The
+harness/scorer (`backtest_replay.py`, `backtest_accuracy.py`) stay unchanged —
+still fed via SCHEMA.md records. Credibility can be scored on realized profit
+(sharp = consistently profitable across many resolved markets) rather than a
+reconstructed directional call, which is cleaner and harder to fake.
