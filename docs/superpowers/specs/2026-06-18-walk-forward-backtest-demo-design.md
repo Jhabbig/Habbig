@@ -1,8 +1,51 @@
 # narve walk-forward backtest → proof report → live page
 
-**Date:** 2026-06-18
-**Status:** design (awaiting review)
+**Date:** 2026-06-18 (updated post-spike)
+**Status:** design — spike complete, real-data source confirmed
 **Owner:** narve / Habbig — product MVP demo
+
+## ⚠️ UPDATE after data-integrity spike (2026-06-18)
+
+The original design assumed hand-sourced pundit/X predictions. The spike found a
+**better, real, unblocked source: Polymarket traders themselves.** Every trade is
+a real, timestamped, on-chain prediction by a real wallet, with the resolved
+outcome public. No scraper, no auth, no hand-sourcing — and **you are no longer
+the blocker.**
+
+**Proven by the spike (all real, hand-verifiable):**
+- **~680 cleanly-resolved binary markets** reachable (decisive 0/1 outcomes).
+  ~2,108 resolved markets total via offset pagination (API caps 100/page).
+- **Wallets repeat across markets** — one sampled wallet: 500 trades / 91 distinct
+  markets. 188 distinct wallets on a single market. Credibility scoring is viable.
+- **The trade→outcome join works** via the trade's own plain-text `outcome` label
+  + the market's decisive resolution. Hand-checkable ("winner = No; a BUY of No is
+  correct"). Real separation observed (one wallet 10/10, others 0/7).
+
+**Three integrity TRAPS the spike caught (the build MUST encode all three, or the
+accuracy number is silently fake — the Theranos failure mode):**
+1. **`?conditionId=` gamma filter COLLIDES** — returned 20 unrelated markets for
+   one id. NEVER join on conditionId. Use `/markets/{id}` (authoritative, unique)
+   for market lookup; `data-api /trades?conditionId=` is acceptable for *pulling*
+   trades but every trade must be re-validated against the specific market.
+2. **Ambiguous resolutions exist** (`outcomePrices: ['0','0']`, or near-50/50).
+   Only score markets with a DECISIVE outcome: `{round(p0),round(p1)}=={1,0}` and
+   `abs(p0-p1) > 0.9`. Reject the rest.
+3. **BUY/SELL × outcome-label semantics** — a SELL of "Yes" is a bet on "No". The
+   spike used a simplification; the real build MUST get trade-direction→predicted-
+   outcome exactly right per Polymarket's schema, hand-verified on ≥3 markets,
+   or accuracy is subtly wrong.
+
+**Source plan:** Polymarket = primary (works now). Metaculus = secondary, wired in
+later from the prod box (it 403s datacenter IPs incl. this one; repo has a
+scraper). Reddit/Truth/X = OUT for v1 (blocked + noisy prose, needs extraction).
+
+**Metric:** ACCURACY + Brier/calibration is the headline — NOT betting ROI. On a
+backtest, Kelly ROI is inflated and says nothing about real skill. "narve's
+credibility-weighted prediction was right X% vs. the market's Y%" is the product.
+
+The harness, lookahead guard, and accuracy scorer from the synthetic build
+(`backtest_replay.py`, `backtest_accuracy.py`, tests) are DONE and reused — the
+real dataset drops into the same machinery via a new Polymarket ingest.
 
 ## Goal
 
