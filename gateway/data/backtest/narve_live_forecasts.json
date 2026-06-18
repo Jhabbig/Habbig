@@ -1,0 +1,38 @@
+[
+  {
+    "question": "Russia x Ukraine ceasefire by December 31, 2026?",
+    "market_price": 0.33,
+    "narve_prob": 0.22,
+    "confidence": 0.55,
+    "lean": "mixed",
+    "digest": "Gathered info shows ESCALATION, not de-escalation \u2014 largest drone attacks on Moscow, new Ukrainian drone units, cross-border strikes. No diplomatic-track signal in the feed. Base rate for a hard year-end ceasefire amid active escalation is low; the war's structural deadlock argues against a clean ceasefire by a fixed date. I sit BELOW the market's 33% \u2014 the info skews toward continued fighting.",
+    "src": "reddit 8/8 on-topic"
+  },
+  {
+    "question": "Will the Republicans win the Florida governor race in 2026?",
+    "market_price": 0.77,
+    "narve_prob": 0.74,
+    "confidence": 0.45,
+    "lean": "mixed",
+    "digest": "Gathered info was largely OTHER states' races (Iowa, Alabama, Georgia) \u2014 thin direct FL signal, so I lean on the strong structural prior: Florida has shifted reliably Republican in recent cycles and the GOP holds the seat. I land close to the market's 77% but shade slightly down for low info-confidence. Honest: this is prior-driven, not info-driven.",
+    "src": "reddit 8, mostly off-topic"
+  },
+  {
+    "question": "Will Pete Buttigieg announce a Presidential run before 2027?",
+    "market_price": 0.14,
+    "narve_prob": 0.2,
+    "confidence": 0.35,
+    "lean": "mixed",
+    "digest": "The gathered news was generic political headlines, no Buttigieg-specific signal \u2014 low info value. Prior: ambitious past-candidate, midterm year, many Democrats positioning for 2028 but formal *announcements before 2027* are historically rare (most declare in the spring of the year before the primary). I sit modestly above the market's 14% but flag very low confidence \u2014 this is near-prior.",
+    "src": "news 8, off-topic"
+  },
+  {
+    "question": "Will there be a US government shutdown in 2026?",
+    "market_price": null,
+    "narve_prob": 0.45,
+    "confidence": 0.5,
+    "lean": "mixed",
+    "digest": "Gathered HN info references PAST shutdowns ('the US government shutdown ended', 'longest in history') \u2014 historical, not 2026-specific, so partial contamination risk; I down-weight it. Base rate: shutdowns/CR brinkmanship are frequent in divided-funding years; roughly a coin-flip-ish for *some* shutdown in a given recent year. ~45%, no market price to benchmark against.",
+    "src": "hackernews 8, historical"
+  }
+]
