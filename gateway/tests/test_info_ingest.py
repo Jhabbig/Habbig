@@ -192,8 +192,14 @@ def test_gather_dedupes(monkeypatch):
         raise RuntimeError("source down")
     monkeypatch.setattr(ing, "fetch_npr", _boom)        # must not crash gather
     monkeypatch.setattr(ing, "fetch_hill", lambda limit=15: [])
+    # New sources added to gather() — stub them so this stays a unit test (no
+    # network): google_news raises (gather must survive it), bbc/guardian empty.
+    monkeypatch.setattr(ing, "fetch_google_news", lambda q, limit=15: (_ for _ in ()).throw(RuntimeError("source down")))
+    monkeypatch.setattr(ing, "fetch_bbc", lambda limit=15: [])
+    monkeypatch.setattr(ing, "fetch_guardian", lambda limit=15: [])
     out = ing.gather("anything", limit_per=15)
-    # 2 reddit dupes collapse to 1; + 1 hn = 2 total; npr raised -> skipped
+    # 2 reddit dupes collapse to 1; + 1 hn = 2 total; npr + google_news raised
+    # (skipped, gather survives); hill/bbc/guardian empty.
     assert len(out) == 2
     platforms = {it["platform"] for it in out}
     assert platforms == {"reddit", "hackernews"}
