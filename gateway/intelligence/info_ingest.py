@@ -243,6 +243,27 @@ def fetch_hill(limit: int = 25) -> list[dict]:
     return parse_rss(_curl("https://thehill.com/homenews/feed/"), limit=limit)
 
 
+def fetch_google_news(query: str, limit: int = 25, days: int = 14) -> list[dict]:
+    """Google News RSS — the best news source: SEARCHABLE and aggregates every
+    outlet. Verified reachable from this host (per-query, ~50+ items). `days`
+    scopes recency via the when:Nd operator so the info is fresh, not archival.
+    """
+    import urllib.parse
+    q = urllib.parse.quote(f"when:{days}d {query}")
+    url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    return parse_rss(_curl(url), limit=limit)
+
+
+def fetch_bbc(limit: int = 25) -> list[dict]:
+    """BBC Politics headlines (RSS 2.0). Whole-feed (no search)."""
+    return parse_rss(_curl("https://feeds.bbci.co.uk/news/politics/rss.xml"), limit=limit)
+
+
+def fetch_guardian(limit: int = 25) -> list[dict]:
+    """Guardian US-news headlines (RSS 2.0). Whole-feed (no search)."""
+    return parse_rss(_curl("https://www.theguardian.com/us-news/rss"), limit=limit)
+
+
 # --------------------------------------------------------------------------- #
 # Aggregation
 # --------------------------------------------------------------------------- #
@@ -267,8 +288,13 @@ def gather(
             _log(f"fetch_reddit({sub!r}) failed: {exc!r}")
     for fetch in (
         lambda: fetch_hackernews(query, limit=limit_per),
+        # Google News is SEARCHABLE + aggregates all outlets — the richest,
+        # most on-topic source. Queried with `query`; the rest are whole-feed.
+        lambda: fetch_google_news(query, limit=limit_per),
         lambda: fetch_npr(limit=limit_per),
         lambda: fetch_hill(limit=limit_per),
+        lambda: fetch_bbc(limit=limit_per),
+        lambda: fetch_guardian(limit=limit_per),
     ):
         try:
             combined.extend(fetch())
