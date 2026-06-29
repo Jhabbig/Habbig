@@ -130,13 +130,16 @@ def _transaction_cost_report(
 
     g_gross, g_net, g_to = pnl(pred_sign)
     n_gross, n_net, _ = pnl(null_sign)
-    edge_vs_cost = g_gross - n_gross
+    # A genuine edge after costs requires a POSITIVE net return that also beats
+    # the null's net return. Beating a money-losing null while still losing money
+    # is not an edge.
+    has_edge = (g_net > 0) and (g_net > n_net)
     return {
         "gross_ann_return": g_gross,
         "net_ann_return": g_net,
         "null_net_ann_return": n_net,
         "daily_turnover_frac": g_to,
-        "edge_below_cost": bool(g_net <= n_net),
+        "edge_below_cost": bool(not has_edge),
         "cost_bps": cost_bps,
     }
 
