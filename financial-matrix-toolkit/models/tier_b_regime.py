@@ -407,7 +407,8 @@ class AbsorbingDrawdownChain(BaseModel):
         return {
             "current_drawdown": self._current_dd,
             "current_state": self._current_state,
-            "expected_recovery_days_by_depth": dict(zip(labels, np.round(self._expected_steps, 1))),
+            "expected_recovery_days_by_depth": {k: round(float(v), 1)
+                                                for k, v in zip(labels, self._expected_steps)},
             "expected_recovery_days_now": self.expected_time_to_recovery(),
             "fundamental_matrix": self._N,
         }

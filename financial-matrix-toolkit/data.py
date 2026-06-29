@@ -209,7 +209,13 @@ def generate_synthetic_prices(
     crisis_boost = np.where(regime == 1, 1.6, 1.0)
 
     # --- assemble returns --------------------------------------------------
-    drift = rng.uniform(0.0001, 0.0004, n)  # tiny positive drift, ~10-40bps/yr*... negligible per day
+    # A SINGLE small common drift (a market-wide risk premium, ~+5%/yr) and NO
+    # per-asset idiosyncratic drift. Per-asset drift dispersion would be a stable,
+    # learnable directional signal - a synthetic artifact that would let the
+    # Tier-D models "predict" direction. Keeping drift common and tiny means
+    # daily direction is genuinely near-unpredictable (the core thesis), while
+    # the base-rate null absorbs the common premium.
+    drift = np.full(n, 0.0002)  # ~+5%/yr, common to all assets
     R = np.zeros((T, n))
     for t in range(T):
         mkt = market_beta * market_factor[t] * crisis_boost[t]
