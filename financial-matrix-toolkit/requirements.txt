@@ -1,0 +1,11 @@
+# Financial matrix toolkit - runtime dependencies (Python 3.11).
+# No ML frameworks: numpy/scipy/pandas/matplotlib only.
+numpy>=1.26
+scipy>=1.11
+pandas>=2.0
+matplotlib>=3.7
+# Optional: real data loading on a machine with open network access.
+# The toolkit runs fully without it (cached + synthetic fallback).
+yfinance>=0.2 ; extra == "live"
+# Testing.
+pytest>=7.4
