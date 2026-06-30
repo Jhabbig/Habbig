@@ -4,8 +4,9 @@ numpy>=1.26
 scipy>=1.11
 pandas>=2.0
 matplotlib>=3.7
-# Optional: real data loading on a machine with open network access.
-# The toolkit runs fully without it (cached + synthetic fallback).
-yfinance>=0.2 ; extra == "live"
 # Testing.
 pytest>=7.4
+
+# For REAL market data on a machine with open network, also install:
+#     pip install -r requirements-live.txt
+# The toolkit runs fully without it (cached + synthetic fallback).
