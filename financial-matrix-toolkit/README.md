@@ -128,6 +128,21 @@ refitting a fresh model on every window.
 direction/return model the report also gives gross vs **net (after-cost)** annual
 return and whether the edge survives costs. Seed is **42** everywhere.
 
+**An after-cost edge must be statistically significant, not just a point
+estimate.** Beating the null's net return on one short sample is cheap — with
+several correlated long-biased models, P(≥1 false winner) ≈ 94%. So the harness
+runs a **paired Newey-West (HAC) t-test** on the per-period (model − null)
+net-return series and reports three states:
+
+* `EDGE < COST` — does not even beat the null net (red);
+* `beats null but WITHIN NOISE (t=…, p=…)` — point-estimate win, not significant (yellow);
+* `edge > cost & SIGNIFICANT (t=…, p=…)` — survives the test (green).
+
+The closing summary counts only edges that survive **Bonferroni** correction
+across the Tier-D models. This is what stops the toolkit crowning small-sample
+noise as skill. (No-look-ahead is enforced too: data is forward-filled only —
+never back-filled, which would copy a future price into the past.)
+
 ## The 20 models (tier order = predictability order)
 
 **Tier C — Volatility (genuinely works)**

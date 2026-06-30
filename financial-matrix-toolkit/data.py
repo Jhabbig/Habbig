@@ -97,14 +97,20 @@ def log_returns(P: np.ndarray) -> np.ndarray:
 
 
 def _clean_prices(df: pd.DataFrame) -> pd.DataFrame:
-    """Handle missing data: forward-fill gaps, drop assets/leading rows that are
-    still empty, and drop any remaining all-NaN rows."""
+    """Handle missing data WITHOUT look-ahead.
+
+    Forward-fill internal gaps (holidays, halts) using only past prices. We do
+    NOT back-fill: back-filling leading NaNs would copy a *future* price backward
+    into the period before an asset started trading - a look-ahead leak on real
+    data where tickers have different inception dates. Leading NaNs are instead
+    dropped, so the panel starts when every asset has data.
+    """
     df = df.sort_index()
     # Drop columns that are entirely missing.
     df = df.dropna(axis=1, how="all")
-    # Forward then backward fill internal gaps (holidays, halts).
-    df = df.ffill().bfill()
-    # Any row still containing NaN is unusable.
+    # Forward-fill only (past -> present). Never backward (future -> past).
+    df = df.ffill()
+    # Drop leading rows where any asset has no price yet (no back-fill).
     df = df.dropna(axis=0, how="any")
     # Drop non-positive prices (cannot take a log).
     df = df[(df > 0).all(axis=1)]

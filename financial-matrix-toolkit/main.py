@@ -136,32 +136,48 @@ def closing_summary(results) -> None:
     """The honest verdict: how many Tier-D direction models beat the null AFTER
     transaction costs. The expected, correct answer is ~zero."""
     tier_d = [r for r in results if r.tier == "D"]
-    beat_after_cost = []
-    for r in tier_d:
-        e = r.extras
-        if "net_ann_return" in e and not e.get("edge_below_cost", True):
-            beat_after_cost.append(r.name)
+    # A point-estimate "beat the null" is not enough: require statistical
+    # significance (paired Newey-West t-test on the per-period edge over the null).
+    point_winners = [r.name for r in tier_d
+                     if r.extras.get("beats_null_pointest", False)]
+    n_tests = max(1, len(tier_d))
+    bonf = 0.05 / n_tests  # Bonferroni-corrected threshold across the Tier-D models
+    sig_winners = [r.name for r in tier_d
+                   if r.extras.get("edge_significant", False)]
+    bonf_winners = [r.name for r in tier_d
+                    if r.extras.get("beats_null_pointest", False)
+                    and r.extras.get("edge_pvalue", 1.0) < bonf]
 
     # volatility tier headline
     tier_c = [r for r in results if r.tier == "C"]
     vol_beats = sum(1 for r in tier_c if np.isfinite(r.skill) and r.skill > 0)
+    cost = int(tier_d[0].extras.get("cost_bps", 10)) if tier_d else 10
 
     print(f"\n{_BOLD}========================= CLOSING SUMMARY ============================{_RESET}")
     print(f"  Volatility (Tier C): {vol_beats}/{len(tier_c)} models beat the vol null "
           f"(volatility magnitude IS predictable - it clusters).")
-    print(f"  Direction  (Tier D): {len(beat_after_cost)}/{len(tier_d)} models beat the "
-          f"coin-flip / random-walk null AFTER {int(tier_d[0].extras.get('cost_bps', 10)) if tier_d else 10}bps costs.")
-    if not beat_after_cost:
+    print(f"  Direction  (Tier D), after {cost}bps costs:")
+    print(f"     - beat the null on the point estimate : {len(point_winners)}/{len(tier_d)} "
+          f"{point_winners if point_winners else ''}")
+    print(f"     - statistically significant (p<0.05)  : {len(sig_winners)}/{len(tier_d)} "
+          f"{sig_winners if sig_winners else ''}")
+    print(f"     - significant after Bonferroni (p<{bonf:.3f}): {len(bonf_winners)}/{len(tier_d)} "
+          f"{bonf_winners if bonf_winners else ''}")
+
+    if not bonf_winners:
         print(f"\n  {_GREEN}{_BOLD}This is the correct, expected result.{_RESET}")
-        print("  Zero direction models beat the null after costs. Return DIRECTION is")
-        print("  near-unpredictable: this is the EFFICIENT-MARKET FLOOR, not a bug in the")
-        print("  models. The toolkit's value is in the predictable structure it DID find -")
-        print("  cross-asset correlation, market regime, and volatility magnitude.")
+        print("  No direction model shows a statistically significant edge after costs.")
+        if point_winners:
+            print(f"  ({len(point_winners)} model(s) beat the null on a raw point estimate, but that")
+            print("   vanishes under a proper significance test - it is small-sample noise, exactly")
+            print("   the trap the closing test exists to catch.)")
+        print("  Return DIRECTION is near-unpredictable: the EFFICIENT-MARKET FLOOR. The")
+        print("  toolkit's value is the structure it DID find - correlation, regime, volatility.")
     else:
-        print(f"\n  {_RED}{_BOLD}{len(beat_after_cost)} direction model(s) appear to beat the null "
-              f"after costs: {beat_after_cost}.{_RESET}")
-        print("  Treat with extreme suspicion: re-check for look-ahead bias, an under-")
-        print("  powered null, or overfitting before believing any direction edge is real.")
+        print(f"\n  {_RED}{_BOLD}{len(bonf_winners)} direction model(s) show a SIGNIFICANT edge after "
+              f"costs + Bonferroni: {bonf_winners}.{_RESET}")
+        print("  Still treat with suspicion: re-check for look-ahead bias, regime-specific luck,")
+        print("  or overfitting, and validate out-of-sample on more data before believing it.")
     print(f"{_BOLD}====================================================================={_RESET}\n")
 
 

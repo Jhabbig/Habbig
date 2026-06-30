@@ -14,6 +14,7 @@ An edge smaller than transaction costs is not an edge - and the harness says so.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Callable
@@ -98,47 +99,89 @@ def slice_market_data(md: MarketData, a: int, b: int) -> MarketData:
     )
 
 
+def _newey_west_tstat(d: np.ndarray, lag: int | None = None) -> tuple[float, float]:
+    """Paired t-statistic and two-sided p-value for mean(d) != 0, with a
+    Newey-West (Bartlett) HAC variance that corrects for autocorrelation.
+
+    Used to test whether a strategy's per-period return EDGE over the null is
+    distinguishable from zero. Returns (t_stat, p_value).
+    """
+    d = np.asarray(d, dtype=float)
+    d = d[np.isfinite(d)]
+    n = d.size
+    if n < 10:
+        return 0.0, 1.0
+    mean = d.mean()
+    dd = d - mean
+    if lag is None:
+        lag = max(1, int(4 * (n / 100.0) ** (2.0 / 9.0)))  # Newey-West rule of thumb
+    s = float(np.mean(dd * dd))  # gamma_0
+    for ell in range(1, lag + 1):
+        w = 1.0 - ell / (lag + 1.0)
+        s += 2.0 * w * float(np.mean(dd[ell:] * dd[:-ell]))
+    se = math.sqrt(max(s, 0.0) / n)
+    if se <= 0:
+        return 0.0, 1.0
+    t = mean / se
+    try:
+        from scipy import stats
+        p = float(2.0 * (1.0 - stats.t.cdf(abs(t), df=n - 1)))
+    except Exception:  # normal approximation if scipy unavailable
+        p = float(2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(t) / math.sqrt(2.0)))))
+    return float(t), p
+
+
 def _transaction_cost_report(
     pred_sign: np.ndarray,
     actual_ret: np.ndarray,
     null_sign: np.ndarray,
     cost_bps: float,
+    alpha: float = 0.05,
 ) -> dict:
-    """P&L of a daily long/short strategy before and after costs.
+    """P&L of a daily long/short strategy before and after costs, WITH a
+    significance test on the edge over the null.
 
     Position each day = sign(prediction) per asset, equal weight. A trade (and
     hence a cost) is incurred whenever a position flips. The same accounting is
-    applied to the null strategy. An edge below cost is explicitly flagged.
+    applied to the null strategy. A point-estimate "net > null_net" is NOT enough
+    to claim an edge: we run a paired Newey-West t-test on the per-period
+    (model - null) net-return series and require statistical significance too.
     """
     pred_sign = np.sign(pred_sign)
     null_sign = np.sign(null_sign)
     cost = cost_bps / 1e4
 
-    def pnl(pos: np.ndarray) -> tuple[float, float, float]:
+    def pnl(pos: np.ndarray):
         # pos, actual_ret: shape (W, n). Order preserved = time order.
         gross = pos * actual_ret
         turnover = np.zeros_like(pos)
         turnover[0] = np.abs(pos[0])  # entering the first position
         turnover[1:] = np.abs(pos[1:] - pos[:-1])
-        costs = turnover * cost
-        net = gross - costs
-        # annualise mean daily portfolio return (equal weight across assets)
+        net = gross - turnover * cost
+        net_daily = np.nanmean(net, axis=1)  # per-period equal-weight portfolio return
         gross_ann = float(np.nanmean(gross) * 252)
         net_ann = float(np.nanmean(net) * 252)
         avg_trades = float(np.nanmean(turnover) / 2)  # fraction of names trading/day
-        return gross_ann, net_ann, avg_trades
+        return gross_ann, net_ann, avg_trades, net_daily
 
-    g_gross, g_net, g_to = pnl(pred_sign)
-    n_gross, n_net, _ = pnl(null_sign)
-    # A genuine edge after costs requires a POSITIVE net return that also beats
-    # the null's net return. Beating a money-losing null while still losing money
-    # is not an edge.
-    has_edge = (g_net > 0) and (g_net > n_net)
+    g_gross, g_net, g_to, g_daily = pnl(pred_sign)
+    n_gross, n_net, _, n_daily = pnl(null_sign)
+
+    # Significance of the after-cost edge over the null (paired, HAC-robust).
+    t_stat, p_value = _newey_west_tstat(g_daily - n_daily)
+    beats_null_pointest = (g_net > 0) and (g_net > n_net)
+    significant = beats_null_pointest and (p_value < alpha)
+    # A genuine edge requires positive net, beating the null, AND significance.
+    has_edge = significant
     return {
         "gross_ann_return": g_gross,
         "net_ann_return": g_net,
         "null_net_ann_return": n_net,
         "daily_turnover_frac": g_to,
+        "beats_null_pointest": bool(beats_null_pointest),
+        "edge_tstat": t_stat,
+        "edge_pvalue": p_value,
+        "edge_significant": bool(significant),
         "edge_below_cost": bool(not has_edge),
         "cost_bps": cost_bps,
     }
@@ -311,11 +354,19 @@ def print_result(res: WFResult) -> None:
     if res.target in (TARGET_DIRECTION, TARGET_RETURNS) and "net_ann_return" in res.extras:
         e = res.extras
         col = _RED if e["edge_below_cost"] else _GREEN
+        # Three honest states: loses to null / beats null but within noise / real edge.
+        if not e.get("beats_null_pointest", False):
+            verdict = f"{_RED}EDGE < COST{_RESET}"
+        elif not e.get("edge_significant", False):
+            verdict = (f"{_YELLOW}beats null but WITHIN NOISE "
+                       f"(t={e['edge_tstat']:+.2f}, p={e['edge_pvalue']:.2f}){_RESET}")
+        else:
+            verdict = (f"{_GREEN}edge > cost & SIGNIFICANT "
+                       f"(t={e['edge_tstat']:+.2f}, p={e['edge_pvalue']:.3f}){_RESET}")
         print(
             f"        cost@{e['cost_bps']:.0f}bps -> gross={e['gross_ann_return']:+.2%}/yr "
             f"net={col}{e['net_ann_return']:+.2%}{_RESET}/yr  "
-            f"null_net={e['null_net_ann_return']:+.2%}/yr  "
-            + (f"{_RED}EDGE < COST{_RESET}" if e["edge_below_cost"] else f"{_GREEN}edge > cost{_RESET}")
+            f"null_net={e['null_net_ann_return']:+.2%}/yr  -> " + verdict
         )
 
 
