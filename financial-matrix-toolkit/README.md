@@ -64,6 +64,27 @@ python scale_experiment.py     # how skill scales with dataset size (see below)
 pytest                         # per-model tests
 ```
 
+### Forecasting a single series h steps ahead (oil, inflation, …)
+
+`forecast.py` predicts the LEVEL of *any* one series H steps ahead (e.g. oil ~1
+month = 21 trading days, or next-quarter inflation) and **honestly reports
+whether it beats the naive "no change" null**, with an 80% uncertainty band and a
+significance test (Newey-West, lag ≥ horizon, Bonferroni across models — h-step
+windows overlap, so a raw skill number is very noisy).
+
+```bash
+python forecast.py --demo macro --horizon 6      # persistent series -> SIGNIFICANT skill
+python forecast.py --demo oil   --horizon 21     # random-walk price  -> no skill (honest)
+python forecast.py --ticker CL=F --horizon 21    # crude oil ~1 month (needs yfinance)
+python forecast.py --fred CPIAUCSL --horizon 12 --transform yoy   # CPI inflation (needs pandas_datareader)
+python forecast.py --csv mydata.csv --value-col rate --horizon 6  # any CSV series
+```
+
+The lesson it teaches: asset **price levels** are barely forecastable beyond
+"about the same as today" (skill ≈ 0, wide band), while **macro statistics**
+(inflation, unemployment) are genuinely persistent and *do* beat no-change. A
+small MAPE is not skill — only a *significant* skill-vs-null is.
+
 ### Training on more data
 
 These are statistical estimators **refit on every walk-forward window**, not
