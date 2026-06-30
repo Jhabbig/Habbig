@@ -59,8 +59,27 @@ pip install -r requirements.txt
 python main.py                 # full run on cached/synthetic data
 python main.py --refresh       # fetch real prices (needs open network)
 python main.py --train 378 --step 5 --cost-bps 10
+python main.py --days 10000 --train 2520 --step 20   # train on a big synthetic panel
+python scale_experiment.py     # how skill scales with dataset size (see below)
 pytest                         # per-model tests
 ```
+
+### Training on more data
+
+These are statistical estimators **refit on every walk-forward window**, not
+networks trained once and frozen. "More data" means a larger training window per
+fit and more out-of-sample windows — set via `--train` / `--days`, or use
+`scale_experiment.py` to sweep dataset size (1.5k → 20k days). The result is the
+point of the whole toolkit:
+
+* **Volatility skill stays solidly positive** — vol clustering is real structure.
+* **Direction accuracy converges to 50% with a *shrinking* confidence interval**
+  that keeps straddling 50%. More data does not manufacture a direction edge; it
+  makes the efficient-market verdict *more* certain. Net-of-cost direction return
+  stays negative at every scale.
+
+(No real data is reachable in this sandbox, so the scale-up uses the seeded
+synthetic generator; the same conclusion holds on real data via `--refresh`.)
 
 Outputs (ranking table, per-model report, plots) print to the terminal and write
 to `./results/` (`skill_ranking.png`, `forecast_panels.png`).

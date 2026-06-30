@@ -172,10 +172,16 @@ def main() -> None:
     ap.add_argument("--step", type=int, default=5, help="walk-forward step (days)")
     ap.add_argument("--cost-bps", type=float, default=10.0, help="transaction cost per trade (bps)")
     ap.add_argument("--no-plots", action="store_true", help="skip matplotlib plots")
+    ap.add_argument("--days", type=int, default=None,
+                    help="generate a synthetic panel of this many days and train on it "
+                         "(the 'as much data as possible' scale-up; no real data needed)")
     args = ap.parse_args()
 
     set_global_seed(42)
-    data = load_market_data(refresh=args.refresh)
+    if args.days:
+        data = load_market_data(force_synthetic=True, synthetic_days=args.days)
+    else:
+        data = load_market_data(refresh=args.refresh)
     print(f"\n{_BOLD}Loaded {data.n} assets x {data.T} days | source={data.source} "
           f"| {data.meta.get('start')}..{data.meta.get('end')}{_RESET}")
     if data.source == "synthetic":

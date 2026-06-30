@@ -243,6 +243,8 @@ def load_market_data(
     cache_path: str = DEFAULT_CACHE,
     refresh: bool = False,
     allow_synthetic: bool = True,
+    synthetic_days: int | None = None,
+    force_synthetic: bool = False,
 ) -> MarketData:
     """Load prices and produce ``MarketData`` (P, R, tickers, dates, source).
 
@@ -251,8 +253,26 @@ def load_market_data(
     refresh : if True, try a live yfinance fetch first and overwrite the cache.
     allow_synthetic : if True, fall back to the seeded synthetic generator when
         neither network nor cache is available.
+    synthetic_days : length of the synthetic series to generate (default 1500).
+    force_synthetic : skip live + cache and generate a fresh synthetic panel of
+        ``synthetic_days`` rows (used for the "max data" scale-up runs). Cached to
+        a size-specific file so the committed canonical cache is never clobbered.
     """
     tickers = tickers or TICKERS
+
+    # 0. forced synthetic of an arbitrary size (the "train on as much as possible"
+    #    path when no real data is reachable). Reproducible: seeded, size-keyed cache.
+    if force_synthetic:
+        days = synthetic_days or 1500
+        sized_cache = os.path.join(os.path.dirname(cache_path), f"prices_synth_{days}.csv")
+        if os.path.exists(sized_cache) and not refresh:
+            df = pd.read_csv(sized_cache, index_col=0, parse_dates=True)
+            return _build(df, source="synthetic")
+        logger.warning("Generating %d-day SYNTHETIC panel (no real data reachable).", days)
+        df = generate_synthetic_prices(tickers, T=days, start=start)
+        os.makedirs(os.path.dirname(sized_cache), exist_ok=True)
+        df.to_csv(sized_cache)
+        return _build(df, source="synthetic")
 
     # 1. live fetch (only when explicitly refreshing or no cache exists)
     if refresh or not os.path.exists(cache_path):
