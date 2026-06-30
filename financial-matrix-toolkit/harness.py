@@ -260,6 +260,8 @@ def walk_forward(
         model_err = rmse(preds, actuals)
         null_err = rmse(nulls, actuals)
         metric = "RMSE(ret)"
+        # sign hit-rate of the return forecaster (useful for the direction story)
+        extras["accuracy"] = directional_accuracy(preds, actuals)
         extras.update(_transaction_cost_report(np.sign(preds), actuals, nulls + 1e-9, cost_bps))
         fseries = np.nanmean(preds, axis=1)
         aseries = np.nanmean(actuals, axis=1)

@@ -78,6 +78,19 @@ point of the whole toolkit:
   makes the efficient-market verdict *more* certain. Net-of-cost direction return
   stays negative at every scale.
 
+Measured across 8× more data (synthetic; `results/scaling.png`, `scaling.csv`):
+
+| Data | OOS windows | Vol skill (EWMA / RidgeAR) | Direction accuracy (95% CI) |
+|------|-------------|----------------------------|------------------------------|
+| 4,000d (~15y)  | 73  | +13.9% / +10.6% | 48.7–54.0%, ±11.5% |
+| 10,000d (~39y) | 373 | +11.8% / +12.5% | 48.8–50.2%, ±5.1%  |
+| 20,000d (~79y) | 873 | +12.5% / +14.9% | 49.9–51.9%, ±3.3%  |
+
+The direction CI contracts as 1/√windows and never stops straddling 50% (all
+`|z| < 1.1`). A cautionary detail: at 4k days the logistic model showed a
+tempting +22%/yr "edge" — pure small-sample noise (CI ±11.5%); by 20k days it
+collapses to +0.4%/yr. More data destroys the illusion of a direction edge.
+
 (No real data is reachable in this sandbox, so the scale-up uses the seeded
 synthetic generator; the same conclusion holds on real data via `--refresh`.)
 
