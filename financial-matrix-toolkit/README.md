@@ -64,6 +64,37 @@ python scale_experiment.py     # how skill scales with dataset size (see below)
 pytest                         # per-model tests
 ```
 
+### Predicting market EVENTS honestly (`predict_events.py`)
+
+A general harness for any binary market event. Because most events are RARE,
+plain accuracy lies ("predict nothing ever happens" scores 90%), so every event
+is scored with **balanced accuracy, precision, recall, F1, and skill = balanced
+accuracy − 0.5**. Three models train per event: base-rate null, persistence, and
+a class-weighted logistic. Includes a hyperparameter `--grid` that shows accuracy
+*plateauing* (the target sets the ceiling, not the tuning).
+
+```bash
+python predict_events.py --demo --event all
+python predict_events.py --demo --event vol_transition        # the genuinely HARD one
+python predict_events.py --demo --event vol_state --grid       # tuning plateau demo
+python predict_events.py --ticker ^GSPC --event big_move
+```
+
+Built-in events (extensible — add a labeler to the `EVENTS` registry):
+
+| event | question | nature | typical skill |
+|-------|----------|--------|---------------|
+| `vol_state` | vol above trailing median? | balanced | high (+0.37) |
+| `drawdown` | in a >5% drawdown? | persistent | high (+0.45) |
+| `trend_up` | price above 21-day MA? | persistent | high (+0.39) |
+| `big_move` | \|return\| > 2× trailing std? | tail | modest (+0.17) |
+| `vol_transition` | will the vol regime FLIP? | rare/hard | low (+0.06) |
+
+The lesson the table teaches: **persistent states are easy, transitions and tail
+events are hard** — and a base-rate guesser can score 90% *accuracy* on a rare
+event while catching 0% of them (recall 0, balanced accuracy 0.5). Always read
+balanced accuracy / recall, never raw accuracy, for rare events.
+
 ### Where high accuracy is REAL: volatility state (`classify_volstate.py`)
 
 Return *direction* tops out near a coin flip, but volatility *state* ("calm vs
