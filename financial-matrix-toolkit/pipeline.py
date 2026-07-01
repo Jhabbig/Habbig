@@ -33,12 +33,14 @@ from harness import slice_market_data
 from models.tier_c_volatility import EWMAVolatility, RollingCovariance
 from models.tier_b_regime import GaussianHMMRegime, DMDReturns
 from models.tier_a_structure import PCAReturns, RMTFilter
+from eventmetrics import best_threshold, bootstrap_auc_ci, prob_metrics
 from predict_events import (
     EVENTS,
     build_context,
     clf_metrics,
     fit_logistic_weighted,
     predict_logistic,
+    predict_proba_logistic,
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -159,7 +161,7 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         if t + horizon < S.shape[0]:
             lab[i] = S[t + horizon]
 
-    yt, yp = [], []
+    yt, yprob, ythr = [], [], []
     for i in range(n_orig):
         t_i = origins[i]
         # purge: only rows whose label was knowable before the test feature time
@@ -177,13 +179,26 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         if len(np.unique(ytr)) < 2:
             continue
         w, mu, sd = fit_logistic_weighted(Xtr, ytr, **logistic_cfg)
+        # tune the operating threshold on TRAINING predictions only (no leak)
+        thr = best_threshold(ytr, predict_proba_logistic(w, mu, sd, Xtr), metric="bal")
         valid = np.isfinite(X[i]).all(1) & np.isfinite(lab[i])
         if valid.any():
             yt.append(lab[i][valid])
-            yp.append(predict_logistic(w, mu, sd, X[i][valid]))
+            yprob.append(predict_proba_logistic(w, mu, sd, X[i][valid]))
+            ythr.append(np.full(valid.sum(), thr))
     if not yt:
         return None
-    return clf_metrics(np.concatenate(yt), np.concatenate(yp))
+    y = np.concatenate(yt); p = np.concatenate(yprob)
+    thr = float(np.mean(np.concatenate(ythr)))          # avg tuned threshold (report)
+    # thresholded metrics use each fit's own tuned threshold
+    pred = (p >= np.concatenate(ythr)).astype(float)
+    m = prob_metrics(y, p, threshold=0.5)               # threshold-free bundle (auc/ap/brier)
+    tuned = prob_metrics(y, np.where(pred == 1, 1.0, 0.0), threshold=0.5)
+    m["bal_acc"] = tuned["bal_acc"]; m["precision"] = tuned["precision"]
+    m["recall"] = tuned["recall"]; m["f1"] = tuned["f1"]; m["threshold"] = thr
+    lo, hi = bootstrap_auc_ci(y, p)
+    m["auc_lo"], m["auc_hi"] = lo, hi
+    return m
 
 
 def readout_baserate(origins, S, horizon):
@@ -223,10 +238,12 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     hyb_names = TRACK_FEATURES + RAW_FEATURES
     names = list(EVENTS) if args.event == "all" else [args.event]
 
-    print(f"\n{_B}Two-stage results: base-rate vs RAW vs TRACKS vs HYBRID (tracks+raw){_X}")
-    print(f"  (balanced accuracy; skill = bal_acc - 0.5; horizon={args.horizon}, "
-          f"window={args.window}, stride={args.stride})\n")
-    print(f"  {'event':<16s}{'base':>7s}{'raw':>8s}{'TRACKS':>8s}{'HYBRID':>8s}{'hyb skill':>11s}")
+    print(f"\n{_B}Two-stage event readout (HYBRID = tracks + raw), probabilistic metrics{_X}")
+    print(f"  horizon={args.horizon}, window={args.window}, stride={args.stride}. AUC is threshold-free")
+    print(f"  (0.5 = chance); AP = PR-AUC (baseline = base rate); Brier lower is better; the")
+    print(f"  operating threshold is tuned on TRAINING data only.\n")
+    print(f"  {'event':<15s}{'rate':>6s}{'AUC':>6s}{'AUC 95% CI':>14s}{'AP':>6s}"
+          f"{'Brier':>7s}{'balAcc':>8s}{'recall':>8s}{'F1':>6s}")
 
     manifest = {"window": args.window, "stride": args.stride, "horizon": args.horizon,
                 "track_features": TRACK_FEATURES, "raw_features": RAW_FEATURES, "events": {}}
@@ -234,48 +251,62 @@ def train_and_save(md, origins, X, last_models, ctx, args):
         if name not in EVENTS:
             print(f"  unknown event {name!r}"); continue
         S = EVENTS[name][0](ctx)
-        base = readout_baserate(origins, S, args.horizon)
         track = readout_event(origins, X, S, args.horizon, args.stride)
         raw = readout_event(origins, Xraw, S, args.horizon, args.stride)
         hyb = readout_event(origins, Xhyb, S, args.horizon, args.stride)
-        if hyb is None or base is None:
-            print(f"  {name:<16s}  (insufficient data)"); continue
-        skill = hyb["bal_acc"] - 0.5
-        col = _G if skill > 0.08 else (_Y if skill > 0.02 else _R)
-        rawba = raw["bal_acc"] if raw else float("nan")
-        trba = track["bal_acc"] if track else float("nan")
-        print(f"  {name:<16s}{base['bal_acc']:>7.1%}{rawba:>8.1%}{trba:>8.1%}{hyb['bal_acc']:>8.1%}"
-              f"   {col}{skill:+.2f}{_X}  (F1={hyb['f1']:.2f}, recall={hyb['recall']:.0%})")
+        if hyb is None:
+            print(f"  {name:<15s}  (insufficient data)"); continue
+        sig = np.isfinite(hyb["auc_lo"]) and hyb["auc_lo"] > 0.5
+        col = _G if sig else _R
+        ci = f"[{hyb['auc_lo']:.2f},{hyb['auc_hi']:.2f}]"
+        print(f"  {name:<15s}{hyb['base_rate']:>6.0%}{col}{hyb['auc']:>6.2f}{_X}{ci:>14s}"
+              f"{hyb['ap']:>6.2f}{hyb['brier']:>7.3f}{hyb['bal_acc']:>8.1%}"
+              f"{hyb['recall']:>8.0%}{hyb['f1']:>6.2f}")
 
-        # train the FINAL readout on ALL rows using the hybrid features, and save it
+        # train the FINAL readout on ALL rows using the hybrid features, save it + importances
         w, mu, sd = _fit_final(Xhyb, origins, S, args.horizon)
+        importances = None
         if w is not None:
             path = os.path.join(TRAINED_DIR, f"readout_{name}.npz")
             np.savez(path, w=w, mu=mu, sd=sd, feature_names=np.array(hyb_names))
-            manifest["events"][name] = {
-                "readout_file": os.path.basename(path),
-                "hybrid_balanced_accuracy": round(hyb["bal_acc"], 4),
-                "hybrid_recall": round(hyb["recall"], 4),
-                "hybrid_f1": round(hyb["f1"], 4),
-                "base_rate": round(hyb["base_rate"], 4),
-                "hybrid_skill": round(skill, 4),
-                "track_balanced_accuracy": round(trba, 4) if np.isfinite(trba) else None,
-                "raw_balanced_accuracy": round(rawba, 4) if np.isfinite(rawba) else None,
-            }
+            coef = np.abs(w[1:])
+            order = np.argsort(coef)[::-1][:5]
+            importances = [(hyb_names[j], round(float(w[1 + j]), 3)) for j in order]
+        manifest["events"][name] = {
+            "readout_file": f"readout_{name}.npz" if w is not None else None,
+            "base_rate": round(hyb["base_rate"], 4),
+            "auc": round(hyb["auc"], 4),
+            "auc_ci": [round(hyb["auc_lo"], 4), round(hyb["auc_hi"], 4)],
+            "auc_significant": bool(sig),
+            "average_precision": round(hyb["ap"], 4),
+            "brier": round(hyb["brier"], 4),
+            "tuned_balanced_accuracy": round(hyb["bal_acc"], 4),
+            "tuned_recall": round(hyb["recall"], 4),
+            "tuned_f1": round(hyb["f1"], 4),
+            "tuned_threshold": round(hyb["threshold"], 4),
+            "track_auc": round(track["auc"], 4) if track else None,
+            "raw_auc": round(raw["auc"], 4) if raw else None,
+            "top_features": importances,
+        }
 
     with open(os.path.join(TRAINED_DIR, "pipeline_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
     logger.info("Saved trained readouts + manifest to %s", TRAINED_DIR)
 
+    # feature-importance highlights
+    print(f"\n{_B}Top drivers per event (signed standardised logistic weight):{_X}")
+    for name in names:
+        info = manifest["events"].get(name, {})
+        if info.get("top_features"):
+            tops = ", ".join(f"{f}({c:+.2f})" for f, c in info["top_features"][:4])
+            print(f"  {name:<15s} {tops}")
+
     print(f"\n{_B}How to read it:{_X}")
-    print("  base   = base-rate floor (0.5 balanced by definition).")
-    print("  raw    = stage-2 on raw rolling features only.")
-    print("  TRACKS = stage-2 on the stage-1 MODEL OUTPUTS only (the pure two-stage idea).")
-    print("  HYBRID = stage-2 on tracks + raw together = the full pipeline (saved as trained).")
-    print("  Tracks smooth over a long window, so raw short-window stats often match them;")
-    print("  HYBRID uses both and is the one to deploy. Persistent events score high;")
-    print("  transitions/tails stay honestly hard.")
-    print(f"  Trained readouts saved to {os.path.relpath(TRAINED_DIR, _HERE)}/ (one .npz per event + manifest).\n")
+    print("  AUC (green if its 95% CI clears 0.5) = ranking skill, the honest headline for rare")
+    print("  events. AP vs base rate shows precision-recall lift. Brier = probability quality.")
+    print("  balAcc/recall/F1 use a threshold tuned on TRAIN only. HYBRID (tracks+raw) is saved;")
+    print("  the manifest also records track-only vs raw-only AUC and each event's top drivers.")
+    print(f"  Trained readouts -> {os.path.relpath(TRAINED_DIR, _HERE)}/ (predict_live.py serves them).\n")
 
 
 def _fit_final(X, origins, S, horizon):

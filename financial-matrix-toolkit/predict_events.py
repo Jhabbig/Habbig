@@ -144,9 +144,13 @@ def fit_logistic_weighted(X, y, l2=1.0, lr=0.3, epochs=300, seed=42):
     return w, mu, sd
 
 
-def predict_logistic(w, mu, sd, X):
+def predict_proba_logistic(w, mu, sd, X):
     Xz = np.hstack([np.ones((len(X), 1)), (X - mu) / sd])
-    return (_sigmoid(Xz @ w) >= 0.5).astype(float)
+    return _sigmoid(Xz @ w)
+
+
+def predict_logistic(w, mu, sd, X, threshold=0.5):
+    return (predict_proba_logistic(w, mu, sd, X) >= threshold).astype(float)
 
 
 # --------------------------------------------------------------------------- #

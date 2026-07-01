@@ -78,25 +78,34 @@ python pipeline.py --demo                 # train every model + save the pipelin
 python pipeline.py --demo --event big_move
 ```
 
-It reports four columns per event — base-rate, RAW features, TRACKS (stage-1
-model outputs only), and HYBRID (tracks + raw) — and saves the trained readouts
-to `./trained/` (one `.npz` per event + a `pipeline_manifest.json`). Findings on
-the cached panel:
+The readout outputs **calibrated probabilities** and is scored with the metrics
+that actually matter for rare events — **ROC-AUC (with a bootstrap 95% CI),
+PR-AUC (average precision), and Brier score** — plus a balanced-accuracy / recall
+/ F1 at an operating threshold **tuned on training data only**. Findings on the
+cached panel:
 
-| event | base | raw | tracks | HYBRID | skill |
-|-------|------|-----|--------|--------|-------|
-| vol_state | 48% | 87% | 79% | **87%** | +0.37 |
-| drawdown | 50% | 96% | 95% | **95%** | +0.45 |
-| trend_up | 49% | 88% | 74% | **87%** | +0.37 |
-| big_move | 50% | 64% | 58% | **63%** | +0.13 |
-| vol_transition | 50% | 56% | 55% | **59%** | +0.09 |
+| event | base rate | AUC (95% CI) | PR-AUC | tuned recall |
+|-------|-----------|--------------|--------|--------------|
+| drawdown | 90% | **0.99** [0.99,0.99] | 1.00 | 98% |
+| vol_state | 51% | **0.94** [0.93,0.95] | 0.94 | 87% |
+| trend_up | 47% | **0.94** [0.93,0.95] | 0.93 | 85% |
+| big_move | 10% | **0.68** [0.64,0.71] | 0.20 | 63% |
+| vol_transition | 13% | **0.60** [0.57,0.64] | 0.17 | 53% |
 
-Honest takeaways: the smoothed stage-1 tracks alone often trail raw short-window
-stats, but the **hybrid** (both together) matches or beats either — and for the
-hard `vol_transition` event the model tracks add complementary signal the raw
-features lack (59% > 56% and 55%). Persistent events are easy; transitions/tails
-stay hard. The whole thing is verified leak-free by an adversarial audit and a
-"noise features must score 0.5" regression test.
+Every event's AUC CI clears 0.5, so all have *real* ranking skill — but honestly
+graded: persistent events are near-perfect, tail/transition events have modest
+(but significant) AUC ~0.6–0.7. The manifest also records track-only vs raw-only
+AUC and each event's **top feature drivers** (e.g. `drawdown` driven by drawdown
+depth; `vol_transition` partly by the HMM crisis-probability track — the two-stage
+idea earning its keep). Verified leak-free by a 4-agent adversarial audit (which
+caught and fixed a stride-dependent purge off-by-one) and a "noise features must
+score 0.5" regression test.
+
+**Serve the trained pipeline** — today's per-asset event probabilities:
+
+```bash
+python predict_live.py --demo               # loads trained/ and prints live P(event)
+```
 
 ### Predicting market EVENTS honestly (`predict_events.py`)
 

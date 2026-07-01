@@ -35,53 +35,203 @@
   "events": {
     "vol_state": {
       "readout_file": "readout_vol_state.npz",
-      "hybrid_balanced_accuracy": 0.8727,
-      "hybrid_recall": 0.8612,
-      "hybrid_f1": 0.8728,
       "base_rate": 0.5082,
-      "hybrid_skill": 0.3727,
-      "track_balanced_accuracy": 0.79,
-      "raw_balanced_accuracy": 0.8716
+      "auc": 0.9377,
+      "auc_ci": [
+        0.9272,
+        0.9477
+      ],
+      "auc_significant": true,
+      "average_precision": 0.944,
+      "brier": 0.097,
+      "tuned_balanced_accuracy": 0.8705,
+      "tuned_recall": 0.8745,
+      "tuned_f1": 0.8729,
+      "tuned_threshold": 0.4013,
+      "track_auc": 0.8675,
+      "raw_auc": 0.9375,
+      "top_features": [
+        [
+          "vol_rel_raw",
+          1.481
+        ],
+        [
+          "absr",
+          0.858
+        ],
+        [
+          "state",
+          0.619
+        ],
+        [
+          "logvol_21",
+          -0.52
+        ],
+        [
+          "vol_rel",
+          0.514
+        ]
+      ]
     },
     "vol_transition": {
       "readout_file": "readout_vol_transition.npz",
-      "hybrid_balanced_accuracy": 0.5771,
-      "hybrid_recall": 0.5468,
-      "hybrid_f1": 0.2605,
       "base_rate": 0.129,
-      "hybrid_skill": 0.0771,
-      "track_balanced_accuracy": 0.5341,
-      "raw_balanced_accuracy": 0.5474
+      "auc": 0.6048,
+      "auc_ci": [
+        0.5702,
+        0.6426
+      ],
+      "auc_significant": true,
+      "average_precision": 0.1698,
+      "brier": 0.2338,
+      "tuned_balanced_accuracy": 0.5666,
+      "tuned_recall": 0.5281,
+      "tuned_f1": 0.2518,
+      "tuned_threshold": 0.5056,
+      "track_auc": 0.5571,
+      "raw_auc": 0.5882,
+      "top_features": [
+        [
+          "absr",
+          -0.73
+        ],
+        [
+          "state_5",
+          0.393
+        ],
+        [
+          "log_absr",
+          0.359
+        ],
+        [
+          "hmm_crisis_prob",
+          -0.323
+        ],
+        [
+          "logvol_5",
+          0.233
+        ]
+      ]
     },
     "big_move": {
       "readout_file": "readout_big_move.npz",
-      "hybrid_balanced_accuracy": 0.6246,
-      "hybrid_recall": 0.6162,
-      "hybrid_f1": 0.2423,
       "base_rate": 0.0957,
-      "hybrid_skill": 0.1246,
-      "track_balanced_accuracy": 0.5669,
-      "raw_balanced_accuracy": 0.6459
+      "auc": 0.6774,
+      "auc_ci": [
+        0.639,
+        0.7142
+      ],
+      "auc_significant": true,
+      "average_precision": 0.2028,
+      "brier": 0.2238,
+      "tuned_balanced_accuracy": 0.6171,
+      "tuned_recall": 0.6263,
+      "tuned_f1": 0.2348,
+      "tuned_threshold": 0.4825,
+      "track_auc": 0.6038,
+      "raw_auc": 0.6959,
+      "top_features": [
+        [
+          "logvol",
+          -0.872
+        ],
+        [
+          "logvol_5",
+          0.608
+        ],
+        [
+          "vol_rel_raw",
+          -0.346
+        ],
+        [
+          "state_5",
+          0.298
+        ],
+        [
+          "pca_market_share",
+          0.269
+        ]
+      ]
     },
     "drawdown": {
       "readout_file": "readout_drawdown.npz",
-      "hybrid_balanced_accuracy": 0.9464,
-      "hybrid_recall": 0.9574,
-      "hybrid_f1": 0.9745,
       "base_rate": 0.8952,
-      "hybrid_skill": 0.4464,
-      "track_balanced_accuracy": 0.9466,
-      "raw_balanced_accuracy": 0.9607
+      "auc": 0.9916,
+      "auc_ci": [
+        0.9883,
+        0.9946
+      ],
+      "auc_significant": true,
+      "average_precision": 0.999,
+      "brier": 0.0319,
+      "tuned_balanced_accuracy": 0.925,
+      "tuned_recall": 0.979,
+      "tuned_f1": 0.9819,
+      "tuned_threshold": 0.3731,
+      "track_auc": 0.9876,
+      "raw_auc": 0.9915,
+      "top_features": [
+        [
+          "drawdown",
+          2.225
+        ],
+        [
+          "drawdown_raw",
+          2.175
+        ],
+        [
+          "ewma_var",
+          0.334
+        ],
+        [
+          "ma_ratio",
+          -0.313
+        ],
+        [
+          "pca_market_share",
+          -0.292
+        ]
+      ]
     },
     "trend_up": {
       "readout_file": "readout_trend_up.npz",
-      "hybrid_balanced_accuracy": 0.8661,
-      "hybrid_recall": 0.8371,
-      "hybrid_f1": 0.8571,
       "base_rate": 0.4744,
-      "hybrid_skill": 0.3661,
-      "track_balanced_accuracy": 0.736,
-      "raw_balanced_accuracy": 0.8798
+      "auc": 0.9425,
+      "auc_ci": [
+        0.9331,
+        0.9524
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9333,
+      "brier": 0.0969,
+      "tuned_balanced_accuracy": 0.8689,
+      "tuned_recall": 0.8473,
+      "tuned_f1": 0.8608,
+      "tuned_threshold": 0.4849,
+      "track_auc": 0.8105,
+      "raw_auc": 0.9464,
+      "top_features": [
+        [
+          "ma_ratio",
+          3.329
+        ],
+        [
+          "mom5",
+          0.626
+        ],
+        [
+          "mom21",
+          0.441
+        ],
+        [
+          "rollcov_var",
+          0.235
+        ],
+        [
+          "ewma_var",
+          -0.196
+        ]
+      ]
     }
   }
 }
