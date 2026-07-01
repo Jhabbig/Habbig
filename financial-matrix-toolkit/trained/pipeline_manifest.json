@@ -1,0 +1,87 @@
+{
+  "window": 504,
+  "stride": 5,
+  "horizon": 1,
+  "track_features": [
+    "ewma_var",
+    "rollcov_var",
+    "pca_loading",
+    "dmd_pred_ret",
+    "drawdown",
+    "momentum21",
+    "vol_rel",
+    "hmm_crisis_prob",
+    "pca_market_share",
+    "rmt_noise_frac",
+    "dmd_spectral_radius",
+    "rollcov_frob_speed",
+    "ewma_avg_corr"
+  ],
+  "raw_features": [
+    "logvol",
+    "logvol_5",
+    "logvol_21",
+    "log_absr",
+    "vol_rel_raw",
+    "state",
+    "state_5",
+    "state_21",
+    "mom5",
+    "mom21",
+    "drawdown_raw",
+    "ma_ratio",
+    "absr"
+  ],
+  "events": {
+    "vol_state": {
+      "readout_file": "readout_vol_state.npz",
+      "hybrid_balanced_accuracy": 0.8727,
+      "hybrid_recall": 0.8612,
+      "hybrid_f1": 0.8728,
+      "base_rate": 0.5082,
+      "hybrid_skill": 0.3727,
+      "track_balanced_accuracy": 0.79,
+      "raw_balanced_accuracy": 0.8716
+    },
+    "vol_transition": {
+      "readout_file": "readout_vol_transition.npz",
+      "hybrid_balanced_accuracy": 0.5771,
+      "hybrid_recall": 0.5468,
+      "hybrid_f1": 0.2605,
+      "base_rate": 0.129,
+      "hybrid_skill": 0.0771,
+      "track_balanced_accuracy": 0.5341,
+      "raw_balanced_accuracy": 0.5474
+    },
+    "big_move": {
+      "readout_file": "readout_big_move.npz",
+      "hybrid_balanced_accuracy": 0.6246,
+      "hybrid_recall": 0.6162,
+      "hybrid_f1": 0.2423,
+      "base_rate": 0.0957,
+      "hybrid_skill": 0.1246,
+      "track_balanced_accuracy": 0.5669,
+      "raw_balanced_accuracy": 0.6459
+    },
+    "drawdown": {
+      "readout_file": "readout_drawdown.npz",
+      "hybrid_balanced_accuracy": 0.9464,
+      "hybrid_recall": 0.9574,
+      "hybrid_f1": 0.9745,
+      "base_rate": 0.8952,
+      "hybrid_skill": 0.4464,
+      "track_balanced_accuracy": 0.9466,
+      "raw_balanced_accuracy": 0.9607
+    },
+    "trend_up": {
+      "readout_file": "readout_trend_up.npz",
+      "hybrid_balanced_accuracy": 0.8661,
+      "hybrid_recall": 0.8371,
+      "hybrid_f1": 0.8571,
+      "base_rate": 0.4744,
+      "hybrid_skill": 0.3661,
+      "track_balanced_accuracy": 0.736,
+      "raw_balanced_accuracy": 0.8798
+    }
+  }
+}
