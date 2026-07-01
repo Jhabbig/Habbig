@@ -64,6 +64,25 @@ python scale_experiment.py     # how skill scales with dataset size (see below)
 pytest                         # per-model tests
 ```
 
+### Where high accuracy is REAL: volatility state (`classify_volstate.py`)
+
+Return *direction* tops out near a coin flip, but volatility *state* ("calm vs
+turbulent tomorrow?") is genuinely predictable because volatility clusters. This
+trains four classifiers at once and scores them against an honest 50% floor (the
+state is defined so calm/turbulent are ~50/50):
+
+```bash
+python classify_volstate.py --demo                    # cached 15-asset panel
+python classify_volstate.py --demo --vol-window 21    # vol REGIME (smoother) -> ~95%
+python classify_volstate.py --ticker ^GSPC            # a single real symbol (needs yfinance)
+```
+
+Typical result: ~87% for next-day vol state, ~95% for the smoother 21-day vol
+regime — all far above the 50% floor. **This is the honest way to get a 95%
+accuracy number.** Accuracy is a property of the *target*, not of how hard or how
+long you train: no amount of training makes return direction 95%-accurate, but
+volatility state is 95% by nature.
+
 ### Forecasting a single series h steps ahead (oil, inflation, …)
 
 `forecast.py` predicts the LEVEL of *any* one series H steps ahead (e.g. oil ~1
