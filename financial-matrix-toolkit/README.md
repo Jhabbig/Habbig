@@ -101,10 +101,19 @@ idea earning its keep). Verified leak-free by a 4-agent adversarial audit (which
 caught and fixed a stride-dependent purge off-by-one) and a "noise features must
 score 0.5" regression test.
 
-**Serve the trained pipeline** — today's per-asset event probabilities:
+**Calibrated probabilities.** The readout's raw scores are recalibrated (Platt by
+default, or `--calibration isotonic`) on training data only, so `P(event)` means
+what it says — essential if you want to size positions on it. Calibration slashes
+the Expected Calibration Error on the rare events (vol_transition ECE 0.34 → 0.02,
+big_move 0.35 → 0.02) and writes a reliability diagram to
+`results/reliability_pipeline.png`. The saved model carries its calibrator.
+
+**Train on real data / serve live** — on a networked machine:
 
 ```bash
-python predict_live.py --demo               # loads trained/ and prints live P(event)
+python pipeline.py --refresh                # fetch real prices via yfinance, train, save
+python predict_live.py --demo               # today's per-asset calibrated P(event)
+python predict_live.py --refresh            #   ...on freshly fetched real data
 ```
 
 ### Predicting market EVENTS honestly (`predict_events.py`)

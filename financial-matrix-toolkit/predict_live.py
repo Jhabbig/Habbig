@@ -21,9 +21,9 @@ import os
 
 import numpy as np
 
+from calibration import apply_calibrator, calibrator_from_arrays
 from core import set_global_seed
 from data import load_market_data
-from eventmetrics import prob_metrics  # noqa: F401  (kept for parity / future use)
 from pipeline import TRAINED_DIR, build_context, build_raw_at_origins, build_tracks
 from predict_events import predict_proba_logistic
 
@@ -42,12 +42,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--demo", action="store_true", help="use the cached/synthetic panel")
+    ap.add_argument("--refresh", action="store_true", help="fetch real prices via yfinance first")
     ap.add_argument("--event", default="all", help="event name or 'all'")
     args = ap.parse_args()
     set_global_seed(42)
 
     man = load_manifest()
-    md = load_market_data()
+    md = load_market_data(refresh=args.refresh)
     # rebuild the CURRENT hybrid feature vector at the latest origin
     origins, X, _ = build_tracks(md, man["window"], man["stride"], verbose=False)
     ctx = build_context(md, vol_window=5, med_window=63)
@@ -66,7 +67,8 @@ def main():
         if not info or not info.get("readout_file"):
             print(f"  {name}: no trained model"); continue
         d = np.load(os.path.join(TRAINED_DIR, info["readout_file"]), allow_pickle=True)
-        prob = predict_proba_logistic(d["w"], d["mu"], d["sd"], x_now)
+        raw = predict_proba_logistic(d["w"], d["mu"], d["sd"], x_now)
+        prob = apply_calibrator(calibrator_from_arrays(d), raw)   # calibrated probabilities
         thr = info.get("tuned_threshold", 0.5)
         auc = info.get("auc", float("nan"))
         sig = info.get("auc_significant", False)

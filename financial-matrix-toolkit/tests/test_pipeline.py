@@ -52,8 +52,8 @@ def test_saved_readout_roundtrip():
     X = rng.normal(0, 1, (len(origins), n, 6))
     for i, t in enumerate(origins):
         X[i, :, 0] = S[t + 1]
-    w, mu, sd = _fit_final(X, origins, S, horizon=1)
-    assert w is not None
+    w, mu, sd, cal = _fit_final(X, origins, S, horizon=1)
+    assert w is not None and cal is not None
     pred = predict_logistic(w, mu, sd, X[0])
     assert pred.shape == (n,)
     assert set(np.unique(pred)).issubset({0.0, 1.0})
