@@ -14,7 +14,7 @@ forecasting accuracy lives.
 
 DATA SOURCES (run locally with open network):
   --ticker CL=F        a Yahoo symbol via yfinance     (CL=F/BZ=F oil, USO, AAPL, ^GSPC)
-  --fred  CPIAUCSL     a FRED series via pandas_datareader (inflation, UNRATE, GDP, ...)
+  --fred  CPIAUCSL     a FRED series via its public CSV (inflation, UNRATE, GDP, ...); no key
   --csv   data.csv     a CSV with a date column + a value column
   --demo  macro|oil    built-in synthetic series (NO network) to see the lesson
 
@@ -25,8 +25,8 @@ EXAMPLES:
   python forecast.py --fred CPIAUCSL --horizon 12 --transform yoy   # CPI inflation, 1yr
   python forecast.py --csv mydata.csv --value-col rate --horizon 6
 
-Dependencies: numpy/scipy/pandas (core). yfinance for --ticker, pandas_datareader
-for --fred (install only if you use them).
+Dependencies: numpy/scipy/pandas (core). --ticker needs yfinance; --fred and --csv
+need nothing extra (FRED is read straight from its public CSV endpoint).
 """
 
 from __future__ import annotations
@@ -156,19 +156,44 @@ def mape(pred, act):
 # Data loaders
 # --------------------------------------------------------------------------- #
 def load_ticker(sym, start="2005-01-01"):
-    import yfinance as yf
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise SystemExit(
+            "yfinance is not installed. Install it with:\n"
+            "    pip install -r requirements-live.txt   (or: pip install yfinance)"
+        )
     raw = yf.download(sym, start=start, progress=False, auto_adjust=True)
     if raw is None or len(raw) == 0:
-        raise RuntimeError(f"yfinance returned no data for {sym!r}.")
+        raise SystemExit(f"yfinance returned no data for {sym!r} (bad symbol or blocked network).")
     s = raw["Close"]
     s = s.iloc[:, 0] if isinstance(s, pd.DataFrame) else s
     return s.dropna()
 
 
 def load_fred(series, start="1990-01-01"):
-    from pandas_datareader import data as pdr
-    s = pdr.DataReader(series, "fred", start=start)
-    return s.iloc[:, 0].dropna()
+    """Fetch a FRED series directly from its public CSV endpoint.
+
+    No API key and no extra library needed - just pandas reading a URL. FRED marks
+    missing observations with '.', which we coerce to NaN and drop.
+    """
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+    try:
+        df = pd.read_csv(url)
+    except Exception as exc:
+        raise SystemExit(
+            f"Could not download FRED series {series!r} from {url}\n"
+            f"  ({exc})\n"
+            "  Check the series id at https://fred.stlouisfed.org and your network."
+        )
+    date_col, val_col = df.columns[0], df.columns[1]
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    s = pd.to_numeric(df[val_col], errors="coerce")
+    s.index = df[date_col]
+    s = s.dropna()
+    s = s[s.index >= pd.Timestamp(start)]
+    s.name = series
+    return s
 
 
 def load_csv(path, date_col, value_col):
@@ -217,7 +242,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--ticker", help="Yahoo symbol via yfinance (e.g. CL=F, USO, AAPL)")
-    src.add_argument("--fred", help="FRED series id via pandas_datareader (e.g. CPIAUCSL)")
+    src.add_argument("--fred", help="FRED series id, read from its public CSV (e.g. CPIAUCSL)")
     src.add_argument("--csv", help="path to a CSV with a date + value column")
     src.add_argument("--demo", choices=["macro", "oil"], help="built-in synthetic series")
     ap.add_argument("--horizon", type=int, default=21, help="steps ahead to forecast (21d ~ 1 month)")
