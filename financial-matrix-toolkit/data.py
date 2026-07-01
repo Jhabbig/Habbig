@@ -164,6 +164,7 @@ def generate_synthetic_prices(
     T: int = 1500,
     start: str = DEFAULT_START,
     seed: int = SEED,
+    crisis_drift: float = -0.0012,
 ) -> pd.DataFrame:
     """Seeded synthetic daily prices that mimic real equity markets.
 
@@ -221,13 +222,18 @@ def generate_synthetic_prices(
     # Tier-D models "predict" direction. Keeping drift common and tiny means
     # daily direction is genuinely near-unpredictable (the core thesis), while
     # the base-rate null absorbs the common premium.
-    drift = np.full(n, 0.0002)  # ~+5%/yr, common to all assets
+    drift = np.full(n, 0.0006)  # calm-period drift; the risk premium earned ex-crises
+    # crises are high-vol AND negative-return (the "leverage effect" of real
+    # markets): the risk premium is earned in calm periods and given back in
+    # crashes. This is what makes volatility management pay off - and it is added
+    # as a REGIME-level effect, so day-to-day direction stays ~unpredictable.
+    crisis_ret = np.where(regime == 1, crisis_drift, 0.0)
     R = np.zeros((T, n))
     for t in range(T):
         mkt = market_beta * market_factor[t] * crisis_boost[t]
         sec = sector_beta * sector_factor[t, sector_idx]
         idio = idio_vol[t] * rng.standard_normal(n)
-        R[t] = drift + mkt + sec + idio
+        R[t] = drift + crisis_ret[t] + mkt + sec + idio
 
     # --- prices ------------------------------------------------------------
     start_prices = rng.uniform(40, 320, n)

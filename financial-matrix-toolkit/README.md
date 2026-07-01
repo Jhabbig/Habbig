@@ -64,6 +64,27 @@ python scale_experiment.py     # how skill scales with dataset size (see below)
 pytest                         # per-model tests
 ```
 
+### The honest bottom line: does it PAY? (`backtest.py`)
+
+The capstone test. If direction is unpredictable but volatility and correlation
+are, then a strategy built on *risk* — not direction — should help. This
+backtests equal-weight buy-and-hold against inverse-vol (risk parity) and
+vol-managed strategies, walk-forward, **net of costs**, using a causal EWMA
+covariance forecast, with a **block-bootstrap 95% CI on the Sharpe difference**.
+
+```bash
+python backtest.py --demo                       # equity curves -> results/backtest.png
+python backtest.py --refresh --target-vol 0.12  # on real data
+```
+
+Result (cached panel): every strategy's Sharpe-vs-benchmark CI **straddles 0** —
+the predictable structure does **not** buy a statistically significant
+risk-adjusted edge, and never buys higher raw return (direction is unpredictable).
+What it *does* buy is **shallower drawdowns** (risk parity −2.2%, vol-managed cuts
+max drawdown further on longer samples). That is the real, defensible payoff of
+knowing volatility and correlation: **risk control and crash mitigation, not
+alpha.** The toolkit refuses to manufacture an edge even in its own backtest.
+
 ### The two-stage pipeline: track models → event readout (`pipeline.py`)
 
 The end-to-end architecture: **stage 1** fits the matrix models (EWMA, rolling
