@@ -35,27 +35,45 @@ def _sigmoid(z):
     return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
 
 
-def build_features(R, vol_window):
+def _roll_mean(a, w):
+    out = np.full_like(a, np.nan)
+    c = np.cumsum(np.nan_to_num(a), axis=0)
+    for t in range(w, len(a) + 1):
+        out[t - 1] = (c[t - 1] - (c[t - 1 - w] if t - 1 - w >= 0 else 0)) / w
+    return out
+
+
+def _roll_median(a, w):
+    out = np.full_like(a, np.nan)
+    for t in range(w, len(a) + 1):
+        out[t - 1] = np.nanmedian(a[t - w:t], axis=0)
+    return out
+
+
+def build_features(R, vol_window, med_window=63):
     """Per-asset volatility features and the binary turbulent/calm state.
 
-    Returns F (T, n, k) features, S (T, n) current state, VOL (T, n).
+    The target ("vol above its trailing median") is a RELATIVE measure, so the
+    features must be relative too - otherwise a static threshold on absolute vol
+    cannot track the moving median. We therefore include, alongside the absolute
+    log-vol features:
+      * rel      = log-vol minus its trailing median  (directly matches the target)
+      * state_t  = today's calm/turbulent state        (lets the model learn persistence)
+      * s5, s21  = fraction of the last 5 / 21 days that were turbulent
+
+    Returns F (T, n, k) features, VOL (T, n).
     """
     T, n = R.shape
     absr = np.abs(R)
-    # short-horizon realised vol (rolling std), padded to length T
     vol = np.full((T, n), np.nan)
     for t in range(vol_window, T + 1):
         vol[t - 1] = R[t - vol_window:t].std(axis=0)
     logvol = np.log(vol + 1e-8)
-    # rolling means of log-vol (5- and 21-day) as extra features
-    def roll(a, w):
-        out = np.full_like(a, np.nan)
-        c = np.cumsum(np.nan_to_num(a), axis=0)
-        for t in range(w, len(a) + 1):
-            out[t - 1] = (c[t - 1] - (c[t - 1 - w] if t - 1 - w >= 0 else 0)) / w
-        return out
-    lv5, lv21 = roll(logvol, 5), roll(logvol, 21)
-    F = np.stack([logvol, lv5, lv21, np.log(absr + 1e-8)], axis=2)  # (T, n, 4)
+    lv5, lv21 = _roll_mean(logvol, 5), _roll_mean(logvol, 21)
+    rel = logvol - _roll_median(logvol, med_window)      # relative to recent regime
+    S = make_state(vol, med_window)                       # today's state (0/1)
+    s5, s21 = _roll_mean(S, 5), _roll_mean(S, 21)         # recent turbulence fraction
+    F = np.stack([logvol, lv5, lv21, np.log(absr + 1e-8), rel, S, s5, s21], axis=2)
     return F, vol
 
 
