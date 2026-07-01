@@ -441,14 +441,25 @@ if STATIC_DIR.exists():
 
 # ── Security headers (raw ASGI middleware — faster than BaseHTTPMiddleware) ──
 
+# NOTE: X-Frame-Options is intentionally omitted. The unified terminal (/app)
+# embeds each dashboard subdomain in an iframe, which X-Frame-Options: DENY
+# would block. Framing is instead restricted to first-party origins via the
+# CSP `frame-ancestors` directive below (the modern, wildcard-capable
+# replacement); cross-site framing remains blocked.
 _SECURITY_HEADERS_RAW: list[tuple[bytes, bytes]] = [
     (b"x-content-type-options", b"nosniff"),
-    (b"x-frame-options", b"DENY"),
     (b"x-xss-protection", b"1; mode=block"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
     (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()"),
     (b"cross-origin-opener-policy", b"same-origin"),
 ]
+
+# First-party origins allowed to frame / be framed (the unified terminal and the
+# dashboard subdomains). Production allows only the real domain; dev also allows
+# localhost so the terminal works against locally-run dashboards.
+_FIRST_PARTY_FRAME = "'self' https://*.narve.ai"
+if not IS_PRODUCTION:
+    _FIRST_PARTY_FRAME += " http://localhost:* http://127.0.0.1:*"
 if IS_PRODUCTION:
     _SECURITY_HEADERS_RAW.append(
         (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
@@ -461,8 +472,8 @@ _CSP_VALUE = "; ".join([
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
     "connect-src 'self' https://*.stripe.com https://*.polymarket.com https://*.kalshi.com",
-    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
-    "frame-ancestors 'none'",
+    "frame-src " + _FIRST_PARTY_FRAME + " https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
+    "frame-ancestors " + _FIRST_PARTY_FRAME,
     "base-uri 'self'",
     "form-action 'self' https://checkout.stripe.com",
 ]).encode()
@@ -1111,15 +1122,11 @@ async def login_page(request: Request, token: str = ""):
         return await proxy_request(request, "/login")
     user = current_user(request)
     if user and not user.get("_dev_bypass"):
-        # Real logged-in user → skip to their default dashboard (or the hub).
+        # Already logged in → go straight to the unified terminal (deep-linked
+        # to their preferred dashboard if set).
         default_key = db.get_default_dashboard(user["user_id"])
-        if default_key and default_key in DASHBOARDS:
-            dash_cfg = DASHBOARDS[default_key]
-            if is_local_host(request):
-                return RedirectResponse(f"http://localhost:{dash_cfg['target']}", status_code=302)
-            s, b, p = _request_base_domain(request)
-            return RedirectResponse(f"{s}://{dash_cfg['subdomain']}.{b}{p}/", status_code=302)
-        return RedirectResponse("/dashboards", status_code=302)
+        dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS else "/app"
+        return RedirectResponse(dest, status_code=302)
     # If a claimed invite token is provided (from /gate redirect), show token section
     token = token.strip()
     token_section = ""
@@ -1198,22 +1205,10 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
         return _render_login_error("Invalid email or password.")
 
     token = db.create_session(user["id"])
-    # Honour the user's default-dashboard preference (set in /settings).
+    # Land in the unified terminal, deep-linked to the user's preferred
+    # dashboard if they've set one (the terminal reads the #hash on load).
     default_key = db.get_default_dashboard(user["id"])
-    if default_key and default_key in DASHBOARDS:
-        dash_cfg = DASHBOARDS[default_key]
-        if is_local_host(request):
-            dest = f"http://localhost:{dash_cfg['target']}"
-        else:
-            s, b, p = _request_base_domain(request)
-            # Validate that the base domain matches the configured domain
-            # to prevent open redirects via forged Host headers.
-            if b.rstrip(".") == DOMAIN.rstrip("."):
-                dest = f"{s}://{dash_cfg['subdomain']}.{b}{p}/"
-            else:
-                dest = "/dashboards"
-    else:
-        dest = "/dashboards"
+    dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS else "/app"
     response = RedirectResponse(dest, status_code=302)
     set_session_cookie(response, token, request)
     return response
@@ -1294,7 +1289,7 @@ async def signup_submit(request: Request, username: str = Form(""), email: str =
         db.delete_user(user_id)
         return render_page("gate", request=request, error="This token was just claimed by someone else. Please use a different token.")
     token = db.create_session(user_id)
-    response = RedirectResponse("/dashboards", status_code=302)
+    response = RedirectResponse("/app", status_code=302)
     set_session_cookie(response, token, request)
     return response
 
@@ -1483,6 +1478,56 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         raw_tour_steps=tour_html,
         tour_total_steps=str(total_steps),
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+    )
+
+
+@app.get("/app", response_class=HTMLResponse)
+async def unified_app(request: Request):
+    """Unified terminal — a single shell with a dashboard sidebar; each dashboard
+    is embedded in an iframe. Subscribed dashboards load their live subdomain;
+    locked ones load their preview page instead."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/app")
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+
+    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    is_admin_user = bool(user.get("is_admin"))
+    local_mode = is_local_host(request)
+    # The terminal always lives at the apex, so build subdomain URLs from the
+    # configured DOMAIN (not _request_base_domain, whose subdomain-stripping
+    # fallback mangles the apex host, e.g. narve.ai → ai).
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host_raw = request.headers.get("host", DOMAIN)
+    port_suffix = ":" + host_raw.rsplit(":", 1)[1] if ":" in host_raw else ""
+
+    items = []
+    for key, cfg in DASHBOARDS.items():
+        has_sub = _is_sub_active(subs.get(key), is_admin_user)
+        if has_sub:
+            if local_mode:
+                url = f"http://localhost:{cfg['target']}/"
+            else:
+                url = f"{scheme}://{cfg['subdomain']}.{DOMAIN}{port_suffix}/"
+        else:
+            # Locked → embed the (same-origin) preview page instead of the gated app.
+            url = f"/preview/{key}"
+        items.append({
+            "key": key,
+            "name": cfg["display_name"],
+            "description": cfg.get("description", ""),
+            "accent": cfg["accent"],
+            "url": url,
+            "locked": not has_sub,
+        })
+
+    return render_page(
+        "app",
+        request,
+        raw_dashboard_data=json.dumps(items),
+        user_email=user.get("email", ""),
     )
 
 
