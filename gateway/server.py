@@ -1222,7 +1222,7 @@ async def login_page(request: Request, token: str = ""):
         # Already logged in → go straight to the unified terminal (deep-linked
         # to their preferred dashboard if set).
         default_key = db.get_default_dashboard(user["user_id"])
-        dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS else "/app"
+        dest = f"/app#{default_key}" if default_key and default_key in VISIBLE_DASHBOARDS else "/app"
         return RedirectResponse(dest, status_code=302)
     # If a claimed invite token is provided (from /gate redirect), show token section
     token = token.strip()
@@ -1305,7 +1305,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     # Land in the unified terminal, deep-linked to the user's preferred
     # dashboard if they've set one (the terminal reads the #hash on load).
     default_key = db.get_default_dashboard(user["id"])
-    dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS else "/app"
+    dest = f"/app#{default_key}" if default_key and default_key in VISIBLE_DASHBOARDS else "/app"
     response = RedirectResponse(dest, status_code=302)
     set_session_cookie(response, token, request)
     return response
@@ -1606,7 +1606,9 @@ async def unified_app(request: Request):
     port_suffix = ":" + host_raw.rsplit(":", 1)[1] if ":" in host_raw else ""
 
     items = []
-    for key, cfg in DASHBOARDS.items():
+    # Only list dashboards visible in the storefront (skips hidden/parked/merged
+    # ones), matching the landing/hub/billing surfaces.
+    for key, cfg in VISIBLE_DASHBOARDS.items():
         has_sub = _is_sub_active(subs.get(key), is_admin_user)
         if has_sub:
             if local_mode:
