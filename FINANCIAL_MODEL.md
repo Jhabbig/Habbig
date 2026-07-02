@@ -1,52 +1,47 @@
-# narve.ai — Financial Model v3 (banker-grade operating model)
+# narve.ai — Financial Model v4 (realistic operating model)
 
-*Rebuilt July 2, 2026. Companion to `FINANCIAL_MODEL.xlsx` — a 36-month, three-statement operating model in investment-banking format. All third-party prices verified against official sources as of 2026-07-02 (sources on the Pricing Data tab).*
+*Rebuilt July 2, 2026. Companion to `FINANCIAL_MODEL.xlsx` — 36-month, three-statement operating model. All third-party prices verified against official sources as of 2026-07-02 (Pricing Data tab). Formula integrity machine-verified: balance sheet ties to <1e-10 in every month, FY rollups tie to monthly sums, all Checks read OK.*
 
-## What's in the workbook
+## What v4 fixes about realism
 
-| Tab | Contents |
+| v3 assumed | v4 models |
 |---|---|
-| **Cover** | Company summary, contents, formatting conventions, key model choices |
-| **Drivers** | Every input in one place — blue-on-yellow cells. Includes a **scenario switch** (1 Bear / 2 Base / 3 Bull) driving growth/churn via INDEX, and a **training-plan toggle** (1 Fine-tune / 2 Scale) that switches H100 Capacity Blocks, A100 spot, and the ML contractor on/off. **Founder salary is a driver, default $0** — set it to e.g. 60000 when funded and the whole model recalculates. |
-| **Pricing Data** | The sourced price reference (AWS GPU/serving, APIs, SaaS, professional) |
-| **Rev Build** | Bottoms-up revenue: gross-adds engine → per-product subscriber waterfalls (Weather $7.99 / Market Edge $9.99 / Midterm $14.99, mix 25/40/35) → MRR → ARR |
-| **Opex** | Cost schedule: COGS (Stripe + serving infra + APIs), R&D (GPU training), S&M, G&A, one-times |
-| **Income Statement** | Monthly P&L to net income (D&A $0 — rented compute; taxes $0 — NOLs) |
-| **Cash Flow & BS** | Cash bridge with SAFE proceeds in M1; mini balance sheet (cash = SAFE liability + retained earnings) with a **tie-out check row** |
-| **Annual & KPIs** | FY1–FY3 rollups + SaaS metrics: LTV/CAC, CAC payback, burn multiple, Rule of 40, peak funding need, recommended raise |
-| **Sensitivity** | Peak-funding-need and M24-MRR grids across churn (4–8%) × adds growth (10–20%), for both training plans |
-| **Cap Table & Valuation** | Post-money SAFE conversion math (live), founder-ownership grid (raise × cap), forward-ARR multiple valuation |
-| **Checks** | BS tie-out, mix = 100%, minimum-cash flag, margin sanity — all read OK |
+| Growth was free ($500/mo marketing → 52× LTV/CAC) | **Adds = invite trickle + organic ramp + marketing ÷ CAC** (Base CAC $60; Bear $90 / Bull $35). LTV/CAC lands at an honest **2.6×**, CAC payback **6.5 months** |
+| Revenue from day 1 | **Public launch delayed to M3** (open the invite gate, fix Stripe renewals, get the regulatory memo first); pre-launch only a 4/mo invite trickle |
+| Uniform churn | **First-month activation drop** (15% of new monthly subs) + ongoing 6%/mo (incl. failed payments) + **annual non-renewal 35%** at month 12 |
+| Monthly billing only | **20% of adds prepay annually** (~2 months free) → billings ≠ revenue, a **deferred-revenue liability** on the BS, and CFO = NI + ΔDR |
+| Training but free serving | **GPU inference** (g6.xlarge reserved, $382/mo) from launch + per-subscriber support tooling in COGS |
+| Static KPI table | **Dashboard tab with live Excel charts** (revenue vs billings, cash, subscriber pools, EBITDA) that follow the Drivers switches |
 
-Banker conventions throughout: blue = hardcoded input, black = calculation, green = cross-sheet link; negatives in red parentheses; monthly columns M1–M36 (Aug-26 → Jul-29).
+Structure retained from v3: Bear/Base/Bull scenario switch, Fine-tune/Scale training toggle, founder salary as a driver (default $0), SAFE cap table, forward-ARR valuation, sensitivity grids (now churn × CAC), Checks tab.
 
-## Base case at a glance (Base demand × Fine-tune plan × $0 salary × $60k SAFE)
+## Base case (Base demand × Fine-tune plan × $0 salary × $125k SAFE, launch M3)
 
-| | FY1 | M24 | M36 |
+| | FY1 | FY2 | FY3 |
 |---|---|---|---|
-| Subscribers | 348 (end) | 1,361 | 1,958 |
-| Revenue / MRR | $16.3k (FY) | $15.3k/mo | $22.0k/mo |
-| ARR | $39.9k (end) | $184k | $264k |
-| EBITDA | −$35.2k (FY, incl. $20.5k one-times) | +$11.6k/mo | positive 26 of 36 months |
-| Ending cash | $24.8k | $105k | $290k |
+| Revenue (recognized) | $17.1k | $86.7k | $196.7k |
+| Ending ARR | $39.9k | $134.6k | $254.6k |
+| Ending subscribers | 311 | 1,051 | 1,993 |
+| EBITDA | −$51.3k (incl. $20.5k one-times) | −$0.8k (≈breakeven) | +$90.9k |
+| Ending cash (with $125k SAFE) | $79.2k | $90.9k | $197.9k |
 
-- **Gross margin ~92%** at M24 (COGS = Stripe ≈6% + serving infra + API licenses).
-- **Peak funding need $35.6k** → recommended raise **≈$44.5k → pitch $50–60k**. With the $60k SAFE modeled, minimum cash is +$24.4k — the plan is fully funded with margin.
-- **Burn multiple FY1 ≈ 0.9×** (net burn / net new ARR) — under 1× is considered excellent.
-- LTV/CAC computes at ~52× — a flag that the $500/mo marketing input is doing very little work; real CAC will be higher once acquisition is paid.
-- Scale-training plan (H100 Capacity-Block week every month): peak need jumps to ~$250–320k range depending on churn/growth (see the Sensitivity tab's third grid).
+- **EBITDA turns positive month 21**; gross margin ramps 74% (M12) → 87% (M24) → 90% (M36) as fixed serving costs amortize.
+- **Peak funding need $48.2k** → recommended raise **$60.3k with the 25% buffer**. The modeled **$125k SAFE** keeps minimum cash at +$76.8k — deliberate headroom, because the CAC and churn assumptions are the untested part of the plan (see sensitivity).
+- Deferred revenue builds to **$34k by M36** — real prepay float that helps cash but is a liability, not income.
+- Marketing becomes the biggest cost line at scale (AWS is 23% of M24 costs on the fine-tune plan; flip the training toggle to Scale and AWS dominates again). That's the honest trade: **growth costs money; training costs are the choice.**
 
-## Cap table (defaults: $60k SAFE at $2M post-money cap)
+## Sensitivity (churn × paid CAC, static grids from identical logic)
 
-SAFE converts to **3.0%**; founder keeps **97.0%** of 10M shares. The ownership grid covers raises $50k–$250k × caps $1M–$5M (e.g. $250k at $1M cap = 75% founder — don't do that; $100k at $2M = 95%).
+Peak funding need on the fine-tune plan spans roughly **$40k (4.5% churn / $30 CAC) to $75k+ (9% churn / $120 CAC)**; the Scale plan (H100 Capacity-Block week monthly) adds ~$9.5k/mo of R&D and pushes peak need into the $250–350k range. Grids are on the Sensitivity tab; the highlighted cell is the base case.
 
-## Valuation context
+## Cap table & valuation (defaults: $125k SAFE at $2M post-money cap)
 
-Forward-ARR multiples (live, from Rev Build): at M24 base ARR $184k → $551k–$1.8M at 3–10×; at M36 ARR $264k → $792k–$2.6M. Small prosumer-signals SaaS typically trades 3–7× ARR — the $2M SAFE cap is defensible against the M24–M36 base trajectory plus the trained-model IP.
+SAFE converts to **6.25%**; founder keeps **93.75%**. Ownership grid covers $75k–$300k raises × $1M–$5M caps. Forward-ARR valuation (live): M24 ARR $134.6k → $404k–$1.35M at 3–10×; M36 ARR $254.6k → $764k–$2.5M. A $2M cap is defensible mid-range against the M24–M36 trajectory plus trained-model IP.
 
 ## Caveats
 
-- Sensitivity grids are computed at build time from the identical model logic (openpyxl can't emit Excel data tables); the Drivers switches cover live what-ifs.
-- Projections assume open self-serve signup from month 1 (gateway is currently invite-gated) and require fixing the Stripe `invoice.paid` renewal gap (`BALANCE_SHEET.md`).
-- GPU spot ±30%; Capacity-Block rates float (hiked ~20% July 1, 2026). Taxes/D&A simplifications noted on the Cover.
-- Formula integrity machine-verified: balance sheet ties to <1e-10 across all 36 months; all checks read OK.
+- CAC ($60 base) and churn (6%) are the two assumptions with no data behind them yet — everything else is a researched price or a config.json fact. Instrument them from the first month of launch.
+- Stripe fees are expensed as incurred (annual-prepay fees hit at purchase, slightly conservative vs deferring them).
+- Sensitivity grids are computed at build time (openpyxl can't emit native data tables); Drivers switches cover live what-ifs.
+- GPU spot ±30%; Capacity-Block rates float (hiked ~20% July 1, 2026). Taxes $0 (NOLs), no D&A (rented compute).
+- Prerequisites baked into the launch delay: open the invite gate, fix the Stripe `invoice.paid` renewal gap (`BALANCE_SHEET.md`), obtain the IA/CTA memo.
