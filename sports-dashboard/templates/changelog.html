@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Changelog · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.6; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 32px 24px; }
+  .header { display: flex; align-items: baseline; justify-content: space-between;
+            margin-bottom: 8px; }
+  h1 { font-size: 28px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+
+  .release {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px 24px; margin-bottom: 16px;
+  }
+  .release h2 {
+    margin: 0 0 6px; font-size: 18px;
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px;
+  }
+  .release .date { color: var(--muted); font-size: 13px;
+                   font-variant-numeric: tabular-nums; }
+  .release h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--accent); font-weight: 600; margin: 16px 0 6px;
+  }
+  .release ul { margin: 6px 0 0 0; padding-left: 22px; }
+  .release li { margin-bottom: 4px; }
+  .release li strong { color: var(--fg); }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    background: rgba(16, 185, 129, 0.12); color: var(--green);
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; vertical-align: middle;
+  }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: #1c1e26; padding: 1px 5px; border-radius: 3px;
+    font-size: 12px; color: var(--fg);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>What's new</h1>
+    <a href="/features">All features →</a>
+  </div>
+  <p class="sub">Highlights from recent shipping. Newest first.</p>
+
+  <div class="release">
+    <h2>Pro-tier complete <span class="pill">latest</span></h2>
+    <p class="sub" style="margin: 0 0 8px">
+      Sharpe now has the full sharp-bettor toolkit. Some highlights:
+    </p>
+
+    <h3>Verifiable proof of edge</h3>
+    <ul>
+      <li><a href="/track-record"><strong>Track record</strong></a> — CLV, simulated P&amp;L, calibration plots across every flagged signal. Anonymous-readable.</li>
+      <li><a href="/leaderboard"><strong>Leaderboard</strong></a> — opt-in roster of users ranked by mean closing line value.</li>
+    </ul>
+
+    <h3>Cross-venue signals</h3>
+    <ul>
+      <li><a href="/player-props"><strong>Player props</strong></a> — books × Kalshi × Polymarket on (player, stat, line).</li>
+      <li><a href="/cross-book-arbitrage"><strong>Cross-book arbitrage</strong></a> — low-hold + middles across major sportsbooks.</li>
+      <li><a href="/smart-money"><strong>Smart money</strong></a> — top-50 Polymarket whales' positions overlaid on sports markets.</li>
+      <li><a href="/poly-fills"><strong>Polymarket fills tape</strong></a> — live large-fill feed via WS.</li>
+      <li><a href="/steam-moves"><strong>Steam moves</strong></a> — sharp-book line moves ≥2pp within 30 min.</li>
+    </ul>
+
+    <h3>Your edge</h3>
+    <ul>
+      <li><a href="/trades"><strong>Bet tracker</strong></a> — per-trade CLV, per-sport/book stats, CSV export.</li>
+      <li><a href="/backtest"><strong>Backtest replay</strong></a> — replay an arbitrary alert rule against history.</li>
+      <li><strong>Bankroll + Kelly</strong> — persist your bankroll, get sized stake suggestions per signal.</li>
+    </ul>
+
+    <h3>Automation</h3>
+    <ul>
+      <li><strong>Rule-based alerts</strong> — structured filters by sport, market, divergence, time, channel routing, quiet hours.</li>
+      <li><strong>Bearer API tokens</strong> — programmatic access via <code>Authorization: Bearer &lt;token&gt;</code>.</li>
+      <li><strong>Signed webhooks</strong> — HMAC-SHA256 signatures, replay protection.</li>
+      <li><strong>PWA + Web Push</strong> — install on phone, real-time push when signals fire.</li>
+    </ul>
+
+    <h3>AI</h3>
+    <ul>
+      <li><strong>Signal explanations</strong> — Claude generates plain-English "why is this mispriced" for any signal. Cached aggressively to bound API cost.</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <h2>Real-time foundation</h2>
+    <h3>Latency</h3>
+    <ul>
+      <li>Polymarket WebSocket subscriber: prices update within ~2s of the venue (was 5 min poll).</li>
+      <li>Adaptive per-sport polling: 15s pre-game, 60s within 4h, 5 min today, 30 min idle.</li>
+      <li>Odds API quota-aware throttling so the free 500/mo tier survives multiple sports.</li>
+      <li>Circuit breaker on the PM WebSocket — won't hammer Polymarket if they go down.</li>
+    </ul>
+    <h3>Signal quality</h3>
+    <ul>
+      <li>De-vigged divergence (strips bookmaker overround before comparing).</li>
+      <li>Sharp-consensus gate (require Pinnacle/Circa/BetCRIS/Betfair Ex).</li>
+      <li>Liquidity gate (≥$1k Polymarket volume, spread ≤ 5pp).</li>
+      <li>Stale-data gate (rejects markets that have never traded or are flat for a week).</li>
+    </ul>
+  </div>
+
+  <div class="release">
+    <h2>Refactor + observability</h2>
+    <ul>
+      <li>Main file <code>sports_dashboard.py</code> shrunk 44% by extracting embedded HTML into <code>templates/</code>.</li>
+      <li>Pinned requirements, split into <code>requirements.txt</code> + <code>requirements-dev.txt</code>.</li>
+      <li>Prometheus metrics at <code>/metrics</code> — 25+ metrics across poll loop, signals, alerts, quota, fills, push.</li>
+      <li>Liveness + readiness probes at <code>/healthz</code> and <code>/readyz</code>.</li>
+      <li>289 tests covering matching, signal-quality gates, track record, alerts, tokens, webhooks, push, leaderboard.</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

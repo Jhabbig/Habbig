@@ -183,6 +183,12 @@ CREATE TABLE IF NOT EXISTS superuser_key_usage_logs (
     FOREIGN KEY (key_id) REFERENCES superuser_keys(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS fleet_counters (
+    key         TEXT PRIMARY KEY,
+    count       INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_positions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL,
@@ -190,8 +196,7 @@ CREATE TABLE IF NOT EXISTS user_positions (
     external_id      TEXT NOT NULL,
     token_or_side    TEXT NOT NULL DEFAULT '',
     title            TEXT NOT NULL DEFAULT '',
-    qty_open         REAL NOT NULL DEFAULT 0,
-    qty_closed       REAL NOT NULL DEFAULT 0,
+    qty_open         REAL NOT NULL DEFAULT 0,    qty_closed       REAL NOT NULL DEFAULT 0,
     avg_entry_price  REAL NOT NULL DEFAULT 0,
     avg_exit_price   REAL,
     realized_pnl     REAL NOT NULL DEFAULT 0,
@@ -808,6 +813,56 @@ def cancel_subscription_by_stripe_id(stripe_sub_id: str) -> None:
             "UPDATE subscriptions SET status = 'cancelled' WHERE stripe_sub_id = ?",
             (stripe_sub_id,),
         )
+
+
+def active_subscription_counts() -> dict:
+    """Per-dashboard active subscription tallies for the fleet dashboard.
+
+    Returns {dashboard_key: {"total": n, "monthly": n, "annual": n}} counting
+    only rows that are active and unexpired (admin bypass doesn't create
+    rows, so this reflects real subscriber attachment).
+    """
+    now = int(time.time())
+    with conn() as c:
+        rows = c.execute(
+            "SELECT dashboard_key, plan, COUNT(*) AS cnt FROM subscriptions "
+            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
+            "GROUP BY dashboard_key, plan",
+            (now,),
+        ).fetchall()
+    out: dict = {}
+    for row in rows:
+        entry = out.setdefault(row["dashboard_key"], {"total": 0, "monthly": 0, "annual": 0})
+        entry["total"] += row["cnt"]
+        if "annual" in (row["plan"] or ""):
+            entry["annual"] += row["cnt"]
+        else:
+            entry["monthly"] += row["cnt"]
+    return out
+
+
+# ── Fleet counters ─────────────────────────────────────────────────────────────
+# Tiny persistent tallies behind the /admin/fleet dashboard: lifetime counts of
+# legacy-subdomain redirects, parked-page visits, etc. survive restarts so the
+# long-term effects of trimming the storefront stay visible.
+
+
+def bump_fleet_counter(key: str, n: int = 1) -> None:
+    now = int(time.time())
+    with conn() as c:
+        c.execute(
+            "INSERT INTO fleet_counters (key, count, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET count = count + excluded.count, "
+            "updated_at = excluded.updated_at",
+            (key, n, now),
+        )
+
+
+def get_fleet_counters() -> dict:
+    """Return {key: {"count": n, "updated_at": ts}} for every fleet counter."""
+    with conn() as c:
+        rows = c.execute("SELECT key, count, updated_at FROM fleet_counters").fetchall()
+    return {row["key"]: {"count": row["count"], "updated_at": row["updated_at"]} for row in rows}
 
 
 # ── Invite token operations ──────────────────────────────────────────────────

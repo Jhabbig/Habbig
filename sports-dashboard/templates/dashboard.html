@@ -1,0 +1,2593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharpe — Sports Market Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0d10;
+    --surface: #131417;
+    --surface2: #18191e;
+    --surface3: #1f2027;
+    --border: rgba(255,255,255,0.06);
+    --border-light: rgba(255,255,255,0.08);
+    --text: #ebebef;
+    --text-secondary: #8b8d98;
+    --muted: #5c5e6a;
+    --accent: #818cf8;
+    --accent-dim: rgba(99,102,241,0.10);
+    --green: #34d399;
+    --green-dim: rgba(52,211,153,0.08);
+    --green-mid: rgba(52,211,153,0.14);
+    --red: #f87171;
+    --red-dim: rgba(248,113,113,0.08);
+    --yellow: #fbbf24;
+    --yellow-dim: rgba(251,191,36,0.08);
+    --blue: #818cf8;
+    --blue-dim: rgba(99,102,241,0.08);
+    --purple: #a78bfa;
+    --purple-dim: rgba(167,139,250,0.08);
+    --orange: #fb923c;
+    --orange-dim: rgba(251,146,60,0.08);
+    --gold: #fbbf24;
+    --gold-dim: rgba(251,191,36,0.08);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.15);
+    --positive: #34d399;
+    --negative: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-weight: 400;
+  }
+  a { color: var(--text); text-decoration: none; }
+  a:hover { opacity: 0.6; }
+
+  /* ---- Scrollbar ---- */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-light); }
+
+  /* ---- Nav ---- */
+  .nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 32px; height: 52px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .nav-left { display: flex; align-items: center; gap: 16px; }
+  .nav-logo {
+    width: 28px; height: 28px;
+    background: var(--text); color: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 14px;
+  }
+  .nav-brand { font-weight: 600; font-size: 16px; letter-spacing: -0.02em; }
+  .nav-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--positive); animation: pulse 2s infinite;
+  }
+  .status-dot.error { background: var(--negative); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+  .nav-right { display: flex; align-items: center; gap: 8px; }
+  .nav-link {
+    font-size: 12px; color: var(--text-secondary); cursor: pointer;
+    padding: 6px 10px; transition: opacity .15s;
+    background: none; border: none; font-family: inherit; font-weight: 400;
+  }
+  .nav-link:hover { opacity: 0.6; }
+  .nav-link.admin { display: none; }
+  .btn-upgrade {
+    background: var(--text); color: var(--surface);
+    font-weight: 500; font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 6px 14px; border: none;
+    cursor: pointer; display: none; transition: opacity .15s;
+  }
+  .btn-upgrade:hover { opacity: 0.8; }
+
+  /* ---- Main Tabs ---- */
+  .main-tabs {
+    display: flex; gap: 0; background: var(--surface);
+    border-bottom: 1px solid var(--border); padding: 0 32px;
+  }
+  .main-tab {
+    padding: 12px 20px; font-size: 12px; font-weight: 500;
+    color: var(--muted); cursor: pointer; border: none; background: none;
+    border-bottom: 1px solid transparent; transition: all .15s;
+    font-family: inherit; text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .main-tab:hover { color: var(--text-secondary); }
+  .main-tab.active { color: var(--text); border-bottom-color: var(--text); }
+
+  /* ---- Sport Tabs ---- */
+  .sport-tabs {
+    background: var(--surface); padding: 0;
+  }
+  .category-row {
+    display: flex; gap: 0; padding: 0 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .category-btn {
+    padding: 10px 20px; font-size: 12px; font-weight: 500;
+    background: none; border: none; border-bottom: 1px solid transparent;
+    color: var(--muted); cursor: pointer; transition: all .15s;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .category-btn:hover { color: var(--text-secondary); }
+  .category-btn.active { color: var(--text); border-bottom-color: var(--text); }
+  .subcategory-row {
+    display: flex; gap: 0; padding: 0 32px;
+    overflow-x: auto; flex-wrap: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+  .sport-tab {
+    padding: 8px 16px; font-size: 12px; font-weight: 400;
+    background: none; border: none; border-bottom: 1px solid transparent;
+    color: var(--muted); cursor: pointer; white-space: nowrap;
+    transition: all .15s;
+  }
+  .sport-tab:hover { color: var(--text-secondary); }
+  .sport-tab.active { color: var(--text); border-bottom-color: var(--text); }
+
+  /* ---- Container ---- */
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px 32px 80px; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ---- Hero Banner ---- */
+  .hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 32px; margin-bottom: 32px; position: relative;
+  }
+  .hero-dismiss {
+    position: absolute; top: 12px; right: 16px;
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 18px; line-height: 1;
+  }
+  .hero-dismiss:hover { color: var(--text); }
+  .hero h2 { font-size: 18px; font-weight: 500; margin-bottom: 20px; letter-spacing: -0.01em; }
+  .hero-steps { display: flex; gap: 32px; flex-wrap: wrap; }
+  .hero-step {
+    flex: 1; min-width: 200px; display: flex; gap: 12px; align-items: flex-start;
+  }
+  .hero-step-num {
+    width: 24px; height: 24px;
+    background: var(--text); color: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 500; font-size: 12px; flex-shrink: 0;
+  }
+  .hero-step-text { font-size: 13px; color: var(--text-secondary); line-height: 1.6; font-weight: 300; }
+  .hero-step-text strong { color: var(--text); font-weight: 500; }
+
+  /* ---- Top Opportunities ---- */
+  .top-opps { display: flex; gap: 1px; margin-bottom: 32px; flex-wrap: wrap; background: var(--border); }
+  .top-opp {
+    flex: 1; min-width: 220px; padding: 20px;
+    background: var(--surface); cursor: pointer; transition: opacity .2s;
+  }
+  .top-opp:hover { opacity: 0.7; }
+  .top-opp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .top-opp-edge { font-size: 20px; font-weight: 300; color: var(--positive); }
+  .top-opp-team { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .top-opp-sub { font-size: 11px; color: var(--muted); font-weight: 300; }
+
+  /* ---- Stats Row ---- */
+  .stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; margin-bottom: 32px; background: var(--border); }
+  .stat-card {
+    background: var(--surface); padding: 20px; text-align: left;
+  }
+  .stat-value { font-size: 24px; font-weight: 300; letter-spacing: -0.02em; }
+  .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 400; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 300; }
+
+  /* ---- Toolbar ---- */
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 24px; flex-wrap: wrap;
+  }
+  .toolbar input[type="text"] {
+    flex: 1; min-width: 200px; padding: 8px 0;
+    background: transparent; border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: 13px; outline: none; font-family: inherit; font-weight: 300;
+  }
+  .toolbar input[type="text"]:focus { border-bottom-color: var(--text); }
+  .toolbar input[type="text"]::placeholder { color: var(--muted); }
+  .toolbar select {
+    padding: 8px 0; background: transparent;
+    border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: 13px; font-family: inherit; cursor: pointer; font-weight: 400;
+  }
+  .toolbar .toggle-wrap {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--text-secondary); cursor: pointer; user-select: none; font-weight: 400;
+  }
+  .toolbar .toggle-wrap input { accent-color: var(--text); }
+  .btn-sm {
+    padding: 6px 14px; font-size: 12px; font-weight: 400;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-secondary); cursor: pointer; font-family: inherit;
+    transition: all .15s; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .btn-sm:hover { border-color: var(--text); color: var(--text); }
+
+  /* ---- Event Cards ---- */
+  .cards-grid { display: flex; flex-direction: column; gap: 12px; }
+  .card {
+    background: var(--surface); overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    transition: border-color .15s, box-shadow .15s;
+    animation: fadeIn .3s ease both;
+  }
+  .card:hover { border-color: var(--border-light); box-shadow: var(--shadow); }
+  .card:nth-child(1) { animation-delay: 0s; }
+  .card:nth-child(2) { animation-delay: .03s; }
+  .card:nth-child(3) { animation-delay: .06s; }
+  .card:nth-child(4) { animation-delay: .09s; }
+  .card:nth-child(5) { animation-delay: .12s; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(2px); } to { opacity:1; transform: translateY(0); } }
+
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 22px; cursor: pointer; gap: 12px;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .card-header:hover { background: var(--surface2); }
+  .card-teams { font-size: 14px; font-weight: 500; flex: 1; letter-spacing: -0.01em; }
+  .card-teams span.vs { color: var(--muted); font-weight: 300; margin: 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card-time { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 300; }
+  .card-meta { display: flex; align-items: center; gap: 10px; }
+  .signal-badge {
+    font-size: 10px; font-weight: 600; padding: 4px 10px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border-radius: 999px;
+  }
+  .signal-badge.buy { background: var(--green-mid); color: var(--positive); }
+  .signal-badge.sell { background: var(--red-dim); color: var(--negative); }
+  .signal-badge.neutral { background: var(--surface3); color: var(--muted); }
+  .confidence-stars { display: inline-flex; gap: 1px; font-size: 12px; }
+  .star-filled { color: var(--text); }
+  .star-empty { color: var(--border); }
+
+  .card-action-hint {
+    margin: 0 22px 14px;
+    padding: 10px 14px;
+    font-size: 12px; color: var(--positive); font-weight: 500;
+    background: var(--green-dim);
+    border: 1px solid rgba(52,211,153,0.2);
+    border-radius: var(--radius-sm);
+  }
+
+  .outcome-chips {
+    display: flex; gap: 8px; padding: 0 22px 14px; flex-wrap: wrap;
+  }
+  .outcome-chip {
+    padding: 5px 12px; font-size: 11px; font-weight: 500;
+    background: var(--surface2); border: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.02em;
+    border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .outcome-chip.pos { background: var(--green-dim); border-color: rgba(52,211,153,0.25); color: var(--positive); }
+  .outcome-chip.neg { background: var(--red-dim); border-color: rgba(220,38,38,0.25); color: var(--negative); }
+
+  /* Card Detail (expandable) */
+  .card-detail { display: none; padding: 6px 22px 24px; }
+  .card-detail.open { display: block; }
+
+  .prob-compare { margin-bottom: 20px; }
+  .prob-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
+  .prob-label { width: 120px; font-weight: 400; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prob-bars { flex: 1; display: flex; gap: 3px; align-items: center; }
+  .prob-bar { height: 4px; transition: width .3s; }
+  .prob-bar.book { background: var(--text); }
+  .prob-bar.poly { background: var(--muted); }
+  .prob-bar.kalshi { background: var(--text-secondary); }
+  .prob-legend { display: flex; gap: 16px; font-size: 10px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .prob-legend span::before { content: ''; display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
+  .prob-legend .leg-book::before { background: var(--text); }
+  .prob-legend .leg-poly::before { background: var(--muted); }
+  .prob-legend .leg-kalshi::before { background: var(--text-secondary); }
+  .btn-action.kalshi-btn { background: var(--text); color: var(--surface); }
+  .btn-action.kalshi-btn:hover { opacity: 0.8; }
+
+  /* Market Intel Grid */
+  .intel-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1px; margin-bottom: 20px; background: var(--border);
+  }
+  .intel-item {
+    background: var(--surface); padding: 12px 14px; font-size: 12px;
+  }
+  .intel-item-label {
+    color: var(--muted); font-size: 10px; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 400;
+  }
+  .intel-item-value { font-weight: 500; font-size: 14px; }
+  .info-i {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px;
+    background: var(--surface2); color: var(--muted);
+    font-size: 9px; font-weight: 500; cursor: help;
+    position: relative;
+  }
+  .info-i .tooltip {
+    display: none; position: absolute; bottom: 120%; left: 50%;
+    transform: translateX(-50%); background: var(--text);
+    color: var(--surface); border: none;
+    padding: 8px 12px; font-size: 11px; font-weight: 300;
+    width: 220px; line-height: 1.5;
+    z-index: 50; white-space: normal;
+  }
+  .info-i:hover .tooltip { display: block; }
+
+  /* Outcome Table */
+  .outcome-table-wrap { overflow-x: auto; margin-bottom: 20px; }
+  .outcome-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .outcome-table th {
+    text-align: left; padding: 8px 10px; font-weight: 500;
+    color: var(--muted); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; border-bottom: 1px solid var(--border);
+  }
+  .outcome-table td {
+    padding: 10px 10px; border-bottom: 1px solid var(--border); font-weight: 300;
+  }
+  .outcome-table tr:last-child td { border-bottom: none; }
+
+  /* Head-to-head section */
+  .h2h-section {
+    margin-bottom: 20px; padding: 18px 20px;
+    background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+  }
+  .h2h-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10px; color: var(--text-secondary); text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 14px; font-weight: 600;
+  }
+  .h2h-header::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); display: inline-block;
+  }
+  .h2h-record {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 12px;
+  }
+  .h2h-team { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+  .h2h-team.away { text-align: right; }
+  .h2h-score {
+    font-size: 26px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+    padding: 6px 16px; background: var(--surface3);
+    border-radius: var(--radius-sm);
+    display: inline-flex; align-items: baseline;
+  }
+  .h2h-dash { font-size: 18px; color: var(--muted); margin: 0 6px; }
+  .h2h-meta {
+    display: flex; gap: 16px; font-size: 11px; color: var(--muted);
+    flex-wrap: wrap; padding-top: 4px;
+  }
+  .h2h-meta-item { display: flex; align-items: center; gap: 5px; }
+  .h2h-form-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .h2h-form-label {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 6px; font-weight: 500;
+  }
+  .h2h-form-pills { display: flex; gap: 4px; }
+  .h2h-form-pill {
+    width: 20px; height: 20px; display: inline-flex;
+    align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    background: var(--surface2); color: var(--muted);
+    border-radius: 5px;
+  }
+  .h2h-form-pill.W { background: var(--green); color: var(--bg); }
+  .h2h-form-pill.L { background: var(--red); color: var(--bg); }
+  .h2h-form-pill.D { background: var(--text-secondary); color: var(--surface); }
+  .h2h-empty { font-size: 11px; color: var(--muted); font-style: italic; padding: 6px 0; }
+  .h2h-toggle-recent {
+    background: none; border: none; color: var(--text-secondary); cursor: pointer;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 8px 0 0; margin: 0; font-family: inherit; font-weight: 500;
+  }
+  .h2h-toggle-recent:hover { color: var(--text); }
+  .h2h-recent-list { display: none; margin-top: 10px; padding: 8px 12px; background: var(--surface); border-radius: var(--radius-sm); }
+  .h2h-recent-list.open { display: block; }
+  .h2h-recent-item {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 8px 0; font-size: 11px; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+  .h2h-recent-item:last-child { border-bottom: none; }
+  .h2h-recent-date { color: var(--muted); white-space: nowrap; min-width: 80px; }
+  .h2h-recent-winner { color: var(--text); font-weight: 500; }
+
+  /* Team strength bars + chemistry */
+  .team-stats-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .team-stats-card {
+    background: var(--surface); padding: 12px 14px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border);
+  }
+  .team-stats-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    margin-bottom: 8px; letter-spacing: -0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .team-stats-record {
+    font-size: 18px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .team-stats-record .pct { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .team-stats-rank {
+    font-size: 10px; color: var(--text-secondary); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .team-stats-bars { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .stat-bar-row { display: flex; align-items: center; gap: 8px; font-size: 10px; }
+  .stat-bar-label { color: var(--muted); width: 56px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-bar-track {
+    flex: 1; height: 4px; background: var(--surface3);
+    border-radius: 2px; overflow: hidden;
+  }
+  .stat-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+  .stat-bar-fill.good { background: var(--green); }
+  .stat-bar-fill.mid { background: var(--accent); }
+  .stat-bar-fill.bad { background: var(--red); }
+  .stat-bar-value {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    width: 36px; text-align: right; font-weight: 500;
+  }
+
+  /* Chemistry indicator */
+  .chemistry-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; background: var(--surface);
+    border-radius: var(--radius-sm); margin-top: 8px;
+    border: 1px solid var(--border);
+  }
+  .chemistry-label {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.06em; flex-shrink: 0; font-weight: 500;
+  }
+  .chemistry-meter {
+    flex: 1; height: 6px; background: var(--surface3);
+    border-radius: 3px; overflow: hidden; position: relative;
+  }
+  .chemistry-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--red) 0%, var(--yellow) 50%, var(--green) 100%);
+    border-radius: 3px;
+  }
+  .chemistry-value { font-size: 11px; font-weight: 600; color: var(--text); min-width: 32px; text-align: right; }
+
+  /* Player cards */
+  .players-section {
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .players-section-title {
+    font-size: 10px; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 10px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .players-section-title::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent); display: inline-block;
+  }
+  .players-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .player-team-block { display: flex; flex-direction: column; gap: 8px; }
+  .player-team-label {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500;
+  }
+  .player-card {
+    background: var(--surface); padding: 10px 12px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border);
+    transition: border-color .15s;
+  }
+  .player-card:hover { border-color: var(--border-light); }
+  .player-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.01em; margin-bottom: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .player-pos {
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .player-stats {
+    display: flex; gap: 8px; font-size: 11px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums; flex-wrap: wrap;
+  }
+  .player-stat strong { color: var(--text); font-weight: 600; }
+  .player-tags {
+    display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
+  }
+  .player-tag {
+    font-size: 9px; padding: 2px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  }
+  .player-tag.strength { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
+  .player-tag.weakness { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
+  @media (max-width: 600px) {
+    .team-stats-grid, .players-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ---- Top Polymarket Traders ---- */
+  .top-traders-section {
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  .top-traders-title {
+    font-size: 10px; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 10px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .top-traders-title::before {
+    content: ''; width: 4px; height: 4px; border-radius: 50%;
+    background: #f5b942; display: inline-block;
+  }
+  .top-traders-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .top-trader-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    transition: border-color .15s;
+  }
+  .top-trader-row:hover { border-color: var(--border-light); }
+  .top-trader-rank {
+    font-size: 10px; font-weight: 700; color: var(--muted);
+    background: rgba(0,0,0,0.04); width: 22px; height: 22px;
+    border-radius: 999px; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .top-trader-name {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    letter-spacing: -0.01em; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .top-trader-vol {
+    font-size: 10px; color: var(--muted);
+    font-variant-numeric: tabular-nums; flex-shrink: 0;
+  }
+  .top-trader-bet {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
+  .top-trader-side {
+    font-size: 9px; padding: 2px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+  }
+  .top-trader-side.long { background: var(--green-dim); color: var(--positive); border: 1px solid rgba(52,211,153,0.25); }
+  .top-trader-side.short { background: var(--red-dim); color: var(--negative); border: 1px solid rgba(248,113,113,0.25); }
+  .top-trader-outcome {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .top-trader-usd {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    font-variant-numeric: tabular-nums; min-width: 50px; text-align: right;
+  }
+  .top-trader-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(245,185,66,0.12); color: #c08214;
+    border: 1px solid rgba(245,185,66,0.35);
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+    margin-left: 8px;
+  }
+  .top-trader-badge::before {
+    content: '★'; font-size: 10px;
+  }
+
+  /* Bookmaker Breakdown */
+  .bookie-toggle {
+    font-size: 11px; color: var(--muted); cursor: pointer;
+    background: none; border: none; font-family: inherit;
+    margin-bottom: 8px; display: flex; align-items: center; gap: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .bookie-toggle:hover { color: var(--text-secondary); }
+  .bookie-section { display: none; margin-bottom: 12px; }
+  .bookie-section.open { display: block; }
+  .bookie-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .bookie-table th {
+    text-align: left; padding: 6px 8px; font-weight: 500;
+    color: var(--muted); font-size: 10px; border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .bookie-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 300; }
+
+  /* Card Actions */
+  .card-actions {
+    display: flex; gap: 8px; align-items: center; padding-top: 16px;
+    border-top: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .btn-action {
+    padding: 7px 14px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-secondary); cursor: pointer; font-family: inherit;
+    transition: all .15s; display: inline-flex; align-items: center; gap: 6px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .btn-action:hover { border-color: var(--text); color: var(--text); }
+  .btn-action.primary {
+    background: var(--text); border-color: var(--text); color: var(--surface);
+  }
+  .btn-action.primary:hover { opacity: 0.8; }
+  .btn-watchlist.active { color: var(--text); border-color: var(--text); }
+
+  /* ---- Free Tier Gate ---- */
+  .gate-overlay { position: relative; }
+  .gate-blur { filter: blur(6px); pointer-events: none; user-select: none; opacity: 0.5; }
+  .gate-cta {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 10; background: rgba(250,250,250,0.85);
+  }
+  .gate-cta h3 { font-size: 16px; font-weight: 500; margin-bottom: 16px; }
+  .gate-cta .btn-upgrade-big {
+    background: var(--text); color: var(--surface);
+    font-weight: 500; font-size: 12px; letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 10px 28px; border: none; cursor: pointer;
+  }
+  .gate-cta .btn-upgrade-big:hover { opacity: 0.8; }
+
+  /* ---- Profit Tracker ---- */
+  .profit-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin-bottom: 32px; background: var(--border); }
+  .profit-card { background: var(--surface); padding: 20px; text-align: left; }
+  .profit-value { font-size: 22px; font-weight: 300; }
+  .profit-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .trades-table-wrap { overflow-x: auto; }
+  .trades-table { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--surface); }
+  .trades-table th { text-align: left; padding: 10px 12px; font-weight: 500; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--surface2); }
+  .trades-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 300; }
+  .trades-table tr:last-child td { border-bottom: none; }
+
+  /* ---- Watchlist ---- */
+  .watchlist-list { display: flex; flex-direction: column; gap: 1px; background: var(--border); }
+  .watchlist-item {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--surface); padding: 16px 20px;
+  }
+  .watchlist-item-info { display: flex; flex-direction: column; gap: 4px; }
+  .watchlist-item-name { font-weight: 500; font-size: 14px; }
+  .watchlist-item-edge { font-size: 12px; font-weight: 300; }
+  .watchlist-remove {
+    background: none; border: 1px solid var(--border);
+    color: var(--negative); font-size: 11px; padding: 6px 12px;
+    cursor: pointer; font-family: inherit; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .watchlist-remove:hover { border-color: var(--negative); }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 13px; font-weight: 300; }
+
+  /* ---- History ---- */
+  .history-table-wrap { overflow-x: auto; }
+  .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .history-table th {
+    text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .history-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    font-weight: 300;
+  }
+  .history-table tr:hover td { background: var(--bg); }
+  .history-res { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+  .history-res.yes { color: var(--positive); }
+  .history-res.no { color: var(--negative); }
+
+  /* ---- Modals ---- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(250,250,250,0.9);
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 32px; max-width: 560px; width: 90%; max-height: 85vh; overflow-y: auto;
+  }
+  .modal h2 { font-size: 18px; font-weight: 500; margin-bottom: 20px; letter-spacing: -0.01em; }
+  .modal-close {
+    float: right; background: none; border: none;
+    color: var(--muted); font-size: 18px; cursor: pointer;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  /* Customize Modal */
+  .customize-section { margin-bottom: 24px; }
+  .customize-section h3 { font-size: 11px; font-weight: 500; margin-bottom: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .customize-check {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    font-size: 13px; color: var(--text-secondary); cursor: pointer; font-weight: 300;
+  }
+  .customize-check input { accent-color: var(--text); }
+
+  /* Upgrade Modal */
+  .upgrade-content { text-align: center; }
+  .upgrade-price { font-size: 32px; font-weight: 300; color: var(--text); margin: 20px 0; }
+  .upgrade-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
+  .upgrade-features { text-align: left; margin: 24px 0; }
+  .upgrade-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 300; }
+  .upgrade-row:last-child { border-bottom: none; }
+  .upgrade-check { color: var(--positive); }
+  .upgrade-cross { color: var(--muted); }
+
+  /* Glossary */
+  .glossary-item { margin-bottom: 16px; }
+  .glossary-item dt { font-weight: 500; font-size: 13px; color: var(--text); margin-bottom: 4px; }
+  .glossary-item dd { font-size: 13px; color: var(--text-secondary); line-height: 1.6; font-weight: 300; }
+
+  /* Trade Modal Form */
+  .trade-form { display: flex; flex-direction: column; gap: 16px; }
+  .trade-form label { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .trade-form input, .trade-form select {
+    width: 100%; padding: 8px 0; background: transparent;
+    border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: 13px; font-family: inherit; font-weight: 300;
+  }
+  .trade-form input:focus { border-bottom-color: var(--text); outline: none; }
+  .btn-primary {
+    padding: 10px 20px; background: var(--text); color: var(--surface);
+    font-weight: 500; font-size: 12px; border: none; cursor: pointer;
+    font-family: inherit; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .btn-primary:hover { opacity: 0.8; }
+
+  /* ---- Trend Indicators ---- */
+  .trend-arrow { font-size: 11px; font-weight: 600; margin-left: 4px; }
+  .trend-arrow.widening { color: var(--green); }
+  .trend-arrow.narrowing { color: var(--red); }
+  .trend-arrow.stable { color: var(--muted); }
+  .trend-arrow.new { color: var(--blue); }
+  .trend-change { font-size: 10px; color: var(--muted); margin-left: 4px; }
+  .sparkline { display: inline-block; vertical-align: middle; margin-left: 6px; }
+  .sparkline canvas { display: block; }
+
+  /* ---- Market Type Badge ---- */
+  .market-type-badge {
+    font-size: 9px; font-weight: 600; padding: 2px 6px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    background: var(--surface3); color: var(--muted);
+    margin-left: 8px;
+  }
+  .market-type-badge.spreads { background: var(--purple-dim); color: var(--purple); }
+  .market-type-badge.totals { background: var(--orange-dim); color: var(--orange); }
+  .market-type-badge.futures { background: var(--gold-dim); color: var(--gold); }
+
+  /* ---- Cross-Sport Ticker ---- */
+  .cross-sport-ticker {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 16px 20px; margin-bottom: 24px; overflow: hidden;
+  }
+  .cross-sport-ticker h3 {
+    font-size: 11px; font-weight: 500; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
+  }
+  .ticker-items { display: flex; gap: 1px; overflow-x: auto; background: var(--border); }
+  .ticker-item {
+    flex-shrink: 0; min-width: 200px; padding: 12px 16px;
+    background: var(--surface); cursor: pointer;
+  }
+  .ticker-item:hover { background: var(--surface2); }
+  .ticker-sport { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ticker-teams { font-size: 12px; font-weight: 500; margin: 4px 0; }
+  .ticker-edge { font-size: 14px; font-weight: 300; color: var(--green); }
+
+  /* ---- Edge Stats Tab ---- */
+  .sharpe-chart-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 24px; margin-bottom: 24px;
+  }
+  .sharpe-chart-wrap h3 {
+    font-size: 14px; font-weight: 500; margin-bottom: 16px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .sharpe-big { font-size: 36px; font-weight: 300; margin-bottom: 4px; }
+  .sharpe-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .perf-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 24px; background: var(--border); }
+  .perf-card { background: var(--surface); padding: 20px; text-align: left; }
+  .perf-value { font-size: 22px; font-weight: 300; }
+  .perf-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* ---- Alerts Tab ---- */
+  .alert-form { max-width: 500px; }
+  .alert-form .field { margin-bottom: 20px; }
+  .alert-form label { display: block; font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .alert-form input[type="text"], .alert-form input[type="number"] {
+    width: 100%; padding: 8px 0; background: transparent;
+    border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); font-size: 13px; font-family: inherit; font-weight: 300;
+  }
+  .alert-form input:focus { border-bottom-color: var(--text); outline: none; }
+  .alert-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin-bottom: 16px; }
+
+  /* ---- Flag Match ---- */
+  .btn-flag {
+    padding: 5px 10px; font-size: 10px; font-weight: 400;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .btn-flag:hover { border-color: var(--yellow); color: var(--yellow); }
+
+  /* ---- Depth Indicator ---- */
+  .depth-badge {
+    font-size: 10px; padding: 2px 6px;
+    background: var(--surface3); color: var(--text-secondary);
+  }
+  .depth-badge.deep { background: var(--green-dim); color: var(--green); }
+  .depth-badge.thin { background: var(--yellow-dim); color: var(--yellow); }
+
+  /* ---- Responsive (enhanced) ---- */
+  @media (max-width: 768px) {
+    .nav { padding: 0 12px; height: 48px; }
+    .nav-brand { font-size: 14px; }
+    .nav-status { display: none; }
+    .container { padding: 16px 12px 60px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .stats-row .stat-card:last-child { grid-column: span 2; }
+    .profit-summary { grid-template-columns: repeat(2, 1fr); }
+    .profit-summary .profit-card:last-child { grid-column: span 2; }
+    .hero-steps { flex-direction: column; }
+    .hero { padding: 20px; margin-bottom: 20px; }
+    .top-opps { flex-direction: column; }
+    .intel-grid { grid-template-columns: repeat(2, 1fr); }
+    .toolbar { flex-direction: column; gap: 8px; }
+    .toolbar input[type="text"] { width: 100%; }
+    .card-header { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+    .card-teams { font-size: 13px; }
+    .card-detail { padding: 0 14px 20px; }
+    .card-actions { flex-wrap: wrap; gap: 6px; }
+    .btn-action { padding: 6px 10px; font-size: 10px; }
+    .main-tabs { padding: 0 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .main-tab { padding: 10px 14px; font-size: 11px; white-space: nowrap; }
+    .category-row { padding: 0 12px; }
+    .subcategory-row { padding: 0 12px; }
+    .stat-value { font-size: 20px; }
+    .stat-card { padding: 14px; }
+    .cross-sport-ticker { padding: 12px 14px; margin-bottom: 16px; }
+    .perf-grid { grid-template-columns: repeat(2, 1fr); }
+    .sharpe-chart-wrap { padding: 16px; }
+    .outcome-table { font-size: 11px; }
+    .outcome-table th, .outcome-table td { padding: 6px 6px; }
+    .prob-row { flex-wrap: wrap; }
+    .prob-label { width: 80px; font-size: 11px; }
+    .modal { padding: 20px; max-width: 95%; }
+  }
+  @media (max-width: 480px) {
+    .nav-right { gap: 4px; }
+    .nav-link { padding: 4px 6px; font-size: 11px; }
+    .btn-upgrade { padding: 4px 10px; font-size: 10px; }
+    .stats-row { grid-template-columns: 1fr; }
+    .stats-row .stat-card:last-child { grid-column: span 1; }
+    .profit-summary { grid-template-columns: 1fr; }
+    .profit-summary .profit-card:last-child { grid-column: span 1; }
+    .intel-grid { grid-template-columns: 1fr; }
+    .main-tabs { overflow-x: auto; }
+    .nav-right .nav-link span.hide-mobile { display: none; }
+    .card-meta { flex-wrap: wrap; gap: 4px; }
+    .signal-badge { font-size: 9px; padding: 2px 6px; }
+    .outcome-chips { gap: 4px; }
+    .outcome-chip { font-size: 10px; padding: 2px 6px; }
+    .ticker-item { min-width: 160px; padding: 10px 12px; }
+    .perf-grid { grid-template-columns: 1fr; }
+    .card-action-hint { font-size: 11px; padding: 0 14px 10px; }
+  }
+  /* Quota-exhausted banner — server-rendered: shown only when the
+     the-odds-api circuit breaker is open (degraded-quota-exhausted),
+     otherwise stays display:none. Sits above the nav so the bookmaker-odds
+     gap is acknowledged before users see empty edge cards. Polymarket +
+     Kalshi cross-venue signals continue working. */
+  .quota-banner {
+    display: none;
+    background: linear-gradient(90deg, rgba(251,191,36,0.15), rgba(251,191,36,0.05));
+    border-bottom: 1px solid rgba(251,191,36,0.4);
+    color: #fbbf24;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+  .quota-banner b { color: #fde68a; }
+  .quota-banner .quota-banner-detail {
+    color: rgba(253,230,138,0.7);
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== QUOTA BANNER (server-rendered: shown only when breaker is open) ===== -->
+<div class="quota-banner" id="quotaBanner" style="display:__QUOTA_BANNER_DISPLAY__;">
+  <b>Bookmaker odds temporarily unavailable</b> — the-odds-api monthly quota exhausted; falling back to Polymarket↔Kalshi cross-venue signals below.
+  <div class="quota-banner-detail">Auto-probes again in ~__QUOTA_BANNER_HOURS__h, or restored instantly when ODDS_API_KEY is rotated/upgraded.</div>
+</div>
+
+<!-- ===== NAV ===== -->
+<nav class="nav">
+  <div class="nav-left">
+    <div class="nav-logo">S</div>
+    <span class="nav-brand">Sharpe</span>
+    <div class="nav-status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting</span>
+      <span id="lastUpdate" style="margin-left:8px;font-size:11px;color:var(--muted)"></span>
+      <span id="countdown" style="margin-left:4px;font-size:11px;color:var(--muted)"></span>
+    </div>
+  </div>
+  <div class="nav-right">
+    <button class="btn-upgrade" id="btnUpgradeNav" onclick="openUpgrade()" data-i18n="nav.upgrade">Upgrade to Pro</button>
+    <button class="nav-link" onclick="openGlossary()" data-i18n="nav.howItWorks">How It Works</button>
+    <a class="nav-link" href="/features">Features</a>
+    <a class="nav-link" href="/settings"><span class="hide-mobile" data-i18n="nav.settings">Settings </span>&#9881;</a>
+    <a class="nav-link admin" id="adminLink" href="/admin" data-i18n="nav.admin">Admin</a>
+  </div>
+</nav>
+
+<!-- ===== MAIN TABS ===== -->
+<div class="main-tabs">
+  <button class="main-tab active" onclick="switchTab('dashboard')" id="tabBtnDashboard" data-i18n="tab.dashboard">Dashboard</button>
+  <button class="main-tab" onclick="switchTab('profit')" id="tabBtnProfit" data-i18n="tab.profitTracker">Profit Tracker</button>
+  <button class="main-tab" onclick="switchTab('watchlist')" id="tabBtnWatchlist" data-i18n="tab.watchlist">Watchlist</button>
+  <button class="main-tab" onclick="switchTab('edgestats')" id="tabBtnEdgestats">Edge Stats</button>
+  <button class="main-tab" onclick="switchTab('alerts')" id="tabBtnAlerts">Alerts</button>
+  <button class="main-tab" onclick="switchTab('history')" id="tabBtnHistory">History</button>
+</div>
+
+<!-- ===== SPORT TABS ===== -->
+<div class="sport-tabs" id="sportTabs"></div>
+
+<!-- ===== CONTENT ===== -->
+<div class="container">
+
+  <!-- DASHBOARD TAB -->
+  <div class="tab-content active" id="tabDashboard">
+
+    <!-- Hero Banner -->
+    <div class="hero" id="heroBanner" style="display:none;">
+      <button class="hero-dismiss" onclick="dismissHero()">&times;</button>
+      <h2>Find Mispriced Bets Before the Market Corrects</h2>
+      <div class="hero-steps">
+        <div class="hero-step">
+          <div class="hero-step-num">1</div>
+          <div class="hero-step-text"><strong>We scan sportsbooks</strong> and aggregate sharp odds from top bookmakers worldwide.</div>
+        </div>
+        <div class="hero-step">
+          <div class="hero-step-num">2</div>
+          <div class="hero-step-text"><strong>We compare to Polymarket</strong> prices in real time to find probability divergences.</div>
+        </div>
+        <div class="hero-step">
+          <div class="hero-step-num">3</div>
+          <div class="hero-step-text"><strong>You see the edge</strong> — when Polymarket is cheaper, you buy before the price corrects.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cross-Sport Ticker -->
+    <div class="cross-sport-ticker" id="crossSportTicker" style="display:none;">
+      <h3>Top Edges Across All Sports</h3>
+      <div class="ticker-items" id="tickerItems"></div>
+    </div>
+
+    <!-- Top Opportunities -->
+    <div class="top-opps" id="topOpps"></div>
+
+    <!-- Stats Row -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="statScanned">-</div>
+        <div class="stat-label">Events Scanned</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statPolyListed">-</div>
+        <div class="stat-label">Polymarket Listed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statKalshi" style="color:var(--text)">-</div>
+        <div class="stat-label">Kalshi Markets</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statMatched">-</div>
+        <div class="stat-label">Matched</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statOpps" style="color:var(--text)">-</div>
+        <div class="stat-label">Opportunities</div>
+        <div class="stat-sub">&ge; <span id="threshDisplay">__USER_THRESHOLD__</span>% edge</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statBestEdge" style="color:var(--text)">-</div>
+        <div class="stat-label">Best Edge</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search events..." oninput="render()">
+      <select id="sortSelect" onchange="render()">
+        <option value="edge">Sort: Edge %</option>
+        <option value="confidence">Sort: Confidence</option>
+        <option value="time">Sort: Time to Event</option>
+        <option value="volume">Sort: Volume</option>
+        <option value="kelly">Sort: Kelly Size</option>
+        <option value="book_agreement">Sort: Book Agreement</option>
+      </select>
+      <select id="marketTypeFilter" onchange="render()" style="border:none;border-bottom:1px solid var(--border);background:transparent;font-size:12px;padding:4px 8px;font-family:inherit;color:var(--text);">
+        <option value="all">All Markets</option>
+        <option value="h2h">Moneyline</option>
+        <option value="spreads">Spreads</option>
+        <option value="totals">Totals</option>
+        <option value="futures">Futures</option>
+      </select>
+      <label class="toggle-wrap">
+        <input type="checkbox" id="signalsToggle" onchange="signalsOnly=this.checked;render()">
+        Opportunities Only
+      </label>
+      <label class="toggle-wrap" title="Show only events where one of the top 10 Polymarket traders has an open position">
+        <input type="checkbox" id="topTraderToggle" onchange="topTraderOnly=this.checked;render()">
+        Top Trader Bets
+      </label>
+      <button class="btn-sm" onclick="openCustomize()">Customize</button>
+    </div>
+
+    <!-- Cards -->
+    <div class="cards-grid" id="cardsGrid"></div>
+  </div>
+
+  <!-- PROFIT TRACKER TAB -->
+  <div class="tab-content" id="tabProfit">
+    <div class="profit-summary" id="profitSummary"></div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <button class="btn-primary" onclick="openTradeModal()">+ Log Trade</button>
+    </div>
+    <div class="trades-table-wrap">
+      <table class="trades-table" id="tradesTable">
+        <thead><tr><th>Market</th><th>Outcome</th><th>Entry</th><th>Amount</th><th>Status</th><th>P&amp;L</th><th>Date</th></tr></thead>
+        <tbody id="tradesBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="tradesEmpty" style="display:none;">No trades logged yet. Start tracking your trades!</div>
+  </div>
+
+  <!-- WATCHLIST TAB -->
+  <div class="tab-content" id="tabWatchlist">
+    <div class="watchlist-list" id="watchlistList"></div>
+    <div class="empty-state" id="watchlistEmpty" style="display:none;">Your watchlist is empty. Star events from the dashboard to track them.</div>
+  </div>
+
+  <!-- EDGE STATS TAB -->
+  <div class="tab-content" id="tabEdgestats">
+    <div class="perf-grid" id="perfGrid"></div>
+    <div class="sharpe-chart-wrap">
+      <h3>Rolling Edge Performance</h3>
+      <div style="display:flex;align-items:flex-end;gap:32px;margin-bottom:24px;">
+        <div>
+          <div class="sharpe-big" id="sharpeValue">-</div>
+          <div class="sharpe-label">Sharpe Ratio (Annualized)</div>
+        </div>
+        <div>
+          <div class="sharpe-big" id="overallWinRate" style="font-size:28px;">-</div>
+          <div class="sharpe-label">Overall Win Rate</div>
+        </div>
+      </div>
+      <canvas id="sharpeChart" width="800" height="200" style="width:100%;height:200px;"></canvas>
+    </div>
+    <div class="empty-state" id="edgeStatsEmpty" style="display:none;">Not enough resolved edges yet. Data builds over time as events complete.</div>
+  </div>
+
+  <!-- ALERTS TAB -->
+  <div class="tab-content" id="tabAlerts">
+    <div style="max-width:560px;">
+      <h2 style="font-size:18px;font-weight:500;margin-bottom:24px;">Alert Settings</h2>
+      <div class="alert-form">
+        <label class="alert-toggle">
+          <input type="checkbox" id="alertEnabled" style="accent-color:var(--text);">
+          Enable Alerts
+        </label>
+        <div class="field">
+          <label>Minimum Edge % (only alert above this)</label>
+          <input type="number" id="alertMinEdge" value="5" min="1" max="50" step="0.5">
+        </div>
+        <div class="field">
+          <label>Telegram Bot Token</label>
+          <input type="text" id="alertTgToken" placeholder="123456:ABC-DEF...">
+        </div>
+        <div class="field">
+          <label>Telegram Chat ID</label>
+          <input type="text" id="alertTgChat" placeholder="e.g. -1001234567890">
+        </div>
+        <div class="field">
+          <label>Webhook URL (optional, e.g. Slack/Discord)</label>
+          <input type="text" id="alertWebhook" placeholder="https://hooks.slack.com/...">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:24px;">
+          <button class="btn-primary" onclick="saveAlerts()">Save Alerts</button>
+          <button class="btn-sm" onclick="testAlert()">Test Alert</button>
+        </div>
+        <div id="alertStatus" style="margin-top:12px;font-size:12px;color:var(--muted);"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY TAB (Pro only) -->
+  <div class="tab-content" id="tabHistory">
+    <div id="historyGate" style="display:none;">
+      <div class="empty-state">
+        <div style="font-size:14px;font-weight:500;margin-bottom:8px;">Historical data is a Pro feature</div>
+        <div style="color:var(--muted);font-size:13px;margin-bottom:16px;">Unlock 1 year of resolved market data, price snapshots, and performance tracking.</div>
+        <button class="btn-upgrade" style="display:inline-block;" onclick="openUpgrade()">Upgrade to Pro</button>
+      </div>
+    </div>
+    <div id="historyContent" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;">Resolved Markets</div>
+        <select id="historySportFilter" onchange="loadHistory()" style="border:none;border-bottom:1px solid var(--border);background:transparent;font-size:12px;padding:4px 8px;font-family:inherit;">
+          <option value="">All Sports</option>
+        </select>
+      </div>
+      <div class="history-table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Outcome</th>
+              <th>Final Price</th>
+              <th>Volume</th>
+              <th>Resolution</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="historyEmpty" style="display:none;">No historical data available yet. Data accumulates over time.</div>
+      <div style="margin-top:32px;">
+        <div style="font-size:14px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:16px;">Recent Price Snapshots</div>
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Outcome</th>
+                <th>Book</th>
+                <th>Poly</th>
+                <th>Kalshi</th>
+                <th>Divergence</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="snapshotBody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="snapshotEmpty" style="display:none;">No snapshots yet. Price data is captured every update cycle.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== GLOSSARY MODAL ===== -->
+<div class="modal-overlay" id="glossaryModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('glossaryModal')">&times;</button>
+    <h2>How It Works &mdash; Glossary</h2>
+    <dl>
+      <div class="glossary-item"><dt>Edge %</dt><dd>The percentage difference between the sportsbook consensus probability and the Polymarket price. A positive edge means Polymarket is cheaper.</dd></div>
+      <div class="glossary-item"><dt>Confidence Score (1-5)</dt><dd>How confident the system is in this signal, based on book agreement, volume, spread, and time to event.</dd></div>
+      <div class="glossary-item"><dt>Book Agreement (1-5)</dt><dd>How closely the sportsbooks agree with each other. 5 = near-unanimous consensus.</dd></div>
+      <div class="glossary-item"><dt>Sharp Book</dt><dd>The bookmaker with the sharpest (most accurate) odds, weighted by market reputation.</dd></div>
+      <div class="glossary-item"><dt>Implied Vig</dt><dd>The bookmaker margin (overround) baked into the odds. Lower vig = cleaner probability estimate.</dd></div>
+      <div class="glossary-item"><dt>True Prob (No Vig)</dt><dd>The de-vigged consensus probability &mdash; the market's best guess at the true probability.</dd></div>
+      <div class="glossary-item"><dt>Book Range</dt><dd>The spread between the highest and lowest bookmaker probabilities for an outcome.</dd></div>
+      <div class="glossary-item"><dt>Median Book Prob</dt><dd>The median probability across all bookmakers, more robust to outliers than the mean.</dd></div>
+      <div class="glossary-item"><dt>Kelly Bet Size</dt><dd>Suggested bet size as % of bankroll using the Kelly Criterion, based on edge and probability.</dd></div>
+      <div class="glossary-item"><dt>Vol/Liquidity Ratio</dt><dd>Polymarket volume divided by liquidity. Higher ratios indicate more active trading relative to available depth.</dd></div>
+      <div class="glossary-item"><dt>Spread %</dt><dd>The bid-ask spread on Polymarket as a percentage. Tighter spreads mean lower execution cost.</dd></div>
+      <div class="glossary-item"><dt>Edge Direction</dt><dd>BUY if Polymarket is underpriced vs books; SELL if overpriced.</dd></div>
+      <div class="glossary-item"><dt>Time to Event</dt><dd>Hours until the event starts. Edges closer to event time are more actionable.</dd></div>
+      <div class="glossary-item"><dt>Best/Worst Odds</dt><dd>The best and worst decimal odds offered across bookmakers for the top outcome.</dd></div>
+      <div class="glossary-item"><dt>Match Confidence</dt><dd>How well the Polymarket question matched to the sportsbook event (string matching score).</dd></div>
+      <div class="glossary-item"><dt>Kalshi Price</dt><dd>The Kalshi prediction market mid-price for an outcome. Kalshi is a US-regulated prediction exchange (CFTC). Comparing both Polymarket and Kalshi gives you two independent market signals.</dd></div>
+    </dl>
+  </div>
+</div>
+
+<!-- ===== CUSTOMIZE MODAL ===== -->
+<div class="modal-overlay" id="customizeModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('customizeModal')">&times;</button>
+    <h2>Customize Dashboard</h2>
+    <div class="customize-section">
+      <h3>Widgets</h3>
+      <label class="customize-check"><input type="checkbox" data-widget="hero" checked> Hero Banner</label>
+      <label class="customize-check"><input type="checkbox" data-widget="top_opps" checked> Top Opportunities</label>
+      <label class="customize-check"><input type="checkbox" data-widget="stats" checked> Stats Row</label>
+      <label class="customize-check"><input type="checkbox" data-widget="events" checked> Event Cards</label>
+    </div>
+    <div class="customize-section">
+      <h3>Card Data Points</h3>
+      <label class="customize-check"><input type="checkbox" data-dp="volume" checked> Volume Traded</label>
+      <label class="customize-check"><input type="checkbox" data-dp="spread" checked> Bid-Ask Spread</label>
+      <label class="customize-check"><input type="checkbox" data-dp="bookmakers" checked> Bookmakers</label>
+      <label class="customize-check"><input type="checkbox" data-dp="sharp_book" checked> Sharp Book</label>
+      <label class="customize-check"><input type="checkbox" data-dp="price_change" checked> 24h Price Change</label>
+      <label class="customize-check"><input type="checkbox" data-dp="match_confidence" checked> Match Confidence</label>
+      <label class="customize-check"><input type="checkbox" data-dp="book_agreement"> Book Agreement</label>
+      <label class="customize-check"><input type="checkbox" data-dp="book_range"> Book Range</label>
+      <label class="customize-check"><input type="checkbox" data-dp="median_book_prob"> Median Book Prob</label>
+      <label class="customize-check"><input type="checkbox" data-dp="book_std_dev"> Book Std Dev</label>
+      <label class="customize-check"><input type="checkbox" data-dp="implied_vig"> Implied Vig</label>
+      <label class="customize-check"><input type="checkbox" data-dp="true_prob_no_vig"> True Prob (No Vig)</label>
+      <label class="customize-check"><input type="checkbox" data-dp="best_odds"> Best Odds</label>
+      <label class="customize-check"><input type="checkbox" data-dp="worst_odds"> Worst Odds</label>
+      <label class="customize-check"><input type="checkbox" data-dp="vol_liquidity_ratio"> Vol/Liquidity Ratio</label>
+      <label class="customize-check"><input type="checkbox" data-dp="spread_pct"> Spread %</label>
+      <label class="customize-check"><input type="checkbox" data-dp="edge_direction"> Edge Direction</label>
+      <label class="customize-check"><input type="checkbox" data-dp="time_to_event"> Time to Event</label>
+    </div>
+    <div class="customize-section">
+      <label class="customize-check"><input type="checkbox" id="expandDefault"> Expand cards by default</label>
+    </div>
+    <button class="btn-primary" onclick="saveLayout()" style="width:100%;">Save Preferences</button>
+  </div>
+</div>
+
+<!-- ===== UPGRADE MODAL ===== -->
+<div class="modal-overlay" id="upgradeModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('upgradeModal')">&times;</button>
+    <div class="upgrade-content">
+      <h2>Sharpe Pro</h2>
+      <div class="upgrade-price">$24.99<span>/mo</span></div>
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px;">Unlock the full power of market intelligence.</p>
+      <div class="upgrade-features">
+        <div class="upgrade-row"><span>Feature</span><span style="display:flex;gap:40px;"><span>Free</span><span>Pro</span></span></div>
+        <div class="upgrade-row"><span>Live edge signals</span><span style="display:flex;gap:40px;"><span>3 cards</span><span class="upgrade-check">Unlimited</span></span></div>
+        <div class="upgrade-row"><span>Confidence scores</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
+        <div class="upgrade-row"><span>Profit tracker</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
+        <div class="upgrade-row"><span>Watchlist</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
+        <div class="upgrade-row"><span>Advanced data points</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
+        <div class="upgrade-row"><span>Custom layout</span><span style="display:flex;gap:40px;"><span class="upgrade-cross">&#x2717;</span><span class="upgrade-check">&#x2713;</span></span></div>
+      </div>
+      <a href="mailto:support@sharpe.app?subject=Upgrade%20to%20Pro" class="btn-primary" style="display:inline-block;margin-top:16px;text-decoration:none;">Contact Us to Upgrade</a>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TRADE MODAL ===== -->
+<div class="modal-overlay" id="tradeModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('tradeModal')">&times;</button>
+    <h2>Log Trade</h2>
+    <div class="trade-form">
+      <div><label>Market</label><input type="text" id="tradeMarket" placeholder="e.g. Lakers vs Celtics"></div>
+      <div><label>Outcome</label><input type="text" id="tradeOutcome" placeholder="e.g. Lakers Win"></div>
+      <div><label>Entry Price (cents)</label><input type="number" id="tradePrice" min="1" max="99" placeholder="e.g. 45"></div>
+      <div><label>Amount ($)</label><input type="number" id="tradeAmount" min="1" placeholder="e.g. 100"></div>
+      <button class="btn-primary" onclick="submitTrade()">Log Trade</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Constants ===== */
+const POLL = """ + str(POLL_INTERVAL) + """;
+const THRESH = __USER_THRESHOLD__;
+const DEFAULT_THRESH = """ + str(DIVERGENCE_THRESHOLD) + """;
+const USER_SPORT = '__USER_SPORT__';
+const USERNAME = '__USERNAME__';
+let data = null, sports = {}, activeSport = '', signalsOnly = false, topTraderOnly = false;
+let refreshCountdown = POLL, ws = null;
+let userLayout = { visible_widgets: ['hero','top_opps','stats','events'], visible_data_points: ['volume','spread','bookmakers','sharp_book','price_change','match_confidence'], card_expanded_default: false };
+let userTier = 'free';
+let watchlistIds = new Set();
+
+/* ===== Localization: i18n + Currency / Units (narve_currency, narve_units, narve_language) ===== */
+const NARVE_LANGUAGES = [
+  ['en','English'],['es','Espa\u00f1ol'],['de','Deutsch'],['fr','Fran\u00e7ais'],
+  ['it','Italiano'],['pt','Portugu\u00eas'],['nl','Nederlands'],['pl','Polski'],
+  ['ja','\u65e5\u672c\u8a9e'],['ko','\ud55c\uad6d\uc5b4'],['zh','\u4e2d\u6587'],['ru','\u0420\u0443\u0441\u0441\u043a\u0438\u0439'],
+  ['hi','\u0939\u093f\u0928\u094d\u0926\u0940'],['ar','\u0627\u0644\u0639\u0631\u0628\u064a\u0629'],['bn','\u09ac\u09be\u0982\u09b2\u09be'],['ur','\u0627\u0631\u062f\u0648'],
+  ['id','Bahasa Indonesia'],['tr','T\u00fcrk\u00e7e'],['vi','Ti\u1ebfng Vi\u1ec7t'],['th','\u0e44\u0e17\u0e22'],
+];
+const NARVE_I18N = {
+  en: {'pref.title':'Preferences','pref.localization':'Display & Language','pref.language':'Language','pref.currency':'Display Currency','pref.numberFormat':'Number Format','pref.american':'American (1,234.56)','pref.european':'European (1.234,56)','pref.languageDesc':'Interface language for menus and labels','pref.currencyDesc':'Convert market values to your preferred currency (live ECB rates)','pref.formatDesc':'How numbers are punctuated','pref.save':'Save','pref.cancel':'Cancel','pref.close':'Close','pref.savedOk':'Saved','pref.unsaved':'You have unsaved changes','pref.saveChanges':'Save Changes','nav.dashboard':'Dashboard','nav.settings':'Settings','nav.signOut':'Sign Out','common.loading':'Loading...','common.error':'Error','common.refresh':'Refresh','common.search':'Search','nav.upgrade':'Upgrade to Pro','nav.howItWorks':'How It Works','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Profit Tracker','tab.watchlist':'Watchlist'},
+  es: {'pref.title':'Preferencias','pref.localization':'Pantalla e idioma','pref.language':'Idioma','pref.currency':'Moneda de visualizaci\u00f3n','pref.numberFormat':'Formato de n\u00famero','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Idioma de la interfaz para men\u00fas y etiquetas','pref.currencyDesc':'Convierte los valores del mercado a tu moneda preferida (tasas BCE en vivo)','pref.formatDesc':'C\u00f3mo se punt\u00faan los n\u00fameros','pref.save':'Guardar','pref.cancel':'Cancelar','pref.close':'Cerrar','pref.savedOk':'Guardado','pref.unsaved':'Tienes cambios sin guardar','pref.saveChanges':'Guardar cambios','nav.dashboard':'Panel','nav.settings':'Configuraci\u00f3n','nav.signOut':'Cerrar sesi\u00f3n','common.loading':'Cargando...','common.error':'Error','common.refresh':'Actualizar','common.search':'Buscar','nav.upgrade':'Actualizar a Pro','nav.howItWorks':'C\u00f3mo funciona','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'Seguidor de ganancias','tab.watchlist':'Lista de seguimiento'},
+  de: {'pref.title':'Einstellungen','pref.localization':'Anzeige & Sprache','pref.language':'Sprache','pref.currency':'Anzeigew\u00e4hrung','pref.numberFormat':'Zahlenformat','pref.american':'Amerikanisch (1,234.56)','pref.european':'Europ\u00e4isch (1.234,56)','pref.languageDesc':'Oberfl\u00e4chensprache f\u00fcr Men\u00fcs und Beschriftungen','pref.currencyDesc':'Marktwerte in Ihre bevorzugte W\u00e4hrung umrechnen (Live-EZB-Kurse)','pref.formatDesc':'Wie Zahlen formatiert werden','pref.save':'Speichern','pref.cancel':'Abbrechen','pref.close':'Schlie\u00dfen','pref.savedOk':'Gespeichert','pref.unsaved':'Sie haben ungespeicherte \u00c4nderungen','pref.saveChanges':'\u00c4nderungen speichern','nav.dashboard':'\u00dcbersicht','nav.settings':'Einstellungen','nav.signOut':'Abmelden','common.loading':'Wird geladen...','common.error':'Fehler','common.refresh':'Aktualisieren','common.search':'Suchen','nav.upgrade':'Auf Pro upgraden','nav.howItWorks':'Funktionsweise','nav.admin':'Admin','tab.dashboard':'\u00dcbersicht','tab.profitTracker':'Gewinn-Tracker','tab.watchlist':'Beobachtungsliste'},
+  fr: {'pref.title':'Pr\u00e9f\u00e9rences','pref.localization':'Affichage et langue','pref.language':'Langue','pref.currency':'Devise d\u2019affichage','pref.numberFormat':'Format des nombres','pref.american':'Am\u00e9ricain (1,234.56)','pref.european':'Europ\u00e9en (1.234,56)','pref.languageDesc':'Langue de l\u2019interface pour les menus et les \u00e9tiquettes','pref.currencyDesc':'Convertir les valeurs de march\u00e9 dans votre devise pr\u00e9f\u00e9r\u00e9e (taux BCE en direct)','pref.formatDesc':'Comment les nombres sont ponctu\u00e9s','pref.save':'Enregistrer','pref.cancel':'Annuler','pref.close':'Fermer','pref.savedOk':'Enregistr\u00e9','pref.unsaved':'Vous avez des modifications non enregistr\u00e9es','pref.saveChanges':'Enregistrer les modifications','nav.dashboard':'Tableau de bord','nav.settings':'Param\u00e8tres','nav.signOut':'D\u00e9connexion','common.loading':'Chargement...','common.error':'Erreur','common.refresh':'Actualiser','common.search':'Rechercher','nav.upgrade':'Passer \u00e0 Pro','nav.howItWorks':'Comment \u00e7a marche','nav.admin':'Admin','tab.dashboard':'Tableau de bord','tab.profitTracker':'Suivi des profits','tab.watchlist':'Liste de suivi'},
+  it: {'pref.title':'Preferenze','pref.localization':'Visualizzazione e lingua','pref.language':'Lingua','pref.currency':'Valuta di visualizzazione','pref.numberFormat':'Formato numerico','pref.american':'Americano (1,234.56)','pref.european':'Europeo (1.234,56)','pref.languageDesc':'Lingua dell\u2019interfaccia per menu ed etichette','pref.currencyDesc':'Converti i valori di mercato nella tua valuta preferita (tassi BCE in tempo reale)','pref.formatDesc':'Come sono punteggiati i numeri','pref.save':'Salva','pref.cancel':'Annulla','pref.close':'Chiudi','pref.savedOk':'Salvato','pref.unsaved':'Hai modifiche non salvate','pref.saveChanges':'Salva modifiche','nav.dashboard':'Pannello','nav.settings':'Impostazioni','nav.signOut':'Esci','common.loading':'Caricamento...','common.error':'Errore','common.refresh':'Aggiorna','common.search':'Cerca','nav.upgrade':'Passa a Pro','nav.howItWorks':'Come funziona','nav.admin':'Admin','tab.dashboard':'Pannello','tab.profitTracker':'Tracker dei profitti','tab.watchlist':'Lista di osservazione'},
+  pt: {'pref.title':'Prefer\u00eancias','pref.localization':'Exibi\u00e7\u00e3o e idioma','pref.language':'Idioma','pref.currency':'Moeda de exibi\u00e7\u00e3o','pref.numberFormat':'Formato num\u00e9rico','pref.american':'Americano (1,234.56)','pref.european':'Europeu (1.234,56)','pref.languageDesc':'Idioma da interface para menus e r\u00f3tulos','pref.currencyDesc':'Converter valores de mercado para sua moeda preferida (taxas BCE em tempo real)','pref.formatDesc':'Como os n\u00fameros s\u00e3o pontuados','pref.save':'Salvar','pref.cancel':'Cancelar','pref.close':'Fechar','pref.savedOk':'Salvo','pref.unsaved':'Voc\u00ea tem altera\u00e7\u00f5es n\u00e3o salvas','pref.saveChanges':'Salvar altera\u00e7\u00f5es','nav.dashboard':'Painel','nav.settings':'Configura\u00e7\u00f5es','nav.signOut':'Sair','common.loading':'Carregando...','common.error':'Erro','common.refresh':'Atualizar','common.search':'Pesquisar','nav.upgrade':'Atualizar para Pro','nav.howItWorks':'Como funciona','nav.admin':'Admin','tab.dashboard':'Painel','tab.profitTracker':'Rastreador de lucros','tab.watchlist':'Lista de observa\u00e7\u00e3o'},
+  nl: {'pref.title':'Voorkeuren','pref.localization':'Weergave en taal','pref.language':'Taal','pref.currency':'Weergavevaluta','pref.numberFormat':'Getalnotatie','pref.american':'Amerikaans (1,234.56)','pref.european':'Europees (1.234,56)','pref.languageDesc':'Taal van de interface voor menu\u2019s en labels','pref.currencyDesc':'Converteer marktwaardes naar je voorkeursvaluta (live ECB-koersen)','pref.formatDesc':'Hoe getallen worden geschreven','pref.save':'Opslaan','pref.cancel':'Annuleren','pref.close':'Sluiten','pref.savedOk':'Opgeslagen','pref.unsaved':'Je hebt niet-opgeslagen wijzigingen','pref.saveChanges':'Wijzigingen opslaan','nav.dashboard':'Dashboard','nav.settings':'Instellingen','nav.signOut':'Afmelden','common.loading':'Laden...','common.error':'Fout','common.refresh':'Vernieuwen','common.search':'Zoeken','nav.upgrade':'Upgraden naar Pro','nav.howItWorks':'Hoe het werkt','nav.admin':'Admin','tab.dashboard':'Dashboard','tab.profitTracker':'Winst-tracker','tab.watchlist':'Volglijst'},
+  pl: {'pref.title':'Preferencje','pref.localization':'Wy\u015bwietlanie i j\u0119zyk','pref.language':'J\u0119zyk','pref.currency':'Waluta wy\u015bwietlania','pref.numberFormat':'Format liczb','pref.american':'Ameryka\u0144ski (1,234.56)','pref.european':'Europejski (1.234,56)','pref.languageDesc':'J\u0119zyk interfejsu dla menu i etykiet','pref.currencyDesc':'Konwertuj warto\u015bci rynkowe na preferowan\u0105 walut\u0119 (kursy EBC na \u017cywo)','pref.formatDesc':'Jak interpunkcja liczb','pref.save':'Zapisz','pref.cancel':'Anuluj','pref.close':'Zamknij','pref.savedOk':'Zapisano','pref.unsaved':'Masz niezapisane zmiany','pref.saveChanges':'Zapisz zmiany','nav.dashboard':'Panel','nav.settings':'Ustawienia','nav.signOut':'Wyloguj','common.loading':'\u0141adowanie...','common.error':'B\u0142\u0105d','common.refresh':'Od\u015bwie\u017c','common.search':'Szukaj','nav.upgrade':'Przejd\u017a na Pro','nav.howItWorks':'Jak to dzia\u0142a','nav.admin':'Admin','tab.dashboard':'Panel','tab.profitTracker':'\u015aledzenie zysk\u00f3w','tab.watchlist':'Lista obserwowanych'},
+  ja: {'pref.title':'\u8a2d\u5b9a','pref.localization':'\u8868\u793a\u3068\u8a00\u8a9e','pref.language':'\u8a00\u8a9e','pref.currency':'\u8868\u793a\u901a\u8ca8','pref.numberFormat':'\u6570\u5024\u5f62\u5f0f','pref.american':'\u30a2\u30e1\u30ea\u30ab\u5f0f (1,234.56)','pref.european':'\u30e8\u30fc\u30ed\u30c3\u30d1\u5f0f (1.234,56)','pref.languageDesc':'\u30e1\u30cb\u30e5\u30fc\u3068\u30e9\u30d9\u30eb\u306e\u30a4\u30f3\u30bf\u30fc\u30d5\u30a7\u30fc\u30b9\u8a00\u8a9e','pref.currencyDesc':'\u5e02\u5834\u4fa1\u5024\u3092\u5e0c\u671b\u306e\u901a\u8ca8\u306b\u5909\u63db\uff08\u30e9\u30a4\u30d6ECB\u30ec\u30fc\u30c8\uff09','pref.formatDesc':'\u6570\u5b57\u306e\u533a\u5207\u308a\u65b9','pref.save':'\u4fdd\u5b58','pref.cancel':'\u30ad\u30e3\u30f3\u30bb\u30eb','pref.close':'\u9589\u3058\u308b','pref.savedOk':'\u4fdd\u5b58\u3057\u307e\u3057\u305f','pref.unsaved':'\u672a\u4fdd\u5b58\u306e\u5909\u66f4\u304c\u3042\u308a\u307e\u3059','pref.saveChanges':'\u5909\u66f4\u3092\u4fdd\u5b58','nav.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','nav.settings':'\u8a2d\u5b9a','nav.signOut':'\u30b5\u30a4\u30f3\u30a2\u30a6\u30c8','common.loading':'\u8aad\u307f\u8fbc\u307f\u4e2d...','common.error':'\u30a8\u30e9\u30fc','common.refresh':'\u66f4\u65b0','common.search':'\u691c\u7d22','nav.upgrade':'Pro\u306b\u30a2\u30c3\u30d7\u30b0\u30ec\u30fc\u30c9','nav.howItWorks':'\u4f7f\u3044\u65b9','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u30c0\u30c3\u30b7\u30e5\u30dc\u30fc\u30c9','tab.profitTracker':'\u5229\u76ca\u30c8\u30e9\u30c3\u30ab\u30fc','tab.watchlist':'\u30a6\u30a9\u30c3\u30c1\u30ea\u30b9\u30c8'},
+  ko: {'pref.title':'\ud658\uacbd\uc124\uc815','pref.localization':'\ud45c\uc2dc \ubc0f \uc5b8\uc5b4','pref.language':'\uc5b8\uc5b4','pref.currency':'\ud45c\uc2dc \ud1b5\ud654','pref.numberFormat':'\uc22b\uc790 \ud615\uc2dd','pref.american':'\ubbf8\uad6d\uc2dd (1,234.56)','pref.european':'\uc720\ub7fd\uc2dd (1.234,56)','pref.languageDesc':'\uba54\ub274 \ubc0f \ub77c\ubca8\uc758 \uc778\ud130\ud398\uc774\uc2a4 \uc5b8\uc5b4','pref.currencyDesc':'\uc2dc\uc7a5 \uac00\uce58\ub97c \uc120\ud638\ud558\ub294 \ud1b5\ud654\ub85c \ubcc0\ud658 (\uc2e4\uc2dc\uac04 ECB \ud658\uc728)','pref.formatDesc':'\uc22b\uc790 \uad6c\ub450\uc810 \ubc29\uc2dd','pref.save':'\uc800\uc7a5','pref.cancel':'\ucde8\uc18c','pref.close':'\ub2eb\uae30','pref.savedOk':'\uc800\uc7a5\ub428','pref.unsaved':'\uc800\uc7a5\ub418\uc9c0 \uc54a\uc740 \ubcc0\uacbd\uc0ac\ud56d\uc774 \uc788\uc2b5\ub2c8\ub2e4','pref.saveChanges':'\ubcc0\uacbd\uc0ac\ud56d \uc800\uc7a5','nav.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','nav.settings':'\uc124\uc815','nav.signOut':'\ub85c\uadf8\uc544\uc6c3','common.loading':'\ub85c\ub529 \uc911...','common.error':'\uc624\ub958','common.refresh':'\uc0c8\ub85c \uace0\uce68','common.search':'\uac80\uc0c9','nav.upgrade':'Pro\ub85c \uc5c5\uadf8\ub808\uc774\ub4dc','nav.howItWorks':'\uc0ac\uc6a9 \ubc29\ubc95','nav.admin':'\uad00\ub9ac\uc790','tab.dashboard':'\ub300\uc2dc\ubcf4\ub4dc','tab.profitTracker':'\uc218\uc775 \ucd94\uc801\uae30','tab.watchlist':'\uad00\uc2ec \ubaa9\ub85d'},
+  zh: {'pref.title':'\u504f\u597d\u8bbe\u7f6e','pref.localization':'\u663e\u793a\u4e0e\u8bed\u8a00','pref.language':'\u8bed\u8a00','pref.currency':'\u663e\u793a\u8d27\u5e01','pref.numberFormat':'\u6570\u5b57\u683c\u5f0f','pref.american':'\u7f8e\u5f0f (1,234.56)','pref.european':'\u6b27\u5f0f (1.234,56)','pref.languageDesc':'\u83dc\u5355\u548c\u6807\u7b7e\u7684\u754c\u9762\u8bed\u8a00','pref.currencyDesc':'\u5c06\u5e02\u573a\u4ef7\u503c\u8f6c\u6362\u4e3a\u60a8\u504f\u597d\u7684\u8d27\u5e01\uff08\u5b9e\u65f6\u6b27\u6d32\u592e\u884c\u6c47\u7387\uff09','pref.formatDesc':'\u6570\u5b57\u6807\u70b9\u65b9\u5f0f','pref.save':'\u4fdd\u5b58','pref.cancel':'\u53d6\u6d88','pref.close':'\u5173\u95ed','pref.savedOk':'\u5df2\u4fdd\u5b58','pref.unsaved':'\u60a8\u6709\u672a\u4fdd\u5b58\u7684\u66f4\u6539','pref.saveChanges':'\u4fdd\u5b58\u66f4\u6539','nav.dashboard':'\u4eea\u8868\u677f','nav.settings':'\u8bbe\u7f6e','nav.signOut':'\u9000\u51fa','common.loading':'\u52a0\u8f7d\u4e2d...','common.error':'\u9519\u8bef','common.refresh':'\u5237\u65b0','common.search':'\u641c\u7d22','nav.upgrade':'\u5347\u7ea7\u5230 Pro','nav.howItWorks':'\u5de5\u4f5c\u539f\u7406','nav.admin':'\u7ba1\u7406','tab.dashboard':'\u4eea\u8868\u677f','tab.profitTracker':'\u5229\u6da6\u8ddf\u8e2a','tab.watchlist':'\u5173\u6ce8\u5217\u8868'},
+  ru: {'pref.title':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','pref.localization':'\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0438 \u044f\u0437\u044b\u043a','pref.language':'\u042f\u0437\u044b\u043a','pref.currency':'\u0412\u0430\u043b\u044e\u0442\u0430 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f','pref.numberFormat':'\u0424\u043e\u0440\u043c\u0430\u0442 \u0447\u0438\u0441\u0435\u043b','pref.american':'\u0410\u043c\u0435\u0440\u0438\u043a\u0430\u043d\u0441\u043a\u0438\u0439 (1,234.56)','pref.european':'\u0415\u0432\u0440\u043e\u043f\u0435\u0439\u0441\u043a\u0438\u0439 (1.234,56)','pref.languageDesc':'\u042f\u0437\u044b\u043a \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0434\u043b\u044f \u043c\u0435\u043d\u044e \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u0435\u0439','pref.currencyDesc':'\u041a\u043e\u043d\u0432\u0435\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u044b\u043d\u043e\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u043f\u0440\u0435\u0434\u043f\u043e\u0447\u0438\u0442\u0430\u0435\u043c\u0443\u044e \u0432\u0430\u043b\u044e\u0442\u0443 (\u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u0435 \u043a\u0443\u0440\u0441\u044b \u0415\u0426\u0411)','pref.formatDesc':'\u041a\u0430\u043a \u043f\u0443\u043d\u043a\u0442\u0443\u0438\u0440\u0443\u044e\u0442\u0441\u044f \u0447\u0438\u0441\u043b\u0430','pref.save':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','pref.cancel':'\u041e\u0442\u043c\u0435\u043d\u0430','pref.close':'\u0417\u0430\u043a\u0440\u044b\u0442\u044c','pref.savedOk':'\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e','pref.unsaved':'\u0423 \u0432\u0430\u0441 \u0435\u0441\u0442\u044c \u043d\u0435\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043d\u044b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f','pref.saveChanges':'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c','nav.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','nav.settings':'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438','nav.signOut':'\u0412\u044b\u0439\u0442\u0438','common.loading':'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...','common.error':'\u041e\u0448\u0438\u0431\u043a\u0430','common.refresh':'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c','common.search':'\u041f\u043e\u0438\u0441\u043a','nav.upgrade':'\u041f\u0435\u0440\u0435\u0439\u0442\u0438 \u043d\u0430 Pro','nav.howItWorks':'\u041a\u0430\u043a \u044d\u0442\u043e \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442','nav.admin':'\u0410\u0434\u043c\u0438\u043d','tab.dashboard':'\u041f\u0430\u043d\u0435\u043b\u044c','tab.profitTracker':'\u041e\u0442\u0441\u043b\u0435\u0436\u0438\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u0438\u0431\u044b\u043b\u0438','tab.watchlist':'\u0421\u043f\u0438\u0441\u043e\u043a \u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f'},
+  hi: {'pref.title':'\u092a\u094d\u0930\u093e\u0925\u092e\u093f\u0915\u0924\u093e\u090f\u0901','pref.localization':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u0914\u0930 \u092d\u093e\u0937\u093e','pref.language':'\u092d\u093e\u0937\u093e','pref.currency':'\u092a\u094d\u0930\u0926\u0930\u094d\u0936\u0928 \u092e\u0941\u0926\u094d\u0930\u093e','pref.numberFormat':'\u0938\u0902\u0916\u094d\u092f\u093e \u092a\u094d\u0930\u093e\u0930\u0942\u092a','pref.american':'\u0905\u092e\u0947\u0930\u093f\u0915\u0940 (1,234.56)','pref.european':'\u092f\u0942\u0930\u094b\u092a\u0940\u092f (1.234,56)','pref.languageDesc':'\u092e\u0947\u0928\u0942 \u0914\u0930 \u0932\u0947\u092c\u0932 \u0915\u0947 \u0932\u093f\u090f \u0907\u0902\u091f\u0930\u092b\u093c\u0947\u0938 \u092d\u093e\u0937\u093e','pref.currencyDesc':'\u092c\u093e\u091c\u093c\u093e\u0930 \u092e\u0942\u0932\u094d\u092f\u094b\u0902 \u0915\u094b \u0905\u092a\u0928\u0940 \u092a\u0938\u0902\u0926\u0940\u0926\u093e \u092e\u0941\u0926\u094d\u0930\u093e \u092e\u0947\u0902 \u092c\u0926\u0932\u0947\u0902 (\u0932\u093e\u0907\u0935 ECB \u0926\u0930\u0947\u0902)','pref.formatDesc':'\u0938\u0902\u0916\u094d\u092f\u093e\u090f\u0901 \u0915\u0948\u0938\u0947 \u0932\u093f\u0916\u0940 \u091c\u093e\u0924\u0940 \u0939\u0948\u0902','pref.save':'\u0938\u0939\u0947\u091c\u0947\u0902','pref.cancel':'\u0930\u0926\u094d\u0926 \u0915\u0930\u0947\u0902','pref.close':'\u092c\u0902\u0926 \u0915\u0930\u0947\u0902','pref.savedOk':'\u0938\u0939\u0947\u091c\u093e \u0917\u092f\u093e','pref.unsaved':'\u0906\u092a\u0915\u0947 \u092a\u093e\u0938 \u0905\u0938\u0939\u0947\u091c\u0947 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0939\u0948\u0902','pref.saveChanges':'\u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0938\u0939\u0947\u091c\u0947\u0902','nav.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','nav.settings':'\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938','nav.signOut':'\u0938\u093e\u0907\u0928 \u0906\u0909\u091f','common.loading':'\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...','common.error':'\u0924\u094d\u0930\u0941\u091f\u093f','common.refresh':'\u0930\u093f\u092b\u093c\u094d\u0930\u0947\u0936 \u0915\u0930\u0947\u0902','common.search':'\u0916\u094b\u091c\u0947\u0902','nav.upgrade':'Pro \u092e\u0947\u0902 \u0905\u092a\u0917\u094d\u0930\u0947\u0921 \u0915\u0930\u0947\u0902','nav.howItWorks':'\u092f\u0939 \u0915\u0948\u0938\u0947 \u0915\u093e\u092e \u0915\u0930\u0924\u093e \u0939\u0948','nav.admin':'\u090f\u0921\u092e\u093f\u0928','tab.dashboard':'\u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921','tab.profitTracker':'\u0932\u093e\u092d \u091f\u094d\u0930\u0948\u0915\u0930','tab.watchlist':'\u0935\u0949\u091a\u0932\u093f\u0938\u094d\u091f'},
+  ar: {'pref.title':'\u0627\u0644\u062a\u0641\u0636\u064a\u0644\u0627\u062a','pref.localization':'\u0627\u0644\u0639\u0631\u0636 \u0648\u0627\u0644\u0644\u063a\u0629','pref.language':'\u0627\u0644\u0644\u063a\u0629','pref.currency':'\u0639\u0645\u0644\u0629 \u0627\u0644\u0639\u0631\u0636','pref.numberFormat':'\u062a\u0646\u0633\u064a\u0642 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.american':'\u0623\u0645\u0631\u064a\u0643\u064a (1,234.56)','pref.european':'\u0623\u0648\u0631\u0648\u0628\u064a (1.234,56)','pref.languageDesc':'\u0644\u063a\u0629 \u0627\u0644\u0648\u0627\u062c\u0647\u0629 \u0644\u0644\u0642\u0648\u0627\u0626\u0645 \u0648\u0627\u0644\u062a\u0633\u0645\u064a\u0627\u062a','pref.currencyDesc':'\u062a\u062d\u0648\u064a\u0644 \u0642\u064a\u0645 \u0627\u0644\u0633\u0648\u0642 \u0625\u0644\u0649 \u0639\u0645\u0644\u062a\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629 (\u0623\u0633\u0639\u0627\u0631 ECB \u0627\u0644\u0645\u0628\u0627\u0634\u0631\u0629)','pref.formatDesc':'\u0643\u064a\u0641\u064a\u0629 \u0643\u062a\u0627\u0628\u0629 \u0627\u0644\u0623\u0631\u0642\u0627\u0645','pref.save':'\u062d\u0641\u0638','pref.cancel':'\u0625\u0644\u063a\u0627\u0621','pref.close':'\u0625\u063a\u0644\u0627\u0642','pref.savedOk':'\u062a\u0645 \u0627\u0644\u062d\u0641\u0638','pref.unsaved':'\u0644\u062f\u064a\u0643 \u062a\u063a\u064a\u064a\u0631\u0627\u062a \u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638\u0629','pref.saveChanges':'\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a','nav.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','nav.settings':'\u0627\u0644\u0625\u0639\u062f\u0627\u062f\u0627\u062a','nav.signOut':'\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c','common.loading':'\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644...','common.error':'\u062e\u0637\u0623','common.refresh':'\u062a\u062d\u062f\u064a\u062b','common.search':'\u0628\u062d\u062b','nav.upgrade':'\u0627\u0644\u062a\u0631\u0642\u064a\u0629 \u0625\u0644\u0649 Pro','nav.howItWorks':'\u0643\u064a\u0641 \u064a\u0639\u0645\u0644','nav.admin':'\u0627\u0644\u0645\u0633\u0624\u0648\u0644','tab.dashboard':'\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629','tab.profitTracker':'\u0645\u062a\u062a\u0628\u0639 \u0627\u0644\u0623\u0631\u0628\u0627\u062d','tab.watchlist':'\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0645\u0631\u0627\u0642\u0628\u0629'},
+  bn: {'pref.title':'\u09aa\u09cd\u09b0\u09be\u09a7\u09be\u09a8\u09cd\u09af\u09a4\u09be','pref.localization':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u0993 \u09ad\u09be\u09b7\u09be','pref.language':'\u09ad\u09be\u09b7\u09be','pref.currency':'\u09aa\u094d\u09b0\u09a6\u09b0\u094d\u09b6\u09a8 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be','pref.numberFormat':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u09ac\u09bf\u09a8\u09cd\u09af\u09be\u09b8','pref.american':'\u0986\u09ae\u09c7\u09b0\u09bf\u0995\u09be\u09a8 (1,234.56)','pref.european':'\u0987\u0989\u09b0\u09cb\u09aa\u09c0\u09af\u09bc (1.234,56)','pref.languageDesc':'\u09ae\u09c7\u09a8\u09c1 \u0993 \u09b2\u09c7\u09ac\u09c7\u09b2\u09c7\u09b0 \u099c\u09a8\u09cd\u09af \u0987\u09a8\u09cd\u099f\u09be\u09b0\u09ab\u09c7\u09b8 \u09ad\u09be\u09b7\u09be','pref.currencyDesc':'\u09ac\u09be\u099c\u09be\u09b0 \u09ae\u09c2\u09b2\u09cd\u09af \u0986\u09aa\u09a8\u09be\u09b0 \u09aa\u099b\u09a8\u09cd\u09a6\u09c7\u09b0 \u09ae\u09c1\u09a6\u09cd\u09b0\u09be\u09af\u09bc \u09b0\u09c2\u09aa\u09be\u09a8\u09cd\u09a4\u09b0 \u0995\u09b0\u09c1\u09a8 (\u09b2\u09be\u0987\u09ad ECB \u09b0\u09c7\u099f)','pref.formatDesc':'\u09b8\u0982\u0996\u09cd\u09af\u09be \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u09b2\u09c7\u0996\u09be \u09b9\u09af\u09bc','pref.save':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','pref.cancel':'\u09ac\u09be\u09a4\u09bf\u09b2','pref.close':'\u09ac\u09a8\u09cd\u09a7 \u0995\u09b0\u09c1\u09a8','pref.savedOk':'\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4','pref.unsaved':'\u0986\u09aa\u09a8\u09be\u09b0 \u0985\u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09bf\u09a4 \u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u0986\u099b\u09c7','pref.saveChanges':'\u09aa\u09b0\u09bf\u09ac\u09b0\u09cd\u09a4\u09a8 \u09b8\u0982\u09b0\u0995\u09cd\u09b7\u09a3 \u0995\u09b0\u09c1\u09a8','nav.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','nav.settings':'\u09b8\u09c7\u099f\u09bf\u0982\u09b8','nav.signOut':'\u09b8\u09be\u0987\u09a8 \u0986\u0989\u099f','common.loading':'\u09b2\u09cb\u09a1 \u09b9\u099a\u09cd\u099b\u09c7...','common.error':'\u09a4\u09cd\u09b0\u09c1\u099f\u09bf','common.refresh':'\u09b0\u09bf\u09ab\u09cd\u09b0\u09c7\u09b6 \u0995\u09b0\u09c1\u09a8','common.search':'\u0985\u09a8\u09c1\u09b8\u09a8\u09cd\u09a7\u09be\u09a8','nav.upgrade':'Pro \u09a4\u09c7 \u0986\u09aa\u0997\u09cd\u09b0\u09c7\u09a1 \u0995\u09b0\u09c1\u09a8','nav.howItWorks':'\u098f\u099f\u09bf \u0995\u09c0\u09ad\u09be\u09ac\u09c7 \u0995\u09be\u099c \u0995\u09b0\u09c7','nav.admin':'\u0985\u09cd\u09af\u09be\u09a1\u09ae\u09bf\u09a8','tab.dashboard':'\u09a1\u09cd\u09af\u09be\u09b6\u09ac\u09cb\u09b0\u09cd\u09a1','tab.profitTracker':'\u09b2\u09be\u09ad \u099f\u09cd\u09b0\u09cd\u09af\u09be\u0995\u09be\u09b0','tab.watchlist':'\u0993\u09af\u09bc\u09be\u099a\u09b2\u09bf\u09b8\u09cd\u099f'},
+  ur: {'pref.title':'\u062a\u0631\u062c\u06cc\u062d\u0627\u062a','pref.localization':'\u0688\u0633\u067e\u0644\u06cc \u0627\u0648\u0631 \u0632\u0628\u0627\u0646','pref.language':'\u0632\u0628\u0627\u0646','pref.currency':'\u0688\u0633\u067e\u0644\u06cc \u06a9\u0631\u0646\u0633\u06cc','pref.numberFormat':'\u0646\u0645\u0628\u0631 \u0641\u0627\u0631\u0645\u06cc\u0679','pref.american':'\u0627\u0645\u0631\u06cc\u06a9\u06cc (1,234.56)','pref.european':'\u06cc\u0648\u0631\u067e\u06cc (1.234,56)','pref.languageDesc':'\u0645\u06cc\u0646\u06cc\u0648\u0632 \u0627\u0648\u0631 \u0644\u06cc\u0628\u0644\u0632 \u06a9\u06cc \u0627\u0646\u0679\u0631\u0641\u06cc\u0633 \u0632\u0628\u0627\u0646','pref.currencyDesc':'\u0645\u0627\u0631\u06a9\u06cc\u0679 \u0642\u062f\u0631\u0648\u0646 \u06a9\u0648 \u0627\u067e\u0646\u06cc \u067e\u0633\u0646\u062f\u06cc\u062f\u06c1 \u06a9\u0631\u0646\u0633\u06cc \u0645\u06cc\u0646 \u062a\u0628\u062f\u06cc\u0644 \u06a9\u0631\u06cc\u0646 (\u0644\u0627\u0626\u06cc\u0648 ECB \u0634\u0631\u062d)','pref.formatDesc':'\u0646\u0645\u0628\u0631 \u06a9\u06cc\u0633\u06d2 \u0644\u06a9\u06be\u06d2 \u062c\u0627\u062a\u06d2 \u06c1\u06cc\u06ba','pref.save':'\u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','pref.cancel':'\u0645\u0646\u0633\u0648\u062e','pref.close':'\u0628\u0646\u062f \u06a9\u0631\u06cc\u0646','pref.savedOk':'\u0645\u062d\u0641\u0648\u0638 \u06c1\u0648 \u06af\u06cc\u0627','pref.unsaved':'\u0622\u067e \u06a9\u06cc \u063a\u06cc\u0631 \u0645\u062d\u0641\u0648\u0638 \u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u06c1\u06cc\u06ba','pref.saveChanges':'\u062a\u0628\u062f\u06cc\u0644\u06cc\u0627\u06ba \u0645\u062d\u0641\u0648\u0638 \u06a9\u0631\u06cc\u0646','nav.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','nav.settings':'\u0633\u06cc\u0679\u0646\u06af\u0632','nav.signOut':'\u0633\u0627\u0626\u0646 \u0622\u0624\u0679','common.loading':'\u0644\u0648\u0688 \u06c1\u0648 \u0631\u06c1\u0627 \u06c1\u06d2...','common.error':'\u062e\u0631\u0627\u0628\u06cc','common.refresh':'\u0631\u06cc\u0641\u0631\u06cc\u0634 \u06a9\u0631\u06cc\u0646','common.search':'\u062a\u0644\u0627\u0634 \u06a9\u0631\u06cc\u0646','nav.upgrade':'Pro \u0645\u06cc\u0646 \u0627\u067e\u06af\u0631\u06cc\u0688 \u06a9\u0631\u06cc\u0646','nav.howItWorks':'\u06cc\u06c1 \u06a9\u06cc\u0633\u06d2 \u06a9\u0627\u0645 \u06a9\u0631\u062a\u0627 \u06c1\u06d2','nav.admin':'\u0627\u06cc\u0688\u0645\u0646','tab.dashboard':'\u0688\u06cc\u0634 \u0628\u0648\u0631\u0688','tab.profitTracker':'\u0645\u0646\u0627\u0641\u0639 \u0679\u0631\u06cc\u06a9\u0631','tab.watchlist':'\u0648\u0627\u0686 \u0644\u0633\u0679'},
+  id: {'pref.title':'Preferensi','pref.localization':'Tampilan & Bahasa','pref.language':'Bahasa','pref.currency':'Mata Uang Tampilan','pref.numberFormat':'Format Angka','pref.american':'Amerika (1,234.56)','pref.european':'Eropa (1.234,56)','pref.languageDesc':'Bahasa antarmuka untuk menu dan label','pref.currencyDesc':'Konversi nilai pasar ke mata uang pilihan Anda (kurs ECB langsung)','pref.formatDesc':'Cara penulisan angka','pref.save':'Simpan','pref.cancel':'Batal','pref.close':'Tutup','pref.savedOk':'Tersimpan','pref.unsaved':'Anda memiliki perubahan yang belum disimpan','pref.saveChanges':'Simpan Perubahan','nav.dashboard':'Dasbor','nav.settings':'Pengaturan','nav.signOut':'Keluar','common.loading':'Memuat...','common.error':'Kesalahan','common.refresh':'Segarkan','common.search':'Cari','nav.upgrade':'Tingkatkan ke Pro','nav.howItWorks':'Cara Kerja','nav.admin':'Admin','tab.dashboard':'Dasbor','tab.profitTracker':'Pelacak Keuntungan','tab.watchlist':'Daftar Pantau'},
+  tr: {'pref.title':'Tercihler','pref.localization':'G\u00f6r\u00fcn\u00fcm ve Dil','pref.language':'Dil','pref.currency':'G\u00f6r\u00fcnt\u00fcleme Para Birimi','pref.numberFormat':'Say\u0131 Bi\u00e7imi','pref.american':'Amerikan (1,234.56)','pref.european':'Avrupa (1.234,56)','pref.languageDesc':'Men\u00fcler ve etiketler i\u00e7in aray\u00fcz dili','pref.currencyDesc':'Piyasa de\u011ferlerini tercih etti\u011finiz para birimine d\u00f6n\u00fc\u015ft\u00fcr\u00fcn (canl\u0131 ECB kurlar\u0131)','pref.formatDesc':'Say\u0131lar\u0131n yaz\u0131l\u0131\u015f bi\u00e7imi','pref.save':'Kaydet','pref.cancel':'\u0130ptal','pref.close':'Kapat','pref.savedOk':'Kaydedildi','pref.unsaved':'Kaydedilmemi\u015f de\u011fi\u015fiklikleriniz var','pref.saveChanges':'De\u011fi\u015fiklikleri Kaydet','nav.dashboard':'Pano','nav.settings':'Ayarlar','nav.signOut':'\u00c7\u0131k\u0131\u015f','common.loading':'Y\u00fckleniyor...','common.error':'Hata','common.refresh':'Yenile','common.search':'Ara','nav.upgrade':'Pro\u2019ya Y\u00fckseltin','nav.howItWorks':'Nas\u0131l \u00c7al\u0131\u015f\u0131r','nav.admin':'Y\u00f6netici','tab.dashboard':'Pano','tab.profitTracker':'K\u00e2r Takip\u00e7isi','tab.watchlist':'\u0130zleme Listesi'},
+  vi: {'pref.title':'T\u00f9y ch\u1ecdn','pref.localization':'Hi\u1ec3n th\u1ecb & Ng\u00f4n ng\u1eef','pref.language':'Ng\u00f4n ng\u1eef','pref.currency':'Ti\u1ec1n t\u1ec7 hi\u1ec3n th\u1ecb','pref.numberFormat':'\u0110\u1ecbnh d\u1ea1ng s\u1ed1','pref.american':'Ki\u1ec3u M\u1ef9 (1,234.56)','pref.european':'Ki\u1ec3u Ch\u00e2u \u00c2u (1.234,56)','pref.languageDesc':'Ng\u00f4n ng\u1eef giao di\u1ec7n cho menu v\u00e0 nh\u00e3n','pref.currencyDesc':'Chuy\u1ec3n \u0111\u1ed5i gi\u00e1 tr\u1ecb th\u1ecb tr\u01b0\u1eddng sang ti\u1ec1n t\u1ec7 \u01b0a th\u00edch (t\u1ef7 gi\u00e1 ECB tr\u1ef1c ti\u1ebfp)','pref.formatDesc':'C\u00e1ch vi\u1ebft s\u1ed1','pref.save':'L\u01b0u','pref.cancel':'H\u1ee7y','pref.close':'\u0110\u00f3ng','pref.savedOk':'\u0110\u00e3 l\u01b0u','pref.unsaved':'B\u1ea1n c\u00f3 thay \u0111\u1ed5i ch\u01b0a l\u01b0u','pref.saveChanges':'L\u01b0u thay \u0111\u1ed5i','nav.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','nav.settings':'C\u00e0i \u0111\u1eb7t','nav.signOut':'\u0110\u0103ng xu\u1ea5t','common.loading':'\u0110ang t\u1ea3i...','common.error':'L\u1ed7i','common.refresh':'L\u00e0m m\u1edbi','common.search':'T\u00ecm ki\u1ebfm','nav.upgrade':'N\u00e2ng c\u1ea5p l\u00ean Pro','nav.howItWorks':'C\u00e1ch ho\u1ea1t \u0111\u1ed9ng','nav.admin':'Qu\u1ea3n tr\u1ecb','tab.dashboard':'B\u1ea3ng \u0111i\u1ec1u khi\u1ec3n','tab.profitTracker':'Theo d\u00f5i l\u1ee3i nhu\u1eadn','tab.watchlist':'Danh s\u00e1ch theo d\u00f5i'},
+  th: {'pref.title':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','pref.localization':'\u0e01\u0e32\u0e23\u0e41\u0e2a\u0e14\u0e07\u0e1c\u0e25\u0e41\u0e25\u0e30\u0e20\u0e32\u0e29\u0e32','pref.language':'\u0e20\u0e32\u0e29\u0e32','pref.currency':'\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e41\u0e2a\u0e14\u0e07','pref.numberFormat':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.american':'\u0e41\u0e1a\u0e1a\u0e2d\u0e40\u0e21\u0e23\u0e34\u0e01\u0e31\u0e19 (1,234.56)','pref.european':'\u0e41\u0e1a\u0e1a\u0e22\u0e38\u0e42\u0e23\u0e1b (1.234,56)','pref.languageDesc':'\u0e20\u0e32\u0e29\u0e32\u0e2d\u0e34\u0e19\u0e40\u0e17\u0e2d\u0e23\u0e4c\u0e40\u0e1f\u0e0b\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a\u0e40\u0e21\u0e19\u0e39\u0e41\u0e25\u0e30\u0e1b\u0e49\u0e32\u0e22\u0e01\u0e33\u0e01\u0e31\u0e1a','pref.currencyDesc':'\u0e41\u0e1b\u0e25\u0e07\u0e21\u0e39\u0e25\u0e04\u0e48\u0e32\u0e15\u0e25\u0e32\u0e14\u0e40\u0e1b\u0e47\u0e19\u0e2a\u0e01\u0e38\u0e25\u0e40\u0e07\u0e34\u0e19\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23 (\u0e2d\u0e31\u0e15\u0e23\u0e32 ECB \u0e2a\u0e14)','pref.formatDesc':'\u0e23\u0e39\u0e1b\u0e41\u0e1a\u0e1a\u0e01\u0e32\u0e23\u0e40\u0e02\u0e35\u0e22\u0e19\u0e15\u0e31\u0e27\u0e40\u0e25\u0e02','pref.save':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.cancel':'\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01','pref.close':'\u0e1b\u0e34\u0e14','pref.savedOk':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e41\u0e25\u0e49\u0e27','pref.unsaved':'\u0e04\u0e38\u0e13\u0e21\u0e35\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07\u0e17\u0e35\u0e48\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01','pref.saveChanges':'\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e01\u0e32\u0e23\u0e40\u0e1b\u0e25\u0e35\u0e48\u0e22\u0e19\u0e41\u0e1b\u0e25\u0e07','nav.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','nav.settings':'\u0e01\u0e32\u0e23\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32','nav.signOut':'\u0e2d\u0e2d\u0e01\u0e08\u0e32\u0e01\u0e23\u0e30\u0e1a\u0e1a','common.loading':'\u0e01\u0e33\u0e25\u0e31\u0e07\u0e42\u0e2b\u0e25\u0e14...','common.error':'\u0e02\u0e49\u0e2d\u0e1c\u0e34\u0e14\u0e1e\u0e25\u0e32\u0e14','common.refresh':'\u0e23\u0e35\u0e40\u0e1f\u0e23\u0e0a','common.search':'\u0e04\u0e49\u0e19\u0e2b\u0e32','nav.upgrade':'\u0e2d\u0e31\u0e1b\u0e40\u0e01\u0e23\u0e14\u0e40\u0e1b\u0e47\u0e19 Pro','nav.howItWorks':'\u0e27\u0e34\u0e18\u0e35\u0e01\u0e32\u0e23\u0e17\u0e33\u0e07\u0e32\u0e19','nav.admin':'\u0e1c\u0e39\u0e49\u0e14\u0e39\u0e41\u0e25\u0e23\u0e30\u0e1a\u0e1a','tab.dashboard':'\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14','tab.profitTracker':'\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21\u0e01\u0e33\u0e44\u0e23','tab.watchlist':'\u0e23\u0e32\u0e22\u0e01\u0e32\u0e23\u0e15\u0e34\u0e14\u0e15\u0e32\u0e21'},
+};
+let _narveLang = localStorage.getItem('narve_language') || 'en';
+function t(key) {
+  const dict = NARVE_I18N[_narveLang] || NARVE_I18N.en;
+  return dict[key] || NARVE_I18N.en[key] || key;
+}
+function applyTranslations(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    el.textContent = t(k);
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+  scope.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.getAttribute('data-i18n-title'));
+  });
+}
+function setNarveLanguage(code) {
+  _narveLang = code;
+  localStorage.setItem('narve_language', code);
+  document.documentElement.lang = code;
+  applyTranslations();
+}
+
+const NARVE_FX_FALLBACK = {
+  USD:1.0, EUR:0.92, GBP:0.79, JPY:150, AUD:1.52, CAD:1.36, CHF:0.88, CNY:7.20,
+  HKD:7.83, NZD:1.65, SEK:10.5, KRW:1340, SGD:1.34, NOK:10.6, MXN:17.0,
+  INR:83.0, ZAR:18.5, TRY:32.0, BRL:5.0, DKK:6.85, PLN:3.95, THB:35.0,
+  IDR:15700, HUF:360, CZK:23.0, ILS:3.7, PHP:56.0, MYR:4.7, RON:4.6, ISK:137,
+};
+let _narveFxRates = NARVE_FX_FALLBACK;
+let _narveCurrency = localStorage.getItem('narve_currency') || 'USD';
+let _narveUnits = localStorage.getItem('narve_units') || 'american';
+function _narveLocale() { return _narveUnits === 'european' ? 'de-DE' : 'en-US'; }
+function _narveRate(code) {
+  if (!code || code === 'USD') return 1;
+  return _narveFxRates[code] || NARVE_FX_FALLBACK[code] || 1;
+}
+function _narveSymbol(code) {
+  try {
+    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
+    const sym = parts.find(p => p.type === 'currency');
+    if (sym) return sym.value;
+  } catch (e) {}
+  return code;
+}
+function _narveSymFirst(code) {
+  try {
+    const parts = new Intl.NumberFormat(_narveLocale(), { style: 'currency', currency: code }).formatToParts(0);
+    const cIdx = parts.findIndex(p => p.type === 'currency');
+    const nIdx = parts.findIndex(p => p.type === 'integer');
+    return cIdx < nIdx;
+  } catch (e) { return true; }
+}
+// Format an amount given in USD into the user's chosen currency.
+function fmtMoney(usdValue, decimals) {
+  if (usdValue == null || isNaN(Number(usdValue))) return '-';
+  const v = Number(usdValue) * _narveRate(_narveCurrency);
+  const sym = _narveSymbol(_narveCurrency);
+  const symFirst = _narveSymFirst(_narveCurrency);
+  const dec = decimals == null ? 2 : decimals;
+  const formatted = v.toLocaleString(_narveLocale(), {
+    minimumFractionDigits: dec, maximumFractionDigits: dec,
+  });
+  return symFirst ? sym + formatted : formatted + ' ' + sym;
+}
+async function ensureNarveFxRates() {
+  try {
+    const cached = JSON.parse(localStorage.getItem('narve_fx_rates') || 'null');
+    if (cached && cached.rates && Date.now() - cached.fetched_at < 3600000) {
+      _narveFxRates = cached.rates; return _narveFxRates;
+    }
+  } catch (e) {}
+  try {
+    const r = await fetch('/api/fx-rates', { credentials: 'same-origin' });
+    if (r.ok) {
+      const data = await r.json();
+      _narveFxRates = data.rates || NARVE_FX_FALLBACK;
+      _narveFxRates.USD = 1.0;
+      try { localStorage.setItem('narve_fx_rates', JSON.stringify({ rates: _narveFxRates, fetched_at: Date.now() })); } catch (e) {}
+    }
+  } catch (e) {}
+  return _narveFxRates;
+}
+
+/* ===== Utilities ===== */
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function fmt(n, d) { return n != null ? Number(n).toFixed(d === undefined ? 1 : d) : '-'; }
+function fmtPct(n) { return n != null ? (n >= 0 ? '+' : '') + Number(n).toFixed(1) + '%' : '-'; }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+
+/* ===== Confidence Stars ===== */
+function renderConfidenceStars(score) {
+  const s = Math.round(Number(score) || 0);
+  let h = '<span class="confidence-stars">';
+  for (let i = 1; i <= 5; i++) h += i <= s ? '<span class="star-filled">&#9733;</span>' : '<span class="star-empty">&#9734;</span>';
+  return h + '</span>';
+}
+
+/* ===== WebSocket ===== */
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => {
+    document.getElementById('statusText').textContent = 'Live';
+    document.getElementById('statusDot').classList.remove('error');
+  };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'update') {
+        // Always update cross-sport edges even if sport doesn't match
+        if (msg.data.cross_sport_edges) {
+          data = data || {};
+          data.cross_sport_edges = msg.data.cross_sport_edges;
+        }
+        if (msg.data.active_sport && msg.data.active_sport !== activeSport) {
+          renderCrossSportTicker();
+          return;
+        }
+        data = msg.data;
+        refreshCountdown = POLL;
+        render();
+      }
+    } catch(err) { console.warn('WS parse error:', err); }
+  };
+  ws.onclose = (e) => {
+    if (e.code === 4001) { window.location.href = '/login'; return; }
+    document.getElementById('statusText').textContent = 'Reconnecting...';
+    document.getElementById('statusDot').classList.add('error');
+    setTimeout(connectWS, 5000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+/* ===== Load Sports ===== */
+let sportCategories = [];
+let activeCategory = 'Sports';
+
+function loadSports() {
+  fetch('/api/sports', { credentials: 'same-origin' }).then(r => r.json()).then(resp => {
+    sportCategories = resp.categories || [];
+    sports = {};
+    sportCategories.forEach(cat => {
+      cat.sports.forEach(s => { sports[s.key] = s; });
+    });
+    // Determine active category from active sport
+    if (activeSport) {
+      for (const cat of sportCategories) {
+        if (cat.sports.some(s => s.key === activeSport)) {
+          activeCategory = cat.name;
+          break;
+        }
+      }
+    }
+    renderSportTabs();
+  }).catch(() => {});
+}
+
+function renderSportTabs() {
+  const wrap = document.getElementById('sportTabs');
+  wrap.innerHTML = '';
+  // Category header row
+  const catRow = document.createElement('div');
+  catRow.className = 'category-row';
+  sportCategories.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'category-btn' + (cat.name === activeCategory ? ' active' : '');
+    btn.textContent = cat.name;
+    btn.onclick = () => {
+      activeCategory = cat.name;
+      // Switch to first sport in this category
+      if (cat.sports.length > 0) {
+        switchSport(cat.sports[0].key);
+      }
+      renderSportTabs();
+    };
+    catRow.appendChild(btn);
+  });
+  wrap.appendChild(catRow);
+  // Subcategory row for active category
+  const activeCat = sportCategories.find(c => c.name === activeCategory);
+  if (activeCat) {
+    const subRow = document.createElement('div');
+    subRow.className = 'subcategory-row';
+    activeCat.sports.forEach(s => {
+      const btn = document.createElement('button');
+      btn.className = 'sport-tab' + (s.key === activeSport ? ' active' : '');
+      btn.textContent = s.title;
+      btn.onclick = () => switchSport(s.key);
+      subRow.appendChild(btn);
+    });
+    wrap.appendChild(subRow);
+  }
+}
+
+function switchSport(key) {
+  activeSport = key;
+  // Update active category
+  for (const cat of sportCategories) {
+    if (cat.sports.some(s => s.key === key)) {
+      activeCategory = cat.name;
+      break;
+    }
+  }
+  renderSportTabs();
+  fetch('/api/data?sport=' + encodeURIComponent(key), { credentials: 'same-origin' })
+    .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
+}
+
+/* ===== Load Layout ===== */
+function loadLayout() {
+  fetch('/api/layout', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d) {
+      if (d.visible_widgets) userLayout.visible_widgets = d.visible_widgets;
+      if (d.visible_data_points) userLayout.visible_data_points = d.visible_data_points;
+      if (d.card_expanded_default !== undefined) userLayout.card_expanded_default = d.card_expanded_default;
+      applyLayoutToUI();
+    }
+  }).catch(() => {});
+}
+
+function applyLayoutToUI() {
+  document.querySelectorAll('[data-widget]').forEach(el => {
+    el.querySelector('input').checked = userLayout.visible_widgets.includes(el.querySelector('input').dataset.widget);
+  });
+  document.querySelectorAll('[data-dp]').forEach(el => {
+    el.querySelector('input').checked = userLayout.visible_data_points.includes(el.querySelector('input').dataset.dp);
+  });
+  document.getElementById('expandDefault').checked = userLayout.card_expanded_default;
+}
+
+function saveLayout() {
+  const widgets = [];
+  document.querySelectorAll('[data-widget] input:checked').forEach(el => widgets.push(el.dataset.widget));
+  const dps = [];
+  document.querySelectorAll('[data-dp] input:checked').forEach(el => dps.push(el.dataset.dp));
+  const expanded = document.getElementById('expandDefault').checked;
+  userLayout = { visible_widgets: widgets, visible_data_points: dps, card_expanded_default: expanded };
+  fetch('/api/layout', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userLayout)
+  }).then(() => { closeModal('customizeModal'); render(); }).catch(() => {});
+}
+
+/* ===== Load Subscription ===== */
+function loadSubscription() {
+  fetch('/api/subscription', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d && d.tier) {
+      userTier = d.tier;
+      if (userTier === 'free') {
+        document.getElementById('btnUpgradeNav').style.display = 'inline-block';
+      }
+    }
+  }).catch(() => {});
+}
+
+/* ===== Load User Info ===== */
+function loadUserInfo() {
+  fetch('/api/me', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d && d.is_admin) {
+      document.getElementById('adminLink').style.display = 'inline-block';
+    }
+  }).catch(() => {});
+}
+
+/* ===== Main Render ===== */
+function render() {
+  if (!data) return;
+  const comps = data.comparisons || [];
+
+  // Stats
+  document.getElementById('statScanned').textContent = data.odds_events_count || '-';
+  document.getElementById('statPolyListed').textContent = data.poly_events_count || '-';
+  document.getElementById('statKalshi').textContent = data.kalshi_markets_count || '-';
+  document.getElementById('statMatched').textContent = comps.length;
+  const opps = comps.filter(c => c.outcomes && c.outcomes.some(o => Math.abs(o.divergence_pct || 0) >= THRESH));
+  document.getElementById('statOpps').textContent = opps.length;
+  const edges = comps.flatMap(c => (c.outcomes || []).map(o => Math.abs(o.divergence_pct || 0)));
+  document.getElementById('statBestEdge').textContent = edges.length ? fmt(Math.max(...edges)) + '%' : '-';
+  document.getElementById('lastUpdate').textContent = data.last_update ? 'Updated ' + new Date(data.last_update).toLocaleTimeString() : '';
+
+  // Top Opportunities
+  renderTopOpps(comps);
+
+  // Cards
+  renderCards(comps);
+
+  // Widget visibility
+  document.getElementById('heroBanner').style.display = userLayout.visible_widgets.includes('hero') && !localStorage.getItem('sharpe_hero_dismissed') ? '' : 'none';
+  document.getElementById('topOpps').style.display = userLayout.visible_widgets.includes('top_opps') ? '' : 'none';
+  document.querySelector('.stats-row').style.display = userLayout.visible_widgets.includes('stats') ? '' : 'none';
+
+  // Cross-sport ticker
+  renderCrossSportTicker();
+
+  // Draw sparklines after DOM is updated
+  requestAnimationFrame(drawSparklines);
+}
+
+/* ===== Top Opportunities ===== */
+function renderTopOpps(comps) {
+  const wrap = document.getElementById('topOpps');
+  const sorted = comps.filter(c => c.outcomes && c.outcomes.some(o => (o.divergence_pct || 0) >= THRESH))
+    .map(c => {
+      const best = c.outcomes.reduce((a, b) => (Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0)) ? b : a, c.outcomes[0]);
+      return { ...c, _bestEdge: Math.abs(best.divergence_pct || 0), _bestOutcome: best };
+    })
+    .sort((a, b) => b._bestEdge - a._bestEdge)
+    .slice(0, 3);
+
+  if (!sorted.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = sorted.map((c, i) => {
+    const dir = (c.edge_direction || (c._bestOutcome.divergence_pct > 0 ? 'BUY' : 'SELL'));
+    return '<div class="top-opp" onclick="scrollToCard(' + i + ')">' +
+      '<div class="top-opp-header"><span class="top-opp-edge">' + fmtPct(c._bestEdge) + '</span>' + renderConfidenceStars(c.confidence_score) + '</div>' +
+      '<div class="top-opp-team">' + esc(c.home_team || '') + ' vs ' + esc(c.away_team || '') + '</div>' +
+      '<div class="top-opp-sub">' + esc(c._bestOutcome.outcome_name || '') + ' &mdash; ' + dir + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+function scrollToCard(idx) {
+  const cards = document.querySelectorAll('.card');
+  if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/* ===== Render Cards ===== */
+function renderCards(comps) {
+  const grid = document.getElementById('cardsGrid');
+  const search = (document.getElementById('searchInput').value || '').toLowerCase();
+  const sortBy = document.getElementById('sortSelect').value;
+
+  const marketFilter = document.getElementById('marketTypeFilter').value;
+  let filtered = comps.filter(c => {
+    if (signalsOnly && !(c.outcomes || []).some(o => Math.abs(o.divergence_pct || 0) >= THRESH)) return false;
+    if (topTraderOnly && !(c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length))) return false;
+    if (marketFilter !== 'all' && (c.market_type || 'h2h') !== marketFilter) return false;
+    if (search) {
+      const hay = ((c.home_team || '') + ' ' + (c.away_team || '')).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    const eA = Math.max(...(a.outcomes||[]).map(o => Math.abs(o.divergence_pct||0)), 0);
+    const eB = Math.max(...(b.outcomes||[]).map(o => Math.abs(o.divergence_pct||0)), 0);
+    if (sortBy === 'edge') return eB - eA;
+    if (sortBy === 'confidence') return (b.confidence_score||0) - (a.confidence_score||0);
+    if (sortBy === 'time') return (a.time_to_event_hours||9999) - (b.time_to_event_hours||9999);
+    if (sortBy === 'volume') return (b.poly_volume||0) - (a.poly_volume||0);
+    if (sortBy === 'kelly') {
+      const kA = Math.max(...(a.outcomes||[]).map(o => Math.abs(o.kelly_fraction||0)), 0);
+      const kB = Math.max(...(b.outcomes||[]).map(o => Math.abs(o.kelly_fraction||0)), 0);
+      return kB - kA;
+    }
+    if (sortBy === 'book_agreement') return (b.book_agreement||0) - (a.book_agreement||0);
+    return eB - eA;
+  });
+
+  if (!filtered.length) { grid.innerHTML = '<div class="empty-state">No events match your filters.</div>'; return; }
+
+  const FREE_LIMIT = 3;
+  let html = '';
+  filtered.forEach((c, idx) => {
+    const isFreeGated = userTier === 'free' && idx >= FREE_LIMIT;
+    const bestOutcome = (c.outcomes||[]).reduce((a, b) => Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0) ? b : a, (c.outcomes||[])[0] || {});
+    const isSignal = (c.outcomes||[]).some(o => Math.abs(o.divergence_pct||0) >= THRESH);
+    const dir = c.edge_direction || (bestOutcome.divergence_pct > 0 ? 'BUY' : 'SELL');
+    const badgeCls = isSignal ? (dir === 'BUY' ? 'buy' : 'sell') : 'neutral';
+    const expanded = userLayout.card_expanded_default && !isFreeGated;
+    const cardId = 'card-' + idx;
+
+    if (isFreeGated && idx === FREE_LIMIT) {
+      html += '<div class="gate-overlay"><div class="gate-blur">';
+    }
+
+    html += '<div class="card" id="' + cardId + '">';
+    // Header
+    html += '<div class="card-header" onclick="toggleCard(\\'' + cardId + '\\')">';
+    html += '<div class="card-teams">' + esc(c.home_team || 'Unknown') + '<span class="vs">vs</span>' + esc(c.away_team || '');
+    const mtype = c.market_type || 'h2h';
+    if (mtype !== 'h2h') html += '<span class="market-type-badge ' + mtype + '">' + mtype + '</span>';
+    html += '</div>';
+    html += '<div class="card-meta">';
+    if (c.time_to_event_hours != null) html += '<span class="card-time">' + (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') + '</span>';
+    html += '<span class="signal-badge ' + badgeCls + '">' + (isSignal ? dir + ' ' + fmt(Math.abs(bestOutcome.divergence_pct || 0)) + '%' : 'No Edge') + '</span>';
+    if (c.has_top_trader || (c.top_trader_positions && c.top_trader_positions.length)) {
+      const tCount = (c.top_trader_positions || []).length;
+      html += '<span class="top-trader-badge" title="' + tCount + ' of the top 10 Polymarket traders have a position on this market">Top ' + tCount + '</span>';
+    }
+    // Trend arrow
+    const bestTrend = bestOutcome.trend || {};
+    const trendDir = bestTrend.direction || 'new';
+    const trendIcon = trendDir === 'widening' ? '&#9650;' : trendDir === 'narrowing' ? '&#9660;' : trendDir === 'stable' ? '&#8212;' : '&#9679;';
+    html += '<span class="trend-arrow ' + trendDir + '" title="Edge ' + trendDir + '">' + trendIcon + '</span>';
+    if (bestTrend.change_2h) html += '<span class="trend-change">' + (bestTrend.change_2h > 0 ? '+' : '') + fmt(bestTrend.change_2h, 1) + '/2h</span>';
+    html += renderConfidenceStars(c.confidence_score);
+    html += '</div></div>';
+
+    // Action hint
+    if (isSignal && bestOutcome.outcome_name) {
+      const polyPrice = bestOutcome.poly_price != null ? Math.round(bestOutcome.poly_price * 100) : null;
+      const kalshiPrice = bestOutcome.kalshi_prob != null ? Math.round(bestOutcome.kalshi_prob) : null;
+      let hintPlatforms = '';
+      if (polyPrice != null && kalshiPrice != null) hintPlatforms = 'Polymarket (' + polyPrice + 'c) / Kalshi (' + kalshiPrice + 'c)';
+      else if (polyPrice != null) hintPlatforms = 'Polymarket (' + polyPrice + 'c)';
+      else if (kalshiPrice != null) hintPlatforms = 'Kalshi (' + kalshiPrice + 'c)';
+      html += '<div class="card-action-hint">' + esc(bestOutcome.outcome_name) + ' is ' + fmt(Math.abs(bestOutcome.divergence_pct||0)) + '% cheaper on ' + hintPlatforms + ' &mdash; ' + dir + '</div>';
+    }
+
+    // Outcome chips
+    if (c.outcomes && c.outcomes.length) {
+      html += '<div class="outcome-chips">';
+      c.outcomes.forEach((o, oi) => {
+        const d = o.divergence_pct || 0;
+        const cls = Math.abs(d) >= THRESH ? (d > 0 ? 'pos' : 'neg') : '';
+        const t = o.trend || {};
+        const sparkId = cardId + '-spark-' + oi;
+        html += '<span class="outcome-chip ' + cls + '">' + esc(o.outcome_name || '?') + ' ' + fmtPct(d);
+        if (t.points && t.points.length > 2) html += '<span class="sparkline"><canvas id="' + sparkId + '" width="40" height="16"></canvas></span>';
+        html += '</span>';
+      });
+      html += '</div>';
+    }
+
+    // Detail
+    html += '<div class="card-detail' + (expanded ? ' open' : '') + '" id="detail-' + cardId + '">';
+
+    // Probability comparison bars
+    if (c.outcomes && c.outcomes.length) {
+      html += '<div class="prob-compare">';
+      html += '<div class="prob-legend"><span class="leg-book">Book Consensus</span><span class="leg-poly">Polymarket</span><span class="leg-kalshi">Kalshi</span></div>';
+      c.outcomes.forEach(o => {
+        const bp = (o.sharp_prob || o.consensus_prob || 0) * 100;
+        const pp = (o.poly_price || 0) * 100;
+        const kp = o.kalshi_prob || 0;
+        html += '<div class="prob-row"><div class="prob-label">' + esc(o.outcome_name || '') + '</div><div class="prob-bars">' +
+          '<div class="prob-bar book" style="width:' + bp + '%"></div>' +
+          '<div class="prob-bar poly" style="width:' + pp + '%"></div>' +
+          (kp > 0 ? '<div class="prob-bar kalshi" style="width:' + kp + '%"></div>' : '') +
+          '</div><span style="font-size:11px;color:var(--muted);white-space:nowrap">' + fmt(bp,0) + '% / ' + fmt(pp,0) + '%' + (kp > 0 ? ' / ' + fmt(kp,0) + '%' : '') + '</span></div>';
+      });
+      html += '</div>';
+    }
+
+    // Head-to-head historical record
+    html += buildH2HSection(c, cardId);
+
+    // Top 10 Polymarket trader positions on this market
+    html += buildTopTradersSection(c);
+
+    // Market Intel Grid
+    html += buildIntelGrid(c);
+
+    // Outcome Table
+    if (c.outcomes && c.outcomes.length) {
+      html += '<div class="outcome-table-wrap"><table class="outcome-table"><thead><tr><th>Outcome</th><th>Sharp%</th><th>Consensus%</th><th>Poly%</th><th>Kalshi%</th><th>Edge</th><th>Cheaper On</th><th>Bet Size</th></tr></thead><tbody>';
+      c.outcomes.forEach(o => {
+        const d = o.divergence_pct || 0;
+        const col = Math.abs(d) >= THRESH ? (d > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text)';
+        const kp = o.kalshi_prob;
+        html += '<tr><td>' + esc(o.outcome_name || '') + '</td><td>' + fmt((o.sharp_prob||0)*100,1) + '%</td><td>' + fmt((o.consensus_prob||0)*100,1) + '%</td><td>' + fmt((o.poly_price||0)*100,1) + '%</td><td style="color:var(--text)">' + (kp != null ? fmt(kp,1) + '%' : '-') + '</td><td style="color:' + col + ';font-weight:600">' + fmtPct(d) + '</td><td>' + (d > 0 ? 'Poly' : d < 0 ? 'Books' : '-') + '</td><td>' + (o.kelly_fraction != null ? fmt(o.kelly_fraction * 100, 1) + '%' : '-') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Bookmaker Breakdown
+    if (c.bookmaker_breakdown && Object.keys(c.bookmaker_breakdown).length) {
+      html += '<button class="bookie-toggle" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\\'open\\')">&#9660; Bookmaker Breakdown (' + Object.keys(c.bookmaker_breakdown).length + ')</button>';
+      html += '<div class="bookie-section"><table class="bookie-table"><thead><tr><th>Book</th><th>Outcome</th><th>Prob</th><th>Odds</th></tr></thead><tbody>';
+      Object.entries(c.bookmaker_breakdown).forEach(([bk, outcomes]) => {
+        (Array.isArray(outcomes) ? outcomes : []).forEach((o, oi) => {
+          html += '<tr><td>' + (oi === 0 ? esc(bk) : '') + '</td><td>' + esc(o.outcome || '') + '</td><td>' + fmt((o.implied_prob||0)*100,1) + '%</td><td>' + fmt(o.decimal_odds, 2) + '</td></tr>';
+        });
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Card actions
+    const wKey = esc((c.home_team||'') + ' vs ' + (c.away_team||''));
+    html += '<div class="card-actions">';
+    if (c.poly_url) html += '<a href="' + esc(c.poly_url) + '" target="_blank" class="btn-action primary">Trade on Polymarket</a>';
+    if (c.kalshi_event) html += '<a href="https://kalshi.com/events/' + esc(c.kalshi_event) + '" target="_blank" class="btn-action kalshi-btn">Trade on Kalshi</a>';
+    html += '<button class="btn-action btn-watchlist' + (watchlistIds.has(wKey) ? ' active' : '') + '" onclick="event.stopPropagation();toggleWatchlist(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\')">&#9733; Watchlist</button>';
+    html += '<button class="btn-action" onclick="event.stopPropagation();logTrade(\\'' + wKey.replace(/'/g,"\\\\'") + '\\',\\'' + esc((bestOutcome.outcome_name||'')).replace(/'/g,"\\\\'") + '\\',' + Math.round((bestOutcome.poly_price||0)*100) + ')">Log Trade</button>';
+    html += '<button class="btn-flag" onclick="event.stopPropagation();flagMatch(\\'' + esc(c.home_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.away_team||'').replace(/'/g,"\\\\'") + '\\',\\'' + esc(c.poly_question||'').replace(/'/g,"\\\\'") + '\\')" title="Report bad match">&#9873; Flag</button>';
+    html += '</div>';
+
+    html += '</div>'; // card-detail
+    html += '</div>'; // card
+  });
+
+  // Close gate overlay
+  if (userTier === 'free' && filtered.length > FREE_LIMIT) {
+    html += '</div>'; // gate-blur
+    html += '<div class="gate-cta"><h3>Upgrade to Pro to see all ' + filtered.length + ' edges</h3><button class="btn-upgrade-big" onclick="openUpgrade()">Unlock All Signals</button></div>';
+    html += '</div>'; // gate-overlay
+  }
+
+  grid.innerHTML = html;
+}
+
+/* ===== Head-to-Head Builder ===== */
+function buildH2HSection(c, cardId) {
+  const h2h = c.h2h;
+  const homeForm = c.home_form;
+  const awayForm = c.away_form;
+  const homeInfo = c.home_info;
+  const awayInfo = c.away_info;
+  const homePlayers = c.home_players || [];
+  const awayPlayers = c.away_players || [];
+  const homeChem = c.home_chemistry;
+  const awayChem = c.away_chemistry;
+  // Skip entirely for futures or when we have no historical data at all
+  if (c.is_futures) return '';
+  if (!h2h && !homeForm && !awayForm && !homeInfo && !awayInfo && !homePlayers.length && !awayPlayers.length) return '';
+  const home = c.home_team || '';
+  const away = c.away_team || '';
+  let html = '<div class="h2h-section">';
+  html += '<div class="h2h-header">Head-to-Head History</div>';
+  if (h2h && h2h.total_games > 0) {
+    html += '<div class="h2h-record">';
+    html += '<div class="h2h-team home">' + esc(home) + '</div>';
+    html += '<div class="h2h-score">' + h2h.team_a_wins + '<span class="h2h-dash">-</span>' + h2h.team_b_wins + (h2h.draws ? '<span class="h2h-dash">-</span>' + h2h.draws : '') + '</div>';
+    html += '<div class="h2h-team away">' + esc(away) + '</div>';
+    html += '</div>';
+    html += '<div class="h2h-meta">';
+    html += '<div class="h2h-meta-item">Last ' + h2h.total_games + ' meeting' + (h2h.total_games === 1 ? '' : 's') + '</div>';
+    if (h2h.last_meeting && h2h.last_meeting.date) {
+      html += '<div class="h2h-meta-item">Last: ' + esc(h2h.last_meeting.date) + ' &middot; ' + esc(h2h.last_meeting.score || '') + '</div>';
+    }
+    html += '</div>';
+    if (h2h.recent && h2h.recent.length > 1) {
+      const listId = cardId + '-h2h-recent';
+      html += '<button class="h2h-toggle-recent" onclick="event.stopPropagation();document.getElementById(\\'' + listId + '\\').classList.toggle(\\'open\\')">&#9660; Show all ' + h2h.recent.length + ' meetings</button>';
+      html += '<div class="h2h-recent-list" id="' + listId + '">';
+      h2h.recent.forEach(m => {
+        const winner = m.winner || '';
+        html += '<div class="h2h-recent-item">' +
+          '<span class="h2h-recent-date">' + esc(m.date || '') + '</span>' +
+          '<span>' + esc(m.home || '') + ' ' + (m.home_score != null ? m.home_score : '') + '-' + (m.away_score != null ? m.away_score : '') + ' ' + esc(m.away || '') + '</span>' +
+          '<span style="color:var(--muted)">' + esc(winner) + '</span>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+  } else if (!homeInfo && !awayInfo) {
+    html += '<div class="h2h-empty">No prior meetings found in our records.</div>';
+  }
+  // Recent form pills for both teams
+  if (homeForm || awayForm) {
+    html += '<div class="h2h-form-row">';
+    if (homeForm) {
+      html += '<div><div class="h2h-form-label">' + esc(home) + ' &middot; last ' + homeForm.last_n + '</div>';
+      html += '<div class="h2h-form-pills">' + (homeForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
+    } else {
+      html += '<div></div>';
+    }
+    if (awayForm) {
+      html += '<div style="text-align:right"><div class="h2h-form-label">' + esc(away) + ' &middot; last ' + awayForm.last_n + '</div>';
+      html += '<div class="h2h-form-pills" style="justify-content:flex-end">' + (awayForm.results || []).map(r => '<span class="h2h-form-pill ' + r + '">' + r + '</span>').join('') + '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  // Team stats grid (W/L record + key indicators)
+  if (homeInfo || awayInfo) {
+    html += '<div class="team-stats-grid">';
+    html += renderTeamStatsCard(home, homeInfo);
+    html += renderTeamStatsCard(away, awayInfo);
+    html += '</div>';
+  }
+
+  // Chemistry meters (team momentum / cohesion)
+  if (homeChem || awayChem) {
+    if (homeChem) html += renderChemistryRow(home, homeChem);
+    if (awayChem) html += renderChemistryRow(away, awayChem);
+  }
+
+  // Top players with strengths and weaknesses
+  if (homePlayers.length || awayPlayers.length) {
+    html += '<div class="players-section">';
+    html += '<div class="players-section-title">Key Players</div>';
+    html += '<div class="players-grid">';
+    html += '<div class="player-team-block">';
+    html += '<div class="player-team-label">' + esc(home) + '</div>';
+    if (homePlayers.length) {
+      homePlayers.forEach(p => { html += renderPlayerCard(p); });
+    } else {
+      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
+    }
+    html += '</div>';
+    html += '<div class="player-team-block">';
+    html += '<div class="player-team-label">' + esc(away) + '</div>';
+    if (awayPlayers.length) {
+      awayPlayers.forEach(p => { html += renderPlayerCard(p); });
+    } else {
+      html += '<div style="color:var(--muted);font-size:11px;">No roster data</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderTeamStatsCard(name, info) {
+  if (!info) {
+    return '<div class="team-stats-card"><div class="team-stats-name">' + esc(name) + '</div><div style="color:var(--muted);font-size:11px;">No team data</div></div>';
+  }
+  const wins = info.wins || 0;
+  const losses = info.losses || 0;
+  const draws = info.draws || 0;
+  const winPct = (info.win_pct || 0) * 100;
+  const recordStr = draws > 0 ? wins + '-' + losses + '-' + draws : wins + '-' + losses;
+  let html = '<div class="team-stats-card">';
+  html += '<div class="team-stats-name">' + esc(info.name || name) + '</div>';
+  html += '<div class="team-stats-record">' + recordStr + ' <span class="pct">' + winPct.toFixed(1) + '%</span></div>';
+  if (info.rank) {
+    html += '<div class="team-stats-rank">League Rank #' + info.rank + (info.conference_rank ? ' &middot; Conf #' + info.conference_rank : '') + '</div>';
+  } else if (info.conference_rank) {
+    html += '<div class="team-stats-rank">Conference Rank #' + info.conference_rank + '</div>';
+  }
+  html += '<div class="team-stats-bars">';
+  // Win pct bar
+  const winCls = winPct >= 60 ? 'good' : winPct >= 45 ? 'mid' : 'bad';
+  html += '<div class="stat-bar-row"><div class="stat-bar-label">Win %</div><div class="stat-bar-track"><div class="stat-bar-fill ' + winCls + '" style="width:' + Math.max(2, Math.min(100, winPct)) + '%"></div></div><div class="stat-bar-value">' + winPct.toFixed(0) + '%</div></div>';
+  // Last 10 (parse e.g. "7-3" -> percentage)
+  if (info.last_10) {
+    const m = String(info.last_10).match(/^(\\d+)-(\\d+)/);
+    if (m) {
+      const lw = parseInt(m[1], 10);
+      const ll = parseInt(m[2], 10);
+      const lp = (lw + ll) > 0 ? (lw / (lw + ll)) * 100 : 0;
+      const lcls = lp >= 60 ? 'good' : lp >= 45 ? 'mid' : 'bad';
+      html += '<div class="stat-bar-row"><div class="stat-bar-label">L10</div><div class="stat-bar-track"><div class="stat-bar-fill ' + lcls + '" style="width:' + Math.max(2, Math.min(100, lp)) + '%"></div></div><div class="stat-bar-value">' + lw + '-' + ll + '</div></div>';
+    }
+  }
+  // Streak
+  if (info.streak) {
+    let s = parseInt(info.streak, 10);
+    if (!isNaN(s)) {
+      const sAbs = Math.min(Math.abs(s), 10);
+      const sPct = (sAbs / 10) * 100;
+      const sCls = s > 0 ? 'good' : s < 0 ? 'bad' : 'mid';
+      const sLabel = s > 0 ? 'W' + s : s < 0 ? 'L' + Math.abs(s) : '-';
+      html += '<div class="stat-bar-row"><div class="stat-bar-label">Streak</div><div class="stat-bar-track"><div class="stat-bar-fill ' + sCls + '" style="width:' + Math.max(2, sPct) + '%"></div></div><div class="stat-bar-value">' + sLabel + '</div></div>';
+    }
+  }
+  // Points differential bar (basketball/hockey/football)
+  if (info.points_for && info.points_against) {
+    const pf = info.points_for;
+    const pa = info.points_against;
+    const diff = pf - pa;
+    // Map -10..+10 to 0..100
+    const dPct = Math.max(0, Math.min(100, 50 + (diff / 10) * 50));
+    const dCls = diff > 1 ? 'good' : diff < -1 ? 'bad' : 'mid';
+    const sign = diff > 0 ? '+' : '';
+    html += '<div class="stat-bar-row"><div class="stat-bar-label">Pt Diff</div><div class="stat-bar-track"><div class="stat-bar-fill ' + dCls + '" style="width:' + dPct + '%"></div></div><div class="stat-bar-value">' + sign + diff.toFixed(1) + '</div></div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderChemistryRow(name, chem) {
+  if (!chem) return '';
+  const score = chem.score || 0;
+  const label = chem.label || '';
+  let html = '<div class="chemistry-row">';
+  html += '<div class="chemistry-label">' + esc(name) + ' Chemistry</div>';
+  html += '<div class="chemistry-meter"><div class="chemistry-fill" style="width:' + Math.max(2, Math.min(100, score)) + '%"></div></div>';
+  html += '<div class="chemistry-value">' + score.toFixed(0) + ' &middot; ' + esc(label) + '</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderPlayerCard(p) {
+  if (!p) return '';
+  const stats = p.stats || {};
+  const statKeys = Object.keys(stats);
+  let statHtml = '';
+  if (statKeys.length) {
+    statHtml = '<div class="player-stats">';
+    statKeys.slice(0, 4).forEach(k => {
+      const v = stats[k];
+      if (v == null || v === '') return;
+      const vs = (typeof v === 'number') ? (v % 1 === 0 ? v.toString() : v.toFixed(1)) : String(v);
+      statHtml += '<span class="player-stat">' + esc(k) + ' <strong>' + esc(vs) + '</strong></span>';
+    });
+    statHtml += '</div>';
+  }
+  let tagHtml = '';
+  const strengths = p.strengths || [];
+  const weaknesses = p.weaknesses || [];
+  if (strengths.length || weaknesses.length) {
+    tagHtml = '<div class="player-tags">';
+    strengths.slice(0, 3).forEach(s => { tagHtml += '<span class="player-tag strength">' + esc(s) + '</span>'; });
+    weaknesses.slice(0, 2).forEach(w => { tagHtml += '<span class="player-tag weakness">' + esc(w) + '</span>'; });
+    tagHtml += '</div>';
+  }
+  let html = '<div class="player-card">';
+  html += '<div class="player-name">' + esc(p.name || '') + (p.jersey ? ' <span style="color:var(--muted);font-weight:400">#' + esc(p.jersey) + '</span>' : '') + '</div>';
+  if (p.position) html += '<div class="player-pos">' + esc(p.position) + '</div>';
+  html += statHtml;
+  html += tagHtml;
+  html += '</div>';
+  return html;
+}
+
+/* ===== Top Polymarket Traders Section =====
+   Renders an at-a-glance list of which top-10 Polymarket traders (by lifetime
+   volume) currently hold a position on this market, what side they took,
+   their average buy price, and their net dollar exposure. */
+function buildTopTradersSection(c) {
+  const positions = c.top_trader_positions || [];
+  if (!positions.length) return '';
+  let html = '<div class="top-traders-section">';
+  html += '<div class="top-traders-title">Top 10 Polymarket Traders &mdash; Positions on this Market <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0;font-size:10px;margin-left:6px">(' + positions.length + ' active)</span></div>';
+  html += '<div class="top-traders-list">';
+  positions.forEach(p => {
+    const sideCls = p.side === 'LONG' ? 'long' : 'short';
+    const sideLabel = p.side === 'LONG' ? 'Long' : 'Short';
+    const displayName = p.pseudonym || p.name || (p.wallet ? p.wallet.slice(0, 6) + '\u2026' + p.wallet.slice(-4) : 'Unknown');
+    const usd = Math.abs(p.net_usd || 0);
+    const usdStr = usd >= 1000 ? '$' + (usd / 1000).toFixed(usd >= 10000 ? 0 : 1) + 'k' : '$' + usd.toFixed(0);
+    const lifetimeVol = p.lifetime_volume || 0;
+    const lifetimeStr = lifetimeVol >= 1e6 ? '$' + (lifetimeVol / 1e6).toFixed(1) + 'M' : '$' + (lifetimeVol / 1000).toFixed(0) + 'k';
+    const avgPriceStr = p.avg_price > 0 ? Math.round(p.avg_price * 100) + 'c' : '';
+    html += '<div class="top-trader-row">';
+    html += '<span class="top-trader-rank">#' + (p.rank || '?') + '</span>';
+    html += '<span class="top-trader-name" title="' + esc(displayName) + ' &middot; lifetime ' + lifetimeStr + '">' + esc(displayName) + '</span>';
+    html += '<span class="top-trader-vol" title="Lifetime trading volume">' + lifetimeStr + '</span>';
+    html += '<div class="top-trader-bet">';
+    html += '<span class="top-trader-side ' + sideCls + '">' + sideLabel + '</span>';
+    html += '<span class="top-trader-outcome" title="' + esc(p.outcome || '') + '">' + esc(p.outcome || '') + '</span>';
+    if (avgPriceStr) html += '<span class="top-trader-vol">@ ' + avgPriceStr + '</span>';
+    html += '<span class="top-trader-usd">' + usdStr + '</span>';
+    html += '</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+/* ===== Intel Grid Builder ===== */
+function buildIntelGrid(c) {
+  const dp = userLayout.visible_data_points;
+  const items = [];
+  const tooltips = {
+    volume: 'Total volume traded on Polymarket for this event.',
+    spread: 'Bid-ask spread on Polymarket. Lower = tighter market.',
+    bookmakers: 'Number of sportsbooks quoting this event.',
+    sharp_book: 'The sharpest bookmaker with most accurate odds.',
+    price_change: 'Polymarket price change in the last 24 hours.',
+    match_confidence: 'How well the Polymarket market matched to book event.',
+    book_agreement: 'How closely books agree (1-5). Higher = stronger consensus.',
+    book_range: 'Spread between highest and lowest book probabilities.',
+    median_book_prob: 'Median probability across all bookmakers.',
+    book_std_dev: 'Standard deviation of book probabilities. Lower = tighter.',
+    implied_vig: 'Bookmaker margin (overround) in the odds.',
+    true_prob_no_vig: 'De-vigged true probability estimate.',
+    best_odds: 'Best decimal odds offered across bookmakers.',
+    worst_odds: 'Worst decimal odds offered across bookmakers.',
+    vol_liquidity_ratio: 'Volume / Liquidity. Higher = more actively traded.',
+    spread_pct: 'Polymarket spread as a percentage.',
+    edge_direction: 'BUY if Polymarket underpriced, SELL if overpriced.',
+    time_to_event: 'Hours until event starts.',
+    kalshi_price: 'Kalshi prediction market implied probability for the best outcome.',
+    kalshi_volume: 'Total contracts traded on Kalshi for this game.'
+  };
+
+  if (dp.includes('volume')) items.push({ label: 'Volume Traded', value: c.poly_volume != null ? fmtMoney(c.poly_volume, 0) : '-', key: 'volume' });
+  if (dp.includes('spread')) items.push({ label: 'Bid-Ask Spread', value: c.poly_spread != null ? fmt(c.poly_spread, 2) : '-', key: 'spread' });
+  if (dp.includes('bookmakers')) items.push({ label: 'Bookmakers', value: c.num_bookmakers || '-', key: 'bookmakers' });
+  if (dp.includes('sharp_book')) items.push({ label: 'Sharp Book', value: c.sharp_book || '-', key: 'sharp_book' });
+  if (dp.includes('price_change')) items.push({ label: '24h Change', value: c.poly_one_day_change != null ? fmtPct(c.poly_one_day_change) : '-', key: 'price_change' });
+  if (dp.includes('match_confidence')) items.push({ label: 'Match Confidence', value: c.match_score != null ? fmt(c.match_score, 0) + '%' : '-', key: 'match_confidence' });
+  if (dp.includes('book_agreement')) items.push({ label: 'Book Agreement', value: c.book_agreement != null ? renderConfidenceStars(c.book_agreement) : '-', key: 'book_agreement' });
+  if (dp.includes('book_range')) items.push({ label: 'Book Range', value: c.book_range != null ? fmt(c.book_range * 100, 1) + '%' : '-', key: 'book_range' });
+  if (dp.includes('median_book_prob')) items.push({ label: 'Median Book Prob', value: c.median_book_prob != null ? fmt(c.median_book_prob * 100, 1) + '%' : '-', key: 'median_book_prob' });
+  if (dp.includes('book_std_dev')) items.push({ label: 'Book Std Dev', value: c.book_std_dev != null ? fmt(c.book_std_dev * 100, 2) + '%' : '-', key: 'book_std_dev' });
+  if (dp.includes('implied_vig')) items.push({ label: 'Implied Vig', value: c.implied_vig != null ? fmt(c.implied_vig * 100, 1) + '%' : '-', key: 'implied_vig' });
+  if (dp.includes('true_prob_no_vig')) items.push({ label: 'True Prob (No Vig)', value: c.true_prob_no_vig != null ? fmt(c.true_prob_no_vig * 100, 1) + '%' : '-', key: 'true_prob_no_vig' });
+  if (dp.includes('best_odds')) items.push({ label: 'Best Odds', value: c.best_decimal_odds != null ? fmt(c.best_decimal_odds, 2) : '-', key: 'best_odds' });
+  if (dp.includes('worst_odds')) items.push({ label: 'Worst Odds', value: c.worst_decimal_odds != null ? fmt(c.worst_decimal_odds, 2) : '-', key: 'worst_odds' });
+  if (dp.includes('vol_liquidity_ratio')) items.push({ label: 'Vol/Liq Ratio', value: c.volume_liquidity_ratio != null ? fmt(c.volume_liquidity_ratio, 2) : '-', key: 'vol_liquidity_ratio' });
+  if (dp.includes('spread_pct')) items.push({ label: 'Spread %', value: c.spread_pct != null ? fmt(c.spread_pct, 2) + '%' : '-', key: 'spread_pct' });
+  if (dp.includes('edge_direction')) items.push({ label: 'Edge Direction', value: c.edge_direction || '-', key: 'edge_direction' });
+  if (dp.includes('time_to_event')) items.push({ label: 'Time to Event', value: c.time_to_event_hours != null ? (c.time_to_event_hours < 1 ? '<1h' : Math.round(c.time_to_event_hours) + 'h') : '-', key: 'time_to_event' });
+  if (dp.includes('kalshi_price')) {
+    const bestO = (c.outcomes||[]).reduce((a,b) => Math.abs(b.divergence_pct||0) > Math.abs(a.divergence_pct||0) ? b : a, (c.outcomes||[])[0]||{});
+    items.push({ label: 'Kalshi Price', value: bestO.kalshi_prob != null ? fmt(bestO.kalshi_prob, 1) + '%' : 'N/A', key: 'kalshi_price' });
+  }
+  if (dp.includes('kalshi_volume')) items.push({ label: 'Kalshi Volume', value: c.kalshi_volume ? Number(c.kalshi_volume).toLocaleString() : '-', key: 'kalshi_volume' });
+
+  if (!items.length) return '';
+  let h = '<div class="intel-grid">';
+  items.forEach(it => {
+    h += '<div class="intel-item"><div class="intel-item-label">' + esc(it.label) + ' <span class="info-i">i<span class="tooltip">' + esc(tooltips[it.key] || '') + '</span></span></div><div class="intel-item-value">' + it.value + '</div></div>';
+  });
+  return h + '</div>';
+}
+
+/* ===== Toggle Card Detail ===== */
+function toggleCard(id) {
+  const d = document.getElementById('detail-' + id);
+  if (d) d.classList.toggle('open');
+}
+
+/* ===== Tab Switching ===== */
+function switchTab(tab) {
+  document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tabBtn' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+
+  if (tab === 'dashboard') { document.getElementById('tabDashboard').classList.add('active'); }
+  else if (tab === 'profit') { document.getElementById('tabProfit').classList.add('active'); renderProfitTracker(); }
+  else if (tab === 'watchlist') { document.getElementById('tabWatchlist').classList.add('active'); renderWatchlist(); }
+  else if (tab === 'edgestats') { document.getElementById('tabEdgestats').classList.add('active'); loadEdgePerformance(); }
+  else if (tab === 'alerts') { document.getElementById('tabAlerts').classList.add('active'); loadAlertConfig(); }
+  else if (tab === 'history') { document.getElementById('tabHistory').classList.add('active'); initHistory(); }
+}
+
+/* ===== Profit Tracker ===== */
+function renderProfitTracker() {
+  fetch('/api/trades/stats', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).then(stats => {
+    const wrap = document.getElementById('profitSummary');
+    const pnl = stats.total_pnl || 0;
+    const pnlCol = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    wrap.innerHTML =
+      '<div class="profit-card"><div class="profit-value" style="color:' + pnlCol + '">' + fmtMoney(pnl, 2) + '</div><div class="profit-label">Total P&amp;L</div></div>' +
+      '<div class="profit-card"><div class="profit-value">' + fmt(stats.win_rate || 0, 0) + '%</div><div class="profit-label">Win Rate</div></div>' +
+      '<div class="profit-card"><div class="profit-value">' + (stats.open_trades || 0) + '</div><div class="profit-label">Open Trades</div></div>' +
+      '<div class="profit-card"><div class="profit-value">' + (stats.closed_trades || 0) + '</div><div class="profit-label">Closed Trades</div></div>' +
+      '<div class="profit-card"><div class="profit-value">' + fmt(stats.roi || 0, 1) + '%</div><div class="profit-label">ROI</div></div>';
+  }).catch(() => {});
+
+  fetch('/api/trades', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).then(trades => {
+    const body = document.getElementById('tradesBody');
+    const empty = document.getElementById('tradesEmpty');
+    if (!trades.length) { body.innerHTML = ''; empty.style.display = ''; return; }
+    empty.style.display = 'none';
+    body.innerHTML = trades.map(t => {
+      const pnlCol = (t.pnl||0) >= 0 ? 'var(--green)' : 'var(--red)';
+      return '<tr><td>' + esc(t.market_name||'') + '</td><td>' + esc(t.outcome||'') + '</td><td>' + fmt(t.entry_price,0) + 'c</td><td>' + fmtMoney(t.amount,2) + '</td><td>' + esc(t.status||'open') + '</td><td style="color:' + pnlCol + '">' + fmtMoney(t.pnl||0,2) + '</td><td>' + (t.created_at ? new Date(t.created_at).toLocaleDateString() : '-') + '</td></tr>';
+    }).join('');
+  }).catch(() => {});
+}
+
+/* ===== Watchlist ===== */
+function renderWatchlist() {
+  fetch('/api/watchlist', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).then(items => {
+    const wrap = document.getElementById('watchlistList');
+    const empty = document.getElementById('watchlistEmpty');
+    watchlistIds = new Set(items.map(i => i.market_key || (i.home_team + ' vs ' + i.away_team)));
+    if (!items.length) { wrap.innerHTML = ''; empty.style.display = ''; return; }
+    empty.style.display = 'none';
+    wrap.innerHTML = items.map(i => {
+      const edge = i.current_edge != null ? fmtPct(i.current_edge) : '-';
+      const edgeCol = (i.current_edge||0) >= THRESH ? 'var(--green)' : 'var(--text-secondary)';
+      return '<div class="watchlist-item"><div class="watchlist-item-info"><div class="watchlist-item-name">' + esc(i.market_name || (i.home_team + ' vs ' + i.away_team)) + '</div><div class="watchlist-item-edge" style="color:' + edgeCol + '">Edge: ' + edge + '</div></div><button class="watchlist-remove" onclick="removeWatchlist(' + i.id + ')">Remove</button></div>';
+    }).join('');
+  }).catch(() => {});
+}
+
+function toggleWatchlist(key, home, away) {
+  if (userTier === 'free') { openUpgrade(); return; }
+  fetch('/api/watchlist', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ market_key: key, home_team: home, away_team: away })
+  }).then(r => r.json()).then(() => { renderWatchlist(); render(); }).catch(() => {});
+}
+
+function removeWatchlist(id) {
+  fetch('/api/watchlist/' + id, { method: 'DELETE', credentials: 'same-origin' })
+    .then(() => renderWatchlist()).catch(() => {});
+}
+
+/* ===== History (Pro only) ===== */
+let historyInitialized = false;
+function initHistory() {
+  const gate = document.getElementById('historyGate');
+  const content = document.getElementById('historyContent');
+  if (userTier !== 'pro') {
+    gate.style.display = '';
+    content.style.display = 'none';
+    return;
+  }
+  gate.style.display = 'none';
+  content.style.display = '';
+  if (!historyInitialized) {
+    // Populate sport filter dropdown
+    const sel = document.getElementById('historySportFilter');
+    Object.entries(sports).forEach(([k, s]) => {
+      const opt = document.createElement('option');
+      opt.value = k; opt.textContent = s.title || k;
+      sel.appendChild(opt);
+    });
+    historyInitialized = true;
+  }
+  loadHistory();
+}
+
+function loadHistory() {
+  const sport = document.getElementById('historySportFilter').value;
+  const qs = sport ? '?sport=' + encodeURIComponent(sport) + '&limit=200' : '?limit=200';
+  fetch('/api/history' + qs, { credentials: 'same-origin' }).then(r => {
+    if (r.status === 403) { document.getElementById('historyGate').style.display = ''; document.getElementById('historyContent').style.display = 'none'; return null; }
+    return r.ok ? r.json() : null;
+  }).then(data => {
+    if (!data) return;
+    renderHistorical(data.historical || []);
+    renderSnapshots(data.snapshots || []);
+  }).catch(() => {});
+}
+
+function renderHistorical(rows) {
+  const body = document.getElementById('historyBody');
+  const empty = document.getElementById('historyEmpty');
+  if (!rows.length) { body.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  body.innerHTML = rows.map(r => {
+    const res = (r.resolution || '').toLowerCase();
+    const resCls = res === 'yes' ? 'yes' : (res === 'no' ? 'no' : '');
+    const vol = r.volume ? fmtMoney(r.volume, 0) : '-';
+    const price = r.final_price != null ? fmtPct(r.final_price * 100) : '-';
+    const date = r.end_date ? new Date(r.end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+    return '<tr>' +
+      '<td>' + esc(r.event_title || '') + '</td>' +
+      '<td>' + esc(r.outcome || r.market_question || '') + '</td>' +
+      '<td>' + price + '</td>' +
+      '<td>' + vol + '</td>' +
+      '<td><span class="history-res ' + resCls + '">' + esc(r.resolution || '-') + '</span></td>' +
+      '<td>' + date + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function renderSnapshots(rows) {
+  const body = document.getElementById('snapshotBody');
+  const empty = document.getElementById('snapshotEmpty');
+  if (!rows.length) { body.innerHTML = ''; empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  body.innerHTML = rows.map(r => {
+    const bp = r.book_prob != null ? fmtPct(r.book_prob) : '-';
+    const pp = r.poly_prob != null ? fmtPct(r.poly_prob) : '-';
+    const kp = r.kalshi_prob != null ? fmtPct(r.kalshi_prob) : '-';
+    const div = r.divergence != null ? fmtPct(r.divergence) : '-';
+    const time = r.snapshot_at ? new Date(r.snapshot_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
+    return '<tr>' +
+      '<td>' + esc(r.event_name || '') + '</td>' +
+      '<td>' + esc(r.outcome || '') + '</td>' +
+      '<td>' + bp + '</td>' +
+      '<td>' + pp + '</td>' +
+      '<td>' + kp + '</td>' +
+      '<td>' + div + '</td>' +
+      '<td>' + time + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+/* ===== Trade Logging ===== */
+function logTrade(market, outcome, price) {
+  if (userTier === 'free') { openUpgrade(); return; }
+  document.getElementById('tradeMarket').value = market || '';
+  document.getElementById('tradeOutcome').value = outcome || '';
+  document.getElementById('tradePrice').value = price || '';
+  document.getElementById('tradeAmount').value = '';
+  openModal('tradeModal');
+}
+
+function openTradeModal() {
+  if (userTier === 'free') { openUpgrade(); return; }
+  document.getElementById('tradeMarket').value = '';
+  document.getElementById('tradeOutcome').value = '';
+  document.getElementById('tradePrice').value = '';
+  document.getElementById('tradeAmount').value = '';
+  openModal('tradeModal');
+}
+
+function submitTrade() {
+  const market = document.getElementById('tradeMarket').value.trim();
+  const outcome = document.getElementById('tradeOutcome').value.trim();
+  const price = parseInt(document.getElementById('tradePrice').value, 10);
+  const amount = parseFloat(document.getElementById('tradeAmount').value);
+  if (!market || !outcome || !price || !amount) return;
+  fetch('/api/trades', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ market_name: market, outcome: outcome, entry_price: price, amount: amount })
+  }).then(r => { if (r.ok) { closeModal('tradeModal'); renderProfitTracker(); } }).catch(() => {});
+}
+
+/* ===== Modals ===== */
+function openGlossary() { openModal('glossaryModal'); }
+function openCustomize() { applyLayoutToUI(); openModal('customizeModal'); }
+function openUpgrade() { openModal('upgradeModal'); }
+
+function dismissHero() {
+  localStorage.setItem('sharpe_hero_dismissed', '1');
+  document.getElementById('heroBanner').style.display = 'none';
+}
+
+/* ===== Cross-Sport Ticker ===== */
+function renderCrossSportTicker() {
+  const edges = (data && data.cross_sport_edges) || [];
+  const wrap = document.getElementById('crossSportTicker');
+  const items = document.getElementById('tickerItems');
+  if (!edges.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  items.innerHTML = edges.slice(0, 10).map(e =>
+    '<div class="ticker-item" onclick="switchSport(\\'' + (Object.entries(sports).find(([k,s]) => s.title === e.sport_name)?.[0] || '') + '\\')">' +
+    '<div class="ticker-sport">' + esc(e.sport_name) + '</div>' +
+    '<div class="ticker-teams">' + esc(e.home_team) + ' vs ' + esc(e.away_team) + '</div>' +
+    '<div class="ticker-edge">' + fmtPct(Math.abs(e.divergence)) + ' &mdash; ' + esc(e.outcome) + '</div>' +
+    '</div>'
+  ).join('');
+}
+
+/* ===== Sparkline Drawing ===== */
+function drawSparklines() {
+  if (!data || !data.comparisons) return;
+  data.comparisons.forEach((c, ci) => {
+    (c.outcomes || []).forEach((o, oi) => {
+      const t = o.trend || {};
+      if (!t.points || t.points.length < 3) return;
+      const cvs = document.getElementById('card-' + ci + '-spark-' + oi);
+      if (!cvs) return;
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      const pts = t.points;
+      const mn = Math.min(...pts), mx = Math.max(...pts);
+      const range = mx - mn || 1;
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      ctx.strokeStyle = t.direction === 'widening' ? '#34d399' : t.direction === 'narrowing' ? '#f87171' : '#5c5e6a';
+      ctx.lineWidth = 1.5;
+      pts.forEach((v, i) => {
+        const x = (i / (pts.length - 1)) * w;
+        const y = h - ((v - mn) / range) * (h - 4) - 2;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+  });
+}
+
+/* ===== Flag Match ===== */
+function flagMatch(home, away, polyQ) {
+  const reason = prompt('Why is this match incorrect? (optional)');
+  if (reason === null) return;
+  fetch('/api/flag-match', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ home_team: home, away_team: away, poly_question: polyQ, reason: reason })
+  }).then(r => {
+    if (r.ok) alert('Match flagged. Thank you!');
+    else alert('Failed to flag match.');
+  }).catch(() => alert('Error flagging match.'));
+}
+
+/* ===== Edge Performance / Sharpe ===== */
+function loadEdgePerformance() {
+  fetch('/api/edge-performance', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    const empty = document.getElementById('edgeStatsEmpty');
+    if (!d.weekly || !d.weekly.length) { empty.style.display = ''; return; }
+    empty.style.display = 'none';
+
+    // Performance grid
+    const grid = document.getElementById('perfGrid');
+    const s = d.sharpe_ratio || 0;
+    const sCol = s >= 1 ? 'var(--green)' : s >= 0 ? 'var(--text)' : 'var(--red)';
+    grid.innerHTML =
+      '<div class="perf-card"><div class="perf-value" style="color:' + sCol + '">' + fmt(s, 2) + '</div><div class="perf-label">Sharpe Ratio</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + fmt(d.overall_win_rate, 1) + '%</div><div class="perf-label">Win Rate</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + (d.total_resolved || 0) + '</div><div class="perf-label">Resolved Edges</div></div>' +
+      '<div class="perf-card"><div class="perf-value">' + (d.total_correct || 0) + '</div><div class="perf-label">Correct Calls</div></div>';
+
+    document.getElementById('sharpeValue').textContent = fmt(s, 2);
+    document.getElementById('sharpeValue').style.color = sCol;
+    document.getElementById('overallWinRate').textContent = fmt(d.overall_win_rate, 1) + '%';
+
+    // Draw chart
+    drawSharpeChart(d.weekly);
+  }).catch(() => {});
+}
+
+function drawSharpeChart(weekly) {
+  const cvs = document.getElementById('sharpeChart');
+  if (!cvs || !weekly.length) return;
+  const ctx = cvs.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  cvs.width = cvs.offsetWidth * dpr;
+  cvs.height = 200 * dpr;
+  ctx.scale(dpr, dpr);
+  const w = cvs.offsetWidth, h = 200;
+  const pad = { top: 20, right: 20, bottom: 30, left: 50 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  // Data
+  const winRates = weekly.map(w => w.win_rate);
+  const mn = Math.min(...winRates, 0);
+  const mx = Math.max(...winRates, 100);
+  const range = mx - mn || 1;
+
+  // Background
+  ctx.fillStyle = '#131417';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (plotH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#5c5e6a'; ctx.font = '10px Inter'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(mx - (range / 4) * i, 0) + '%', pad.left - 8, y + 3);
+  }
+
+  // 50% reference line
+  const y50 = pad.top + plotH * (1 - (50 - mn) / range);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(pad.left, y50); ctx.lineTo(w - pad.right, y50); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Win rate line
+  ctx.beginPath();
+  ctx.strokeStyle = '#34d399';
+  ctx.lineWidth = 2;
+  weekly.forEach((wk, i) => {
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Points
+  weekly.forEach((wk, i) => {
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    const y = pad.top + plotH * (1 - (wk.win_rate - mn) / range);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = wk.win_rate >= 50 ? '#34d399' : '#f87171';
+    ctx.fill();
+  });
+
+  // X-axis labels
+  ctx.fillStyle = '#5c5e6a'; ctx.font = '9px Inter'; ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(weekly.length / 8));
+  weekly.forEach((wk, i) => {
+    if (i % step !== 0 && i !== weekly.length - 1) return;
+    const x = pad.left + (i / Math.max(weekly.length - 1, 1)) * plotW;
+    ctx.fillText(wk.week || '', x, h - 8);
+  });
+}
+
+/* ===== Alerts Config ===== */
+function loadAlertConfig() {
+  fetch('/api/alerts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    document.getElementById('alertEnabled').checked = !!d.enabled;
+    document.getElementById('alertMinEdge').value = d.min_edge || 5;
+    document.getElementById('alertTgToken').value = d.telegram_bot_token || '';
+    document.getElementById('alertTgChat').value = d.telegram_chat_id || '';
+    document.getElementById('alertWebhook').value = d.webhook_url || '';
+  }).catch(() => {});
+}
+
+function saveAlerts() {
+  const body = {
+    enabled: document.getElementById('alertEnabled').checked ? 1 : 0,
+    min_edge: parseFloat(document.getElementById('alertMinEdge').value) || 5,
+    telegram_bot_token: document.getElementById('alertTgToken').value.trim(),
+    telegram_chat_id: document.getElementById('alertTgChat').value.trim(),
+    webhook_url: document.getElementById('alertWebhook').value.trim(),
+    sports: [],
+  };
+  fetch('/api/alerts', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => {
+    const el = document.getElementById('alertStatus');
+    if (r.ok) el.textContent = 'Saved!'; else el.textContent = 'Error saving.';
+    setTimeout(() => el.textContent = '', 3000);
+  }).catch(() => {});
+}
+
+function testAlert() {
+  fetch('/api/alerts/test', { method: 'POST', credentials: 'same-origin' })
+    .then(r => r.json()).then(d => {
+      const el = document.getElementById('alertStatus');
+      if (d.status === 'ok') el.textContent = 'Test alert sent!';
+      else el.textContent = d.error || 'Error';
+      setTimeout(() => el.textContent = '', 5000);
+    }).catch(() => {});
+}
+
+/* ===== Countdown Timer ===== */
+setInterval(() => {
+  if (refreshCountdown > 0) refreshCountdown--;
+  const el = document.getElementById('countdown');
+  if (el) el.textContent = '(next scan in ' + refreshCountdown + 's)';
+}, 1000);
+
+/* ===== Init ===== */
+activeSport = USER_SPORT || '';
+if (!localStorage.getItem('sharpe_hero_dismissed')) {
+  document.getElementById('heroBanner').style.display = '';
+}
+document.documentElement.lang = _narveLang;
+applyTranslations();
+connectWS();
+loadSports();
+loadLayout();
+loadSubscription();
+loadUserInfo();
+// Refresh FX rates in the background, then re-render so amounts use the latest rates.
+ensureNarveFxRates().then(() => { try { if (data) render(); } catch (e) {} }).catch(() => {});
+
+fetch('/api/data' + (activeSport ? '?sport=' + encodeURIComponent(activeSport) : ''), { credentials: 'same-origin' })
+  .then(r => r.json()).then(d => { data = d; render(); }).catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Money · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1300px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .summary { display: flex; gap: 18px; margin-bottom: 16px;
+             padding: 12px 16px; background: var(--card);
+             border: 1px solid var(--border); border-radius: 6px;
+             font-size: 13px; flex-wrap: wrap; }
+  .summary b { color: var(--accent); font-weight: 600; }
+  .empty { padding: 60px; text-align: center; color: var(--muted); }
+  .market {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px; margin-bottom: 14px;
+  }
+  .market-head { display: flex; justify-content: space-between;
+                 align-items: baseline; gap: 12px; flex-wrap: wrap;
+                 margin-bottom: 10px; }
+  .market-title { font-weight: 600; font-size: 16px; }
+  .market-meta { color: var(--muted); font-size: 12px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           background: #1c1e26; color: var(--muted); font-size: 11px;
+           text-transform: uppercase; letter-spacing: 0.04em; margin-left: 6px; }
+  .badge-signal { background: var(--green); color: #fff; }
+  .side {
+    margin-top: 8px; padding: 10px 12px;
+    background: #0d0e13; border-radius: 6px;
+  }
+  .side-head { display: flex; justify-content: space-between;
+               align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .side-outcome { font-weight: 600; }
+  .side-stats { display: flex; gap: 14px; color: var(--muted); font-size: 12px;
+                font-variant-numeric: tabular-nums; }
+  .side-stats b { color: var(--fg); font-weight: 600; }
+  .wallet-list { margin-top: 8px; display: grid;
+                 grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+                 gap: 6px; }
+  .wallet { padding: 6px 10px; background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 8px; font-variant-numeric: tabular-nums; }
+  .wallet .name { color: var(--fg); font-weight: 600; }
+  .wallet .meta { color: var(--muted); }
+  .wallet .net.pos { color: var(--green); }
+  .wallet .net.neg { color: var(--red); }
+  .trade-btn { display: inline-block; padding: 4px 10px; border-radius: 4px;
+               font-size: 11px; font-weight: 600; text-decoration: none;
+               background: rgba(59,130,246,0.15); color: var(--accent);
+               border: 1px solid rgba(59,130,246,0.3); }
+  .trade-btn:hover { background: rgba(59,130,246,0.25); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Smart Money</h1>
+  <p class="sub">
+    Top Polymarket wallets' positions overlaid on the active sport's markets.
+    Refreshed every ~10 min on the server side; only meaningful net exposures
+    ($50+) are shown.
+    <a href="/">← Back to dashboard</a>
+  </p>
+  <div class="summary" id="summary"></div>
+  <div id="content"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmtUSD(n) { return n == null ? "—" : "$" + Math.abs(n).toLocaleString(undefined, {maximumFractionDigits: 0}); }
+function fmtPrice(n) { return n == null ? "—" : "$" + Number(n).toFixed(3); }
+function fmtAge(tsSec) {
+  if (!tsSec) return "—";
+  const ageMs = Date.now() - tsSec * 1000;
+  if (ageMs < 0) return "—";
+  const mins = Math.floor(ageMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + "h ago";
+  return Math.floor(hrs / 24) + "d ago";
+}
+function shortWallet(w) { return w ? w.slice(0, 6) + "…" + w.slice(-4) : "?"; }
+
+function renderSummary(d) {
+  $("summary").innerHTML =
+    `<span><b>${d.n_markets || 0}</b> markets with whale activity</span>` +
+    `<span><b>${d.n_whales_unique || 0}</b> unique top-50 wallets</span>` +
+    `<span>Sport: <b>${esc(d.sport || "—")}</b></span>`;
+}
+
+function renderMarkets(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">' +
+      'No top-50 wallet positions on this sport’s active markets right now. ' +
+      'Try again after the next refresh, or switch sport from the main dashboard.</div>';
+    return;
+  }
+  let html = "";
+  for (const r of rows) {
+    const sigBadge = r.has_signal
+      ? `<span class="badge badge-signal">EV ${r.max_divergence != null ? (Math.round(r.max_divergence*10)/10) + "pp" : ""}</span>`
+      : "";
+    const tradeLink = r.trade_poly_url
+      ? ` <a class="trade-btn" href="${r.trade_poly_url}" target="_blank" rel="noopener">Poly →</a>`
+      : "";
+    const polyQuestion = r.poly_question
+      ? `<div class="market-meta">${esc(r.poly_question)}</div>`
+      : "";
+
+    let sidesHtml = "";
+    for (const s of r.sides) {
+      const walletsHtml = (s.top_wallets || []).map(w => {
+        const cls = w.net_usd > 0 ? "pos" : "neg";
+        const display = w.name || w.pseudonym || shortWallet(w.wallet);
+        return `<div class="wallet">
+          <span>
+            <span class="name">${esc(display)}</span>
+            ${w.rank ? `<span class="meta"> #${w.rank}</span>` : ""}
+          </span>
+          <span>
+            <span class="meta">${fmtPrice(w.avg_price)}</span>
+            <span class="net ${cls}"> ${fmtUSD(w.net_usd)}</span>
+          </span>
+        </div>`;
+      }).join("");
+      const cls = s.net_usd > 0 ? "pos" : "neg";
+      sidesHtml += `<div class="side">
+        <div class="side-head">
+          <span class="side-outcome">${esc(s.outcome)}</span>
+          <span class="side-stats">
+            <span><b>${s.n_whales}</b> whales</span>
+            <span><b class="${cls}">${fmtUSD(s.net_usd)}</b> net</span>
+            <span>avg <b>${fmtPrice(s.avg_entry_price)}</b></span>
+            <span>last <b>${fmtAge(s.last_trade_ts)}</b></span>
+          </span>
+        </div>
+        <div class="wallet-list">${walletsHtml}</div>
+      </div>`;
+    }
+
+    html += `<div class="market">
+      <div class="market-head">
+        <div>
+          <div class="market-title">${esc(r.event || "(unknown event)")} ${sigBadge}</div>
+          ${polyQuestion}
+        </div>
+        <div class="market-meta">
+          <b>${r.total_whales}</b> whales · <b>${fmtUSD(r.total_usd)}</b> exposure
+          ${tradeLink}
+        </div>
+      </div>
+      ${sidesHtml}
+    </div>`;
+  }
+  $("content").innerHTML = html;
+}
+
+async function load() {
+  let r;
+  try { r = await fetch("/api/smart-money"); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (r.status === 401) {
+    $("content").innerHTML = '<div class="empty">Sign in required.</div>'; return;
+  }
+  if (!r.ok) {
+    $("content").innerHTML = `<div class="empty">Error ${r.status}</div>`; return;
+  }
+  const d = await r.json();
+  renderSummary(d);
+  renderMarkets(d.rows || []);
+}
+
+load();
+setInterval(load, 60000);  // refresh once a minute
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polymarket Fills · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+              align-items: flex-end; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 6px 10px; font-size: 13px; }
+  .summary { padding: 10px 14px; background: var(--card);
+             border: 1px solid var(--border); border-radius: 6px;
+             font-size: 13px; margin-bottom: 14px; }
+  .summary b { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 11px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  .buy { color: var(--green); font-weight: 600; }
+  .sell { color: var(--red); font-weight: 600; }
+  .pulse {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+  .empty { padding: 60px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .ticker { font-family: ui-monospace, SFMono-Regular, monospace;
+            font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Polymarket Fills <span class="pulse"></span> <small style="color:var(--muted)">live</small></h1>
+  <p class="sub">
+    Real-time tape of large Polymarket fills captured from the WS feed.
+    Surfaces conviction signals (big BUY = sharp money on YES; big SELL
+    = sharp money on NO) before the price catches up.
+    <a href="/">← Back to dashboard</a>
+  </p>
+  <div class="controls">
+    <label class="field">Min USD
+      <input id="minUsd" type="number" min="0" step="500" value="1000">
+    </label>
+    <label class="field">Side
+      <select id="side">
+        <option value="">Both</option>
+        <option value="BUY">BUY only</option>
+        <option value="SELL">SELL only</option>
+      </select>
+    </label>
+    <label class="field">Limit
+      <input id="limit" type="number" min="10" max="500" step="10" value="100">
+    </label>
+  </div>
+  <div id="summary" class="summary"></div>
+  <div id="content"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmt(n, d=2) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtUSD(n) { return n == null ? "—" : "$" + Math.round(n).toLocaleString(); }
+function fmtPrice(n) { return n == null ? "—" : "$" + Number(n).toFixed(3); }
+function fmtAge(tsSec) {
+  if (!tsSec) return "—";
+  const ageMs = Date.now() - tsSec * 1000;
+  if (ageMs < 0) return "—";
+  const s = Math.floor(ageMs / 1000);
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  return Math.floor(m / 60) + "h ago";
+}
+
+async function load() {
+  const params = new URLSearchParams({
+    min_usd: $("minUsd").value,
+    limit: $("limit").value,
+  });
+  if ($("side").value) params.set("side", $("side").value);
+  let r;
+  try { r = await fetch("/api/poly-fills?" + params.toString()); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (r.status === 401) { $("content").innerHTML = '<div class="empty">Sign in required.</div>'; return; }
+  if (!r.ok) { $("content").innerHTML = `<div class="empty">Error ${r.status}</div>`; return; }
+  const d = await r.json();
+  $("summary").innerHTML = `<b>${d.fills.length}</b> fills shown · <b>${d.n_buffer}</b> in buffer · min $${d.min_usd.toLocaleString()}`;
+  render(d.fills || []);
+}
+
+function render(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">' +
+      'No fills captured yet. The Polymarket WS feed populates this in ' +
+      'real time once the server has matched markets to subscribe to.' +
+      '</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>When</th><th>Side</th><th class="num">USD</th>' +
+    '<th class="num">Size</th><th class="num">Price</th>' +
+    '<th>Event</th><th>Outcome</th><th>Asset</th></tr></thead><tbody>';
+  for (const f of rows) {
+    const sideCls = f.side === "BUY" ? "buy" : "sell";
+    const tradeLink = f.trade_poly_url
+      ? ` <a href="${f.trade_poly_url}" target="_blank" rel="noopener">→</a>`
+      : "";
+    html += '<tr>' +
+      `<td>${esc(fmtAge(f.ts))}</td>` +
+      `<td class="${sideCls}">${esc(f.side)}</td>` +
+      `<td class="num"><b>${fmtUSD(f.usd)}</b></td>` +
+      `<td class="num">${fmt(f.size, 1)}</td>` +
+      `<td class="num">${fmtPrice(f.price)}</td>` +
+      `<td>${esc(f.event || "(unmatched)")}${tradeLink}</td>` +
+      `<td>${esc(f.outcome || "")}</td>` +
+      `<td class="ticker">${esc((f.asset_id || "").slice(0, 10))}…</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
+}
+
+["minUsd", "side", "limit"].forEach(id => $(id).addEventListener("change", load));
+load();
+setInterval(load, 5000);  // refresh every 5s — feed is live
+</script>
+</body>
+</html>

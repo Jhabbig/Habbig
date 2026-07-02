@@ -1,0 +1,4 @@
+# Optional dependency for fetching REAL daily prices (open network required).
+# Install alongside requirements.txt to enable `python main.py --refresh`:
+#     pip install -r requirements.txt -r requirements-live.txt
+yfinance>=0.2

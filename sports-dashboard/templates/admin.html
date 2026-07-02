@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharpe — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #08090e;
+    --surface: #12141c;
+    --surface2: #1a1d2b;
+    --surface3: #222538;
+    --border: #2a2d42;
+    --border-light: #363a52;
+    --text: #f0f0f8;
+    --text-secondary: #a0a3b8;
+    --muted: #6b6f8a;
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.12);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59,130,246,0.12);
+    --purple: #8b5cf6;
+    --purple-dim: rgba(139,92,246,0.12);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.12);
+    --yellow: #eab308;
+    --yellow-dim: rgba(234,179,8,0.12);
+    --orange: #f97316;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.3);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+
+  /* Nav */
+  .admin-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    background: rgba(18,20,28,0.85);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .admin-nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 800;
+    font-size: 1.2em;
+    letter-spacing: -0.5px;
+    text-decoration: none;
+    color: var(--text);
+  }
+  .admin-nav-logo-icon {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--green), var(--blue));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; color: #fff; font-weight: 800;
+  }
+  .admin-badge {
+    font-size: 0.6em;
+    font-weight: 700;
+    background: var(--purple);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 100px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .admin-nav-links {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .admin-nav-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.85em;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+  .admin-nav-links a:hover { color: var(--text); }
+  .admin-nav-links a.active { color: var(--purple); }
+
+  /* Container */
+  .admin-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+  .admin-header {
+    margin-bottom: 24px;
+  }
+  .admin-header h1 {
+    font-size: 1.5em;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .admin-header p {
+    color: var(--text-secondary);
+    font-size: 0.88em;
+    margin-top: 2px;
+  }
+
+  /* Stat cards */
+  .admin-stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .admin-stats-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 1100px) {
+    .admin-stats { grid-template-columns: repeat(3, 1fr); }
+    .admin-stats-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 700px) {
+    .admin-stats { grid-template-columns: repeat(2, 1fr); }
+    .admin-stats-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+  .admin-stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    transition: border-color 0.2s, transform 0.15s;
+  }
+  .admin-stat:hover { border-color: var(--border-light); transform: translateY(-1px); }
+  .admin-stat-label {
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .admin-stat-value {
+    font-size: 1.9em;
+    font-weight: 800;
+    letter-spacing: -1px;
+  }
+  .admin-stat-sub {
+    font-size: 0.75em;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* Sections */
+  .admin-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .admin-section-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .admin-section-title {
+    font-size: 0.9em;
+    font-weight: 700;
+  }
+  .admin-section-count {
+    font-size: 0.75em;
+    color: var(--muted);
+    background: var(--surface2);
+    padding: 2px 10px;
+    border-radius: 100px;
+  }
+
+  /* Search */
+  .search-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.82em;
+    outline: none;
+    width: 240px;
+    transition: border-color 0.2s;
+  }
+  .search-box::placeholder { color: var(--muted); }
+  .search-box:focus { border-color: var(--blue); }
+
+  /* Table */
+  .admin-table-wrap {
+    overflow-x: auto;
+  }
+  .admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82em;
+  }
+  .admin-table th {
+    text-align: left;
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color 0.2s;
+  }
+  .admin-table th:hover { color: var(--text-secondary); }
+  .admin-table th .sort-arrow { margin-left: 4px; font-size: 0.9em; opacity: 0.4; }
+  .admin-table th.sorted .sort-arrow { opacity: 1; color: var(--blue); }
+  .admin-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .admin-table tr:last-child td { border-bottom: none; }
+  .admin-table tr:hover td { background: rgba(255,255,255,0.015); }
+
+  .user-avatar-sm {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--purple));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 0.7em;
+    margin-right: 10px;
+    vertical-align: middle;
+    flex-shrink: 0;
+    color: #fff;
+  }
+  .user-name-cell {
+    display: flex;
+    align-items: center;
+    min-width: 200px;
+  }
+  .user-name-info { display: flex; flex-direction: column; }
+  .user-email { font-size: 0.85em; color: var(--muted); }
+
+  /* Badges */
+  .badge-pro {
+    font-size: 0.65em;
+    font-weight: 700;
+    background: var(--green-dim);
+    color: var(--green);
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-free {
+    font-size: 0.65em;
+    font-weight: 700;
+    background: var(--surface3);
+    color: var(--muted);
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .badge-admin {
+    font-size: 0.65em;
+    font-weight: 700;
+    background: var(--purple-dim);
+    color: var(--purple);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+  }
+  .badge-new {
+    font-size: 0.65em;
+    font-weight: 700;
+    background: var(--green-dim);
+    color: var(--green);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+  }
+
+  /* Buttons */
+  .btn-sm {
+    font-family: inherit;
+    font-size: 0.72em;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    white-space: nowrap;
+  }
+  .btn-sm:hover { opacity: 0.85; }
+  .btn-sm:active { transform: scale(0.97); }
+  .btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-upgrade {
+    background: var(--green);
+    color: #fff;
+  }
+  .btn-downgrade {
+    background: var(--red);
+    color: #fff;
+  }
+
+  /* Two column bottom layout */
+  .admin-bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 20px;
+  }
+  @media (max-width: 1000px) {
+    .admin-bottom-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Activity feed */
+  .activity-feed {
+    max-height: 520px;
+    overflow-y: auto;
+  }
+  .activity-feed::-webkit-scrollbar { width: 4px; }
+  .activity-feed::-webkit-scrollbar-track { background: transparent; }
+  .activity-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .activity-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+  .activity-dot.login { background: var(--blue); }
+  .activity-dot.register { background: var(--green); }
+  .activity-dot.settings { background: var(--yellow); }
+  .activity-dot.other { background: var(--purple); }
+  .activity-text {
+    font-size: 0.82em;
+    flex: 1;
+    color: var(--text-secondary);
+  }
+  .activity-text strong { color: var(--text); }
+  .activity-time {
+    font-size: 0.72em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* Signup chart */
+  .chart-container {
+    padding: 16px 20px;
+    height: 140px;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+  }
+  .chart-bar {
+    flex: 1;
+    background: var(--blue);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    position: relative;
+    transition: all 0.3s;
+    cursor: default;
+  }
+  .chart-bar:hover {
+    background: var(--purple);
+  }
+  .chart-bar:hover::after {
+    content: attr(data-label);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface3);
+    border: 1px solid var(--border-light);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+    z-index: 10;
+    color: var(--text);
+    pointer-events: none;
+  }
+
+  /* Edge performance */
+  .edge-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    padding: 20px;
+  }
+  @media (max-width: 700px) {
+    .edge-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .edge-item {
+    text-align: center;
+  }
+  .edge-item-value {
+    font-size: 1.6em;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .edge-item-label {
+    font-size: 0.72em;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+
+  /* Loading */
+  .loading-center {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .loading-spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<nav class="admin-nav">
+  <a class="admin-nav-logo" href="/">
+    <div class="admin-nav-logo-icon">S</div>
+    <span>Sharpe</span>
+    <span class="admin-badge">Admin</span>
+  </a>
+  <div class="admin-nav-links">
+    <a href="/">Dashboard</a>
+    <a href="/settings">Settings</a>
+    <a href="/admin" class="active">Admin</a>
+  </div>
+</nav>
+
+<div class="admin-container">
+  <div class="admin-header">
+    <h1>Admin Dashboard</h1>
+    <p>Revenue, user management, and platform analytics</p>
+  </div>
+
+  <!-- Revenue & Growth Cards (6) -->
+  <div class="admin-stats" id="revenueCards">
+    <div class="admin-stat">
+      <div class="admin-stat-label">MRR</div>
+      <div class="admin-stat-value" style="color:var(--text)" id="statMrr">--</div>
+      <div class="admin-stat-sub">Monthly recurring revenue</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Total Users</div>
+      <div class="admin-stat-value" id="statTotalUsers">--</div>
+      <div class="admin-stat-sub">Registered accounts</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Pro Users</div>
+      <div class="admin-stat-value" style="color:var(--purple)" id="statProUsers">--</div>
+      <div class="admin-stat-sub">Paying subscribers</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Free Users</div>
+      <div class="admin-stat-value" id="statFreeUsers">--</div>
+      <div class="admin-stat-sub">Free tier</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Conversion Rate</div>
+      <div class="admin-stat-value" style="color:var(--orange)" id="statConversion">--</div>
+      <div class="admin-stat-sub">Free to Pro</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Active Today</div>
+      <div class="admin-stat-value" style="color:var(--text)" id="statActiveToday">--</div>
+      <div class="admin-stat-sub">Logged in today</div>
+    </div>
+  </div>
+
+  <!-- Engagement Cards (4) -->
+  <div class="admin-stats-4" id="engagementCards">
+    <div class="admin-stat">
+      <div class="admin-stat-label">DAU</div>
+      <div class="admin-stat-value" style="color:var(--blue)" id="statDau">--</div>
+      <div class="admin-stat-sub">Daily active users</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">WAU</div>
+      <div class="admin-stat-value" style="color:var(--blue)" id="statWau">--</div>
+      <div class="admin-stat-sub">Weekly active users</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">MAU</div>
+      <div class="admin-stat-value" style="color:var(--blue)" id="statMau">--</div>
+      <div class="admin-stat-sub">Monthly active users</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-label">Avg Logins/User</div>
+      <div class="admin-stat-value" style="color:var(--purple)" id="statAvgLogins">--</div>
+      <div class="admin-stat-sub">Engagement rate</div>
+    </div>
+  </div>
+
+  <!-- Signup Chart -->
+  <div class="admin-section">
+    <div class="admin-section-header">
+      <span class="admin-section-title">Signups (Last 30 Days)</span>
+      <span class="admin-section-count" id="signupTotal">0 total</span>
+    </div>
+    <div class="chart-container" id="signupChart">
+      <div class="loading-center" style="width:100%"><div class="loading-spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- Edge Performance -->
+  <div class="admin-section">
+    <div class="admin-section-header">
+      <span class="admin-section-title">Edge Performance</span>
+    </div>
+    <div class="edge-grid" id="edgeStats">
+      <div class="edge-item">
+        <div class="edge-item-value" id="edgeTotal">--</div>
+        <div class="edge-item-label">Total Edges</div>
+      </div>
+      <div class="edge-item">
+        <div class="edge-item-value" style="color:var(--text)" id="edgeCorrect">--</div>
+        <div class="edge-item-label">Correct</div>
+      </div>
+      <div class="edge-item">
+        <div class="edge-item-value" style="color:var(--red)" id="edgeIncorrect">--</div>
+        <div class="edge-item-label">Incorrect</div>
+      </div>
+      <div class="edge-item">
+        <div class="edge-item-value" style="color:var(--blue)" id="edgeWinRate">--</div>
+        <div class="edge-item-label">Win Rate</div>
+      </div>
+    </div>
+    <div style="padding:0 20px 16px;text-align:center">
+      <span style="font-size:0.78em;color:var(--muted)">Pending: <span id="edgePending">--</span></span>
+    </div>
+  </div>
+
+  <!-- Users Table + Activity Feed side by side -->
+  <div class="admin-bottom-grid">
+    <div class="admin-section" style="margin-bottom:0">
+      <div class="admin-section-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="admin-section-title">Users</span>
+          <span class="admin-section-count" id="userCount">0</span>
+        </div>
+        <input type="text" class="search-box" placeholder="Search users..." id="userSearch" oninput="searchUsers(this.value)">
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="usersTable">
+          <thead>
+            <tr>
+              <th data-sort="username" onclick="sortTable('username')">User <span class="sort-arrow">&#8597;</span></th>
+              <th data-sort="tier" onclick="sortTable('tier')">Tier <span class="sort-arrow">&#8597;</span></th>
+              <th data-sort="created_at" onclick="sortTable('created_at')">Joined <span class="sort-arrow">&#8597;</span></th>
+              <th data-sort="last_login" onclick="sortTable('last_login')">Last Login <span class="sort-arrow">&#8597;</span></th>
+              <th data-sort="login_count" onclick="sortTable('login_count')">Logins <span class="sort-arrow">&#8597;</span></th>
+              <th data-sort="default_sport" onclick="sortTable('default_sport')">Sport <span class="sort-arrow">&#8597;</span></th>
+              <th>Threshold</th>
+              <th>Referral</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="9" class="loading-center"><div class="loading-spinner"></div>Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="admin-section" style="margin-bottom:0">
+      <div class="admin-section-header">
+        <span class="admin-section-title">Recent Activity</span>
+      </div>
+      <div class="activity-feed" id="activityFeed">
+        <div class="loading-center"><div class="loading-spinner"></div>Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SPORT_NAMES = {
+  basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL',
+  baseball_mlb: 'MLB', soccer_epl: 'EPL', soccer_spain_la_liga: 'La Liga',
+  soccer_germany_bundesliga: 'Bundesliga', soccer_italy_serie_a: 'Serie A',
+  soccer_france_ligue_one: 'Ligue 1', soccer_uefa_champs_league: 'UCL',
+  soccer_uefa_europa_league: 'UEL', mma_mixed_martial_arts: 'MMA'
+};
+
+let allUsers = [];
+let currentSort = { key: 'created_at', dir: 'desc' };
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return 'Never';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'Just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+  return d.toLocaleDateString();
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '--';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function renderUsers(users) {
+  const tbody = document.getElementById('usersBody');
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">No users found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const initial = (u.username || '?').charAt(0).toUpperCase();
+    const isNew = (new Date() - new Date(u.created_at)) < 86400000;
+    const isPro = u.tier === 'pro';
+    const tierBadge = isPro
+      ? '<span class="badge-pro">PRO</span>'
+      : '<span class="badge-free">FREE</span>';
+    const actionBtn = isPro
+      ? '<button class="btn-sm btn-downgrade" onclick="setTier(' + u.id + ', \\'free\\')">Downgrade</button>'
+      : '<button class="btn-sm btn-upgrade" onclick="setTier(' + u.id + ', \\'pro\\')">Upgrade to Pro</button>';
+    return '<tr>' +
+      '<td><div class="user-name-cell">' +
+        '<div class="user-avatar-sm">' + esc(initial) + '</div>' +
+        '<div class="user-name-info">' +
+          '<span>' + esc(u.username) +
+            (u.is_admin ? '<span class="badge-admin">Admin</span>' : '') +
+            (isNew ? '<span class="badge-new">New</span>' : '') +
+          '</span>' +
+          '<span class="user-email">' + esc(u.email) + '</span>' +
+        '</div>' +
+      '</div></td>' +
+      '<td>' + tierBadge + '</td>' +
+      '<td>' + formatDate(u.created_at) + '</td>' +
+      '<td>' + (u.last_login ? timeAgo(u.last_login) : '<span style="color:var(--muted)">Never</span>') + '</td>' +
+      '<td style="font-weight:700">' + (u.login_count || 0) + '</td>' +
+      '<td><span style="color:var(--blue)">' + esc(SPORT_NAMES[u.default_sport] || u.default_sport || '--') + '</span></td>' +
+      '<td>' + (u.divergence_threshold || 5) + '%</td>' +
+      '<td><span class="mono">' + esc(u.referral_code || '--') + '</span></td>' +
+      '<td>' + actionBtn + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function searchUsers(query) {
+  const q = query.toLowerCase().trim();
+  if (!q) {
+    renderUsers(allUsers);
+    return;
+  }
+  const filtered = allUsers.filter(u =>
+    (u.username || '').toLowerCase().includes(q) ||
+    (u.email || '').toLowerCase().includes(q)
+  );
+  renderUsers(filtered);
+}
+
+function sortTable(key) {
+  if (currentSort.key === key) {
+    currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    currentSort.key = key;
+    currentSort.dir = 'asc';
+  }
+  // Update header UI
+  document.querySelectorAll('.admin-table th').forEach(th => th.classList.remove('sorted'));
+  const activeTh = document.querySelector('.admin-table th[data-sort="' + key + '"]');
+  if (activeTh) activeTh.classList.add('sorted');
+
+  allUsers.sort((a, b) => {
+    let va = a[key] || '';
+    let vb = b[key] || '';
+    if (key === 'login_count') { va = Number(va) || 0; vb = Number(vb) || 0; }
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return currentSort.dir === 'asc' ? -1 : 1;
+    if (va > vb) return currentSort.dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const q = document.getElementById('userSearch').value;
+  searchUsers(q);
+}
+
+async function setTier(userId, tier) {
+  try {
+    const r = await fetch('/api/admin/set-tier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, tier: tier })
+    });
+    if (!r.ok) {
+      alert('Failed to update tier');
+      return;
+    }
+    await loadAdmin();
+  } catch (e) {
+    console.error(e);
+    alert('Error updating tier');
+  }
+}
+
+async function loadAdmin() {
+  try {
+    const r = await fetch('/api/admin/stats');
+    if (r.status === 403) {
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#08090e"><h1 style="color:#ef4444;font-family:Inter,sans-serif">Access Denied</h1></div>';
+      return;
+    }
+    if (!r.ok) { window.location.href = '/login'; return; }
+    const d = await r.json();
+
+    // Revenue & Growth cards
+    document.getElementById('statMrr').textContent = '$' + (Number(d.mrr) || 0).toFixed(2);
+    document.getElementById('statTotalUsers').textContent = d.total_users || 0;
+    document.getElementById('statProUsers').textContent = d.pro_users || 0;
+    document.getElementById('statFreeUsers').textContent = d.free_users || 0;
+    document.getElementById('statConversion').textContent = (Number(d.conversion_rate) || 0).toFixed(1) + '%';
+    document.getElementById('statActiveToday').textContent = d.active_today || 0;
+
+    // Engagement cards
+    document.getElementById('statDau').textContent = d.dau || 0;
+    document.getElementById('statWau').textContent = d.wau || 0;
+    document.getElementById('statMau').textContent = d.mau || 0;
+    const avgLogins = d.total_users > 0 ? (d.total_logins / d.total_users).toFixed(1) : '0';
+    document.getElementById('statAvgLogins').textContent = avgLogins;
+
+    // Edge Performance
+    const es = d.edge_stats || {};
+    document.getElementById('edgeTotal').textContent = es.total || 0;
+    document.getElementById('edgeCorrect').textContent = es.correct || 0;
+    document.getElementById('edgeIncorrect').textContent = es.incorrect || 0;
+    document.getElementById('edgeWinRate').textContent = (Number(es.win_rate) || 0).toFixed(1) + '%';
+    document.getElementById('edgePending').textContent = es.pending || 0;
+
+    // Users
+    allUsers = d.users || [];
+    document.getElementById('userCount').textContent = allUsers.length;
+    const q = document.getElementById('userSearch').value;
+    if (q) { searchUsers(q); } else { renderUsers(allUsers); }
+
+    // Activity feed
+    const feed = document.getElementById('activityFeed');
+    const activity = d.activity || [];
+    if (!activity.length) {
+      feed.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">No activity yet</div>';
+    } else {
+      feed.innerHTML = activity.map(a => {
+        const dotClass = a.action === 'login' ? 'login'
+          : a.action === 'register' ? 'register'
+          : a.action === 'settings' ? 'settings'
+          : 'other';
+        const actionText = a.action === 'login' ? 'logged in'
+          : a.action === 'register' ? 'created account'
+          : a.action === 'settings' ? 'updated settings'
+          : esc(a.action);
+        return '<div class="activity-item">' +
+          '<div class="activity-dot ' + dotClass + '"></div>' +
+          '<div class="activity-text"><strong>' + esc(a.username) + '</strong> ' + actionText + (a.detail ? ' -- ' + esc(a.detail) : '') + '</div>' +
+          '<div class="activity-time">' + timeAgo(a.created_at) + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    // Signup chart
+    const chart = document.getElementById('signupChart');
+    const signups = d.signups_by_day || [];
+    if (signups.length) {
+      const totalSignups = signups.reduce((s, x) => s + x.count, 0);
+      document.getElementById('signupTotal').textContent = totalSignups + ' total';
+      const maxCount = Math.max(...signups.map(s => s.count));
+      chart.innerHTML = signups.map(s => {
+        const pct = maxCount > 0 ? (s.count / maxCount * 100) : 0;
+        return '<div class="chart-bar" style="height:' + Math.max(pct, 3) + '%" data-label="' + esc(s.day) + ': ' + s.count + ' signup' + (s.count !== 1 ? 's' : '') + '"></div>';
+      }).join('');
+    } else {
+      chart.innerHTML = '<div style="text-align:center;color:var(--muted);width:100%;padding:20px">No signups in last 30 days</div>';
+      document.getElementById('signupTotal').textContent = '0 total';
+    }
+
+  } catch (e) {
+    console.error('Admin load error:', e);
+  }
+}
+
+loadAdmin();
+// Auto-refresh every 30s
+setInterval(loadAdmin, 30000);
+</script>
+</body>
+</html>

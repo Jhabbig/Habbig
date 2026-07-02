@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { IndicatorValues } from '../types';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
@@ -6,15 +6,22 @@ interface IndicatorsProps {
   indicators: IndicatorValues | null;
 }
 
-export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
+const IndicatorsComponent: React.FC<IndicatorsProps> = ({ indicators }) => {
   if (!indicators) {
     return (
       <div className="text-gray-400 text-sm p-4">Waiting for indicator data...</div>
     );
   }
 
-  const rsiColor = indicators.rsi_14 > 70 ? 'text-red-400' : indicators.rsi_14 < 30 ? 'text-green-400' : 'text-gray-300';
-  const macdColor = indicators.macd_histogram > 0 ? 'text-green-400' : 'text-red-400';
+  // Memoize color and state calculations to prevent unnecessary re-renders
+  const indicatorStates = useMemo(() => ({
+    rsiColor: indicators.rsi_14 > 70 ? 'text-red-400' : indicators.rsi_14 < 30 ? 'text-green-400' : 'text-gray-300',
+    rsiState: indicators.rsi_14 > 70 ? 'Overbought' : indicators.rsi_14 < 30 ? 'Oversold' : 'Neutral',
+    macdColor: indicators.macd_histogram > 0 ? 'text-green-400' : 'text-red-400',
+    macdState: indicators.macd_histogram > 0 ? 'Bullish' : 'Bearish',
+    bbPosition: indicators.bb_position > 0.5 ? 'Upper' : indicators.bb_position < -0.5 ? 'Lower' : 'Middle',
+    rocColor: indicators.roc_5 > 0 ? 'text-green-400' : 'text-red-400',
+  }), [indicators]);
 
   return (
     <div className="space-y-4 p-4 bg-gray-900 rounded-lg border border-gray-700">
@@ -24,22 +31,22 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
         {/* RSI */}
         <div className="bg-gray-800 p-3 rounded border border-gray-700">
           <p className="text-gray-400 text-xs mb-1">RSI(14)</p>
-          <p className={`text-lg font-bold ${rsiColor}`}>
+          <p className={`text-lg font-bold ${indicatorStates.rsiColor}`}>
             {indicators.rsi_14.toFixed(2)}
           </p>
           <div className="text-xs text-gray-500 mt-1">
-            {indicators.rsi_14 > 70 ? 'Overbought' : indicators.rsi_14 < 30 ? 'Oversold' : 'Neutral'}
+            {indicatorStates.rsiState}
           </div>
         </div>
 
         {/* MACD */}
         <div className="bg-gray-800 p-3 rounded border border-gray-700">
           <p className="text-gray-400 text-xs mb-1">MACD</p>
-          <p className={`text-lg font-bold ${macdColor}`}>
+          <p className={`text-lg font-bold ${indicatorStates.macdColor}`}>
             {indicators.macd_histogram.toFixed(4)}
           </p>
           <div className="text-xs text-gray-500 mt-1">
-            {indicators.macd_histogram > 0 ? 'Bullish' : 'Bearish'}
+            {indicatorStates.macdState}
           </div>
         </div>
 
@@ -50,7 +57,7 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
             {(indicators.bb_position * 100).toFixed(0)}%
           </p>
           <div className="text-xs text-gray-500 mt-1">
-            {indicators.bb_position > 0.5 ? 'Upper' : indicators.bb_position < -0.5 ? 'Lower' : 'Middle'}
+            {indicatorStates.bbPosition}
           </div>
         </div>
 
@@ -66,7 +73,7 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
         {/* ROC */}
         <div className="bg-gray-800 p-3 rounded border border-gray-700">
           <p className="text-gray-400 text-xs mb-1">ROC(5)</p>
-          <p className={`text-lg font-bold ${indicators.roc_5 > 0 ? 'text-green-400' : 'text-red-400'}`}>
+          <p className={`text-lg font-bold ${indicatorStates.rocColor}`}>
             {indicators.roc_5.toFixed(2)}%
           </p>
         </div>
@@ -118,3 +125,5 @@ export const Indicators: React.FC<IndicatorsProps> = ({ indicators }) => {
     </div>
   );
 };
+
+export const Indicators = React.memo(IndicatorsComponent);

@@ -398,7 +398,7 @@ export default function Dashboard() {
             <Link to="/races" className="text-stone-900 text-sm hover:underline">Browse all</Link>
           </div>
           <div className="bg-white shadow-sm border border-stone-100 rounded-xl overflow-hidden">
-            <table className="w-full text-left">
+            <div className="overflow-x-auto"><table className="w-full text-left">
               <thead>
                 <tr className="border-b border-stone-100">
                   <th className="text-[10px] font-medium text-stone-400 uppercase tracking-wide px-4 py-2.5">Market</th>
@@ -446,7 +446,7 @@ export default function Dashboard() {
                   )
                 })}
               </tbody>
-            </table>
+            </table></div>
             {races.length > 20 && (
               <div className="text-center py-3 border-t border-stone-50">
                 <Link to="/races" className="text-xs text-stone-500 hover:text-stone-800">View all {races.length} markets</Link>

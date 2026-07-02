@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal History · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.55; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; max-width: 720px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+             gap: 10px; margin: 16px 0; }
+  .stat { background: var(--card); border: 1px solid var(--border);
+          border-radius: 8px; padding: 12px 14px; }
+  .stat .label { color: var(--muted); font-size: 11px;
+                 text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .val { font-size: 20px; font-weight: 700; margin-top: 4px;
+               font-variant-numeric: tabular-nums; }
+  .val.green { color: var(--green); } .val.red { color: var(--red); }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0;
+              align-items: end; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 6px 10px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 10px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px;
+           font-size: 10px; font-weight: 700; text-transform: uppercase;
+           letter-spacing: 0.04em; }
+  .badge-win  { background: rgba(16, 185, 129, 0.18); color: var(--green); }
+  .badge-loss { background: rgba(239, 68, 68, 0.18);  color: var(--red); }
+  .badge-open { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Signal History</h1>
+  <p class="sub">
+    Per-signal public ledger — every signal we flagged, with the prices at
+    detection and the final resolution. Aggregate metrics are on
+    <a href="/track-record">/track-record</a>; this is the receipt.
+  </p>
+
+  <div class="summary">
+    <div class="stat"><div class="label">Total signals</div><div class="val" id="sTotal">—</div></div>
+    <div class="stat"><div class="label">Resolved</div><div class="val" id="sResolved">—</div></div>
+    <div class="stat"><div class="label">Win rate</div><div class="val" id="sWin">—</div></div>
+    <div class="stat"><div class="label">Window</div><div class="val" id="sWindow">—</div></div>
+  </div>
+
+  <div class="controls">
+    <label class="field">Sport
+      <select id="sport">
+        <option value="">All</option>
+        <option value="basketball_nba">NBA</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="baseball_mlb">MLB</option>
+        <option value="soccer_epl">EPL</option>
+      </select>
+    </label>
+    <label class="field">Days
+      <select id="days">
+        <option value="7">7d</option>
+        <option value="30" selected>30d</option>
+        <option value="90">90d</option>
+        <option value="365">365d</option>
+      </select>
+    </label>
+    <label class="field">Resolved only
+      <select id="resolvedOnly">
+        <option value="0">No</option>
+        <option value="1">Yes</option>
+      </select>
+    </label>
+    <label class="field">Limit
+      <select id="limit">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="250">250</option>
+        <option value="500">500</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="content"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmt(n, d=1) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPct(n) { return n == null ? "—" : (Number(n) * 100).toFixed(1) + "%"; }
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date((iso || "").replace(' ', 'T') + (iso.includes('+') ? '' : 'Z'));
+  if (isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) +
+         ' ' + d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+}
+function resolutionBadge(r) {
+  if (r === "correct") return '<span class="badge badge-win">Win</span>';
+  if (r === "incorrect") return '<span class="badge badge-loss">Loss</span>';
+  return '<span class="badge badge-open">Open</span>';
+}
+
+async function load() {
+  const params = new URLSearchParams({
+    days: $("days").value,
+    limit: $("limit").value,
+    resolved_only: $("resolvedOnly").value,
+  });
+  if ($("sport").value) params.set("sport", $("sport").value);
+  let r;
+  try { r = await fetch("/api/signal-history?" + params.toString()); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (!r.ok) { $("content").innerHTML = `<div class="empty">Error ${r.status}</div>`; return; }
+  const d = await r.json();
+  renderSummary(d);
+  renderTable(d.rows || []);
+}
+
+function renderSummary(d) {
+  $("sTotal").textContent = d.n_total || 0;
+  $("sResolved").textContent = `${d.n_resolved || 0} / ${d.n_total || 0}`;
+  const win = $("sWin");
+  win.textContent = d.n_resolved ? fmtPct(d.win_rate) : "—";
+  win.classList.toggle("green", d.win_rate > 0.5);
+  win.classList.toggle("red", d.n_resolved > 0 && d.win_rate < 0.5);
+  $("sWindow").textContent = (d.days || 0) + "d";
+}
+
+function renderTable(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">' +
+      'No signals match these filters. Try widening the window or ' +
+      'switching off "Resolved only".</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>When</th><th>Sport</th><th>Event</th><th>Outcome</th>' +
+    '<th>Market</th>' +
+    '<th class="num">Sharp</th><th class="num">Poly</th>' +
+    '<th class="num">Δ</th><th class="num">Kelly</th>' +
+    '<th>Result</th></tr></thead><tbody>';
+  for (const r of rows) {
+    const event = (r.home_team || "") + (r.away_team ? " vs " + r.away_team : "");
+    html += '<tr>' +
+      `<td>${esc(fmtDate(r.detected_at))}</td>` +
+      `<td>${esc(r.sport || "—")}</td>` +
+      `<td>${esc(event)}</td>` +
+      `<td>${esc(r.outcome || "")}</td>` +
+      `<td>${esc(r.market_type || "h2h")}</td>` +
+      `<td class="num">${fmt(r.sharp_prob)}</td>` +
+      `<td class="num">${fmt(r.poly_prob)}</td>` +
+      `<td class="num">${fmt(r.divergence)}pp</td>` +
+      `<td class="num">${r.kelly_pct ? fmt(r.kelly_pct) + '%' : '—'}</td>` +
+      `<td>${resolutionBadge(r.resolution)}</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
+}
+
+["sport","days","resolvedOnly","limit"].forEach(id => $(id).addEventListener("change", load));
+load();
+</script>
+</body>
+</html>

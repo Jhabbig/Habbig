@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Track Record · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted);
+             text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  .stat { font-size: 28px; font-weight: 700; margin: 4px 0; }
+  .stat.green { color: var(--green); }
+  .stat.red { color: var(--red); }
+  .row { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 90px; }
+  .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+           letter-spacing: 0.05em; }
+  .val { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .controls { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+  .controls label { font-size: 12px; color: var(--muted); }
+  .controls select, .controls input {
+    background: var(--card); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px; font-size: 13px;
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  svg { width: 100%; height: 200px; display: block; margin-top: 8px; }
+  .legend { font-size: 12px; color: var(--muted); display: flex; gap: 16px;
+            margin-top: 8px; }
+  .legend span::before {
+    content: ""; display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 6px; vertical-align: middle;
+  }
+  .legend .actual::before { background: var(--accent); }
+  .legend .expected::before { background: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .cta {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    margin: 0 0 24px;
+  }
+  .cta-btn {
+    background: var(--accent); color: #fff !important;
+    padding: 10px 18px; border-radius: 6px; font-weight: 600;
+    text-decoration: none !important;
+  }
+  .cta-btn:hover { background: #2563eb; }
+  .cta-link { color: var(--muted) !important; font-size: 13px; }
+  .footer-cta {
+    margin-top: 32px; padding: 24px; text-align: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .footer-cta h3 { margin: 0 0 8px; font-size: 18px; }
+  .footer-cta p { margin: 0 0 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Track Record</h1>
+  <p class="sub">
+    Every flagged signal, every closing line, every resolved bet — the math
+    we'd otherwise hide behind a paywall. Updated each scan; aggregates only,
+    no per-signal detail until you sign in.
+  </p>
+  <div class="cta">
+    <a class="cta-btn" href="/signup">Get live alerts →</a>
+    <a class="cta-link" href="/">Already a user? Sign in</a>
+  </div>
+
+  <div class="controls">
+    <label>Sport
+      <select id="sport">
+        <option value="">All sports</option>
+      </select>
+    </label>
+    <label>Window
+      <select id="days">
+        <option value="7">7d</option>
+        <option value="30" selected>30d</option>
+        <option value="90">90d</option>
+        <option value="180">180d</option>
+        <option value="365">365d</option>
+      </select>
+    </label>
+    <label>Threshold (pp, P&amp;L only)
+      <input id="threshold" type="number" min="0" max="50" step="0.5" value="5">
+    </label>
+    <label>Stake (USD)
+      <input id="stake" type="number" min="1" max="10000" step="10" value="100">
+    </label>
+  </div>
+
+  <div class="grid">
+    <div class="card" id="card-clv">
+      <h2>Closing line value</h2>
+      <div class="stat" id="clv-mean">—</div>
+      <div class="row">
+        <div><div class="label">Median</div><div class="val" id="clv-median">—</div></div>
+        <div><div class="label">% positive</div><div class="val" id="clv-positive">—</div></div>
+        <div><div class="label">N</div><div class="val" id="clv-n">—</div></div>
+      </div>
+    </div>
+
+    <div class="card" id="card-pnl">
+      <h2>Simulated P&amp;L</h2>
+      <div class="stat" id="pnl-total">—</div>
+      <div class="row">
+        <div><div class="label">Win rate</div><div class="val" id="pnl-winrate">—</div></div>
+        <div><div class="label">ROI</div><div class="val" id="pnl-roi">—</div></div>
+        <div><div class="label">Sharpe</div><div class="val" id="pnl-sharpe">—</div></div>
+        <div><div class="label">Max DD</div><div class="val" id="pnl-dd">—</div></div>
+        <div><div class="label">N</div><div class="val" id="pnl-n">—</div></div>
+      </div>
+      <svg id="pnl-curve" viewBox="0 0 600 200" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="card" id="card-calib">
+      <h2>Calibration</h2>
+      <p class="label" style="margin-bottom: 4px;">
+        Empirical win rate vs predicted, by divergence bucket.
+      </p>
+      <svg id="calib-svg" viewBox="0 0 600 200" preserveAspectRatio="none"></svg>
+      <div class="legend">
+        <span class="actual">Actual win rate</span>
+        <span class="expected">Implied (from sharp prob)</span>
+      </div>
+      <table id="calib-table">
+        <thead>
+          <tr><th>Bucket (pp)</th><th class="num">N</th><th class="num">Actual</th><th class="num">Expected</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer-cta">
+    <h3>See the live signals behind this track record.</h3>
+    <p>Sign up free — get the next +EV signal sent to Telegram, webhook, or browser push.</p>
+    <a class="cta-btn" href="/signup">Get live alerts →</a>
+  </div>
+</div>
+
+<script>
+const SPORT_LABELS = {
+  basketball_nba: "NBA", americanfootball_nfl: "NFL", icehockey_nhl: "NHL",
+  baseball_mlb: "MLB", soccer_epl: "EPL", soccer_spain_la_liga: "La Liga",
+  soccer_germany_bundesliga: "Bundesliga", soccer_italy_serie_a: "Serie A",
+  soccer_france_ligue_one: "Ligue 1", soccer_uefa_champs_league: "UCL",
+  soccer_uefa_europa_league: "UEL", soccer_usa_mls: "MLS",
+  mma_mixed_martial_arts: "MMA", boxing_boxing: "Boxing",
+  tennis_atp: "Tennis ATP", tennis_wta: "Tennis WTA",
+  motorsport_f1: "F1", americanfootball_ncaaf: "NCAAF",
+};
+
+function $(id) { return document.getElementById(id); }
+function fmt(n, d=2) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPct(n, d=1) { return n == null ? "—" : (Number(n) * 100).toFixed(d) + "%"; }
+function fmtUSD(n) { return n == null ? "—" : (n >= 0 ? "+" : "") + "$" + Number(n).toFixed(2); }
+function fmtPP(n, d=2) { return n == null ? "—" : (n >= 0 ? "+" : "") + Number(n).toFixed(d) + " pp"; }
+
+function populateSports() {
+  const sel = $("sport");
+  Object.entries(SPORT_LABELS).forEach(([k, v]) => {
+    const opt = document.createElement("option");
+    opt.value = k; opt.textContent = v;
+    sel.appendChild(opt);
+  });
+}
+
+async function loadAll() {
+  const sport = $("sport").value;
+  const days = $("days").value;
+  const threshold = $("threshold").value;
+  const stake = $("stake").value;
+  const sportQ = sport ? "&sport=" + encodeURIComponent(sport) : "";
+  const [clv, pnl, calib] = await Promise.all([
+    fetch(`/api/track-record/clv?days=${days}${sportQ}`).then(r => r.json()),
+    fetch(`/api/track-record/pnl?days=${days}&threshold=${threshold}&stake=${stake}${sportQ}`).then(r => r.json()),
+    fetch(`/api/track-record/calibration?days=${days}${sportQ}`).then(r => r.json()),
+  ]);
+  renderClv(clv);
+  renderPnl(pnl);
+  renderCalib(calib);
+}
+
+function renderClv(d) {
+  const o = d.overall || {};
+  const mean = $("clv-mean");
+  mean.textContent = fmtPP(o.mean);
+  mean.classList.toggle("green", (o.mean || 0) > 0);
+  mean.classList.toggle("red", (o.mean || 0) < 0);
+  $("clv-median").textContent = fmtPP(o.median);
+  $("clv-positive").textContent = fmtPct(o.positive_rate);
+  $("clv-n").textContent = o.n || 0;
+}
+
+function renderPnl(d) {
+  const total = $("pnl-total");
+  total.textContent = fmtUSD(d.total_pnl);
+  total.classList.toggle("green", (d.total_pnl || 0) > 0);
+  total.classList.toggle("red", (d.total_pnl || 0) < 0);
+  $("pnl-winrate").textContent = fmtPct(d.win_rate);
+  $("pnl-roi").textContent = fmt(d.roi_pct, 2) + "%";
+  $("pnl-sharpe").textContent = fmt(d.sharpe, 2);
+  $("pnl-dd").textContent = fmtUSD(-(d.max_drawdown || 0));
+  $("pnl-n").textContent = d.n_bets || 0;
+
+  // Equity curve
+  const svg = $("pnl-curve");
+  svg.innerHTML = "";
+  const points = d.equity_curve || [];
+  if (points.length < 2) {
+    svg.innerHTML = '<text x="300" y="100" text-anchor="middle" fill="#6b7280">No data</text>';
+    return;
+  }
+  const minV = Math.min(0, ...points);
+  const maxV = Math.max(0, ...points);
+  const w = 600, h = 200, pad = 4;
+  const xStep = (w - 2*pad) / (points.length - 1);
+  const yScale = v => h - pad - ((v - minV) / (maxV - minV || 1)) * (h - 2*pad);
+  let path = "";
+  points.forEach((p, i) => {
+    path += (i === 0 ? "M" : "L") + (pad + i * xStep) + "," + yScale(p);
+  });
+  const stroke = (points[points.length - 1] >= 0) ? "#10b981" : "#ef4444";
+  // Zero line
+  if (minV < 0 && maxV > 0) {
+    svg.innerHTML += `<line x1="0" x2="${w}" y1="${yScale(0)}" y2="${yScale(0)}" stroke="#1f2128" />`;
+  }
+  svg.innerHTML += `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="2" />`;
+}
+
+function renderCalib(d) {
+  const tbody = $("calib-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  const bins = d.bins || [];
+  const populated = bins.filter(b => b.n > 0);
+
+  // Table
+  bins.forEach(b => {
+    const range = b.hi == null ? `${b.lo}+` : `${b.lo}–${b.hi}`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${range}</td><td class="num">${b.n}</td>` +
+      `<td class="num">${b.win_rate == null ? '—' : fmtPct(b.win_rate)}</td>` +
+      `<td class="num">${b.expected == null ? '—' : fmtPct(b.expected)}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Chart
+  const svg = $("calib-svg");
+  svg.innerHTML = "";
+  if (populated.length === 0) {
+    svg.innerHTML = '<text x="300" y="100" text-anchor="middle" fill="#6b7280">No resolved signals yet</text>';
+    return;
+  }
+  const w = 600, h = 200, pad = 28;
+  const barW = (w - 2*pad) / bins.length;
+  const yScale = v => h - pad - v * (h - 2*pad);
+  // Diagonal y=x reference (within plot area)
+  svg.innerHTML += `<line x1="${pad}" y1="${yScale(0)}" x2="${w-pad}" y2="${yScale(1)}" stroke="#1f2128" stroke-dasharray="3,3" />`;
+  bins.forEach((b, i) => {
+    const x = pad + i * barW + barW * 0.5;
+    if (b.n > 0) {
+      const yA = yScale(b.win_rate || 0);
+      const yE = yScale(b.expected || 0);
+      svg.innerHTML += `<circle cx="${x}" cy="${yA}" r="5" fill="#3b82f6" />`;
+      svg.innerHTML += `<circle cx="${x}" cy="${yE}" r="3" fill="#6b7280" />`;
+    }
+    const range = b.hi == null ? `${b.lo}+` : `${b.lo}-${b.hi}`;
+    svg.innerHTML += `<text x="${x}" y="${h-6}" text-anchor="middle" fill="#6b7280" font-size="11">${range}</text>`;
+  });
+  // Y-axis 0/50/100
+  [0, 0.5, 1].forEach(y => {
+    svg.innerHTML += `<text x="4" y="${yScale(y)+4}" fill="#6b7280" font-size="10">${(y*100).toFixed(0)}%</text>`;
+  });
+}
+
+populateSports();
+loadAll();
+["sport", "days", "threshold", "stake"].forEach(id => {
+  $(id).addEventListener("change", loadAll);
+});
+</script>
+</body>
+</html>

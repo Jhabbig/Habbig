@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Steam Moves · Sharpe</title>
+<style>
+  :root {
+    --bg: #08090e; --fg: #e6e7eb; --muted: #6b7280; --border: #1f2128;
+    --card: #111218; --accent: #3b82f6; --green: #10b981; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  label.field { font-size: 12px; color: var(--muted); display: inline-flex;
+                flex-direction: column; gap: 4px; }
+  select, input { background: var(--card); color: var(--fg);
+                  border: 1px solid var(--border); border-radius: 4px;
+                  padding: 6px 10px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 11px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; font-weight: 600; background: #0d0e13; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; }
+  .pos { color: var(--green); font-weight: 600; }
+  .neg { color: var(--red); font-weight: 600; }
+  .empty { padding: 60px; text-align: center; color: var(--muted); }
+  a, a:visited { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Steam Moves</h1>
+  <p class="sub">
+    Rapid sharp-book line moves. Pros trade off these because they signal
+    that sharp money just hit a major venue. Scanned from the last N hours
+    of stored snapshots; only moves greater than the threshold within the
+    window are flagged.
+    <a href="/">← Back to dashboard</a>
+  </p>
+  <div class="controls">
+    <label class="field">Sport
+      <select id="sport">
+        <option value="">All sports</option>
+        <option value="basketball_nba">NBA</option>
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="icehockey_nhl">NHL</option>
+        <option value="baseball_mlb">MLB</option>
+        <option value="soccer_epl">EPL</option>
+      </select>
+    </label>
+    <label class="field">Hours back
+      <input id="hours" type="number" min="1" max="168" value="24">
+    </label>
+    <label class="field">Min Δ (pp)
+      <input id="minDelta" type="number" min="0.5" max="50" step="0.5" value="2">
+    </label>
+    <label class="field">Window (min)
+      <input id="window" type="number" min="1" max="240" value="30">
+    </label>
+  </div>
+  <div id="content"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function fmt(n, d=1) { return n == null ? "—" : Number(n).toFixed(d); }
+function fmtPP(n) { return n == null ? "—" : (n>=0?"+":"") + Number(n).toFixed(1) + "pp"; }
+function fmtAge(iso) {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso.replace(' ', 'T') + 'Z').getTime();
+  if (ms < 0) return "—";
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+
+async function load() {
+  const sport = $("sport").value;
+  const hours = $("hours").value;
+  const minD = $("minDelta").value;
+  const win = $("window").value;
+  const q = new URLSearchParams({hours, min_delta_pp: minD, window_min: win});
+  if (sport) q.set("sport", sport);
+  let r;
+  try { r = await fetch("/api/steam-moves?" + q.toString()); }
+  catch { $("content").innerHTML = '<div class="empty">Network error.</div>'; return; }
+  if (r.status === 401) { $("content").innerHTML = '<div class="empty">Sign in required.</div>'; return; }
+  if (!r.ok) { $("content").innerHTML = `<div class="empty">Error ${r.status}</div>`; return; }
+  const d = await r.json();
+  render(d.moves || []);
+}
+
+function render(rows) {
+  if (!rows.length) {
+    $("content").innerHTML = '<div class="empty">No steam moves match these filters.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>' +
+    '<th>When</th><th>Sport</th><th>Event</th><th>Outcome</th>' +
+    '<th class="num">From → To</th>' +
+    '<th class="num">Δ</th>' +
+    '<th class="num">Elapsed</th>' +
+    '<th class="num">Poly</th>' +
+    '<th class="num">Kalshi</th></tr></thead><tbody>';
+  for (const m of rows) {
+    const cls = m.delta_pp > 0 ? "pos" : "neg";
+    html += '<tr>' +
+      `<td>${esc(fmtAge(m.to_ts))}</td>` +
+      `<td>${esc(m.sport || "—")}</td>` +
+      `<td>${esc(m.event)}</td>` +
+      `<td>${esc(m.outcome)}</td>` +
+      `<td class="num">${fmt(m.from_prob)}% → ${fmt(m.to_prob)}%</td>` +
+      `<td class="num ${cls}">${fmtPP(m.delta_pp)}</td>` +
+      `<td class="num">${fmt(m.elapsed_min)}m</td>` +
+      `<td class="num">${m.poly_prob == null ? "—" : fmt(m.poly_prob) + "%"}</td>` +
+      `<td class="num">${m.kalshi_prob == null ? "—" : fmt(m.kalshi_prob) + "%"}</td>` +
+    '</tr>';
+  }
+  html += '</tbody></table>';
+  $("content").innerHTML = html;
+}
+
+["sport","hours","minDelta","window"].forEach(id => $(id).addEventListener("change", load));
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

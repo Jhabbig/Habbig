@@ -7,13 +7,24 @@ Exposes REST endpoints and WebSocket for real-time market data + indicators.
 import asyncio
 import json
 import logging
-from typing import Set, Dict
+import os
+import re
+import secrets
+from typing import Set, Dict, Optional, Tuple
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import lru_cache
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response
 
 from tier1_adapters import get_facade, RealtimeFacade
 from backtest_engine import SimpleBacktestEngine, BacktestResult
@@ -27,14 +38,44 @@ logging.basicConfig(
 )
 log = logging.getLogger("api")
 
+# Environment-driven configuration
+ENV = os.environ.get("ENV", "dev").lower()
+IS_DEV = ENV == "dev"
+# Comma-separated list of allowed origins; in dev defaults to localhost.
+_default_dev_origins = "http://localhost:5173,http://127.0.0.1:5173"
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", _default_dev_origins if IS_DEV else "").split(",")
+    if o.strip()
+]
+
 # Global state
 facade: RealtimeFacade = None
 connected_clients: Dict[str, Set[WebSocket]] = {}  # ticker -> set of WebSockets
+session_tokens: Set[str] = set()  # Valid session tokens for WebSocket auth
+
+# Simple response caching for Greeks (5min TTL)
+_greeks_cache: Dict[Tuple[str, float, float], Tuple[datetime, Dict]] = {}
+_cache_ttl_seconds = 300
 
 
 # ============================================================================
 # Pydantic Models
 # ============================================================================
+
+class ErrorResponse(BaseModel):
+    """Standardized error response."""
+    error: str = Field(..., description="Error message")
+    detail: str = Field(default="", description="Additional error details")
+    status_code: int = Field(..., description="HTTP status code")
+
+
+class ApiMetadata(BaseModel):
+    """API response metadata for cache and freshness tracking."""
+    timestamp: float = Field(..., description="Response generation timestamp (Unix epoch)")
+    cached: bool = Field(default=False, description="Whether response was from cache")
+    cache_ttl_seconds: int = Field(default=0, description="Cache TTL in seconds")
+
 
 class BarResponse(BaseModel):
     """OHLCV bar response."""
@@ -85,21 +126,25 @@ class HealthResponse(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    """Backtest request."""
-    ticker: str
-    strategy: str  # "rsi", "ma_crossover"
-    days: int = 30
-    initial_capital: float = 100000.0
-    position_size_pct: float = 0.1
+    """Backtest request with comprehensive validation."""
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$",
+                       description="Stock ticker symbol (e.g., AAPL, SPY)")
+    strategy: str = Field(..., pattern=r"^(rsi|ma_crossover)$",
+                         description="Strategy: 'rsi' or 'ma_crossover'")
+    days: int = Field(30, ge=1, le=365, description="Number of days (1-365)")
+    initial_capital: float = Field(100000.0, gt=0, le=1_000_000_000,
+                                  description="Starting capital in USD")
+    position_size_pct: float = Field(0.1, gt=0, le=1.0,
+                                    description="Position size % (0.01-1.0)")
 
     # RSI strategy params
-    rsi_oversold: float = 30.0
-    rsi_overbought: float = 70.0
-    rsi_period: int = 14
+    rsi_oversold: float = Field(30.0, ge=0, le=100, description="RSI oversold threshold")
+    rsi_overbought: float = Field(70.0, ge=0, le=100, description="RSI overbought threshold")
+    rsi_period: int = Field(14, ge=2, le=200, description="RSI lookback period")
 
     # MA crossover params
-    fast_period: int = 12
-    slow_period: int = 26
+    fast_period: int = Field(12, ge=2, le=200, description="Fast MA period")
+    slow_period: int = Field(26, ge=2, le=500, description="Slow MA period")
 
 
 class BacktestResponse(BaseModel):
@@ -130,8 +175,8 @@ class BacktestResponse(BaseModel):
 
 class SignalRequest(BaseModel):
     """AI signal generation request."""
-    ticker: str
-    price: float
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$")
+    price: float = Field(..., gt=0)
     rsi_14: float
     rsi_7: float
     rsi_21: float
@@ -173,12 +218,20 @@ class OptionChainItem(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    """Options scanner request."""
-    ticker: str
-    calls: list[OptionChainItem]
-    puts: list[OptionChainItem]
-    spot_price: float
-    screening_type: str = "all"  # all, unusual_volume, iv_spike, skew_shifts, earnings_move
+    """Options scanner request with comprehensive validation."""
+    ticker: str = Field(..., min_length=1, max_length=10, pattern=r"^[A-Z0-9.\-]{1,10}$",
+                       description="Stock ticker symbol")
+    calls: list[OptionChainItem] = Field(..., max_length=500,
+                                        description="Call options data (max 500)")
+    puts: list[OptionChainItem] = Field(..., max_length=500,
+                                       description="Put options data (max 500)")
+    spot_price: float = Field(..., gt=0, le=1_000_000,
+                             description="Current spot price (0 < price <= 1M)")
+    screening_type: str = Field(
+        "all",
+        pattern=r"^(all|unusual_volume|iv_spike|skew_shifts|earnings_move)$",
+        description="Scan type: all, unusual_volume, iv_spike, skew_shifts, or earnings_move"
+    )
 
 
 class ScanResultResponse(BaseModel):
@@ -213,6 +266,21 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================================================
+# Security Headers Middleware
+# ============================================================================
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+        return response
+
+
+# ============================================================================
 # FastAPI App
 # ============================================================================
 
@@ -220,17 +288,67 @@ app = FastAPI(
     title="Trading Dashboard API",
     description="Real-time market data, indicators, and Greeks",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Disable interactive docs outside dev — they leak the full API surface.
+    docs_url="/docs" if IS_DEV else None,
+    redoc_url="/redoc" if IS_DEV else None,
+    openapi_url="/openapi.json" if IS_DEV else None,
 )
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda r, e: JSONResponse(
+    status_code=429,
+    content={"detail": "Rate limit exceeded"},
+))
+
+# Security headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS — explicit origin list, never the wildcard. If ALLOWED_ORIGINS is empty
+# in a non-dev environment, CORS is effectively closed.
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        max_age=600,
+    )
+else:
+    log.warning("CORS is disabled: ALLOWED_ORIGINS is empty.")
+
+
+# Replace ad-hoc {"error": ...} dicts with proper HTTPException responses,
+# and centralize unexpected errors so internal stack traces / module paths
+# never leak to clients.
+@app.exception_handler(Exception)
+async def _generic_exception_handler(_, exc):
+    """Generic exception handler with standardized error response."""
+    log.exception("Unhandled error")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": "An unexpected error occurred. Please try again.",
+            "status_code": 500
+        }
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_, exc: HTTPException):
+    """HTTP exception handler with standardized format."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "Request error",
+            "detail": "",
+            "status_code": exc.status_code
+        },
+    )
 
 
 # ============================================================================
@@ -247,67 +365,104 @@ async def health():
     }
 
 
+class SessionTokenResponse(BaseModel):
+    """Session token for WebSocket authentication."""
+    token: str
+
+
+@app.get("/api/session-token", response_model=SessionTokenResponse)
+@limiter.limit("10/minute")
+async def get_session_token(request: Request):
+    """Generate a session token for WebSocket authentication."""
+    token = secrets.token_urlsafe(32)
+    session_tokens.add(token)
+    return {"token": token}
+
+
+TICKER_PATTERN = r"^[A-Z0-9.\-]{1,10}$"
+
+
 @app.get("/api/bars", response_model=list[BarResponse])
 async def get_bars(
-    ticker: str = Query(..., example="AAPL"),
-    interval: str = Query("1m", example="1m"),
-    limit: int = Query(100, ge=1, le=1000)
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+    interval: str = Query("1m", pattern=r"^(1m|5m|15m|1h|1d)$"),
+    limit: int = Query(100, ge=1, le=1000),
 ):
     """
     Get historical bars for a ticker.
     Intervals: 1m, 5m, 15m, 1h, 1d
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
         facade.subscribe(ticker)
-        bars = facade.get_bars(ticker, interval, limit)
-        return bars
+        return facade.get_bars(ticker, interval, limit)
     except Exception as e:
-        log.error(f"Error fetching bars: {e}")
-        return {"error": str(e)}
+        log.exception("Error fetching bars")
+        raise HTTPException(status_code=500, detail="Failed to fetch bars") from e
 
 
 @app.get("/api/indicators", response_model=IndicatorResponse)
-async def get_indicators(ticker: str = Query(..., example="AAPL")):
+async def get_indicators(
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+):
     """Get latest indicator values for a ticker."""
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
         indicators = facade.get_indicators(ticker)
         if not indicators:
-            return {"error": f"No indicators for {ticker}"}
+            raise HTTPException(status_code=404, detail="No indicators available")
         return indicators
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Error fetching indicators: {e}")
-        return {"error": str(e)}
+        log.exception("Error fetching indicators")
+        raise HTTPException(status_code=500, detail="Failed to fetch indicators") from e
 
 
 @app.get("/api/greeks", response_model=list[GreeksResponse])
 async def get_greeks(
-    ticker: str = Query(..., example="AAPL"),
-    spot_price: float = Query(..., gt=0, example=150.0),
-    expiration_days: float = Query(30, gt=0, example=30),
+    ticker: str = Query(..., example="AAPL", min_length=1, max_length=10, pattern=TICKER_PATTERN),
+    spot_price: float = Query(..., gt=0, le=1_000_000, example=150.0),
+    expiration_days: float = Query(30, gt=0, le=3650, example=30),
 ):
     """
     Compute Greeks for an option chain.
     Returns Greeks for ATM ± 5 strikes.
+    Cached for 5 minutes to reduce computation load.
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
-        greeks = facade.compute_greeks_chain(
-            ticker,
-            spot_price=spot_price,
-            expiration_days=expiration_days
+        # Check cache (simple LRU-like logic with TTL)
+        cache_key = (ticker, spot_price, expiration_days)
+        now = datetime.now()
+
+        if cache_key in _greeks_cache:
+            cached_time, cached_result = _greeks_cache[cache_key]
+            if (now - cached_time).total_seconds() < _cache_ttl_seconds:
+                log.debug(f"Greeks cache hit for {ticker}")
+                return cached_result
+
+        # Compute and cache
+        result = facade.compute_greeks_chain(
+            ticker, spot_price=spot_price, expiration_days=expiration_days
         )
-        return greeks
+        _greeks_cache[cache_key] = (now, result)
+
+        # Limit cache size to 100 entries
+        if len(_greeks_cache) > 100:
+            oldest_key = min(_greeks_cache.keys(), key=lambda k: _greeks_cache[k][0])
+            del _greeks_cache[oldest_key]
+
+        return result
     except Exception as e:
-        log.error(f"Error computing Greeks: {e}")
-        return {"error": str(e)}
+        log.exception("Error computing Greeks")
+        raise HTTPException(status_code=500, detail="Failed to compute Greeks") from e
 
 
 # ============================================================================
@@ -360,11 +515,11 @@ async def generate_signal(request: SignalRequest):
             "signal": signal.signal,
             "confidence": signal.confidence,
             "price": signal.price,
-            "reasoning": signal.reasoning
+            "reasoning": signal.reasoning,
         }
     except Exception as e:
-        log.error(f"Error generating signal: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error generating signal")
+        raise HTTPException(status_code=500, detail="Failed to generate signal") from e
 
 
 # ============================================================================
@@ -372,7 +527,8 @@ async def generate_signal(request: SignalRequest):
 # ============================================================================
 
 @app.post("/api/scan/options", response_model=list[ScanResultResponse])
-async def scan_options(request: ScanRequest):
+@limiter.limit("30/minute")
+async def scan_options(request: Request, scan_request: ScanRequest):
     """
     Scan options chain for unusual activity.
     Detects: volume spikes, IV spikes, skew shifts, implied earnings moves.
@@ -381,20 +537,20 @@ async def scan_options(request: ScanRequest):
         scanner = OptionsScanEngine()
 
         # Convert to dict format expected by scanner
-        calls = [{"strike": c.strike, "volume": c.volume, "iv": c.iv, "iv_percentile": c.iv_percentile} for c in request.calls]
-        puts = [{"strike": p.strike, "volume": p.volume, "iv": p.iv, "iv_percentile": p.iv_percentile} for p in request.puts]
+        calls = [{"strike": c.strike, "volume": c.volume, "iv": c.iv, "iv_percentile": c.iv_percentile} for c in scan_request.calls]
+        puts = [{"strike": p.strike, "volume": p.volume, "iv": p.iv, "iv_percentile": p.iv_percentile} for p in scan_request.puts]
 
         timestamp = int(datetime.now().timestamp())
         results = []
 
-        if request.screening_type in ["all", "unusual_volume"]:
-            results.extend(scanner.scan_unusual_volume(request.ticker, calls, puts, timestamp))
-        if request.screening_type in ["all", "iv_spike"]:
-            results.extend(scanner.scan_iv_spikes(request.ticker, calls, puts, timestamp))
-        if request.screening_type in ["all", "skew_shifts"]:
-            results.extend(scanner.scan_skew_shifts(request.ticker, calls, puts, request.spot_price, timestamp))
-        if request.screening_type in ["all", "earnings_move"]:
-            results.extend(scanner.scan_earnings_move(request.ticker, calls, puts, request.spot_price, timestamp))
+        if scan_request.screening_type in ["all", "unusual_volume"]:
+            results.extend(scanner.scan_unusual_volume(scan_request.ticker, calls, puts, timestamp))
+        if scan_request.screening_type in ["all", "iv_spike"]:
+            results.extend(scanner.scan_iv_spikes(scan_request.ticker, calls, puts, timestamp))
+        if scan_request.screening_type in ["all", "skew_shifts"]:
+            results.extend(scanner.scan_skew_shifts(scan_request.ticker, calls, puts, scan_request.spot_price, timestamp))
+        if scan_request.screening_type in ["all", "earnings_move"]:
+            results.extend(scanner.scan_earnings_move(scan_request.ticker, calls, puts, scan_request.spot_price, timestamp))
 
         # Convert ScanResult to response format
         response = [
@@ -412,8 +568,8 @@ async def scan_options(request: ScanRequest):
 
         return response
     except Exception as e:
-        log.error(f"Error scanning options: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error scanning options")
+        raise HTTPException(status_code=500, detail="Failed to scan options") from e
 
 
 # ============================================================================
@@ -421,9 +577,10 @@ async def scan_options(request: ScanRequest):
 # ============================================================================
 
 @app.websocket("/ws/{ticker}")
-async def websocket_endpoint(websocket: WebSocket, ticker: str):
+async def websocket_endpoint(websocket: WebSocket, ticker: str, token: str = Query(...)):
     """
     WebSocket endpoint for real-time bar + indicator streaming.
+    Requires valid session token for authentication.
 
     Sends JSON messages:
     {
@@ -433,6 +590,17 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str):
         "indicators": {...}
     }
     """
+    # Validate token
+    if token not in session_tokens:
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
+
+    # CSWSH protection: check Origin header matches allowed origins
+    origin = websocket.headers.get("origin", "")
+    if ALLOWED_ORIGINS and origin not in ALLOWED_ORIGINS:
+        await websocket.close(code=1008, reason="Forbidden origin")
+        return
+
     await websocket.accept()
     log.info(f"Client connected to {ticker}")
 
@@ -508,7 +676,8 @@ async def websocket_endpoint(websocket: WebSocket, ticker: str):
 # ============================================================================
 
 @app.post("/api/backtest", response_model=BacktestResponse)
-async def run_backtest(request: BacktestRequest):
+@limiter.limit("20/minute")
+async def run_backtest(request: Request, backtest_request: BacktestRequest):
     """
     Run a backtest with specified strategy and parameters.
 
@@ -517,18 +686,22 @@ async def run_backtest(request: BacktestRequest):
     - ma_crossover: Moving average crossover
     """
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
     try:
-        # Fetch historical bars (demo: generate synthetic data)
+        # Fetch historical bars (demo: generate synthetic data).
+        # NOTE: This data is synthetic, not historical. Surface that to clients
+        # so it isn't misrepresented as a real backtest.
         from datetime import datetime, timedelta
         import random
 
         bars = []
         price = 150.0
-        ts = int((datetime.now() - timedelta(days=request.days)).timestamp())
+        ts = int((datetime.now() - timedelta(days=backtest_request.days)).timestamp())
 
-        for i in range(request.days * 48):  # Assume ~48 5-min bars per day
+        # `backtest_request.days` is bounded 1..365 by the Pydantic model, so the loop
+        # is bounded to at most 365 * 48 = 17,520 iterations.
+        for i in range(backtest_request.days * 48):  # Assume ~48 5-min bars per day
             change = random.gauss(0, 0.8)
             price += change
             price = max(price, 50)
@@ -539,34 +712,37 @@ async def run_backtest(request: BacktestRequest):
                 'high': price + abs(random.gauss(0, 0.5)),
                 'low': price - abs(random.gauss(0, 0.5)),
                 'close': price + random.gauss(0, 0.3),
-                'volume': random.randint(100000, 1000000)
+                'volume': random.randint(100000, 1000000),
             })
 
-        # Run backtest
-        engine = SimpleBacktestEngine(initial_capital=request.initial_capital)
+        engine = SimpleBacktestEngine(initial_capital=backtest_request.initial_capital)
 
-        if request.strategy.lower() == "rsi":
+        strategy = backtest_request.strategy.lower()
+        if strategy == "rsi":
             result = engine.run_rsi_strategy(
                 bars,
-                rsi_oversold=request.rsi_oversold,
-                rsi_overbought=request.rsi_overbought,
-                rsi_period=request.rsi_period,
-                position_size_pct=request.position_size_pct,
+                rsi_oversold=backtest_request.rsi_oversold,
+                rsi_overbought=backtest_request.rsi_overbought,
+                rsi_period=backtest_request.rsi_period,
+                position_size_pct=backtest_request.position_size_pct,
             )
-        elif request.strategy.lower() == "ma_crossover":
+        elif strategy == "ma_crossover":
             result = engine.run_ma_crossover_strategy(
                 bars,
-                fast_period=request.fast_period,
-                slow_period=request.slow_period,
-                position_size_pct=request.position_size_pct,
+                fast_period=backtest_request.fast_period,
+                slow_period=backtest_request.slow_period,
+                position_size_pct=backtest_request.position_size_pct,
             )
         else:
-            return {"error": f"Unknown strategy: {request.strategy}"}
+            # Should be unreachable thanks to the Pydantic pattern.
+            raise HTTPException(status_code=400, detail="Unknown strategy")
 
-        # Convert result to dict
+        if result is None:
+            raise HTTPException(status_code=501, detail=f"Strategy '{strategy}' not implemented")
+
         result_dict = {
-            "ticker": request.ticker,
-            "strategy": request.strategy,
+            "ticker": backtest_request.ticker,
+            "strategy": backtest_request.strategy,
             "start_date": result.start_date,
             "end_date": result.end_date,
             "initial_capital": result.initial_capital,
@@ -590,31 +766,46 @@ async def run_backtest(request: BacktestRequest):
         }
         return result_dict
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Error running backtest: {e}", exc_info=True)
-        return {"error": str(e)}
+        log.exception("Error running backtest")
+        raise HTTPException(status_code=500, detail="Backtest failed") from e
 
 
 # ============================================================================
 # Demo/Test Endpoint
 # ============================================================================
 
+_demo_task: asyncio.Task | None = None
+
+
 @app.post("/api/demo/start")
 async def demo_start(
-    tickers: list[str] = Query(["AAPL", "TSLA", "MSFT"]),
-    duration_sec: float = Query(300)
+    tickers: list[str] = Query(["AAPL", "TSLA", "MSFT"], max_length=20),
+    duration_sec: float = Query(300, gt=0, le=3600),
 ):
     """Start demo streaming for testing."""
+    global _demo_task
     if not facade:
-        return {"error": "Facade not initialized"}
+        raise HTTPException(status_code=503, detail="Service unavailable")
+
+    # Reject ticker symbols that don't match the allowed pattern.
+    bad = [t for t in tickers if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", t)]
+    if bad:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+
+    # Refuse to start a second demo task while one is already running —
+    # prevents trivial resource amplification via repeated /demo/start calls.
+    if _demo_task is not None and not _demo_task.done():
+        raise HTTPException(status_code=409, detail="Demo already running")
 
     try:
-        # Start demo in background
-        asyncio.create_task(facade.demo_stream(tickers, duration_sec=duration_sec))
+        _demo_task = asyncio.create_task(facade.demo_stream(tickers, duration_sec=duration_sec))
         return {"status": "demo started", "tickers": tickers, "duration": duration_sec}
     except Exception as e:
-        log.error(f"Error starting demo: {e}")
-        return {"error": str(e)}
+        log.exception("Error starting demo")
+        raise HTTPException(status_code=500, detail="Failed to start demo") from e
 
 
 # ============================================================================
@@ -624,13 +815,20 @@ async def demo_start(
 if __name__ == "__main__":
     import uvicorn
 
-    log.info("Starting Trading Dashboard Backend on http://localhost:8000")
-    log.info("API docs: http://localhost:8000/docs")
+    # Bind to loopback by default. Exposing to all interfaces requires
+    # explicitly setting HOST in the environment, and should only be done
+    # behind a reverse proxy that terminates TLS and adds auth.
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+
+    log.info(f"Starting Trading Dashboard Backend on http://{host}:{port}")
+    if IS_DEV:
+        log.info(f"API docs: http://{host}:{port}/docs")
 
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        host=host,
+        port=port,
+        reload=IS_DEV,
+        log_level="info",
     )

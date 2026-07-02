@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, BarChart3 } from 'lucide-react';
 
 export interface BacktestResult {
@@ -30,10 +30,17 @@ interface BacktestResultsProps {
   result: BacktestResult;
 }
 
-export const BacktestResults: React.FC<BacktestResultsProps> = ({ result }) => {
-  const isPositive = result.total_return_pct >= 0;
-  const startDate = new Date(result.start_date).toLocaleDateString();
-  const endDate = new Date(result.end_date).toLocaleDateString();
+const BacktestResultsComponent: React.FC<BacktestResultsProps> = ({ result }) => {
+  const dateMetadata = useMemo(() => ({
+    isPositive: result.total_return_pct >= 0,
+    startDate: new Date(result.start_date).toLocaleDateString(),
+    endDate: new Date(result.end_date).toLocaleDateString(),
+  }), [result.total_return_pct, result.start_date, result.end_date]);
+
+  const recentTrades = useMemo(() =>
+    result.trades.slice(-10).reverse(),
+    [result.trades]
+  );
 
   return (
     <div className="space-y-4">
@@ -45,8 +52,8 @@ export const BacktestResults: React.FC<BacktestResultsProps> = ({ result }) => {
           {/* Total Return */}
           <div className="bg-gray-900 p-4 rounded border border-gray-700">
             <div className="text-gray-400 text-sm mb-1">Total Return</div>
-            <div className={`text-2xl font-bold flex items-center gap-2 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-              {isPositive ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+            <div className={`text-2xl font-bold flex items-center gap-2 ${dateMetadata.isPositive ? 'text-green-400' : 'text-red-400'}`}>
+              {dateMetadata.isPositive ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
               {result.total_return_pct.toFixed(2)}%
             </div>
             <div className="text-xs text-gray-500 mt-2">
@@ -154,7 +161,7 @@ export const BacktestResults: React.FC<BacktestResultsProps> = ({ result }) => {
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm text-gray-400">
         <div className="flex justify-between items-center">
           <div>
-            <span className="font-medium">Backtest Period:</span> {startDate} to {endDate}
+            <span className="font-medium">Backtest Period:</span> {dateMetadata.startDate} to {dateMetadata.endDate}
           </div>
           <div>
             <span className="font-medium">Bars Analyzed:</span> {result.bar_count}
@@ -184,7 +191,7 @@ export const BacktestResults: React.FC<BacktestResultsProps> = ({ result }) => {
                 </tr>
               </thead>
               <tbody>
-                {result.trades.slice(-10).reverse().map((trade, idx) => (
+                {recentTrades.map((trade, idx) => (
                   <tr key={idx} className="border-b border-gray-700 hover:bg-gray-700">
                     <td className="py-2 px-3 text-gray-300">
                       {new Date(trade.entry_time * 1000).toLocaleDateString()}
@@ -212,3 +219,5 @@ export const BacktestResults: React.FC<BacktestResultsProps> = ({ result }) => {
     </div>
   );
 };
+
+export const BacktestResults = React.memo(BacktestResultsComponent);

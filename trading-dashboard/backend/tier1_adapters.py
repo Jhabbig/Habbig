@@ -161,7 +161,8 @@ async def get_facade() -> RealtimeFacade:
     """Get or create global facade instance."""
     global facade
     if facade is None:
-        facade = RealtimeFacade(api_key="demo")
+        api_key = os.environ.get("MARKET_DATA_API_KEY", "demo")
+        facade = RealtimeFacade(api_key=api_key)
         await facade.connect()
     return facade
 

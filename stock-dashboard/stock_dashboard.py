@@ -111,6 +111,92 @@ def get_fx_rates() -> dict:
     return cached or _FX_FALLBACK
 
 
+# ── CryptoEdge companion feed ────────────────────────────────────────────────
+# The crypto dashboard is the other half of the merged Market Edge product
+# (one subscription unlocks both apps). It exposes a localhost-only signals
+# endpoint for machine consumers; we mirror it here so the stock page can
+# show live crypto signals alongside stocks, degrading gracefully when the
+# crypto service isn't running.
+CRYPTO_DASHBOARD_URL = os.environ.get("CRYPTO_DASHBOARD_URL", "http://127.0.0.1:8000")
+_CRYPTO_CACHE = {"data": None, "fetched_at": 0.0}
+_CRYPTO_TTL = 30  # seconds
+
+
+def get_crypto_signals():
+    """Fetch CryptoEdge per-asset signals, cached briefly; None when offline."""
+    now = time.time()
+    if now - _CRYPTO_CACHE["fetched_at"] < _CRYPTO_TTL:
+        return _CRYPTO_CACHE["data"]
+    _CRYPTO_CACHE["fetched_at"] = now
+    try:
+        req = urllib.request.Request(
+            f"{CRYPTO_DASHBOARD_URL}/_internal/bot/signals",
+            headers={"User-Agent": "stock-dashboard/market-edge"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(data, dict) and data:
+                    _CRYPTO_CACHE["data"] = data
+                    return data
+    except Exception as e:
+        logging.debug("CryptoEdge signals unavailable: %s", e)
+    _CRYPTO_CACHE["data"] = None
+    return None
+
+
+def build_crypto_section():
+    """Render the live crypto-signals strip fed by the CryptoEdge service."""
+    signals = get_crypto_signals()
+    if not signals:
+        body = (
+            '<div class="crypto-offline">CryptoEdge feed offline — crypto signals appear here '
+            'when the crypto dashboard is running. Your Market Edge subscription covers both apps.</div>'
+        )
+        count_badge = "offline"
+    else:
+        cards = []
+        for ticker in sorted(signals):
+            s = signals[ticker]
+            name = html.escape(str(ticker).upper().removesuffix("USDT"))
+            price = s.get("price") or 0
+            price_str = f"${price:,.2f}" if price >= 10 else f"${price:,.4f}"
+            delta = s.get("current_delta")
+            delta_str = f"{delta:+,.2f}" if isinstance(delta, (int, float)) else "—"
+            delta_cls = "profit-text" if isinstance(delta, (int, float)) and delta >= 0 else "loss-text"
+            rsi = s.get("rsi")
+            rsi_str = f"{rsi:.0f}" if isinstance(rsi, (int, float)) else "—"
+            win = s.get("hist_win_rate")
+            win_str = f"{win:.0f}%" if isinstance(win, (int, float)) else "—"
+            vol_label = html.escape(str(s.get("volatility_label", "")).title())
+            cards.append(f"""
+        <div class="crypto-card" id="cx-{name}">
+            <div class="crypto-card-head">
+                <span class="crypto-ticker">{name}</span>
+                <span class="pill">{vol_label}</span>
+            </div>
+            <div class="crypto-price" data-cx="price">{price_str}</div>
+            <div class="crypto-meta">
+                <span>5m <b class="{delta_cls}" data-cx="delta">{delta_str}</b></span>
+                <span>RSI <b data-cx="rsi">{rsi_str}</b></span>
+                <span>Win <b data-cx="win">{win_str}</b></span>
+            </div>
+        </div>""")
+        body = f'<div class="crypto-grid">{"".join(cards)}</div>'
+        count_badge = f"{len(signals)} assets live"
+
+    return f"""
+<!-- Crypto Signals (CryptoEdge companion) -->
+<div class="section" id="crypto-section">
+    <div class="section-head">
+        <div class="section-title">Crypto Signals <span class="crypto-source">via CryptoEdge</span></div>
+        <div class="section-badge" id="crypto-badge">{count_badge}</div>
+    </div>
+    {body}
+</div>
+"""
+
+
 def load_state():
     """Load bot state from JSON, retrying once on decode error (race condition)."""
     for attempt in range(2):
@@ -177,6 +263,8 @@ def build_html():
         else:
             bot_status = "Running"
             bot_status_color = "#22c55e"
+
+    crypto_section = build_crypto_section()
 
     # Ticker performance summary from trades
     ticker_stats = {}
@@ -977,6 +1065,24 @@ tbody tr:hover {{ background: var(--surface-hover); }}
 }}
 .trade-result.success {{ background: var(--green-light); border: 1px solid var(--green); }}
 .trade-result.error {{ background: var(--red-light); border: 1px solid var(--red); }}
+.nav-link {{
+    color: #f59e0b; text-decoration: none; font-weight: 600; font-size: 14px;
+    padding: 6px 12px; border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 8px;
+    transition: background 0.15s;
+}}
+.nav-link:hover {{ background: rgba(245, 158, 11, 0.1); }}
+.crypto-source {{ font-size: 12px; font-weight: 500; color: var(--text-muted, #94a3b8); margin-left: 6px; }}
+.crypto-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }}
+.crypto-card {{
+    background: var(--card, #ffffff); border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px; padding: 14px 16px;
+}}
+.crypto-card-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
+.crypto-ticker {{ font-weight: 700; font-size: 15px; letter-spacing: 0.02em; }}
+.crypto-price {{ font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin-bottom: 6px; }}
+.crypto-meta {{ display: flex; gap: 12px; font-size: 12px; color: var(--text-muted, #64748b); }}
+.crypto-meta b {{ font-variant-numeric: tabular-nums; }}
+.crypto-offline {{ color: var(--text-muted, #94a3b8); font-size: 13px; padding: 10px 2px; }}
 </style>
 </head>
 <body>
@@ -987,10 +1093,11 @@ tbody tr:hover {{ background: var(--surface-hover); }}
         <div class="nav-logo">S</div>
         <div>
             <div class="nav-title">StockSignal</div>
-            <div class="nav-subtitle">AI-Powered Market Predictions</div>
+            <div class="nav-subtitle">Market Edge &middot; AI Stock Predictions</div>
         </div>
     </div>
     <div class="nav-right">
+        <a id="crypto-link" class="nav-link" href="http://localhost:8000" title="CryptoEdge crypto signals — included in your Market Edge subscription">&#8646; Crypto</a>
         <div class="status-pill">
             <div class="status-dot"></div>
             {bot_status}
@@ -1035,6 +1142,8 @@ tbody tr:hover {{ background: var(--surface-hover); }}
         {prediction_cards}
     </div>
 </div>
+
+{crypto_section}
 
 <!-- Chart + Ticker Performance -->
 <div class="grid-2">
@@ -1632,6 +1741,56 @@ tbody tr:hover {{ background: var(--surface-hover); }}
   }}, 30000);
 }})();
 </script>
+<script>
+(function() {{
+  // Market Edge cross-nav: behind the gateway the companion crypto app
+  // lives on the sibling subdomain; locally it's port 8000.
+  var host = location.host;
+  if (host.split(':')[0].indexOf('stocks.') === 0) {{
+    document.getElementById('crypto-link').href =
+      location.protocol + '//' + host.replace(/^stocks\./, 'crypto.');
+  }}
+
+  // Live refresh of the CryptoEdge signals strip.
+  function fmtPrice(p) {{
+    if (typeof p !== 'number' || !p) return '—';
+    return '$' + p.toLocaleString(undefined, {{
+      minimumFractionDigits: 2, maximumFractionDigits: p >= 10 ? 2 : 4 }});
+  }}
+  async function refreshCrypto() {{
+    try {{
+      var r = await fetch('/api/crypto-signals', {{ credentials: 'same-origin' }});
+      if (!r.ok) return;
+      var sig = await r.json();
+      if (!sig || sig.error) return;
+      var n = 0;
+      Object.keys(sig).forEach(function(ticker) {{
+        var name = String(ticker).toUpperCase().replace(/USDT$/, '');
+        var card = document.getElementById('cx-' + name);
+        if (!card) return;
+        n++;
+        var s = sig[ticker];
+        var el = card.querySelector('[data-cx="price"]');
+        if (el) el.textContent = fmtPrice(s.price);
+        el = card.querySelector('[data-cx="delta"]');
+        if (el && typeof s.current_delta === 'number') {{
+          el.textContent = (s.current_delta >= 0 ? '+' : '') + s.current_delta.toFixed(2);
+          el.className = s.current_delta >= 0 ? 'profit-text' : 'loss-text';
+        }}
+        el = card.querySelector('[data-cx="rsi"]');
+        if (el && typeof s.rsi === 'number') el.textContent = s.rsi.toFixed(0);
+        el = card.querySelector('[data-cx="win"]');
+        if (el && typeof s.hist_win_rate === 'number') el.textContent = s.hist_win_rate.toFixed(0) + '%';
+      }});
+      var badge = document.getElementById('crypto-badge');
+      if (badge && n) badge.textContent = n + ' assets live';
+    }} catch (e) {{ /* crypto service offline — section stays as rendered */ }}
+  }}
+  if (document.getElementById('crypto-section')) {{
+    setInterval(refreshCrypto, 60000);
+  }}
+}})();
+</script>
 </body>
 </html>"""
     return page_html
@@ -1730,6 +1889,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "public, max-age=300")
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
+        elif self.path == "/api/crypto-signals":
+            signals = get_crypto_signals()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            body = signals if signals else {"error": "crypto feed offline"}
+            self.wfile.write(json.dumps(body).encode())
         else:
             self.send_response(404)
             self.end_headers()

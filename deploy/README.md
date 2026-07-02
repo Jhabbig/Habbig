@@ -9,24 +9,29 @@ Install on the production server:
 
 ```bash
 sudo bash deploy/install-services.sh
-sudo systemctl enable --now narve-gateway narve-crypto narve-weather \
-                            narve-sports narve-world narve-midterm \
-                            narve-traders narve-stock
+sudo systemctl enable --now narve-gateway narve-crypto narve-stock \
+                            narve-weather narve-midterm
 ```
+
+`install-services.sh` is the source of truth for what runs: it installs and
+enables the live units, and **stops + disables any parked/merged unit** still
+present from an earlier deploy. The gateway serves a parked notice (or a
+301 redirect for merged dashboards) on retired subdomains, and the
+`/admin/fleet` dashboard shows live state plus the lasting effects of the
+trim (captured redirects, parked-page visits, subs still attached).
 
 ## Files in this directory
 
 | File | Purpose |
 |---|---|
-| `install-services.sh` | Copies every `narve-*.service` file into `/etc/systemd/system/` and runs `systemctl daemon-reload`. Must be run as root. |
+| `install-services.sh` | Installs the live `narve-*.service` files into `/etc/systemd/system/`, stops/disables parked ones, runs `systemctl daemon-reload`. Must be run as root. |
 | `narve-gateway.service` | Runs `gateway/server.py` on port 7000. Depends on Redis. |
-| `narve-crypto.service` | Runs `crypto-dashboard/server.py` on port 8000. |
-| `narve-stock.service` | Runs `stock-dashboard/stock_dashboard.py` on port 8050. |
+| `narve-crypto.service` | Runs `crypto-dashboard/server.py` on port 8000 (Market Edge). |
+| `narve-stock.service` | Runs `stock-dashboard/stock_dashboard.py` on port 8050 (Market Edge). |
 | `narve-midterm.service` | Runs `midterm-dashboard/backend/main.py` on port 8051. |
-| `narve-traders.service` | Runs `top-traders-dashboard/server.py` on port 8052. |
-| `narve-weather.service` | Runs `polymarket_weather_dashboard/server.py` on port 5050. (And/or `polymarket_weather_bot/main.py` depending on which unit you enable.) |
-| `narve-sports.service` | Runs `sports-dashboard/sports_dashboard.py` on port 8888. |
-| `narve-world.service` | Runs `world-state-dashboard/server.py` on port 7050. |
+| `narve-weather.service` | Runs `polymarket_weather_dashboard/server.py` on port 5050 — includes the merged Disasters + Climate sections. |
+| `narve-health-monitor.sh` | Cron probe of the live services + public URLs. |
+| `parked/` | Unit files for parked/merged dashboards (sports, world, traders, centralbank, disasters, crypto-trackers, whale). Kept for reference; not installed. Move one back up and add it to `SERVICES` to revive it. |
 
 ## Conventions baked into every unit
 

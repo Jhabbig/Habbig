@@ -1,0 +1,258 @@
+{
+  "window": 504,
+  "stride": 5,
+  "horizon": 1,
+  "calibration": "platt",
+  "track_features": [
+    "ewma_var",
+    "rollcov_var",
+    "pca_loading",
+    "dmd_pred_ret",
+    "drawdown",
+    "momentum21",
+    "vol_rel",
+    "hmm_crisis_prob",
+    "pca_market_share",
+    "rmt_noise_frac",
+    "dmd_spectral_radius",
+    "rollcov_frob_speed",
+    "ewma_avg_corr"
+  ],
+  "raw_features": [
+    "logvol",
+    "logvol_5",
+    "logvol_21",
+    "log_absr",
+    "vol_rel_raw",
+    "state",
+    "state_5",
+    "state_21",
+    "mom5",
+    "mom21",
+    "drawdown_raw",
+    "ma_ratio",
+    "absr"
+  ],
+  "events": {
+    "vol_state": {
+      "readout_file": "readout_vol_state.npz",
+      "base_rate": 0.5101,
+      "auc": 0.9365,
+      "auc_ci": [
+        0.9257,
+        0.9464
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9432,
+      "brier_raw": 0.0977,
+      "brier_calibrated": 0.0977,
+      "ece_raw": 0.014,
+      "ece_calibrated": 0.0133,
+      "calibration": "platt",
+      "tuned_balanced_accuracy": 0.8703,
+      "tuned_recall": 0.8816,
+      "tuned_f1": 0.8742,
+      "tuned_threshold": 0.3764,
+      "track_auc": 0.8676,
+      "raw_auc": 0.936,
+      "top_features": [
+        [
+          "vol_rel_raw",
+          1.446
+        ],
+        [
+          "absr",
+          0.832
+        ],
+        [
+          "state",
+          0.647
+        ],
+        [
+          "logvol_21",
+          -0.509
+        ],
+        [
+          "vol_rel",
+          0.48
+        ]
+      ]
+    },
+    "vol_transition": {
+      "readout_file": "readout_vol_transition.npz",
+      "base_rate": 0.1295,
+      "auc": 0.6003,
+      "auc_ci": [
+        0.5661,
+        0.6374
+      ],
+      "auc_significant": true,
+      "average_precision": 0.1638,
+      "brier_raw": 0.2404,
+      "brier_calibrated": 0.113,
+      "ece_raw": 0.3436,
+      "ece_calibrated": 0.0205,
+      "calibration": "platt",
+      "tuned_balanced_accuracy": 0.5602,
+      "tuned_recall": 0.5261,
+      "tuned_f1": 0.2474,
+      "tuned_threshold": 0.1355,
+      "track_auc": 0.5463,
+      "raw_auc": 0.5831,
+      "top_features": [
+        [
+          "absr",
+          -0.681
+        ],
+        [
+          "state_5",
+          0.413
+        ],
+        [
+          "log_absr",
+          0.338
+        ],
+        [
+          "hmm_crisis_prob",
+          -0.3
+        ],
+        [
+          "logvol_5",
+          0.239
+        ]
+      ]
+    },
+    "big_move": {
+      "readout_file": "readout_big_move.npz",
+      "base_rate": 0.0942,
+      "auc": 0.6777,
+      "auc_ci": [
+        0.6412,
+        0.7153
+      ],
+      "auc_significant": true,
+      "average_precision": 0.197,
+      "brier_raw": 0.2336,
+      "brier_calibrated": 0.0832,
+      "ece_raw": 0.363,
+      "ece_calibrated": 0.0178,
+      "calibration": "platt",
+      "tuned_balanced_accuracy": 0.6181,
+      "tuned_recall": 0.6564,
+      "tuned_f1": 0.2304,
+      "tuned_threshold": 0.0899,
+      "track_auc": 0.5989,
+      "raw_auc": 0.6953,
+      "top_features": [
+        [
+          "logvol",
+          -0.82
+        ],
+        [
+          "logvol_5",
+          0.637
+        ],
+        [
+          "vol_rel_raw",
+          -0.396
+        ],
+        [
+          "state_5",
+          0.278
+        ],
+        [
+          "ewma_avg_corr",
+          -0.27
+        ]
+      ]
+    },
+    "drawdown": {
+      "readout_file": "readout_drawdown.npz",
+      "base_rate": 0.8536,
+      "auc": 0.9895,
+      "auc_ci": [
+        0.9859,
+        0.9925
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9982,
+      "brier_raw": 0.0395,
+      "brier_calibrated": 0.0319,
+      "ece_raw": 0.0552,
+      "ece_calibrated": 0.033,
+      "calibration": "platt",
+      "tuned_balanced_accuracy": 0.9467,
+      "tuned_recall": 0.966,
+      "tuned_f1": 0.9765,
+      "tuned_threshold": 0.5249,
+      "track_auc": 0.9846,
+      "raw_auc": 0.9877,
+      "top_features": [
+        [
+          "drawdown_raw",
+          2.538
+        ],
+        [
+          "drawdown",
+          2.356
+        ],
+        [
+          "ma_ratio",
+          -0.314
+        ],
+        [
+          "mom5",
+          -0.263
+        ],
+        [
+          "hmm_crisis_prob",
+          0.222
+        ]
+      ]
+    },
+    "trend_up": {
+      "readout_file": "readout_trend_up.npz",
+      "base_rate": 0.5082,
+      "auc": 0.9413,
+      "auc_ci": [
+        0.9304,
+        0.951
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9421,
+      "brier_raw": 0.0989,
+      "brier_calibrated": 0.0965,
+      "ece_raw": 0.0419,
+      "ece_calibrated": 0.0236,
+      "calibration": "platt",
+      "tuned_balanced_accuracy": 0.8654,
+      "tuned_recall": 0.8241,
+      "tuned_f1": 0.861,
+      "tuned_threshold": 0.5914,
+      "track_auc": 0.813,
+      "raw_auc": 0.9477,
+      "top_features": [
+        [
+          "ma_ratio",
+          3.185
+        ],
+        [
+          "mom5",
+          0.736
+        ],
+        [
+          "mom21",
+          0.466
+        ],
+        [
+          "rollcov_var",
+          0.194
+        ],
+        [
+          "state",
+          -0.177
+        ]
+      ]
+    }
+  }
+}

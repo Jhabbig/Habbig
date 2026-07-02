@@ -30,9 +30,11 @@ LOG="/tmp/narve-health.log"
 STATE_PREFIX="/tmp/narve-status"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ENV_FILE="/home/julianhabbig/Polymarket/gateway/.env.production"
-SERVICES=(crypto midterm sports stock traders weather world)
-DASHBOARDS=(sports.narve.ai weather.narve.ai world.narve.ai crypto.narve.ai
-            midterm.narve.ai traders.narve.ai climate.narve.ai)
+# Live products only — parked services (sports, world, traders, centralbank,
+# crypto-trackers, whale) are intentionally stopped and merged ones
+# (disasters, climate) redirect, so probing them would be pure noise.
+SERVICES=(crypto midterm stock weather)
+DASHBOARDS=(weather.narve.ai crypto.narve.ai midterm.narve.ai stocks.narve.ai)
 WORST_LEVEL=ok  # ok < warn < crit
 
 bump() {
@@ -98,29 +100,7 @@ for url in "${DASHBOARDS[@]}"; do
     esac
 done
 
-# 4. sports quota-exhausted state (degraded but not down)
-sports_status=$(curl -s --max-time 6 http://127.0.0.1:8888/api/health 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null)
-case "$sports_status" in
-    healthy)
-        log "OK    sports /api/health status=healthy"
-        ;;
-    degraded-quota-exhausted)
-        log "WARN  sports /api/health status=degraded-quota-exhausted (the-odds-api quota burnt)"
-        bump warn
-        echo "$NOW sports quota exhausted" >> "${STATE_PREFIX}.warn"
-        ;;
-    degraded)
-        log "WARN  sports /api/health status=degraded (a critical key is missing)"
-        bump warn
-        echo "$NOW sports key missing" >> "${STATE_PREFIX}.warn"
-        ;;
-    *)
-        # Empty or unknown — not necessarily bad, /api/health may need auth
-        ;;
-esac
-
-# 5. Worst-level summary
+# 4. Worst-level summary
 log "SUMMARY worst=$WORST_LEVEL"
 echo "$NOW $WORST_LEVEL" > "${STATE_PREFIX}.${WORST_LEVEL}"
 

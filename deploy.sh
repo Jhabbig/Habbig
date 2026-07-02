@@ -15,21 +15,18 @@ SERVER="${DEPLOY_SERVER:?Set DEPLOY_SERVER env var (e.g. user@host)}"
 REMOTE_DIR="~/Polymarket"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Sites that get deployed
+# Sites that get deployed — live products + bots only. Parked dashboards
+# (sports, world, traders, truth, airace, whale, ...) stay in the repo but
+# are no longer synced or run; the gateway serves a parked notice on their
+# subdomains and the fleet dashboard (/admin/fleet) tracks them.
 SITES=(
     gateway
     crypto-dashboard
     stock-dashboard
-    sports-dashboard
     polymarket_weather_dashboard
-    world-state-dashboard
     midterm-dashboard
-    Dashboard-x-truth-research-prediction
     polymarket-bot
     polymarket_weather_bot
-    top-traders-dashboard
-    ai-race-dashboard
-    whale-dashboard
 )
 
 # Excluded from rsync
