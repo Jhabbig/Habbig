@@ -93,6 +93,17 @@ LEGACY_SUBDOMAIN_REDIRECTS: dict = CONFIG.get("legacy_subdomain_redirects", {})
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
 
+# Upstream host resolution. Bare metal/systemd runs every dashboard on
+# localhost; docker-compose runs each in its own container, reachable only by
+# a network alias. The pattern substitutes {key} (underscores sanitized to
+# dashes) so compose can set GATEWAY_UPSTREAM_HOST_PATTERN=dash-{key} while
+# bare metal keeps the 127.0.0.1 default.
+UPSTREAM_HOST_PATTERN = os.environ.get("GATEWAY_UPSTREAM_HOST_PATTERN", "127.0.0.1")
+
+
+def upstream_host(dashboard_key: str) -> str:
+    return UPSTREAM_HOST_PATTERN.replace("{key}", dashboard_key.replace("_", "-"))
+
 # ── Stripe config ──────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
@@ -268,6 +279,124 @@ DASHBOARD_PREVIEWS = {
             "Updated every 6 hours (Form 4 / 13D feeds within hours of filing)",
         ],
     },
+    "centralbank": {
+        "tagline": "Every central bank on one screen. Policy rates, the decision calendar, the market-implied path, and Polymarket FOMC mispricings — see where rates are going before the statement drops.",
+        "features": [
+            {"icon": "\U0001f3db️", "title": "Global Rate Board", "desc": "Fed, ECB, BoE, BoJ, and more — current policy rates with the full decision history."},
+            {"icon": "\U0001f4c5", "title": "Decision Calendar", "desc": "Every upcoming rate decision with countdown, prior moves, and consensus expectations."},
+            {"icon": "\U0001f4c8", "title": "Implied Rate Path", "desc": "Market-implied path from futures pricing, charted against the official dot plot."},
+            {"icon": "\U0001f3af", "title": "FOMC Market Edge", "desc": "Polymarket rate-decision markets overlaid with the implied path to surface mispricings."},
+            {"icon": "\U0001f4dd", "title": "Statement Stance", "desc": "Hawkish/dovish stance tracking across successive statements and pressers."},
+            {"icon": "\U0001f514", "title": "Decision Alerts", "desc": "Know the moment a decision lands and how markets reprice around it."},
+        ],
+        "includes": [
+            "Policy rates and history for the major central banks",
+            "Full decision calendar with market expectations",
+            "Market-implied rate path vs official guidance",
+            "Polymarket FOMC and rate-market overlays",
+            "Statement stance tracking over time",
+            "Time-series charts for every tracked bank",
+        ],
+    },
+    "airace": {
+        "tagline": "Who's winning the AI race? Frontier-lab leaderboards on the benchmarks that matter, the capability frontier over time, and live AI prediction markets — one tab for the fastest-moving story in tech.",
+        "features": [
+            {"icon": "\U0001f3c1", "title": "Frontier Leaderboard", "desc": "Best public scores on MMLU-Pro, GPQA Diamond, SWE-bench Verified, AIME, HLE, LMArena Elo, and LiveCodeBench."},
+            {"icon": "\U0001f4c8", "title": "Capability Frontier", "desc": "How the state of the art has moved over time, lab by lab and benchmark by benchmark."},
+            {"icon": "\U0001f52e", "title": "AI Prediction Markets", "desc": "Live Polymarket odds on model releases, benchmark milestones, and lab races."},
+            {"icon": "\U0001f4f0", "title": "Release Tracker", "desc": "Model launches and capability announcements across the major frontier labs."},
+            {"icon": "⚖️", "title": "Lab vs Lab", "desc": "Head-to-head comparisons across benchmarks, modalities, and timelines."},
+            {"icon": "\U0001f4ca", "title": "Milestone Watch", "desc": "Progress toward headline milestones with market-implied timelines."},
+        ],
+        "includes": [
+            "Leaderboards across 7+ frontier benchmarks",
+            "Capability-over-time frontier charts",
+            "Live AI-related Polymarket markets",
+            "Model release and announcement tracking",
+            "Lab-by-lab comparison views",
+            "Regular benchmark data refreshes",
+        ],
+    },
+    "crypto_trackers": {
+        "tagline": "Every coin, every venue, no fortune-telling. Multi-exchange spot and perps, cross-exchange arbitrage, funding rates, DeFi TVL, and Fear & Greed — mirrored from canonical sources with verifiable timestamps.",
+        "features": [
+            {"icon": "\U0001fa99", "title": "Every-Coin Trackers", "desc": "Spot and perpetuals across major exchanges, with per-source latency shown for every datapoint."},
+            {"icon": "⚖️", "title": "Cross-Exchange Arb", "desc": "Price spreads across venues surfaced in real time, with the venues to execute both legs."},
+            {"icon": "\U0001f4b8", "title": "Funding Rates", "desc": "Perpetual funding across exchanges — spot the crowded side of the boat."},
+            {"icon": "\U0001f3e6", "title": "DeFi TVL", "desc": "Protocol and chain TVL tracking from canonical on-chain sources."},
+            {"icon": "\U0001f628", "title": "Fear & Greed", "desc": "Sentiment gauges tracked over time against price."},
+            {"icon": "✅", "title": "Data Fidelity First", "desc": "No neural-net predictions — every datapoint mirrored from source-of-truth with verifiable timestamps."},
+        ],
+        "includes": [
+            "Multi-exchange spot + perpetuals coverage",
+            "Cross-exchange arbitrage spread scanner",
+            "Funding-rate comparison across venues",
+            "DeFi TVL by protocol and chain",
+            "Fear & Greed index history",
+            "Per-source latency and timestamp verification",
+        ],
+    },
+    "religion": {
+        "tagline": "The global religious landscape, tracked like a market. World religions, a curated NRM and cult watchlist, USCIRF religious-freedom designations, and live signal from Polymarket religion markets.",
+        "features": [
+            {"icon": "\U0001f30d", "title": "World Religions Atlas", "desc": "Adherents, trends, and geography for the world's major religions."},
+            {"icon": "\U0001f440", "title": "NRM / Cult Watchlist", "desc": "Curated watchlist of new religious movements and notable historical cults."},
+            {"icon": "\U0001f4dc", "title": "USCIRF Designations", "desc": "Religious-freedom designations and country-level tracking."},
+            {"icon": "\U0001f4c8", "title": "Religion Markets", "desc": "Live Polymarket religion-tagged markets — papal succession, religious events, and more."},
+            {"icon": "\U0001f4f0", "title": "News Signal", "desc": "Public RSS and news feeds filtered to the religious landscape, including Vatican sources."},
+            {"icon": "\U0001f514", "title": "Watchlist Alerts", "desc": "Alerts on watchlist developments and market moves."},
+        ],
+        "includes": [
+            "World religions data and trends",
+            "Curated NRM / cult watchlist",
+            "USCIRF designation tracking",
+            "Live Polymarket religion markets",
+            "News and RSS signal feeds",
+            "Alert rules on watchlist entries",
+        ],
+    },
+    "voters": {
+        "tagline": "The state of voters around the world. Who they are, what they want, and when they vote next — an atlas of voter concerns and upcoming elections, country by country.",
+        "features": [
+            {"icon": "\U0001f5f3️", "title": "Election Timeline", "desc": "Every upcoming national election on one scrolling timeline, 18 months out."},
+            {"icon": "\U0001f30d", "title": "Country Atlas", "desc": "Voter counts, top concerns, and next-vote countdowns for every tracked country, tiered by depth."},
+            {"icon": "\U0001f4ca", "title": "Voter Concerns", "desc": "The issues voters actually rank first — inflation, security, housing — with share-of-concern data."},
+            {"icon": "\U0001f4c8", "title": "Concern → Policy Chains", "desc": "How voter concerns translate into policy and market impact (expanding coverage)."},
+            {"icon": "\U0001f50e", "title": "Tiered Depth", "desc": "Tier A full-depth countries, Tier B election-cycle deep dives, Tier C watchlist."},
+            {"icon": "\U0001f4dd", "title": "Curated Data", "desc": "Hand-curated political context with a review queue and freshness dates."},
+        ],
+        "includes": [
+            "Global election calendar, 18 months forward",
+            "Country-by-country voter profiles",
+            "Top-concern rankings with data shares",
+            "Tiered coverage depth (A/B/C)",
+            "Curated, dated political context",
+            "Regular curation refreshes",
+        ],
+    },
+    "truth": {
+        "tagline": "The prediction-extraction engine. A two-stage LLM pipeline reads X, TruthSocial, Reddit, and RSS, turns loose talk into structured, falsifiable predictions, prices every one against live Polymarket & Kalshi odds, and keeps score — so you follow the voices that are actually right.",
+        "features": [
+            {"icon": "\U0001f9e0", "title": "LLM Extraction Engine", "desc": "Two-stage extraction: precise regex first (free, fast), then a Claude-powered parser for hedged, indirect, multi-clause predictions. Structured JSON output, content-hash cached so repeat posts cost nothing."},
+            {"icon": "\U0001f4e1", "title": "Four Live Sources", "desc": "X, TruthSocial, Reddit, and any RSS/Substack feed, scraped every 5 minutes and fed straight into the extractor."},
+            {"icon": "\U0001f3af", "title": "Market Matching", "desc": "Every extracted prediction is matched to Polymarket AND Kalshi markets — multi-outcome aware, so a 'Trump will win' post can't be misrouted to the Harris market."},
+            {"icon": "\U0001f4c8", "title": "Best-Side EV Signals", "desc": "For each matched prediction the engine prices YES vs NO at the live quote and fires the higher-EV side as a BUY signal, filtered by source credibility."},
+            {"icon": "\U0001f3c6", "title": "Credibility Leaderboard", "desc": "Bayesian-smoothed, decay-weighted accuracy per source with Brier-score calibration — the engine learns who to trust by settling every call."},
+            {"icon": "\U0001f9fe", "title": "Paper-Trade Ledger + Backtest", "desc": "Every signal opens a $1 paper trade, settled on market resolution. Backtest with tunable thresholds: ROI, Sharpe, max drawdown, P&L curve."},
+        ],
+        "includes": [
+            "Two-stage regex + Claude LLM prediction extraction (content-hash cached)",
+            "X, TruthSocial, Reddit, and RSS/Substack scraping every 5 minutes",
+            "Polymarket + Kalshi market matching with multi-outcome disambiguation",
+            "Best-side EV scoring and BUY YES / BUY NO signals",
+            "Source credibility leaderboard with Brier calibration",
+            "Automatic $1 paper-trade ledger with live P&L",
+            "Backtest harness: ROI, annualised Sharpe, max drawdown, category breakdown",
+            "Liquidity-aware EV (order-book walk, slippage at $100/$1k/$10k)",
+            "Cross-venue Polymarket vs Kalshi arbitrage tab",
+            "Public JSON API + Telegram signal alerts and query bot",
+        ],
+    },
 }
 
 # Production flag: set PRODUCTION=1 on the deployed server. Disables the
@@ -360,7 +489,7 @@ async def _health_check_loop():
                 stats = _upstream_stats.setdefault(key, {})
                 stats["last_check"] = started
                 try:
-                    resp = await probe_client.get(f"http://127.0.0.1:{port}/")
+                    resp = await probe_client.get(f"http://{upstream_host(key)}:{port}/")
                     healthy = resp.status_code < 500
                     _upstream_health[key] = healthy
                     if healthy:
@@ -4731,7 +4860,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     target_port = dash_cfg["target"]
     path = forced_path if forced_path is not None else request.url.path
     query = request.url.query
-    upstream_url = f"http://127.0.0.1:{target_port}{path}"
+    upstream_url = f"http://{upstream_host(key)}:{target_port}{path}"
     if query:
         upstream_url += f"?{query}"
 
@@ -4898,6 +5027,49 @@ def _render_unified_panel(title: str, message: str, accent: str = "#6366f1",
 </body></html>"""
 
 
+def _inject_ws_prefix_shim(content: bytes, dash_key: str) -> bytes:
+    """Wrap window.WebSocket so root-absolute WS URLs stay under /d/<key>/.
+
+    Browsers send no Referer on WebSocket handshakes, so a dashboard framed
+    at /d/<key>/ that opens ws://<host>/ws would otherwise arrive at the apex
+    with no way to recover which dashboard it belongs to. The shim rewrites
+    same-host WS URLs to the /d/<key> prefix, which the WS proxy routes
+    explicitly. Injected at the top of <head> so it runs before any app JS.
+    """
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    shim = (
+        "<script>(function(){"
+        f"var PFX='/d/{dash_key}';"
+        "var NativeWS=window.WebSocket;if(!NativeWS)return;"
+        "function rw(u){try{var url=new URL(u,location.href);"
+        "if((url.protocol==='ws:'||url.protocol==='wss:')&&url.host===location.host"
+        "&&url.pathname.indexOf(PFX+'/')!==0){url.pathname=PFX+url.pathname;return url.href;}"
+        "}catch(e){}return u;}"
+        "var W=function(u,p){return p===undefined?new NativeWS(rw(u)):new NativeWS(rw(u),p);};"
+        "W.prototype=NativeWS.prototype;"
+        "W.CONNECTING=NativeWS.CONNECTING;W.OPEN=NativeWS.OPEN;"
+        "W.CLOSING=NativeWS.CLOSING;W.CLOSED=NativeWS.CLOSED;"
+        "window.WebSocket=W;})();</script>"
+    )
+    lower = text.lower()
+    head_open = lower.find("<head")
+    if head_open != -1:
+        close = lower.find(">", head_open)
+        if close != -1:
+            text = text[:close + 1] + shim + text[close + 1:]
+            return text.encode("utf-8")
+    html_open = lower.find("<html")
+    if html_open != -1:
+        close = lower.find(">", html_open)
+        if close != -1:
+            text = text[:close + 1] + shim + text[close + 1:]
+            return text.encode("utf-8")
+    return (shim + text).encode("utf-8")
+
+
 @app.api_route("/d/{dash_key}", methods=["GET", "HEAD"])
 async def unified_proxy_bare(request: Request, dash_key: str):
     """Normalize /d/<key> to /d/<key>/ so relative URLs resolve under the prefix."""
@@ -4976,7 +5148,7 @@ async def unified_proxy(request: Request, dash_key: str, sub_path: str):
 
     path = "/" + sub_path
     query = request.url.query
-    upstream_url = f"http://127.0.0.1:{dash_cfg['target']}{path}"
+    upstream_url = f"http://{upstream_host(dash_key)}:{dash_cfg['target']}{path}"
     if query:
         upstream_url += f"?{query}"
 
@@ -5035,6 +5207,33 @@ async def unified_proxy(request: Request, dash_key: str, sub_path: str):
         k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
     }
 
+    # Dashboards ship their own anti-framing headers (X-Frame-Options: DENY,
+    # frame-ancestors 'none'). Fine when they're the top-level document on a
+    # subdomain, fatal inside the unified view: browsers enforce the most
+    # restrictive of the duplicated headers and blank the iframe. Strip the
+    # upstream frame directives here — the gateway's SecurityHeadersMiddleware
+    # appends the single authoritative policy (SAMEORIGIN / 'self') instead.
+    # Upstreams may legally send multiple CSP headers (httpx comma-joins
+    # them), so remove the directive per policy rather than regexing the
+    # joined value — a naive regex would eat unrelated directives through
+    # the comma.
+    resp_headers.pop("x-frame-options", None)
+    _upstream_csp = resp_headers.get("content-security-policy")
+    if _upstream_csp and "frame-ancestors" in _upstream_csp.lower():
+        _cleaned_policies = []
+        for _policy in _upstream_csp.split(","):
+            _directives = [d.strip() for d in _policy.split(";") if d.strip()]
+            _directives = [
+                d for d in _directives
+                if not d.lower().startswith("frame-ancestors")
+            ]
+            if _directives:
+                _cleaned_policies.append("; ".join(_directives))
+        if _cleaned_policies:
+            resp_headers["content-security-policy"] = ", ".join(_cleaned_policies)
+        else:
+            resp_headers.pop("content-security-policy", None)
+
     # Keep upstream redirects inside the /d/<key> prefix.
     loc = resp_headers.get("location")
     if loc and loc.startswith("/") and not loc.startswith("//"):
@@ -5050,9 +5249,10 @@ async def unified_proxy(request: Request, dash_key: str, sub_path: str):
             cache.set_api(dash_key, cache_path, upstream.content, content_type)
 
     # Live updates inside tabs: the SSE client talks to /api/stream on this
-    # same origin, so it works unchanged under the unified view.
+    # same origin, so it works unchanged under the unified view. The WS shim
+    # keeps the dashboard's own WebSockets routable under /d/<key>/.
     if "text/html" in (content_type or ""):
-        content = _inject_sse_client(content)
+        content = _inject_ws_prefix_shim(_inject_sse_client(content), dash_key)
     if content is not upstream.content:
         resp_headers.pop("content-length", None)
         resp_headers["content-length"] = str(len(content))
@@ -5216,7 +5416,7 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
     target_port = dash_cfg["target"]
     query = ws.url.query
-    upstream_url = f"ws://127.0.0.1:{target_port}/{full_path}"
+    upstream_url = f"ws://{upstream_host(key)}:{target_port}/{full_path}"
     if query:
         upstream_url += f"?{query}"
 

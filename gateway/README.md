@@ -7,14 +7,22 @@ per-dashboard subscriptions so users can pick and mix.
 ## Domain layout
 
 ```
-narve.ai                  → apex: login, signup, my dashboards, billing
-crypto.narve.ai           → proxy → :8000 (crypto-dashboard)
-markets.narve.ai          → proxy → :8050 (stock-dashboard)
-midterm.narve.ai          → proxy → :8051 (midterm-dashboard)
-traders.narve.ai          → proxy → :8052 (top-traders-dashboard)
-weather.narve.ai          → proxy → :5050 (polymarket_weather_dashboard)
-sports.narve.ai           → proxy → :8888 (sports-dashboard)
-world.narve.ai            → proxy → :7050 (world-state-dashboard)
+narve.ai                  → apex: login, signup, my dashboards, billing, /one
+crypto.narve.ai           → proxy → :8000  (crypto-dashboard)
+stocks.narve.ai           → proxy → :8050  (stock-dashboard)
+midterm.narve.ai          → proxy → :8051  (midterm-dashboard)
+traders.narve.ai          → proxy → :8052  (top-traders-dashboard)
+weather.narve.ai          → proxy → :5050  (polymarket_weather_dashboard)
+sports.narve.ai           → proxy → :8888  (sports-dashboard)
+world.narve.ai            → proxy → :7050  (world-state-dashboard)
+voters.narve.ai           → proxy → :7051  (voters-dashboard)
+cb.narve.ai               → proxy → :7060  (centralbank-dashboard)
+truth.narve.ai            → proxy → :18789 (Dashboard-x-truth-research-prediction)
+ai.narve.ai               → proxy → :7070  (ai-race-dashboard)
+trackers.narve.ai         → proxy → :7054  (crypto-trackers-dashboard)
+religion.narve.ai         → proxy → :7062  (religion-dashboard)
+whale.narve.ai            → proxy → :8053  (whale-dashboard)
+disasters/climate.narve.ai → 301 → weather (merged)
 ```
 
 Change any subdomain name in `config.json`. The internal `key` stays the same
@@ -31,8 +39,8 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
   pages — they just go unused. The gateway forwards `X-Gateway-User-Id` and
   `X-Gateway-User-Email` headers downstream so the dashboards can trust the
   identity if they ever want to read it.
-- **WebSocket support** for crypto and sports, flagged by `supports_websocket`
-  in `config.json`.
+- **WebSocket support** for crypto, sports, and whale, flagged by
+  `supports_websocket` in `config.json`.
 - **Narve One unified view.** `/one` consolidates every dashboard into one
   tabbed page. Live products render fully inside same-origin iframes served by
   the `/d/<key>/…` **path proxy** (same auth, subscription, parked/merged,
@@ -41,15 +49,18 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
   appear as status cards, so the whole fleet is visible from one screen.
   Three supporting mechanisms: root-absolute asset/API requests that escape an
   iframe's prefix are recovered via a same-origin `Referer` check in the
-  catch-all and 307'd back under `/d/<key>/`; WebSocket handshakes accept
-  either an explicit `/d/<key>/` prefix or (since browsers send no Referer on
-  WS upgrades) fall back to the unique live `supports_websocket` dashboard;
+  catch-all and 307'd back under `/d/<key>/`; WebSockets keep working because
+  the proxy injects a tiny shim into framed HTML that rewrites same-host WS
+  URLs under `/d/<key>/` (browsers send no Referer on WS upgrades, so the
+  prefix can't be recovered server-side; a legacy fallback still routes
+  prefix-less upgrades when exactly one live dashboard speaks WebSocket);
   and the security headers use `X-Frame-Options: SAMEORIGIN` +
   `frame-ancestors 'self'` so the gateway may frame itself while external
-  framing stays blocked.
+  framing stays blocked (upstream anti-framing headers are stripped on the
+  `/d/` path only).
 - **Localhost dev bypass:** when the request host is `localhost` / `*.localhost`
   and `PRODUCTION` is unset, the gateway auto-creates a `dev@local` user with
-  all 7 dashboards active so you can preview without signing up. This is
+  every dashboard active so you can preview without signing up. This is
   **disabled automatically when `PRODUCTION=1`**.
 
 ## Files
@@ -85,7 +96,7 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
 
 ```bash
 pip install -r gateway/requirements.txt
-./start_dashboards.sh restart          # boots all 7 dashboards + gateway
+./start_dashboards.sh restart          # boots the whole fleet + gateway
 open http://localhost:7000             # auto-logs you in as dev@local
 ```
 
@@ -119,7 +130,7 @@ See **`DEPLOY_NARVE.md`** for the full step-by-step checklist. Short version:
      - service: http_status:404
    ```
 5. Run `./gateway/setup_cloudflare.sh <tunnel-id>` to register DNS routes
-   for the apex + all 7 subdomains at once.
+   for the apex + every subdomain in config.json at once.
 6. Flip to production mode on the host:
    ```bash
    export PRODUCTION=1

@@ -19,8 +19,6 @@
       "monthly_cents": 1999,
       "annual_cents": 19900,
       "supports_websocket": true,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "price_1TJXuZQq4pCmZ517QOsgoeAg",
       "stripe_price_annual": "price_1TJXuaQq4pCmZ517TerWA5ET"
     },
@@ -45,8 +43,6 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "price_1TJXudQq4pCmZ517r5kGGPg8",
       "stripe_price_annual": "price_1TJXueQq4pCmZ517BA5k30Tc"
     },
@@ -97,8 +93,6 @@
       "monthly_cents": 1299,
       "annual_cents": 12900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
       "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
     },
@@ -125,8 +119,6 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
     },
@@ -139,8 +131,6 @@
       "monthly_cents": 1499,
       "annual_cents": 14900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "TODO_TRUTH_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_TRUTH_STRIPE_ANNUAL"
     },
@@ -153,8 +143,6 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
     },
@@ -181,8 +169,6 @@
       "monthly_cents": 1499,
       "annual_cents": 14900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "TODO_TRACKERS_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_TRACKERS_STRIPE_ANNUAL"
     },
@@ -195,8 +181,6 @@
       "monthly_cents": 599,
       "annual_cents": 5900,
       "supports_websocket": false,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": null,
       "stripe_price_annual": null
     },
@@ -209,10 +193,20 @@
       "monthly_cents": 1799,
       "annual_cents": 17900,
       "supports_websocket": true,
-      "hidden": true,
-      "parked": true,
       "stripe_price_monthly": "TODO_set_stripe_price_id",
       "stripe_price_annual": "TODO_set_stripe_price_id"
+    },
+    "voters": {
+      "subdomain": "voters",
+      "target": 7051,
+      "display_name": "Voters",
+      "description": "The state of voters worldwide — who they are, what they want, upcoming elections",
+      "accent": "#84cc16",
+      "monthly_cents": 599,
+      "annual_cents": 5900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_VOTERS_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_VOTERS_STRIPE_ANNUAL"
     }
   }
 }

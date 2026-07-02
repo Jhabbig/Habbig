@@ -1,0 +1,36 @@
+[Unit]
+Description=Narve Religion & Cults Tracker (port 7062)
+After=network.target
+
+[Service]
+# ALERTS_DB_PATH must point somewhere writable — the app's default
+# (/app/data/alerts.sqlite) only exists inside its Docker image and crashes
+# a bare-metal boot at import time.
+# BIND_HOST stays on loopback: this app has no SSO gating of its own, so a
+# 0.0.0.0 bind would expose the paid dashboard around the gateway paywall.
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/religion-dashboard
+Environment=ALERTS_DB_PATH=/home/julianhabbig/Polymarket/religion-dashboard/data/alerts.sqlite
+Environment=BIND_HOST=127.0.0.1
+ExecStartPre=/bin/mkdir -p /home/julianhabbig/Polymarket/religion-dashboard/data
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/religion-dashboard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,14 @@
+# Healthchecks use python (stdlib http.client) instead of curl — the
+# dashboard images are python:3.12-slim, which ships no curl. "Healthy"
+# mirrors the gateway's own probe: any status below 500 (auth-gated
+# dashboards answer 401/302 to an unauthenticated probe, which is fine;
+# 503 means the SSO secret is missing).
+#
+# Cross-container proxying: the gateway resolves upstreams via
+# GATEWAY_UPSTREAM_HOST_PATTERN=dash-{key} (underscores sanitized to
+# dashes), and every dashboard service carries a matching dash-<key>
+# network alias. On bare metal / systemd the pattern defaults to 127.0.0.1.
+
 services:
   redis:
     image: redis:7-alpine
@@ -15,6 +26,8 @@ services:
     ports:
       - "127.0.0.1:7000:7000"
     env_file: ./gateway/.env
+    environment:
+      GATEWAY_UPSTREAM_HOST_PATTERN: "dash-{key}"
     volumes:
       - gateway-data:/app/data
     restart: unless-stopped
@@ -38,8 +51,12 @@ services:
     volumes:
       - crypto-data:/app/data
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-crypto
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8000,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -50,8 +67,12 @@ services:
       - "8050"
     env_file: ./gateway/.env.production
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-stocks
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8050,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -62,8 +83,12 @@ services:
       - "8051"
     env_file: ./gateway/.env.production
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-midterm
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8051/"]
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8051,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -74,18 +99,189 @@ services:
       - "5050"
     env_file: ./gateway/.env.production
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-weather
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',5050,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
 
-  # climate + disasters were merged into the weather service: they run as
-  # tabs of the weather dashboard with APIs under /api/climate/* and
-  # /api/disasters/*. Parked dashboards (sports, world, top-traders,
-  # centralbank, airace, crypto-trackers, religion, whale) are no longer
-  # composed at all — the gateway serves a parked notice on their
-  # subdomains and /admin/fleet tracks the effects.
+  # ── Revived fleet ──────────────────────────────────────────────────────
+  # Every dashboard is live again. climate + disasters stay merged into the
+  # weather service (tabs with APIs under /api/climate/* and
+  # /api/disasters/*). The gateway does NOT depends_on these — it circuit-
+  # breaks per upstream, so a sick dashboard degrades to an offline notice
+  # instead of blocking the whole stack. Most of these gate every route
+  # behind GATEWAY_SSO_SECRET (503 without it), so gateway/.env.production
+  # must define it for healthchecks and proxying to work.
+
+  sports:
+    build: ./sports-dashboard
+    expose:
+      - "8888"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-sports
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8888,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  world:
+    build: ./world-state-dashboard
+    expose:
+      - "7050"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-world
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7050,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  top-traders:
+    build: ./top-traders-dashboard
+    # The app's __main__ binds 127.0.0.1 (right for bare metal, unreachable
+    # cross-container) — run it via uvicorn on 0.0.0.0 inside the container.
+    command: ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8052"]
+    expose:
+      - "8052"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-top-traders
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8052,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  centralbank:
+    build: ./centralbank-dashboard
+    expose:
+      - "7060"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-centralbank
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7060,timeout=4)\ntry:\n    c.request('GET','/healthz')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  truth:
+    build: ./Dashboard-x-truth-research-prediction
+    expose:
+      - "18789"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-truth
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',18789,timeout=4)\ntry:\n    c.request('GET','/health')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  airace:
+    build: ./ai-race-dashboard
+    expose:
+      - "7070"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-airace
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7070,timeout=4)\ntry:\n    c.request('GET','/api/health')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  crypto-trackers:
+    build: ./crypto-trackers-dashboard
+    expose:
+      - "7054"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-crypto-trackers
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7054,timeout=4)\ntry:\n    c.request('GET','/healthz')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  religion:
+    build: ./religion-dashboard
+    # No SSO gating of its own — reachable only inside this compose network
+    # (expose, never ports:), so the gateway remains its only public door.
+    expose:
+      - "7062"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-religion
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7062,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  whale:
+    build: ./whale-dashboard
+    expose:
+      - "8053"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-whale
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',8053,timeout=4)\ntry:\n    c.request('GET','/')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  voters:
+    build: ./voters-dashboard
+    expose:
+      - "7051"
+    env_file: ./gateway/.env.production
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - dash-voters
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import http.client,sys\nc=http.client.HTTPConnection('127.0.0.1',7051,timeout=4)\ntry:\n    c.request('GET','/healthz')\n    s=c.getresponse().status\nexcept Exception:\n    sys.exit(1)\nsys.exit(0 if s<500 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   gateway-data:

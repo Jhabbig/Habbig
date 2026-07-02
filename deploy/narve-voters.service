@@ -1,0 +1,30 @@
+[Unit]
+Description=Narve Voters Dashboard (port 7051)
+After=network.target
+
+[Service]
+# Required env vars: GATEWAY_SSO_SECRET
+# Note: This service loads the shared gateway .env but only needs the above vars
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/voters-dashboard
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/voters-dashboard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

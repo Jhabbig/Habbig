@@ -8,13 +8,12 @@ set -e
 if [ "$(id -u)" -ne 0 ]; then echo "Error: must run as root (sudo)"; exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Live products only. Parked dashboards (storefront-hidden, services stopped)
-# and merged ones keep their unit files under deploy/parked/ for reference.
-SERVICES="narve-gateway narve-crypto narve-stock narve-weather narve-midterm"
-# Units retired by the storefront trim: stopped + disabled on upgrade so an
-# existing box actually sheds them. The gateway serves a parked notice (or a
-# redirect for merged dashboards) on their subdomains.
-PARKED="narve-sports narve-world narve-traders narve-centralbank narve-disasters narve-crypto-trackers narve-whale"
+# The whole fleet is live. Only merged dashboards (absorbed into another
+# service) keep their unit files under deploy/parked/ for reference.
+SERVICES="narve-gateway narve-crypto narve-stock narve-weather narve-midterm narve-sports narve-world narve-traders narve-centralbank narve-truth narve-airace narve-crypto-trackers narve-religion narve-whale narve-voters"
+# Merged dashboards: stopped + disabled on upgrade so an existing box sheds
+# them. The gateway 301-redirects their subdomains to the absorbing product.
+PARKED="narve-disasters"
 
 echo "Installing systemd service units..."
 for svc in $SERVICES; do
@@ -22,7 +21,7 @@ for svc in $SERVICES; do
     echo "  Installed $svc.service"
 done
 
-echo "Stopping + disabling parked/merged services (if present)..."
+echo "Stopping + disabling merged services (if present)..."
 for svc in $PARKED; do
     if systemctl list-unit-files "$svc.service" --no-legend 2>/dev/null | grep -q "$svc"; then
         systemctl disable --now "$svc" 2>/dev/null || true
@@ -47,7 +46,9 @@ fi
 
 echo ""
 echo "Done. To start everything:"
-echo "  sudo systemctl start narve-crypto narve-stock narve-weather narve-midterm"
+echo "  sudo systemctl start narve-crypto narve-stock narve-weather narve-midterm \\"
+echo "       narve-sports narve-world narve-traders narve-centralbank narve-truth \\"
+echo "       narve-airace narve-crypto-trackers narve-religion narve-whale narve-voters"
 echo "  sudo systemctl start narve-gateway"
 echo ""
 echo "To check status:"
