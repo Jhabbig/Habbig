@@ -25,6 +25,14 @@ a dashboard = remove the two flags + re-add its service to deploy.
 | **Midterm Predictor** | `midterm-dashboard/` (8051) | US election predictions aggregating 6 sources (FastAPI + React). |
 | **Market Edge — Stocks & Crypto** | `crypto-dashboard/` (8000) + `stock-dashboard/` (8050) | One subscription, two apps: CryptoEdge ML signals and the StockSignal stock desk, cross-linked. |
 
+**Narve One** (`/one` on the gateway) consolidates the entire fleet into a
+single tabbed dashboard: the live products above render fully inside
+same-origin iframes served by the gateway's `/d/<key>/` path proxy, while
+parked and merged dashboards show status cards. No per-dashboard code changes
+were needed — the tab rail is derived from `gateway/config.json`, and auth,
+subscriptions, caching, SSE, and WebSockets all flow through the same gateway
+machinery as the per-subdomain views. See `gateway/README.md`.
+
 ## Layout
 
 | Directory | Port | What it is |

@@ -30,7 +30,7 @@ import time
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 # Load .env.production before any config reads
 _env_file = Path(__file__).parent / ".env.production"
@@ -471,7 +471,9 @@ if STATIC_DIR.exists():
 
 _SECURITY_HEADERS_RAW: list[tuple[bytes, bytes]] = [
     (b"x-content-type-options", b"nosniff"),
-    (b"x-frame-options", b"DENY"),
+    # SAMEORIGIN (not DENY): the unified view at /one frames dashboards
+    # same-origin via the /d/<key>/ path proxy. External framing stays blocked.
+    (b"x-frame-options", b"SAMEORIGIN"),
     (b"x-xss-protection", b"1; mode=block"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
     (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()"),
@@ -489,8 +491,8 @@ _CSP_VALUE = "; ".join([
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
     "connect-src 'self' https://*.stripe.com https://*.polymarket.com https://*.kalshi.com",
-    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
-    "frame-ancestors 'none'",
+    "frame-src 'self' https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
+    "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self' https://checkout.stripe.com",
 ]).encode()
@@ -1585,6 +1587,60 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         raw_tour_steps=tour_html,
         tour_total_steps=str(total_steps),
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+    )
+
+
+@app.get("/one", response_class=HTMLResponse)
+async def unified_dashboard_page(request: Request):
+    """Narve One — every dashboard consolidated into one tabbed page.
+
+    Live products render fully inside same-origin iframes served by the
+    /d/<key>/ path proxy; parked and merged dashboards get status cards.
+    The tab rail is built from config.json so it always matches the fleet.
+    """
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/one")
+
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+
+    entries = []
+    for key, cfg in DASHBOARDS.items():
+        if cfg.get("merged_into"):
+            status = "merged"
+        elif cfg.get("parked"):
+            status = "parked"
+        elif _is_navigable(cfg):
+            status = "live"
+        else:
+            # Hidden, not parked, not alias-navigable — keep it off the rail,
+            # same as every other storefront surface.
+            continue
+        merged_target = cfg.get("merged_into") or ""
+        entries.append({
+            "key": key,
+            "name": cfg.get("display_name", key),
+            "desc": cfg.get("description", ""),
+            "accent": cfg.get("accent", "#6366f1"),
+            "status": status,
+            "merged_into": merged_target,
+            "merged_into_name": DASHBOARDS.get(merged_target, {}).get("display_name", "") if merged_target else "",
+            "subscribed": bool(
+                status == "live" and cached_has_subscription(user["user_id"], key)
+            ),
+        })
+    order = {"live": 0, "parked": 1, "merged": 2}
+    entries.sort(key=lambda e: order[e["status"]])
+
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    return render_page(
+        "one", request=request,
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        # <-escape so config text can never break out of the JSON <script> block.
+        raw_dash_data=json.dumps(entries).replace("<", "\\u003c"),
     )
 
 
@@ -4558,6 +4614,13 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
 
 # ── Reverse proxy for dashboard subdomains ────────────────────────────────────
 
+# Hop-by-hop headers stripped in both directions by every proxy path.
+_HOP_BY_HOP = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "host",
+    "content-encoding", "content-length",
+}
+
 
 def _bump_fleet_counter_safe(key: str) -> None:
     """Persist a fleet tally without ever letting a DB hiccup break a request."""
@@ -4691,14 +4754,9 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # Strip hop-by-hop headers; also strip any client-supplied X-Gateway-*
     # headers so a malicious client can't forge upstream identity.
-    hop_by_hop = {
-        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-        "te", "trailers", "transfer-encoding", "upgrade", "host",
-        "content-encoding", "content-length",
-    }
     fwd_headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in hop_by_hop and not k.lower().startswith("x-gateway-")
+        if k.lower() not in _HOP_BY_HOP and not k.lower().startswith("x-gateway-")
     }
 
     # Set user identity headers (if user is logged in or using superuser key)
@@ -4754,7 +4812,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # Relay response; strip hop-by-hop headers from upstream.
     resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
     }
 
     # Inject dashboard switcher into HTML responses. Superuser/investor
@@ -4805,6 +4863,201 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     if has_superuser_access and request.query_params.get("superuser_key") == superuser_key:
         set_superuser_cookie(resp, superuser_key, request)
     return resp
+
+
+# ── Unified view path proxy (/one frames every dashboard same-origin) ─────────
+
+# Matches "/d/<key>/" inside a Referer path — used to recover which dashboard
+# an absolute-path asset/API request belongs to when it escapes its prefix.
+_UNIFIED_REF_RE = re.compile(r"/d/([A-Za-z0-9_-]+)/")
+
+
+def _render_unified_panel(title: str, message: str, accent: str = "#6366f1",
+                          link_href: str = "", link_label: str = "") -> str:
+    """Small status card rendered inside a unified-view iframe (parked,
+    offline, sign-in, subscribe). Links break out of the frame via target=_top."""
+    link = ""
+    if link_href:
+        link = (f'<a href="{html.escape(link_href, quote=True)}" target="_top">'
+                f"{html.escape(link_label or 'Continue')}</a>")
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0b0e14; color:#e6e8ee; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
+  .card {{ max-width:430px; padding:36px 40px; background:#11151f; border:1px solid #232938;
+          border-radius:16px; text-align:center; }}
+  .dot {{ width:12px; height:12px; border-radius:50%; background:{accent}; display:inline-block; margin-bottom:14px; }}
+  h1 {{ font-size:18px; margin:0 0 10px; }}
+  p {{ font-size:14px; line-height:1.65; color:#9aa3b5; margin:0 0 22px; }}
+  a {{ display:inline-block; padding:10px 22px; background:{accent}; color:#fff; border-radius:8px;
+      text-decoration:none; font-size:14px; font-weight:600; }}
+</style></head><body>
+<div class="card"><span class="dot"></span><h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>{link}</div>
+</body></html>"""
+
+
+@app.api_route("/d/{dash_key}", methods=["GET", "HEAD"])
+async def unified_proxy_bare(request: Request, dash_key: str):
+    """Normalize /d/<key> to /d/<key>/ so relative URLs resolve under the prefix."""
+    query = request.url.query
+    return RedirectResponse(f"/d/{dash_key}/" + (f"?{query}" if query else ""), status_code=307)
+
+
+@app.api_route("/d/{dash_key}/{sub_path:path}",
+               methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def unified_proxy(request: Request, dash_key: str, sub_path: str):
+    """Path-based reverse proxy for the unified view at /one.
+
+    Same auth, subscription, parked/merged, circuit-breaker, and Redis-cache
+    semantics as the subdomain proxy, but keyed by URL prefix so dashboards
+    can be framed same-origin as tabs of a single page.
+    """
+    if get_subdomain(request):
+        # /d/... has no meaning on a dashboard subdomain — let that dashboard
+        # handle (and most likely 404) its own path.
+        return await proxy_request(request)
+
+    dash_cfg = DASHBOARDS.get(dash_key)
+    if not dash_cfg:
+        return HTMLResponse(
+            _render_unified_panel("Unknown dashboard",
+                                  f"No dashboard is registered under the key '{dash_key}'.",
+                                  link_href="/one", link_label="Back to Narve One"),
+            status_code=404,
+        )
+
+    merged_into = dash_cfg.get("merged_into")
+    if merged_into and merged_into in DASHBOARDS:
+        _bump_fleet_counter_safe(f"legacy_redirect:{dash_cfg.get('subdomain', dash_key)}")
+        query = request.url.query
+        target = f"/d/{merged_into}/{sub_path}" + (f"?{query}" if query else "")
+        return RedirectResponse(target, status_code=307)
+
+    if dash_cfg.get("parked"):
+        _bump_fleet_counter_safe(f"parked_visit:{dash_key}")
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is parked",
+            "This dashboard has been taken out of the active line-up and its "
+            "service is not currently running.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href="/dashboards", link_label="Go to your dashboards",
+        ))
+
+    superuser_key = _get_superuser_key_from_request(request)
+    has_superuser_access = bool(
+        superuser_key and db.has_superuser_key_access(superuser_key, dash_key)
+    )
+
+    user = current_user(request)
+    if not user and not has_superuser_access:
+        return HTMLResponse(_render_unified_panel(
+            "Sign in required", "Log in at the apex to use the unified view.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href="/gate", link_label="Sign in",
+        ), status_code=401)
+
+    if user and not has_superuser_access and not cached_has_subscription(user["user_id"], dash_key):
+        return HTMLResponse(_render_unified_panel(
+            f"Subscribe to {dash_cfg.get('display_name', dash_key)}",
+            "Your account doesn't have an active subscription for this dashboard yet.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href=f"/billing?dashboard={dash_key}", link_label="Go to billing",
+        ), status_code=403)
+
+    if not is_upstream_healthy(dash_key):
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is temporarily unavailable",
+            f"The backend is being checked every {_HEALTH_CHECK_INTERVAL}s and "
+            "will recover automatically.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=503)
+
+    path = "/" + sub_path
+    query = request.url.query
+    upstream_url = f"http://127.0.0.1:{dash_cfg['target']}{path}"
+    if query:
+        upstream_url += f"?{query}"
+
+    # Cache-first for GETs — same namespace as the subdomain proxy and the
+    # poller, since the prefix-stripped path matches what they store.
+    cache_path = f"{path}?{query}" if query else path
+    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
+        cached = cache.get_api(dash_key, cache_path)
+        if cached:
+            cached_body, cached_ct = cached
+            return Response(
+                content=cached_body,
+                status_code=200,
+                headers={"content-type": cached_ct, "x-cache": "HIT", "cache-control": "no-store"},
+            )
+
+    fwd_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP and not k.lower().startswith("x-gateway-")
+    }
+    if user:
+        fwd_headers["X-Gateway-User-Id"] = str(user["user_id"])
+        fwd_headers["X-Gateway-User-Email"] = user["email"]
+    elif has_superuser_access:
+        fwd_headers["X-Gateway-User-Id"] = "superuser"
+        fwd_headers["X-Gateway-User-Email"] = "investor@dashboard"
+    if has_superuser_access:
+        fwd_headers["X-Gateway-Investor-Mode"] = "true"
+        key_info = db.validate_superuser_key(superuser_key)
+        if key_info and key_info.get("aspects"):
+            fwd_headers["X-Gateway-Key-Aspects"] = ",".join(key_info["aspects"])
+    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
+    if _sso_secret:
+        fwd_headers["X-Gateway-Secret"] = _sso_secret
+    fwd_headers["X-Forwarded-Host"] = request.headers.get("host", "")
+    fwd_headers["X-Forwarded-Proto"] = request.url.scheme
+
+    body = await request.body()
+    try:
+        upstream = await HTTP_CLIENT.request(
+            request.method, upstream_url, headers=fwd_headers, content=body,
+            follow_redirects=False,
+        )
+    except httpx.ConnectError:
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is offline",
+            f"The backend on port {dash_cfg['target']} isn't responding. "
+            "Try ./start_dashboards.sh restart.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=502)
+    except httpx.RequestError as e:
+        log.exception("Unified upstream error for %s: %s", upstream_url, e)
+        return HTMLResponse(_render_unified_panel("Upstream error", str(e)), status_code=502)
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
+
+    # Keep upstream redirects inside the /d/<key> prefix.
+    loc = resp_headers.get("location")
+    if loc and loc.startswith("/") and not loc.startswith("//"):
+        resp_headers["location"] = f"/d/{dash_key}{loc}"
+
+    content = upstream.content
+    content_type = upstream.headers.get("content-type", "")
+    if "application/json" in content_type or path.startswith("/api") or path.startswith("/data"):
+        resp_headers["cache-control"] = "no-store, no-cache, must-revalidate"
+        resp_headers["pragma"] = "no-cache"
+        resp_headers["x-cache"] = "MISS"
+        if request.method == "GET" and upstream.status_code == 200 and not path.startswith("/api/auth"):
+            cache.set_api(dash_key, cache_path, upstream.content, content_type)
+
+    # Live updates inside tabs: the SSE client talks to /api/stream on this
+    # same origin, so it works unchanged under the unified view.
+    if "text/html" in (content_type or ""):
+        content = _inject_sse_client(content)
+    if content is not upstream.content:
+        resp_headers.pop("content-length", None)
+        resp_headers["content-length"] = str(len(content))
+
+    return Response(content=content, status_code=upstream.status_code, headers=resp_headers)
 
 
 # ── SSE stream endpoint ────────────────────────────────────────────────────────
@@ -4861,6 +5114,23 @@ async def cache_stats_endpoint(request: Request):
 async def catch_all(request: Request, full_path: str):
     sub = get_subdomain(request)
     if not sub:
+        # Unified-view fallback: dashboards framed under /d/<key>/ request
+        # root-absolute assets and APIs (/static/app.js, /api/...) that land
+        # here. Recover the owning dashboard from the (same-origin) Referer
+        # and bounce the request back under its prefix — 307 keeps method+body.
+        referer = request.headers.get("referer", "")
+        if referer:
+            try:
+                ref = urlparse(referer)
+                same_origin = ref.netloc.lower() == request.headers.get("host", "").lower()
+            except ValueError:
+                same_origin = False
+            if same_origin:
+                m = _UNIFIED_REF_RE.search(ref.path)
+                if m and m.group(1) in DASHBOARDS:
+                    query = request.url.query
+                    target = f"/d/{m.group(1)}/{full_path}" + (f"?{query}" if query else "")
+                    return RedirectResponse(target, status_code=307)
         # Apex fallthrough — 404 (escape the path to prevent reflected XSS).
         return HTMLResponse(
             f"<h1>Not found</h1><p>No such page at <code>{html.escape(request.url.path)}</code>.</p>",
@@ -4887,6 +5157,26 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         sub = host[: -len(".localhost")]
 
     key = SUBDOMAIN_TO_KEY.get(sub)
+
+    # Unified view: /one frames dashboards on the apex origin, so their
+    # WebSocket URLs arrive here either as /d/<key>/<path> (explicit prefix)
+    # or as the dashboard's own absolute path (browsers send no Referer on a
+    # WS handshake, so the prefix can't be recovered). Map the explicit
+    # prefix first; failing that, if exactly one live dashboard speaks
+    # WebSocket, route to it. Auth + subscription are still enforced below.
+    if not key and not sub:
+        parts = full_path.split("/", 2)
+        if len(parts) >= 2 and parts[0] == "d" and parts[1] in DASHBOARDS:
+            key = parts[1]
+            full_path = parts[2] if len(parts) > 2 else ""
+        else:
+            ws_capable = [
+                k for k, c in DASHBOARDS.items()
+                if c.get("supports_websocket") and not c.get("parked") and not c.get("merged_into")
+            ]
+            if len(ws_capable) == 1:
+                key = ws_capable[0]
+
     if not key:
         await ws.close(code=1008, reason="Unknown subdomain")
         return

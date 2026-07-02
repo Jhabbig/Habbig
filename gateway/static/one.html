@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Narve One — every dashboard, one screen</title>
+  <link rel="icon" type="image/png" href="/_gateway_static/favicon.png">
+  <link rel="stylesheet" href="/_gateway_static/gateway.css">
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; display: flex; flex-direction: column; background: #0b0e14; }
+
+    .one-layout { flex: 1; display: flex; min-height: 0; }
+
+    /* ── Tab rail ── */
+    .one-rail {
+      width: 252px; flex-shrink: 0; overflow-y: auto;
+      background: #0d1119; border-right: 1px solid #232938;
+      padding: 14px 10px 24px;
+    }
+    .one-rail-section {
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
+      color: #5b6478; text-transform: uppercase; margin: 18px 8px 6px;
+    }
+    .one-rail-section:first-child { margin-top: 4px; }
+    .one-tab {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 9px 10px; margin: 2px 0; border: 1px solid transparent;
+      border-radius: 10px; background: none; cursor: pointer; text-align: left;
+      color: #c7cddb; font-size: 13.5px; font-family: inherit;
+    }
+    .one-tab:hover { background: #131828; }
+    .one-tab.active { background: #161c2e; border-color: #2b3550; color: #fff; }
+    .one-tab .dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+      background: var(--accent, #6366f1);
+    }
+    .one-tab.dim { color: #6b7386; }
+    .one-tab.dim .dot { opacity: 0.35; }
+    .one-tab .tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .one-tab .badge {
+      font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+      padding: 2px 7px; border-radius: 99px; flex-shrink: 0;
+      background: #1b2233; color: #7d8698; text-transform: uppercase;
+    }
+    .one-tab .badge.live { background: rgba(52, 211, 153, 0.12); color: #34d399; }
+    .one-tab .badge.lock { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+
+    /* ── Stage ── */
+    .one-stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .one-stagebar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 16px; background: #0d1119; border-bottom: 1px solid #232938;
+    }
+    .one-stagebar .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .one-stagebar .stage-title { font-size: 14px; font-weight: 650; color: #e6e8ee; }
+    .one-stagebar .stage-desc {
+      font-size: 12.5px; color: #77809466; color: #778094; flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .one-stagebar a.stage-open {
+      font-size: 12.5px; color: #9aa3b5; text-decoration: none;
+      padding: 5px 12px; border: 1px solid #2b3550; border-radius: 8px;
+    }
+    .one-stagebar a.stage-open:hover { color: #fff; border-color: #46527a; }
+
+    .one-frames { flex: 1; position: relative; min-height: 0; background: #0b0e14; }
+    .one-frames iframe {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      border: 0; display: none; background: #0b0e14;
+    }
+    .one-frames iframe.visible { display: block; }
+
+    /* Info card for parked / merged tabs */
+    .one-info {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center; padding: 24px;
+    }
+    .one-info.visible { display: flex; }
+    .one-info .card {
+      max-width: 460px; padding: 38px 42px; background: #11151f;
+      border: 1px solid #232938; border-radius: 16px; text-align: center;
+    }
+    .one-info .card .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-bottom: 14px; }
+    .one-info .card h2 { font-size: 19px; margin: 0 0 10px; color: #e6e8ee; }
+    .one-info .card p { font-size: 14px; line-height: 1.65; color: #9aa3b5; margin: 0 0 22px; }
+    .one-info .card a {
+      display: inline-block; padding: 10px 22px; border-radius: 8px;
+      color: #fff; text-decoration: none; font-size: 14px; font-weight: 600;
+    }
+
+    @media (max-width: 760px) {
+      .one-layout { flex-direction: column; }
+      .one-rail {
+        width: auto; display: flex; overflow-x: auto; overflow-y: hidden;
+        border-right: 0; border-bottom: 1px solid #232938; padding: 8px;
+      }
+      .one-rail-section { display: none; }
+      .one-tab { width: auto; flex-shrink: 0; }
+      .one-stagebar .stage-desc { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="gw-header">
+    <a href="/dashboards?hub=1" class="gw-brand" style="text-decoration:none">
+      <img src="/_gateway_static/img/logo.png" alt="narve.ai" class="gw-brand-logo">
+      <span>narve.ai</span>
+    </a>
+    <div class="gw-sep"></div>
+    <span style="font-size:13.5px;font-weight:650;color:#e6e8ee">Narve One</span>
+    <span style="font-size:12px;color:#778094;margin-left:10px">every dashboard, one screen</span>
+    <div class="gw-spacer"></div>
+    <nav class="gw-nav">
+      <a href="/dashboards?hub=1">Hub</a>
+      <a href="/billing">Billing</a>
+      <a href="/settings">Settings</a>
+      {{ raw_admin_link }}
+    </nav>
+    <a href="/profile" class="gw-user-pill" style="text-decoration:none">{{ username }}</a>
+    <form method="post" action="/logout" style="display:inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button type="submit" class="gw-signout">Sign out</button></form>
+  </header>
+
+  <div class="one-layout">
+    <aside class="one-rail" id="rail"></aside>
+    <main class="one-stage">
+      <div class="one-stagebar" id="stagebar" style="display:none">
+        <span class="dot" id="stageDot"></span>
+        <span class="stage-title" id="stageTitle"></span>
+        <span class="stage-desc" id="stageDesc"></span>
+        <a class="stage-open" id="stageOpen" href="#" target="_blank" rel="noopener">Open full ↗</a>
+      </div>
+      <div class="one-frames" id="frames">
+        <div class="one-info" id="info"><div class="card" id="infoCard"></div></div>
+      </div>
+    </main>
+  </div>
+
+  <script id="dash-data" type="application/json">{{ raw_dash_data }}</script>
+  <script>
+    const DASH = JSON.parse(document.getElementById('dash-data').textContent);
+    const byKey = Object.fromEntries(DASH.map(d => [d.key, d]));
+
+    const rail = document.getElementById('rail');
+    const frames = document.getElementById('frames');
+    const info = document.getElementById('info');
+    const infoCard = document.getElementById('infoCard');
+    const stagebar = document.getElementById('stagebar');
+
+    const SECTIONS = [
+      ['live',   'Live'],
+      ['parked', 'Parked'],
+      ['merged', 'Legacy · merged'],
+    ];
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g,
+        c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // ── Build the rail ──
+    for (const [status, label] of SECTIONS) {
+      const group = DASH.filter(d => d.status === status);
+      if (!group.length) continue;
+      const h = document.createElement('div');
+      h.className = 'one-rail-section';
+      h.textContent = label;
+      rail.appendChild(h);
+      for (const d of group) {
+        const btn = document.createElement('button');
+        btn.className = 'one-tab' + (status === 'live' ? '' : ' dim');
+        btn.dataset.key = d.key;
+        btn.style.setProperty('--accent', d.accent);
+        let badge = '';
+        if (status === 'live')  badge = d.subscribed
+          ? '<span class="badge live">live</span>'
+          : '<span class="badge lock">sub</span>';
+        if (status === 'parked') badge = '<span class="badge">parked</span>';
+        if (status === 'merged') badge = '<span class="badge">merged</span>';
+        btn.innerHTML = `<span class="dot"></span><span class="tab-name">${esc(d.name)}</span>${badge}`;
+        btn.addEventListener('click', () => activate(d.key, true));
+        rail.appendChild(btn);
+      }
+    }
+
+    // ── Tab activation ──
+    const iframes = {};   // key → iframe (lazy-created, kept alive)
+    let activeKey = null;
+
+    function activate(key, pushHash) {
+      const d = byKey[key];
+      if (!d) return;
+      activeKey = key;
+      if (pushHash) history.replaceState(null, '', '#' + key);
+
+      document.querySelectorAll('.one-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.key === key));
+
+      // Stage bar
+      stagebar.style.display = 'flex';
+      document.getElementById('stageDot').style.background = d.accent;
+      document.getElementById('stageTitle').textContent = d.name;
+      document.getElementById('stageDesc').textContent = d.desc;
+      const open = document.getElementById('stageOpen');
+      open.href = '/d/' + key + '/';
+      open.style.display = d.status === 'live' ? '' : 'none';
+
+      // Stage content
+      Object.values(iframes).forEach(f => f.classList.remove('visible'));
+      info.classList.remove('visible');
+
+      if (d.status === 'live') {
+        if (!iframes[key]) {
+          const f = document.createElement('iframe');
+          f.src = '/d/' + key + '/';
+          f.title = d.name;
+          frames.appendChild(f);
+          iframes[key] = f;
+        }
+        iframes[key].classList.add('visible');
+      } else if (d.status === 'parked') {
+        showParkedCard(d);
+      } else if (d.status === 'merged') {
+        showMergedCard(d);
+      }
+    }
+
+    function showParkedCard(d) {
+      infoCard.innerHTML =
+        `<span class="dot" style="background:${esc(d.accent)}"></span>` +
+        `<h2>${esc(d.name)} is parked</h2>` +
+        `<p>${esc(d.desc)}</p>` +
+        `<p>This dashboard is out of the active line-up and its service is not
+         currently running. Reviving it is a config flip away.</p>`;
+      info.classList.add('visible');
+    }
+
+    function showMergedCard(d) {
+      const target = byKey[d.merged_into];
+      infoCard.innerHTML =
+        `<span class="dot" style="background:${esc(d.accent)}"></span>` +
+        `<h2>${esc(d.name)}</h2>` +
+        `<p>Merged into <strong>${esc(d.merged_into_name || (target && target.name) || d.merged_into)}</strong> —
+         its data now lives there as a tab, and old subscriptions carry over.</p>` +
+        (target ? `<a href="#" style="background:${esc(target.accent)}"
+           onclick="activate('${esc(d.merged_into)}', true); return false;">Open ${esc(target.name)}</a>` : '');
+      info.classList.add('visible');
+    }
+
+    // Expose for the inline onclick above.
+    window.activate = activate;
+
+    // ── Initial tab: #hash deep link, else first live product ──
+    const initial = (location.hash || '').slice(1);
+    if (initial && byKey[initial]) {
+      activate(initial, false);
+    } else {
+      const firstLive = DASH.find(d => d.status === 'live');
+      if (firstLive) activate(firstLive.key, false);
+    }
+  </script>
+</body>
+</html>

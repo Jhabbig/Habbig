@@ -33,6 +33,20 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
   identity if they ever want to read it.
 - **WebSocket support** for crypto and sports, flagged by `supports_websocket`
   in `config.json`.
+- **Narve One unified view.** `/one` consolidates every dashboard into one
+  tabbed page. Live products render fully inside same-origin iframes served by
+  the `/d/<key>/…` **path proxy** (same auth, subscription, parked/merged,
+  circuit-breaker, and Redis-cache semantics as the subdomain proxy — just
+  keyed by URL prefix instead of Host header). Parked and merged dashboards
+  appear as status cards, so the whole fleet is visible from one screen.
+  Three supporting mechanisms: root-absolute asset/API requests that escape an
+  iframe's prefix are recovered via a same-origin `Referer` check in the
+  catch-all and 307'd back under `/d/<key>/`; WebSocket handshakes accept
+  either an explicit `/d/<key>/` prefix or (since browsers send no Referer on
+  WS upgrades) fall back to the unique live `supports_websocket` dashboard;
+  and the security headers use `X-Frame-Options: SAMEORIGIN` +
+  `frame-ancestors 'self'` so the gateway may frame itself while external
+  framing stays blocked.
 - **Localhost dev bypass:** when the request host is `localhost` / `*.localhost`
   and `PRODUCTION` is unset, the gateway auto-creates a `dev@local` user with
   all 7 dashboards active so you can preview without signing up. This is
