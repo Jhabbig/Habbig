@@ -3,10 +3,11 @@
 Companion to `narve-pitch-deck.pptx` (14 slides, pre-seed, pre-launch framing).
 Every slide carries full speaker notes inside the .pptx (View → Notes).
 
-## Placeholders you must fill before sending
+Team is filled in: Julian Habbig (CEO, julian@habbig.com) · Sho Cakarel (CTO, sho@cakarel.com).
 
-- Slide 1: founder name + contact
-- Slide 14: founder bio, raise amount, instrument, use of funds, runway
+## Placeholders still to fill before sending
+
+- Slide 14: founder backgrounds (one line each), raise amount, instrument, use of funds, runway
 
 ## Verify before this deck leaves the building
 
