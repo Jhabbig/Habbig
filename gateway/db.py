@@ -1,12 +1,26 @@
-"""SQLite layer for the gateway — users, sessions, subscriptions."""
+"""Database layer for the gateway — users, sessions, subscriptions.
+
+Supports two backends, chosen at import time by the ``DATABASE_URL`` env var:
+
+  * **PostgreSQL** — when ``DATABASE_URL`` is set (e.g.
+    ``postgres://user:pass@host:5432/dbname``). Uses a psycopg connection pool.
+  * **SQLite** — otherwise (default). File at ``gateway/auth.db``.
+
+The public function API is identical on both backends; ``server.py`` never sees
+the difference. SQL is written once with ``?`` placeholders and SQLite syntax;
+on PostgreSQL the placeholders are translated to ``%s`` and the schema DDL is
+adapted on the fly (see ``_to_pg_schema``).
+"""
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -20,6 +34,22 @@ from cryptography.fernet import Fernet
 log = logging.getLogger("gateway.db")
 
 DB_PATH = Path(__file__).parent / "auth.db"
+
+# ── Backend selection ─────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+IS_PG = DATABASE_URL.startswith("postgres")
+
+if IS_PG:
+    import psycopg
+    from psycopg_pool import ConnectionPool
+
+    # Map the two SQLite exception classes the code catches onto their psycopg
+    # equivalents, so the ``except`` clauses below work unchanged on both.
+    IntegrityError: type[Exception] = psycopg.errors.UniqueViolation
+    OperationalError: type[Exception] = psycopg.errors.UndefinedTable
+else:
+    IntegrityError = sqlite3.IntegrityError
+    OperationalError = sqlite3.OperationalError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -201,6 +231,170 @@ CREATE INDEX IF NOT EXISTS idx_usage_logs_accessed ON superuser_key_usage_logs(a
 """
 
 
+# ── Cross-backend row, placeholder and connection helpers ─────────────────────
+
+
+class _Row:
+    """Query result row supporting both integer-index and column-name access,
+    matching the subset of ``sqlite3.Row`` the gateway relies on (including
+    ``dict(row)``). Used as the psycopg row factory so PostgreSQL rows behave
+    exactly like SQLite ones.
+
+    Perf: the column→index map (``_idx``) is built once per result set by the
+    factory and shared by every row, so scanning N rows costs no per-row dict
+    construction. Values are stored by reference (psycopg hands us a fresh list
+    per row), avoiding a copy."""
+
+    __slots__ = ("_vals", "_idx")
+
+    def __init__(self, vals, idx):
+        self._vals = vals
+        self._idx = idx
+
+    def __getitem__(self, key):
+        if type(key) is str:
+            return self._vals[self._idx[key]]
+        return self._vals[key]  # int or slice
+
+    def get(self, key, default=None):
+        i = self._idx.get(key)
+        return self._vals[i] if i is not None else default
+
+    def keys(self):
+        return list(self._idx)  # dict preserves column order
+
+    def __contains__(self, key):
+        return key in self._idx
+
+    def __iter__(self):
+        return iter(self._vals)
+
+    def __len__(self):
+        return len(self._vals)
+
+
+def _pg_row_factory(cursor):
+    """psycopg row factory producing ``_Row`` instances that share one
+    column-index map per result set."""
+    desc = cursor.description
+    idx = {d.name: i for i, d in enumerate(desc)} if desc else {}
+
+    def make_row(values):
+        return _Row(values, idx)
+
+    return make_row
+
+
+# Placeholder translation is pure and called on every PG query, but the set of
+# distinct SQL strings is small and fixed (module-level literals), so we memoise
+# in a plain dict — lock-free under the GIL, no lru_cache lock on the hot path.
+_TRANSLATE_CACHE: dict[str, str] = {}
+_RETURNING_CACHE: dict[str, str] = {}
+
+
+def _translate(sql: str) -> str:
+    """Convert SQLite ``?`` placeholders to psycopg ``%s`` (memoised). Literal
+    ``%`` is escaped to ``%%`` first so it survives psycopg's format parsing
+    (the gateway's SQL contains no ``LIKE`` patterns, but this keeps it safe)."""
+    t = _TRANSLATE_CACHE.get(sql)
+    if t is None:
+        t = sql.replace("%", "%%").replace("?", "%s")
+        _TRANSLATE_CACHE[sql] = t
+    return t
+
+
+def _with_returning(sql: str) -> str:
+    """Append ``RETURNING id`` to an INSERT (memoised)."""
+    r = _RETURNING_CACHE.get(sql)
+    if r is None:
+        r = sql.rstrip().rstrip(";").rstrip() + " RETURNING id"
+        _RETURNING_CACHE[sql] = r
+    return r
+
+
+class _Conn:
+    """Thin wrapper giving both backends a single ``execute`` surface.
+
+    On PostgreSQL it translates placeholders before delegating to the underlying
+    psycopg connection; on SQLite it passes straight through. ``execute`` returns
+    the backend's native cursor, so ``.fetchone()/.fetchall()/.rowcount`` and
+    iteration all work identically to before."""
+
+    __slots__ = ("_raw",)
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def execute(self, sql, params=()):
+        if IS_PG:
+            return self._raw.execute(_translate(sql), params)
+        return self._raw.execute(sql, params)
+
+    def executescript(self, script: str):
+        if IS_PG:
+            # psycopg's extended protocol rejects multi-statement strings, so
+            # run each statement on its own. The schema DDL has no embedded
+            # semicolons, so a plain split is safe.
+            for stmt in script.split(";"):
+                s = stmt.strip()
+                if s:
+                    self._raw.execute(s)
+        else:
+            self._raw.executescript(script)
+
+
+def _insert_returning_id(c: _Conn, sql: str, params):
+    """Run an INSERT and return the new row's ``id`` on either backend."""
+    if IS_PG:
+        row = c.execute(_with_returning(sql), params).fetchone()
+        return row[0] if row else None
+    return c.execute(sql, params).lastrowid
+
+
+# ── PostgreSQL: connection pool ───────────────────────────────────────────────
+_pg_pool: "ConnectionPool | None" = None
+
+
+def _configure_pg_conn(c) -> None:
+    """Per-connection setup: auto-prepare frequently-run statements server-side
+    after a couple of uses, so the session/subscription hot-path queries skip
+    parse+plan on every call."""
+    c.prepare_threshold = int(os.environ.get("DB_PREPARE_THRESHOLD", "2"))
+
+
+def _get_pool() -> "ConnectionPool":
+    global _pg_pool
+    if _pg_pool is None:
+        _pg_pool = ConnectionPool(
+            DATABASE_URL,
+            # Warm connections avoid cold-connect latency on the first requests;
+            # max_lifetime/max_idle recycle connections proactively so we don't
+            # pay a per-checkout liveness probe on the hot path.
+            min_size=int(os.environ.get("DB_POOL_MIN", "2")),
+            max_size=int(os.environ.get("DB_POOL_MAX", "10")),
+            max_idle=float(os.environ.get("DB_POOL_MAX_IDLE", "300")),
+            max_lifetime=float(os.environ.get("DB_POOL_MAX_LIFETIME", "1800")),
+            timeout=float(os.environ.get("DB_POOL_TIMEOUT", "10")),
+            kwargs={"row_factory": _pg_row_factory},
+            configure=_configure_pg_conn,
+            open=True,
+        )
+        # Close the pool's background worker threads cleanly at process exit,
+        # otherwise psycopg's __del__ warns "cannot join thread at interpreter
+        # shutdown" for short-lived scripts (harmless, but noisy).
+        atexit.register(close_pool)
+    return _pg_pool
+
+
+def close_pool() -> None:
+    """Close the PostgreSQL connection pool, if one is open."""
+    global _pg_pool
+    if _pg_pool is not None:
+        _pg_pool.close()
+        _pg_pool = None
+
+
+# ── SQLite: thread-local persistent connection ────────────────────────────────
 def _configure_connection(c: sqlite3.Connection) -> None:
     """Apply performance pragmas to a fresh connection."""
     c.row_factory = sqlite3.Row
@@ -229,47 +423,113 @@ def _get_conn() -> sqlite3.Connection:
 
 @contextmanager
 def conn():
+    if IS_PG:
+        # psycopg_pool commits on clean block exit and rolls back on exception,
+        # then returns the connection to the pool.
+        with _get_pool().connection() as raw:
+            yield _Conn(raw)
+        return
     c = _get_conn()
+    wrapped = _Conn(c)
     try:
-        yield c
+        yield wrapped
         c.commit()
     except Exception:
         c.rollback()
         raise
 
 
+# ── Schema bootstrap ──────────────────────────────────────────────────────────
+_PG_SCHEMA: Optional[str] = None
+
+
+def _to_pg_schema(schema: str) -> str:
+    """Translate the SQLite ``SCHEMA`` DDL to PostgreSQL.
+
+    * ``INTEGER PRIMARY KEY AUTOINCREMENT`` → identity column
+    * ``REAL`` → ``DOUBLE PRECISION``
+    * strip FK clauses — they were never enforced under SQLite (the schema ran
+      without ``PRAGMA foreign_keys = ON``; ``delete_user`` cascades manually),
+      and dropping them sidesteps table-creation ordering issues.
+    """
+    schema = schema.replace(
+        "INTEGER PRIMARY KEY AUTOINCREMENT",
+        "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY",
+    )
+    schema = re.sub(r"\bREAL\b", "DOUBLE PRECISION", schema)
+    # table-level: ",\n    FOREIGN KEY (...) REFERENCES x(y) [ON DELETE CASCADE]"
+    schema = re.sub(
+        r",\s*\n\s*FOREIGN KEY\s*\([^)]*\)\s*REFERENCES\s+\w+\s*\([^)]*\)"
+        r"(\s+ON DELETE CASCADE)?",
+        "",
+        schema,
+    )
+    # column-level: " REFERENCES x(y)"
+    schema = re.sub(r"\s+REFERENCES\s+\w+\s*\([^)]*\)", "", schema)
+    return schema
+
+
 def init_db() -> None:
+    if IS_PG:
+        _get_pool()  # ensure the pool is open before first use
     with conn() as c:
-        c.executescript(SCHEMA)
-        # Lightweight migrations: add columns that were introduced after the
-        # original schema shipped. SQLite doesn't support IF NOT EXISTS on
-        # ALTER TABLE, so we probe PRAGMA table_info and only add when missing.
-        existing_cols = {row["name"] for row in c.execute("PRAGMA table_info(users)")}
-        if "default_dashboard" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN default_dashboard TEXT")
-        if "suspended" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
-        if "invite_token_id" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
-        if "username" not in existing_cols:
-            c.execute("ALTER TABLE users ADD COLUMN username TEXT")
-            for row in c.execute("SELECT id, email FROM users WHERE username IS NULL").fetchall():
-                uname = row[1].split("@")[0] if row[1] else f"user{row[0]}"
-                c.execute("UPDATE users SET username = ? WHERE id = ?", (uname, row[0]))
-        # invite_tokens migrations
-        invite_cols = {row["name"] for row in c.execute("PRAGMA table_info(invite_tokens)")}
-        if "target_email" not in invite_cols:
-            c.execute("ALTER TABLE invite_tokens ADD COLUMN target_email TEXT")
-        # subscriptions migrations
-        sub_cols = {row["name"] for row in c.execute("PRAGMA table_info(subscriptions)")}
-        if "stripe_sub_id" not in sub_cols:
-            c.execute("ALTER TABLE subscriptions ADD COLUMN stripe_sub_id TEXT")
-        if "source" not in sub_cols:
-            c.execute("ALTER TABLE subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'placeholder'")
-        # trading_orders migrations
-        order_cols = {row["name"] for row in c.execute("PRAGMA table_info(trading_orders)")}
-        if "source_dashboard" not in order_cols:
-            c.execute("ALTER TABLE trading_orders ADD COLUMN source_dashboard TEXT")
+        if IS_PG:
+            global _PG_SCHEMA
+            if _PG_SCHEMA is None:
+                _PG_SCHEMA = _to_pg_schema(SCHEMA)
+            c.executescript(_PG_SCHEMA)
+            _init_db_migrations_pg(c)
+        else:
+            c.executescript(SCHEMA)
+            _init_db_migrations_sqlite(c)
+
+
+def _init_db_migrations_pg(c: _Conn) -> None:
+    """Idempotent column additions for older PostgreSQL deployments. On a fresh
+    database created from the schema above these are all no-ops."""
+    for stmt in (
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_dashboard TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_id INTEGER",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
+        "ALTER TABLE invite_tokens ADD COLUMN IF NOT EXISTS target_email TEXT",
+        "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS stripe_sub_id TEXT",
+        "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'placeholder'",
+        "ALTER TABLE trading_orders ADD COLUMN IF NOT EXISTS source_dashboard TEXT",
+    ):
+        c.execute(stmt)
+
+
+def _init_db_migrations_sqlite(c: _Conn) -> None:
+    # Lightweight migrations: add columns that were introduced after the
+    # original schema shipped. SQLite doesn't support IF NOT EXISTS on
+    # ALTER TABLE, so we probe PRAGMA table_info and only add when missing.
+    existing_cols = {row["name"] for row in c.execute("PRAGMA table_info(users)")}
+    if "default_dashboard" not in existing_cols:
+        c.execute("ALTER TABLE users ADD COLUMN default_dashboard TEXT")
+    if "suspended" not in existing_cols:
+        c.execute("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
+    if "invite_token_id" not in existing_cols:
+        c.execute("ALTER TABLE users ADD COLUMN invite_token_id INTEGER REFERENCES invite_tokens(id)")
+    if "username" not in existing_cols:
+        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+        for row in c.execute("SELECT id, email FROM users WHERE username IS NULL").fetchall():
+            uname = row[1].split("@")[0] if row[1] else f"user{row[0]}"
+            c.execute("UPDATE users SET username = ? WHERE id = ?", (uname, row[0]))
+    # invite_tokens migrations
+    invite_cols = {row["name"] for row in c.execute("PRAGMA table_info(invite_tokens)")}
+    if "target_email" not in invite_cols:
+        c.execute("ALTER TABLE invite_tokens ADD COLUMN target_email TEXT")
+    # subscriptions migrations
+    sub_cols = {row["name"] for row in c.execute("PRAGMA table_info(subscriptions)")}
+    if "stripe_sub_id" not in sub_cols:
+        c.execute("ALTER TABLE subscriptions ADD COLUMN stripe_sub_id TEXT")
+    if "source" not in sub_cols:
+        c.execute("ALTER TABLE subscriptions ADD COLUMN source TEXT NOT NULL DEFAULT 'placeholder'")
+    # trading_orders migrations
+    order_cols = {row["name"] for row in c.execute("PRAGMA table_info(trading_orders)")}
+    if "source_dashboard" not in order_cols:
+        c.execute("ALTER TABLE trading_orders ADD COLUMN source_dashboard TEXT")
 
 
 # ── Password hashing ──────────────────────────────────────────────────────────
@@ -312,12 +572,12 @@ def create_user(email: str, password: str, username: str = "", is_admin: bool = 
     level = admin_level if admin_level else (1 if is_admin else 0)
     pwd_hash, salt = _hash_password(password)
     with conn() as c:
-        cur = c.execute(
+        return _insert_returning_id(
+            c,
             "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (username, email, pwd_hash, salt, int(time.time()), level),
         )
-        return cur.lastrowid
 
 
 def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
@@ -362,21 +622,21 @@ def delete_user(user_id: int) -> None:
         # Trading credentials and orders
         try:
             c.execute("DELETE FROM trading_credentials WHERE user_id = ?", (user_id,))
-        except sqlite3.OperationalError:
+        except OperationalError:
             pass  # table may not exist in older deployments
         try:
             c.execute("DELETE FROM trading_orders WHERE user_id = ?", (user_id,))
-        except sqlite3.OperationalError:
+        except OperationalError:
             pass
         # Subscriptions
         try:
             c.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
-        except sqlite3.OperationalError:
+        except OperationalError:
             pass
         # Password reset tokens
         try:
             c.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
-        except sqlite3.OperationalError:
+        except OperationalError:
             pass
         # Detach claimed invite tokens (don't delete — preserves audit trail
         # but clears the FK so we don't have rows pointing at a deleted user)
@@ -385,7 +645,7 @@ def delete_user(user_id: int) -> None:
                 "UPDATE invite_tokens SET claimed_by_user_id = NULL WHERE claimed_by_user_id = ?",
                 (user_id,),
             )
-        except sqlite3.OperationalError:
+        except OperationalError:
             pass
         # Finally delete the user row
         c.execute("DELETE FROM users WHERE id = ?", (user_id,))
@@ -715,7 +975,7 @@ def mark_stripe_event_processed(event_id: str, event_type: str) -> bool:
                 (event_id, event_type or "", int(time.time())),
             )
         return True
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         return False
 
 
@@ -749,11 +1009,11 @@ def get_revenue_stats() -> dict:
 
 def create_enquiry(email: str, job_title: str, message: str) -> int:
     with conn() as c:
-        cur = c.execute(
+        return _insert_returning_id(
+            c,
             "INSERT INTO enquiries (email, job_title, message, created_at) VALUES (?, ?, ?, ?)",
             (email.strip(), job_title.strip(), message.strip(), int(time.time())),
         )
-        return cur.lastrowid
 
 
 def list_enquiries() -> list[sqlite3.Row]:
@@ -942,13 +1202,13 @@ def create_trading_order(
     """Create a pending order record. Returns the order ID."""
     now = int(time.time())
     with conn() as c:
-        cur = c.execute(
+        return _insert_returning_id(
+            c,
             "INSERT INTO trading_orders "
             "(user_id, platform, market_slug, market_question, side, action, amount, price, status, source_dashboard, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
             (user_id, platform, market_slug, market_question, side, action, amount, price, source_dashboard, now),
         )
-        return cur.lastrowid
 
 
 _TRADING_ORDER_FIELDS = {"status", "error", "fill_price", "fill_amount", "order_ext_id"}
@@ -1007,7 +1267,8 @@ def upsert_position(
     if opened_at is None:
         opened_at = now
     with conn() as c:
-        cur = c.execute(
+        return _insert_returning_id(
+            c,
             """
             INSERT INTO user_positions
                 (user_id, platform, external_id, token_or_side, title,
@@ -1036,7 +1297,6 @@ def upsert_position(
                 status, source_dashboard, opened_at, closed_at,
             ),
         )
-        return cur.lastrowid
 
 
 def update_mark_price(position_id: int, mark_price: float) -> None:
@@ -1399,8 +1659,7 @@ def list_superuser_keys() -> list[dict]:
 def revoke_superuser_key(key_id: int) -> bool:
     """Revoke a superuser key by ID. Returns True if successful."""
     with conn() as c:
-        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
-        return c.total_changes > 0
+        return c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,)).rowcount > 0
 
 
 def toggle_superuser_key(key_id: int) -> dict | None:
@@ -1444,15 +1703,13 @@ def toggle_superuser_key(key_id: int) -> dict | None:
 def enable_superuser_key(key_id: int) -> bool:
     """Enable a superuser key by ID. Returns True if successful."""
     with conn() as c:
-        c.execute("UPDATE superuser_keys SET active = 1 WHERE id = ?", (key_id,))
-        return c.total_changes > 0
+        return c.execute("UPDATE superuser_keys SET active = 1 WHERE id = ?", (key_id,)).rowcount > 0
 
 
 def disable_superuser_key(key_id: int) -> bool:
     """Disable a superuser key by ID. Returns True if successful."""
     with conn() as c:
-        c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,))
-        return c.total_changes > 0
+        return c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,)).rowcount > 0
 
 
 # ── Template functions ──────────────────────────────────────────────────────
@@ -1464,12 +1721,12 @@ def create_superuser_key_template(name: str, description: str = "", dashboards: 
     now = int(time.time())
 
     with conn() as c:
-        c.execute(
+        return _insert_returning_id(
+            c,
             """INSERT INTO superuser_key_templates (name, description, dashboards, aspects, created_at)
                VALUES (?, ?, ?, ?, ?)""",
             (name, description, dashboards_str, aspects_str, now),
         )
-        return c.lastrowid
 
 
 def list_superuser_key_templates() -> list[dict]:
@@ -1519,8 +1776,7 @@ def get_superuser_key_template(template_id: int) -> dict | None:
 def delete_superuser_key_template(template_id: int) -> bool:
     """Delete a template. Returns True if successful."""
     with conn() as c:
-        c.execute("DELETE FROM superuser_key_templates WHERE id = ?", (template_id,))
-        return c.total_changes > 0
+        return c.execute("DELETE FROM superuser_key_templates WHERE id = ?", (template_id,)).rowcount > 0
 
 
 # ── Usage analytics functions ──────────────────────────────────────────────

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>narve.ai — Terminal</title>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --panel: #121722;
+      --panel-2: #1a2130;
+      --border: #232c3d;
+      --text: #e6ebf2;
+      --muted: #8a95a8;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text);
+      display: grid; grid-template-rows: 52px 1fr; height: 100vh; overflow: hidden;
+    }
+
+    /* Top bar */
+    .topbar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .brand { font-weight: 700; letter-spacing: -0.02em; font-size: 16px; }
+    .brand .dot { color: var(--accent); }
+    .search {
+      flex: 0 1 320px; margin-left: 8px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 10px; color: var(--text); font-size: 13px; outline: none;
+    }
+    .search:focus { border-color: var(--accent); }
+    .spacer { flex: 1; }
+    .topbar a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 6px; }
+    .topbar a:hover { color: var(--text); background: var(--panel-2); }
+    .user { color: var(--muted); font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Layout below topbar */
+    .body { display: grid; grid-template-columns: 248px 1fr; min-height: 0; }
+    .sidebar {
+      background: var(--panel); border-right: 1px solid var(--border);
+      overflow-y: auto; padding: 8px;
+    }
+    .side-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 10px 10px 6px; }
+    .item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 10px; border-radius: 8px; cursor: pointer; user-select: none;
+      color: var(--text); font-size: 13.5px; line-height: 1.2;
+    }
+    .item:hover { background: var(--panel-2); }
+    .item.active { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--dotc, var(--accent)); }
+    .item .dotc { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--dotc, var(--accent)); }
+    .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item.locked .name { color: var(--muted); }
+    .lock { font-size: 11px; color: var(--muted); }
+    .item.hidden { display: none; }
+    .empty-search { color: var(--muted); font-size: 13px; padding: 14px 10px; display: none; }
+
+    /* Main content */
+    .main { position: relative; min-width: 0; background: var(--bg); }
+    #frame { width: 100%; height: 100%; border: 0; background: #fff; }
+    .loader {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: var(--bg); color: var(--muted); font-size: 13px; gap: 10px; transition: opacity .2s; z-index: 2;
+    }
+    .loader.hidden { opacity: 0; pointer-events: none; }
+    .spin { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; }
+    @keyframes sp { to { transform: rotate(360deg); } }
+    .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 8px; }
+
+    @media (max-width: 720px) {
+      .body { grid-template-columns: 1fr; }
+      .sidebar { position: absolute; z-index: 5; width: 248px; height: calc(100vh - 52px); transform: translateX(-100%); transition: transform .2s; }
+      .sidebar.open { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">narve<span class="dot">.</span>ai</span>
+    <input id="search" class="search" type="search" placeholder="Search dashboards…  ( / )" autocomplete="off">
+    <span class="spacer"></span>
+    <a href="/dashboards?hub=1">My Dashboards</a>
+    <a href="/billing">Billing</a>
+    <span class="user" title="{{ user_email }}">{{ user_email }}</span>
+    <a href="/logout">Log out</a>
+  </header>
+
+  <div class="body">
+    <nav class="sidebar" id="sidebar">
+      <div class="side-label">Dashboards</div>
+      <div id="list"></div>
+      <div class="empty-search" id="emptySearch">No dashboards match.</div>
+    </nav>
+    <main class="main">
+      <div class="loader hidden" id="loader"><span class="spin"></span> Loading…</div>
+      <div class="placeholder" id="placeholder">
+        <div style="font-size:15px;color:var(--text)">Select a dashboard</div>
+        <div>Pick one from the left to get started.</div>
+      </div>
+      <iframe id="frame" title="dashboard" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    </main>
+  </div>
+
+  <script>
+    const DASHBOARDS = {{ raw_dashboard_data }};
+    const list = document.getElementById('list');
+    const frame = document.getElementById('frame');
+    const loader = document.getElementById('loader');
+    const placeholder = document.getElementById('placeholder');
+    const search = document.getElementById('search');
+    const emptySearch = document.getElementById('emptySearch');
+    const LAST_KEY = 'narve.lastDashboard';
+    const byKey = Object.fromEntries(DASHBOARDS.map(d => [d.key, d]));
+    let current = null;
+
+    // Build the sidebar
+    for (const d of DASHBOARDS) {
+      const el = document.createElement('div');
+      el.className = 'item' + (d.locked ? ' locked' : '');
+      el.dataset.key = d.key;
+      el.dataset.search = (d.name + ' ' + (d.description || '')).toLowerCase();
+      el.style.setProperty('--dotc', d.accent || 'var(--accent)');
+      el.innerHTML =
+        '<span class="dotc"></span>' +
+        '<span class="name"></span>' +
+        (d.locked ? '<span class="lock">🔒</span>' : '');
+      el.querySelector('.name').textContent = d.name;
+      el.title = d.description || d.name;
+      el.addEventListener('click', () => open(d.key));
+      list.appendChild(el);
+    }
+
+    function open(key) {
+      const d = byKey[key];
+      if (!d) return;
+      current = key;
+      placeholder.style.display = 'none';
+      loader.classList.remove('hidden');
+      frame.src = d.url;
+      if (location.hash.slice(1) !== key) history.replaceState(null, '', '#' + key);
+      try { localStorage.setItem(LAST_KEY, key); } catch (e) {}
+      for (const it of list.children) it.classList.toggle('active', it.dataset.key === key);
+      document.getElementById('sidebar').classList.remove('open');
+      document.title = 'narve.ai — ' + d.name;
+    }
+
+    frame.addEventListener('load', () => { if (current) loader.classList.add('hidden'); });
+
+    // Search filter
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      let visible = 0;
+      for (const it of list.children) {
+        const hit = !q || it.dataset.search.includes(q);
+        it.classList.toggle('hidden', !hit);
+        if (hit) visible++;
+      }
+      emptySearch.style.display = visible ? 'none' : 'block';
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== search) { e.preventDefault(); search.focus(); }
+      if (e.key === 'Escape' && document.activeElement === search) { search.value = ''; search.dispatchEvent(new Event('input')); search.blur(); }
+    });
+    window.addEventListener('hashchange', () => {
+      const k = location.hash.slice(1);
+      if (k && byKey[k] && k !== current) open(k);
+    });
+
+    // Initial selection: hash → last-opened → first
+    (function init() {
+      let start = location.hash.slice(1);
+      if (!start || !byKey[start]) { try { start = localStorage.getItem(LAST_KEY); } catch (e) {} }
+      if (!start || !byKey[start]) start = DASHBOARDS.length ? DASHBOARDS[0].key : null;
+      if (start) open(start);
+    })();
+  </script>
+</body>
+</html>

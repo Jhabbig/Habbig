@@ -72,13 +72,70 @@ jobs:
       - name: Run pytest
         run: python -m pytest tests/
 
+  test-gateway-db:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: narve
+          POSTGRES_PASSWORD: narve
+          POSTGRES_DB: narve
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U narve -d narve"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: gateway
+    env:
+      # Empty on the sqlite leg → db.py falls back to the local SQLite file.
+      DATABASE_URL: ${{ matrix.backend == 'postgres' && 'postgres://narve:narve@localhost:5432/narve' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime + test deps
+        run: pip install -r requirements.txt pytest
+      - name: Run DB backend tests (${{ matrix.backend }})
+        run: python -m pytest test_db_backends.py -v
+      - name: Migration round-trip (SQLite → Postgres)
+        if: matrix.backend == 'postgres'
+        run: |
+          # 1. seed a SQLite auth.db using the SQLite backend
+          env -u DATABASE_URL python - <<'PY'
+          import db
+          db.init_db()
+          for i in range(3):
+              db.create_user(f"seed{i}@example.com", "Sup3rSecret!pw12")
+          print("seeded", db.DB_PATH)
+          PY
+          # 2. migrate it into the live Postgres (wipe target first)
+          python migrate_sqlite_to_pg.py --sqlite auth.db --truncate
+          # 3. verify the rows landed
+          python - <<'PY'
+          import db
+          users = db.list_all_users()
+          assert len(users) >= 3, users
+          print("migrated users:", len(users))
+          PY
+
   docker-build:
     runs-on: ubuntu-latest
     env:
-      # Compose interpolates ${REDIS_PASSWORD:?...} at parse time, so the build
-      # step needs *some* value. The password is only read at runtime by redis,
-      # not during the build.
+      # Compose interpolates ${REDIS_PASSWORD:?...} and ${POSTGRES_PASSWORD:?...}
+      # at parse time, so the build step needs *some* value. These are only read
+      # at runtime by redis/postgres, not during the build.
       REDIS_PASSWORD: ci-build
+      POSTGRES_PASSWORD: ci-build
     steps:
       - uses: actions/checkout@v4
       - name: Build all images

@@ -21,6 +21,23 @@ services:
       interval: 10s
       retries: 3
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-narve}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD env var}"
+      POSTGRES_DB: "${POSTGRES_DB:-narve}"
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-narve} -d ${POSTGRES_DB:-narve}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   gateway:
     build: ./gateway
     ports:
@@ -28,11 +45,16 @@ services:
     env_file: ./gateway/.env
     environment:
       GATEWAY_UPSTREAM_HOST_PATTERN: "dash-{key}"
+      # Point the gateway at the bundled Postgres. Overrides any DATABASE_URL
+      # in gateway/.env. Remove this block to fall back to SQLite.
+      DATABASE_URL: "postgres://${POSTGRES_USER:-narve}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD env var}@postgres:5432/${POSTGRES_DB:-narve}"
     volumes:
       - gateway-data:/app/data
     restart: unless-stopped
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       crypto:
         condition: service_healthy
@@ -285,4 +307,5 @@ services:
 
 volumes:
   gateway-data:
+  postgres-data:
   crypto-data:
