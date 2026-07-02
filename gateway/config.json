@@ -1,5 +1,5 @@
 {
-  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai. The 'key' is internal and must not change — it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. Flags: 'hidden': true removes a dashboard from every storefront surface (landing, hub, tour, billing, settings) while keeping proxying and existing subscriptions working — flip it back to relist. 'access_alias': '<key>' means a subscription to that other key unlocks this dashboard too (merged products sold under one key). 'merged_into': '<key>' marks a retired dashboard whose subdomain now 301-redirects to the absorbing dashboard; pair it with a 'legacy_grants' entry so old subscribers keep access to the merged product. 'parked': true marks a hidden dashboard whose service is intentionally not deployed: the gateway serves a parked notice on its subdomain (tallied on /admin/fleet) instead of proxying, and health probes skip it.",
+  "_comment": "Edit subdomain values to change how dashboards appear at *.narve.ai. The 'key' is internal and must not change \u2014 it's how the gateway identifies each dashboard. The 'target' is the local port where the dashboard is actually running. Pricing is plan-level (see PLANS in server.py: Basic/Pro/Enterprise) \u2014 dashboards no longer carry their own prices. Flags: 'hidden': true removes a dashboard from every storefront surface (landing, hub, tour, billing, settings) while keeping proxying and existing subscriptions working \u2014 flip it back to relist. 'access_alias': '<key>' means a subscription to that other key unlocks this dashboard too (merged products sold under one key). 'merged_into': '<key>' marks a retired dashboard whose subdomain now 301-redirects to the absorbing dashboard; pair it with a 'legacy_grants' entry so old subscribers keep access to the merged product. 'parked': true marks a hidden dashboard whose service is intentionally not deployed: the gateway serves a parked notice on its subdomain (tallied on /admin/fleet) instead of proxying, and health probes skip it.",
   "domain": "narve.ai",
   "gateway_port": 7000,
   "cookie_secret_env": "GATEWAY_COOKIE_SECRET",
@@ -16,25 +16,17 @@
       "display_name": "Sharpe Sports",
       "description": "Polymarket vs bookmaker odds arbitrage signals",
       "accent": "#ef4444",
-      "monthly_cents": 1999,
-      "annual_cents": 19900,
       "supports_websocket": true,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "price_1TJXuZQq4pCmZ517QOsgoeAg",
-      "stripe_price_annual": "price_1TJXuaQq4pCmZ517TerWA5ET"
+      "parked": true
     },
     "weather": {
       "subdomain": "weather",
       "target": 5050,
       "display_name": "Weather, Climate & Disasters",
-      "description": "Weather market edges · hurricanes, quakes & wildfires · long-horizon climate",
+      "description": "Weather market edges \u00b7 hurricanes, quakes & wildfires \u00b7 long-horizon climate",
       "accent": "#3b82f6",
-      "monthly_cents": 799,
-      "annual_cents": 7900,
-      "supports_websocket": false,
-      "stripe_price_monthly": "price_1TJXubQq4pCmZ517I3rB06z3",
-      "stripe_price_annual": "price_1TJXucQq4pCmZ517bEimvNuD"
+      "supports_websocket": false
     },
     "world": {
       "subdomain": "world",
@@ -42,39 +34,27 @@
       "display_name": "World State",
       "description": "Global conflicts, headlines, geopolitical feed",
       "accent": "#8b5cf6",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "price_1TJXudQq4pCmZ517r5kGGPg8",
-      "stripe_price_annual": "price_1TJXueQq4pCmZ517BA5k30Tc"
+      "parked": true
     },
     "crypto": {
       "subdomain": "crypto",
       "target": 8000,
-      "display_name": "Market Edge — Stocks & Crypto",
+      "display_name": "Market Edge \u2014 Stocks & Crypto",
       "description": "BTC & crypto ensemble ML signals + pro stock desk: Kelly sizing, Greeks, risk engine",
       "accent": "#f59e0b",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
-      "supports_websocket": true,
-      "stripe_price_monthly": "price_1TJXufQq4pCmZ517hcTl3rsK",
-      "stripe_price_annual": "price_1TJXugQq4pCmZ517oI08QMkS"
+      "supports_websocket": true
     },
     "stocks": {
       "subdomain": "stocks",
       "target": 8050,
-      "display_name": "Market Edge — Stock Desk",
+      "display_name": "Market Edge \u2014 Stock Desk",
       "description": "StockSignal: real-time stock signals, position sizing, options Greeks (included with Market Edge)",
       "accent": "#f59e0b",
-      "monthly_cents": 999,
-      "annual_cents": 9900,
       "supports_websocket": false,
       "hidden": true,
-      "access_alias": "crypto",
-      "stripe_price_monthly": null,
-      "stripe_price_annual": null
+      "access_alias": "crypto"
     },
     "midterm": {
       "subdomain": "midterm",
@@ -82,11 +62,7 @@
       "display_name": "Midterm Predictor",
       "description": "Election & polling aggregation across markets",
       "accent": "#6366f1",
-      "monthly_cents": 1499,
-      "annual_cents": 14900,
-      "supports_websocket": false,
-      "stripe_price_monthly": "price_1TJXuhQq4pCmZ517HHLDcXuE",
-      "stripe_price_annual": "price_1TJXuiQq4pCmZ517fq4wS21C"
+      "supports_websocket": false
     },
     "top_traders": {
       "subdomain": "traders",
@@ -94,13 +70,9 @@
       "display_name": "Top Traders",
       "description": "Polymarket top-trader activity and leaderboard",
       "accent": "#0ea5e9",
-      "monthly_cents": 1299,
-      "annual_cents": 12900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "price_1TJXujQq4pCmZ517lvI0RcLS",
-      "stripe_price_annual": "price_1TJXukQq4pCmZ517ma0Q8iMP"
+      "parked": true
     },
     "climate": {
       "subdomain": "climate",
@@ -108,55 +80,39 @@
       "display_name": "Climate Change",
       "description": "Merged into Weather, Climate & Disasters",
       "accent": "#34d399",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "merged_into": "weather",
-      "stripe_price_monthly": null,
-      "stripe_price_annual": null
+      "merged_into": "weather"
     },
     "centralbank": {
       "subdomain": "cb",
       "target": 7060,
       "display_name": "Central Bank Tracker",
-      "description": "Fed, ECB, BoE rates · implied path · Polymarket FOMC edge",
+      "description": "Fed, ECB, BoE rates \u00b7 implied path \u00b7 Polymarket FOMC edge",
       "accent": "#14b8a6",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "TODO_CENTRALBANK_STRIPE_MONTHLY",
-      "stripe_price_annual": "TODO_CENTRALBANK_STRIPE_ANNUAL"
+      "parked": true
     },
     "truth": {
       "subdomain": "truth",
       "target": 18789,
       "display_name": "Truth Research",
-      "description": "X / TruthSocial prediction-mining · EV signals · paper-trade ledger",
+      "description": "X / TruthSocial prediction-mining \u00b7 EV signals \u00b7 paper-trade ledger",
       "accent": "#f43f5e",
-      "monthly_cents": 1499,
-      "annual_cents": 14900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "TODO_TRUTH_STRIPE_MONTHLY",
-      "stripe_price_annual": "TODO_TRUTH_STRIPE_ANNUAL"
+      "parked": true
     },
     "airace": {
       "subdomain": "ai",
       "target": 7070,
       "display_name": "AI Race",
-      "description": "Frontier model leaderboard · capability frontier · live AI prediction markets",
+      "description": "Frontier model leaderboard \u00b7 capability frontier \u00b7 live AI prediction markets",
       "accent": "#a78bfa",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": null,
-      "stripe_price_annual": null
+      "parked": true
     },
     "disasters": {
       "subdomain": "disasters",
@@ -164,27 +120,19 @@
       "display_name": "Major Disasters",
       "description": "Merged into Weather, Climate & Disasters",
       "accent": "#f97316",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "merged_into": "weather",
-      "stripe_price_monthly": null,
-      "stripe_price_annual": null
+      "merged_into": "weather"
     },
     "crypto_trackers": {
       "subdomain": "trackers",
       "target": 7054,
       "display_name": "Crypto Trackers",
-      "description": "Every coin · cross-exchange · funding · DeFi TVL · F&G · data-fidelity-first",
+      "description": "Every coin \u00b7 cross-exchange \u00b7 funding \u00b7 DeFi TVL \u00b7 F&G \u00b7 data-fidelity-first",
       "accent": "#f59e0b",
-      "monthly_cents": 1499,
-      "annual_cents": 14900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "TODO_TRACKERS_STRIPE_MONTHLY",
-      "stripe_price_annual": "TODO_TRACKERS_STRIPE_ANNUAL"
+      "parked": true
     },
     "religion": {
       "subdomain": "religion",
@@ -192,27 +140,19 @@
       "display_name": "Religion & Cults Tracker",
       "description": "World religions, NRM / cult watchlist, USCIRF designations, Polymarket religion markets",
       "accent": "#d29922",
-      "monthly_cents": 599,
-      "annual_cents": 5900,
       "supports_websocket": false,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": null,
-      "stripe_price_annual": null
+      "parked": true
     },
     "whale": {
       "subdomain": "whale",
       "target": 8053,
       "display_name": "Whale Watch",
-      "description": "Institutional whale flow — 13F, Form 4, 13D filings",
+      "description": "Institutional whale flow \u2014 13F, Form 4, 13D filings",
       "accent": "#10b981",
-      "monthly_cents": 1799,
-      "annual_cents": 17900,
       "supports_websocket": true,
       "hidden": true,
-      "parked": true,
-      "stripe_price_monthly": "TODO_set_stripe_price_id",
-      "stripe_price_annual": "TODO_set_stripe_price_id"
+      "parked": true
     }
   }
 }

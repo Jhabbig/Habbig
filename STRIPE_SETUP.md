@@ -1,62 +1,38 @@
-# Stripe setup — 30-min checklist
+# Stripe setup — 15-min checklist
 
-Right now **nobody can subscribe to any dashboard** because no `STRIPE_PRICE_ID_*` env vars are set anywhere on the production box. The Habbig gateway's `subproduct.py` references env vars like `STRIPE_PRICE_ID_SPORTS_MONTHLY`, but `~/.gateway_env`, `~/Polymarket/gateway/.env.production`, and `~/Habbig/gateway/.env` all have zero `STRIPE_*` entries.
+Pricing is **plan-level only**. Per-dashboard prices are retired — every
+dashboard is included with a plan, and the only SKUs are:
 
-This is the fastest revenue unlock. ~30 min on stripe.com + a few env-var lines.
-
-## Step 1 — create products in Stripe (~20 min)
-
-Log into stripe.com → Products → "+ Add product". Create **one product per dashboard** with two prices (monthly + annual). Suggested setup based on current `gateway/config.json`:
-
-| product | monthly | annual |
+| plan | price | Stripe price needed |
 |---|---|---|
-| narve.ai · Sports | $19.99/mo | $199.00/yr |
-| narve.ai · Weather | $7.99/mo | $79.00/yr |
-| narve.ai · World | $5.99/mo | $59.00/yr |
-| narve.ai · Crypto | $9.99/mo | $99.00/yr |
-| narve.ai · Midterm | $14.99/mo | $149.00/yr |
-| narve.ai · Top Traders | $12.99/mo | $129.00/yr |
-| narve.ai · Whale | $17.99/mo | $179.00/yr |
-| narve.ai · Voters | $5.99/mo | $59.00/yr |
-| narve.ai · Climate | $5.99/mo | $59.00/yr |
-| narve.ai · Disasters | $5.99/mo | $59.00/yr |
-| **narve.ai Trader (3 dashboards)** | **$99.00/mo** | **$999.00/yr** |
-| **narve.ai Pro (all dashboards)** | **$229.00/mo** | **$1,999.00/yr** |
+| **narve.ai Basic** | **$75/mo** | yes — `STRIPE_PRICE_ID_BASIC_MONTHLY` |
+| **narve.ai Pro** | **$180/mo** | yes — `STRIPE_PRICE_ID_PRO_MONTHLY` |
+| **narve.ai Enterprise** | **negotiable** | no — deals close via `/enquire`, access granted manually |
 
-The Trader and Pro tiers already exist in `gateway/server.py` `PLAN_DEFS`. They're the highest-leverage SKUs — most users want 2–3 dashboards (Trader) or all of them (Pro), and bundling drops decision-fatigue. The pricing in `PLAN_DEFS` is already wired into `/billing`, just needs Stripe price IDs to actually charge.
+Plans bill monthly. The plan definitions live in `gateway/server.py`
+(`PLANS`); the Stripe price IDs are read from env so prices can be rotated
+without a deploy. Until both env vars are set, the upgrade buttons log an
+error instead of charging (and with no `STRIPE_SECRET_KEY` at all, billing
+runs in placeholder mode — no real payments).
 
-After creating each product, copy the **price ID** (looks like `price_1Abc23dEFgh4567ijklmnop`).
+## Step 1 — create two products in Stripe (~10 min)
+
+Log into stripe.com → Products → "+ Add product":
+
+1. **narve.ai Basic** — one recurring monthly price of **$75.00**
+2. **narve.ai Pro** — one recurring monthly price of **$180.00**
+
+After creating each, copy the **price ID** (looks like
+`price_1Abc23dEFgh4567ijklmnop`).
 
 ## Step 2 — drop the IDs into `~/.gateway_env`
 
 ```bash
 ssh julianhabbig@100.69.44.108
 cat >> ~/.gateway_env <<'EOF'
-# Stripe price IDs — see STRIPE_SETUP.md for the dashboard mapping
-STRIPE_PRICE_ID_SPORTS_MONTHLY=price_xxx
-STRIPE_PRICE_ID_SPORTS_ANNUAL=price_xxx
-STRIPE_PRICE_ID_WEATHER_MONTHLY=price_xxx
-STRIPE_PRICE_ID_WEATHER_ANNUAL=price_xxx
-STRIPE_PRICE_ID_WORLD_MONTHLY=price_xxx
-STRIPE_PRICE_ID_WORLD_ANNUAL=price_xxx
-STRIPE_PRICE_ID_CRYPTO_MONTHLY=price_xxx
-STRIPE_PRICE_ID_CRYPTO_ANNUAL=price_xxx
-STRIPE_PRICE_ID_MIDTERM_MONTHLY=price_xxx
-STRIPE_PRICE_ID_MIDTERM_ANNUAL=price_xxx
-STRIPE_PRICE_ID_TRADERS_MONTHLY=price_xxx
-STRIPE_PRICE_ID_TRADERS_ANNUAL=price_xxx
-STRIPE_PRICE_ID_WHALE_MONTHLY=price_xxx
-STRIPE_PRICE_ID_WHALE_ANNUAL=price_xxx
-STRIPE_PRICE_ID_VOTERS_MONTHLY=price_xxx
-STRIPE_PRICE_ID_VOTERS_ANNUAL=price_xxx
-STRIPE_PRICE_ID_CLIMATE_MONTHLY=price_xxx
-STRIPE_PRICE_ID_CLIMATE_ANNUAL=price_xxx
-STRIPE_PRICE_ID_DISASTERS_MONTHLY=price_xxx
-STRIPE_PRICE_ID_DISASTERS_ANNUAL=price_xxx
-STRIPE_PRICE_ID_TRADER_MONTHLY=price_xxx
-STRIPE_PRICE_ID_TRADER_ANNUAL=price_xxx
+# Stripe plan price IDs — Basic $75/mo, Pro $180/mo (see STRIPE_SETUP.md)
+STRIPE_PRICE_ID_BASIC_MONTHLY=price_xxx
 STRIPE_PRICE_ID_PRO_MONTHLY=price_xxx
-STRIPE_PRICE_ID_PRO_ANNUAL=price_xxx
 # Stripe webhook signing secret (Settings → Webhooks → narve.ai endpoint)
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 # Stripe secret key (Settings → API keys → secret)
@@ -65,19 +41,36 @@ EOF
 sudo systemctl restart polymarket-gateway  # or kill the watchdog gateway pid
 ```
 
-The layered .env loader I added earlier picks `~/.gateway_env` as priority 1, so all dashboards see the new vars without further config.
+The layered .env loader picks `~/.gateway_env` as priority 1, so all
+dashboards see the new vars without further config.
 
 ## Step 3 — verify
 
 ```bash
-curl -sI https://sports.narve.ai/  # should still 302 to /gate
-# In a browser, log in, click "Upgrade" on a dashboard, you should hit a real Stripe Checkout
+curl -sI https://weather.narve.ai/  # should still 302 to /gate
+# In a browser, log in, open /billing, click "Subscribe — $75/mo" on Basic,
+# you should hit a real Stripe Checkout for $75.00/month.
 ```
 
-If checkout 4xx's, the price ID env var is wrong. The gateway logs at `/tmp/gateway.log` will show which env var it tried to read.
+If checkout 4xx's, the price ID env var is wrong. The gateway logs at
+`/tmp/gateway.log` will show which plan it tried to price.
 
-## Notes
+## Enterprise
 
-- The legacy `gateway/config.json` (Polymarket tree) still has `"stripe_price_monthly": null` for `climate` only. That config isn't read in production (Habbig gateway runs production) so it's harmless, but worth setting if you ever revert to Polymarket gateway.
-- `whale` and `disasters` were never in the original Stripe lineup — the env vars above include them since the dashboards exist; adjust if you don't want to sell them yet.
-- The narve.ai Pro bundle SKU is added in this same PR (`subproduct.py` PRO entry). It needs `STRIPE_PRICE_ID_PRO_MONTHLY/ANNUAL` for the upgrade button to work.
+There is deliberately no Stripe product for Enterprise — pricing is
+negotiated per customer. Leads arrive through the `/enquire` form (visible
+on `/pricing` and `/billing`). Close the deal off-platform (invoice, bank
+transfer, custom Stripe invoice — whatever fits), then grant access from
+`/admin` → user → **Grant Free** with all dashboards selected.
+
+## Migration notes
+
+- Old per-dashboard Stripe products/prices ($5.99–$19.99) and the old
+  Trader (£49) / Pro (£149) bundle prices are dead. Archive them in Stripe
+  so nobody can subscribe through a stale link.
+- Existing subscriptions on old prices keep working: the gateway treats
+  per-dashboard subs as **legacy** (access unchanged, cancellable from
+  /billing, counted separately in admin revenue), and old `trader_*` plan
+  records display as Basic.
+- The webhook handler is unchanged (`checkout.session.completed` with
+  `type=bundle` metadata), so no Stripe webhook reconfiguration is needed.

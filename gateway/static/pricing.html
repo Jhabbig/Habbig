@@ -106,28 +106,20 @@
     <div class="pr-header">
       <h1 class="pr-title">Simple, transparent pricing</h1>
       <p class="pr-sub">Buy now and level up your Polymarket trading. No setup fees. Cancel anytime.</p>
-
-      <div class="pr-toggle-wrap">
-        <span class="pr-toggle-label active" id="lbl-monthly" onclick="setInterval('monthly')">Monthly</span>
-        <div class="pr-toggle" id="interval-toggle" onclick="toggleInterval()">
-          <div class="pr-toggle-dot"></div>
-        </div>
-        <span class="pr-toggle-label" id="lbl-annual" onclick="setInterval('annual')">Annual</span>
-      </div>
     </div>
 
     <!-- ===== PRICING CARDS ===== -->
     <div class="pr-cards">
 
-      <!-- Trader -->
+      <!-- Basic -->
       <div class="pr-card">
-        <div class="pr-tier">Trader</div>
+        <div class="pr-tier">Basic</div>
         <div class="pr-tagline">For active traders getting started with signal intelligence</div>
         <div class="pr-price">
-          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="49" data-annual="399">49</span></span>
+          <span class="pr-amount"><span class="pr-currency">$</span><span class="price-val">75</span></span>
           <span class="pr-period price-period">/month</span>
         </div>
-        <div class="pr-savings pr-savings-hidden annual-savings" data-text="Save &pound;189/yr">Save &pound;189/yr</div>
+        <div class="pr-savings pr-savings-hidden">&nbsp;</div>
         <div class="pr-divider"></div>
         <ul class="pr-features">
           <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 30-day data window</li>
@@ -141,7 +133,7 @@
           <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Push notifications</span></li>
           <li><svg class="pr-cross" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> <span class="pr-excluded">Unlimited markets</span></li>
         </ul>
-        <a href="/subscribe?plan=trader" class="pr-cta pr-cta-outline plan-cta" data-plan="trader">Get Started</a>
+        <a href="/subscribe?plan=basic" class="pr-cta pr-cta-outline plan-cta" data-plan="basic">Get Started</a>
       </div>
 
       <!-- Pro -->
@@ -150,10 +142,10 @@
         <div class="pr-tier">Pro</div>
         <div class="pr-tagline">For serious traders who want the full edge</div>
         <div class="pr-price">
-          <span class="pr-amount"><span class="pr-currency">&pound;</span><span class="price-val" data-monthly="149" data-annual="1,199">149</span></span>
+          <span class="pr-amount"><span class="pr-currency">$</span><span class="price-val">180</span></span>
           <span class="pr-period price-period">/month</span>
         </div>
-        <div class="pr-savings pr-savings-hidden annual-savings" data-text="Save &pound;589/yr">Save &pound;589/yr</div>
+        <div class="pr-savings pr-savings-hidden">&nbsp;</div>
         <div class="pr-divider"></div>
         <ul class="pr-features">
           <li><svg class="pr-check" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 6-month data window</li>
@@ -173,7 +165,7 @@
         <div class="pr-tier">Enterprise</div>
         <div class="pr-tagline">For funds, institutions, and custom use cases</div>
         <div class="pr-price">
-          <div class="pr-custom-price">Custom pricing</div>
+          <div class="pr-custom-price">Negotiable</div>
         </div>
         <div class="pr-savings pr-savings-hidden">&nbsp;</div>
         <div class="pr-divider"></div>
@@ -196,7 +188,7 @@
         <thead>
           <tr>
             <th></th>
-            <th>Trader<div class="pr-comp-cta"><a href="/subscribe?plan=trader">Get Started</a></div></th>
+            <th>Basic<div class="pr-comp-cta"><a href="/subscribe?plan=basic">Get Started</a></div></th>
             <th>Pro<div class="pr-comp-cta"><a href="/subscribe?plan=pro">Get Started</a></div></th>
             <th>Enterprise<div class="pr-comp-cta"><a href="/enquire">Contact Us</a></div></th>
           </tr>
@@ -249,7 +241,7 @@
           What's the difference between the data windows?
           <svg class="pr-faq-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </div>
-        <div class="pr-faq-a"><p>The data window determines how far back the feed and source history goes. Trader gives you 30 days of predictions and source tracking. Pro gives you 6 months, which is where the real credibility signal emerges — you can see how a source performed across multiple resolved markets over time.</p></div>
+        <div class="pr-faq-a"><p>The data window determines how far back the feed and source history goes. Basic gives you 30 days of predictions and source tracking. Pro gives you 6 months, which is where the real credibility signal emerges — you can see how a source performed across multiple resolved markets over time.</p></div>
       </div>
       <div class="pr-faq-item">
         <div class="pr-faq-q" onclick="toggleFaq(this)">
@@ -271,45 +263,6 @@
 </div>
 
 <script>
-var isAnnual = false;
-
-function toggleInterval() {
-  isAnnual = !isAnnual;
-  updatePrices();
-}
-
-function setInterval(mode) {
-  isAnnual = mode === 'annual';
-  updatePrices();
-}
-
-function updatePrices() {
-  var toggle = document.getElementById('interval-toggle');
-  var lblM = document.getElementById('lbl-monthly');
-  var lblA = document.getElementById('lbl-annual');
-
-  toggle.classList.toggle('on', isAnnual);
-  lblM.classList.toggle('active', !isAnnual);
-  lblA.classList.toggle('active', isAnnual);
-
-  document.querySelectorAll('.price-val').forEach(function(el) {
-    el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
-  });
-  document.querySelectorAll('.price-period').forEach(function(el) {
-    el.textContent = isAnnual ? '/year' : '/month';
-  });
-  document.querySelectorAll('.annual-savings').forEach(function(el) {
-    el.classList.toggle('pr-savings-hidden', !isAnnual);
-  });
-
-  // Update CTA links
-  var interval = isAnnual ? 'annual' : 'monthly';
-  document.querySelectorAll('.plan-cta').forEach(function(el) {
-    var plan = el.dataset.plan;
-    if (plan) el.href = '/subscribe?plan=' + plan + '&interval=' + interval;
-  });
-}
-
 function toggleFaq(el) {
   var item = el.parentElement;
   var wasOpen = item.classList.contains('open');

@@ -294,14 +294,14 @@
 
     <div class="preview-pricing">
       <div class="preview-price-box">
-        <div class="preview-price-amount">{{ monthly_price }}</div>
-        <div class="preview-price-period">per month</div>
+        <div class="preview-price-amount">{{ basic_price }}</div>
+        <div class="preview-price-period">Basic / month</div>
       </div>
       <div class="preview-price-divider">or</div>
       <div class="preview-price-box">
-        <div class="preview-price-amount">{{ annual_price }}</div>
-        <div class="preview-price-period">per year</div>
-        <div class="preview-price-save">Save {{ annual_savings }}%</div>
+        <div class="preview-price-amount">{{ pro_price }}</div>
+        <div class="preview-price-period">Pro / month</div>
+        <div class="preview-price-save">Every dashboard included</div>
       </div>
     </div>
 
@@ -330,7 +330,7 @@
   <!-- Bottom CTA -->
   <section class="preview-bottom-cta">
     <div class="preview-bottom-price">
-      Starting at <strong>{{ monthly_price }}/month</strong> &mdash; cancel any time.
+      Plans from <strong>{{ basic_price }}/month</strong> &mdash; every dashboard included, cancel any time. Enterprise pricing is negotiable.
     </div>
     <a class="preview-cta-primary" href="/billing?dashboard={{ dashboard_key }}">Subscribe to {{ dashboard_name }}</a>
     <a class="preview-contact" href="mailto:julian@narve.ai">Questions? Get in touch</a>

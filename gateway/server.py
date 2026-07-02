@@ -105,18 +105,66 @@ else:
         "STRIPE_SECRET_KEY not set — billing will use placeholder mode (no real payments)"
     )
 
-BUNDLE_PLANS = {
-    "trader": {
-        "monthly_cents": 4900, "annual_cents": 39900, "name": "betyc Trader",
-        "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
-        "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
+# Site-wide subscription tiers. Per-dashboard pricing is retired: every
+# dashboard is included with a plan, and the only prices anywhere are these.
+# Enterprise is negotiated per customer via /enquire, so it has no Stripe
+# price — access is granted manually (admin grant / invoicing).
+# Stripe price IDs come from env so prices can be rotated without a deploy.
+PLANS = {
+    "basic": {
+        "monthly_cents": 7500, "name": "Basic",
+        "stripe_price_monthly": os.environ.get("STRIPE_PRICE_ID_BASIC_MONTHLY", ""),
     },
     "pro": {
-        "monthly_cents": 14900, "annual_cents": 119900, "name": "betyc Pro",
-        "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
-        "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
+        "monthly_cents": 18000, "name": "Pro",
+        "stripe_price_monthly": os.environ.get("STRIPE_PRICE_ID_PRO_MONTHLY", ""),
     },
 }
+# Old bundle plan keys that may still exist in subscription records.
+# "trader" subs predate the Basic tier and map onto it for display.
+LEGACY_PLAN_ALIASES = {"trader": "basic"}
+
+
+def plan_from_sub_records(sub_plans) -> str:
+    """Map a user's subscription plan strings to a display tier.
+
+    Subscription rows store strings like "basic_monthly", "pro_monthly",
+    legacy "trader_monthly", or bare "monthly"/"annual" from the retired
+    per-dashboard pricing model. Returns "pro", "basic", "legacy" (still
+    active but predates plan pricing), or "" when nothing matches.
+    """
+    tiers = set()
+    for p in sub_plans:
+        base = (p or "").split("_")[0]
+        base = LEGACY_PLAN_ALIASES.get(base, base)
+        tiers.add(base if base in PLANS else "legacy")
+    for tier in ("pro", "basic"):
+        if tier in tiers:
+            return tier
+    return "legacy" if tiers else ""
+
+
+def plan_mrr_cents() -> int:
+    """Site-wide MRR from active plan subscriptions.
+
+    A plan purchase writes one subscription row per dashboard, so revenue is
+    priced per-user by tier, never per-row. Legacy per-dashboard subs predate
+    plan pricing and count $0; Enterprise is invoiced off-platform.
+    """
+    now = int(time.time())
+    plans_by_user: dict = {}
+    for s in db.list_all_subscriptions():
+        if s["status"] != "active":
+            continue
+        if s["expires_at"] and s["expires_at"] <= now:
+            continue
+        plans_by_user.setdefault(s["user_id"], []).append(s["plan"])
+    total = 0
+    for user_plans in plans_by_user.values():
+        tier = plan_from_sub_records(user_plans)
+        if tier in PLANS:
+            total += PLANS[tier]["monthly_cents"]
+    return total
 
 # Rich preview content for each dashboard's /preview/<key> product page.
 DASHBOARD_PREVIEWS = {
@@ -1142,7 +1190,7 @@ def _render_landing() -> HTMLResponse:
           <div class="landing-dash-dot"></div>
           <div class="landing-dash-title">{html.escape(cfg['display_name'])}</div>
           <div class="landing-dash-desc">{html.escape(cfg['description'])}</div>
-          <div class="landing-dash-price">${cfg['monthly_cents']/100:.0f}/mo</div>
+          <div class="landing-dash-price">Included in every plan</div>
         </div>
         """)
     return render_page(
@@ -1446,24 +1494,28 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
 
     # ── Build subscription summary ──────────────────────────────────
     active_subs = []
-    total_monthly = 0
+    active_plans = []
     for key, cfg in DASHBOARDS.items():
         if _is_sub_active(subs.get(key), is_admin_user):
             sub_record = subs.get(key)
-            plan = sub_record["plan"] if sub_record else ""
-            if "annual" in plan:
-                price_label = f"${cfg['annual_cents']/100:.2f}/yr"
-                total_monthly += cfg["annual_cents"] / 12
-            else:
-                price_label = f"${cfg['monthly_cents']/100:.2f}/mo"
-                total_monthly += cfg["monthly_cents"]
-            active_subs.append({"name": cfg["display_name"], "accent": cfg["accent"], "price": price_label})
+            if sub_record:
+                active_plans.append(sub_record["plan"])
+            active_subs.append({"name": cfg["display_name"], "accent": cfg["accent"]})
 
     if active_subs:
+        plan_tier = plan_from_sub_records(active_plans)
+        if plan_tier in PLANS:
+            plan_def = PLANS[plan_tier]
+            total_label = f'${plan_def["monthly_cents"]/100:.0f}<span>/mo &middot; {html.escape(plan_def["name"])}</span>'
+        elif plan_tier == "legacy":
+            total_label = '<span>Legacy plan</span>'
+        else:
+            # Active access without any subscription record — admin comp.
+            total_label = '<span>Complimentary access</span>'
         pills = "".join(
             f'<span class="summary-pill" style="--accent:{s["accent"]}">'
             f'<span class="summary-pill-dot" style="background:{s["accent"]}"></span>'
-            f'{html.escape(s["name"])} <span class="summary-pill-price">{s["price"]}</span>'
+            f'{html.escape(s["name"])}'
             f'</span>'
             for s in active_subs
         )
@@ -1471,7 +1523,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             f'<div class="sub-summary">'
             f'<div class="sub-summary-head">'
             f'<div class="sub-summary-label">Your active plan</div>'
-            f'<div class="sub-summary-total">${total_monthly/100:.2f}<span>/mo equiv.</span></div>'
+            f'<div class="sub-summary-total">{total_label}</div>'
             f'</div>'
             f'<div class="sub-summary-pills">{pills}</div>'
             f'<a class="sub-summary-link" href="/billing">Manage billing &rarr;</a>'
@@ -1484,7 +1536,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             '<div class="sub-summary-label">No active subscriptions</div>'
             '</div>'
             '<p class="sub-summary-hint">Pick a dashboard below to see what it offers, or '
-            '<a href="/billing">view plans</a> to save.</p>'
+            '<a href="/billing">view plans</a> — Basic $75/mo, Pro $180/mo, Enterprise negotiable.</p>'
             '</div>'
         )
 
@@ -1534,7 +1586,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
           <div class="dash-card-title">{cfg['display_name']}</div>
           <div class="dash-card-desc">{cfg['description']}</div>
           {highlights_html}
-          <div class="dash-card-price">${cfg['monthly_cents']/100:.2f}/mo · ${cfg['annual_cents']/100:.2f}/yr</div>
+          <div class="dash-card-price">Included with Basic &amp; Pro</div>
           <div class="dash-card-foot">{cta}</div>
         </div>
         """)
@@ -1555,8 +1607,6 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         )
         includes = preview.get("includes", [])[:4]
         inc_html = "".join(f'<li>{html.escape(item)}</li>' for item in includes)
-        price_mo = f"${cfg['monthly_cents']/100:.2f}"
-        price_yr = f"${cfg['annual_cents']/100:.2f}"
 
         tour_steps_html.append(
             f'<div class="tour-step" data-step="{i + 2}">'
@@ -1568,7 +1618,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             f'<p class="tour-step-tagline">{tagline}</p>'
             f'<div class="tour-feats">{feat_html}</div>'
             f'<div class="tour-includes"><h4>Included</h4><ul>{inc_html}</ul></div>'
-            f'<div class="tour-price">{price_mo}/mo or {price_yr}/yr</div>'
+            f'<div class="tour-price">Included with Basic &amp; Pro</div>'
             f'</div>'
         )
 
@@ -1611,6 +1661,61 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
     now = int(time.time())
     csrf_token = _get_csrf_token(request)
     csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
+
+    # ── Plan cards (the only purchasable SKUs) ──────────────────────────────
+    # Current tier is derived from real subscription records, not admin comps.
+    paid_plan_strings = [s["plan"] for s in subs.values() if _is_sub_active(s, False)]
+    current_tier = plan_from_sub_records(paid_plan_strings)
+
+    plan_blurbs = {
+        "basic": "Every live dashboard, one flat price.",
+        "pro": "Everything in Basic plus priority data, top-tier signals, and first access to new dashboards.",
+    }
+    plan_cards = []
+    for tier_key, plan_def in PLANS.items():
+        price_html = f'${plan_def["monthly_cents"]/100:.0f}<span class="billing-plan-period">/mo</span>'
+        if current_tier == tier_key:
+            badge = '<span class="billing-plan-badge billing-plan-badge-active">Current plan</span>'
+            action_html = (
+                f'<form method="post" action="/billing">{csrf_hidden}'
+                f'<button type="submit" name="action" value="cancelplan" class="btn btn-danger">Cancel plan</button>'
+                f'</form>'
+            )
+        else:
+            badge = ""
+            cta = "Switch plan" if current_tier in PLANS else "Subscribe"
+            action_html = (
+                f'<form method="post" action="/billing/subscribe">{csrf_hidden}'
+                f'<input type="hidden" name="plan" value="{tier_key}">'
+                f'<button type="submit" class="btn btn-primary">{cta} — ${plan_def["monthly_cents"]/100:.0f}/mo</button>'
+                f'</form>'
+            )
+        plan_cards.append(
+            f'<div class="billing-plan-card" style="flex:1;min-width:220px">'
+            f'<div class="billing-plan-header"><div class="billing-plan-name">{html.escape(plan_def["name"])}</div>{badge}</div>'
+            f'<div class="billing-plan-price">{price_html}</div>'
+            f'<div class="billing-plan-desc">{plan_blurbs.get(tier_key, "")}</div>'
+            f'{action_html}'
+            f'</div>'
+        )
+    plan_cards.append(
+        '<div class="billing-plan-card" style="flex:1;min-width:220px">'
+        '<div class="billing-plan-header"><div class="billing-plan-name">Enterprise</div></div>'
+        '<div class="billing-plan-price">Negotiable</div>'
+        '<div class="billing-plan-desc">Custom terms, API access, and dedicated support — priced per use case.</div>'
+        '<a href="/enquire" class="btn btn-primary-outline">Contact us</a>'
+        '</div>'
+    )
+    admin_note = (
+        '<p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">'
+        'Admin accounts have complimentary access to every dashboard.</p>'
+        if is_admin_user else ""
+    )
+    plan_card_html = (
+        f'{admin_note}<div style="display:flex;gap:16px;flex-wrap:wrap">{"".join(plan_cards)}</div>'
+    )
+
+    # ── Per-dashboard rows: status + legacy-subscription management only ────
     rows_html = []
     for key, cfg in DASHBOARDS.items():
         s = subs.get(key)
@@ -1624,30 +1729,26 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
         elif is_active:
             status_label = '<span style="color:var(--green)">Active</span>'
         elif s and s["status"] == "active" and s["expires_at"] and s["expires_at"] <= now:
-            status_label = '<span style="color:var(--amber)">Expired — renew below</span>'
+            status_label = '<span style="color:var(--amber)">Expired — pick a plan above to renew</span>'
         elif s and s["status"] == "cancelled":
             status_label = '<span style="color:var(--red)">Cancelled</span>'
         else:
-            status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
+            status_label = '<span style="color:var(--text-muted)">Included with Basic &amp; Pro</span>'
         if cfg.get("merged_into"):
-            # Retired product — no new purchases, only cancellation of the
-            # remaining subscription. Access continues via the merged product.
+            # Retired product — access continues via the merged product.
             absorbed_by = DASHBOARDS.get(cfg["merged_into"], {}).get("display_name", cfg["merged_into"])
-            monthly_btn = (
+            note = (
                 f'<span style="color:var(--text-muted);font-size:12px">Now part of '
                 f'{html.escape(absorbed_by)} — your subscription keeps working there.</span>'
             )
-            annual_btn = ""
         else:
-            monthly_btn = (
-                f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly ${cfg["monthly_cents"]/100:.2f}</button>'
-            )
-            annual_btn = (
-                f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual ${cfg["annual_cents"]/100:.2f}</button>'
-            )
+            note = ""
+        # Old per-dashboard subscriptions (pre-plan pricing) can still be
+        # cancelled individually; plan subscriptions are managed above.
+        is_legacy_sub = bool(s) and plan_from_sub_records([s["plan"]]) == "legacy"
         cancel_btn = (
             f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
-            if is_active and not is_admin_user else ""
+            if is_active and is_legacy_sub and not is_admin_user else ""
         )
         highlight = ' style="outline: 2px solid var(--accent); outline-offset: 2px;"' if dashboard == key else ""
         rows_html.append(f"""
@@ -1663,8 +1764,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
           <div class="billing-row-actions">
             <form method="post" action="/billing">
               {csrf_hidden}
-              {monthly_btn}
-              {annual_btn}
+              {note}
               {cancel_btn}
             </form>
           </div>
@@ -1685,6 +1785,7 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
         "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
+        raw_plan_card=plan_card_html,
         raw_admin_link=admin_link,
         raw_banner=banner,
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
@@ -1707,67 +1808,28 @@ async def billing_action(request: Request, action: str = Form(...)):
 
     parts = action.split(":")
 
-    # ── Subscribe to a single dashboard ────────────────────────────────────
-    if parts[0] == "sub" and len(parts) == 3:
-        _, key, plan = parts
-        if key in DASHBOARDS and DASHBOARDS[key].get("access_alias"):
-            # Alias entries are part of a merged product — sell the real key.
-            return RedirectResponse(
-                f"/billing?dashboard={DASHBOARDS[key]['access_alias']}", status_code=302
-            )
-        if key in DASHBOARDS and DASHBOARDS[key].get("merged_into"):
-            # Retired product — point the buyer at the one that absorbed it.
-            return RedirectResponse(
-                f"/billing?dashboard={DASHBOARDS[key]['merged_into']}", status_code=302
-            )
-        if key in DASHBOARDS and plan in ("monthly", "annual"):
-            if not STRIPE_SECRET_KEY:
-                # Dev/fallback: placeholder mode (no real payment)
-                duration = 30 if plan == "monthly" else 365
-                db.upsert_subscription(
-                    user_id=user["user_id"],
-                    dashboard_key=key,
-                    plan=plan,
-                    duration_days=duration,
-                    source="placeholder",
-                )
-                flush_sub_cache()
-                return RedirectResponse("/billing", status_code=302)
+    # ── Cancel the whole plan (all dashboards, one Stripe subscription) ─────
+    # Per-dashboard purchases are retired; the only SKUs are the Basic/Pro
+    # plans, so cancellation is plan-level. Enterprise is managed manually.
+    if parts[0] == "cancelplan":
+        # Only plan-tier records: legacy per-dashboard subs have their own
+        # Cancel buttons and must survive a plan cancellation.
+        subs = db.list_subscriptions(user["user_id"])
+        active = [
+            s for s in subs
+            if _is_sub_active(s, False) and plan_from_sub_records([s["plan"]]) in PLANS
+        ]
+        if STRIPE_SECRET_KEY:
+            for stripe_sub_id in {s["stripe_sub_id"] for s in active if s["stripe_sub_id"]}:
+                try:
+                    stripe.Subscription.cancel(stripe_sub_id)
+                except Exception:
+                    log.warning("Stripe cancel failed for %s, cancelling locally", stripe_sub_id)
+        for s in active:
+            db.cancel_subscription(user["user_id"], s["dashboard_key"])
+        flush_sub_cache()
 
-            # Create Stripe Checkout Session
-            cfg = DASHBOARDS[key]
-            price_key = "stripe_price_monthly" if plan == "monthly" else "stripe_price_annual"
-            stripe_price_id = cfg.get(price_key)
-            if not stripe_price_id:
-                log.error("No Stripe price ID configured for %s %s", key, plan)
-                return RedirectResponse("/billing", status_code=302)
-
-            try:
-                customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
-            except StripeProviderError:
-                return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
-            base = _stripe_base_url(request)
-
-            try:
-                session = stripe.checkout.Session.create(
-                    customer=customer_id,
-                    mode="subscription",
-                    line_items=[{"price": stripe_price_id, "quantity": 1}],
-                    metadata={
-                        "user_id": str(user["user_id"]),
-                        "dashboard_key": key,
-                        "plan": plan,
-                        "type": "dashboard",
-                    },
-                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
-                    cancel_url=base + f"/billing?dashboard={key}",
-                )
-            except Exception as exc:
-                log.error("Stripe checkout creation failed for user %s: %s", user.get("user_id"), exc)
-                return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
-            return RedirectResponse(session.url, status_code=303)
-
-    # ── Cancel a dashboard subscription ────────────────────────────────────
+    # ── Cancel a legacy per-dashboard subscription ──────────────────────────
     elif parts[0] == "cancel" and len(parts) == 2:
         _, key = parts
         if key in DASHBOARDS:
@@ -1788,7 +1850,7 @@ async def billing_action(request: Request, action: str = Form(...)):
 
 @app.post("/billing/subscribe")
 async def billing_subscribe(request: Request, plan: str = Form(""), interval: str = Form("monthly")):
-    """Subscribe the logged-in user to a bundle plan (trader/pro)."""
+    """Subscribe the logged-in user to a plan (basic/pro). Plans bill monthly."""
     # CSRF check
     form_data = await request.form()
     csrf_tok = form_data.get("_csrf_token", "")
@@ -1797,14 +1859,13 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
     user = current_user(request)
     if not user:
         return RedirectResponse("/gate", status_code=302)
-    if plan not in ("trader", "pro"):
+    if plan not in PLANS:
         return RedirectResponse("/billing", status_code=302)
-    if interval not in ("monthly", "annual"):
-        return RedirectResponse("/billing", status_code=302)
+    interval = "monthly"  # plans are monthly-only; enterprise is negotiated off-platform
 
     if not STRIPE_SECRET_KEY:
         # Dev/fallback: placeholder mode
-        duration = 30 if interval == "monthly" else 365
+        duration = 30
         for key, _cfg in DASHBOARDS.items():
             if _cfg.get("access_alias") or _cfg.get("merged_into"):
                 continue  # access flows through the primary product key
@@ -1819,12 +1880,11 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
         log.info("User %s subscribed to %s (%s) — placeholder mode", user.get("username", user["email"]), plan, interval)
         return RedirectResponse("/billing", status_code=302)
 
-    # Create Stripe Checkout Session for the bundle
-    bundle = BUNDLE_PLANS[plan]
-    price_key = "stripe_price_monthly" if interval == "monthly" else "stripe_price_annual"
-    stripe_price_id = bundle.get(price_key)
+    # Create Stripe Checkout Session for the plan
+    plan_def = PLANS[plan]
+    stripe_price_id = plan_def.get("stripe_price_monthly")
     if not stripe_price_id:
-        log.error("No Stripe price ID configured for bundle %s %s", plan, interval)
+        log.error("No Stripe price ID configured for plan %s %s", plan, interval)
         return RedirectResponse("/billing", status_code=302)
 
     try:
@@ -1923,8 +1983,8 @@ async def stripe_webhook(request: Request):
                 log.info("Stripe: activated %s (%s) for user %s", dashboard_key, plan, user_id)
 
         elif meta.get("type") == "bundle":
-            # Bundle plan — unlock all dashboards
-            plan_type = meta.get("plan_type", "trader")
+            # Plan checkout — unlock all dashboards
+            plan_type = meta.get("plan_type", "basic")
             interval = meta.get("interval", "monthly")
             if interval not in ("monthly", "annual"):
                 interval = "monthly"
@@ -1940,7 +2000,7 @@ async def stripe_webhook(request: Request):
                     source="stripe",
                     stripe_sub_id=stripe_sub_id,
                 )
-            log.info("Stripe: activated bundle %s (%s) for user %s", plan_type, interval, user_id)
+            log.info("Stripe: activated plan %s (%s) for user %s", plan_type, interval, user_id)
 
     # ── customer.subscription.deleted — subscription cancelled ─────────────
     elif event_type == "customer.subscription.deleted":
@@ -2015,11 +2075,10 @@ async def preview_page(request: Request, dashboard_key: str):
             f'</li>'
         )
 
-    monthly_price = f"${cfg['monthly_cents'] / 100:.2f}"
-    annual_price = f"${cfg['annual_cents'] / 100:.2f}"
-    # Calculate annual savings percentage vs paying monthly for 12 months
-    monthly_total = cfg["monthly_cents"] * 12
-    savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
+    # Per-dashboard pricing is retired — every dashboard is included with a
+    # plan, so the preview advertises the plan prices instead.
+    basic_price = f"${PLANS['basic']['monthly_cents'] / 100:.0f}"
+    pro_price = f"${PLANS['pro']['monthly_cents'] / 100:.0f}"
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
@@ -2028,9 +2087,8 @@ async def preview_page(request: Request, dashboard_key: str):
         dashboard_name=cfg["display_name"],
         dashboard_key=dashboard_key,
         tagline=preview.get("tagline", cfg["description"]),
-        monthly_price=monthly_price,
-        annual_price=annual_price,
-        annual_savings=str(savings_pct),
+        basic_price=basic_price,
+        pro_price=pro_price,
         accent=cfg["accent"],
         username=user.get("username", user["email"]),
         raw_features_html="".join(features_html_parts),
@@ -3006,20 +3064,26 @@ def _build_revenue_content() -> str:
     subs = db.list_all_subscriptions()
     now = int(time.time())
 
-    # Calculate MRR and ARR from active subscriptions using config prices
-    mrr_cents = 0
+    # MRR is plan-based: a plan purchase writes one subscription row per
+    # dashboard, so price per-user (by tier), never per-row. Legacy
+    # per-dashboard subs predate plan pricing and carry no configured price.
+    plans_by_user: dict = {}
     for s in subs:
         if s["status"] != "active":
             continue
         if s["expires_at"] and s["expires_at"] <= now:
             continue
-        cfg = DASHBOARDS.get(s["dashboard_key"])
-        if not cfg:
-            continue
-        if "monthly" in s["plan"]:
-            mrr_cents += cfg["monthly_cents"]
-        elif "annual" in s["plan"]:
-            mrr_cents += cfg["annual_cents"] // 12
+        plans_by_user.setdefault(s["user_id"], []).append(s["plan"])
+
+    tier_counts = {"basic": 0, "pro": 0, "legacy": 0}
+    mrr_cents = 0
+    for user_plans in plans_by_user.values():
+        tier = plan_from_sub_records(user_plans)
+        if tier in PLANS:
+            tier_counts[tier] += 1
+            mrr_cents += PLANS[tier]["monthly_cents"]
+        elif tier:
+            tier_counts["legacy"] += 1
 
     mrr = mrr_cents / 100
     arr = mrr * 12
@@ -3042,46 +3106,35 @@ def _build_revenue_content() -> str:
         f'</div>'
     )
 
-    # Per-dashboard breakdown
-    dashboard_rows = {}
-    for row in stats["per_dashboard"]:
-        key = row["dashboard_key"]
-        if key not in dashboard_rows:
-            dashboard_rows[key] = {"monthly": 0, "annual": 0}
-        plan = row["plan"]
-        if "monthly" in plan:
-            dashboard_rows[key]["monthly"] += row["cnt"]
-        elif "annual" in plan:
-            dashboard_rows[key]["annual"] += row["cnt"]
-
-    if dashboard_rows:
+    # Per-plan breakdown (Enterprise deals are invoiced off-platform, so
+    # they appear here only if granted as subscriptions by an admin).
+    tier_meta = [
+        ("basic", "Basic", f'${PLANS["basic"]["monthly_cents"]/100:.0f}/mo'),
+        ("pro", "Pro", f'${PLANS["pro"]["monthly_cents"]/100:.0f}/mo'),
+        ("legacy", "Legacy (retired per-dashboard pricing)", "—"),
+    ]
+    if any(tier_counts.values()):
         out += (
             '<div style="margin-bottom:24px">'
-            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Revenue by Dashboard</div>'
+            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Subscribers by Plan</div>'
             '<div class="admin-list">'
         )
-        for key, counts in dashboard_rows.items():
-            cfg = DASHBOARDS.get(key, {})
-            name = cfg.get("display_name", key)
-            accent = cfg.get("accent", "var(--accent)")
-            mo_price = cfg.get("monthly_cents", 0) / 100
-            yr_price = cfg.get("annual_cents", 0) / 100
-            mo_rev = counts["monthly"] * mo_price
-            yr_rev = counts["annual"] * (yr_price / 12)
-            dash_mrr = mo_rev + yr_rev
+        for tier_key, name, price_label in tier_meta:
+            count = tier_counts.get(tier_key, 0)
+            if not count:
+                continue
+            tier_mrr = (PLANS[tier_key]["monthly_cents"] / 100 * count) if tier_key in PLANS else 0
             out += (
                 f'<div class="admin-row">'
                 f'<div class="admin-row-info">'
                 f'<div class="admin-row-main">'
-                f'<span style="width:8px;height:8px;border-radius:50%;background:{accent};flex-shrink:0"></span>'
                 f'<span style="font-weight:600">{html.escape(name)}</span>'
-                f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">${mo_price:.0f}/mo &middot; ${yr_price:.0f}/yr</span>'
+                f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{price_label}</span>'
                 f'</div>'
-                f'<div class="admin-row-meta">'
-                f'{counts["monthly"]} monthly &middot; {counts["annual"]} annual'
-                f'</div></div>'
+                f'<div class="admin-row-meta">{count} subscriber{"s" if count != 1 else ""}</div>'
+                f'</div>'
                 f'<div style="text-align:right;margin-left:16px">'
-                f'<div style="font-size:18px;font-weight:700;color:var(--green)">${dash_mrr:,.2f}<span style="font-size:11px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
+                f'<div style="font-size:18px;font-weight:700;color:var(--green)">${tier_mrr:,.2f}<span style="font-size:11px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
                 f'</div></div>'
             )
         out += '</div></div>'
@@ -3325,9 +3378,11 @@ async def admin_api_fleet(request: Request):
             state = "live"
         stats = _upstream_stats.get(key, {})
         sub_info = subs.get(key, {"total": 0, "monthly": 0, "annual": 0})
-        run_rate = (sub_info["monthly"] * cfg.get("monthly_cents", 0)
-                    + sub_info["annual"] * cfg.get("annual_cents", 0) / 12)
-        price_id = cfg.get("stripe_price_monthly") or ""
+        # Pricing is plan-level, so revenue can't be attributed to a single
+        # dashboard any more — per-service run rate is always 0 and the
+        # fleet total is computed from plan subscriptions below.
+        run_rate = 0
+        plans_ready = all(p.get("stripe_price_monthly") for p in PLANS.values())
         services.append({
             "key": key,
             "display_name": cfg.get("display_name", key),
@@ -3343,7 +3398,7 @@ async def admin_api_fleet(request: Request):
             "last_ok": stats.get("last_ok"),
             "subs": sub_info,
             "run_rate_cents": round(run_rate),
-            "stripe_ready": price_id.startswith("price_"),
+            "stripe_ready": plans_ready,
             "parked_visits": counters.get(f"parked_visit:{key}", {}).get("count", 0),
             "legacy_redirects": counters.get(f"legacy_redirect:{cfg.get('subdomain')}", {}).get("count", 0),
         })
@@ -3356,7 +3411,7 @@ async def admin_api_fleet(request: Request):
             "parked": sum(1 for s in services if s["state"] == "parked"),
             "merged": sum(1 for s in services if s["state"] == "merged"),
             "active_subs": sum(s["subs"]["total"] for s in services),
-            "run_rate_cents": sum(s["run_rate_cents"] for s in services),
+            "run_rate_cents": plan_mrr_cents(),
             "parked_subs": sum(s["subs"]["total"] for s in services if s["state"] == "parked"),
             "legacy_redirects": sum(v["count"] for k, v in counters.items() if k.startswith("legacy_redirect:")),
             "parked_visits": sum(v["count"] for k, v in counters.items() if k.startswith("parked_visit:")),

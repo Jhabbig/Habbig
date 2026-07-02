@@ -78,22 +78,18 @@
 
       <!-- Plan selector -->
       <div class="sub-plans">
-        <div class="sub-plan selected" id="plan-trader" onclick="selectPlan('trader')">
-          <div class="sub-plan-name">Trader</div>
-          <div class="sub-plan-price" id="price-trader">&pound;49<span>/mo</span></div>
+        <div class="sub-plan selected" id="plan-basic" onclick="selectPlan('basic')">
+          <div class="sub-plan-name">Basic</div>
+          <div class="sub-plan-price" id="price-basic">$75<span>/mo</span></div>
         </div>
         <div class="sub-plan" id="plan-pro" onclick="selectPlan('pro')" style="position:relative">
           <div class="sub-plan-popular">Popular</div>
           <div class="sub-plan-name">Pro</div>
-          <div class="sub-plan-price" id="price-pro">&pound;149<span>/mo</span></div>
+          <div class="sub-plan-price" id="price-pro">$180<span>/mo</span></div>
         </div>
       </div>
 
-      <!-- Interval toggle -->
-      <div class="sub-interval">
-        <button class="sub-interval-btn active" id="btn-monthly" onclick="setInt('monthly')">Monthly</button>
-        <button class="sub-interval-btn" id="btn-annual" onclick="setInt('annual')">Annual</button>
-      </div>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 24px">Plans bill monthly. Need Enterprise? <a href="/enquire" style="color:var(--accent)">Pricing is negotiable — contact us</a>.</p>
 
       <!-- Email -->
       <form id="sub-form" onsubmit="return submitCheckout(event)">
@@ -102,9 +98,9 @@
 
         <!-- Summary -->
         <div class="sub-summary">
-          <div class="sub-summary-row"><span>Plan</span><span id="sum-plan">Trader</span></div>
+          <div class="sub-summary-row"><span>Plan</span><span id="sum-plan">Basic</span></div>
           <div class="sub-summary-row"><span>Billing</span><span id="sum-interval">Monthly</span></div>
-          <div class="sub-summary-row sub-summary-total"><span>Total</span><span id="sum-total">&pound;49/month</span></div>
+          <div class="sub-summary-row sub-summary-total"><span>Total</span><span id="sum-total">$75/month</span></div>
         </div>
 
         <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin:16px 0 8px;font-size:12px;color:#f59e0b;line-height:1.5">
@@ -144,52 +140,35 @@
 </div>
 
 <script>
-var selectedPlan = 'trader';
-var selectedInterval = 'monthly';
+var selectedPlan = 'basic';
+var selectedInterval = 'monthly';  // plans bill monthly; Enterprise is negotiated via /enquire
 
 var prices = {
-  trader: { monthly: 49, annual: 399, monthly_label: '49', annual_label: '399' },
-  pro: { monthly: 149, annual: 1199, monthly_label: '149', annual_label: '1,199' }
+  basic: { monthly: 75, monthly_label: '75' },
+  pro: { monthly: 180, monthly_label: '180' }
 };
 
 // Read query params
 (function() {
   var params = new URLSearchParams(window.location.search);
   var plan = params.get('plan');
-  var interval = params.get('interval');
   if (plan === 'pro') selectPlan('pro');
-  if (interval === 'annual') setInt('annual');
 })();
 
 function selectPlan(plan) {
   selectedPlan = plan;
-  document.getElementById('plan-trader').classList.toggle('selected', plan === 'trader');
+  document.getElementById('plan-basic').classList.toggle('selected', plan === 'basic');
   document.getElementById('plan-pro').classList.toggle('selected', plan === 'pro');
-  updateSummary();
-}
-
-function setInt(interval) {
-  selectedInterval = interval;
-  document.getElementById('btn-monthly').classList.toggle('active', interval === 'monthly');
-  document.getElementById('btn-annual').classList.toggle('active', interval === 'annual');
-
-  // Update price displays
-  var suffix = interval === 'annual' ? '/yr' : '/mo';
-  document.getElementById('price-trader').innerHTML = '&pound;' + prices.trader[interval + '_label'] + '<span>' + suffix + '</span>';
-  document.getElementById('price-pro').innerHTML = '&pound;' + prices.pro[interval + '_label'] + '<span>' + suffix + '</span>';
   updateSummary();
 }
 
 function updateSummary() {
   var p = prices[selectedPlan];
-  var label = selectedPlan === 'trader' ? 'Trader' : 'Pro';
-  var intLabel = selectedInterval === 'monthly' ? 'Monthly' : 'Annual';
-  var amount = p[selectedInterval + '_label'];
-  var period = selectedInterval === 'monthly' ? '/month' : '/year';
+  var label = selectedPlan === 'basic' ? 'Basic' : 'Pro';
 
   document.getElementById('sum-plan').textContent = label;
-  document.getElementById('sum-interval').textContent = intLabel;
-  document.getElementById('sum-total').innerHTML = '&pound;' + amount + period;
+  document.getElementById('sum-interval').textContent = 'Monthly';
+  document.getElementById('sum-total').innerHTML = '$' + p.monthly_label + '/month';
 }
 
 function submitCheckout(e) {
