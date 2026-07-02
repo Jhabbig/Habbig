@@ -1222,7 +1222,7 @@ async def login_page(request: Request, token: str = ""):
         # Already logged in → go straight to the unified terminal (deep-linked
         # to their preferred dashboard if set).
         default_key = db.get_default_dashboard(user["user_id"])
-        dest = f"/app#{default_key}" if default_key and default_key in VISIBLE_DASHBOARDS else "/app"
+        dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS and _is_navigable(DASHBOARDS[default_key]) else "/app"
         return RedirectResponse(dest, status_code=302)
     # If a claimed invite token is provided (from /gate redirect), show token section
     token = token.strip()
@@ -1305,7 +1305,7 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
     # Land in the unified terminal, deep-linked to the user's preferred
     # dashboard if they've set one (the terminal reads the #hash on load).
     default_key = db.get_default_dashboard(user["id"])
-    dest = f"/app#{default_key}" if default_key and default_key in VISIBLE_DASHBOARDS else "/app"
+    dest = f"/app#{default_key}" if default_key and default_key in DASHBOARDS and _is_navigable(DASHBOARDS[default_key]) else "/app"
     response = RedirectResponse(dest, status_code=302)
     set_session_cookie(response, token, request)
     return response
@@ -1595,7 +1595,7 @@ async def unified_app(request: Request):
     if not user:
         return RedirectResponse("/gate", status_code=302)
 
-    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+    uid = user["user_id"]
     is_admin_user = bool(user.get("is_admin"))
     local_mode = is_local_host(request)
     # The terminal always lives at the apex, so build subdomain URLs from the
@@ -1606,11 +1606,14 @@ async def unified_app(request: Request):
     port_suffix = ":" + host_raw.rsplit(":", 1)[1] if ":" in host_raw else ""
 
     items = []
-    # Only list dashboards visible in the storefront (skips hidden/parked/merged
-    # ones), matching the landing/hub/billing surfaces.
-    for key, cfg in VISIBLE_DASHBOARDS.items():
-        has_sub = _is_sub_active(subs.get(key), is_admin_user)
-        if has_sub:
+    # Mirror the app's nav/switcher: list navigable dashboards (visible ones
+    # plus hidden merged-product companions; excludes parked/merged_into), and
+    # gate each with the alias/legacy-aware access check the rest of the app uses.
+    for key, cfg in DASHBOARDS.items():
+        if not _is_navigable(cfg):
+            continue
+        has_access = is_admin_user or cached_has_subscription(uid, key)
+        if has_access:
             if local_mode:
                 url = f"http://localhost:{cfg['target']}/"
             else:
@@ -1624,13 +1627,21 @@ async def unified_app(request: Request):
             "description": cfg.get("description", ""),
             "accent": cfg["accent"],
             "url": url,
-            "locked": not has_sub,
+            "locked": not has_access,
         })
 
+    # Escape characters that could break out of the <script> tag the JSON is
+    # embedded in (defence-in-depth — dashboard metadata is operator-controlled).
+    data_json = (
+        json.dumps(items)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     return render_page(
         "app",
         request,
-        raw_dashboard_data=json.dumps(items),
+        raw_dashboard_data=data_json,
         user_email=user.get("email", ""),
     )
 
