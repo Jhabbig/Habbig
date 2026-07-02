@@ -81,6 +81,8 @@ Each directory has its own `README.md` with a per-file breakdown.
 | `.dockerignore` | Top-level Docker build exclusions (also overridden per-dashboard). |
 | `.gitignore` | Project-wide ignores: secrets, DBs, logs, Python/Node artifacts, OS cruft. The Python `lib/` rule is unignored for `midterm-dashboard/frontend/src/lib/` — without that explicit unignore, the entire frontend `src/lib/` directory (api.js, settings.jsx, currency.js) is silently swallowed. If you add a frontend `src/lib/` to another dashboard, add it to the unignore list too. |
 | `.env.example` | Reference of every env key across every service. Each service also has its own `.env.example`. |
+| `bootstrap_data.py` | Data-readiness bootstrap (stdlib only) — probes all 28 upstream feeds, audits credentials in `gateway/.env.production`, checks every service port, and (with `--refresh`) pulls real prices into the matrix toolkit. Run after deploy. |
+| `DATA_SOURCES.md` | The complete data map: every feed each dashboard consumes, which need credentials (only 4 signup keys gate real functionality), and how refresh works. |
 | `ruff.toml` | Linting config — 200-char lines, F821 (undefined names) only. |
 
 **Documentation**
