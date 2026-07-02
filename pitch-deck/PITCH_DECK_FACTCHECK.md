@@ -13,6 +13,13 @@ The ask is filled in: $50,000 pre-seed (SAFE).
   and months of runway the $50K buys
 - Slide 14: the ~40/35/25 use-of-funds split is a DRAFT — adjust to your actual budget
 
+## Design & fonts
+
+The deck uses the narve.ai landing-page design language (gateway/static/landing.html):
+light editorial, monochrome ink on #F5F5F5, with the fonts **Jost** (UI), **Lora italic**
+(serif emphasis), and **Fraunces italic** (display numbers). All three are free Google
+Fonts — install them on the presenting machine for exact rendering, or present the PDF.
+
 ## Verify before this deck leaves the building
 
 External stats were researched via web search on 2026-07-02, but primary pages
