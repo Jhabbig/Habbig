@@ -5,9 +5,13 @@ Every slide carries full speaker notes inside the .pptx (View → Notes).
 
 Team is filled in: Julian Habbig (CEO, julian@habbig.com) · Sho Cakarel (CTO, sho@cakarel.com).
 
+The ask is filled in: $50,000 pre-seed (SAFE).
+
 ## Placeholders still to fill before sending
 
-- Slide 14: founder backgrounds (one line each), raise amount, instrument, use of funds, runway
+- Slide 14: founder backgrounds (one line each), SAFE cap/discount + target close date,
+  and months of runway the $50K buys
+- Slide 14: the ~40/35/25 use-of-funds split is a DRAFT — adjust to your actual budget
 
 ## Verify before this deck leaves the building
 
