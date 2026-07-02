@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# size-keyed synthetic scale-up panels (reproducible from seed 42)
+data/prices_synth_*.csv
