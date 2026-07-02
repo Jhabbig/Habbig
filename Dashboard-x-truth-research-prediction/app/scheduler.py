@@ -371,6 +371,24 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
     )
+    # Stage-3 engine: Message Batches flush/poll for non-interactive extraction
+    # (-50% via the provider Batch API). Only scheduled when enabled in config.
+    try:
+        from app.engine.batch import batch_queue, is_enabled as _batch_enabled
+        from app.engine.config import get_engine_config
+        if _batch_enabled():
+            interval = int(get_engine_config().get("batch", {}).get("flush_interval_seconds", 300))
+            scheduler.add_job(
+                batch_queue.run_cycle,
+                trigger=IntervalTrigger(seconds=interval),
+                id="engine_batch",
+                name="Engine batch flush/poll",
+                replace_existing=True,
+                max_instances=1,
+            )
+            logger.info("Engine batch queue scheduled every %ss", interval)
+    except Exception as exc:
+        logger.warning("Engine batch scheduling skipped: %s", exc)
     scheduler.start()
     logger.info("Scheduler started — pipeline every 5 min, price stream every 60s, telegram poll every 15s")
 

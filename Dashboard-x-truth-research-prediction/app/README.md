@@ -12,9 +12,10 @@ app/
 ├── scheduler.py      # APScheduler pipeline that runs scrapers → extractor → ranker → resolver
 ├── config.py         # Loads .env into a settings dict + parses config.yaml
 ├── config.yaml       # Tunables (keywords, credibility weights, scoring thresholds)
-├── credibility/      # Source-credibility scoring engine
+├── credibility/      # Source-credibility scoring engine (Stage 1)
+├── engine/           # Prediction Engine — Stage 3 fusion layer (credibility × metrics → calibrated P(YES))
 ├── markets/          # Polymarket + Kalshi market clients
-├── processing/       # Extractor (LLM/regex), ranker (EV/risk), resolver (mark predictions correct)
+├── processing/       # Extractor (LLM/regex), ranker (EV/risk), resolver (Stage 2 + settlement)
 ├── scrapers/         # X / TruthSocial scrapers
 ├── desktop/          # PyInstaller-bundled macOS desktop wrapper (rumps menu bar + pywebview)
 ├── templates/        # Jinja2 templates served by main.py
@@ -38,6 +39,7 @@ app/
 | Dir | Purpose | README |
 |---|---|---|
 | `credibility/` | Source-credibility scoring engine | `credibility/README.md` |
+| `engine/` | Stage-3 Prediction Engine: fuses credibility + extracted metrics into calibrated predictions, with dedup cache, model-tier routing, batch API, audit trail, replay harness | `engine/README.md` |
 | `markets/` | Polymarket + Kalshi clients | `markets/README.md` |
 | `processing/` | Extractor / ranker / resolver | `processing/README.md` |
 | `scrapers/` | X + TruthSocial scrapers | `scrapers/README.md` |
