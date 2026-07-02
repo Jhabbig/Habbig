@@ -1,61 +1,71 @@
-# narve.ai — Financial Model (Costs, Projections, Raise)
+# narve.ai — Financial Model v2 (Costs, Projections, Raise)
 
-*Built July 2, 2026. Companion to `FINANCIAL_MODEL.xlsx` (5 tabs: Assumptions, Costs, Projections, P&L, Raise & Runway — the workbook has live formulas; edit the yellow driver cells and everything recalculates). All prices researched against current official sources; URLs on the Assumptions tab.*
+*Rebuilt July 2, 2026 — **v2: founder salary removed; AWS GPU compute for training our own models is now the main cost.** Companion to `FINANCIAL_MODEL.xlsx` (live formulas; edit the yellow driver cells — GPU hours/rates included — and everything recalculates). All prices verified against official sources; URLs on the Assumptions tab.*
 
 ## Headline numbers
 
 | | Value |
 |---|---|
-| **Bootstrap monthly cost** (today's 3-product fleet on AWS, founder unpaid) | **$161/mo** (~$1,940/yr) |
-| **Funded pre-seed monthly burn** (salary, insurance, bookkeeping, marketing) | **$10,148/mo** |
+| **Bootstrap** (trimmed 3-product fleet, no training) | **$161/mo** (~$1,940/yr) |
+| **ML fine-tune plan** (main plan — the P&L runs on this) | **$2,727/mo** — 57% of it AWS; GPU training $1,454/mo is the single biggest line |
+| **ML scale plan** (H100 Capacity Blocks) | **$12,763/mo** — 75% AWS |
 | **One-time setup** (incorporation + SAFE legal + regulatory memo) | **$20,500** |
-| **Peak cash need** (24-month base growth case) | **$145,732** |
-| **Recommended raise** (peak need + 25% buffer) | **≈ $182,000 → pitch $200,000** |
-| **Breakeven** | 16 subscribers (bootstrap) · 964 subscribers (funded plan) |
-| **EBITDA turns positive** (funded × base case) | month ~20 |
+| **Peak cash need** (fine-tune × base growth) | **$35,638** |
+| **Recommended raise** (peak + 25% buffer) | **≈ $45,000 → pitch $50–60k** (or ~$313k if committing to H100 scale training from day 1, ignoring revenue) |
+| **Breakeven** | 16 subscribers (bootstrap) · 259 subscribers (fine-tune plan) |
+| **EBITDA turns positive** (fine-tune × base case) | month ~11; cumulative cash back above zero before month 24 (+$45k at M24) |
 
-## Monthly costs — three scenarios (AWS us-east-1 prices)
+## AWS GPU training prices (us-east-1, verified from the official price list, 2026-07-02)
 
-| Line | Bootstrap | Funded | Full fleet | Notes |
+| Instance | GPUs | On-demand | Spot (approx) | Notes |
 |---|---|---|---|---|
-| EC2 | $60.74 | $76.14 | $168.62 | t3.large on-demand / t3.xlarge 1-yr reserved / + m7i-flex.xlarge second box |
-| EBS + snapshots + S3 | $5.83 | $11.65 | $23.30 | gp3 $0.08/GB-mo; snapshots $0.05; S3 $0.023 |
-| Data transfer out | $0 | $18 | $36 | first 100 GB/mo free, then $0.09/GB |
-| Redis | $0 | $0 | $11.68 | on-box until Full fleet (ElastiCache t4g.micro) |
-| SES email | $0.50 | $1 | $2 | $0.10 per 1,000 emails |
-| Open-Meteo commercial | $33 | $33 | $33 | **required** — free tier is non-commercial; the weather product is sold |
-| The Odds API | $0 | $30 | $59 | free 500 credits → 20K → 100K tier (sports revival) |
-| Anthropic Claude API | $10 | $50 | $200 | email relay → signal explanations → Truth LLM extraction (Haiku 4.5 @ $1/$5 per MTok, batch −50%) |
-| X API (pay-per-use) | $0 | $0 | $300 | only if Truth dashboard revived; $0.005/post read (legacy tiers closed Feb 2026) |
-| Alpaca + CoinGecko | $0 | $0 | $228 | free tiers until stock desk needs full SIP ($99) / trackers revived ($129) |
-| Domain, Workspace, Sentry, Apple | $13.89 | $48.14 | $55.14 | .ai $82.70/yr; Workspace $7/user; Sentry Team $26; Apple $99/yr |
-| Founder salary + payroll tax | $0 | $6,875 | $6,875 | $75k/yr (Pilot 2025 pre-seed median) + 10% |
-| Contractor | $0 | $1,500 | $1,500 | part-time planning figure |
-| Bookkeeping + insurance + compliance | $37.50 | $505 | $505 | Pilot $99 + GL/E&O/cyber $281 + DE franchise tax/agent/tax-filing amortized $125 |
-| Marketing | $0 | $1,000 | $1,000 | planning figure |
-| **Total monthly** | **$161** | **$10,148** | **$10,997** | |
+| g5.xlarge | 1× A10G 24 GB | $1.006/hr | ~$0.44 | cheapest dev GPU |
+| g6.xlarge | 1× L4 24 GB | $0.805/hr | ~$0.41 | inference-oriented |
+| **g6e.xlarge** | 1× L40S 48 GB | **$1.861/hr** | ~$0.93–1.47 | fine-tuning workhorse (fits 7–13B LoRA); 1-yr reserved $1.172/hr (−37%) |
+| g6e.12xlarge | 4× L40S | $10.49/hr | ~$5.1 | multi-GPU fine-tunes |
+| p4d.24xlarge | 8× A100 40 GB | $21.96/hr | ~$9.7 (±30%) | post-2025 price cut |
+| p5.48xlarge | 8× H100 80 GB | $55.04/hr | ~$24 (volatile) | **Capacity Blocks: $5.191/GPU-hr = $41.53/hr** (after July 1, 2026 ~20% hike; floats with demand) |
+| trn1.32xlarge | 16× Trainium | $21.50/hr | ~$8.4 | <5% spot interruption — cheapest reliable big-training if the stack can use Neuron |
 
-**One-time:** Stripe Atlas incorporation $500 · pre-seed SAFE legal review $5,000 (YC docs themselves are free) · **IA/CTA regulatory memo $15,000** (midpoint of $5–25k; strongly recommended before selling trading signals — Advisers Act publisher-exclusion + CTA analysis).
+Spot on the g-family has **>20% interruption rates** — fine for short fine-tunes with checkpointing, bad for long runs. p5/trn1 spot interrupts <5%.
 
-## Projections (24 months)
+## Monthly costs — three scenarios
 
-Blended ARPU **$11.24**/sub/mo from the live `gateway/config.json` prices (40% Market Edge $9.99 + 35% Midterm $14.99 + 25% Weather $7.99). Stripe takes 2.9% + $0.30/charge + 0.7% Billing ≈ 6% of a $9.99 sub.
-
-| Case | Model | Month-24 subs | Month-24 MRR |
+| Section | Bootstrap | ML fine-tune | ML scale |
 |---|---|---|---|
-| Conservative | 10 new/mo flat, 6% churn | ~129 | ~$1,450 |
-| **Base** | 15 new/mo growing 15%/mo (cap 150), 6% churn | ~1,361 | ~$15,300 |
-| Optimistic | 30 new/mo growing 20%/mo (cap 400), 5% churn | ~4,088 | ~$45,950 |
+| AWS — serving (t3 app box, EBS, S3, egress, SES) | $67 | $107 | $107 |
+| **AWS — model training (GPU)** | $0 | **$1,454** | **$9,491** |
+| — single-GPU dev/fine-tune (g6e.xlarge, 300 h/mo) | — | $558 | $558 |
+| — multi-GPU runs (g6e.12xlarge, 80 h/mo) | — | $839 | $839 |
+| — H100 Capacity-Block week (168 h/mo) | — | — | $6,977 |
+| — A100 spot experiments (100 h/mo) | — | — | $970 |
+| — training storage + transfer | — | $57 | $146 |
+| Data & AI APIs (Open-Meteo commercial, Odds API, Claude) | $43 | $113 | $113 |
+| SaaS & tooling (domain, Workspace, Sentry, Apple) | $14 | $48 | $48 |
+| People & professional (**no founder salary**; bookkeeping, insurance, compliance; ML contractor at scale) | $38 | $505 | $2,005 |
+| Marketing | $0 | $500 | $1,000 |
+| **Total monthly** | **$161** | **$2,727** | **$12,763** |
+| AWS share | 42% | **57%** | **75%** |
+
+GPU hours and rates are editable drivers on the Assumptions tab — the Costs and P&L tabs recalculate from them.
+
+**One-time ($20,500):** Stripe Atlas $500 · SAFE legal review $5,000 · IA/CTA regulatory memo $15,000 (still recommended before selling trading signals).
+
+## Projections (unchanged from v1)
+
+Blended ARPU $11.24/sub/mo from live `gateway/config.json` prices; Stripe takes ≈6% of a $9.99 sub. Month-24 MRR: ~$1,450 conservative / ~$15,300 base / ~$45,950 optimistic.
 
 ## The raise
 
-On the funded plan × base growth: cumulative cash bottoms out at **−$145,732** (the burn is nearly flat by month 18 as revenue ramps; EBITDA goes positive ~month 20). With a 25% buffer: **≈$182k — a $200k pre-seed on a YC SAFE funds ~24 months to profitability** in the base case. Sensitivity: 12-month runway needs $123k; 18-month needs $146k.
+Without a salary, the model is dramatically lighter: on the fine-tune plan × base growth, cumulative cash bottoms out at **−$35,638** (month ~11, when EBITDA turns positive), and is back above zero (+$45k) by month 24. With the 25% buffer: **≈$45k — a $50–60k pre-seed SAFE covers the whole plan**, and most of it is literally GPU hours and the legal one-times.
 
-The bootstrap alternative costs ~$1,940/year all-in — 16 paying subscribers cover it. Given that, the raise is really buying **founder salary, marketing, and legal cleanliness**, not servers.
+If you commit to **H100-scale training from day 1**, the crude upper bound (18 months of scale burn + one-times + buffer, giving no credit for revenue) is **≈$313k**.
+
+Middle path worth considering: raise ~$60k, run the fine-tune plan, and buy individual H100 Capacity-Block weeks (~$7k each) only when an experiment earns it.
 
 ## Caveats
 
-- Projections assume open self-serve signup from month 1; the gateway is currently **invite-token gated** (and fix the Stripe `invoice.paid` renewal gap before charging real subscribers — see `BALANCE_SHEET.md`).
-- AWS priced from official us-east-1 price lists (June 2026); Sonnet 5 API pricing is introductory until 2026-08-31.
-- Insurance, contractor, marketing, and the regulatory-memo figure are planning estimates (sources and ranges on the Assumptions tab); everything else is a published price.
-- Formulas verified by independent recalculation — the workbook's computed results match a from-scratch Python replication of the model.
+- Projections assume open self-serve signup from month 1; the gateway is currently invite-token gated, and the Stripe `invoice.paid` renewal gap should be fixed before charging subscribers (see `BALANCE_SHEET.md`).
+- GPU spot prices are ±30% volatile; Capacity-Block rates rose ~15% in Jan 2026 and ~20% on July 1, 2026 and float with demand — re-verify before committing.
+- No salary means the founder is unpaid indefinitely — investors may push back; add it back as a driver if needed.
+- Formulas verified by independent recalculation (workbook results match a from-scratch replication).
