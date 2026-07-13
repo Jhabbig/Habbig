@@ -387,6 +387,18 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 — never let config import itself break startup
         log.exception("config.validate_config() crashed — continuing (legacy env)")
 
+    # Error tracking: initialise Sentry as early as possible (right after config
+    # validation) so subsequent startup and request errors are captured. The
+    # call no-ops when SENTRY_DSN is unset (local dev) or when sentry-sdk is not
+    # installed, and sets the environment + release tags itself — see
+    # observability.sentry_setup.init_sentry.
+    try:
+        from observability import init_sentry
+        if init_sentry(platform="gateway"):
+            log.info("Sentry error tracking initialised (env=%s, release=%s)", APP_ENVIRONMENT, APP_GIT_SHA)
+    except Exception:  # noqa: BLE001 — error tracking must never break startup
+        log.exception("init_sentry() failed — continuing without Sentry")
+
     HTTP_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0))
     mode = "PRODUCTION" if IS_PRODUCTION else "dev (localhost bypass enabled)"
     log.info("Gateway started on port %d, domain=%s, mode=%s", GATEWAY_PORT, DOMAIN, mode)
