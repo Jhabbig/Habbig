@@ -170,7 +170,9 @@ def clf_metrics(y_true, y_pred):
     bal = np.nanmean([recall, tnr])
     f1 = (2 * precision * recall / (precision + recall)
           if (precision and recall and np.isfinite(precision) and np.isfinite(recall)) else 0.0)
-    return dict(acc=acc, bal_acc=bal, precision=precision, recall=recall, f1=f1,
+    denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    mcc = (tp * tn - fp * fn) / denom if denom else 0.0   # 0 = chance under any imbalance
+    return dict(acc=acc, bal_acc=bal, precision=precision, recall=recall, f1=f1, mcc=mcc,
                 base_rate=float(np.mean(y_true)))
 
 
@@ -229,7 +231,7 @@ def print_event(name, desc, res):
     print(f"\n{_B}EVENT: {name}{_X}  ({desc})")
     br = next(iter(res.values()))["base_rate"]
     print(f"  base rate of event = {br:.1%}   (so plain accuracy is misleading if far from 50%)")
-    print(f"  {'model':<16s}{'acc':>7s}{'bal_acc':>9s}{'prec':>7s}{'recall':>8s}{'F1':>7s}{'skill':>8s}")
+    print(f"  {'model':<16s}{'acc':>7s}{'bal_acc':>9s}{'prec':>7s}{'recall':>8s}{'F1':>7s}{'MCC':>7s}{'skill':>8s}")
     for m, d in res.items():
         skill = d["bal_acc"] - 0.5
         if m.startswith("BaseRate"):
@@ -242,7 +244,7 @@ def print_event(name, desc, res):
             tag = f"{_R}{skill:+.2f}{_X}"
         prec = f"{d['precision']:>7.1%}" if np.isfinite(d["precision"]) else f"{'  -  ':>7s}"
         print(f"  {m:<16s}{d['acc']:>7.1%}{d['bal_acc']:>9.1%}{prec}"
-              f"{d['recall']:>8.1%}{d['f1']:>7.2f}   {tag}")
+              f"{d['recall']:>8.1%}{d['f1']:>7.2f}{d['mcc']:>7.2f}   {tag}")
 
 
 def run_grid(ctx, name, train, step, horizon):

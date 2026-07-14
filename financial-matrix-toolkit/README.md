@@ -129,6 +129,38 @@ the Expected Calibration Error on the rare events (vol_transition ECE 0.34 → 0
 big_move 0.35 → 0.02) and writes a reliability diagram to
 `results/reliability_pipeline.png`. The saved model carries its calibrator.
 
+**Effectiveness metrics — is the model *useful*, not just *ranked well*?** Beyond
+AUC/AP/Brier, every event is scored with metrics anchored to a no-skill null
+(`eventmetrics.py`): the **Brier skill score** (1 − Brier/climatology; > 0 = the
+calibrated probabilities beat always-predicting-the-base-rate), the **Murphy
+decomposition** (Brier = reliability − resolution + uncertainty: honesty cost vs
+information content vs target difficulty), **Spiegelhalter's z-test** (is the
+miscalibration statistically detectable, or just binning noise?), **MCC** at the
+tuned threshold (uses all four confusion cells, so base-rate guessing scores
+exactly 0 under any imbalance), **KS** separation, and **precision@10% /
+lift@10%** (of the top-decile loudest alerts, how many are real — and how many
+times better than flagging days at random?). Findings on the cached panel:
+
+| event | BSS | MCC | KS | lift@10% | calibration consistent? |
+|-------|-----|-----|-----|----------|-------------------------|
+| drawdown | **+0.74** | 0.85 | 0.92 | 1.2× | no (z-test p < 0.01) |
+| vol_state | **+0.61** | 0.74 | 0.75 | 2.0× | yes (p = 0.72) |
+| trend_up | **+0.61** | 0.73 | 0.75 | 1.9× | no (p < 0.01) |
+| big_move | +0.02 | 0.14 | 0.28 | **2.4×** | yes (p = 0.50) |
+| vol_transition | **−0.00** | 0.08 | 0.17 | 1.1× | yes (p = 0.42) |
+
+These sharpen the honest story in three ways. (1) `vol_transition`'s AUC is
+significantly above 0.5, yet its Brier skill is **zero** — resolution 0.001 <
+reliability 0.002, so the calibrated probabilities carry no usable information
+beyond the base rate: ranking skill that thin does not survive conversion into
+probabilities you could size a position on. (2) `big_move` is the mirror image:
+BSS barely positive but a **2.4× lift** — used as a top-decile alert list it
+catches 2.4× more real tail moves than random flagging, which is exactly how a
+rare-event model with AUC 0.68 should be consumed. (3) The strong events show
+statistically *detectable* miscalibration (Spiegelhalter p < 0.01) even at
+ECE ≈ 0.03 — visible only because the sample is large. A small ECE is not proof
+of honesty; only the significance test is.
+
 **Train on real data / serve live** — on a networked machine:
 
 ```bash
@@ -141,8 +173,9 @@ python predict_live.py --refresh            #   ...on freshly fetched real data
 
 A general harness for any binary market event. Because most events are RARE,
 plain accuracy lies ("predict nothing ever happens" scores 90%), so every event
-is scored with **balanced accuracy, precision, recall, F1, and skill = balanced
-accuracy − 0.5**. Three models train per event: base-rate null, persistence, and
+is scored with **balanced accuracy, precision, recall, F1, MCC, and skill =
+balanced accuracy − 0.5** (MCC makes the trap visible in one number: the
+base-rate null scores 90% accuracy and exactly 0.00 MCC). Three models train per event: base-rate null, persistence, and
 a class-weighted logistic. Includes a hyperparameter `--grid` that shows accuracy
 *plateauing* (the target sets the ceiling, not the tuning).
 

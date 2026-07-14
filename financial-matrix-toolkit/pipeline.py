@@ -40,7 +40,17 @@ from calibration import (
     fit_calibrator,
     reliability,
 )
-from eventmetrics import best_threshold, bootstrap_auc_ci, brier, prob_metrics
+from eventmetrics import (
+    best_threshold,
+    bootstrap_auc_ci,
+    brier,
+    brier_skill_score,
+    log_loss,
+    mcc,
+    murphy_decomposition,
+    prob_metrics,
+    spiegelhalter_z,
+)
 from predict_events import (
     EVENTS,
     build_context,
@@ -213,6 +223,16 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["ece_cal"] = expected_calibration_error(y, p_cal)
     lo, hi = bootstrap_auc_ci(y, p_raw)
     m["auc_lo"], m["auc_hi"] = lo, hi
+    # effectiveness metrics - every one anchored to a null (see eventmetrics.py)
+    m["bss_cal"] = brier_skill_score(y, p_cal)           # > 0 beats the base-rate null
+    m["log_loss_cal"] = log_loss(y, p_cal)
+    dec = murphy_decomposition(y, p_cal)
+    m["reliability_cal"] = dec["reliability"]
+    m["resolution_cal"] = dec["resolution"]
+    m["uncertainty"] = dec["uncertainty"]
+    m["spieg_z"], m["spieg_p"] = spiegelhalter_z(y, p_cal)
+    m["mcc_tuned"] = mcc(y, pred, threshold=0.5)         # MCC at the tuned operating point
+    # ks / precision_at_10 / lift_at_10 come from the prob_metrics bundle (raw scores)
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
     return m
 
@@ -310,6 +330,20 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "tuned_recall": round(hyb["recall"], 4),
             "tuned_f1": round(hyb["f1"], 4),
             "tuned_threshold": round(hyb["threshold"], 4),
+            "tuned_mcc": round(hyb["mcc_tuned"], 4),
+            "brier_skill_score": round(hyb["bss_cal"], 4),
+            "log_loss_calibrated": round(hyb["log_loss_cal"], 4),
+            "murphy": {
+                "reliability": round(hyb["reliability_cal"], 5),
+                "resolution": round(hyb["resolution_cal"], 5),
+                "uncertainty": round(hyb["uncertainty"], 5),
+            },
+            "spiegelhalter_z": round(hyb["spieg_z"], 3),
+            "spiegelhalter_p": round(hyb["spieg_p"], 4),
+            "calibration_consistent": bool(np.isfinite(hyb["spieg_p"]) and hyb["spieg_p"] >= 0.05),
+            "ks": round(hyb["ks"], 4),
+            "precision_at_10pct": round(hyb["precision_at_10"], 4),
+            "lift_at_10pct": round(hyb["lift_at_10"], 4),
             "track_auc": round(track["auc"], 4) if track else None,
             "raw_auc": round(raw["auc"], 4) if raw else None,
             "top_features": importances,
@@ -328,6 +362,26 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             print(f"  {name:<15s}{info['brier_raw']:>8.3f} -> {info['brier_calibrated']:<6.3f}"
                   f"{info['ece_raw']:>9.3f} -> {info['ece_calibrated']:<6.3f}")
     _plot_reliability(reliab)
+
+    # effectiveness summary: every number anchored to a no-skill null
+    print(f"\n{_B}Prediction effectiveness (vs the always-predict-base-rate null):{_X}")
+    print(f"  {'event':<15s}{'BSS':>7s}{'resol':>8s}{'reliab':>8s}{'calib?':>8s}"
+          f"{'MCC':>6s}{'KS':>6s}{'lift@10%':>10s}")
+    for name in names:
+        info = manifest["events"].get(name, {})
+        if "brier_skill_score" not in info:
+            continue
+        bss = info["brier_skill_score"]
+        col = _G if bss > 0 else _R
+        cal_ok = f"{_G}ok{_X}" if info["calibration_consistent"] else f"{_R}off{_X}"
+        print(f"  {name:<15s}{col}{bss:>7.2f}{_X}{info['murphy']['resolution']:>8.3f}"
+              f"{info['murphy']['reliability']:>8.3f}{cal_ok:>17s}"
+              f"{info['tuned_mcc']:>6.2f}{info['ks']:>6.2f}{info['lift_at_10pct']:>9.1f}x")
+    print("  BSS > 0 = the calibrated probabilities beat climatology (0 = knowing only the")
+    print("  base rate, 1 = perfect). resolution must exceed reliability for real skill.")
+    print("  calib? = Spiegelhalter z-test (ok: p>=0.05, probabilities statistically honest).")
+    print("  MCC at the tuned threshold (0 = chance under any imbalance). lift@10% = how many")
+    print("  times more events the top-decile alert list catches than random flagging.")
 
     # feature-importance highlights
     print(f"\n{_B}Top drivers per event (signed standardised logistic weight):{_X}")
