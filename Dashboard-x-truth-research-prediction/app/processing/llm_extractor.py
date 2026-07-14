@@ -34,23 +34,33 @@ from app.processing.extractor import ExtractionResult
 logger = logging.getLogger(__name__)
 
 
+# Bump when the prompt's extraction semantics change — it namespaces the
+# (content_hash, model) cache so stale extractions from an older prompt
+# aren't served for new posts.
+_PROMPT_VERSION = 2
+
 _SYSTEM_PROMPT = """You extract betting-relevant predictions from social-media posts.
 
-You will receive one short post (X / TruthSocial). Decide whether it contains
-any concrete prediction about a future event that could be cross-referenced
-against a prediction market (Polymarket, Kalshi, Manifold). Return all such
-predictions as structured JSON. If the post contains no prediction, return an
-empty list.
+You will receive one short post (X / TruthSocial / Reddit / RSS). Decide
+whether it contains any concrete prediction about a future event that could be
+cross-referenced against a prediction market (Polymarket, Kalshi, Manifold).
+Return all such predictions as structured JSON. If the post contains no
+prediction, return an empty list.
 
-A "prediction" is a forward-looking, falsifiable claim about a specific event.
+A "prediction" is a forward-looking, falsifiable claim about a specific event,
+made or clearly endorsed BY THE POSTER.
 Examples that ARE predictions:
   - "Trump will win Pennsylvania" -> outcome=Yes, prob=null, category=politics
   - "BTC hits 150k by EOY, 70% chance" -> outcome=Yes, prob=0.70, category=crypto
   - "Lakers won't make the playoffs this year" -> outcome=No, prob=null, category=sports
   - "I give Russia a 30% chance of using a tactical nuke before the ceasefire"
     -> outcome=Yes, prob=0.30, category=geopolitics
+  - "I'm 90% sure this bill won't pass" -> outcome=No, prob=0.90 (the speaker
+    is 90% confident in the NO side — do not flip the number to 0.10)
   - "If the Fed cuts in March, gold goes to 3000" -> outcome=Yes, prob=null,
     category=other (this is conditional, but still a falsifiable forecast)
+  - "Pundits keep saying the merger dies. They're wrong — it closes by June."
+    -> outcome=Yes (the poster's OWN claim is the prediction, not the pundits')
 
 Examples that are NOT predictions (return empty list):
   - "Trump won Pennsylvania" (past-tense fact, already resolved)
@@ -58,6 +68,12 @@ Examples that are NOT predictions (return empty list):
   - "Will the Lakers win?" (question, not a claim)
   - "Buy now, big sale" (commercial, not a forecast)
   - "Stocks dropped 5% today" (factual reporting of past)
+  - 'RT @pundit: "The senate bill passes next week"' (someone ELSE's
+    prediction merely relayed — the poster did not endorse it)
+  - "Imagine believing BTC hits 1M this year lol" (mockery of a prediction,
+    not an endorsement — if anything it implies the poster believes the
+    opposite, but sarcasm is too unreliable to score; skip it)
+  - "He predicted the crash back in 2021" (report about a past prediction)
 
 Output schema (a JSON object with one key, "predictions", which is a list):
   {
@@ -78,18 +94,34 @@ Rules:
   - "predicted_outcome" is always "Yes" or "No" — the YES/NO of the underlying
     event happening. A NO prediction means the speaker thinks the event won't
     happen (e.g. "Lakers won't make the playoffs" -> outcome=No).
-  - Only include "predicted_probability" if the post states an explicit number
-    or commonly-understood synonym ("a coin flip" -> 0.50, "almost certain"
-    -> 0.90, "no chance" -> 0.02). Otherwise return null.
-  - Be conservative on confidence. Hedged or sarcastic posts should score low
-    (<0.5). Only direct, falsifiable claims score >0.7.
+  - "predicted_probability" is the speaker's stated confidence in their
+    predicted_outcome. Include it only if the post states an explicit number,
+    an odds fraction ("1 in 5 chance" -> 0.20), or a commonly-understood
+    verbal probability. Calibrate verbal probabilities consistently:
+      "certain" / "guaranteed" / "lock" -> 0.97   "almost certain" -> 0.92
+      "very likely" / "highly likely"   -> 0.85   "likely" / "probably" -> 0.70
+      "more likely than not"            -> 0.60   "coin flip" / "toss-up" -> 0.50
+      "unlikely" / "doubt it"           -> 0.30   "very unlikely" -> 0.15
+      "long shot" / "slim chance"       -> 0.12   "no chance" / "impossible" -> 0.03
+    Otherwise return null. Never invent a number the speaker didn't imply.
+  - Only extract the POSTER's own predictions. Quoted text, retweets,
+    screenshots described, and "X says/predicts Y" reports are not the
+    poster's claim unless the poster explicitly agrees ("this", "he's right",
+    "exactly"). Mockery or disagreement is not an endorsement of either side.
+  - Predictions about events that have clearly already resolved are not
+    predictions — skip them.
+  - "raw_text" must be a verbatim quote and should include the deadline or
+    condition when the post states one ("by EOY", "before March", "if the
+    Fed cuts") — downstream market matching depends on those qualifiers.
+  - Be conservative on confidence. Hedged, sarcastic, or joke posts score low
+    (<0.5). Only direct, falsifiable claims by the poster score >0.7.
   - Skip rhetorical questions, jokes, song lyrics, and commercial promotions.
   - One post may yield multiple predictions if it makes several distinct
     claims. Most posts yield 0 or 1.
   - Categories: politics (elections, legislation, polls), sports (games,
     seasons, championships), crypto (coin prices, protocols, ETFs),
     geopolitics (wars, sanctions, treaties), other (everything else, including
-    weather, climate, awards, science).
+    weather, climate, economics, awards, science).
 
 Respond with the JSON object only — no preamble, no markdown fences."""
 
@@ -224,11 +256,14 @@ async def extract(content: str) -> List[ExtractionResult]:
     if client is None:
         return []
 
-    model = settings.get("LLM_EXTRACTOR_MODEL", "claude-opus-4-7")
+    model = settings.get("LLM_EXTRACTOR_MODEL", "claude-opus-4-8")
     content_hash = _hash_content(content)
+    # Cache key carries the prompt version: a prompt change alters extraction
+    # semantics, so entries produced under an older prompt must not be reused.
+    cache_key_model = f"{model}#p{_PROMPT_VERSION}"
 
     try:
-        cached = await _read_cache(content_hash, model)
+        cached = await _read_cache(content_hash, cache_key_model)
         if cached is not None:
             return cached
     except Exception as exc:
@@ -239,9 +274,15 @@ async def extract(content: str) -> List[ExtractionResult]:
         # messages, so a stable system block is the easiest cache anchor. Once
         # the first request warms the cache, subsequent calls within the TTL
         # read it back at ~0.1× cost.
+        #
+        # Adaptive thinking: off-by-default on Opus 4.8 unless set explicitly.
+        # The model decides per post whether to think — trivial posts stay
+        # cheap, while hedged/sarcastic/quoted posts (exactly where extraction
+        # errors live) get reasoning. max_tokens covers thinking + JSON.
         response = await client.messages.parse(
             model=model,
-            max_tokens=1024,
+            max_tokens=4096,
+            thinking={"type": "adaptive"},
             system=[{
                 "type": "text",
                 "text": _SYSTEM_PROMPT,
@@ -275,7 +316,7 @@ async def extract(content: str) -> List[ExtractionResult]:
         )
 
     try:
-        await _write_cache(content_hash, model, results)
+        await _write_cache(content_hash, cache_key_model, results)
     except Exception as exc:
         logger.warning("LLM extraction cache write failed: %s", exc)
 
