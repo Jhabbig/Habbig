@@ -6,7 +6,6 @@ splits into 5-minute windows, trains neural net ensembles, and generates
 a tabbed HTML dashboard with live predictions.
 """
 
-import requests
 import time
 import json
 import asyncio
@@ -19,7 +18,6 @@ import tempfile
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 
@@ -205,7 +203,7 @@ def fetch_klines(symbol, start_ms, end_ms):
 
     # Run the async event loop (works from sync context)
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # Already in async context — use nest_asyncio or thread
         import concurrent.futures
 
@@ -607,7 +605,6 @@ def compute_per_second_velocity(data, windows):
 
     # ── Post-cross velocity analysis ──
     # For each window, find cross events and measure velocity in the 30s after
-    window_ms = WINDOW_SECONDS * 1000
     data_dict = {ts: price for ts, price in data}
 
     velocities_after_cross_pos = []
@@ -620,7 +617,6 @@ def compute_per_second_velocity(data, windows):
 
     for w in windows:
         w_start_ms = int(w["start"].timestamp() * 1000)
-        w_end_ms = w_start_ms + window_ms
         baseline = w["baseline"]
 
         # Collect window prices by second offset (direct lookup, no iteration)
@@ -752,6 +748,17 @@ class AdamOptimizer:
 
 class WindowNeuralNet:
     LOOKBACK = 96
+
+    # Chronological split shared by train(), train_all() and backtest():
+    # gradient descent sees [0, vi), early stopping + ensemble weighting see
+    # [vi, si), and [si, n) is never touched before backtest() — otherwise the
+    # reported accuracy is train/test-leaked (scaler stats, early-stop model
+    # selection and ensemble weights would all be fit on the "test" segment).
+    @staticmethod
+    def split_indices(n_samples):
+        si = int(n_samples * 0.85)
+        vi = int(si * 0.85)
+        return vi, si
 
     def __init__(self):
         self.params = {}
@@ -1154,27 +1161,24 @@ class WindowNeuralNet:
     def train(self, windows, epochs=3000, lr=0.001, noise=0.10, seed=42, verbose=True):
         X, y_reg, y_cls = self._build_dataset(windows)
         n = X.shape[0]
-        self.feature_mean = X.mean(axis=0)
-        self.feature_std = X.std(axis=0) + 1e-8
+        vi, si = self.split_indices(n)
+
+        # Scaler stats fit on the first 85% only — the holdout must not leak in.
+        self.feature_mean = X[:si].mean(axis=0)
+        self.feature_std = X[:si].std(axis=0) + 1e-8
         X = (X - self.feature_mean) / self.feature_std
-        self.target_mean = float(y_reg.mean())
-        self.target_std = float(y_reg.std()) + 1e-8
+        self.target_mean = float(y_reg[:si].mean())
+        self.target_std = float(y_reg[:si].std()) + 1e-8
         y_reg_n = (y_reg - self.target_mean) / self.target_std
 
-        si = int(n * 0.85)
-
         # Move training data to GPU
-        Xt, Xv = to_gpu(X[:si]), to_gpu(X[si:])
-        yrt, yrv = to_gpu(y_reg_n[:si]), to_gpu(y_reg_n[si:])
-        yct, ycv = to_gpu(y_cls[:si]), to_gpu(y_cls[si:])
-        yrv_raw = to_gpu(y_reg[si:])
-
-        # Keep CPU copies of feature stats for predict()
-        self.feature_mean = self.feature_mean  # stays numpy
-        self.feature_std = self.feature_std
+        Xt, Xv = to_gpu(X[:vi]), to_gpu(X[vi:si])
+        yrt, yrv = to_gpu(y_reg_n[:vi]), to_gpu(y_reg_n[vi:si])
+        yct, ycv = to_gpu(y_cls[:vi]), to_gpu(y_cls[vi:si])
+        yrv_raw = to_gpu(y_reg[vi:si])
 
         if verbose:
-            print(f"    Samples: {n}, Train: {si}, Val: {n - si}, Device: {'GPU' if GPU else 'CPU'}")
+            print(f"    Samples: {n}, Train: {vi}, Val: {si - vi}, Holdout: {n - si}, Device: {'GPU' if GPU else 'CPU'}")
 
         self._init_weights(X.shape[1], seed=seed)
         opt = AdamOptimizer(lr=lr)
@@ -1339,15 +1343,17 @@ class EnsemblePredictor:
             m.train(windows, epochs=cfg["epochs"], lr=cfg["lr"], noise=cfg["noise"], seed=cfg["seed"], verbose=verbose)
             self.models.append(m)
 
-        # Compute per-model validation accuracy for weighted ensemble
+        # Compute per-model validation accuracy for weighted ensemble.
+        # Weights come from the [vi, si) validation segment — never from the
+        # final 15% holdout that backtest() reports on.
         lb = WindowNeuralNet.LOOKBACK
         n_total = len(windows) - lb
-        si = lb + int(n_total * 0.85)
+        vi, si = WindowNeuralNet.split_indices(n_total)
         raw_accs = []
         for m in self.models:
             correct = 0
             total = 0
-            for i in range(si, len(windows)):
+            for i in range(lb + vi, lb + si):
                 p = m.predict(windows, i)
                 if p is None:
                     continue
@@ -1431,7 +1437,7 @@ class EnsemblePredictor:
     def backtest(self, windows):
         lb = WindowNeuralNet.LOOKBACK
         n_total = len(windows) - lb
-        si = lb + int(n_total * 0.85)
+        si = lb + WindowNeuralNet.split_indices(n_total)[1]
         correct = 0
         total = 0
         errors = []
@@ -1626,8 +1632,6 @@ def _render_model_panel(res):
 
 def generate_dashboard(all_results):
     """Generate multi-asset tabbed HTML dashboard."""
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
     tab_buttons = ""
     tab_contents = ""
     chart_data_all = {}  # {ticker: {24h: [...], 7d: [...]}}
@@ -1657,8 +1661,6 @@ def generate_dashboard(all_results):
                 ac = p["actual_end_delta"]
                 ac_class = "positive" if ac >= 0 else "negative"
                 correct = p["pred_direction"] == p["actual_direction"]
-                tick = "check" if correct else "x"
-                tick_color = "var(--green)" if correct else "var(--red)"
                 actual_str = f'<div class="detail">Actual: <span class="{ac_class}">${ac:+,.2f}</span> {"&#10003;" if correct else "&#10007;"}</div>'
 
             cross_str = f"{p['pred_cross_sec']:.0f}s" if p["pred_cross_sec"] else "—"
@@ -1692,7 +1694,6 @@ def generate_dashboard(all_results):
         vol_color = vol.get("color", "muted")
         vol_std = vol.get("std_pct", 0)
         vol_trend = vol.get("vol_trend", "?")
-        vol_ann = vol.get("annualized_vol", 0)
         vol_trend_icon = "&#9650;" if vol_trend == "INCREASING" else ("&#9660;" if vol_trend == "DECREASING" else "&#9644;")
         vol_trend_color = "negative" if vol_trend == "INCREASING" else ("positive" if vol_trend == "DECREASING" else "muted")
 
@@ -2087,7 +2088,7 @@ def process_asset(ticker, symbol):
     volatility = compute_volatility(windows, lookback_hours=24)
     print(f"  Volatility: {volatility['std_pct']:.3f}% ({volatility['label']}) — trend: {volatility['vol_trend']}")
 
-    print(f"  Computing per-second velocity metrics...")
+    print("  Computing per-second velocity metrics...")
     velocity = compute_per_second_velocity(data, windows)
     if velocity:
         print(f"    Avg gain/sec: ${velocity['avg_gain_per_sec']:.4f} | Avg loss/sec: ${velocity['avg_loss_per_sec']:.4f}")
@@ -2096,11 +2097,11 @@ def process_asset(ticker, symbol):
         print(f"    Post-cross velocity: +${velocity['avg_velocity_after_cross_pos']:.4f}/s | -${velocity['avg_velocity_after_cross_neg']:.4f}/s")
         print(f"    Best entry: {velocity['best_entry_sec']}s into window | {velocity['pct_seconds_gaining']:.1f}% of seconds gaining")
 
-    print(f"  Training ensemble...")
+    print("  Training ensemble...")
     ensemble = EnsemblePredictor()
     ensemble.train_all(windows, verbose=True)
 
-    print(f"  Backtesting...")
+    print("  Backtesting...")
     bt = ensemble.backtest(windows)
     print(f"  Dir accuracy: {bt['dir_acc'] * 100:.1f}% | HC: {bt['hc_acc'] * 100:.1f}% ({bt['hc_count']})")
     print(f"  MAE: ${bt['mae']:.2f} | Median AE: ${bt['median_ae']:.2f}")
