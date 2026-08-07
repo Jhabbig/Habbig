@@ -6,10 +6,26 @@ from app.config import yaml_config
 from app.models import Prediction, Source
 
 
+def shrink_toward_base(accuracy: float, n: int, base_rate: float, k: int = 10) -> float:
+    # Pseudo-count prior: (hits + k*base)/(n + k). Low-n sources get pulled toward
+    # the category base rate so a 3/3 record doesn't read as a 100% hit rate.
+    n = max(0, n)
+    return (accuracy * n + k * base_rate) / (n + k)
+
+
 def compute_ev_score(predicted_prob: float, market_implied_prob: float) -> Optional[float]:
+    # Plain probability gap. The old 1/market_prob multiplier amplified longshots
+    # and made the ranking structurally negative-EV (2026-08 audit).
     if market_implied_prob <= 0 or market_implied_prob >= 1:
         return None
-    return (predicted_prob - market_implied_prob) * (1.0 / market_implied_prob)
+    return predicted_prob - market_implied_prob
+
+
+def _category_base_rate(category: str) -> float:
+    cfg = yaml_config.get("scoring", {})
+    rates = cfg.get("category_base_rates", {}) or {}
+    rate = rates.get(category)
+    return rate if rate is not None else cfg.get("default_base_rate", 0.5)
 
 
 def compute_risk_flags(prediction: Prediction, source: Source | None) -> tuple[bool, list[str]]:
@@ -48,12 +64,19 @@ def compute_risk_flags(prediction: Prediction, source: Source | None) -> tuple[b
 
 def rank_prediction(prediction: Prediction, source: Source | None) -> Prediction:
     if prediction.market_implied_probability is not None and prediction.market_slug is not None:
+        cfg = yaml_config.get("scoring", {})
+        k = cfg.get("ev_shrinkage_pseudo_count", 10)
+        base = _category_base_rate(prediction.category)
         if prediction.predicted_probability is not None:
             pred_prob = prediction.predicted_probability
-        elif source and prediction.category in source.category_credibility:
-            pred_prob = source.category_credibility[prediction.category]
         else:
-            pred_prob = source.global_credibility if source else 0.5
+            cat_cred = source.category_credibility.get(prediction.category) if source else None
+            if cat_cred is not None:
+                pred_prob = shrink_toward_base(cat_cred, source.qualifying_predictions, base, k)
+            elif source:
+                pred_prob = shrink_toward_base(source.global_credibility, source.qualifying_predictions, base, k)
+            else:
+                pred_prob = base
         prediction.ev_score = compute_ev_score(pred_prob, prediction.market_implied_probability)
 
     if source:

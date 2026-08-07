@@ -50,6 +50,14 @@ scoring:
     extreme_market_bounds: [0.05, 0.95]
   market_match_threshold: 0.50
   min_shared_tokens: 3
+  ev_shrinkage_pseudo_count: 10
+  default_base_rate: 0.5
+  category_base_rates:
+    politics: 0.5
+    sports: 0.5
+    crypto: 0.5
+    geopolitics: 0.5
+    other: 0.5
 
 quota:
   twitter_warn_pct: 0.80

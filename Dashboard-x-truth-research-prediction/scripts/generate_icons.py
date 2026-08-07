@@ -4,7 +4,7 @@ from __future__ import annotations
 import shutil, subprocess, tempfile
 from pathlib import Path
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 except ImportError:
     print("pip install Pillow"); raise
 

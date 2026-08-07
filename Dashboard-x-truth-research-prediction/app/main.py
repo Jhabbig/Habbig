@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import collections
 import hashlib
 import hmac
@@ -17,7 +16,6 @@ import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 from cryptography.fernet import Fernet
 
@@ -27,10 +25,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import func, select
 
-from app.config import settings, yaml_config
+from app.config import settings
 from app.db import AsyncSession, engine, get_session, init_db
 from app.models import (
-    CredibilitySnapshot, MarketSnapshot, MonthlyQuota, Prediction, RawPost, Source, SourcePredictionRecord, User,
+    CredibilitySnapshot,
+    MarketSnapshot,
+    MonthlyQuota,
+    Prediction,
+    RawPost,
+    Source,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,7 @@ ONE_YEAR_FROM_NOW = lambda: datetime.now(timezone.utc) + timedelta(days=365)
 _last_run_stats: dict = {}
 _SESSION_SECRET = secrets.token_hex(32)
 _CSRF_SECRET = secrets.token_hex(16)
+
 
 # ---------------------------------------------------------------------------
 # Fernet symmetric encryption for sensitive fields (e.g. truthsocial_password)
@@ -80,8 +85,10 @@ def _decrypt_field(value: str) -> str:
         return _fernet.decrypt(value.encode()).decode()
     except Exception:
         import logging as _log
+
         _log.getLogger(__name__).warning("Failed to decrypt field — possible key rotation or legacy plaintext")
         return value
+
 
 # Rate limiting: track login attempts per IP
 _login_attempts: dict[str, list[float]] = collections.defaultdict(list)
@@ -106,24 +113,28 @@ async def lifespan(app: FastAPI):
                 # was a hardcoded credential bypass for anyone who knew about it.
                 admin_pass = secrets.token_urlsafe(24)
                 logger.warning(
-                    "DASHBOARD_PASSWORD not set -- generated a random one-time admin password "
-                    "for user %r. Save it now (it will not be shown again): %s",
-                    admin_user, admin_pass,
+                    "DASHBOARD_PASSWORD not set -- generated a random one-time admin password for user %r. Save it now (it will not be shown again): %s",
+                    admin_user,
+                    admin_pass,
                 )
-            session.add(User(
-                username=admin_user,
-                email="",
-                password_hash=_hash_password(admin_pass),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            ))
+            session.add(
+                User(
+                    username=admin_user,
+                    email="",
+                    password_hash=_hash_password(admin_pass),
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
             await session.commit()
             logger.info("Created default admin user: %s", admin_user)
     from app.scheduler import start_scheduler
+
     start_scheduler()
     asyncio.create_task(_initial_run())
     yield
     from app.scheduler import shutdown_scheduler
+
     shutdown_scheduler()
 
 
@@ -131,6 +142,7 @@ async def _initial_run():
     global _last_run_stats
     try:
         from app.scheduler import run_pipeline
+
         _last_run_stats = await run_pipeline()
     except Exception as exc:
         logger.error("Initial pipeline run failed: %s", exc)
@@ -285,11 +297,10 @@ def _prune_expired_sessions() -> None:
     # Hard cap: if still too large, evict oldest sessions
     if len(_active_sessions) > _SESSION_MAX_SIZE:
         sorted_tokens = sorted(_active_sessions, key=lambda t: _active_sessions[t][1])
-        for t in sorted_tokens[:len(_active_sessions) - _SESSION_MAX_SIZE]:
+        for t in sorted_tokens[: len(_active_sessions) - _SESSION_MAX_SIZE]:
             del _active_sessions[t]
     # Also prune login attempts
-    stale = [ip for ip, attempts in _login_attempts.items()
-             if not attempts or (now - attempts[-1]) > 600]
+    stale = [ip for ip, attempts in _login_attempts.items() if not attempts or (now - attempts[-1]) > 600]
     for ip in stale:
         del _login_attempts[ip]
 
@@ -356,7 +367,14 @@ async def login_page(request: Request, error: str = "", msg: str = ""):
 
 
 @app.post("/login")
-async def login_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), password: str = Form(""), start_platform: str = Form("polymarket"), csrf_token_field: str = Form("", alias="_csrf_token")):
+async def login_submit(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    username: str = Form(""),
+    password: str = Form(""),
+    start_platform: str = Form("polymarket"),
+    csrf_token_field: str = Form("", alias="_csrf_token"),
+):
     # CSRF validation
     if not _validate_csrf(request, csrf_token_field):
         csrf_token = _get_csrf_token(request)
@@ -399,7 +417,16 @@ async def register_page(request: Request, error: str = ""):
 
 
 @app.post("/register")
-async def register_submit(request: Request, session: AsyncSession = Depends(get_session), username: str = Form(""), email: str = Form(""), password: str = Form(""), password2: str = Form(""), start_platform: str = Form("polymarket"), csrf_token_field: str = Form("", alias="_csrf_token")):
+async def register_submit(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    username: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
+    password2: str = Form(""),
+    start_platform: str = Form("polymarket"),
+    csrf_token_field: str = Form("", alias="_csrf_token"),
+):
     # CSRF validation
     if not _validate_csrf(request, csrf_token_field):
         csrf_token = _get_csrf_token(request)
@@ -409,8 +436,11 @@ async def register_submit(request: Request, session: AsyncSession = Depends(get_
     if len(username) < 3 or len(username) > 15:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Username must be 3\u201315 characters", "csrf_token": csrf_token})
     import re as _re
+
     if len(password) < 12 or not _re.search(r"[A-Z]", password) or not _re.search(r"[a-z]", password) or not _re.search(r"[0-9]", password):
-        return templates.TemplateResponse("register.html", {"request": request, "error": "Password must be at least 12 characters with an uppercase letter, lowercase letter, and number", "csrf_token": csrf_token})
+        return templates.TemplateResponse(
+            "register.html", {"request": request, "error": "Password must be at least 12 characters with an uppercase letter, lowercase letter, and number", "csrf_token": csrf_token}
+        )
     if password != password2:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords don't match", "csrf_token": csrf_token})
     existing = await session.exec(select(User).where(User.username == username))
@@ -420,7 +450,16 @@ async def register_submit(request: Request, session: AsyncSession = Depends(get_
         existing_email = await session.exec(select(User).where(User.email == email))
         if existing_email.first():
             return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered", "csrf_token": csrf_token})
-    session.add(User(username=username, email=email, password_hash=_hash_password(password), preferred_platform=start_platform if start_platform in ("polymarket", "kalshi") else "polymarket", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)))
+    session.add(
+        User(
+            username=username,
+            email=email,
+            password_hash=_hash_password(password),
+            preferred_platform=start_platform if start_platform in ("polymarket", "kalshi") else "polymarket",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
     await session.commit()
     return RedirectResponse("/login?msg=Account+created.+Sign+in+below.", status_code=302)
 
@@ -455,11 +494,35 @@ async def profile_page(request: Request, session: AsyncSession = Depends(get_ses
     preferred_platform = getattr(user, "preferred_platform", None) or "polymarket"
     preferred_theme = getattr(user, "preferred_theme", None) or "dark"
     csrf_token = _get_csrf_token(request)
-    return templates.TemplateResponse("profile.html", {"request": request, "user": user, "msg": "", "error": "", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "ts_password_decrypted": "••••••••" if user.truthsocial_password else "", "csrf_token": csrf_token})
+    return templates.TemplateResponse(
+        "profile.html",
+        {
+            "request": request,
+            "user": user,
+            "msg": "",
+            "error": "",
+            "preferred_platform": preferred_platform,
+            "preferred_theme": preferred_theme,
+            "ts_password_decrypted": "••••••••" if user.truthsocial_password else "",
+            "csrf_token": csrf_token,
+        },
+    )
 
 
 @app.post("/profile/update", response_class=HTMLResponse)
-async def profile_update(request: Request, confirm_password: str = Form(""), new_username: str = Form(""), email: str = Form(""), twitter_bearer_token: str = Form(""), truthsocial_username: str = Form(""), truthsocial_password: str = Form(""), truthsocial_access_token: str = Form(""), preferred_platform: str = Form("polymarket"), preferred_theme: str = Form("dark"), csrf_token_field: str = Form("", alias="_csrf_token")):
+async def profile_update(
+    request: Request,
+    confirm_password: str = Form(""),
+    new_username: str = Form(""),
+    email: str = Form(""),
+    twitter_bearer_token: str = Form(""),
+    truthsocial_username: str = Form(""),
+    truthsocial_password: str = Form(""),
+    truthsocial_access_token: str = Form(""),
+    preferred_platform: str = Form("polymarket"),
+    preferred_theme: str = Form("dark"),
+    csrf_token_field: str = Form("", alias="_csrf_token"),
+):
     csrf_token = _get_csrf_token(request)
     user = await _get_current_user(request)
     if not user:
@@ -470,7 +533,19 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
         async with AsyncSession(engine, expire_on_commit=False) as session:
             result = await session.exec(select(User).where(User.id == user.id))
             db_user = result.first() or user
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Invalid form submission. Please try again.", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "Invalid form submission. Please try again.",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(User).where(User.id == user.id))
@@ -480,14 +555,50 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
 
         # Require password to save profile changes
         if not _verify_password(confirm_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Enter your current password to save changes", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "Enter your current password to save changes",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
 
         if new_username and new_username != db_user.username:
             if len(new_username) < 3 or len(new_username) > 15:
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username must be 3\u201315 characters", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+                return templates.TemplateResponse(
+                    "profile.html",
+                    {
+                        "request": request,
+                        "user": db_user,
+                        "msg": "",
+                        "error": "Username must be 3\u201315 characters",
+                        "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                        "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                        "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                        "csrf_token": csrf_token,
+                    },
+                )
             existing = await session.exec(select(User).where(User.username == new_username))
             if existing.first():
-                return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Username already taken", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+                return templates.TemplateResponse(
+                    "profile.html",
+                    {
+                        "request": request,
+                        "user": db_user,
+                        "msg": "",
+                        "error": "Username already taken",
+                        "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                        "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                        "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                        "csrf_token": csrf_token,
+                    },
+                )
             db_user.username = new_username
 
         db_user.email = email
@@ -504,14 +615,25 @@ async def profile_update(request: Request, confirm_password: str = Form(""), new
         session.add(db_user)
         await session.commit()
 
-        resp = templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Profile updated", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+        resp = templates.TemplateResponse(
+            "profile.html",
+            {
+                "request": request,
+                "user": db_user,
+                "msg": "Profile updated",
+                "error": "",
+                "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                "csrf_token": csrf_token,
+            },
+        )
         if new_username and new_username != user.username:
             # Update current session for new username and invalidate all others
             current_token = request.cookies.get("session")
             old_username = user.username
             # Remove all sessions for the old username except the current one
-            stale = [t for t, (uname, _) in _active_sessions.items()
-                     if uname == old_username and t != current_token]
+            stale = [t for t, (uname, _) in _active_sessions.items() if uname == old_username and t != current_token]
             for t in stale:
                 del _active_sessions[t]
             # Update the current session to the new username
@@ -533,7 +655,19 @@ async def profile_password(request: Request, current_password: str = Form(""), n
         async with AsyncSession(engine, expire_on_commit=False) as session:
             result = await session.exec(select(User).where(User.id == user.id))
             db_user = result.first() or user
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Invalid form submission. Please try again.", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "Invalid form submission. Please try again.",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.exec(select(User).where(User.id == user.id))
@@ -541,16 +675,64 @@ async def profile_password(request: Request, current_password: str = Form(""), n
         if not db_user:
             return RedirectResponse("/login", status_code=302)
         if not _verify_password(current_password, db_user.password_hash):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Current password is incorrect", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "Current password is incorrect",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
         if len(new_password) < 12 or not _re.search(r"[A-Z]", new_password) or not _re.search(r"[a-z]", new_password) or not _re.search(r"[0-9]", new_password):
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "Password must be 12+ chars with uppercase, lowercase, and a number", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "Password must be 12+ chars with uppercase, lowercase, and a number",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
         if new_password != new_password2:
-            return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "", "error": "New passwords don't match", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+            return templates.TemplateResponse(
+                "profile.html",
+                {
+                    "request": request,
+                    "user": db_user,
+                    "msg": "",
+                    "error": "New passwords don't match",
+                    "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                    "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                    "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                    "csrf_token": csrf_token,
+                },
+            )
         db_user.password_hash = _hash_password(new_password)
         db_user.updated_at = datetime.now(timezone.utc)
         session.add(db_user)
         await session.commit()
-        return templates.TemplateResponse("profile.html", {"request": request, "user": db_user, "msg": "Password changed", "error": "", "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"), "preferred_theme": getattr(db_user, "preferred_theme", "dark"), "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "", "csrf_token": csrf_token})
+        return templates.TemplateResponse(
+            "profile.html",
+            {
+                "request": request,
+                "user": db_user,
+                "msg": "Password changed",
+                "error": "",
+                "preferred_platform": getattr(db_user, "preferred_platform", "polymarket"),
+                "preferred_theme": getattr(db_user, "preferred_theme", "dark"),
+                "ts_password_decrypted": "••••••••" if db_user.truthsocial_password else "",
+                "csrf_token": csrf_token,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -590,33 +772,47 @@ async def update_preferences(request: Request):
 # Helpers
 # ---------------------------------------------------------------------------
 def _cred_color(score: float) -> str:
-    if score >= 0.7: return "bg-green-500/20 text-green-400 border border-green-500/30"
-    elif score >= 0.4: return "bg-[#2D64F3]/20 text-[#5B8DF5] border border-[#2D64F3]/30"
-    elif score > 0: return "bg-red-500/20 text-red-400 border border-red-500/30"
+    if score >= 0.7:
+        return "bg-green-500/20 text-green-400 border border-green-500/30"
+    elif score >= 0.4:
+        return "bg-[#2D64F3]/20 text-[#5B8DF5] border border-[#2D64F3]/30"
+    elif score > 0:
+        return "bg-red-500/20 text-red-400 border border-red-500/30"
     return "bg-gray-500/20 text-gray-500 border border-gray-500/30"
 
+
 def _cred_bar_color(score: float) -> str:
-    if score >= 0.7: return "bg-green-500"
-    elif score >= 0.4: return "bg-[#2D64F3]"
-    elif score > 0: return "bg-red-500"
+    if score >= 0.7:
+        return "bg-green-500"
+    elif score >= 0.4:
+        return "bg-[#2D64F3]"
+    elif score > 0:
+        return "bg-red-500"
     return "bg-gray-600"
+
 
 def _esc(text: str) -> str:
     return html_mod.escape(str(text)) if text else ""
 
+
 def _clamp(val: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
 
+
 def _time_ago(dt: datetime | None) -> str:
-    if not dt: return "\u2014"
+    if not dt:
+        return "\u2014"
     now = datetime.now(timezone.utc)
     dt_utc = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
     diff = now - dt_utc
     mins = int(diff.total_seconds() / 60)
-    if mins < 1: return "just now"
-    if mins < 60: return f"{mins}m ago"
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins}m ago"
     hrs = mins // 60
-    if hrs < 24: return f"{hrs}h ago"
+    if hrs < 24:
+        return f"{hrs}h ago"
     return f"{hrs // 24}d ago"
 
 
@@ -635,25 +831,56 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_sessio
         missing.append("TruthSocial credentials")
     preferred_platform = (getattr(user, "preferred_platform", None) or "polymarket") if user else "polymarket"
     preferred_theme = (getattr(user, "preferred_theme", None) or "dark") if user else "dark"
-    return templates.TemplateResponse("dashboard.html", {"request": request, "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "missing_keys": missing, "user": user.username if user else _user or "anonymous", "preferred_platform": preferred_platform, "preferred_theme": preferred_theme, "csrf_token": _get_csrf_token(request)})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "missing_keys": missing,
+            "user": user.username if user else _user or "anonymous",
+            "preferred_platform": preferred_platform,
+            "preferred_theme": preferred_theme,
+            "csrf_token": _get_csrf_token(request),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Feed
 # ---------------------------------------------------------------------------
 @app.get("/feed", response_class=HTMLResponse)
-async def feed(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth), category: str = "", platform: str = "", hide_risk: bool = False, hide_unrated: bool = False, market: str = "", sort: str = "recent", page: int = 1, per_page: int = 50):
+async def feed(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(require_auth),
+    category: str = "",
+    platform: str = "",
+    hide_risk: bool = False,
+    hide_unrated: bool = False,
+    market: str = "",
+    sort: str = "recent",
+    page: int = 1,
+    per_page: int = 50,
+):
     cutoff = ONE_YEAR_FROM_NOW()
     stmt = select(Prediction, RawPost).join(RawPost, Prediction.raw_post_id == RawPost.id)
     stmt = stmt.where((Prediction.market_close_time.is_(None)) | (Prediction.market_close_time <= cutoff))
-    if category: stmt = stmt.where(Prediction.category == category)
-    if platform: stmt = stmt.where(RawPost.platform == platform)
-    if hide_risk: stmt = stmt.where(Prediction.risk_flag == False)  # noqa: E712
-    if hide_unrated: stmt = stmt.where(Prediction.global_credibility_at_time > 0)
-    if market: stmt = stmt.where(Prediction.market_question.contains(market))
-    if sort == "ev": stmt = stmt.order_by(Prediction.ev_score.desc().nullslast())
-    elif sort == "credibility": stmt = stmt.order_by(Prediction.global_credibility_at_time.desc())
-    else: stmt = stmt.order_by(Prediction.extracted_at.desc())
+    if category:
+        stmt = stmt.where(Prediction.category == category)
+    if platform:
+        stmt = stmt.where(RawPost.platform == platform)
+    if hide_risk:
+        stmt = stmt.where(Prediction.risk_flag == False)  # noqa: E712
+    if hide_unrated:
+        stmt = stmt.where(Prediction.global_credibility_at_time > 0)
+    if market:
+        stmt = stmt.where(Prediction.market_question.contains(market))
+    if sort == "ev":
+        stmt = stmt.order_by(Prediction.ev_score.desc().nullslast())
+    elif sort == "credibility":
+        stmt = stmt.order_by(Prediction.global_credibility_at_time.desc())
+    else:
+        stmt = stmt.order_by(Prediction.extracted_at.desc())
     page, per_page = _clamp(page, 1, 1000), _clamp(per_page, 1, 100)
     stmt = stmt.offset((page - 1) * per_page).limit(per_page)
     result = await session.exec(stmt)
@@ -668,8 +895,14 @@ async def feed(request: Request, session: AsyncSession = Depends(get_session), _
             _rr = pred.risk_reasons if isinstance(pred.risk_reasons, list) else []
             rh = f'<span class="text-amber-400 cursor-help" title="{_esc(", ".join(_esc(r) for r in _rr))}"><svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg></span>'
         pl = '<span class="text-blue-400 text-xs">X</span>' if post.platform == "twitter" else '<span class="text-purple-400 text-xs">TS</span>'
-        mk = f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-blue-400 hover:text-blue-300">{_esc((pred.market_question or "")[:45])}</a>' if pred.market_slug else '<span class="text-gray-600">\u2014</span>'
-        html_rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="px-4 py-3 max-w-[280px]"><div class="truncate text-gray-300">{_esc(pred.predicted_outcome)}: {_esc(post.content[:70])}</div></td><td class="px-4 py-3 text-sm text-gray-400">@{_esc(post.author_handle)}</td><td class="px-4 py-3 text-center">{pl}</td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{_esc(pred.category)}</span></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full {cc}">{pred.global_credibility_at_time:.2f}</span></td><td class="px-4 py-3 font-mono text-sm {ec}">{ev}</td><td class="px-4 py-3 text-center">{rh}</td><td class="px-4 py-3 text-xs">{mk}</td><td class="px-4 py-3 text-xs text-gray-500">{_time_ago(pred.extracted_at)}</td></tr>')
+        mk = (
+            f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-blue-400 hover:text-blue-300">{_esc((pred.market_question or "")[:45])}</a>'
+            if pred.market_slug
+            else '<span class="text-gray-600">\u2014</span>'
+        )
+        html_rows.append(
+            f'<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="px-4 py-3 max-w-[280px]"><div class="truncate text-gray-300">{_esc(pred.predicted_outcome)}: {_esc(post.content[:70])}</div></td><td class="px-4 py-3 text-sm text-gray-400">@{_esc(post.author_handle)}</td><td class="px-4 py-3 text-center">{pl}</td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{_esc(pred.category)}</span></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full {cc}">{pred.global_credibility_at_time:.2f}</span></td><td class="px-4 py-3 font-mono text-sm {ec}" data-experimental="true" title="Experimental score">{ev}</td><td class="px-4 py-3 text-center">{rh}</td><td class="px-4 py-3 text-xs">{mk}</td><td class="px-4 py-3 text-xs text-gray-500">{_time_ago(pred.extracted_at)}</td></tr>'
+        )
     if not html_rows:
         return HTMLResponse('<tr><td colspan="9" class="text-center py-16 text-gray-600">No predictions yet. Pipeline runs every 5 minutes.</td></tr>')
     return HTMLResponse("\n".join(html_rows))
@@ -681,7 +914,13 @@ async def feed(request: Request, session: AsyncSession = Depends(get_session), _
 @app.get("/best-bets", response_class=HTMLResponse)
 async def best_bets(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth)):
     cutoff = ONE_YEAR_FROM_NOW()
-    stmt = select(Prediction, RawPost).join(RawPost, Prediction.raw_post_id == RawPost.id).where(Prediction.risk_flag == False, Prediction.ev_score.isnot(None), (Prediction.market_close_time.is_(None)) | (Prediction.market_close_time <= cutoff)).order_by(Prediction.ev_score.desc()).limit(10)  # noqa: E712
+    stmt = (
+        select(Prediction, RawPost)
+        .join(RawPost, Prediction.raw_post_id == RawPost.id)
+        .where(Prediction.risk_flag == False, Prediction.ev_score.isnot(None), (Prediction.market_close_time.is_(None)) | (Prediction.market_close_time <= cutoff))
+        .order_by(Prediction.ev_score.desc())
+        .limit(10)
+    )  # noqa: E712
     result = await session.exec(stmt)
     rows = result.all()
     if not rows:
@@ -698,8 +937,10 @@ async def best_bets(request: Request, session: AsyncSession = Depends(get_sessio
         acc = f"{source.correct_qualifying}/{source.qualifying_predictions}" if source else "\u2014"
         pl = "X" if post.platform == "twitter" else "TS"
         poly = f'<a href="https://polymarket.com/event/{pred.market_slug}" target="_blank" class="text-xs text-blue-400 hover:text-blue-300">Polymarket &nearr;</a>' if pred.market_slug else ""
-        rk = f'<span class="absolute -top-2 -left-2 w-7 h-7 rounded-full bg-[#2D64F3] flex items-center justify-center text-xs font-bold text-white shadow-lg">#{i+1}</span>'
-        cards.append(f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500"><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc*100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>')
+        rk = f'<span class="absolute -top-2 -left-2 w-7 h-7 rounded-full bg-[#2D64F3] flex items-center justify-center text-xs font-bold text-white shadow-lg">#{i + 1}</span>'
+        cards.append(
+            f'<div class="relative bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-5 border border-white/5 hover:border-white/10 transition-all">{rk}<h3 class="text-sm font-semibold text-gray-200 mb-3 pr-4">{_esc((pred.market_question or "Unmatched")[:80])}</h3><div class="flex items-center gap-2 mb-4 text-xs text-gray-500"><span class="font-medium text-gray-300">{_esc(pred.predicted_outcome)}</span><span>&middot;</span><span>@{_esc(post.author_handle)}</span><span class="px-1.5 py-0.5 rounded bg-white/5">{pl}</span></div><div class="{evc} text-3xl font-bold tracking-tight mb-4" data-experimental="true">{pred.ev_score:+.2f}<span class="text-sm font-normal text-gray-500 ml-1">EV</span><span class="ml-2 align-middle text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">experimental</span></div><div class="grid grid-cols-2 gap-4 mb-4"><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Global</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(gc)} h-1.5 rounded-full" style="width:{int(gc * 100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{gc:.2f}</div></div><div><div class="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">Category</div><div class="w-full bg-gray-700/50 rounded-full h-1.5"><div class="{_cred_bar_color(catc)} h-1.5 rounded-full" style="width:{int(catc * 100)}%"></div></div><div class="text-xs mt-1 text-gray-400">{catc:.2f}</div></div></div><div class="flex justify-between text-xs text-gray-400 mb-3 py-2 border-t border-white/5"><span>Market: <span class="text-gray-300">{mp}</span></span><span>Predicted: <span class="text-gray-300">{pp}</span></span><span>Record: <span class="text-gray-300">{acc}</span></span></div><div class="flex justify-end">{poly}</div></div>'
+        )
     return HTMLResponse(f'<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">{chr(10).join(cards)}</div>')
 
 
@@ -719,13 +960,29 @@ async def leaderboard(request: Request, session: AsyncSession = Depends(get_sess
         pl = '<span class="text-blue-400">X</span>' if s.platform == "twitter" else '<span class="text-purple-400">TS</span>'
         acc = f"{s.accuracy_global:.0%}" if s.accuracy_global is not None else "\u2014"
         rec = f"{s.correct_qualifying}/{s.qualifying_predictions}" if s.qualifying_predictions > 0 else "0/0"
-        cp = "".join(f'<span class="text-[10px] px-1.5 py-0.5 rounded-full {_cred_color(v)}">{c[:4]}</span> ' for c in (s.categories_predicted_in or [])[:5] if (v := (s.category_credibility or {}).get(c)) is not None)
-        th = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Trusted</span>' if s.trusted is True else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">Untrusted</span>' if s.trusted is False else ""
-        st = '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Rated</span>' if s.accuracy_unlocked else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-500/10 text-gray-500 border border-gray-500/20">Unrated</span>'
-        rk = ['', '<span class="text-lg">&#129351;</span>', '<span class="text-lg">&#129352;</span>', '<span class="text-lg">&#129353;</span>']
+        cp = "".join(
+            f'<span class="text-[10px] px-1.5 py-0.5 rounded-full {_cred_color(v)}">{c[:4]}</span> '
+            for c in (s.categories_predicted_in or [])[:5]
+            if (v := (s.category_credibility or {}).get(c)) is not None
+        )
+        th = (
+            '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">Trusted</span>'
+            if s.trusted is True
+            else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">Untrusted</span>'
+            if s.trusted is False
+            else ""
+        )
+        st = (
+            '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Rated</span>'
+            if s.accuracy_unlocked
+            else '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-500/10 text-gray-500 border border-gray-500/20">Unrated</span>'
+        )
+        rk = ["", '<span class="text-lg">&#129351;</span>', '<span class="text-lg">&#129352;</span>', '<span class="text-lg">&#129353;</span>']
         rk_html = rk[rank] if rank <= 3 else f'<span class="text-sm text-gray-500 font-mono">{rank}</span>'
         tb = f'<div class="flex gap-1"><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": true}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs {"bg-green-600 text-white" if s.trusted is True else "bg-white/5 text-gray-500 hover:bg-white/10"}">+</button><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": false}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs {"bg-red-600 text-white" if s.trusted is False else "bg-white/5 text-gray-500 hover:bg-white/10"}">-</button><button hx-post="/sources/{s.handle}/trust" hx-vals=\'{{"trusted": null}}\' hx-target="#leaderboard-content" hx-swap="innerHTML" class="w-6 h-6 rounded flex items-center justify-center text-xs bg-white/5 text-gray-500 hover:bg-white/10">&#8635;</button></div>'
-        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] group"><td class="px-4 py-3 text-center w-12">{rk_html}</td><td class="px-4 py-3"><div class="flex items-center gap-2"><span class="font-medium text-gray-200">@{_esc(s.handle)}</span>{pl}{th}{st}</div></td><td class="px-4 py-3 w-40"><div class="flex items-center gap-2"><div class="flex-1 bg-gray-700/30 rounded-full h-2"><div class="{cb} h-2 rounded-full" style="width:{int(s.global_credibility*100)}%"></div></div><span class="text-sm font-mono text-gray-300 w-10 text-right">{s.global_credibility:.2f}</span></div></td><td class="px-4 py-3 text-sm text-gray-400">{acc}</td><td class="px-4 py-3 text-sm text-gray-400 font-mono">{rec}</td><td class="px-4 py-3"><div class="flex gap-1 flex-wrap">{cp}</div></td><td class="px-4 py-3 text-xs text-gray-500">{s.follower_count:,}</td><td class="px-4 py-3 opacity-0 group-hover:opacity-100 transition-opacity">{tb}</td></tr>')
+        rows.append(
+            f'<tr class="border-b border-white/5 hover:bg-white/[0.02] group"><td class="px-4 py-3 text-center w-12">{rk_html}</td><td class="px-4 py-3"><div class="flex items-center gap-2"><span class="font-medium text-gray-200">@{_esc(s.handle)}</span>{pl}{th}{st}</div></td><td class="px-4 py-3 w-40"><div class="flex items-center gap-2"><div class="flex-1 bg-gray-700/30 rounded-full h-2"><div class="{cb} h-2 rounded-full" style="width:{int(s.global_credibility * 100)}%"></div></div><span class="text-sm font-mono text-gray-300 w-10 text-right">{s.global_credibility:.2f}</span></div></td><td class="px-4 py-3 text-sm text-gray-400">{acc}</td><td class="px-4 py-3 text-sm text-gray-400 font-mono">{rec}</td><td class="px-4 py-3"><div class="flex gap-1 flex-wrap">{cp}</div></td><td class="px-4 py-3 text-xs text-gray-500">{s.follower_count:,}</td><td class="px-4 py-3 opacity-0 group-hover:opacity-100 transition-opacity">{tb}</td></tr>'
+        )
     return HTMLResponse("\n".join(rows))
 
 
@@ -752,6 +1009,7 @@ async def update_trust(handle: str, request: Request, session: AsyncSession = De
     await session.commit()
     try:
         from app.credibility.engine import CredibilityEngine
+
         await CredibilityEngine().recompute(session, handle)
     except Exception as exc:
         logger.error("Recompute failed: %s", exc)
@@ -766,15 +1024,27 @@ async def source_history(handle: str, session: AsyncSession = Depends(get_sessio
         return HTMLResponse('<div class="text-gray-600 text-sm">No history.</div>')
     labels = _json.dumps([s.snapshotted_at.strftime("%m/%d") for s in snapshots])
     values = _json.dumps([s.global_credibility for s in snapshots])
-    cid = "spark-" + _re.sub(r'[^a-zA-Z0-9-]', '', handle.replace('.', '-').replace('@', ''))
-    return HTMLResponse(f'<canvas id="{cid}" width="200" height="50"></canvas><script>new Chart(document.getElementById("{cid}"),{{type:"line",data:{{labels:{labels},datasets:[{{data:{values},borderColor:"#2D64F3",borderWidth:1.5,fill:false,pointRadius:0,tension:0.3}}]}},options:{{responsive:false,plugins:{{legend:{{display:false}}}},scales:{{x:{{display:false}},y:{{display:false,min:0,max:1}}}}}}}});</script>')
+    cid = "spark-" + _re.sub(r"[^a-zA-Z0-9-]", "", handle.replace(".", "-").replace("@", ""))
+    return HTMLResponse(
+        f'<canvas id="{cid}" width="200" height="50"></canvas><script>new Chart(document.getElementById("{cid}"),{{type:"line",data:{{labels:{labels},datasets:[{{data:{values},borderColor:"#2D64F3",borderWidth:1.5,fill:false,pointRadius:0,tension:0.3}}]}},options:{{responsive:false,plugins:{{legend:{{display:false}}}},scales:{{x:{{display:false}},y:{{display:false,min:0,max:1}}}}}}}});</script>'
+    )
 
 
 # ---------------------------------------------------------------------------
 # Markets (with filters + pagination)
 # ---------------------------------------------------------------------------
 @app.get("/markets", response_class=HTMLResponse)
-async def markets(request: Request, session: AsyncSession = Depends(get_session), _user: str = Depends(require_auth), category: str = "", search: str = "", sort: str = "volume", page: int = 1, per_page: int = 20, platform: str = "polymarket"):
+async def markets(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    _user: str = Depends(require_auth),
+    category: str = "",
+    search: str = "",
+    sort: str = "volume",
+    page: int = 1,
+    per_page: int = 20,
+    platform: str = "polymarket",
+):
     cutoff = ONE_YEAR_FROM_NOW()
     stmt = select(MarketSnapshot).where((MarketSnapshot.close_time.is_(None)) | (MarketSnapshot.close_time <= cutoff))
     stmt = stmt.where(MarketSnapshot.platform == platform)
@@ -808,21 +1078,35 @@ async def markets(request: Request, session: AsyncSession = Depends(get_session)
     all_markets = result.all()
 
     if not all_markets:
-        return HTMLResponse(f'<tr><td colspan="6" class="text-center py-16 text-gray-600">No markets found.</td></tr><tr><td colspan="6" class="px-4 py-2 text-xs text-gray-600 text-center">0 results</td></tr>')
+        return HTMLResponse(
+            '<tr><td colspan="6" class="text-center py-16 text-gray-600">No markets found.</td></tr><tr><td colspan="6" class="px-4 py-2 text-xs text-gray-600 text-center">0 results</td></tr>'
+        )
 
     rows = []
     for m in all_markets:
         close_str = m.close_time.strftime("%b %d, %Y") if m.close_time else "\u2014"
         pc = "text-green-400" if m.yes_price >= 0.6 else "text-red-400" if m.yes_price <= 0.4 else "text-gray-300"
-        rows.append(f'<tr class="border-b border-white/5 hover:bg-white/[0.02] cursor-pointer" hx-get="/feed?market={_esc(m.market_question[:50])}" hx-target="#feed-body" hx-swap="innerHTML" onclick="switchTab(\'feed\')"><td class="px-4 py-3 max-w-[300px]"><div class="truncate text-gray-300">{_esc(m.market_question[:65])}</div></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{m.category}</span></td><td class="px-4 py-3"><div class="flex items-center gap-2"><div class="w-16 bg-gray-700/30 rounded-full h-1.5"><div class="bg-[#2D64F3] h-1.5 rounded-full" style="width:{int(m.yes_price*100)}%"></div></div><span class="font-mono text-sm {pc}">{m.yes_price:.0%}</span></div></td><td class="px-4 py-3 text-sm text-gray-400"><span class="narve-money" data-usd="{m.volume_usd or 0}">${m.volume_usd:,.0f}</span></td><td class="px-4 py-3 text-xs text-gray-500">{close_str}</td><td class="px-4 py-3"><button hx-get="/markets/{m.market_slug}/chart" hx-target="#market-chart" hx-swap="innerHTML" class="text-xs text-blue-400 hover:text-blue-300">Chart</button></td></tr>')
+        rows.append(
+            f'<tr class="border-b border-white/5 hover:bg-white/[0.02] cursor-pointer" hx-get="/feed?market={_esc(m.market_question[:50])}" hx-target="#feed-body" hx-swap="innerHTML" onclick="switchTab(\'feed\')"><td class="px-4 py-3 max-w-[300px]"><div class="truncate text-gray-300">{_esc(m.market_question[:65])}</div></td><td class="px-4 py-3"><span class="text-[11px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400">{m.category}</span></td><td class="px-4 py-3"><div class="flex items-center gap-2"><div class="w-16 bg-gray-700/30 rounded-full h-1.5"><div class="bg-[#2D64F3] h-1.5 rounded-full" style="width:{int(m.yes_price * 100)}%"></div></div><span class="font-mono text-sm {pc}">{m.yes_price:.0%}</span></div></td><td class="px-4 py-3 text-sm text-gray-400"><span class="narve-money" data-usd="{m.volume_usd or 0}">${m.volume_usd:,.0f}</span></td><td class="px-4 py-3 text-xs text-gray-500">{close_str}</td><td class="px-4 py-3"><button hx-get="/markets/{m.market_slug}/chart" hx-target="#market-chart" hx-swap="innerHTML" class="text-xs text-blue-400 hover:text-blue-300">Chart</button></td></tr>'
+        )
 
     # Pagination row
     safe_cat = _esc(category)
     safe_search = _esc(search)
     safe_sort = _esc(sort)
-    prev_btn = f'<button hx-get="/markets?page={page-1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">&laquo; Prev</button>' if page > 1 else '<span class="px-2 py-1 text-xs text-gray-700">&laquo; Prev</span>'
-    next_btn = f'<button hx-get="/markets?page={page+1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">Next &raquo;</button>' if page < total_pages else '<span class="px-2 py-1 text-xs text-gray-700">Next &raquo;</span>'
-    rows.append(f'<tr><td colspan="6" class="px-4 py-3"><div class="flex items-center justify-between"><span class="text-xs text-gray-500">{total} markets &middot; Page {page} of {total_pages}</span><div class="flex gap-2">{prev_btn}{next_btn}</div></div></td></tr>')
+    prev_btn = (
+        f'<button hx-get="/markets?page={page - 1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">&laquo; Prev</button>'
+        if page > 1
+        else '<span class="px-2 py-1 text-xs text-gray-700">&laquo; Prev</span>'
+    )
+    next_btn = (
+        f'<button hx-get="/markets?page={page + 1}&per_page={per_page}&category={safe_cat}&search={safe_search}&sort={safe_sort}" hx-target="#markets-body" hx-swap="innerHTML" hx-include=".mkt-filter" class="px-2 py-1 rounded bg-white/5 text-gray-400 hover:bg-white/10 text-xs">Next &raquo;</button>'
+        if page < total_pages
+        else '<span class="px-2 py-1 text-xs text-gray-700">Next &raquo;</span>'
+    )
+    rows.append(
+        f'<tr><td colspan="6" class="px-4 py-3"><div class="flex items-center justify-between"><span class="text-xs text-gray-500">{total} markets &middot; Page {page} of {total_pages}</span><div class="flex gap-2">{prev_btn}{next_btn}</div></div></td></tr>'
+    )
 
     return HTMLResponse("\n".join(rows))
 
@@ -836,7 +1120,9 @@ async def market_chart(slug: str, session: AsyncSession = Depends(get_session), 
     labels = _json.dumps([s.snapshotted_at.strftime("%m/%d %H:%M") for s in snapshots])
     prices = _json.dumps([s.yes_price for s in snapshots])
     title = _esc((snapshots[0].market_question or "")[:60])
-    return HTMLResponse(f'<div class="mt-4 bg-gray-800/50 rounded-xl p-5 border border-white/5"><h4 class="text-sm font-semibold text-gray-300 mb-3">{title}</h4><canvas id="market-odds-chart" height="120"></canvas><script>if(window._mktChart)window._mktChart.destroy();window._mktChart=new Chart(document.getElementById("market-odds-chart"),{{type:"line",data:{{labels:{labels},datasets:[{{label:"Yes",data:{prices},borderColor:"#2D64F3",borderWidth:2,fill:true,backgroundColor:"rgba(45,100,243,0.08)",tension:0.3,pointRadius:1}}]}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},scales:{{y:{{min:0,max:1,grid:{{color:"rgba(255,255,255,0.03)"}},ticks:{{color:"#6b7280"}}}},x:{{grid:{{display:false}},ticks:{{color:"#6b7280",maxRotation:45}}}}}}}}}});</script></div>')
+    return HTMLResponse(
+        f'<div class="mt-4 bg-gray-800/50 rounded-xl p-5 border border-white/5"><h4 class="text-sm font-semibold text-gray-300 mb-3">{title}</h4><canvas id="market-odds-chart" height="120"></canvas><script>if(window._mktChart)window._mktChart.destroy();window._mktChart=new Chart(document.getElementById("market-odds-chart"),{{type:"line",data:{{labels:{labels},datasets:[{{label:"Yes",data:{prices},borderColor:"#2D64F3",borderWidth:2,fill:true,backgroundColor:"rgba(45,100,243,0.08)",tension:0.3,pointRadius:1}}]}},options:{{responsive:true,plugins:{{legend:{{display:false}}}},scales:{{y:{{min:0,max:1,grid:{{color:"rgba(255,255,255,0.03)"}},ticks:{{color:"#6b7280"}}}},x:{{grid:{{display:false}},ticks:{{color:"#6b7280",maxRotation:45}}}}}}}}}});</script></div>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -845,12 +1131,36 @@ async def market_chart(slug: str, session: AsyncSession = Depends(get_session), 
 _FX_CACHE: dict = {"rates": None, "fetched_at": 0.0}
 _FX_TTL = 3600  # 1 hour
 _FX_FALLBACK = {
-    "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
-    "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
-    "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
-    "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
-    "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
-    "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+    "USD": 1.0,
+    "EUR": 0.92,
+    "GBP": 0.79,
+    "JPY": 150.0,
+    "AUD": 1.52,
+    "CAD": 1.36,
+    "CHF": 0.88,
+    "CNY": 7.20,
+    "HKD": 7.83,
+    "NZD": 1.65,
+    "SEK": 10.5,
+    "KRW": 1340.0,
+    "SGD": 1.34,
+    "NOK": 10.6,
+    "MXN": 17.0,
+    "INR": 83.0,
+    "ZAR": 18.5,
+    "TRY": 32.0,
+    "BRL": 5.0,
+    "DKK": 6.85,
+    "PLN": 3.95,
+    "THB": 35.0,
+    "IDR": 15700.0,
+    "HUF": 360.0,
+    "CZK": 23.0,
+    "ILS": 3.7,
+    "PHP": 56.0,
+    "MYR": 4.7,
+    "RON": 4.6,
+    "ISK": 137.0,
 }
 
 
@@ -890,10 +1200,13 @@ async def refresh(_user: str = Depends(require_auth)):
     global _last_run_stats
     try:
         from app.scheduler import run_pipeline
+
         _last_run_stats = await run_pipeline()
         s = _last_run_stats
         ec = len(s.get("errors", []))
-        return HTMLResponse(f'<div class="flex items-center gap-3 text-xs"><span class="text-green-400">&#10003; Synced</span><span class="text-gray-500">{s.get("posts_fetched",0)} posts</span><span class="text-gray-500">{s.get("predictions_extracted",0)} preds</span><span class="text-gray-500">{s.get("markets_synced",0)} mkts</span>{"<span class=text-red-400>" + str(ec) + " err</span>" if ec else ""}</div>')
+        return HTMLResponse(
+            f'<div class="flex items-center gap-3 text-xs"><span class="text-green-400">&#10003; Synced</span><span class="text-gray-500">{s.get("posts_fetched", 0)} posts</span><span class="text-gray-500">{s.get("predictions_extracted", 0)} preds</span><span class="text-gray-500">{s.get("markets_synced", 0)} mkts</span>{"<span class=text-red-400>" + str(ec) + " err</span>" if ec else ""}</div>'
+        )
     except Exception as exc:
         return HTMLResponse(f'<div class="text-red-400 text-xs">Error: {_esc(str(exc))}</div>')
 
@@ -906,4 +1219,13 @@ async def health(session: AsyncSession = Depends(get_session)):
     mk = datetime.now(timezone.utc).strftime("%Y-%m")
     qr = (await session.exec(select(MonthlyQuota).where(MonthlyQuota.platform == "twitter", MonthlyQuota.year_month == mk))).first()
     tu = qr.tweets_read if qr else 0
-    return JSONResponse({"status": "ok", "last_run": _last_run_stats.get("run_at"), "predictions_total": pt, "sources_total": st, "accuracy_unlocked_count": uc, "twitter_quota_remaining": settings.get("TWITTER_MONTHLY_QUOTA", 500) - tu})
+    return JSONResponse(
+        {
+            "status": "ok",
+            "last_run": _last_run_stats.get("run_at"),
+            "predictions_total": pt,
+            "sources_total": st,
+            "accuracy_unlocked_count": uc,
+            "twitter_quota_remaining": settings.get("TWITTER_MONTHLY_QUOTA", 500) - tu,
+        }
+    )

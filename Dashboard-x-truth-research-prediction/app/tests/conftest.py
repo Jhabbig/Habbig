@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
 from app.db import AsyncSession
-from app.models import MarketSnapshot, Prediction, RawPost, Source, SourcePredictionRecord
+from app.models import RawPost, Source
 
 NOW = datetime.now(timezone.utc)
 

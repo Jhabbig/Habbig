@@ -16,7 +16,6 @@ import os
 import time
 import requests
 import argparse
-import math
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import sys
@@ -309,8 +308,6 @@ def get_realtime_signals(coin):
 
     closes_1m = [c["close"] for c in candles_1m]
     volumes_1m = [c["volume"] for c in candles_1m]
-    highs_1m = [c["high"] for c in candles_1m]
-    lows_1m = [c["low"] for c in candles_1m]
     closes_5m = [c["close"] for c in candles_5m] if candles_5m else closes_1m
 
     current_price = closes_1m[-1]
