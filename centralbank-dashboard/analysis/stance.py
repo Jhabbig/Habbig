@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from ingestion import cb_statements
-from . import stance_scorer
+
+from . import historical_store, stance_scorer
+
+log = logging.getLogger(__name__)
 
 
 def compute() -> dict:
@@ -44,6 +48,16 @@ def compute() -> dict:
         1 if r.get("norm_score") is None else 0,
         -(r.get("norm_score") or 0),
     ))
+
+    # Snapshot per-CB norm scores for delta queries — lets right_now show
+    # "Fed stance hawkish (+0.4 vs 7d ago)" instead of a static reading.
+    try:
+        snap_items: list[tuple[str, float | None]] = []
+        for r in rows:
+            snap_items.append((f"stance.{r['cb']}.norm", r.get("norm_score")))
+        historical_store.snapshot_many(snap_items)
+    except Exception as exc:
+        log.warning("history snapshot failed in stance: %s", exc)
 
     return {
         "as_of": datetime.now(timezone.utc).isoformat(),

@@ -2401,6 +2401,12 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/cesium")
+def cesium():
+    """3D globe view with NASA GIBS weather imagery + tracked city stations."""
+    return send_from_directory("static", "cesium.html")
+
+
 @app.route("/healthz")
 def healthz():
     """Uniform liveness endpoint shared with the other dashboards."""

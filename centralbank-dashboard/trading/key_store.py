@@ -29,14 +29,14 @@ call. Every helper here re-decrypts on each call.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-import secrets
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -47,27 +47,32 @@ SECRET_ENV = "CB_KEY_STORE_SECRET"
 
 _lock = Lock()
 
+# Tracks whether we used a generated dev key — informs the M1 error message
+# (telling the user to "re-enter credentials" makes sense; telling them the
+# operator may have rotated the master key is a different fix).
+_USING_DEV_KEY = False
+
 
 def _get_master_key() -> bytes:
     """Read the master Fernet key from env. If absent and we're in DEV_MODE,
     persist a random key on disk so the dashboard works locally; otherwise
     raise — production must set ``CB_KEY_STORE_SECRET`` explicitly so the
     operator owns the key material."""
+    global _USING_DEV_KEY
     raw = os.environ.get(SECRET_ENV, "").strip()
     if raw:
         try:
-            Fernet(raw.encode("utf-8"))   # validate
+            Fernet(raw.encode("utf-8"))  # validate
+            _USING_DEV_KEY = False
             return raw.encode("utf-8")
         except Exception as exc:
-            raise RuntimeError(
-                f"{SECRET_ENV} is set but not a valid Fernet key. "
-                f"Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
-            ) from exc
+            raise RuntimeError(f"{SECRET_ENV} is set but not a valid Fernet key. Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'") from exc
 
     if os.environ.get("DEV_MODE", "").strip() == "1":
         dev_key_path = DEFAULT_DB_PATH.parent / "dev_master.key"
         dev_key_path.parent.mkdir(parents=True, exist_ok=True)
         if dev_key_path.exists():
+            _USING_DEV_KEY = True
             return dev_key_path.read_bytes().strip()
         new_key = Fernet.generate_key()
         dev_key_path.write_bytes(new_key)
@@ -76,19 +81,19 @@ def _get_master_key() -> bytes:
         except OSError:
             pass
         log.warning(
-            "DEV_MODE: generated random master key at %s — fine for local "
-            "development, NEVER use in production.",
+            "DEV_MODE: generated random master key at %s — fine for local development, NEVER use in production.",
             dev_key_path,
         )
+        _USING_DEV_KEY = True
         return new_key
 
-    raise RuntimeError(
-        f"{SECRET_ENV} is required for trading endpoints. Set it (urlsafe-base64 "
-        f"32-byte key) and restart, or set DEV_MODE=1 for local-only testing."
-    )
+    raise RuntimeError(f"{SECRET_ENV} is required for trading endpoints. Set it (urlsafe-base64 32-byte key) and restart, or set DEV_MODE=1 for local-only testing.")
 
 
 def _connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """Open a sqlite3 connection. The caller is responsible for closing it
+    (we wrap with ``contextlib.closing`` everywhere — H6)."""
+    new_db = not db_path.exists()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -103,6 +108,14 @@ def _connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
         )
     """)
     conn.commit()
+    # M3: tighten file perms on first creation. The DB holds encrypted
+    # blobs only, but the Fernet master is right next to it on disk in
+    # DEV_MODE — keep both unreadable to other users on the host.
+    if new_db:
+        try:
+            os.chmod(db_path, 0o600)
+        except OSError:
+            pass
     return conn
 
 
@@ -111,9 +124,17 @@ class StoredKey:
     user_id: str
     api_key_id: str
     private_key_pem: bytes
-    mode: str            # "paper" | "prod"
+    # NB: ``created_at`` and ``updated_at`` are unix-epoch SECONDS
+    # (not milliseconds). The frontend multiplies by 1000 to make a JS Date.
+    mode: str  # "paper" | "prod"
     created_at: int
     updated_at: int
+
+
+def _validate_mode(mode: str) -> None:
+    """M26: single source of truth for mode validation."""
+    if mode not in ("paper", "prod"):
+        raise ValueError(f"mode must be 'paper' or 'prod', got {mode!r}")
 
 
 def upsert_key(
@@ -126,8 +147,7 @@ def upsert_key(
 ) -> None:
     """Encrypt and store a user's API credentials. ``mode`` defaults to
     ``"paper"`` — flipping to ``"prod"`` is its own action."""
-    if mode not in ("paper", "prod"):
-        raise ValueError(f"mode must be 'paper' or 'prod', got {mode!r}")
+    _validate_mode(mode)
     if isinstance(private_key_pem, str):
         private_key_pem = private_key_pem.encode("utf-8")
     # Light sanity check — actual RSA validation happens in kalshi_auth on first sign.
@@ -138,11 +158,11 @@ def upsert_key(
     f = Fernet(master)
     enc_id = f.encrypt(api_key_id.encode("utf-8"))
     enc_pk = f.encrypt(private_key_pem)
-    import time
     now = int(time.time())
 
-    with _lock, _connect(db_path) as conn:
-        conn.execute("""
+    with _lock, contextlib.closing(_connect(db_path)) as conn:
+        conn.execute(
+            """
             INSERT INTO user_keys (user_id, api_key_id_enc, private_key_enc, mode, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
@@ -150,17 +170,18 @@ def upsert_key(
               private_key_enc=excluded.private_key_enc,
               mode=excluded.mode,
               updated_at=excluded.updated_at
-        """, (user_id, enc_id, enc_pk, mode, now, now))
+        """,
+            (user_id, enc_id, enc_pk, mode, now, now),
+        )
         conn.commit()
 
 
 def get_key(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> StoredKey | None:
     master = _get_master_key()
     f = Fernet(master)
-    with _lock, _connect(db_path) as conn:
+    with _lock, contextlib.closing(_connect(db_path)) as conn:
         row = conn.execute(
-            "SELECT user_id, api_key_id_enc, private_key_enc, mode, created_at, updated_at "
-            "FROM user_keys WHERE user_id = ?",
+            "SELECT user_id, api_key_id_enc, private_key_enc, mode, created_at, updated_at FROM user_keys WHERE user_id = ?",
             (user_id,),
         ).fetchone()
     if not row:
@@ -169,12 +190,27 @@ def get_key(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> StoredKey | Non
         api_key_id = f.decrypt(row["api_key_id_enc"]).decode("utf-8")
         pem = f.decrypt(row["private_key_enc"])
     except InvalidToken as exc:
-        # Almost always means the master key changed — operator rotated
-        # CB_KEY_STORE_SECRET. Without the old key, ciphertexts are dead.
-        raise RuntimeError(
-            "Stored key cannot be decrypted with the current CB_KEY_STORE_SECRET. "
-            "The user must re-enter their Kalshi credentials."
-        ) from exc
+        # M1: distinguish "user can fix this" from "operator must look at this".
+        # If we're using a generated dev key, the operator may have wiped
+        # data/dev_master.key — instructing the user to re-enter their key
+        # is the right next step. If the operator supplied CB_KEY_STORE_SECRET
+        # explicitly and *that* changed, the row was encrypted with a key the
+        # operator no longer has; tell them so they don't blame the user.
+        if _USING_DEV_KEY:
+            raise RuntimeError(
+                "Stored key cannot be decrypted with the current dev master key (data/dev_master.key may have been regenerated). The user must re-enter their Kalshi credentials."
+            ) from exc
+        log.error(
+            "operator alert: %s rotated; ciphertext for user_id=%s cannot be decrypted. Either restore the previous secret or instruct the user to re-enter their key.",
+            SECRET_ENV,
+            user_id,
+        )
+        raise RuntimeError(f"Stored key cannot be decrypted. Operator may have rotated {SECRET_ENV}; the user must re-enter their Kalshi credentials.") from exc
+    # M26: defend against a corrupted/tampered mode column.
+    try:
+        _validate_mode(row["mode"])
+    except ValueError:
+        raise RuntimeError(f"corrupt key store: invalid mode {row['mode']!r} for user {user_id}") from None
     return StoredKey(
         user_id=row["user_id"],
         api_key_id=api_key_id,
@@ -186,18 +222,16 @@ def get_key(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> StoredKey | Non
 
 
 def delete_key(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> bool:
-    with _lock, _connect(db_path) as conn:
+    with _lock, contextlib.closing(_connect(db_path)) as conn:
         cur = conn.execute("DELETE FROM user_keys WHERE user_id = ?", (user_id,))
         conn.commit()
     return cur.rowcount > 0
 
 
 def set_mode(user_id: str, mode: str, *, db_path: Path = DEFAULT_DB_PATH) -> bool:
-    if mode not in ("paper", "prod"):
-        raise ValueError(f"mode must be 'paper' or 'prod', got {mode!r}")
-    import time
+    _validate_mode(mode)
     now = int(time.time())
-    with _lock, _connect(db_path) as conn:
+    with _lock, contextlib.closing(_connect(db_path)) as conn:
         cur = conn.execute(
             "UPDATE user_keys SET mode = ?, updated_at = ? WHERE user_id = ?",
             (mode, now, user_id),
@@ -208,8 +242,11 @@ def set_mode(user_id: str, mode: str, *, db_path: Path = DEFAULT_DB_PATH) -> boo
 
 def status(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> dict:
     """Return a key's metadata without decrypting the secret material — safe
-    to call without the master key on hand."""
-    with _lock, _connect(db_path) as conn:
+    to call without the master key on hand.
+
+    The ``created_at`` and ``updated_at`` fields are unix-epoch SECONDS
+    (multiply by 1000 to feed `new Date()`)."""
+    with _lock, contextlib.closing(_connect(db_path)) as conn:
         row = conn.execute(
             "SELECT mode, created_at, updated_at FROM user_keys WHERE user_id = ?",
             (user_id,),
@@ -219,8 +256,8 @@ def status(user_id: str, *, db_path: Path = DEFAULT_DB_PATH) -> dict:
     return {
         "configured": True,
         "mode": row["mode"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        "created_at": row["created_at"],  # seconds
+        "updated_at": row["updated_at"],  # seconds
     }
 
 

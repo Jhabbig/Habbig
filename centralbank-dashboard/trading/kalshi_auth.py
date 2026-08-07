@@ -50,18 +50,39 @@ def host_for_mode(mode: str) -> str:
 
 # --- Signing ---------------------------------------------------------------
 
+
 def load_private_key(pem: bytes | str, password: bytes | None = None) -> rsa.RSAPrivateKey:
-    """Parse a PEM-encoded RSA private key. Raises ``ValueError`` on bad PEM."""
+    """Parse a PEM-encoded RSA private key. Raises ``ValueError`` on bad PEM
+    or on a key whose size is outside the [2048, 4096] range we accept.
+
+    M25: bound the key size. Most users will paste a Kalshi-generated
+    2048-bit key; allowing absurdly large keys (16k bits) gives a slow-sign
+    DoS vector. We also intercept ``TypeError`` from
+    ``load_pem_private_key`` because that's what the cryptography library
+    raises when an encrypted key is passed without a password — its default
+    message is opaque ("Password was not given but private key is encrypted")
+    only after a layer of indirection."""
     if isinstance(pem, str):
         pem = pem.encode("utf-8")
-    key = serialization.load_pem_private_key(pem, password=password)
+    try:
+        key = serialization.load_pem_private_key(pem, password=password)
+    except TypeError as exc:
+        raise ValueError("private key appears encrypted but no password was supplied — either re-export the Kalshi key without a passphrase or pass it via password=") from exc
     if not isinstance(key, rsa.RSAPrivateKey):
         raise ValueError("Kalshi auth requires an RSA private key (got something else)")
+    if not (2048 <= key.key_size <= 4096):
+        raise ValueError(f"RSA key size must be between 2048 and 4096 bits (got {key.key_size}). Kalshi accepts 2048; larger keys slow signing without security benefit.")
     return key
 
 
 def sign_message(private_key: rsa.RSAPrivateKey, message: bytes) -> str:
-    """Sign ``message`` with RSA-PSS / SHA-256 / MGF1-SHA-256, return base64."""
+    """Sign ``message`` with RSA-PSS / SHA-256 / MGF1-SHA-256, return base64.
+
+    M24: ``salt_length=PSS.DIGEST_LENGTH`` is required by Kalshi's spec
+    (salt = 32 bytes for SHA-256). Do NOT change to ``PSS.MAX_LENGTH`` —
+    Kalshi's verifier is configured for digest-length salts and will
+    reject MAX-length signatures.
+    """
     sig = private_key.sign(
         message,
         padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
@@ -72,9 +93,9 @@ def sign_message(private_key: rsa.RSAPrivateKey, message: bytes) -> str:
 
 @dataclass
 class SignedRequest:
-    method: str         # "GET" / "POST" / "DELETE"
-    full_url: str       # absolute URL including host
-    headers: dict       # KALSHI-ACCESS-{KEY,TIMESTAMP,SIGNATURE} + Content-Type
+    method: str  # "GET" / "POST" / "DELETE"
+    full_url: str  # absolute URL including host
+    headers: dict  # KALSHI-ACCESS-{KEY,TIMESTAMP,SIGNATURE} + Content-Type
     body: bytes | None  # JSON body, or None for non-POST
 
 
@@ -114,10 +135,14 @@ if __name__ == "__main__":
     # Generate an ephemeral key and sign a fake request — proves the crypto
     # paths run end-to-end without needing real Kalshi credentials.
     from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
     test_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
     req = build_signed_request(
-        "GET", "/trade-api/v2/portfolio/balance",
-        api_key_id="test-key-id", private_key=test_key, mode="paper",
+        "GET",
+        "/trade-api/v2/portfolio/balance",
+        api_key_id="test-key-id",
+        private_key=test_key,
+        mode="paper",
     )
     print("URL:    ", req.full_url)
     print("Method: ", req.method)

@@ -27,6 +27,8 @@ from datetime import date, datetime, timezone
 
 from ingestion import decision_calendar, fred_client, implied_path, kalshi_client, polymarket_client
 
+from . import historical_store
+
 # pp threshold — same on both edge types. Polymarket+Kalshi both have ~1 pp
 # spread on liquid markets so 3 pp is conservative for either signal.
 EDGE_THRESHOLD = 0.03
@@ -155,6 +157,16 @@ def compute() -> dict:
             "kalshi_ticker": kal.get("ticker") if kal else None,
             "kalshi_event_ticker": kal.get("event_ticker") if kal else None,
         })
+
+    # Snapshot every venue/bucket price + implied prob for delta queries.
+    # Idempotent across many calls — historical_store dedups by 10-min interval.
+    snapshot_items: list[tuple[str, float | None]] = []
+    for r in rows:
+        b = r["outcome_bucket"]
+        snapshot_items.append((f"poly_price.{b}", r.get("polymarket_price")))
+        snapshot_items.append((f"kalshi_price.{b}", r.get("kalshi_price")))
+        snapshot_items.append((f"implied_prob.{b}", r.get("implied_prob")))
+    historical_store.snapshot_many(snapshot_items)
 
     # Sort by max(|implied edge|, |arb spread|) — biggest signal first.
     def _max_signal(r: dict) -> float:

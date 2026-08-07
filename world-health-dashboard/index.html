@@ -21,6 +21,22 @@
          background: var(--bg); color: var(--fg); overflow: hidden; }
   #globe { position: fixed; inset: 0; }
 
+  /* Polish: smooth panel transitions */
+  #panel, #pheicPanel, #outbreakDetail, #feedPanel, #emChart, #cAurisPanel,
+  #marketsView, #atlasView, #shortagesView, #tradeView {
+    transition: opacity 200ms ease, transform 200ms ease;
+  }
+  #panel:not(.open), #pheicPanel:not(.open), #outbreakDetail:not(.open) {
+    opacity: 0; pointer-events: none;
+  }
+  #panel.open, #pheicPanel.open, #outbreakDetail.open {
+    opacity: 1;
+  }
+  /* Status spinner: don't overlap the feed panel on outbreak/h5n1 tabs */
+  body.tab-outbreaks #status, body.tab-h5n1 #status { left: 392px; }
+  body.tab-em #status { left: 392px; }
+  body.tab-globe.has-search #searchResults { display: block; }
+
   header {
     position: fixed; top: 0; left: 0; right: 0; z-index: 10;
     padding: 10px 18px; background: rgba(14, 17, 23, 0.85);
@@ -40,13 +56,14 @@
                  letter-spacing: 0.08em; margin-right: 6px; }
 
   /* Tab bar */
-  .tabs { display: flex; gap: 2px; }
+  .tabs { display: flex; gap: 2px; flex-wrap: wrap; }
   .tab {
     background: transparent; color: var(--muted); border: 1px solid var(--grid);
     border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer;
+    transition: all 150ms ease;
   }
-  .tab:hover { color: var(--fg); }
+  .tab:hover { color: var(--fg); border-color: var(--muted); }
   .tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 
   /* Hide controls that aren't relevant to a tab */
@@ -73,7 +90,15 @@
   body.tab-shortages   .only-markets, body.tab-shortages .only-hai,
   body.tab-shortages   #legend, body.tab-shortages #panel, body.tab-shortages #pheicPanel,
   body.tab-shortages   #feedPanel, body.tab-shortages #emChart, body.tab-shortages #cAurisPanel,
-  body.tab-shortages   #globe
+  body.tab-shortages   #globe, body.tab-shortages #outbreakDetail,
+  body.tab-trade       .only-globe, body.tab-trade .only-outbreaks, body.tab-trade .only-em,
+  body.tab-trade       .only-markets, body.tab-trade .only-hai,
+  body.tab-trade       #legend, body.tab-trade #panel, body.tab-trade #pheicPanel,
+  body.tab-trade       #feedPanel, body.tab-trade #emChart, body.tab-trade #cAurisPanel,
+  body.tab-trade       #globe, body.tab-trade #outbreakDetail,
+  body.tab-globe       #outbreakDetail, body.tab-em #outbreakDetail,
+  body.tab-pheic       #outbreakDetail, body.tab-markets #outbreakDetail,
+  body.tab-atlas       #outbreakDetail, body.tab-hai #outbreakDetail
     { display: none !important; }
 
   /* Legend */
@@ -122,6 +147,93 @@
                        font-weight: 600; }
   #panel .row .year { color: var(--muted); font-size: 10px; margin-left: 6px; }
   #panel .row .na { color: var(--muted); font-style: italic; }
+
+  /* Outbreak detail modal — overlays on top of feed when one is clicked */
+  #outbreakDetail {
+    position: fixed; top: 60px; right: 16px; bottom: 16px; width: 460px; z-index: 12;
+    background: rgba(22,27,34,0.97); border: 1px solid var(--grid);
+    border-radius: 8px; padding: 18px; overflow-y: auto;
+    backdrop-filter: blur(8px); display: none;
+  }
+  #outbreakDetail.open { display: block; }
+  #outbreakDetail .close { float: right; cursor: pointer; color: var(--muted);
+                            font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 3px; }
+  #outbreakDetail .close:hover { background: var(--grid); color: var(--fg); }
+  #outbreakDetail h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  #outbreakDetail .meta { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                          letter-spacing: 0.06em; margin-top: 4px; }
+  #outbreakDetail .badges { margin-top: 8px; }
+  #outbreakDetail .badge {
+    display: inline-block; padding: 2px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; margin-right: 4px;
+  }
+  #outbreakDetail .badge.country  { background: #1f6feb; color: #fff; }
+  #outbreakDetail .badge.global   { background: var(--accent); color: var(--bg); }
+  #outbreakDetail .badge.regional { background: var(--warn); color: var(--bg); }
+  #outbreakDetail .badge.multi    { background: #c85bd0; color: #fff; }
+  #outbreakDetail .summary-block {
+    background: rgba(14,17,23,0.5); border: 1px solid var(--grid);
+    border-radius: 6px; padding: 12px 14px; margin-top: 14px;
+    font-size: 13px; line-height: 1.55;
+  }
+  #outbreakDetail .source-link { display: inline-block; margin-top: 12px;
+    color: var(--accent); text-decoration: none; font-size: 12px; }
+  #outbreakDetail .source-link:hover { text-decoration: underline; }
+  #outbreakDetail .related-block { margin-top: 18px; }
+  #outbreakDetail .related-block h3 {
+    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; margin: 0 0 8px; font-weight: 600;
+  }
+  #outbreakDetail .related-item {
+    padding: 8px 0; border-bottom: 1px solid var(--grid); cursor: pointer;
+  }
+  #outbreakDetail .related-item:last-child { border-bottom: 0; }
+  #outbreakDetail .related-item:hover { background: rgba(48,54,61,0.3); }
+  #outbreakDetail .related-item .head {
+    display: flex; justify-content: space-between; gap: 10px; font-size: 12px;
+  }
+  #outbreakDetail .related-item .when {
+    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  #outbreakDetail .atlas-link {
+    display: inline-block; background: var(--accent); color: var(--bg);
+    padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    margin-top: 8px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  #outbreakDetail .atlas-link:hover { filter: brightness(1.1); }
+
+  /* Vulnerability / HAI drilldown panel content */
+  .vuln-pill { display: inline-block; padding: 2px 7px; border-radius: 3px;
+               font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+               text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  .vuln-pill.vuln-resilient { background: var(--good); color: var(--bg); }
+  .vuln-pill.vuln-watch     { background: var(--warn); color: var(--bg); }
+  .vuln-pill.vuln-fragile   { background: #ff8b3d; color: var(--bg); }
+  .vuln-pill.vuln-atrisk    { background: var(--bad); color: #fff; }
+  #panel .vuln-explainer { color: var(--muted); font-size: 11px; line-height: 1.5;
+                            background: rgba(14,17,23,0.5); border: 1px solid var(--grid);
+                            border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; }
+  #panel .vuln-rows { display: flex; flex-direction: column; gap: 12px; }
+  #panel .vuln-row { background: rgba(14,17,23,0.4); border: 1px solid var(--grid);
+                      border-radius: 6px; padding: 10px 12px; }
+  #panel .vuln-row-head { display: flex; justify-content: space-between; align-items: baseline;
+                            margin-bottom: 6px; }
+  #panel .vuln-row-name { font-size: 13px; font-weight: 600; }
+  #panel .vuln-row-contrib { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #panel .vuln-row-contrib.vuln-high { color: var(--bad); }
+  #panel .vuln-row-contrib.vuln-med  { color: var(--warn); }
+  #panel .vuln-row-contrib.vuln-low  { color: var(--good); }
+  #panel .vuln-row-contrib.vuln-dim  { color: var(--muted); }
+  #panel .vuln-bar { height: 6px; background: var(--grid); border-radius: 3px;
+                      overflow: hidden; margin-bottom: 6px; }
+  #panel .vuln-bar-fill { display: block; height: 100%;
+                           background: linear-gradient(to right, #ff8b3d, var(--bad)); }
+  #panel .vuln-row-meta { color: var(--muted); font-size: 11px; line-height: 1.5; }
+  #panel .vuln-row-drug { display: block; margin-top: 3px; }
+  #panel .vuln-shortage { background: var(--bad); color: #fff; padding: 1px 5px;
+                           border-radius: 2px; font-size: 9px; font-weight: 700;
+                           margin-left: 4px; letter-spacing: 0.05em; text-transform: uppercase; }
 
   /* Outbreak feed (left panel for outbreaks tab) */
   #feedPanel {
@@ -231,6 +343,65 @@
   .match .spread { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
   .match .spread.high { color: var(--bad); }
   .match .spread.med  { color: var(--warn); }
+
+  /* Trade tab */
+  #tradeView { position: fixed; top: 60px; left: 0; right: 0; bottom: 0; z-index: 5;
+               background: var(--bg); padding: 20px 24px; overflow-y: auto; display: none; }
+  body.tab-trade #tradeView { display: block; }
+  .trade-headline { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; margin-bottom: 18px; }
+  .trade-card { background: var(--panel); border: 1px solid var(--grid); border-radius: 6px;
+                padding: 14px 18px; }
+  .trade-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+                   color: var(--muted); letter-spacing: 0.06em; font-weight: 600; }
+  .trade-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                 gap: 8px; }
+  .trade-stat { background: rgba(14,17,23,0.5); border: 1px solid var(--grid);
+                border-radius: 4px; padding: 10px 12px; }
+  .trade-stat .lab { color: var(--muted); font-size: 10px; text-transform: uppercase;
+                     letter-spacing: 0.06em; }
+  .trade-stat .val { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
+                     margin-top: 2px; }
+  .trade-stat .sub { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+                     margin-top: 2px; }
+  .trade-note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+  .trade-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+  .trade-list .trade-row { display: grid; grid-template-columns: 32px 1fr 90px 60px;
+                            gap: 8px; align-items: center; padding: 7px 0;
+                            border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .trade-list .trade-row:last-child { border-bottom: 0; }
+  .trade-list .rank { color: var(--muted); font-variant-numeric: tabular-nums;
+                       text-align: right; padding-right: 4px; }
+  .trade-list .country-cell { display: flex; flex-direction: column; }
+  .trade-list .country-cell .name { font-weight: 600; }
+  .trade-list .country-cell .notes { color: var(--muted); font-size: 10px; line-height: 1.4;
+                                       max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+                                       white-space: nowrap; }
+  .trade-list .bar-cell { position: relative; height: 16px; background: var(--grid);
+                           border-radius: 3px; overflow: hidden; }
+  .trade-list .bar-cell .fill { display: block; height: 100%; }
+  .trade-list .bar-cell .fill.exp { background: linear-gradient(to right, #1f6feb, #58a6ff); }
+  .trade-list .bar-cell .fill.imp { background: linear-gradient(to right, #c85bd0, #ff8b3d); }
+  .trade-list .pct { color: var(--muted); font-variant-numeric: tabular-nums;
+                       text-align: right; }
+  .trade-list .pct b { color: var(--fg); }
+
+  .trade-search { width: 100%; background: var(--panel); color: var(--fg);
+                   border: 1px solid var(--grid); border-radius: 4px; padding: 7px 10px;
+                   font-size: 13px; margin-bottom: 12px; }
+
+  .trade-detail { display: none; }
+  .trade-detail.open { display: block; }
+  .trade-detail h4 { margin: 0 0 6px; font-size: 16px; }
+  .trade-detail .row { display: flex; justify-content: space-between;
+                        padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+  .trade-detail .row:last-child { border-bottom: 0; }
+  .trade-detail .row .lab { color: var(--muted); }
+  .trade-detail .row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .trade-detail .imbalance.surplus { color: var(--good); }
+  .trade-detail .imbalance.deficit { color: var(--bad); }
+  .trade-detail .notes { color: var(--muted); font-size: 12px; margin-top: 8px;
+                          padding-top: 8px; border-top: 1px solid var(--grid); }
 
   /* Shortages tab */
   #shortagesView { position: fixed; top: 60px; left: 0; right: 0; bottom: 0; z-index: 5;
@@ -394,6 +565,9 @@
                                          border-radius: 3px; font-size: 11px; font-weight: 700;
                                          margin-top: 6px; display: inline-block; text-transform: uppercase;
                                          letter-spacing: 0.06em; }
+  #atlasDetail .med .row .val.pq-good { color: var(--good); }
+  #atlasDetail .med .row .val.pq-mid  { color: var(--warn); }
+  #atlasDetail .med .row .val.pq-bad  { color: var(--bad); }
   #atlasDetail .extra { margin-top: 24px; max-width: 780px; }
   #atlasDetail .extra summary { cursor: pointer; color: var(--muted); font-size: 12px;
                                   text-transform: uppercase; letter-spacing: 0.06em; }
@@ -458,6 +632,7 @@
     <button class="tab" data-tab="atlas">Atlas</button>
     <button class="tab" data-tab="hai">HAI / AMR</button>
     <button class="tab" data-tab="shortages">Shortages</button>
+    <button class="tab" data-tab="trade">Trade</button>
   </div>
   <span style="flex:1"></span>
   <span class="only-globe">
@@ -543,6 +718,45 @@
     </thead>
     <tbody id="marketsBody"></tbody>
   </table>
+</div>
+
+<!-- Outbreak detail modal — slides in over the right panel when a feed item is clicked -->
+<div id="outbreakDetail">
+  <span class="close" onclick="closeOutbreakDetail()">×</span>
+  <h2 id="obDetailTitle">—</h2>
+  <div class="meta" id="obDetailMeta">—</div>
+  <div class="badges" id="obDetailBadges"></div>
+  <div id="obDetailAtlasBtn" style="margin-top: 12px;"></div>
+  <div class="summary-block" id="obDetailSummary">—</div>
+  <a class="source-link" id="obDetailSourceLink" target="_blank" rel="noopener" href="#">View full WHO DON ↗</a>
+  <div class="related-block" id="obDetailDisease"></div>
+  <div class="related-block" id="obDetailCountry"></div>
+</div>
+
+<!-- Trade tab: pharma exporter/importer flows + per-country detail -->
+<div id="tradeView">
+  <div class="trade-headline">
+    <div class="trade-card">
+      <h3>Global pharma trade — concentration (HS-30, 2023)</h3>
+      <div class="trade-stats" id="tradeStats"></div>
+      <p class="trade-note" style="margin-top:12px" id="tradeNote"></p>
+    </div>
+    <div class="trade-card">
+      <h3>Per-country lookup</h3>
+      <input class="trade-search" id="tradeSearch" placeholder="Search by country name or ISO3…" autocomplete="off">
+      <div class="trade-detail" id="tradeDetail"></div>
+    </div>
+  </div>
+  <div class="trade-cols">
+    <div class="trade-card">
+      <h3>Top 30 pharma exporters</h3>
+      <div class="trade-list" id="tradeExporters"></div>
+    </div>
+    <div class="trade-card">
+      <h3>Top 30 pharma importers</h3>
+      <div class="trade-list" id="tradeImporters"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Shortages tab: leaderboards + active FDA shortages -->
@@ -649,6 +863,7 @@ const state = {
   shortagesActive: null,        // {items: [...]}
   shortagesOverview: null,      // {by_category, by_reason, latest_updates}
   vulnIndex: null,              // {slug: {score, rating}}
+  trade: null,                  // {exporters_top_30, importers_top_30, concentration, ...}
 };
 
 // ── Color scaling ──────────────────────────────────────────────────────────
@@ -716,6 +931,10 @@ function initGlobe() {
       if (!iso) return;
       if (state.tab === 'em') {
         showExcessChart(iso);
+      } else if (state.tab === 'globe' && state.selectedMetricId === '_country_vulnerability') {
+        openCountryVulnerability(iso);
+      } else if (state.tab === 'hai') {
+        openHaiCountry(iso);
       } else {
         openCountryPanel(iso);
       }
@@ -879,6 +1098,10 @@ function switchTab(tab) {
   document.getElementById('panel').classList.remove('open');
   document.getElementById('pheicPanel').classList.remove('open');
   document.getElementById('emChart').classList.remove('show');
+  // Close the outbreak detail when leaving outbreaks/h5n1 tabs.
+  if (tab !== 'outbreaks' && tab !== 'h5n1') {
+    document.getElementById('outbreakDetail')?.classList.remove('open');
+  }
   if (tab === 'globe')      applyMetricLayer();
   if (tab === 'outbreaks')  ensureOutbreaks().then(applyOutbreakLayer).then(renderOutbreakFeed);
   if (tab === 'h5n1')       ensureH5N1().then(applyOutbreakLayer).then(renderH5N1Feed);
@@ -888,6 +1111,7 @@ function switchTab(tab) {
   if (tab === 'atlas')      ensureAtlas().then(() => ensureVulnIndex()).then(renderAtlas);
   if (tab === 'hai')        ensureHAI().then(() => loadHaiLayer(state.haiIndicator)).then(renderCAuris);
   if (tab === 'shortages')  ensureShortages().then(renderShortages);
+  if (tab === 'trade')      ensureTrade().then(renderTrade);
 }
 
 // ── Data loaders ───────────────────────────────────────────────────────────
@@ -997,6 +1221,15 @@ async function ensureAtlas() {
   try {
     const r = await fetch('/api/diseases');
     state.atlas = await r.json();
+  } finally { hideStatus(); }
+}
+
+async function ensureTrade() {
+  if (state.trade) return;
+  showStatus('Loading pharma trade data…');
+  try {
+    const r = await fetch('/api/pharma_trade');
+    state.trade = await r.json();
   } finally { hideStatus(); }
 }
 
@@ -1138,6 +1371,117 @@ async function openCountryPanel(iso3) {
 }
 function closePanel() { document.getElementById('panel').classList.remove('open'); }
 
+// ── Country vulnerability drilldown ────────────────────────────────────────
+async function openCountryVulnerability(iso3) {
+  const panel = document.getElementById('panel');
+  document.getElementById('panelName').textContent = state.countriesByIso[iso3] || iso3;
+  document.getElementById('panelRegion').textContent = '…';
+  document.getElementById('panelMetrics').innerHTML =
+    '<div style="color:var(--muted);padding:12px 0">Loading vulnerability breakdown…</div>';
+  panel.classList.add('open');
+  try {
+    const r = await fetch(`/api/country_vulnerability/${encodeURIComponent(iso3)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderVulnerabilityPanel(iso3, d);
+  } catch (e) {
+    console.error(e);
+    document.getElementById('panelMetrics').innerHTML =
+      '<div style="color:var(--bad);padding:12px 0">Failed to load.</div>';
+  }
+}
+
+function renderVulnerabilityPanel(iso3, d) {
+  const score = d.score;
+  const rating = d.rating || 'no data';
+  // Match the rating-class palette already used in the Shortages tab
+  const ratingCls = rating === 'resilient' ? 'resilient'
+                  : rating === 'watch list' ? 'watch'
+                  : rating === 'fragile' ? 'fragile' : 'atrisk';
+
+  document.getElementById('panelRegion').innerHTML =
+    `${iso3} · <span class="vuln-pill vuln-${ratingCls}">${score != null ? score.toFixed(2) + '/10' : '—'} · ${rating}</span>`;
+
+  const root = document.getElementById('panelMetrics');
+  if (!d.contributions || d.contributions.length === 0) {
+    root.innerHTML = '<div style="color:var(--muted);padding:12px 0">No burden indicators reported for this country.</div>';
+    return;
+  }
+
+  const maxContrib = Math.max(...d.contributions.map(c => c.contribution || 0)) || 1;
+  let html = `
+    <div class="vuln-explainer">
+      Composite score = weighted sum of essential-medicine weak-point scores,
+      where each disease's weight is this country's burden quantile (0-1) for
+      that disease. Bigger bar = bigger contribution to the country's overall
+      vulnerability.
+    </div>
+    <div class="vuln-rows">`;
+
+  for (const c of d.contributions) {
+    const pct = (c.contribution / maxContrib) * 100;
+    const burdenLabel = (c.burden_quantile * 100).toFixed(0) + 'th pct';
+    const drugLine = c.limiting_drug
+      ? `<span class="vuln-row-drug">limited by <b>${escapeHtml(c.limiting_drug)}</b>${c.any_active_shortage ? ' <span class="vuln-shortage">⚠ in shortage</span>' : ''}</span>`
+      : '';
+    html += `
+      <div class="vuln-row">
+        <div class="vuln-row-head">
+          <span class="vuln-row-name">${escapeHtml(c.disease_slug)}</span>
+          <span class="vuln-row-contrib">${c.contribution.toFixed(2)}</span>
+        </div>
+        <div class="vuln-bar">
+          <span class="vuln-bar-fill" style="width:${pct}%"></span>
+        </div>
+        <div class="vuln-row-meta">
+          burden ${burdenLabel} · vuln ${c.vulnerability}/10 ${drugLine}
+        </div>
+      </div>`;
+  }
+  html += `</div>`;
+  root.innerHTML = html;
+}
+
+// ── HAI country drilldown ──────────────────────────────────────────────────
+async function openHaiCountry(iso3) {
+  const panel = document.getElementById('panel');
+  document.getElementById('panelName').textContent = state.countriesByIso[iso3] || iso3;
+  document.getElementById('panelRegion').textContent = '…';
+  document.getElementById('panelMetrics').innerHTML = '<div style="color:var(--muted);padding:12px 0">Loading AMR profile…</div>';
+  panel.classList.add('open');
+  try {
+    const r = await fetch(`/api/hai/country/${encodeURIComponent(iso3)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderHaiCountry(iso3, d);
+  } catch (e) {
+    document.getElementById('panelMetrics').innerHTML =
+      '<div style="color:var(--bad);padding:12px 0">Failed to load.</div>';
+  }
+}
+
+function renderHaiCountry(iso3, d) {
+  document.getElementById('panelRegion').textContent = `${iso3} · antimicrobial resistance profile`;
+  const root = document.getElementById('panelMetrics');
+  let html = '<div class="vuln-rows">';
+  for (const ind of d.indicators) {
+    const v = ind.value;
+    const cls = v == null ? 'dim' : v >= 50 ? 'high' : v >= 20 ? 'med' : 'low';
+    html += `
+      <div class="vuln-row">
+        <div class="vuln-row-head">
+          <span class="vuln-row-name">${escapeHtml(ind.name)}</span>
+          <span class="vuln-row-contrib vuln-${cls}">${v != null ? v.toFixed(1) + '%' : '—'}</span>
+        </div>
+        <div class="vuln-row-meta">
+          ${escapeHtml(ind.pathogen)} · ${escapeHtml(ind.antibiotic)}${ind.year ? ' · ' + ind.year : ''}
+        </div>
+      </div>`;
+  }
+  html += '</div>';
+  root.innerHTML = html;
+}
+
 function renderProfile(profile) {
   const groups = {};
   for (const m of state.metrics) (groups[m.category] = groups[m.category] || []).push(m);
@@ -1197,9 +1541,114 @@ function renderOutbreakFeed() {
        <div class="summary">${it.summary || ''}</div>`;
     div.addEventListener('click', () => {
       if (it.country_iso3) flyToCountry(it.country_iso3);
-      if (it.url) window.open(it.url, '_blank', 'noopener,noreferrer');
+      openOutbreakDetail(it.id);
     });
     list.appendChild(div);
+  }
+}
+
+// ── Outbreak detail modal ──────────────────────────────────────────────────
+async function openOutbreakDetail(don_id) {
+  const root = document.getElementById('outbreakDetail');
+  document.getElementById('obDetailTitle').textContent = 'Loading…';
+  document.getElementById('obDetailMeta').textContent = '';
+  document.getElementById('obDetailBadges').innerHTML = '';
+  document.getElementById('obDetailAtlasBtn').innerHTML = '';
+  document.getElementById('obDetailSummary').textContent = '';
+  document.getElementById('obDetailDisease').innerHTML = '';
+  document.getElementById('obDetailCountry').innerHTML = '';
+  root.classList.add('open');
+  try {
+    const r = await fetch(`/api/outbreak/${encodeURIComponent(don_id)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderOutbreakDetail(d);
+  } catch (e) {
+    document.getElementById('obDetailTitle').textContent = 'Failed to load';
+    document.getElementById('obDetailSummary').textContent = String(e);
+  }
+}
+
+function closeOutbreakDetail() {
+  document.getElementById('outbreakDetail').classList.remove('open');
+}
+
+function renderOutbreakDetail(d) {
+  const it = d.item;
+  document.getElementById('obDetailTitle').textContent = it.title || it.disease || 'Outbreak';
+  document.getElementById('obDetailMeta').textContent =
+    `${it.id || ''} · ${(it.published||'').slice(0,10)} · ${fmtAge(it.published)}`;
+
+  // Badges row
+  const badges = document.getElementById('obDetailBadges');
+  badges.innerHTML = '';
+  const sc = it.scope || 'unknown';
+  const scLabel = sc === 'country' ? (it.country_name || sc) : sc;
+  const scCls = sc;
+  badges.innerHTML = `<span class="badge ${scCls}">${escapeHtml(scLabel)}</span>` +
+    `<span class="badge country" style="background:#30363d;color:var(--fg)">${escapeHtml(it.disease || '—')}</span>`;
+
+  // Atlas link if disease can be matched to a slug
+  const atlasBtn = document.getElementById('obDetailAtlasBtn');
+  atlasBtn.innerHTML = '';
+  if (state.atlas && it.disease) {
+    const norm = (it.disease || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const match = state.atlas.diseases.find(x => x.slug === norm
+      || x.slug.includes(norm.slice(0, 8))
+      || (x.name || '').toLowerCase() === (it.disease || '').toLowerCase());
+    if (match) {
+      const btn = document.createElement('span');
+      btn.className = 'atlas-link';
+      btn.textContent = `Open in Atlas: ${match.name}`;
+      btn.addEventListener('click', () => {
+        closeOutbreakDetail();
+        switchTab('atlas');
+        setTimeout(() => openAtlasDisease(match.slug), 120);
+      });
+      atlasBtn.appendChild(btn);
+    }
+  }
+
+  document.getElementById('obDetailSummary').textContent = it.summary || '(no summary available)';
+  const link = document.getElementById('obDetailSourceLink');
+  if (it.url) {
+    link.href = it.url;
+    link.style.display = 'inline-block';
+  } else {
+    link.style.display = 'none';
+  }
+
+  // Related DONs by disease
+  const dRoot = document.getElementById('obDetailDisease');
+  if (d.related_by_disease && d.related_by_disease.length) {
+    let h = `<h3>Other ${escapeHtml(it.disease)} DONs (${d.related_by_disease.length})</h3>`;
+    for (const r of d.related_by_disease) {
+      const where = r.country_name || r.scope || '—';
+      h += `<div class="related-item" data-id="${r.id}">
+        <div class="head"><span><b>${escapeHtml(where)}</b></span><span class="when">${fmtAge(r.published)}</span></div>
+        <div style="color:var(--muted);font-size:11px;margin-top:4px;line-height:1.4">${escapeHtml((r.summary||'').slice(0,120))}…</div>
+      </div>`;
+    }
+    dRoot.innerHTML = h;
+    dRoot.querySelectorAll('.related-item').forEach(el => {
+      el.addEventListener('click', () => openOutbreakDetail(el.dataset.id));
+    });
+  }
+
+  // Related DONs in same country
+  const cRoot = document.getElementById('obDetailCountry');
+  if (d.related_by_country && d.related_by_country.length) {
+    let h = `<h3>Other DONs in ${escapeHtml(it.country_name || '—')} (${d.related_by_country.length})</h3>`;
+    for (const r of d.related_by_country) {
+      h += `<div class="related-item" data-id="${r.id}">
+        <div class="head"><span><b>${escapeHtml(r.disease||'—')}</b></span><span class="when">${fmtAge(r.published)}</span></div>
+        <div style="color:var(--muted);font-size:11px;margin-top:4px;line-height:1.4">${escapeHtml((r.summary||'').slice(0,120))}…</div>
+      </div>`;
+    }
+    cRoot.innerHTML = h;
+    cRoot.querySelectorAll('.related-item').forEach(el => {
+      el.addEventListener('click', () => openOutbreakDetail(el.dataset.id));
+    });
   }
 }
 
@@ -1377,6 +1826,132 @@ function renderMarketsTable() {
     tr.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);padding:14px">… ${rows.length - 250} more rows hidden. Filter or change sources to narrow.</td>`;
     body.appendChild(tr);
   }
+}
+
+// ── Trade tab ──────────────────────────────────────────────────────────────
+function renderTrade() {
+  const t = state.trade;
+  if (!t) return;
+  const c = t.concentration;
+
+  // Headline stats
+  const statsRoot = document.getElementById('tradeStats');
+  statsRoot.innerHTML = '';
+  for (const [lab, val, sub] of [
+    ['World total (HS-30)',   '$' + c.total_world_usd_b.toFixed(0) + 'B', t.as_of_year + ' WTO/ITC'],
+    ['Top-1 exporter share',  c.top1_share_pct + '%',  t.exporters_top_30[0].country],
+    ['Top-3 share',           c.top3_share_pct + '%',  t.exporters_top_30.slice(0,3).map(r=>r.iso3).join(' · ')],
+    ['Top-5 share',           c.top5_share_pct + '%',  ''],
+    ['Top-10 share',          c.top10_share_pct + '%', ''],
+  ]) {
+    const div = document.createElement('div');
+    div.className = 'trade-stat';
+    div.innerHTML = `<div class="lab">${lab}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}`;
+    statsRoot.appendChild(div);
+  }
+  document.getElementById('tradeNote').textContent = t.note;
+
+  // Exporters list
+  const expRoot = document.getElementById('tradeExporters');
+  expRoot.innerHTML = '';
+  const expMax = Math.max(...t.exporters_top_30.map(r => r.exports_usd_b));
+  t.exporters_top_30.forEach((r, i) => {
+    const pct = (r.exports_usd_b / expMax) * 100;
+    const div = document.createElement('div');
+    div.className = 'trade-row';
+    div.style.cursor = 'pointer';
+    div.innerHTML =
+      `<span class="rank">${i+1}</span>
+       <span class="country-cell"><span class="name">${escapeHtml(r.country)}</span>${r.notes ? `<span class="notes">${escapeHtml(r.notes)}</span>` : ''}</span>
+       <span class="bar-cell"><span class="fill exp" style="width:${pct}%"></span></span>
+       <span class="pct"><b>$${r.exports_usd_b.toFixed(1)}B</b><br><span style="font-size:10px">${r.share_pct.toFixed(1)}%</span></span>`;
+    div.addEventListener('click', () => loadTradeDetail(r.iso3));
+    expRoot.appendChild(div);
+  });
+
+  // Importers list
+  const impRoot = document.getElementById('tradeImporters');
+  impRoot.innerHTML = '';
+  const impMax = Math.max(...t.importers_top_30.map(r => r.imports_usd_b));
+  t.importers_top_30.forEach((r, i) => {
+    const pct = (r.imports_usd_b / impMax) * 100;
+    const div = document.createElement('div');
+    div.className = 'trade-row';
+    div.style.cursor = 'pointer';
+    div.innerHTML =
+      `<span class="rank">${i+1}</span>
+       <span class="country-cell"><span class="name">${escapeHtml(r.country)}</span>${r.notes ? `<span class="notes">${escapeHtml(r.notes)}</span>` : ''}</span>
+       <span class="bar-cell"><span class="fill imp" style="width:${pct}%"></span></span>
+       <span class="pct"><b>$${r.imports_usd_b.toFixed(1)}B</b><br><span style="font-size:10px">${r.share_pct.toFixed(1)}%</span></span>`;
+    div.addEventListener('click', () => loadTradeDetail(r.iso3));
+    impRoot.appendChild(div);
+  });
+
+  // Search box wiring (set up once)
+  const searchEl = document.getElementById('tradeSearch');
+  if (!searchEl.dataset.wired) {
+    searchEl.addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) {
+        document.getElementById('tradeDetail').classList.remove('open');
+        return;
+      }
+      // Match any country in our index
+      const match = state.countries.find(c =>
+        c.iso3.toLowerCase() === q ||
+        c.name.toLowerCase().startsWith(q) ||
+        c.name.toLowerCase().includes(q)
+      );
+      if (match) loadTradeDetail(match.iso3);
+    });
+    searchEl.dataset.wired = '1';
+  }
+}
+
+async function loadTradeDetail(iso3) {
+  const root = document.getElementById('tradeDetail');
+  root.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  root.classList.add('open');
+  try {
+    const r = await fetch(`/api/pharma_trade/${encodeURIComponent(iso3)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderTradeDetail(d);
+  } catch (e) {
+    root.innerHTML = '<div style="color:var(--bad);font-size:12px">Failed to load.</div>';
+  }
+}
+
+function renderTradeDetail(d) {
+  const root = document.getElementById('tradeDetail');
+  const exp = d.exports;
+  const imp = d.imports;
+  const expV = exp ? exp.exports_usd_b : 0;
+  const impV = imp ? imp.imports_usd_b : 0;
+  const balance = expV - impV;
+  const balCls = balance > 0 ? 'surplus' : balance < 0 ? 'deficit' : '';
+  const balLabel = balance > 0 ? 'surplus' : balance < 0 ? 'deficit' : 'balanced';
+  const htx = d.high_tech_exports_pct;
+
+  let html = `<h4>${escapeHtml(d.country)} <span style="color:var(--muted);font-size:12px;font-weight:400">${d.iso3}</span></h4>`;
+  html += `<div class="row"><span class="lab">Pharma exports (${d.as_of_year})</span><span class="val">${exp ? '$' + exp.exports_usd_b.toFixed(1) + 'B' : '—'}</span></div>`;
+  html += `<div class="row"><span class="lab">Pharma imports (${d.as_of_year})</span><span class="val">${imp ? '$' + imp.imports_usd_b.toFixed(1) + 'B' : '—'}</span></div>`;
+  if (exp || imp) {
+    html += `<div class="row"><span class="lab">Trade balance</span><span class="val imbalance ${balCls}">${balance >= 0 ? '+' : ''}$${balance.toFixed(1)}B (${balLabel})</span></div>`;
+  }
+  if (exp) html += `<div class="row"><span class="lab">Share of world exports</span><span class="val">${exp.share_pct.toFixed(1)}%</span></div>`;
+  if (imp) html += `<div class="row"><span class="lab">Share of world imports</span><span class="val">${imp.share_pct.toFixed(1)}%</span></div>`;
+  if (htx && htx.value != null) {
+    html += `<div class="row"><span class="lab">High-tech exports % merch (${htx.year})</span><span class="val">${htx.value.toFixed(1)}%</span></div>`;
+  }
+  if (!exp && !imp) {
+    html += `<div class="row" style="color:var(--muted)">Not in 2023 top-30 exporter or importer table. Trade volume below ~$1B/yr.</div>`;
+  }
+  const note = (exp && exp.notes) || (imp && imp.notes);
+  if (note) {
+    html += `<div class="notes"><b>Notes:</b> ${escapeHtml(note)}</div>`;
+  }
+  root.innerHTML = html;
 }
 
 // ── Shortages tab ──────────────────────────────────────────────────────────
@@ -1654,6 +2229,7 @@ function renderDrugChain(d) {
   const labels = d.labels || {};
   const sh = d.shortage || {};
   const re = d.recalls || {};
+  const pq = d.who_pq;
   let html = `<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
     <span style="font-size:12px;font-weight:600">Supply chain</span>
     <span class="score ${scoreCls}">Weak-point ${wp.score ?? '?'}/10 · ${wp.rating || ''}</span>
@@ -1662,7 +2238,11 @@ function renderDrugChain(d) {
     html += `<div class="shortage-banner">⚠ ACTIVE FDA SHORTAGE — ${sh.current_count} entries</div>`;
   }
   html += `<div class="row"><span class="lab">FDA labels</span><span class="val">${labels.total_labels ?? '—'}</span></div>`;
-  html += `<div class="row"><span class="lab">Distinct manufacturers</span><span class="val">${labels.manufacturer_count ?? '—'}</span></div>`;
+  html += `<div class="row"><span class="lab">US-FDA manufacturers</span><span class="val">${labels.manufacturer_count ?? '—'}</span></div>`;
+  if (pq) {
+    const pqCls = pq.pq_count >= 5 ? 'pq-good' : pq.pq_count >= 2 ? 'pq-mid' : 'pq-bad';
+    html += `<div class="row"><span class="lab">WHO-prequalified suppliers <span style="color:var(--muted);font-size:10px">(LMIC procurement)</span></span><span class="val ${pqCls}">${pq.pq_count} ${pq.pq_count === 1 ? 'maker' : 'makers'}${pq.first_pq_year ? ` · since ${pq.first_pq_year}` : ''}</span></div>`;
+  }
   html += `<div class="row"><span class="lab">Brand-name SBDs</span><span class="val">${(labels.brands || []).length}</span></div>`;
   html += `<div class="row"><span class="lab">Past shortages (resolved)</span><span class="val">${sh.resolved_count ?? 0}</span></div>`;
   html += `<div class="row"><span class="lab">Recalls last 5 yrs</span><span class="val">${re.recent_count ?? 0} (Class I: ${(re.by_classification && re.by_classification['Class I']) || 0})</span></div>`;
@@ -1672,7 +2252,12 @@ function renderDrugChain(d) {
     html += `</ul>`;
   }
   if ((labels.manufacturers || []).length) {
-    html += `<div class="mfr-list"><b>Manufacturers:</b> ${labels.manufacturers.slice(0, 12).map(escapeHtml).join(' · ')}${labels.manufacturers.length > 12 ? ` +${labels.manufacturers.length-12} more` : ''}</div>`;
+    html += `<div class="mfr-list"><b>Manufacturers (FDA):</b> ${labels.manufacturers.slice(0, 12).map(escapeHtml).join(' · ')}${labels.manufacturers.length > 12 ? ` +${labels.manufacturers.length-12} more` : ''}</div>`;
+  }
+  if (pq && (pq.key_makers || []).length) {
+    html += `<div class="mfr-list"><b>WHO PQ'd makers:</b> ${pq.key_makers.map(escapeHtml).join(' · ')}`;
+    if (pq.note) html += `<br><i style="color:var(--muted)">${escapeHtml(pq.note)}</i>`;
+    html += `</div>`;
   }
   if (sh.current_entries && sh.current_entries.length) {
     html += `<div class="mfr-list"><b>Active shortage filings:</b><br>`;

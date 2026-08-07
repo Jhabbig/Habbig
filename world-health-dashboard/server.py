@@ -37,7 +37,7 @@ from analysis import (
     outbreak_radar,
     treatment_vulnerability,
 )
-from ingestion import pharma_trade
+from ingestion import outbreak_feeds, pharma_trade, who_pq
 from ingestion import (
     country_codes,
     excess_mortality,
@@ -300,6 +300,46 @@ async def api_pharma_trade_country(iso3: str) -> JSONResponse:
     if "error" in rec:
         return JSONResponse(rec, status_code=404)
     return JSONResponse(rec)
+
+
+@app.get("/api/who_pq")
+async def api_who_pq() -> JSONResponse:
+    return JSONResponse(who_pq.overview())
+
+
+@app.get("/api/who_pq/{generic}")
+async def api_who_pq_drug(generic: str) -> JSONResponse:
+    rec = who_pq.for_drug(generic)
+    if rec is None:
+        return JSONResponse({"error": f"not in WHO PQ catalogue: {generic}"}, status_code=404)
+    return JSONResponse(rec)
+
+
+@app.get("/api/outbreak/{don_id}")
+async def api_outbreak(don_id: str) -> JSONResponse:
+    """Return one outbreak's full record + related DONs (same disease)."""
+    feed = outbreak_feeds.fetch_outbreaks()
+    items = feed.get("items", [])
+    item = next((it for it in items if str(it.get("id")) == don_id), None)
+    if not item:
+        return JSONResponse({"error": f"unknown DON: {don_id}"}, status_code=404)
+    disease = (item.get("disease") or "").lower()
+    related = [
+        it for it in items
+        if it.get("id") != don_id and (it.get("disease") or "").lower() == disease
+    ][:8]
+    by_country = []
+    iso = item.get("country_iso3")
+    if iso:
+        by_country = [
+            it for it in items
+            if it.get("id") != don_id and it.get("country_iso3") == iso
+        ][:8]
+    return JSONResponse({
+        "item": item,
+        "related_by_disease": related,
+        "related_by_country": by_country,
+    })
 
 
 if __name__ == "__main__":

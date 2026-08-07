@@ -140,6 +140,16 @@ def compute() -> dict:
     delta = implied_rate - current_rate
     probs = _derive_probs(delta)
 
+    # Snapshot for delta queries — implied next-FOMC move + spot DFF.
+    # Imported lazily so this module stays usable without the analysis pkg
+    # imported (e.g. in standalone smoke tests).
+    try:
+        from analysis import historical_store
+        historical_store.snapshot("implied.delta_bps", round(delta * 100, 2))
+        historical_store.snapshot("rate.US", current_rate)
+    except Exception as exc:   # never break the live response on a snapshot bug
+        log.warning("history snapshot failed in implied_path: %s", exc)
+
     return {
         "as_of": today.isoformat(),
         "meeting": fomc,

@@ -29,6 +29,9 @@ SITES=(
     polymarket_weather_bot
     top-traders-dashboard
     climate-dashboard
+    centralbank-dashboard
+    voters-dashboard
+    world-health-dashboard
 )
 
 # Excluded from rsync

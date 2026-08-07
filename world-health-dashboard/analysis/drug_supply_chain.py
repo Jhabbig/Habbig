@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from ingestion import fda_recalls, fda_shortages, openfda_drugs, rxnorm
+from ingestion import fda_recalls, fda_shortages, openfda_drugs, rxnorm, who_pq
 
 log = logging.getLogger(__name__)
 
@@ -69,17 +69,28 @@ def _shortage_summary(shortage_entries: list[dict]) -> dict:
     }
 
 
-def _weak_point_score(labels: dict, shortage: dict, recalls: dict) -> dict:
+def _weak_point_score(labels: dict, shortage: dict, recalls: dict, pq: dict | None = None) -> dict:
     score = 0
     flags: list[str] = []
 
+    # Manufacturer-count signal — but soften if WHO PQ shows broad global supply
+    # even when US labels are sparse (e.g. ACT antimalarials).
     n = labels.get("manufacturer_count", 0)
+    pq_n = pq.get("pq_count") if pq else None
     if n == 1:
-        score += 3
-        flags.append(f"single source — only 1 manufacturer ({(labels.get('manufacturers') or ['?'])[0]})")
+        if pq_n and pq_n >= 5:
+            score += 1
+            flags.append(f"only 1 US-FDA labeller, but {pq_n} WHO-PQ'd suppliers globally")
+        else:
+            score += 3
+            flags.append(f"single source — only 1 manufacturer ({(labels.get('manufacturers') or ['?'])[0]})")
     elif 2 <= n <= 4:
-        score += 2
-        flags.append(f"limited supply — {n} manufacturers")
+        if pq_n and pq_n >= 5:
+            score += 1
+            flags.append(f"only {n} US labellers, but {pq_n} WHO-PQ'd globally — generic competition exists")
+        else:
+            score += 2
+            flags.append(f"limited supply — {n} manufacturers")
 
     if shortage.get("active_shortage"):
         score += 3
@@ -100,6 +111,12 @@ def _weak_point_score(labels: dict, shortage: dict, recalls: dict) -> dict:
     if labels.get("total_labels", 0) < 5:
         score += 1
         flags.append("thin FDA label set — niche or specialist drug")
+
+    # WHO PQ-specific risk: if a drug is in the PQ catalogue but only one
+    # supplier has been prequalified, global LMIC procurement has no fallback.
+    if pq and pq.get("pq_count") == 1:
+        score += 2
+        flags.append(f"only 1 WHO-PQ'd supplier worldwide ({(pq.get('key_makers') or ['?'])[0]}) — no LMIC procurement alternative")
 
     score = min(score, 10)
     if score >= 8:
@@ -126,12 +143,15 @@ def profile(generic: str) -> dict:
         recalls   = f_recalls.result()
         brands    = f_brands.result()
 
+    # WHO PQ is a static lookup — fast, no API.
+    pq = who_pq.for_drug(generic)
     short_summary = _shortage_summary(shortages)
-    score = _weak_point_score(labels, short_summary, recalls)
+    score = _weak_point_score(labels, short_summary, recalls, pq)
 
     return {
         "generic":      generic,
         "rxnorm":       brands,
+        "who_pq":       pq,
         "labels":       {
             "total_labels":       labels.get("total_labels", 0),
             "manufacturers":      labels.get("manufacturers", []),

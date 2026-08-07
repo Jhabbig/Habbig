@@ -25,10 +25,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, File
 from fastapi.middleware.cors import CORSMiddleware
 
 from btc_analyzer import (
-    ASSETS, WINDOW_MINUTES, WINDOW_SECONDS, HISTORY_DAYS,
-    load_or_fetch, parse_klines, analyze_windows,
-    compute_summary, compute_volatility, compute_per_second_velocity,
-    EnsemblePredictor, generate_dashboard,
+    ASSETS,
+    WINDOW_MINUTES,
+    WINDOW_SECONDS,
+    HISTORY_DAYS,
+    load_or_fetch,
+    parse_klines,
+    analyze_windows,
+    compute_summary,
+    compute_volatility,
+    compute_per_second_velocity,
+    EnsemblePredictor,
+    generate_dashboard,
 )
 import database as db
 import clob_trading as clob
@@ -90,7 +98,9 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss:; frame-ancestors 'none'"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss:; frame-ancestors 'none'"
+    )
     if os.environ.get("GATEWAY_SSO_SECRET"):
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
@@ -304,14 +314,14 @@ UNIT_TOGGLE_SCRIPT = """
     usBtn.className = 'narve-unit-btn';
     usBtn.dataset.unit = 'american';
     usBtn.title = 'American ($, MM/DD)';
-    usBtn.textContent = '\U0001F1FA\U0001F1F8';
+    usBtn.textContent = '\U0001f1fa\U0001f1f8';
     usBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#8b949e;';
     usBtn.onclick = function() { window.setNarveUnits('american'); };
     const euBtn = document.createElement('button');
     euBtn.className = 'narve-unit-btn';
     euBtn.dataset.unit = 'european';
     euBtn.title = 'European (\u20ac, DD.MM)';
-    euBtn.textContent = '\U0001F1EA\U0001F1FA';
+    euBtn.textContent = '\U0001f1ea\U0001f1fa';
     euBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:4px 8px;font-size:14px;border-radius:4px;color:#8b949e;';
     euBtn.onclick = function() { window.setNarveUnits('european'); };
     const langSel = document.createElement('select');
@@ -390,13 +400,11 @@ async def unit_toggle_middleware(request: Request, call_next):
     try:
         body = body_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        return Response(content=body_bytes, status_code=response.status_code,
-                        headers=dict(response.headers), media_type=ct)
+        return Response(content=body_bytes, status_code=response.status_code, headers=dict(response.headers), media_type=ct)
     if "</body>" in body and "__narveUnitToggleLoaded" not in body:
         body = body.replace("</body>", UNIT_TOGGLE_SCRIPT + "</body>", 1)
     new_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
-    return Response(content=body, status_code=response.status_code,
-                    headers=new_headers, media_type=ct)
+    return Response(content=body, status_code=response.status_code, headers=new_headers, media_type=ct)
 
 
 # ─── Authentication ──────────────────────────────────────────────────
@@ -441,14 +449,14 @@ async def require_auth(request: Request):
 
 
 # ─── In-memory state ─────────────────────────────────────────────────
-asset_state = {}       # ticker -> full result dict
-ensembles = {}         # ticker -> trained EnsemblePredictor
-live_prices = {}       # ticker -> latest price
-connected_ws = set()   # active WebSocket connections
-_bg_tasks: set = set() # prevent GC of background tasks
+asset_state = {}  # ticker -> full result dict
+ensembles = {}  # ticker -> trained EnsemblePredictor
+live_prices = {}  # ticker -> latest price
+connected_ws = set()  # active WebSocket connections
+_bg_tasks: set = set()  # prevent GC of background tasks
 _ws_lock = asyncio.Lock()
-last_refresh = {}      # ticker -> timestamp of last full refresh
-REFRESH_INTERVAL = 300 # re-analyze every 5 min (1 window)
+last_refresh = {}  # ticker -> timestamp of last full refresh
+REFRESH_INTERVAL = 300  # re-analyze every 5 min (1 window)
 
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines"
@@ -496,6 +504,7 @@ async def load_all_assets():
 def load_asset_windows(ticker, symbol):
     """Load cached data and analyze windows (fast part)."""
     import gc
+
     raw, start_dt, end_dt = load_or_fetch(symbol, days=HISTORY_DAYS)
     data = parse_klines(raw)
     del raw  # free ~400MB JSON
@@ -531,9 +540,11 @@ def load_asset_windows(ticker, symbol):
 
 MODEL_CACHE_DIR = Path(__file__).parent / "cache" / "models"
 
+
 def train_asset_models(ticker):
     """Train ensemble models for an asset (slow GPU part). Uses cached models if available."""
     import gc
+
     windows = asset_state[ticker].pop("_all_windows", None)
     if windows is None:
         return
@@ -653,12 +664,13 @@ async def window_refresher():
                 end_ms = int(now * 1000)
                 start_ms = end_ms - (600 * 1000)  # last 10 min
                 params = {
-                    "symbol": symbol, "interval": "1s",
-                    "startTime": start_ms, "endTime": end_ms, "limit": 1000,
+                    "symbol": symbol,
+                    "interval": "1s",
+                    "startTime": start_ms,
+                    "endTime": end_ms,
+                    "limit": 1000,
                 }
-                resp = await asyncio.to_thread(
-                    requests.get, BINANCE_KLINE_URL, params=params, timeout=15
-                )
+                resp = await asyncio.to_thread(requests.get, BINANCE_KLINE_URL, params=params, timeout=15)
                 if not resp.ok:
                     continue
 
@@ -710,7 +722,8 @@ async def window_refresher():
                         ws_str = str(ws) if ws else ""
                     if p.get("is_current"):
                         db.log_prediction(
-                            ticker=ticker, window_start=ws_str,
+                            ticker=ticker,
+                            window_start=ws_str,
                             pred_direction=p["pred_direction"],
                             pred_delta=p["pred_end_delta"],
                             pred_prob=p["pred_prob_positive"],
@@ -719,24 +732,29 @@ async def window_refresher():
                         )
                     elif p.get("actual_direction"):
                         db.resolve_prediction(
-                            ticker=ticker, window_start=ws_str,
+                            ticker=ticker,
+                            window_start=ws_str,
                             actual_direction=p["actual_direction"],
                             actual_delta=p.get("actual_end_delta", 0) or 0,
                         )
 
-                asset_state[ticker].update({
-                    "windows": old_windows,
-                    "predictions": preds,
-                    "data": existing,
-                })
+                asset_state[ticker].update(
+                    {
+                        "windows": old_windows,
+                        "predictions": preds,
+                        "data": existing,
+                    }
+                )
                 last_refresh[ticker] = now
 
                 # Push update to WebSocket clients
-                msg = json.dumps({
-                    "type": "window_update",
-                    "ticker": ticker,
-                    "data": serialize_asset(ticker),
-                })
+                msg = json.dumps(
+                    {
+                        "type": "window_update",
+                        "ticker": ticker,
+                        "data": serialize_asset(ticker),
+                    }
+                )
                 dead = set()
                 async with _ws_lock:
                     for ws in list(connected_ws):
@@ -752,19 +770,21 @@ async def window_refresher():
                     for p in preds:
                         if p.get("is_current") and p.get("confidence", 0) >= 0.6:
                             conf = int(p["confidence"] * 100)
-                            delta_str = f'{p["pred_end_delta"]:+,.2f}'
+                            delta_str = f"{p['pred_end_delta']:+,.2f}"
 
                             # Browser push
-                            alert_msg = json.dumps({
-                                "type": "alert",
-                                "data": {
-                                    "ticker": ticker,
-                                    "direction": p["pred_direction"],
-                                    "confidence": conf,
-                                    "delta": delta_str,
-                                    "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
-                                },
-                            })
+                            alert_msg = json.dumps(
+                                {
+                                    "type": "alert",
+                                    "data": {
+                                        "ticker": ticker,
+                                        "direction": p["pred_direction"],
+                                        "confidence": conf,
+                                        "delta": delta_str,
+                                        "time": datetime.now(timezone.utc).strftime("%H:%M UTC"),
+                                    },
+                                }
+                            )
                             dead = []
                             async with _ws_lock:
                                 for ws in list(connected_ws):
@@ -778,9 +798,10 @@ async def window_refresher():
                             # Email alerts to users who opted in
                             try:
                                 from email_alerts import send_alert_email, is_configured
+
                                 if is_configured():
                                     # Get all users with email alerts enabled for this ticker
-                                    prefs = db.get_alert_prefs_for_ticker(ticker) if hasattr(db, 'get_alert_prefs_for_ticker') else []
+                                    prefs = db.get_alert_prefs_for_ticker(ticker) if hasattr(db, "get_alert_prefs_for_ticker") else []
                                     for pref in prefs:
                                         if pref.get("alert_email") and p["confidence"] >= pref.get("min_confidence", 0.6):
                                             user = db.get_user(pref["user_id"])
@@ -789,7 +810,10 @@ async def window_refresher():
                                                     send_alert_email,
                                                     user["email"],
                                                     f"CryptoEdge: {ticker} {p['pred_direction'].upper()} ({conf}%)",
-                                                    ticker, p["pred_direction"], conf, delta_str,
+                                                    ticker,
+                                                    p["pred_direction"],
+                                                    conf,
+                                                    delta_str,
                                                 )
                                                 db.log_alert(user["id"], ticker, "email", f"{p['pred_direction']} {conf}%", p["confidence"])
                             except Exception as e:
@@ -819,6 +843,7 @@ async def news_trade_monitor():
     while True:
         try:
             from news_trade_scanner import run_news_trade_scan
+
             result = await asyncio.to_thread(run_news_trade_scan)
 
             if result and result.get("alerts"):
@@ -836,19 +861,21 @@ async def news_trade_monitor():
                 new_alerts = db.get_unnotified_alerts(min_score=30)
                 for alert in new_alerts:
                     # Push WebSocket notification
-                    ws_msg = json.dumps({
-                        "type": "alert",
-                        "data": {
-                            "ticker": "NEWS",
-                            "direction": "news_trade",
-                            "confidence": alert["score"],
-                            "delta": f'[{alert["source"]}] {alert["title"][:60]}',
-                            "time": alert.get("scanned_at", ""),
-                            "alert_id": alert["id"],
-                            "link": alert.get("link", ""),
-                            "related_markets": alert.get("related_markets", []),
-                        },
-                    })
+                    ws_msg = json.dumps(
+                        {
+                            "type": "alert",
+                            "data": {
+                                "ticker": "NEWS",
+                                "direction": "news_trade",
+                                "confidence": alert["score"],
+                                "delta": f"[{alert['source']}] {alert['title'][:60]}",
+                                "time": alert.get("scanned_at", ""),
+                                "alert_id": alert["id"],
+                                "link": alert.get("link", ""),
+                                "related_markets": alert.get("related_markets", []),
+                            },
+                        }
+                    )
                     async with _ws_lock:
                         for ws in list(connected_ws):
                             try:
@@ -862,9 +889,8 @@ async def news_trade_monitor():
                         if w.get("notify_email") and w.get("email"):
                             try:
                                 from email_alerts import send_news_trade_alert
-                                await asyncio.to_thread(
-                                    send_news_trade_alert, w["email"], dict(alert)
-                                )
+
+                                await asyncio.to_thread(send_news_trade_alert, w["email"], dict(alert))
                             except Exception:
                                 pass
 
@@ -888,33 +914,37 @@ def serialize_asset(ticker):
     bt = st["backtest"]
 
     preds_out = []
-    for p in (st["predictions"] or []):
-        preds_out.append({
-            "window_start": p["window_start"].isoformat() if hasattr(p["window_start"], "isoformat") else str(p["window_start"]),
-            "pred_direction": p["pred_direction"],
-            "pred_end_delta": p["pred_end_delta"],
-            "pred_prob_positive": p["pred_prob_positive"],
-            "confidence": p["confidence"],
-            "is_current": p["is_current"],
-            "actual_end_delta": p["actual_end_delta"],
-        })
+    for p in st["predictions"] or []:
+        preds_out.append(
+            {
+                "window_start": p["window_start"].isoformat() if hasattr(p["window_start"], "isoformat") else str(p["window_start"]),
+                "pred_direction": p["pred_direction"],
+                "pred_end_delta": p["pred_end_delta"],
+                "pred_prob_positive": p["pred_prob_positive"],
+                "confidence": p["confidence"],
+                "is_current": p["is_current"],
+                "actual_end_delta": p["actual_end_delta"],
+            }
+        )
 
     # Last 20 windows for the API (not all 8600+)
     recent_windows = []
     for w in st["windows"][-20:]:
-        recent_windows.append({
-            "start": w["start"].isoformat(),
-            "baseline": w["baseline"],
-            "end_delta": w["end_delta"],
-            "max_positive": w["max_positive"],
-            "max_negative": w["max_negative"],
-            "last_cross_sec": w["last_cross_sec"],
-            "last_cross_direction": w["last_cross_direction"],
-            "rsi": w["rsi"],
-            "crossings": w["crossings"],
-            "avg_pos_magnitude": w["avg_pos_magnitude"],
-            "avg_neg_magnitude": w["avg_neg_magnitude"],
-        })
+        recent_windows.append(
+            {
+                "start": w["start"].isoformat(),
+                "baseline": w["baseline"],
+                "end_delta": w["end_delta"],
+                "max_positive": w["max_positive"],
+                "max_negative": w["max_negative"],
+                "last_cross_sec": w["last_cross_sec"],
+                "last_cross_direction": w["last_cross_direction"],
+                "rsi": w["rsi"],
+                "crossings": w["crossings"],
+                "avg_pos_magnitude": w["avg_pos_magnitude"],
+                "avg_neg_magnitude": w["avg_neg_magnitude"],
+            }
+        )
 
     return {
         "ticker": ticker,
@@ -929,7 +959,9 @@ def serialize_asset(ticker):
             "hc_count": bt.get("hc_count", 0),
             "mae": bt.get("mae", 0),
             "total": bt.get("total", 0),
-        } if bt else None,
+        }
+        if bt
+        else None,
         "predictions": preds_out,
         "recent_windows": recent_windows,
     }
@@ -1031,12 +1063,12 @@ async def root(request: Request):
     user = _get_session_user(request)
     user_name = html_mod.escape((user.get("display_name") or user.get("email", "")) if user else "")
     tier_label = html_mod.escape(user.get("tier", "free").upper() if user else "FREE")
-    tier_color = "var(--green)" if tier_label in ("PREMIUM","ADMIN") else "var(--muted)"
+    tier_color = "var(--green)" if tier_label in ("PREMIUM", "ADMIN") else "var(--muted)"
     has_creds = db.has_clob_credentials(user["id"]) if user else False
     wallet_indicator = (
         '<span style="color:#a371f7;font-size:0.7em;" title="Polymarket wallet connected">&#9679; WALLET</span>'
-        if has_creds else
-        '<a href="/settings#polymarket" style="color:var(--yellow);font-size:0.7em;text-decoration:none;" title="Connect Polymarket wallet">&#9888; CONNECT WALLET</a>'
+        if has_creds
+        else '<a href="/settings#polymarket" style="color:var(--yellow);font-size:0.7em;text-decoration:none;" title="Connect Polymarket wallet">&#9888; CONNECT WALLET</a>'
     )
     nav_html = f"""
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:8px 0;border-bottom:1px solid var(--border);">
@@ -1285,8 +1317,51 @@ async def root(request: Request):
     # globals plus a per-ticker trade button injector
     trade_widget = _trade_widget_html(has_creds)
     crypto_names = {
-        "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana",
-        "DOGE": "Dogecoin", "XRP": "XRP", "BNB": "BNB",
+        "BTC": "Bitcoin",
+        "ETH": "Ethereum",
+        "SOL": "Solana",
+        "DOGE": "Dogecoin",
+        "XRP": "XRP",
+        "BNB": "BNB",
+        "ADA": "Cardano",
+        "AVAX": "Avalanche",
+        "LINK": "Chainlink",
+        "DOT": "Polkadot",
+        "LTC": "Litecoin",
+        "BCH": "Bitcoin Cash",
+        "UNI": "Uniswap",
+        "ATOM": "Cosmos",
+        "NEAR": "NEAR Protocol",
+        "APT": "Aptos",
+        "ARB": "Arbitrum",
+        "OP": "Optimism",
+        "ICP": "Internet Computer",
+        "FIL": "Filecoin",
+        "SUI": "Sui",
+        "TIA": "Celestia",
+        "INJ": "Injective",
+        "TRX": "TRON",
+        "TON": "Toncoin",
+        "AAVE": "Aave",
+        "MKR": "Maker",
+        "CRV": "Curve DAO",
+        "SNX": "Synthetix",
+        "RUNE": "THORChain",
+        "STX": "Stacks",
+        "EGLD": "MultiversX",
+        "THETA": "Theta Network",
+        "AXS": "Axie Infinity",
+        "SAND": "The Sandbox",
+        "MANA": "Decentraland",
+        "ETC": "Ethereum Classic",
+        "IMX": "Immutable",
+        "SEI": "Sei",
+        "STRK": "Starknet",
+        "JUP": "Jupiter",
+        "WIF": "dogwifhat",
+        "FET": "Fetch.ai",
+        "ENS": "Ethereum Name Service",
+        "LDO": "Lido DAO",
     }
     crypto_names_js = json.dumps(crypto_names)
     dash_trade_script = f"""
@@ -1333,6 +1408,7 @@ async def root(request: Request):
 
 # ─── Internal data endpoints (used by dashboard JS only, not public API) ───
 
+
 def _get_bot_signals():
     """Compute trading signals for internal use by trading bots on localhost."""
     signals = {}
@@ -1358,7 +1434,8 @@ def _get_bot_signals():
         avg_crossings_losers = float(np.mean([w["crossings"] for w in neg_windows])) if neg_windows else 3
 
         signal = {
-            "ticker": ticker, "price": live_prices.get(ticker, 0),
+            "ticker": ticker,
+            "price": live_prices.get(ticker, 0),
             "volatility_label": vol.get("label", "UNKNOWN"),
             "gain_loss_ratio": vel.get("gain_loss_ratio", 0),
             "momentum_decay": vel.get("momentum_decay_ratio", 1),
@@ -1370,24 +1447,31 @@ def _get_bot_signals():
             "avg_time_to_trough": vel.get("avg_time_to_trough_sec", 150),
             "avg_gain_per_sec": vel.get("avg_gain_per_sec", 0),
             "avg_loss_per_sec": vel.get("avg_loss_per_sec", 0),
-            "hist_avg_pos_delta": avg_pos_delta, "hist_avg_neg_delta": avg_neg_delta,
-            "hist_avg_max_up": avg_max_up, "hist_avg_max_down": avg_max_down,
+            "hist_avg_pos_delta": avg_pos_delta,
+            "hist_avg_neg_delta": avg_neg_delta,
+            "hist_avg_max_up": avg_max_up,
+            "hist_avg_max_down": avg_max_down,
             "hist_win_rate": win_rate,
-            "hist_avg_rsi_when_up": avg_rsi_when_up, "hist_avg_rsi_when_down": avg_rsi_when_down,
-            "hist_avg_crossings_winners": avg_crossings_winners, "hist_avg_crossings_losers": avg_crossings_losers,
+            "hist_avg_rsi_when_up": avg_rsi_when_up,
+            "hist_avg_rsi_when_down": avg_rsi_when_down,
+            "hist_avg_crossings_winners": avg_crossings_winners,
+            "hist_avg_crossings_losers": avg_crossings_losers,
         }
         if last_window:
-            signal.update({
-                "last_cross_sec": last_window["last_cross_sec"],
-                "last_cross_direction": last_window["last_cross_direction"],
-                "rsi": last_window["rsi"], "crossings": last_window["crossings"],
-                "current_delta": last_window["end_delta"],
-                "current_max_up": last_window["max_positive"],
-                "current_max_down": last_window["max_negative"],
-                "current_avg_delta": last_window["avg_delta"],
-                "current_positive_pct": last_window["positive_pct"],
-                "window_baseline": last_window["baseline"],
-            })
+            signal.update(
+                {
+                    "last_cross_sec": last_window["last_cross_sec"],
+                    "last_cross_direction": last_window["last_cross_direction"],
+                    "rsi": last_window["rsi"],
+                    "crossings": last_window["crossings"],
+                    "current_delta": last_window["end_delta"],
+                    "current_max_up": last_window["max_positive"],
+                    "current_max_down": last_window["max_negative"],
+                    "current_avg_delta": last_window["avg_delta"],
+                    "current_positive_pct": last_window["positive_pct"],
+                    "window_baseline": last_window["baseline"],
+                }
+            )
         signals[ticker] = signal
     return signals
 
@@ -1399,12 +1483,36 @@ _FX_FALLBACK = {
     "base": "USD",
     "date": "fallback",
     "rates": {
-        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
-        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
-        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
-        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
-        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
-        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+        "USD": 1.0,
+        "EUR": 0.92,
+        "GBP": 0.79,
+        "JPY": 150.0,
+        "AUD": 1.52,
+        "CAD": 1.36,
+        "CHF": 0.88,
+        "CNY": 7.20,
+        "HKD": 7.83,
+        "NZD": 1.65,
+        "SEK": 10.5,
+        "KRW": 1340.0,
+        "SGD": 1.34,
+        "NOK": 10.6,
+        "MXN": 17.0,
+        "INR": 83.0,
+        "ZAR": 18.5,
+        "TRY": 32.0,
+        "BRL": 5.0,
+        "DKK": 6.85,
+        "PLN": 3.95,
+        "THB": 35.0,
+        "IDR": 15700.0,
+        "HUF": 360.0,
+        "CZK": 23.0,
+        "ILS": 3.7,
+        "PHP": 56.0,
+        "MYR": 4.7,
+        "RON": 4.6,
+        "ISK": 137.0,
     },
 }
 
@@ -1417,6 +1525,7 @@ async def get_fx_rates():
     if cached and (now - _fx_cache["fetched_at"]) < _FX_TTL:
         return cached
     try:
+
         def _fetch():
             r = requests.get(
                 "https://api.frankfurter.dev/v1/latest?base=USD",
@@ -1424,6 +1533,7 @@ async def get_fx_rates():
                 headers={"User-Agent": "narve-crypto/1.0"},
             )
             return r.json() if r.status_code == 200 else None
+
         data = await asyncio.to_thread(_fetch)
         if data:
             data.setdefault("rates", {})
@@ -1457,6 +1567,7 @@ async def internal_bot_signals(request: Request):
 
 # ─── Bot Dashboard ────────────────────────────────────────────────────
 
+
 @app.get("/_internal/bot/status")
 async def get_bot_status(request: Request):
     """Internal: bot state for the bot dashboard page. Auth checked via session."""
@@ -1464,7 +1575,20 @@ async def get_bot_status(request: Request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     trade_file = Path(__file__).parent / "trades.json"
     log_file = Path(__file__).parent / "bot_activity.log"
-    result = {"running": False, "balance": 0, "total_pnl": 0, "total_trades": 0, "winning_trades": 0, "losing_trades": 0, "peak_balance": 0, "max_drawdown": 0, "consecutive_losses": 0, "trades": [], "log": [], "positions": []}
+    result = {
+        "running": False,
+        "balance": 0,
+        "total_pnl": 0,
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "peak_balance": 0,
+        "max_drawdown": 0,
+        "consecutive_losses": 0,
+        "trades": [],
+        "log": [],
+        "positions": [],
+    }
     if trade_file.exists():
         try:
             with open(trade_file) as f:
@@ -1629,15 +1753,14 @@ setInterval(refresh, 5000);
 
 # ─── Polymarket Bot Dashboard ─────────────────────────────────────────
 
+
 @app.get("/_internal/polybot/status")
 async def get_polybot_status(request: Request):
     if not _check_auth(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     trade_file = Path(__file__).parent / "poly_trades.json"
     log_file = Path(__file__).parent / "poly_bot_activity.log"
-    result = {"running": False, "balance": 0, "total_pnl": 0, "total_trades": 0,
-              "wins": 0, "losses": 0, "peak_balance": 0, "pending": None,
-              "trades": [], "log": []}
+    result = {"running": False, "balance": 0, "total_pnl": 0, "total_trades": 0, "wins": 0, "losses": 0, "peak_balance": 0, "pending": None, "trades": [], "log": []}
     if trade_file.exists():
         try:
             with open(trade_file) as f:
@@ -1669,11 +1792,15 @@ async def polybot_dashboard(request: Request):
     user = _get_session_user(request)
     has_creds = db.has_clob_credentials(user["id"]) if user else False
     trade_widget = _trade_widget_html(has_creds)
-    creds_banner = "" if has_creds else (
-        '<div style="background:#1a1a2e;border:1px solid #d29922;color:#d29922;'
-        'padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.78em;">'
-        'Connect your Polymarket wallet on <a href="/settings#polymarket" style="color:#58a6ff;">Settings</a> '
-        'to trade these markets one-click from this page.</div>'
+    creds_banner = (
+        ""
+        if has_creds
+        else (
+            '<div style="background:#1a1a2e;border:1px solid #d29922;color:#d29922;'
+            'padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:0.78em;">'
+            'Connect your Polymarket wallet on <a href="/settings#polymarket" style="color:#58a6ff;">Settings</a> '
+            "to trade these markets one-click from this page.</div>"
+        )
     )
     html = """<!DOCTYPE html>
 <html lang="en"><head>
@@ -1720,7 +1847,7 @@ async def polybot_dashboard(request: Request):
   <a href="/settings">Settings</a>
 </div>
 <h1>Polymarket Multi-Coin 5-Min Bot</h1>
-<p class="subtitle"><span class="live-dot"></span> <span id="status">Loading...</span> &middot; $100 per trade &middot; BTC ETH SOL DOGE XRP BNB &middot; Auto-refresh 5s</p>
+<p class="subtitle"><span class="live-dot"></span> <span id="status">Loading...</span> &middot; $100 per trade &middot; 45 coins (BTC ETH SOL DOGE XRP BNB ADA AVAX LINK DOT LTC BCH UNI ATOM NEAR APT ARB OP ICP FIL SUI TIA INJ TRX TON AAVE MKR CRV SNX RUNE STX EGLD THETA AXS SAND MANA ETC IMX SEI STRK JUP WIF FET ENS LDO) &middot; Auto-refresh 5s</p>
 __CREDS_BANNER__
 <div class="grid" id="stats"></div>
 <div id="pending"></div>
@@ -1830,6 +1957,7 @@ __TRADE_WIDGET__
 
 # ─── Arbitrage Dashboard ──────────────────────────────────────────────
 
+
 @app.get("/_internal/arbitrage/status")
 async def get_arbitrage_status(request: Request):
     if not _check_auth(request):
@@ -1858,6 +1986,7 @@ async def arbitrage_dashboard(request: Request):
 
 # ─── Weather Dashboard ────────────────────────────────────────────────
 
+
 @app.get("/_internal/weather/status")
 async def get_weather_status(request: Request):
     if not _check_auth(request):
@@ -1867,6 +1996,7 @@ async def get_weather_status(request: Request):
     if db_path.exists():
         try:
             import sqlite3
+
             conn = sqlite3.connect(str(db_path), check_same_thread=False)
             try:
                 conn.row_factory = sqlite3.Row
@@ -1903,7 +2033,7 @@ async def weather_dashboard(request: Request):
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme or "http")
     # crypto.<domain>[:port] → strip the leading "crypto."
     if host.startswith("crypto."):
-        target_host = "weather." + host[len("crypto."):]
+        target_host = "weather." + host[len("crypto.") :]
     else:
         # Direct localhost:8000 dev access — fall back to the gateway-style
         # localhost subdomain that the dev gateway routes.
@@ -1914,6 +2044,7 @@ async def weather_dashboard(request: Request):
 # ═══════════════════════════════════════════════════════════════════════
 # SHARED TRADE WIDGET — Embeddable Polymarket trading modal for any page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _trade_widget_html(has_creds: bool) -> str:
     """Return the HTML/CSS/JS for an embeddable Polymarket quick-trade modal.
@@ -2132,10 +2263,7 @@ def _trade_widget_html(has_creds: bool) -> str:
   };
 })();
 </script>"""
-    return (template
-        .replace("__HAS_CREDS__", "true" if has_creds else "false")
-        .replace("__DISABLED__", "" if has_creds else "disabled")
-        .replace("__CONNECT_DISPLAY__", "none" if has_creds else "block"))
+    return template.replace("__HAS_CREDS__", "true" if has_creds else "false").replace("__DISABLED__", "" if has_creds else "disabled").replace("__CONNECT_DISPLAY__", "none" if has_creds else "block")
 
 
 def _kalshi_widget_html(has_kalshi_creds: bool) -> str:
@@ -2286,8 +2414,8 @@ def _kalshi_widget_html(has_kalshi_creds: bool) -> str:
     const yC=toCents(yesPrice);
     const nC=toCents(noPrice) != null ? toCents(noPrice) : (yC!=null ? (100-yC) : null);
     _kq={ticker:ticker,title:title,yesCents:yC,noCents:nC};
-    document.getElementById('kq-yes').textContent=(yC!=null ? yC : '—')+(yC!=null?'\u00A2':'');
-    document.getElementById('kq-no').textContent =(nC!=null ? nC : '—')+(nC!=null?'\u00A2':'');
+    document.getElementById('kq-yes').textContent=(yC!=null ? yC : '—')+(yC!=null?'\u00a2':'');
+    document.getElementById('kq-no').textContent =(nC!=null ? nC : '—')+(nC!=null?'\u00a2':'');
     const link=document.getElementById('kq-link');
     if(ticker) link.href='https://kalshi.com/markets/'+ticker.toLowerCase().split('-')[0]+'/'+ticker;
     recalcCost();
@@ -2324,13 +2452,15 @@ def _kalshi_widget_html(has_kalshi_creds: bool) -> str:
   };
 })();
 </script>"""
-    return (template
-        .replace("__HAS_CREDS__", "true" if has_kalshi_creds else "false")
+    return (
+        template.replace("__HAS_CREDS__", "true" if has_kalshi_creds else "false")
         .replace("__DISABLED__", "" if has_kalshi_creds else "disabled")
-        .replace("__CONNECT_DISPLAY__", "none" if has_kalshi_creds else "block"))
+        .replace("__CONNECT_DISPLAY__", "none" if has_kalshi_creds else "block")
+    )
 
 
 # ─── Dashboard Hub ───────────────────────────────────────────────────
+
 
 @app.get("/hub", response_class=HTMLResponse)
 async def dashboard_hub(request: Request):
@@ -2390,6 +2520,7 @@ async def dashboard_hub(request: Request):
 
 # ─── Kalshi Markets Dashboard ────────────────────────────────────────
 
+
 @app.get("/kalshi", response_class=HTMLResponse)
 async def kalshi_dashboard(request: Request):
     if not _check_auth(request):
@@ -2400,46 +2531,41 @@ async def kalshi_dashboard(request: Request):
 
     try:
         from kalshi_scanner import run_scanner as kalshi_scan
+
         data = await asyncio.to_thread(kalshi_scan)
     except Exception as e:
         data = {"total_markets": 0, "trending": [], "close_calls": [], "top_events": [], "categories": {}}
 
     # Build market rows — each row has a direct Kalshi trade button AND a "Find on Polymarket" button
     def _make_row(m: dict, show_24h: bool = False) -> str:
-        title = html_mod.escape(m['title'][:70])
-        ticker_raw = m.get('ticker', '')
+        title = html_mod.escape(m["title"][:70])
+        ticker_raw = m.get("ticker", "")
         ticker = html_mod.escape(ticker_raw, quote=True)
         kalshi_url = f"https://kalshi.com/markets/{ticker_raw.lower().split('-')[0]}/{ticker_raw.lower()}" if ticker_raw else "https://kalshi.com"
         yes_cls = "positive" if m["yes_price"] >= 0.5 else "negative"
         vol_24h = f"<td>{m.get('volume_24h', 0):,}</td>" if show_24h else ""
+
         # Use json.dumps for JS string literals — handles backslashes, quotes,
         # </script> sequences, U+2028/U+2029, and embedded newlines correctly.
         # Then HTML-escape (with quote=True) so the resulting JS literal can be
         # safely interpolated into a double-quoted onclick attribute.
         def _js_attr(s: str) -> str:
             return html_mod.escape(json.dumps(s), quote=True)
-        title_js = _js_attr(m['title'][:80])
-        title_short_js = _js_attr(m['title'][:60])
+
+        title_js = _js_attr(m["title"][:80])
+        title_short_js = _js_attr(m["title"][:60])
         ticker_js = _js_attr(ticker_raw)
-        yes_val = float(m['yes_price'])
+        yes_val = float(m["yes_price"])
         no_val = 1 - yes_val
-        kalshi_btn = (
-            f'<button class="trade-btn kalshi" '
-            f'onclick="openKalshiWidget({ticker_js}, {title_js}, {yes_val:.4f}, {no_val:.4f})"'
-            f'>Kalshi</button>'
-        )
-        poly_btn = (
-            f'<button class="trade-btn poly" '
-            f'onclick="openTradeWidgetSearch({title_short_js})"'
-            f'>Polymarket</button>'
-        )
+        kalshi_btn = f'<button class="trade-btn kalshi" onclick="openKalshiWidget({ticker_js}, {title_js}, {yes_val:.4f}, {no_val:.4f})">Kalshi</button>'
+        poly_btn = f'<button class="trade-btn poly" onclick="openTradeWidgetSearch({title_short_js})">Polymarket</button>'
         return f"""<tr>
           <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;">{title}</td>
           <td class="{yes_cls}" style="font-weight:700;">{yes_val:.0%}</td>
           <td>{no_val:.0%}</td>
           {vol_24h}
-          <td>{m.get('volume',0):,}</td>
-          <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get('category',''))}</td>
+          <td>{m.get("volume", 0):,}</td>
+          <td style="color:var(--muted);font-size:0.75em;">{html_mod.escape(m.get("category", ""))}</td>
           <td style="white-space:nowrap;">
             {kalshi_btn}
             {poly_btn}
@@ -2499,7 +2625,7 @@ async def kalshi_dashboard(request: Request):
 </div>
 
 <h1>Kalshi Prediction Markets</h1>
-<p style="color:var(--muted);font-size:0.85em;margin-bottom:8px;">{data.get('total_markets',0):,} active markets &bull; Updated {datetime.now(timezone.utc).strftime('%H:%M UTC')}</p>
+<p style="color:var(--muted);font-size:0.85em;margin-bottom:8px;">{data.get("total_markets", 0):,} active markets &bull; Updated {datetime.now(timezone.utc).strftime("%H:%M UTC")}</p>
 <p style="font-size:0.78em;margin-bottom:14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
   <span style="color:var(--muted);">Trading:</span>
   {kalshi_status}
@@ -2544,6 +2670,7 @@ async def kalshi_dashboard(request: Request):
 
 
 # ─── Trade Page (Polymarket) ─────────────────────────────────────────
+
 
 @app.get("/trade", response_class=HTMLResponse)
 async def trade_page(request: Request):
@@ -2701,14 +2828,14 @@ async def trade_page(request: Request):
 <!-- Status Bar -->
 <div class="status-bar">
   <div class="sb-item">
-    <span class="sb-dot" style="background:{'var(--green)' if has_creds else 'var(--red)'}"></span>
-    <span>{'Wallet Connected' if has_creds else '<a href="/settings#polymarket" style="color:var(--blue);">Connect Wallet</a>'}</span>
+    <span class="sb-dot" style="background:{"var(--green)" if has_creds else "var(--red)"}"></span>
+    <span>{"Wallet Connected" if has_creds else '<a href="/settings#polymarket" style="color:var(--blue);">Connect Wallet</a>'}</span>
   </div>
-  <div class="sb-item" id="sb-balance" style="display:{'flex' if has_creds else 'none'};">
+  <div class="sb-item" id="sb-balance" style="display:{"flex" if has_creds else "none"};">
     <span style="color:var(--muted);">Balance:</span>
     <span id="usdc-balance" style="font-weight:600;">Loading...</span>
   </div>
-  <div class="sb-item" id="sb-open-orders" style="display:{'flex' if has_creds else 'none'};">
+  <div class="sb-item" id="sb-open-orders" style="display:{"flex" if has_creds else "none"};">
     <span style="color:var(--muted);">Open Orders:</span>
     <span id="open-orders-count" style="font-weight:600;">0</span>
   </div>
@@ -2854,11 +2981,11 @@ async def trade_page(request: Request):
           <div class="row"><span style="color:var(--muted);">Potential Profit</span><span id="est-profit" style="color:var(--green);">$0.00</span></div>
         </div>
 
-        <button class="tp-submit buy" id="submit-order-btn" onclick="submitOrder()" {'disabled' if not has_creds else ''}>
-          {'Connect Wallet First' if not has_creds else 'Place Order'}
+        <button class="tp-submit buy" id="submit-order-btn" onclick="submitOrder()" {"disabled" if not has_creds else ""}>
+          {"Connect Wallet First" if not has_creds else "Place Order"}
         </button>
 
-        {'' if has_creds else '<p style="font-size:0.7em;color:var(--muted);margin-top:8px;text-align:center;">Go to <a href="/settings#polymarket" style="color:var(--blue);">Settings</a> to connect your Polymarket wallet.</p>'}
+        {"" if has_creds else '<p style="font-size:0.7em;color:var(--muted);margin-top:8px;text-align:center;">Go to <a href="/settings#polymarket" style="color:var(--blue);">Settings</a> to connect your Polymarket wallet.</p>'}
       </div>
     </div>
   </div>
@@ -2890,7 +3017,7 @@ async def trade_page(request: Request):
   let tradeOutcome = 'yes';
   let pendingOrder = null;
   let searchTimeout = null;
-  const hasCreds = {'true' if has_creds else 'false'};
+  const hasCreds = {"true" if has_creds else "false"};
 
   function esc(s) {{
     const d = document.createElement('div');
@@ -3536,22 +3663,26 @@ def _fetch_news_from_rss() -> list:
                 desc_el = item.find("description")
                 if title_el is None or title_el.text is None:
                     continue
-                articles.append({
-                    "title": title_el.text.strip(),
-                    "link": (link_el.text or "").strip() if link_el is not None else "",
-                    "source": source,
-                    "published": (pub_el.text or "").strip() if pub_el is not None else "",
-                    "summary": (desc_el.text or "").strip()[:200] if desc_el is not None else "",
-                })
+                articles.append(
+                    {
+                        "title": title_el.text.strip(),
+                        "link": (link_el.text or "").strip() if link_el is not None else "",
+                        "source": source,
+                        "published": (pub_el.text or "").strip() if pub_el is not None else "",
+                        "summary": (desc_el.text or "").strip()[:200] if desc_el is not None else "",
+                    }
+                )
         except Exception:
             continue
     # Sort by published date (most recent first), limit to 30
     from email.utils import parsedate_to_datetime
+
     def _parse_pub_date(article):
         try:
             return parsedate_to_datetime(article.get("published", ""))
         except Exception:
             return datetime.min.replace(tzinfo=timezone.utc)
+
     articles.sort(key=_parse_pub_date, reverse=True)
     return articles[:30]
 
@@ -3570,6 +3701,7 @@ async def api_news(request: Request):
 
 
 # ─── News-Trade Alerts API ──────────────────────────────────────────
+
 
 @app.get("/api/news-trade-alerts")
 async def api_news_trade_alerts(request: Request):
@@ -3611,9 +3743,7 @@ async def api_add_to_watchlist(request: Request):
     if not alert_id:
         raise HTTPException(status_code=400, detail="alert_id required")
     notes = body.get("notes", "")
-    ok = await asyncio.to_thread(
-        db.add_to_news_watchlist, user["id"], alert_id, notes
-    )
+    ok = await asyncio.to_thread(db.add_to_news_watchlist, user["id"], alert_id, notes)
     return JSONResponse({"ok": ok})
 
 
@@ -3633,6 +3763,7 @@ async def api_remove_from_watchlist(request: Request):
 
 # ─── Accuracy Tracker ────────────────────────────────────────────────
 
+
 @app.get("/accuracy", response_class=HTMLResponse)
 async def accuracy_page(request: Request):
     if not _check_auth(request):
@@ -3650,13 +3781,13 @@ async def accuracy_page(request: Request):
             hc_str = "—"
         else:
             acc_cls = "positive" if s["accuracy"] >= 0.53 else ("negative" if s["accuracy"] < 0.50 else "yellow")
-            acc_str = f'{s["accuracy"]*100:.1f}%'
-            hc_str = f'{s["high_conf_accuracy"]*100:.1f}% ({s["high_conf_total"]})' if s["high_conf_total"] else "—"
+            acc_str = f"{s['accuracy'] * 100:.1f}%"
+            hc_str = f"{s['high_conf_accuracy'] * 100:.1f}% ({s['high_conf_total']})" if s["high_conf_total"] else "—"
 
         stats_html += f"""<div class="card">
           <div class="label">{ticker}</div>
           <div class="value {acc_cls}">{acc_str}</div>
-          <div class="detail">{s['total']} predictions | HC: {hc_str}</div>
+          <div class="detail">{s["total"]} predictions | HC: {hc_str}</div>
         </div>"""
 
     # Recent predictions
@@ -3677,17 +3808,17 @@ async def accuracy_page(request: Request):
         pd_val = p.get("pred_delta") if hasattr(p, "get") else p["pred_delta"]
         pd_str = f"${pd_val:+,.2f}" if pd_val is not None else "—"
         recent_rows += f"""<tr>
-          <td>{p['ticker']}</td>
-          <td>{p['window_start'][:16]}</td>
+          <td>{p["ticker"]}</td>
+          <td>{p["window_start"][:16]}</td>
           <td class="{dir_cls}">{pdir_str}</td>
           <td>{pd_str}</td>
           <td>{conf_pct:.0f}%</td>
-          <td>{p.get('actual_direction','—') or '—'}</td>
+          <td>{p.get("actual_direction", "—") or "—"}</td>
           <td class="{correct_cls}" style="font-weight:700;">{correct_str}</td>
         </tr>"""
 
-    ov_acc = f'{overall["accuracy"]*100:.1f}%' if overall["total"] else "No data"
-    ov_cls = "positive" if overall.get("accuracy",0) >= 0.53 else ("negative" if overall.get("accuracy",0) < 0.50 else "yellow")
+    ov_acc = f"{overall['accuracy'] * 100:.1f}%" if overall["total"] else "No data"
+    ov_cls = "positive" if overall.get("accuracy", 0) >= 0.53 else ("negative" if overall.get("accuracy", 0) < 0.50 else "yellow")
 
     html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -3727,7 +3858,7 @@ async def accuracy_page(request: Request):
 <div class="hero">
   <div style="color:var(--muted);font-size:0.8em;text-transform:uppercase;">Overall Accuracy (30d)</div>
   <div style="font-size:2.5em;font-weight:800;" class="{ov_cls}">{ov_acc}</div>
-  <div style="color:var(--muted);font-size:0.85em;margin-top:4px;">{overall['total']:,} total predictions | {overall['correct']:,} correct</div>
+  <div style="color:var(--muted);font-size:0.85em;margin-top:4px;">{overall["total"]:,} total predictions | {overall["correct"]:,} correct</div>
 </div>
 
 <h2 style="font-size:1em;color:var(--blue);margin-bottom:8px;">Per-Asset Accuracy</h2>
@@ -3849,12 +3980,14 @@ async def save_clob_credentials(request: Request):
         if not (body.get(field) or "").strip():
             return JSONResponse({"error": f"Missing {field}"}, status_code=400)
     try:
-        encrypted = clob.encrypt_credentials({
-            "api_key": (body.get("api_key") or "").strip(),
-            "api_secret": (body.get("api_secret") or "").strip(),
-            "api_passphrase": (body.get("api_passphrase") or "").strip(),
-            "private_key": (body.get("private_key") or "").strip(),
-        })
+        encrypted = clob.encrypt_credentials(
+            {
+                "api_key": (body.get("api_key") or "").strip(),
+                "api_secret": (body.get("api_secret") or "").strip(),
+                "api_passphrase": (body.get("api_passphrase") or "").strip(),
+                "private_key": (body.get("private_key") or "").strip(),
+            }
+        )
         db.save_clob_credentials(user["id"], encrypted)
         # Clear cached trader so it re-initializes with new creds
         _trader_cache.pop(user["id"], None)
@@ -4174,8 +4307,15 @@ async def place_kalshi_order(request: Request):
     yes_price = body.get("yes_price")
     no_price = body.get("no_price")
     result = await asyncio.to_thread(
-        client.place_order, ticker, side, action, count, order_type,
-        yes_price, no_price, body.get("client_order_id"),
+        client.place_order,
+        ticker,
+        side,
+        action,
+        count,
+        order_type,
+        yes_price,
+        no_price,
+        body.get("client_order_id"),
     )
     if isinstance(result, dict) and "error" in result:
         return JSONResponse({"error": result["error"]}, status_code=400)
@@ -4195,6 +4335,7 @@ async def kalshi_open_orders(request: Request):
 
 
 # ─── Settings / Watchlist ────────────────────────────────────────────
+
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
@@ -4221,7 +4362,9 @@ async def settings_page(request: Request):
         wl_html = '<div style="color:var(--muted);">No watchlists yet.</div>'
 
     tier_esc = html_mod.escape(user["tier"].upper())
-    tier_badge = f'<span style="background:{"var(--green)" if user["tier"]=="premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{tier_esc}</span>'
+    tier_badge = (
+        f'<span style="background:{"var(--green)" if user["tier"] == "premium" else "var(--blue)"};color:#fff;padding:3px 10px;border-radius:12px;font-size:0.75em;font-weight:600;">{tier_esc}</span>'
+    )
 
     has_creds = db.has_clob_credentials(user["id"])
     has_kalshi_creds = db.has_kalshi_credentials(user["id"])
@@ -4232,33 +4375,41 @@ async def settings_page(request: Request):
     kalshi_status_text = "Connected" if has_kalshi_creds else "Not Connected"
 
     poly_connected_block = (
-        '<div id="creds-connected">'
-        '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
-        'Your Polymarket CLOB API credentials are stored encrypted. You can trade directly '
-        'from the <a href="/trade" style="color:var(--blue);">Trade</a> page or any market on '
-        'the <a href="/" style="color:var(--blue);">Dashboard</a>, '
-        '<a href="/kalshi" style="color:var(--blue);">Kalshi page</a>, or '
-        '<a href="/polybot" style="color:var(--blue);">Bot page</a>.'
-        '</p>'
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
-        '<button class="btn btn-secondary" onclick="testConnection()">Test Connection</button>'
-        '<button class="btn btn-secondary" onclick="showCredsForm()">Replace Credentials</button>'
-        '<button class="btn btn-danger" onclick="removeCreds()">Disconnect</button>'
-        '</div></div>'
-    ) if has_creds else ""
+        (
+            '<div id="creds-connected">'
+            '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
+            "Your Polymarket CLOB API credentials are stored encrypted. You can trade directly "
+            'from the <a href="/trade" style="color:var(--blue);">Trade</a> page or any market on '
+            'the <a href="/" style="color:var(--blue);">Dashboard</a>, '
+            '<a href="/kalshi" style="color:var(--blue);">Kalshi page</a>, or '
+            '<a href="/polybot" style="color:var(--blue);">Bot page</a>.'
+            "</p>"
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            '<button class="btn btn-secondary" onclick="testConnection()">Test Connection</button>'
+            '<button class="btn btn-secondary" onclick="showCredsForm()">Replace Credentials</button>'
+            '<button class="btn btn-danger" onclick="removeCreds()">Disconnect</button>'
+            "</div></div>"
+        )
+        if has_creds
+        else ""
+    )
 
     kalshi_connected_block = (
-        '<div id="kalshi-connected">'
-        '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
-        'Your Kalshi API key is stored encrypted. You can place YES/NO orders directly '
-        'from the <a href="/kalshi" style="color:var(--blue);">Kalshi page</a>.'
-        '</p>'
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
-        '<button class="btn btn-secondary" onclick="testKalshiConnection()">Test Connection</button>'
-        '<button class="btn btn-secondary" onclick="showKalshiForm()">Replace Credentials</button>'
-        '<button class="btn btn-danger" onclick="removeKalshiCreds()">Disconnect</button>'
-        '</div></div>'
-    ) if has_kalshi_creds else ""
+        (
+            '<div id="kalshi-connected">'
+            '<p style="color:var(--muted);font-size:0.82em;margin-bottom:12px;">'
+            "Your Kalshi API key is stored encrypted. You can place YES/NO orders directly "
+            'from the <a href="/kalshi" style="color:var(--blue);">Kalshi page</a>.'
+            "</p>"
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            '<button class="btn btn-secondary" onclick="testKalshiConnection()">Test Connection</button>'
+            '<button class="btn btn-secondary" onclick="showKalshiForm()">Replace Credentials</button>'
+            '<button class="btn btn-danger" onclick="removeKalshiCreds()">Disconnect</button>'
+            "</div></div>"
+        )
+        if has_kalshi_creds
+        else ""
+    )
 
     poly_form_display = "none" if has_creds else "block"
     kalshi_form_display = "none" if has_kalshi_creds else "block"
@@ -4268,7 +4419,7 @@ async def settings_page(request: Request):
 
     tier_html = (
         "<p style='color:var(--green);font-weight:600;'>Premium features active: Neural Net predictions, Model Marketplace</p>"
-        if user['tier'] in ('premium','admin')
+        if user["tier"] in ("premium", "admin")
         else "<p style='color:var(--muted);'>Free tier — upgrade to Premium for neural net predictions and model marketplace.</p><p style='margin-top:8px;'><em>Contact admin to upgrade.</em></p>"
     )
 
@@ -4325,11 +4476,11 @@ async def settings_page(request: Request):
 
 <div class="info-box">
   <div style="color:var(--muted);font-size:0.8em;">EMAIL</div>
-  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user['email'])}</div>
+  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user["email"])}</div>
 </div>
 <div class="info-box">
   <div style="color:var(--muted);font-size:0.8em;">NAME</div>
-  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user['display_name'] or '(not set)')}</div>
+  <div style="font-size:1.1em;margin-top:2px;">{html_mod.escape(user["display_name"] or "(not set)")}</div>
 </div>
 
 <h2>Your Tier: {tier_esc}</h2>
@@ -4634,6 +4785,7 @@ LEGAL_STYLE = """<style>
   .updated { color:var(--muted); font-size:0.75em; margin-bottom:24px; }
 </style>"""
 
+
 @app.get("/terms", response_class=HTMLResponse)
 async def terms_page():
     return HTMLResponse(f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Terms of Service — CryptoEdge</title>{LEGAL_STYLE}</head><body>
@@ -4710,6 +4862,7 @@ async def disclaimer_page():
 
 # ─── WebSocket ────────────────────────────────────────────────────────
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     # Authenticate via gateway SSO headers (same as HTTP requests)
@@ -4732,10 +4885,14 @@ async def websocket_endpoint(ws: WebSocket):
         connected_ws.add(ws)
     try:
         # Send initial state
-        await ws.send_text(json.dumps({
-            "type": "init",
-            "data": {ticker: serialize_asset(ticker) for ticker in asset_state},
-        }))
+        await ws.send_text(
+            json.dumps(
+                {
+                    "type": "init",
+                    "data": {ticker: serialize_asset(ticker) for ticker in asset_state},
+                }
+            )
+        )
         # Keep alive
         while True:
             await ws.receive_text()
@@ -4751,6 +4908,7 @@ async def websocket_endpoint(ws: WebSocket):
 # ===================================================================
 # CROSS-DASHBOARD SHARE ENDPOINT (localhost-only, for sibling services)
 # ===================================================================
+
 
 @app.get("/api/share/snapshot")
 async def share_snapshot(request: Request):
@@ -4778,4 +4936,5 @@ async def share_snapshot(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=os.environ.get("BIND_HOST", "127.0.0.1"), port=8000)

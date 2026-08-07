@@ -29,11 +29,14 @@ hammers FRED.
 
 from __future__ import annotations
 
+import bisect
 import calendar as _cal
+import concurrent.futures
 import csv
 import io
 import logging
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -53,22 +56,23 @@ _lock = Lock()
 class Series:
     fred_id: str
     name: str
-    short_name: str          # for UI badges
-    release_kind: str        # "CPI" | "PCE" | "NFP"
-    is_index: bool           # True ⇒ report YoY % change; False ⇒ raw level + MoM delta (NFP)
-    units: str               # "%" | "k jobs" — purely cosmetic
+    short_name: str  # for UI badges
+    release_kind: str  # "CPI" | "PCE" | "NFP"
+    is_index: bool  # True ⇒ report YoY % change; False ⇒ raw level + MoM delta (NFP)
+    units: str  # "%" | "k jobs" — purely cosmetic
 
 
 SERIES: list[Series] = [
-    Series("CPIAUCSL",  "Headline CPI",         "CPI",      "CPI", True,  "%"),
-    Series("CPILFESL",  "Core CPI",             "Core CPI", "CPI", True,  "%"),
-    Series("PCEPI",     "Headline PCE",         "PCE",      "PCE", True,  "%"),
-    Series("PCEPILFE",  "Core PCE",             "Core PCE", "PCE", True,  "%"),
-    Series("PAYEMS",    "Non-Farm Payrolls",    "NFP",      "NFP", False, "k jobs"),
+    Series("CPIAUCSL", "Headline CPI", "CPI", "CPI", True, "%"),
+    Series("CPILFESL", "Core CPI", "Core CPI", "CPI", True, "%"),
+    Series("PCEPI", "Headline PCE", "PCE", "PCE", True, "%"),
+    Series("PCEPILFE", "Core PCE", "Core PCE", "PCE", True, "%"),
+    Series("PAYEMS", "Non-Farm Payrolls", "NFP", "NFP", False, "k jobs"),
 ]
 
 
 # --- FRED CSV helpers (same shape as fred_client) ---------------------------
+
 
 def _fetch_csv(series_id: str, timeout: float = 15.0) -> str | None:
     url = FRED_CSV.format(series_id=series_id)
@@ -94,6 +98,7 @@ def _parse_csv(body: str) -> list[tuple[str, float]]:
 
 
 # --- Release-date conventions ----------------------------------------------
+
 
 def _first_friday(year: int, month: int) -> date:
     """First Friday of (year, month). NFP convention."""
@@ -145,6 +150,7 @@ def _next_release_date(kind: str, today: date | None = None) -> date | None:
 
 # --- Compute summary ---------------------------------------------------------
 
+
 def _compute_yoy(points: list[tuple[str, float]]) -> tuple[dict | None, dict | None, list[float]]:
     """Return (latest_summary, prev_summary, last_24m_yoy_series)."""
     if len(points) < 13:
@@ -184,8 +190,7 @@ def _compute_yoy(points: list[tuple[str, float]]) -> tuple[dict | None, dict | N
             sparkline.append(round((v / anchor_v - 1) * 100, 3))
 
     return (
-        {"date": last_date, "value": round(last_val, 4),
-         "yoy_pct": round(yoy_pct, 3), "mom_pct": round(mom_pct, 3)},
+        {"date": last_date, "value": round(last_val, 4), "yoy_pct": round(yoy_pct, 3), "mom_pct": round(mom_pct, 3)},
         {"date": prev_date, "value": round(prev_val, 4)},
         sparkline,
     )
@@ -203,8 +208,7 @@ def _compute_nfp(points: list[tuple[str, float]]) -> tuple[dict | None, dict | N
     for i in range(max(1, len(points) - 24), len(points)):
         sparkline.append(round(points[i][1] - points[i - 1][1], 1))
     return (
-        {"date": last_date, "value": round(last_val, 1),
-         "mom_change_k": round(mom_change, 1)},
+        {"date": last_date, "value": round(last_val, 1), "mom_change_k": round(mom_change, 1)},
         {"date": prev_date, "value": round(prev_val, 1)},
         sparkline,
     )
@@ -224,19 +228,40 @@ def fetch_all() -> list[dict]:
         next_d = _next_release_date(s.release_kind, today)
         days_until = (next_d - today).days if next_d else None
 
-        rows.append({
-            "fred_id": s.fred_id,
-            "name": s.name,
-            "short_name": s.short_name,
-            "release_kind": s.release_kind,
-            "units": s.units,
-            "is_index": s.is_index,
-            "latest": latest,
-            "prev": prev,
-            "sparkline": sparkline,                    # 24-pt series for chart
-            "next_release_date": next_d.isoformat() if next_d else None,
-            "days_until": days_until,
-        })
+        rows.append(
+            {
+                "fred_id": s.fred_id,
+                "name": s.name,
+                "short_name": s.short_name,
+                "release_kind": s.release_kind,
+                "units": s.units,
+                "is_index": s.is_index,
+                "latest": latest,
+                "prev": prev,
+                "sparkline": sparkline,  # 24-pt series for chart
+                "next_release_date": next_d.isoformat() if next_d else None,
+                "days_until": days_until,
+            }
+        )
+
+    # Snapshot per-series headline number for delta queries. Lazy import so
+    # the ingestion module stays usable in standalone smoke tests.
+    try:
+        from analysis import historical_store
+
+        snap_items: list[tuple[str, float | None]] = []
+        for r in rows:
+            latest = r.get("latest") or {}
+            if r["is_index"]:
+                snap_items.append((f"econ.{r['fred_id']}.yoy", latest.get("yoy_pct")))
+                snap_items.append((f"econ.{r['fred_id']}.value", latest.get("value")))
+            else:
+                snap_items.append((f"econ.{r['fred_id']}.mom_change_k", latest.get("mom_change_k")))
+                snap_items.append((f"econ.{r['fred_id']}.value", latest.get("value")))
+        historical_store.snapshot_many(snap_items)
+    except Exception as exc:
+        log.warning("history snapshot failed in econ_releases: %s", exc)
+
     return rows
 
 
@@ -251,10 +276,7 @@ def get_cached(force: bool = False) -> dict:
     data = {
         "as_of": today.isoformat(),
         "series": rows,
-        "release_calendar_method": (
-            "CPI ≈ 14th of month (BLS); PCE ≈ 29th of month (BEA); "
-            "NFP = 1st Friday of next month (BLS); weekend-bumped to Mon"
-        ),
+        "release_calendar_method": ("CPI ≈ 14th of month (BLS); PCE ≈ 29th of month (BEA); NFP = 1st Friday of next month (BLS); weekend-bumped to Mon"),
     }
     with _lock:
         _CACHE["data"] = data
@@ -264,5 +286,6 @@ def get_cached(force: bool = False) -> dict:
 
 if __name__ == "__main__":
     import json
+
     logging.basicConfig(level=logging.INFO)
     print(json.dumps(get_cached(force=True), indent=2)[:3000])

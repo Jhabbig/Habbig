@@ -156,8 +156,23 @@ window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.141.0/Build/Cesi
 //   size:    point size multiplier (point only)
 //   coords:  field on each item containing waypoints (line only)
 //   default: true = on at first paint
-// Yesterday's date for GIBS — today's tiles often aren't processed yet.
-const _GIBS_TIME = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+// Day-by-day TimeIntervalCollection covering the last 30 days. Cesium uses
+// this with the clock to swap GIBS imagery as the timeline advances.
+function buildGibsTimeIntervals(daysBack = 30) {
+  const ivs = new Cesium.TimeIntervalCollection();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const startOfToday = Cesium.JulianDate.fromIso8601(todayIso + 'T00:00:00Z');
+  for (let d = daysBack; d >= 0; d--) {
+    const day  = Cesium.JulianDate.addDays(startOfToday, -d, new Cesium.JulianDate());
+    const next = Cesium.JulianDate.addDays(day,           1, new Cesium.JulianDate());
+    ivs.addInterval(new Cesium.TimeInterval({
+      start: day, stop: next,
+      isStartIncluded: true, isStopIncluded: false,
+      data: Cesium.JulianDate.toIso8601(day).slice(0, 10),
+    }));
+  }
+  return ivs;
+}
 
 const LAYERS = [
   // Borders sit alone — special-cased loader

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Multi-Asset 5-Minute Window Analyzer
-Fetches 1-second kline data from Binance for BTC, ETH, SOL, DOGE, XRP,
+Fetches 1-second kline data from Binance for 45 USDT pairs (see ASSETS dict),
 splits into 5-minute windows, trains neural net ensembles, and generates
 a tabbed HTML dashboard with live predictions.
 """
@@ -61,14 +61,16 @@ def safe_pickle_load(filepath):
     print(f"[SECURITY] Rejecting unsigned pickle file: {filepath} — delete and regenerate")
     return None
 
+
 # ─── GPU acceleration via CuPy (falls back to NumPy on CPU) ─────────
 try:
     import cupy as cp
-    xp = cp        # GPU array module
+
+    xp = cp  # GPU array module
     GPU = True
     print(f"[GPU] CuPy {cp.__version__} — using {cp.cuda.runtime.getDeviceCount()} GPU(s)")
 except Exception:
-    xp = np        # fallback: plain numpy
+    xp = np  # fallback: plain numpy
     GPU = False
     print("[CPU] CuPy not available — running on CPU")
 
@@ -85,11 +87,51 @@ def to_cpu(a):
 
 # ─── Config ───────────────────────────────────────────────────────────
 ASSETS = {
-    "BTC":  {"symbol": "BTCUSDT",  "name": "Bitcoin"},
-    "ETH":  {"symbol": "ETHUSDT",  "name": "Ethereum"},
-    "SOL":  {"symbol": "SOLUSDT",  "name": "Solana"},
+    "BTC": {"symbol": "BTCUSDT", "name": "Bitcoin"},
+    "ETH": {"symbol": "ETHUSDT", "name": "Ethereum"},
+    "SOL": {"symbol": "SOLUSDT", "name": "Solana"},
     "DOGE": {"symbol": "DOGEUSDT", "name": "Dogecoin"},
-    "XRP":  {"symbol": "XRPUSDT",  "name": "XRP"},
+    "XRP": {"symbol": "XRPUSDT", "name": "XRP"},
+    "BNB": {"symbol": "BNBUSDT", "name": "BNB"},
+    "ADA": {"symbol": "ADAUSDT", "name": "Cardano"},
+    "AVAX": {"symbol": "AVAXUSDT", "name": "Avalanche"},
+    "LINK": {"symbol": "LINKUSDT", "name": "Chainlink"},
+    "DOT": {"symbol": "DOTUSDT", "name": "Polkadot"},
+    "LTC": {"symbol": "LTCUSDT", "name": "Litecoin"},
+    "BCH": {"symbol": "BCHUSDT", "name": "Bitcoin Cash"},
+    "UNI": {"symbol": "UNIUSDT", "name": "Uniswap"},
+    "ATOM": {"symbol": "ATOMUSDT", "name": "Cosmos"},
+    "NEAR": {"symbol": "NEARUSDT", "name": "NEAR Protocol"},
+    "APT": {"symbol": "APTUSDT", "name": "Aptos"},
+    "ARB": {"symbol": "ARBUSDT", "name": "Arbitrum"},
+    "OP": {"symbol": "OPUSDT", "name": "Optimism"},
+    "ICP": {"symbol": "ICPUSDT", "name": "Internet Computer"},
+    "FIL": {"symbol": "FILUSDT", "name": "Filecoin"},
+    "SUI": {"symbol": "SUIUSDT", "name": "Sui"},
+    "TIA": {"symbol": "TIAUSDT", "name": "Celestia"},
+    "INJ": {"symbol": "INJUSDT", "name": "Injective"},
+    "TRX": {"symbol": "TRXUSDT", "name": "TRON"},
+    "TON": {"symbol": "TONUSDT", "name": "Toncoin"},
+    "AAVE": {"symbol": "AAVEUSDT", "name": "Aave"},
+    "MKR": {"symbol": "MKRUSDT", "name": "Maker"},
+    "CRV": {"symbol": "CRVUSDT", "name": "Curve DAO"},
+    "SNX": {"symbol": "SNXUSDT", "name": "Synthetix"},
+    "RUNE": {"symbol": "RUNEUSDT", "name": "THORChain"},
+    "STX": {"symbol": "STXUSDT", "name": "Stacks"},
+    "EGLD": {"symbol": "EGLDUSDT", "name": "MultiversX"},
+    "THETA": {"symbol": "THETAUSDT", "name": "Theta Network"},
+    "AXS": {"symbol": "AXSUSDT", "name": "Axie Infinity"},
+    "SAND": {"symbol": "SANDUSDT", "name": "The Sandbox"},
+    "MANA": {"symbol": "MANAUSDT", "name": "Decentraland"},
+    "ETC": {"symbol": "ETCUSDT", "name": "Ethereum Classic"},
+    "IMX": {"symbol": "IMXUSDT", "name": "Immutable"},
+    "SEI": {"symbol": "SEIUSDT", "name": "Sei"},
+    "STRK": {"symbol": "STRKUSDT", "name": "Starknet"},
+    "JUP": {"symbol": "JUPUSDT", "name": "Jupiter"},
+    "WIF": {"symbol": "WIFUSDT", "name": "dogwifhat"},
+    "FET": {"symbol": "FETUSDT", "name": "Fetch.ai"},
+    "ENS": {"symbol": "ENSUSDT", "name": "Ethereum Name Service"},
+    "LDO": {"symbol": "LDOUSDT", "name": "Lido DAO"},
 }
 INTERVAL = "1s"
 WINDOW_MINUTES = 5
@@ -104,6 +146,7 @@ HISTORY_DAYS = 180
 # ═══════════════════════════════════════════════════════════════════════
 # DATA FETCHING
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fetch_klines(symbol, start_ms, end_ms):
     """Fetch klines using parallel async requests for speed."""
@@ -124,8 +167,11 @@ def fetch_klines(symbol, start_ms, end_ms):
 
     async def fetch_chunk(session, sem, idx, s, e):
         params = {
-            "symbol": symbol, "interval": INTERVAL,
-            "startTime": s, "endTime": e, "limit": MAX_PER_REQUEST,
+            "symbol": symbol,
+            "interval": INTERVAL,
+            "startTime": s,
+            "endTime": e,
+            "limit": MAX_PER_REQUEST,
         }
         async with sem:
             for attempt in range(5):
@@ -162,6 +208,7 @@ def fetch_klines(symbol, start_ms, end_ms):
         loop = asyncio.get_running_loop()
         # Already in async context — use nest_asyncio or thread
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             pool.submit(lambda: asyncio.run(run_all())).result()
     except RuntimeError:
@@ -236,9 +283,11 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
                 data = [(k[0], float(k[4])) for k in klines]
                 data.sort(key=lambda x: x[0])
                 del klines  # free the huge JSON immediately
-                import gc; gc.collect()
+                import gc
+
+                gc.collect()
                 safe_pickle_dump(data, pickle_file)
-                print(f"    {len(data):,} candles. Pickle saved ({pickle_file.stat().st_size/1e6:.0f}MB vs {jf.stat().st_size/1e6:.0f}MB JSON)")
+                print(f"    {len(data):,} candles. Pickle saved ({pickle_file.stat().st_size / 1e6:.0f}MB vs {jf.stat().st_size / 1e6:.0f}MB JSON)")
                 return data, start_dt, end_dt
 
     # Nothing cached — fetch from Binance
@@ -249,9 +298,11 @@ def load_or_fetch(symbol, days=HISTORY_DAYS):
     data = [(k[0], float(k[4])) for k in klines]
     data.sort(key=lambda x: x[0])
     del klines
-    import gc; gc.collect()
+    import gc
+
+    gc.collect()
     safe_pickle_dump(data, pickle_file)
-    print(f"    Saved pickle cache ({pickle_file.stat().st_size/1e6:.0f}MB)")
+    print(f"    Saved pickle cache ({pickle_file.stat().st_size / 1e6:.0f}MB)")
     return data, start_dt, end_dt
 
 
@@ -267,6 +318,7 @@ def parse_klines(raw):
 # ═══════════════════════════════════════════════════════════════════════
 # WINDOW ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def analyze_windows(data):
     if not data:
@@ -301,10 +353,10 @@ def analyze_windows(data):
         for i in range(1, len(deltas)):
             prev_d = deltas[i - 1][1]
             curr_d = deltas[i][1]
-            if (prev_d >= 0 and curr_d < 0):
+            if prev_d >= 0 and curr_d < 0:
                 last_cross_sec = (deltas[i][0] - current_window_start) / 1000
                 last_cross_direction = "negative"
-            elif (prev_d < 0 and curr_d >= 0):
+            elif prev_d < 0 and curr_d >= 0:
                 last_cross_sec = (deltas[i][0] - current_window_start) / 1000
                 last_cross_direction = "positive"
 
@@ -323,7 +375,7 @@ def analyze_windows(data):
         # RSI-like metric for the window (based on recent closes in the window)
         gains, losses = [], []
         for i in range(1, len(window_data)):
-            diff = window_data[i][1] - window_data[i-1][1]
+            diff = window_data[i][1] - window_data[i - 1][1]
             if diff > 0:
                 gains.append(diff)
             else:
@@ -335,26 +387,28 @@ def analyze_windows(data):
         # Number of zero-crossings (choppiness)
         crossings = 0
         for i in range(1, len(deltas)):
-            if (deltas[i-1][1] >= 0) != (deltas[i][1] >= 0):
+            if (deltas[i - 1][1] >= 0) != (deltas[i][1] >= 0):
                 crossings += 1
 
-        windows.append({
-            "start": window_start_dt,
-            "baseline": baseline,
-            "last_cross_sec": last_cross_sec,
-            "last_cross_direction": last_cross_direction,
-            "max_positive": max_positive,
-            "max_negative": max_negative,
-            "avg_delta": avg_delta,
-            "end_delta": end_delta,
-            "avg_pos_magnitude": avg_pos_magnitude,
-            "avg_neg_magnitude": avg_neg_magnitude,
-            "positive_pct": positive_count / len(deltas) * 100,
-            "negative_pct": negative_count / len(deltas) * 100,
-            "candle_count": len(window_data),
-            "rsi": rsi,
-            "crossings": crossings,
-        })
+        windows.append(
+            {
+                "start": window_start_dt,
+                "baseline": baseline,
+                "last_cross_sec": last_cross_sec,
+                "last_cross_direction": last_cross_direction,
+                "max_positive": max_positive,
+                "max_negative": max_negative,
+                "avg_delta": avg_delta,
+                "end_delta": end_delta,
+                "avg_pos_magnitude": avg_pos_magnitude,
+                "avg_neg_magnitude": avg_neg_magnitude,
+                "positive_pct": positive_count / len(deltas) * 100,
+                "negative_pct": negative_count / len(deltas) * 100,
+                "candle_count": len(window_data),
+                "rsi": rsi,
+                "crossings": crossings,
+            }
+        )
 
         current_window_start = window_end
 
@@ -364,12 +418,21 @@ def analyze_windows(data):
 def compute_summary(windows):
     if not windows:
         return {
-            "total_windows": 0, "avg_last_cross_sec": None, "median_last_cross_sec": None,
-            "windows_with_cross": 0, "windows_that_went_negative": 0,
-            "windows_that_went_positive": 0, "windows_ended_positive": 0,
-            "windows_ended_negative": 0, "avg_max_positive": 0, "avg_max_negative": 0,
-            "avg_pos_magnitude": 0, "avg_neg_magnitude": 0, "avg_end_delta": 0,
-            "avg_rsi": 50, "avg_crossings": 0,
+            "total_windows": 0,
+            "avg_last_cross_sec": None,
+            "median_last_cross_sec": None,
+            "windows_with_cross": 0,
+            "windows_that_went_negative": 0,
+            "windows_that_went_positive": 0,
+            "windows_ended_positive": 0,
+            "windows_ended_negative": 0,
+            "avg_max_positive": 0,
+            "avg_max_negative": 0,
+            "avg_pos_magnitude": 0,
+            "avg_neg_magnitude": 0,
+            "avg_end_delta": 0,
+            "avg_rsi": 50,
+            "avg_crossings": 0,
         }
     crosses = [w["last_cross_sec"] for w in windows if w["last_cross_sec"] is not None]
     wn = sum(1 for w in windows if w["max_negative"] < 0)
@@ -423,8 +486,8 @@ def compute_volatility(windows, lookback_hours=24):
     prices = [w["baseline"] + w["end_delta"] for w in recent]  # closing price
     returns_pct = []
     for i in range(1, len(prices)):
-        if prices[i-1] > 0:
-            ret = ((prices[i] - prices[i-1]) / prices[i-1]) * 100
+        if prices[i - 1] > 0:
+            ret = ((prices[i] - prices[i - 1]) / prices[i - 1]) * 100
             returns_pct.append(ret)
 
     if not returns_pct:
@@ -460,8 +523,7 @@ def compute_volatility(windows, lookback_hours=24):
     else:
         first_half_std = float(np.std(returns_arr)) if len(returns_arr) > 0 else 0.0
         second_half_std = first_half_std
-    vol_trend = "INCREASING" if second_half_std > first_half_std * 1.2 else (
-        "DECREASING" if second_half_std < first_half_std * 0.8 else "STABLE")
+    vol_trend = "INCREASING" if second_half_std > first_half_std * 1.2 else ("DECREASING" if second_half_std < first_half_std * 0.8 else "STABLE")
 
     return {
         "std_pct": round(std_pct, 3),
@@ -512,7 +574,7 @@ def compute_per_second_velocity(data, windows):
     current_direction = 0  # 1=up, -1=down, 0=flat
 
     for i in range(1, len(data)):
-        delta = data[i][1] - data[i-1][1]
+        delta = data[i][1] - data[i - 1][1]
         if delta > 0:
             gains_per_sec.append(delta)
             if current_direction == 1:
@@ -585,7 +647,7 @@ def compute_per_second_velocity(data, windows):
         # Find cross events in this window
         sorted_secs = sorted(w_prices.keys())
         for i in range(1, len(sorted_secs)):
-            s_prev = sorted_secs[i-1]
+            s_prev = sorted_secs[i - 1]
             s_curr = sorted_secs[i]
             d_prev = w_prices[s_prev] - baseline
             d_curr = w_prices[s_curr] - baseline
@@ -657,11 +719,14 @@ def compute_per_second_velocity(data, windows):
 # Use float32 on GPU for ~50x speedup (tensor cores), float64 on CPU
 DTYPE = np.float32 if GPU else np.float64
 
+
 def relu(x):
     return xp.maximum(0, x)
 
+
 def relu_deriv(x):
     return (x > 0).astype(DTYPE)
+
 
 def sigmoid(x):
     return 1.0 / (1.0 + xp.exp(-xp.clip(x, -500, 500)))
@@ -680,8 +745,8 @@ class AdamOptimizer:
                 self.v[key] = xp.zeros_like(params[key])
             self.m[key] = self.beta1 * self.m[key] + (1 - self.beta1) * grads[key]
             self.v[key] = self.beta2 * self.v[key] + (1 - self.beta2) * (grads[key] ** 2)
-            m_hat = self.m[key] / (1 - self.beta1 ** self.t)
-            v_hat = self.v[key] / (1 - self.beta2 ** self.t)
+            m_hat = self.m[key] / (1 - self.beta1**self.t)
+            v_hat = self.v[key] / (1 - self.beta2**self.t)
             params[key] -= self.lr * m_hat / (xp.sqrt(v_hat) + self.eps)
 
 
@@ -719,7 +784,7 @@ class WindowNeuralNet:
         for arr in [end_deltas, vols]:
             last6 = arr[-6:]
             pad = np.zeros(6)
-            pad[-len(last6):] = last6
+            pad[-len(last6) :] = last6
             features.extend(pad.tolist())
 
         # Momentum
@@ -771,13 +836,10 @@ class WindowNeuralNet:
             features.extend([0.0, 0.0])
 
         # Asymmetry
-        features.extend([float(np.mean(max_pos)), float(np.mean(max_neg)),
-                         float(np.mean(max_pos[-3:])), float(np.mean(max_neg[-3:])),
-                         float(np.mean(avg_deltas)), float(np.mean(pct_pos))])
+        features.extend([float(np.mean(max_pos)), float(np.mean(max_neg)), float(np.mean(max_pos[-3:])), float(np.mean(max_neg[-3:])), float(np.mean(avg_deltas)), float(np.mean(pct_pos))])
 
         # Time encoding
-        features.extend([math.sin(2*math.pi*target_hour/24), math.cos(2*math.pi*target_hour/24),
-                         math.sin(2*math.pi*target_dow/7), math.cos(2*math.pi*target_dow/7)])
+        features.extend([math.sin(2 * math.pi * target_hour / 24), math.cos(2 * math.pi * target_hour / 24), math.sin(2 * math.pi * target_dow / 7), math.cos(2 * math.pi * target_dow / 7)])
 
         # Price change %
         features.append((recent[-1]["baseline"] - recent[0]["baseline"]) / (recent[0]["baseline"] + 1e-8) * 100)
@@ -895,27 +957,42 @@ class WindowNeuralNet:
         h1, h2, h3, h4 = 64, 48, 32, 16
         dt = DTYPE
         self.params = {
-            "W1": to_gpu(rng.randn(n_input, h1).astype(dt) * np.sqrt(2.0/n_input)), "b1": xp.zeros((1,h1), dtype=dt),
-            "W2": to_gpu(rng.randn(h1, h2).astype(dt) * np.sqrt(2.0/h1)), "b2": xp.zeros((1,h2), dtype=dt),
-            "W3": to_gpu(rng.randn(h2, h3).astype(dt) * np.sqrt(2.0/h2)), "b3": xp.zeros((1,h3), dtype=dt),
-            "W4": to_gpu(rng.randn(h3, h4).astype(dt) * np.sqrt(2.0/h3)), "b4": xp.zeros((1,h4), dtype=dt),
-            "W_reg": to_gpu(rng.randn(h4, 1).astype(dt) * np.sqrt(2.0/h4)), "b_reg": xp.zeros((1,1), dtype=dt),
-            "W_cls": to_gpu(np.random.randn(h4, 1).astype(dt) * np.sqrt(2.0/h4)), "b_cls": xp.zeros((1,1), dtype=dt),
-            "bn1_g": xp.ones((1,h1), dtype=dt), "bn1_b": xp.zeros((1,h1), dtype=dt),
-            "bn2_g": xp.ones((1,h2), dtype=dt), "bn2_b": xp.zeros((1,h2), dtype=dt),
-            "bn3_g": xp.ones((1,h3), dtype=dt), "bn3_b": xp.zeros((1,h3), dtype=dt),
-            "bn4_g": xp.ones((1,h4), dtype=dt), "bn4_b": xp.zeros((1,h4), dtype=dt),
+            "W1": to_gpu(rng.randn(n_input, h1).astype(dt) * np.sqrt(2.0 / n_input)),
+            "b1": xp.zeros((1, h1), dtype=dt),
+            "W2": to_gpu(rng.randn(h1, h2).astype(dt) * np.sqrt(2.0 / h1)),
+            "b2": xp.zeros((1, h2), dtype=dt),
+            "W3": to_gpu(rng.randn(h2, h3).astype(dt) * np.sqrt(2.0 / h2)),
+            "b3": xp.zeros((1, h3), dtype=dt),
+            "W4": to_gpu(rng.randn(h3, h4).astype(dt) * np.sqrt(2.0 / h3)),
+            "b4": xp.zeros((1, h4), dtype=dt),
+            "W_reg": to_gpu(rng.randn(h4, 1).astype(dt) * np.sqrt(2.0 / h4)),
+            "b_reg": xp.zeros((1, 1), dtype=dt),
+            "W_cls": to_gpu(np.random.randn(h4, 1).astype(dt) * np.sqrt(2.0 / h4)),
+            "b_cls": xp.zeros((1, 1), dtype=dt),
+            "bn1_g": xp.ones((1, h1), dtype=dt),
+            "bn1_b": xp.zeros((1, h1), dtype=dt),
+            "bn2_g": xp.ones((1, h2), dtype=dt),
+            "bn2_b": xp.zeros((1, h2), dtype=dt),
+            "bn3_g": xp.ones((1, h3), dtype=dt),
+            "bn3_b": xp.zeros((1, h3), dtype=dt),
+            "bn4_g": xp.ones((1, h4), dtype=dt),
+            "bn4_b": xp.zeros((1, h4), dtype=dt),
         }
         self.bn_running = {
-            "mu1": xp.zeros((1,h1), dtype=dt), "var1": xp.ones((1,h1), dtype=dt),
-            "mu2": xp.zeros((1,h2), dtype=dt), "var2": xp.ones((1,h2), dtype=dt),
-            "mu3": xp.zeros((1,h3), dtype=dt), "var3": xp.ones((1,h3), dtype=dt),
-            "mu4": xp.zeros((1,h4), dtype=dt), "var4": xp.ones((1,h4), dtype=dt),
+            "mu1": xp.zeros((1, h1), dtype=dt),
+            "var1": xp.ones((1, h1), dtype=dt),
+            "mu2": xp.zeros((1, h2), dtype=dt),
+            "var2": xp.ones((1, h2), dtype=dt),
+            "mu3": xp.zeros((1, h3), dtype=dt),
+            "var3": xp.ones((1, h3), dtype=dt),
+            "mu4": xp.zeros((1, h4), dtype=dt),
+            "var4": xp.ones((1, h4), dtype=dt),
         }
         self.dropout_rate = 0.25
 
     def _batchnorm(self, x, layer, training=True):
-        g = self.params[f"bn{layer}_g"]; b = self.params[f"bn{layer}_b"]
+        g = self.params[f"bn{layer}_g"]
+        b = self.params[f"bn{layer}_b"]
         if training and x.shape[0] > 1:
             mu = x.mean(axis=0, keepdims=True)
             var = x.var(axis=0, keepdims=True) + 1e-8
@@ -956,17 +1033,38 @@ class WindowNeuralNet:
 
         reg_out = a4 @ self.params["W_reg"] + self.params["b_reg"]
         cls_out = sigmoid(a4 @ self.params["W_cls"] + self.params["b_cls"])
-        return reg_out, cls_out, {
-            "X":X, "z1":z1,"bn1":bn1,"a1":a1,"a1d":a1d,"mask1":mask1,
-            "z2":z2,"bn2":bn2,"a2":a2,"a2d":a2d,"mask2":mask2,
-            "z3":z3,"bn3":bn3,"a3":a3,"a3d":a3d,"mask3":mask3,
-            "z4":z4,"bn4":bn4,"a4":a4,
-            "reg_out":reg_out,"cls_out":cls_out,
-        }
+        return (
+            reg_out,
+            cls_out,
+            {
+                "X": X,
+                "z1": z1,
+                "bn1": bn1,
+                "a1": a1,
+                "a1d": a1d,
+                "mask1": mask1,
+                "z2": z2,
+                "bn2": bn2,
+                "a2": a2,
+                "a2d": a2d,
+                "mask2": mask2,
+                "z3": z3,
+                "bn3": bn3,
+                "a3": a3,
+                "a3d": a3d,
+                "mask3": mask3,
+                "z4": z4,
+                "bn4": bn4,
+                "a4": a4,
+                "reg_out": reg_out,
+                "cls_out": cls_out,
+            },
+        )
 
     def _forward_cpu(self, X):
         """CPU-only forward pass for single-sample inference (no dropout)."""
-        p = self.params; bn = self.bn_running
+        p = self.params
+        bn = self.bn_running
         z1 = X @ p["W1"] + p["b1"]
         xn1 = (z1 - bn["mu1"]) / np.sqrt(bn["var1"] + 1e-8)
         a1 = np.maximum(0, p["bn1_g"] * xn1 + p["bn1_b"])
@@ -988,46 +1086,57 @@ class WindowNeuralNet:
         return reg_out, cls_out, None
 
     def _backward(self, cache, y_reg, y_cls):
-        m = cache["X"].shape[0]; grads = {}
+        m = cache["X"].shape[0]
+        grads = {}
 
         # Output gradients
         d_reg = (cache["reg_out"] - y_reg) / m
-        grads["W_reg"] = 0.5 * (cache["a4"].T @ d_reg); grads["b_reg"] = 0.5 * xp.sum(d_reg, axis=0, keepdims=True)
+        grads["W_reg"] = 0.5 * (cache["a4"].T @ d_reg)
+        grads["b_reg"] = 0.5 * xp.sum(d_reg, axis=0, keepdims=True)
         d_from_reg = d_reg @ self.params["W_reg"].T
 
-        cls_out = xp.clip(cache["cls_out"], 1e-7, 1-1e-7)
+        cls_out = xp.clip(cache["cls_out"], 1e-7, 1 - 1e-7)
         d_cls = (cls_out - y_cls) / m
-        grads["W_cls"] = 0.5 * (cache["a4"].T @ d_cls); grads["b_cls"] = 0.5 * xp.sum(d_cls, axis=0, keepdims=True)
+        grads["W_cls"] = 0.5 * (cache["a4"].T @ d_cls)
+        grads["b_cls"] = 0.5 * xp.sum(d_cls, axis=0, keepdims=True)
 
         # Layer 4 (no dropout on last hidden)
         d_a4 = 0.5 * d_from_reg + 0.5 * (d_cls @ self.params["W_cls"].T)
         d_z4 = d_a4 * relu_deriv(cache["bn4"])
-        grads["W4"] = cache["a3d"].T @ d_z4; grads["b4"] = xp.sum(d_z4, axis=0, keepdims=True)
-        grads["bn4_g"] = xp.zeros_like(self.params["bn4_g"]); grads["bn4_b"] = xp.zeros_like(self.params["bn4_b"])
+        grads["W4"] = cache["a3d"].T @ d_z4
+        grads["b4"] = xp.sum(d_z4, axis=0, keepdims=True)
+        grads["bn4_g"] = xp.zeros_like(self.params["bn4_g"])
+        grads["bn4_b"] = xp.zeros_like(self.params["bn4_b"])
 
         # Layer 3
-        d_a3d = (d_z4 @ self.params["W4"].T)
+        d_a3d = d_z4 @ self.params["W4"].T
         d_a3 = d_a3d * cache["mask3"]
         d_z3 = d_a3 * relu_deriv(cache["bn3"])
-        grads["W3"] = cache["a2d"].T @ d_z3; grads["b3"] = xp.sum(d_z3, axis=0, keepdims=True)
-        grads["bn3_g"] = xp.zeros_like(self.params["bn3_g"]); grads["bn3_b"] = xp.zeros_like(self.params["bn3_b"])
+        grads["W3"] = cache["a2d"].T @ d_z3
+        grads["b3"] = xp.sum(d_z3, axis=0, keepdims=True)
+        grads["bn3_g"] = xp.zeros_like(self.params["bn3_g"])
+        grads["bn3_b"] = xp.zeros_like(self.params["bn3_b"])
 
         # Layer 2
-        d_a2d = (d_z3 @ self.params["W3"].T)
+        d_a2d = d_z3 @ self.params["W3"].T
         d_a2 = d_a2d * cache["mask2"]
         d_z2 = d_a2 * relu_deriv(cache["bn2"])
-        grads["W2"] = cache["a1d"].T @ d_z2; grads["b2"] = xp.sum(d_z2, axis=0, keepdims=True)
-        grads["bn2_g"] = xp.zeros_like(self.params["bn2_g"]); grads["bn2_b"] = xp.zeros_like(self.params["bn2_b"])
+        grads["W2"] = cache["a1d"].T @ d_z2
+        grads["b2"] = xp.sum(d_z2, axis=0, keepdims=True)
+        grads["bn2_g"] = xp.zeros_like(self.params["bn2_g"])
+        grads["bn2_b"] = xp.zeros_like(self.params["bn2_b"])
 
         # Layer 1
-        d_a1d = (d_z2 @ self.params["W2"].T)
+        d_a1d = d_z2 @ self.params["W2"].T
         d_a1 = d_a1d * cache["mask1"]
         d_z1 = d_a1 * relu_deriv(cache["bn1"])
-        grads["W1"] = cache["X"].T @ d_z1; grads["b1"] = xp.sum(d_z1, axis=0, keepdims=True)
-        grads["bn1_g"] = xp.zeros_like(self.params["bn1_g"]); grads["bn1_b"] = xp.zeros_like(self.params["bn1_b"])
+        grads["W1"] = cache["X"].T @ d_z1
+        grads["b1"] = xp.sum(d_z1, axis=0, keepdims=True)
+        grads["bn1_g"] = xp.zeros_like(self.params["bn1_g"])
+        grads["bn1_b"] = xp.zeros_like(self.params["bn1_b"])
 
         # L2 regularization
-        for k in ["W1","W2","W3","W4","W_reg","W_cls"]:
+        for k in ["W1", "W2", "W3", "W4", "W_reg", "W_cls"]:
             grads[k] += 3e-3 * self.params[k]
         return grads
 
@@ -1035,16 +1144,21 @@ class WindowNeuralNet:
         X, yr, yc = [], [], []
         for i in range(self.LOOKBACK, len(windows)):
             f = self._extract_features(windows, i)
-            if f is None: continue
-            X.append(f); yr.append(windows[i]["end_delta"]); yc.append(1.0 if windows[i]["end_delta"]>=0 else 0.0)
-        return np.array(X, dtype=DTYPE), np.array(yr, dtype=DTYPE).reshape(-1,1), np.array(yc, dtype=DTYPE).reshape(-1,1)
+            if f is None:
+                continue
+            X.append(f)
+            yr.append(windows[i]["end_delta"])
+            yc.append(1.0 if windows[i]["end_delta"] >= 0 else 0.0)
+        return np.array(X, dtype=DTYPE), np.array(yr, dtype=DTYPE).reshape(-1, 1), np.array(yc, dtype=DTYPE).reshape(-1, 1)
 
     def train(self, windows, epochs=3000, lr=0.001, noise=0.10, seed=42, verbose=True):
         X, y_reg, y_cls = self._build_dataset(windows)
         n = X.shape[0]
-        self.feature_mean = X.mean(axis=0); self.feature_std = X.std(axis=0)+1e-8
+        self.feature_mean = X.mean(axis=0)
+        self.feature_std = X.std(axis=0) + 1e-8
         X = (X - self.feature_mean) / self.feature_std
-        self.target_mean = float(y_reg.mean()); self.target_std = float(y_reg.std())+1e-8
+        self.target_mean = float(y_reg.mean())
+        self.target_std = float(y_reg.std()) + 1e-8
         y_reg_n = (y_reg - self.target_mean) / self.target_std
 
         si = int(n * 0.85)
@@ -1060,7 +1174,7 @@ class WindowNeuralNet:
         self.feature_std = self.feature_std
 
         if verbose:
-            print(f"    Samples: {n}, Train: {si}, Val: {n-si}, Device: {'GPU' if GPU else 'CPU'}")
+            print(f"    Samples: {n}, Train: {si}, Val: {n - si}, Device: {'GPU' if GPU else 'CPU'}")
 
         self._init_weights(X.shape[1], seed=seed)
         opt = AdamOptimizer(lr=lr)
@@ -1083,15 +1197,15 @@ class WindowNeuralNet:
 
             # Validation (no dropout)
             vr, vc, _ = self._forward(Xv, training=False)
-            val_mse = float(xp.mean((vr-yrv)**2))
-            vc_c = xp.clip(vc, 1e-7, 1-1e-7)
-            val_bce = float(-xp.mean(ycv*xp.log(vc_c)+(1-ycv)*xp.log(1-vc_c)))
-            vl = 0.4*val_mse + 0.6*val_bce  # weight classification more heavily
+            val_mse = float(xp.mean((vr - yrv) ** 2))
+            vc_c = xp.clip(vc, 1e-7, 1 - 1e-7)
+            val_bce = float(-xp.mean(ycv * xp.log(vc_c) + (1 - ycv) * xp.log(1 - vc_c)))
+            vl = 0.4 * val_mse + 0.6 * val_bce  # weight classification more heavily
 
             if vl < best_vl - 1e-5:
                 best_vl = vl
-                best_p = {k:v.copy() for k,v in self.params.items()}
-                best_bn = {k:v.copy() for k,v in self.bn_running.items()}
+                best_p = {k: v.copy() for k, v in self.params.items()}
+                best_bn = {k: v.copy() for k, v in self.bn_running.items()}
                 pc = 0
             else:
                 pc += 1
@@ -1101,14 +1215,16 @@ class WindowNeuralNet:
                 current_lr *= 0.5
                 opt.lr = current_lr
                 lr_reductions += 1
-                if verbose: print(f"      LR reduced to {current_lr:.6f}")
+                if verbose:
+                    print(f"      LR reduced to {current_lr:.6f}")
 
-            if verbose and (epoch+1) % 200 == 0:
-                da = float(xp.mean((vc>=0.5).astype(DTYPE)==ycv))
-                mae = float(xp.mean(xp.abs(vr*self.target_std+self.target_mean-yrv_raw)))
-                print(f"      Epoch {epoch+1:>4d} | val_loss={vl:.5f} | dir_acc={da:.3f} | MAE=${mae:.2f} | lr={current_lr:.5f}")
+            if verbose and (epoch + 1) % 200 == 0:
+                da = float(xp.mean((vc >= 0.5).astype(DTYPE) == ycv))
+                mae = float(xp.mean(xp.abs(vr * self.target_std + self.target_mean - yrv_raw)))
+                print(f"      Epoch {epoch + 1:>4d} | val_loss={vl:.5f} | dir_acc={da:.3f} | MAE=${mae:.2f} | lr={current_lr:.5f}")
             if pc >= patience:
-                if verbose: print(f"      Early stop at epoch {epoch+1}")
+                if verbose:
+                    print(f"      Early stop at epoch {epoch + 1}")
                 break
 
         if best_p:
@@ -1146,16 +1262,17 @@ class WindowNeuralNet:
 
     def predict(self, windows, idx):
         f = self._extract_features(windows, idx)
-        if f is None or not self.trained: return None
-        X = (f.reshape(1,-1) - self.feature_mean) / self.feature_std
+        if f is None or not self.trained:
+            return None
+        X = (f.reshape(1, -1) - self.feature_mean) / self.feature_std
         # Predict on CPU (params already moved to CPU after training)
         reg, cls, _ = self._forward_cpu(X)
-        delta = float(reg[0,0]) * self.target_std + self.target_mean
-        prob = float(cls[0,0])
+        delta = float(reg[0, 0]) * self.target_std + self.target_mean
+        prob = float(cls[0, 0])
         start = max(0, idx - self.LOOKBACK)
         recent = windows[start:idx]
-        vols = [w["max_positive"]-w["max_negative"] for w in recent]
-        vr = (np.mean(vols[-6:])/(np.mean(vols)+1e-8)) if len(vols)>=6 else 1.0
+        vols = [w["max_positive"] - w["max_negative"] for w in recent]
+        vr = (np.mean(vols[-6:]) / (np.mean(vols) + 1e-8)) if len(vols) >= 6 else 1.0
         rmp = np.mean([w["max_positive"] for w in recent]) if recent else 0
         rmn = np.mean([w["max_negative"] for w in recent]) if recent else 0
         crosses = [w["last_cross_sec"] for w in recent if w["last_cross_sec"] is not None]
@@ -1176,11 +1293,11 @@ class WindowNeuralNet:
             "pred_end_delta": round(delta, 2),
             "pred_direction": "positive" if prob >= 0.5 else "negative",
             "pred_prob_positive": round(prob, 3),
-            "pred_max_up": round(float(rmp * (0.85+0.3*vr)), 2),
-            "pred_max_down": round(float(rmn * (0.85+0.3*vr)), 2),
+            "pred_max_up": round(float(rmp * (0.85 + 0.3 * vr)), 2),
+            "pred_max_down": round(float(rmn * (0.85 + 0.3 * vr)), 2),
             "pred_cross_sec": round(float(np.mean(crosses)), 1) if crosses else None,
-            "confidence": round(abs(prob-0.5)*2, 2),
-            "vol_regime": "HIGH" if vr>1.3 else ("LOW" if vr<0.7 else "NORMAL"),
+            "confidence": round(abs(prob - 0.5) * 2, 2),
+            "vol_regime": "HIGH" if vr > 1.3 else ("LOW" if vr < 0.7 else "NORMAL"),
             "momentum": round(momentum_val, 2),
             "avg_rsi": round(float(np.mean([w["rsi"] for w in recent[-6:]])), 1) if recent else 50,
         }
@@ -1188,24 +1305,24 @@ class WindowNeuralNet:
 
 class EnsemblePredictor:
     CONFIGS = [
-        {"seed": 42,   "lr": 0.001,  "epochs": 6000,  "noise": 0.10},
-        {"seed": 123,  "lr": 0.002,  "epochs": 6000,  "noise": 0.12},
-        {"seed": 777,  "lr": 0.0008, "epochs": 8000,  "noise": 0.08},
-        {"seed": 2024, "lr": 0.0015, "epochs": 6000,  "noise": 0.15},
-        {"seed": 999,  "lr": 0.001,  "epochs": 7000,  "noise": 0.10},
-        {"seed": 314,  "lr": 0.0005, "epochs": 10000, "noise": 0.08},
-        {"seed": 555,  "lr": 0.0012, "epochs": 6000,  "noise": 0.12},
+        {"seed": 42, "lr": 0.001, "epochs": 6000, "noise": 0.10},
+        {"seed": 123, "lr": 0.002, "epochs": 6000, "noise": 0.12},
+        {"seed": 777, "lr": 0.0008, "epochs": 8000, "noise": 0.08},
+        {"seed": 2024, "lr": 0.0015, "epochs": 6000, "noise": 0.15},
+        {"seed": 999, "lr": 0.001, "epochs": 7000, "noise": 0.10},
+        {"seed": 314, "lr": 0.0005, "epochs": 10000, "noise": 0.08},
+        {"seed": 555, "lr": 0.0012, "epochs": 6000, "noise": 0.12},
     ]
 
     # Human-readable names for each model style
     MODEL_NAMES = [
-        "Balanced",        # seed=42, standard lr/noise
-        "Aggressive",      # seed=123, high lr, high noise
-        "Conservative",    # seed=777, low lr, low noise, long train
-        "Noisy",           # seed=2024, mid lr, highest noise
-        "Steady",          # seed=999, standard lr/noise, longer train
-        "Patient",         # seed=314, very low lr, long train, low noise
-        "Adaptive",        # seed=555, mid lr, high noise
+        "Balanced",  # seed=42, standard lr/noise
+        "Aggressive",  # seed=123, high lr, high noise
+        "Conservative",  # seed=777, low lr, low noise, long train
+        "Noisy",  # seed=2024, mid lr, highest noise
+        "Steady",  # seed=999, standard lr/noise, longer train
+        "Patient",  # seed=314, very low lr, long train, low noise
+        "Adaptive",  # seed=555, mid lr, high noise
     ]
 
     def __init__(self):
@@ -1216,10 +1333,10 @@ class EnsemblePredictor:
         self.model_weights = []
         self.model_info = []
         for i, cfg in enumerate(self.CONFIGS):
-            if verbose: print(f"    Model {i+1}/{len(self.CONFIGS)} (seed={cfg['seed']})")
+            if verbose:
+                print(f"    Model {i + 1}/{len(self.CONFIGS)} (seed={cfg['seed']})")
             m = WindowNeuralNet()
-            m.train(windows, epochs=cfg["epochs"], lr=cfg["lr"], noise=cfg["noise"],
-                    seed=cfg["seed"], verbose=verbose)
+            m.train(windows, epochs=cfg["epochs"], lr=cfg["lr"], noise=cfg["noise"], seed=cfg["seed"], verbose=verbose)
             self.models.append(m)
 
         # Compute per-model validation accuracy for weighted ensemble
@@ -1228,18 +1345,22 @@ class EnsemblePredictor:
         si = lb + int(n_total * 0.85)
         raw_accs = []
         for m in self.models:
-            correct = 0; total = 0
+            correct = 0
+            total = 0
             for i in range(si, len(windows)):
                 p = m.predict(windows, i)
-                if p is None: continue
+                if p is None:
+                    continue
                 actual = "positive" if windows[i]["end_delta"] >= 0 else "negative"
-                if p["pred_direction"] == actual: correct += 1
+                if p["pred_direction"] == actual:
+                    correct += 1
                 total += 1
             acc = correct / total if total else 0.5
             raw_accs.append(acc)
             # Weight = accuracy squared (reward better models more)
-            self.model_weights.append(acc ** 2)
-            if verbose: print(f"      Model val_acc={acc:.3f}, weight={acc**2:.4f}")
+            self.model_weights.append(acc**2)
+            if verbose:
+                print(f"      Model val_acc={acc:.3f}, weight={acc**2:.4f}")
 
         # Normalize weights
         total_w = sum(self.model_weights)
@@ -1247,20 +1368,23 @@ class EnsemblePredictor:
 
         # Store model info for dashboard
         for i, cfg in enumerate(self.CONFIGS):
-            self.model_info.append({
-                "name": self.MODEL_NAMES[i],
-                "seed": cfg["seed"],
-                "lr": cfg["lr"],
-                "epochs": cfg["epochs"],
-                "noise": cfg["noise"],
-                "accuracy": round(raw_accs[i], 4),
-                "weight": round(self.model_weights[i], 4),
-            })
+            self.model_info.append(
+                {
+                    "name": self.MODEL_NAMES[i],
+                    "seed": cfg["seed"],
+                    "lr": cfg["lr"],
+                    "epochs": cfg["epochs"],
+                    "noise": cfg["noise"],
+                    "accuracy": round(raw_accs[i], 4),
+                    "weight": round(self.model_weights[i], 4),
+                }
+            )
 
     def predict(self, windows, idx):
         preds = [m.predict(windows, idx) for m in self.models]
         valid = [(i, p) for i, p in enumerate(preds) if p is not None]
-        if not valid: return None
+        if not valid:
+            return None
 
         # Weighted average using per-model accuracy
         weights = [self.model_weights[i] for i, _ in valid]
@@ -1269,31 +1393,33 @@ class EnsemblePredictor:
 
         avg_delta = sum(w * p["pred_end_delta"] for w, (_, p) in zip(weights, valid))
         avg_prob = sum(w * p["pred_prob_positive"] for w, (_, p) in zip(weights, valid))
-        dirs = [1 if p["pred_prob_positive"]>=0.5 else 0 for _, p in valid]
-        agree = max(sum(dirs), len(dirs)-sum(dirs)) / len(valid)
+        dirs = [1 if p["pred_prob_positive"] >= 0.5 else 0 for _, p in valid]
+        agree = max(sum(dirs), len(dirs) - sum(dirs)) / len(valid)
         # Per-model breakdown
         model_details = []
         for i, p in enumerate(preds):
             if p is None:
                 continue
             info = self.model_info[i] if i < len(self.model_info) else {}
-            model_details.append({
-                "name": info.get("name", f"Model {i+1}"),
-                "direction": p["pred_direction"],
-                "prob": p["pred_prob_positive"],
-                "delta": p["pred_end_delta"],
-                "accuracy": info.get("accuracy", 0),
-                "weight": info.get("weight", 0),
-            })
+            model_details.append(
+                {
+                    "name": info.get("name", f"Model {i + 1}"),
+                    "direction": p["pred_direction"],
+                    "prob": p["pred_prob_positive"],
+                    "delta": p["pred_end_delta"],
+                    "accuracy": info.get("accuracy", 0),
+                    "weight": info.get("weight", 0),
+                }
+            )
 
         return {
             "pred_end_delta": round(avg_delta, 2),
-            "pred_direction": "positive" if avg_prob>=0.5 else "negative",
+            "pred_direction": "positive" if avg_prob >= 0.5 else "negative",
             "pred_prob_positive": round(avg_prob, 3),
             "pred_max_up": valid[0][1]["pred_max_up"],
             "pred_max_down": valid[0][1]["pred_max_down"],
             "pred_cross_sec": valid[0][1]["pred_cross_sec"],
-            "confidence": round((agree-0.5)*2, 2),
+            "confidence": round((agree - 0.5) * 2, 2),
             "vol_regime": valid[0][1]["vol_regime"],
             "momentum": valid[0][1]["momentum"],
             "avg_rsi": valid[0][1]["avg_rsi"],
@@ -1306,22 +1432,29 @@ class EnsemblePredictor:
         lb = WindowNeuralNet.LOOKBACK
         n_total = len(windows) - lb
         si = lb + int(n_total * 0.85)
-        correct = 0; total = 0; errors = []; hc_c = 0; hc_t = 0
+        correct = 0
+        total = 0
+        errors = []
+        hc_c = 0
+        hc_t = 0
         for i in range(si, len(windows)):
             p = self.predict(windows, i)
-            if p is None: continue
-            actual_dir = "positive" if windows[i]["end_delta"]>=0 else "negative"
+            if p is None:
+                continue
+            actual_dir = "positive" if windows[i]["end_delta"] >= 0 else "negative"
             dc = p["pred_direction"] == actual_dir
-            if dc: correct += 1
+            if dc:
+                correct += 1
             total += 1
             if p["confidence"] >= 0.4:
                 hc_t += 1
-                if dc: hc_c += 1
+                if dc:
+                    hc_c += 1
             errors.append(abs(p["pred_end_delta"] - windows[i]["end_delta"]))
         return {
             "total": total,
-            "dir_acc": correct/total if total else 0,
-            "hc_acc": hc_c/hc_t if hc_t else 0,
+            "dir_acc": correct / total if total else 0,
+            "hc_acc": hc_c / hc_t if hc_t else 0,
             "hc_count": hc_t,
             "mae": float(np.mean(errors)) if errors else 0,
             "median_ae": float(np.median(errors)) if errors else 0,
@@ -1332,12 +1465,22 @@ class EnsemblePredictor:
             return None
         last = windows[-1]
         ns = last["start"] + timedelta(minutes=WINDOW_MINUTES)
-        dummy = {"start": ns, "end_delta":0, "max_positive":0, "max_negative":0,
-                 "avg_delta":0, "baseline":last["baseline"], "positive_pct":50,
-                 "last_cross_sec":None, "last_cross_direction":None,
-                 "rsi":50, "crossings":0}
+        dummy = {
+            "start": ns,
+            "end_delta": 0,
+            "max_positive": 0,
+            "max_negative": 0,
+            "avg_delta": 0,
+            "baseline": last["baseline"],
+            "positive_pct": 50,
+            "last_cross_sec": None,
+            "last_cross_direction": None,
+            "rsi": 50,
+            "crossings": 0,
+        }
         p = self.predict(windows + [dummy], len(windows))
-        if p: p["window_start"] = ns
+        if p:
+            p["window_start"] = ns
         return p
 
     def save_to_file(self, filepath):
@@ -1386,12 +1529,12 @@ class EnsemblePredictor:
         """Predict current (next) + last 3 completed windows."""
         results = []
         # Last 3 completed
-        for i in range(max(0, len(windows)-3), len(windows)):
+        for i in range(max(0, len(windows) - 3), len(windows)):
             p = self.predict(windows, i)
             if p:
                 p["window_start"] = windows[i]["start"]
                 p["actual_end_delta"] = windows[i]["end_delta"]
-                p["actual_direction"] = "positive" if windows[i]["end_delta"]>=0 else "negative"
+                p["actual_direction"] = "positive" if windows[i]["end_delta"] >= 0 else "negative"
                 p["is_current"] = False
                 results.append(p)
         # Next (current/upcoming)
@@ -1407,6 +1550,7 @@ class EnsemblePredictor:
 # ═══════════════════════════════════════════════════════════════════════
 # HTML DASHBOARD
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _render_model_panel(res):
     """Render the ensemble model breakdown panel."""
@@ -1435,8 +1579,8 @@ def _render_model_panel(res):
         if detail:
             dir_class = "positive" if detail["direction"] == "positive" else "negative"
             dir_str = detail["direction"].upper()
-            prob_str = f'{detail["prob"]:.1%}'
-            delta_str = f'${detail["delta"]:+,.2f}'
+            prob_str = f"{detail['prob']:.1%}"
+            delta_str = f"${detail['delta']:+,.2f}"
         else:
             dir_class = "muted"
             dir_str = "—"
@@ -1453,7 +1597,7 @@ def _render_model_panel(res):
           <td class="{dir_class}" style="font-weight:600;">{dir_str}</td>
           <td>{prob_str}</td>
           <td>{delta_str}</td>
-          <td class="{acc_class}">{mi["accuracy"]*100:.1f}%</td>
+          <td class="{acc_class}">{mi["accuracy"] * 100:.1f}%</td>
           <td style="width:120px;">
             <div style="display:flex;align-items:center;gap:6px;">
               <div style="background:var(--blue);height:8px;border-radius:4px;width:{bar_width}%;opacity:0.7;"></div>
@@ -1500,14 +1644,14 @@ def generate_dashboard(all_results):
         pred_cards = ""
         if not preds:
             pred_cards = '<div class="pred-card" style="border-color:var(--yellow);"><div style="padding:12px;text-align:center;color:var(--yellow);font-weight:600;">Models training on GPU... predictions will appear shortly.</div></div>'
-        for p in (preds or []):
+        for p in preds or []:
             is_cur = p["is_current"]
             border = "var(--green)" if is_cur else "var(--border)"
             label = "UPCOMING" if is_cur else "COMPLETED"
             label_color = "var(--green)" if is_cur else "var(--muted)"
             dir_class = "positive" if p["pred_direction"] == "positive" else "negative"
             prob = p["pred_prob_positive"]
-            prob_str = f"{prob:.0%}" if prob >= 0.5 else f"{(1-prob):.0%}"
+            prob_str = f"{prob:.0%}" if prob >= 0.5 else f"{(1 - prob):.0%}"
             actual_str = ""
             if p["actual_end_delta"] is not None:
                 ac = p["actual_end_delta"]
@@ -1517,7 +1661,7 @@ def generate_dashboard(all_results):
                 tick_color = "var(--green)" if correct else "var(--red)"
                 actual_str = f'<div class="detail">Actual: <span class="{ac_class}">${ac:+,.2f}</span> {"&#10003;" if correct else "&#10007;"}</div>'
 
-            cross_str = f'{p["pred_cross_sec"]:.0f}s' if p["pred_cross_sec"] else "—"
+            cross_str = f"{p['pred_cross_sec']:.0f}s" if p["pred_cross_sec"] else "—"
             time_str = p["window_start"].strftime("%H:%M") if p.get("window_start") else "—"
 
             pred_cards += f"""
@@ -1530,7 +1674,7 @@ def generate_dashboard(all_results):
                 <div><span class="mini-label">Direction <i class="info-tip" data-tip="Predicted price direction for this 5-min window. POSITIVE = price expected to rise, NEGATIVE = expected to fall.">?</i></span><br><span class="value-sm {dir_class}">{p["pred_direction"].upper()}</span></div>
                 <div><span class="mini-label">Delta <i class="info-tip" data-tip="Predicted price change in dollars from start to end of the 5-minute window.">?</i></span><br><span class="value-sm">${p["pred_end_delta"]:+,.2f}</span></div>
                 <div><span class="mini-label">Prob <i class="info-tip" data-tip="Model probability that price ends higher. Above 50% = bullish, below 50% = bearish.">?</i></span><br><span class="value-sm">{prob_str}</span></div>
-                <div><span class="mini-label">Confidence <i class="info-tip" data-tip="How sure the model is. 0% = coin flip, 100% = very confident. Based on ensemble agreement.">?</i></span><br><span class="value-sm">{p["confidence"]*100:.0f}%</span></div>
+                <div><span class="mini-label">Confidence <i class="info-tip" data-tip="How sure the model is. 0% = coin flip, 100% = very confident. Based on ensemble agreement.">?</i></span><br><span class="value-sm">{p["confidence"] * 100:.0f}%</span></div>
                 <div><span class="mini-label">Range <i class="info-tip" data-tip="Expected max price swing up and down within the window, based on recent volatility.">?</i></span><br><span class="value-sm"><span class="positive">${p["pred_max_up"]:+,.2f}</span> / <span class="negative">${p["pred_max_down"]:+,.2f}</span></span></div>
                 <div><span class="mini-label">Last Cross <i class="info-tip" data-tip="Predicted second when price crosses back through the opening price. Earlier = choppier market.">?</i></span><br><span class="value-sm">{cross_str}</span></div>
                 <div><span class="mini-label">Vol <i class="info-tip" data-tip="Volatility regime. HIGH = large swings expected, LOW = calm market, NORMAL = typical activity.">?</i></span><br><span class="value-sm">{p["vol_regime"]}</span></div>
@@ -1562,7 +1706,7 @@ def generate_dashboard(all_results):
         window_rows = ""
         for w in windows:
             ec = "positive" if w["end_delta"] >= 0 else "negative"
-            cross_s = f'{w["last_cross_sec"]:.0f}s→{w["last_cross_direction"][:3]}' if w["last_cross_sec"] else "—"
+            cross_s = f"{w['last_cross_sec']:.0f}s→{w['last_cross_direction'][:3]}" if w["last_cross_sec"] else "—"
             rsi_class = "negative" if w["rsi"] > 70 else ("positive" if w["rsi"] < 30 else "")
             window_rows += f"""<tr>
               <td>{w["start"].strftime("%m-%d %H:%M")}</td>
@@ -1620,12 +1764,12 @@ def generate_dashboard(all_results):
           <div class="cards" style="margin-top:20px;">
             <div class="card">
               <div class="label">Accuracy in Testing <i class="info-tip" data-tip="How often the model correctly predicted the price direction (up/down) on historical data it hadn't seen during training.">?</i></div>
-              <div class="value {bt_class}">{bt["dir_acc"]*100:.1f}%</div>
+              <div class="value {bt_class}">{bt["dir_acc"] * 100:.1f}%</div>
               <div class="detail">{bt["total"]:,} predictions | MAE: ${bt["mae"]:.2f}</div>
             </div>
             <div class="card">
               <div class="label">High-Conf Test Accuracy <i class="info-tip" data-tip="Accuracy only for predictions where the model was highly confident (>60%). These are the signals most worth acting on.">?</i></div>
-              <div class="value {bt_class}">{bt["hc_acc"]*100:.1f}%</div>
+              <div class="value {bt_class}">{bt["hc_acc"] * 100:.1f}%</div>
               <div class="detail">{bt["hc_count"]:,} high-confidence</div>
             </div>
             <div class="card">
@@ -1646,7 +1790,7 @@ def generate_dashboard(all_results):
             <div class="card">
               <div class="label">Ended +/- <i class="info-tip" data-tip="How many 5-min windows ended with a higher price vs lower price. Shows the overall bullish/bearish bias.">?</i></div>
               <div class="value">{s["windows_ended_positive"]:,} / {s["windows_ended_negative"]:,}</div>
-              <div class="detail">{s["windows_ended_positive"]/max(s["total_windows"],1)*100:.1f}% positive</div>
+              <div class="detail">{s["windows_ended_positive"] / max(s["total_windows"], 1) * 100:.1f}% positive</div>
             </div>
             <div class="card">
               <div class="label">Avg RSI / Crossings <i class="info-tip" data-tip="RSI: momentum indicator (>70 overbought, <30 oversold). Crossings: how many times price crosses the opening price per window (more = choppier).">?</i></div>
@@ -1655,7 +1799,7 @@ def generate_dashboard(all_results):
             </div>
             <div class="card">
               <div class="label">Avg End Delta <i class="info-tip" data-tip="Average price change from open to close of each 5-min window. Positive = overall uptrend, negative = downtrend.">?</i></div>
-              <div class="value {"positive" if s["avg_end_delta"]>=0 else "negative"}">${s["avg_end_delta"]:+,.2f}</div>
+              <div class="value {"positive" if s["avg_end_delta"] >= 0 else "negative"}">${s["avg_end_delta"]:+,.2f}</div>
               <div class="detail">{s["total_windows"]:,} windows over {HISTORY_DAYS}d</div>
             </div>
           </div>
@@ -1665,32 +1809,32 @@ def generate_dashboard(all_results):
             <div class="cards">
               <div class="card">
                 <div class="label">Avg Gain / Loss per Sec <i class="info-tip" data-tip="Average dollar amount gained or lost each second within a window. Shows the speed of price movement up vs down.">?</i></div>
-                <div class="value"><span class="positive">${vel.get("avg_gain_per_sec",0):.4f}</span> / <span class="negative">${vel.get("avg_loss_per_sec",0):.4f}</span></div>
-                <div class="detail">Ratio: {vel.get("gain_loss_ratio",0):.3f} | {vel.get("pct_seconds_gaining",0):.1f}% gaining</div>
+                <div class="value"><span class="positive">${vel.get("avg_gain_per_sec", 0):.4f}</span> / <span class="negative">${vel.get("avg_loss_per_sec", 0):.4f}</span></div>
+                <div class="detail">Ratio: {vel.get("gain_loss_ratio", 0):.3f} | {vel.get("pct_seconds_gaining", 0):.1f}% gaining</div>
               </div>
               <div class="card">
                 <div class="label">Avg Run Duration <i class="info-tip" data-tip="How many consecutive seconds price moves in one direction before reversing. Longer runs = stronger trends within a window.">?</i></div>
-                <div class="value"><span class="positive">{vel.get("avg_run_duration_up",0):.1f}s &#9650;</span> <span class="negative">{vel.get("avg_run_duration_down",0):.1f}s &#9660;</span></div>
+                <div class="value"><span class="positive">{vel.get("avg_run_duration_up", 0):.1f}s &#9650;</span> <span class="negative">{vel.get("avg_run_duration_down", 0):.1f}s &#9660;</span></div>
                 <div class="detail">Consecutive seconds in one direction</div>
               </div>
               <div class="card">
                 <div class="label">Post-Cross Velocity <i class="info-tip" data-tip="Speed of price movement ($/sec) in the 30 seconds after price crosses zero. Shows how aggressively the market moves after a direction change.">?</i></div>
-                <div class="value"><span class="positive">${vel.get("avg_velocity_after_cross_pos",0):.4f}/s</span> <span class="negative">${vel.get("avg_velocity_after_cross_neg",0):.4f}/s</span></div>
+                <div class="value"><span class="positive">${vel.get("avg_velocity_after_cross_pos", 0):.4f}/s</span> <span class="negative">${vel.get("avg_velocity_after_cross_neg", 0):.4f}/s</span></div>
                 <div class="detail">Avg $/sec in 30s after crossing zero</div>
               </div>
               <div class="card">
                 <div class="label">Momentum Decay <i class="info-tip" data-tip="Compares price movement in the 2nd half vs 1st half of each window. Below 1.0 = momentum fades, above 1.0 = momentum accelerates.">?</i></div>
-                <div class="value {"positive" if vel.get("momentum_decay_ratio",1)<0.8 else ("negative" if vel.get("momentum_decay_ratio",1)>1.2 else "yellow")}">{vel.get("momentum_decay_ratio",1):.2f}x</div>
-                <div class="detail">2nd-half vs 1st-half move ({"fades" if vel.get("momentum_decay_ratio",1)<0.8 else ("accelerates" if vel.get("momentum_decay_ratio",1)>1.2 else "steady")})</div>
+                <div class="value {"positive" if vel.get("momentum_decay_ratio", 1) < 0.8 else ("negative" if vel.get("momentum_decay_ratio", 1) > 1.2 else "yellow")}">{vel.get("momentum_decay_ratio", 1):.2f}x</div>
+                <div class="detail">2nd-half vs 1st-half move ({"fades" if vel.get("momentum_decay_ratio", 1) < 0.8 else ("accelerates" if vel.get("momentum_decay_ratio", 1) > 1.2 else "steady")})</div>
               </div>
               <div class="card">
                 <div class="label">Avg Time to Peak / Trough <i class="info-tip" data-tip="Average second within the 5-min window when the highest and lowest prices occur. Helps time entries and exits.">?</i></div>
-                <div class="value"><span class="positive">{vel.get("avg_time_to_peak_sec",0):.0f}s</span> / <span class="negative">{vel.get("avg_time_to_trough_sec",0):.0f}s</span></div>
+                <div class="value"><span class="positive">{vel.get("avg_time_to_peak_sec", 0):.0f}s</span> / <span class="negative">{vel.get("avg_time_to_trough_sec", 0):.0f}s</span></div>
                 <div class="detail">When max/min typically occurs in window</div>
               </div>
               <div class="card">
                 <div class="label">Best Entry Point <i class="info-tip" data-tip="The second into the window where price historically makes its biggest average move. Optimal time to enter a trade.">?</i></div>
-                <div class="value info">{vel.get("best_entry_sec",0)}s</div>
+                <div class="value info">{vel.get("best_entry_sec", 0)}s</div>
                 <div class="detail">Sec into window with max avg |move|</div>
               </div>
             </div>
@@ -1926,10 +2070,11 @@ document.addEventListener('DOMContentLoaded', function() {{
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def process_asset(ticker, symbol):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {ticker} ({symbol})")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     raw, start_dt, end_dt = load_or_fetch(symbol, days=HISTORY_DAYS)
     data = parse_klines(raw)
@@ -1957,13 +2102,13 @@ def process_asset(ticker, symbol):
 
     print(f"  Backtesting...")
     bt = ensemble.backtest(windows)
-    print(f"  Dir accuracy: {bt['dir_acc']*100:.1f}% | HC: {bt['hc_acc']*100:.1f}% ({bt['hc_count']})")
+    print(f"  Dir accuracy: {bt['dir_acc'] * 100:.1f}% | HC: {bt['hc_acc'] * 100:.1f}% ({bt['hc_count']})")
     print(f"  MAE: ${bt['mae']:.2f} | Median AE: ${bt['median_ae']:.2f}")
 
     preds = ensemble.predict_current_and_recent(windows)
     for p in preds:
         tag = "NEXT" if p["is_current"] else "PAST"
-        print(f"    [{tag}] {p['window_start'].strftime('%H:%M')} → {p['pred_direction'].upper()} (${p['pred_end_delta']:+,.2f}, conf={p['confidence']*100:.0f}%)")
+        print(f"    [{tag}] {p['window_start'].strftime('%H:%M')} → {p['pred_direction'].upper()} (${p['pred_end_delta']:+,.2f}, conf={p['confidence'] * 100:.0f}%)")
 
     # Sample chart data for interactive charts (last 24h at ~30s intervals, plus 7d at 5m intervals)
     chart_data_24h = []
@@ -2019,6 +2164,7 @@ def main():
     print("Opening...")
 
     import subprocess
+
     subprocess.Popen(["open", str(output_path)])
 
 

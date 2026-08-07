@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "narve-markets": {
+      "command": "/Users/julianhabbig/Claude Vibecoding /Polymarket/venv/bin/python3",
+      "args": [
+        "/Users/julianhabbig/Claude Vibecoding /Polymarket/.claude/mcp/markets-server.py"
+      ]
+    }
+  }
+}
