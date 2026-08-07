@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forecast Accuracy — narve.ai</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/narve-shell.js" defer></script>
+  <style>
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .tile {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 12px 14px;
+    }
+    .tile-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .tile-value { font-size: 22px; }
+    .tile-note { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+    h2 {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 24px 0 8px;
+      font-weight: 500;
+    }
+
+    .empty-state {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 14px;
+      margin-bottom: 20px;
+    }
+    .hidden { display: none; }
+
+    .chart-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 16px 14px 10px;
+    }
+    .chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      height: 170px;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+    .gridline {
+      position: absolute;
+      left: 0; right: 0;
+      border-top: 1px dashed #232323;
+      pointer-events: none;
+    }
+    .gridline span {
+      position: absolute;
+      right: 2px; top: -14px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .bucket {
+      flex: 1;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 3px;
+      height: 100%;
+    }
+    .bar { width: 40%; max-width: 22px; min-height: 1px; }
+    .bar.pred { background: #4b5563; }
+    .bar.actual { background: var(--accent); }
+    .bucket.empty .bar { background: #1c1c1c; height: 2px; }
+    .chart-labels { display: flex; gap: 8px; margin-top: 6px; }
+    .chart-labels div {
+      flex: 1;
+      text-align: center;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .chart-labels .n { display: block; color: #555; }
+    .legend { margin-top: 10px; color: var(--muted); font-size: 11px; }
+    .legend .swatch {
+      display: inline-block;
+      width: 10px; height: 10px;
+      margin: 0 4px 0 12px;
+      vertical-align: -1px;
+    }
+    .legend .swatch:first-child { margin-left: 0; }
+
+    table.scores { margin-bottom: 8px; }
+    table.scores td.num, table.scores th.num { text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>Forecast Accuracy</h1>
+  <div class="subtitle">Brier scores and calibration from resolved markets</div>
+  <nav class="pages">
+    <a href="/">Board</a>
+    <a href="/accuracy" class="active">Accuracy</a>
+  </nav>
+
+  <div id="empty" class="empty-state hidden">no resolutions yet — calibration accrues automatically</div>
+  <div id="error" class="empty-state hidden"></div>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="tile-label">Resolved rows</div>
+      <div class="tile-value" id="tile-n">—</div>
+      <div class="tile-note" id="tile-n-note"></div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Brier · model</div>
+      <div class="tile-value" id="tile-model">—</div>
+      <div class="tile-note">lower is better</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Brier · market</div>
+      <div class="tile-value" id="tile-market">—</div>
+      <div class="tile-note">same rows, head-to-head</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Edge vs market</div>
+      <div class="tile-value" id="tile-edge">—</div>
+      <div class="tile-note" id="tile-edge-note"></div>
+    </div>
+  </div>
+
+  <h2>Calibration — predicted vs actual, 10% buckets</h2>
+  <div class="chart-wrap">
+    <div class="chart" id="chart"></div>
+    <div class="chart-labels" id="chart-labels"></div>
+    <div class="legend">
+      <span class="swatch" style="background:#4b5563"></span>avg predicted prob
+      <span class="swatch" style="background:var(--accent)"></span>actual hit rate
+    </div>
+  </div>
+
+  <h2>By source</h2>
+  <table class="scores">
+    <thead><tr><th>Source</th><th class="num">N</th><th class="num">Brier</th></tr></thead>
+    <tbody id="by-source"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+  </table>
+
+  <h2>By category</h2>
+  <table class="scores">
+    <thead><tr><th>Category</th><th class="num">N</th><th class="num">Brier</th></tr></thead>
+    <tbody id="by-category"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+  </table>
+
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+    const num = (v, d = 4) => v == null ? '—' : v.toFixed(d);
+    const pct = (v, d = 1) => v == null ? '—' : (v * 100).toFixed(d) + '%';
+    const $ = (id) => document.getElementById(id);
+
+    const BUCKETS = Array.from({ length: 10 }, (_, i) => `${i * 10}-${i * 10 + 10}%`);
+
+    function renderTiles(data) {
+      $('tile-n').textContent = data.n;
+      $('tile-n-note').textContent = `${data.n_model} with a model prob`;
+      $('tile-model').textContent = num(data.brier_model);
+      $('tile-market').textContent = num(data.brier_market);
+
+      const edge = data.edge_vs_market;
+      const el = $('tile-edge');
+      const note = $('tile-edge-note');
+      if (edge == null) {
+        el.textContent = '—';
+        note.textContent = 'needs model-scored resolutions';
+      } else {
+        el.textContent = (edge > 0 ? '+' : '') + edge.toFixed(4);
+        el.className = 'tile-value ' + (edge > 0 ? 'up' : edge < 0 ? 'down' : '');
+        note.textContent = edge > 0 ? 'model beats market'
+          : edge < 0 ? 'market beats model' : 'dead even';
+      }
+    }
+
+    function renderTable(tbodyId, breakdown, emptyLabel) {
+      const entries = Object.entries(breakdown || {});
+      if (entries.length === 0) {
+        $(tbodyId).innerHTML = `<tr><td colspan="3" class="muted">${emptyLabel}</td></tr>`;
+        return;
+      }
+      entries.sort((a, b) => b[1].n - a[1].n);
+      $(tbodyId).innerHTML = entries.map(([name, s]) => `<tr>
+        <td>${esc(name)}</td>
+        <td class="num">${s.n}</td>
+        <td class="num">${num(s.brier)}</td>
+      </tr>`).join('');
+    }
+
+    function renderChart(buckets) {
+      const chart = $('chart');
+      const labels = $('chart-labels');
+      chart.innerHTML = [75, 50, 25].map(p =>
+        `<div class="gridline" style="bottom:${p}%"><span>${p}%</span></div>`
+      ).join('');
+
+      for (const key of BUCKETS) {
+        const b = (buckets || {})[key];
+        const div = document.createElement('div');
+        if (!b) {
+          div.className = 'bucket empty';
+          div.title = `${key}: no resolved rows`;
+          div.innerHTML = '<div class="bar pred"></div><div class="bar actual"></div>';
+        } else {
+          div.className = 'bucket';
+          div.title = `${key}: predicted ${pct(b.avg_prob)}, actual ${pct(b.hit_rate)} (n=${b.count})`;
+          div.innerHTML =
+            `<div class="bar pred" style="height:${(b.avg_prob * 100).toFixed(1)}%"></div>` +
+            `<div class="bar actual" style="height:${(b.hit_rate * 100).toFixed(1)}%"></div>`;
+        }
+        chart.appendChild(div);
+
+        const lab = document.createElement('div');
+        lab.innerHTML = `${esc(key.replace('%', ''))}<span class="n">${b ? 'n=' + b.count : ''}</span>`;
+        labels.appendChild(lab);
+      }
+    }
+
+    fetch('/api/accuracy')
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(data => {
+        if (data.n === 0) $('empty').classList.remove('hidden');
+        renderTiles(data);
+        renderChart(data.buckets);
+        renderTable('by-source', data.by_source, 'no data yet');
+        renderTable('by-category', data.by_category, 'no data yet');
+      })
+      .catch(err => {
+        const el = $('error');
+        el.textContent = 'failed to load accuracy data: ' + err.message;
+        el.classList.remove('hidden');
+        renderChart({});
+        renderTable('by-source', {}, 'unavailable');
+        renderTable('by-category', {}, 'unavailable');
+      });
+  </script>
+</body>
+</html>

@@ -63,6 +63,8 @@ services:
         condition: service_healthy
       world_health:
         condition: service_healthy
+      forecast:
+        condition: service_healthy
 
   crypto:
     build: ./crypto-dashboard
@@ -220,6 +222,23 @@ services:
       retries: 3
       start_period: 60s
 
+  forecast:
+    build: ./forecast-dashboard
+    expose:
+      - "7062"
+    env_file: ./gateway/.env.production
+    environment:
+      BIND_HOST: "0.0.0.0"
+    volumes:
+      - forecast-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7062/healthz',timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
   # Service name uses underscore to match the gateway/config.json key
   # `world_health`. The build context still points at the hyphenated dir.
   # The disease-atlas builds a 121-drug RxNorm + openFDA cache on first
@@ -242,6 +261,7 @@ services:
       start_period: 90s
 
 volumes:
+  forecast-data:
   gateway-data:
   crypto-data:
   voters-data:

@@ -13,6 +13,7 @@
 #   8888 — Sports Dashboard          (sports-dashboard/sports_dashboard.py)
 #   7050 — World State Dashboard     (world-state-dashboard/server.py)
 #   7051 — Voters Atlas Dashboard    (voters-dashboard/server.py)
+#   7062 — Forecast Board             (forecast-dashboard/server.py)
 #   7052 — Climate Change Dashboard  (climate-dashboard/server.py)
 #   7053 — World Health Dashboard    (world-health-dashboard/server.py)
 #   7061 — Central Bank Dashboard    (centralbank-dashboard/server.py)
@@ -31,7 +32,7 @@ NC='\033[0m'
 # Gateway port — honour env override (macOS AirPlay Receiver holds 7000).
 # Falls back to 7000 to match production / config.json.
 GATEWAY_PORT="${GATEWAY_PORT:-7000}"
-ALL_PORTS="$GATEWAY_PORT 8000 8050 8051 8052 5050 8888 7050 7051 7052 7053 7061"
+ALL_PORTS="$GATEWAY_PORT 8000 8050 8051 8052 5050 8888 7050 7051 7052 7053 7061 7062"
 
 # Kill dashboard processes — prefer PID files, fall back to port scan
 cleanup() {
@@ -74,19 +75,19 @@ start_all() {
     fi
 
     # 1. Crypto Dashboard (port 8000)
-    echo -e "${GREEN}[1/12]${NC} Starting Crypto Dashboard on port 8000..."
+    echo -e "${GREEN}[1/13]${NC} Starting Crypto Dashboard on port 8000..."
     python3 "$SCRIPT_DIR/crypto-dashboard/server.py" > /tmp/dashboard_crypto.log 2>&1 &
     echo $! > /tmp/dashboard_crypto.pid
     echo "       PID: $(cat /tmp/dashboard_crypto.pid)"
 
     # 2. Stock Dashboard (port 8050)
-    echo -e "${GREEN}[2/12]${NC} Starting Stock Dashboard on port 8050..."
+    echo -e "${GREEN}[2/13]${NC} Starting Stock Dashboard on port 8050..."
     python3 "$SCRIPT_DIR/stock-dashboard/stock_dashboard.py" --port 8050 > /tmp/dashboard_stock.log 2>&1 &
     echo $! > /tmp/dashboard_stock.pid
     echo "       PID: $(cat /tmp/dashboard_stock.pid)"
 
     # 3. Midterm Prediction Dashboard (port 8051)
-    echo -e "${GREEN}[3/12]${NC} Starting Midterm Dashboard on port 8051..."
+    echo -e "${GREEN}[3/13]${NC} Starting Midterm Dashboard on port 8051..."
     cd "$SCRIPT_DIR/midterm-dashboard/backend"
     python3 main.py > /tmp/dashboard_midterm.log 2>&1 &
     echo $! > /tmp/dashboard_midterm.pid
@@ -94,25 +95,25 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 4. Top Traders Dashboard (port 8052)
-    echo -e "${GREEN}[4/12]${NC} Starting Top Traders Dashboard on port 8052..."
+    echo -e "${GREEN}[4/13]${NC} Starting Top Traders Dashboard on port 8052..."
     python3 "$SCRIPT_DIR/top-traders-dashboard/server.py" > /tmp/dashboard_top_traders.log 2>&1 &
     echo $! > /tmp/dashboard_top_traders.pid
     echo "       PID: $(cat /tmp/dashboard_top_traders.pid)"
 
     # 5. Weather Dashboard (port 5050)
-    echo -e "${GREEN}[5/12]${NC} Starting Weather Dashboard on port 5050..."
+    echo -e "${GREEN}[5/13]${NC} Starting Weather Dashboard on port 5050..."
     python3 "$SCRIPT_DIR/polymarket_weather_dashboard/server.py" > /tmp/dashboard_weather.log 2>&1 &
     echo $! > /tmp/dashboard_weather.pid
     echo "       PID: $(cat /tmp/dashboard_weather.pid)"
 
     # 6. Sports Dashboard (port 8888)
-    echo -e "${GREEN}[6/12]${NC} Starting Sports Dashboard on port 8888..."
+    echo -e "${GREEN}[6/13]${NC} Starting Sports Dashboard on port 8888..."
     python3 "$SCRIPT_DIR/sports-dashboard/sports_dashboard.py" > /tmp/dashboard_sports.log 2>&1 &
     echo $! > /tmp/dashboard_sports.pid
     echo "       PID: $(cat /tmp/dashboard_sports.pid)"
 
     # 7. World State Dashboard (port 7050)
-    echo -e "${GREEN}[7/12]${NC} Starting World State Dashboard on port 7050..."
+    echo -e "${GREEN}[7/13]${NC} Starting World State Dashboard on port 7050..."
     cd "$SCRIPT_DIR/world-state-dashboard"
     python3 -m uvicorn server:app --host 127.0.0.1 --port 7050 > /tmp/dashboard_world.log 2>&1 &
     echo $! > /tmp/dashboard_world.pid
@@ -120,7 +121,7 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 8. Voters Atlas Dashboard (port 7051)
-    echo -e "${GREEN}[8/12]${NC} Starting Voters Atlas on port 7051..."
+    echo -e "${GREEN}[8/13]${NC} Starting Voters Atlas on port 7051..."
     cd "$SCRIPT_DIR/voters-dashboard"
     python3 -m uvicorn server:app --host 127.0.0.1 --port 7051 > /tmp/dashboard_voters.log 2>&1 &
     echo $! > /tmp/dashboard_voters.pid
@@ -128,13 +129,13 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 9. Climate Change Dashboard (port 7052)
-    echo -e "${GREEN}[9/12]${NC} Starting Climate Dashboard on port 7052..."
+    echo -e "${GREEN}[9/13]${NC} Starting Climate Dashboard on port 7052..."
     PORT=7052 python3 "$SCRIPT_DIR/climate-dashboard/server.py" > /tmp/dashboard_climate.log 2>&1 &
     echo $! > /tmp/dashboard_climate.pid
     echo "       PID: $(cat /tmp/dashboard_climate.pid)"
 
     # 10. World Health Dashboard (port 7053)
-    echo -e "${GREEN}[10/12]${NC} Starting World Health Dashboard on port 7053..."
+    echo -e "${GREEN}[10/13]${NC} Starting World Health Dashboard on port 7053..."
     cd "$SCRIPT_DIR/world-health-dashboard"
     PORT=7053 python3 -m uvicorn server:app --host 127.0.0.1 --port 7053 > /tmp/dashboard_world_health.log 2>&1 &
     echo $! > /tmp/dashboard_world_health.pid
@@ -142,16 +143,24 @@ start_all() {
     cd "$SCRIPT_DIR"
 
     # 11. Central Bank Dashboard (port 7061)
-    echo -e "${GREEN}[11/12]${NC} Starting Central Bank Dashboard on port 7061..."
+    echo -e "${GREEN}[11/13]${NC} Starting Central Bank Dashboard on port 7061..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
     PORT=7061 python3 -m uvicorn server:app --host 127.0.0.1 --port 7061 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid
     echo "       PID: $(cat /tmp/dashboard_centralbank.pid)"
     cd "$SCRIPT_DIR"
 
-    # 12. Gateway — starts last so upstreams are up first.
+    # 12. Forecast Board (port 7062)
+    echo -e "${GREEN}[12/13]${NC} Starting Forecast Board on port 7062..."
+    cd "$SCRIPT_DIR/forecast-dashboard"
+    python3 -m uvicorn server:app --host 127.0.0.1 --port 7062 > /tmp/dashboard_forecast.log 2>&1 &
+    echo $! > /tmp/dashboard_forecast.pid
+    echo "       PID: $(cat /tmp/dashboard_forecast.pid)"
+    cd "$SCRIPT_DIR"
+
+    # 13. Gateway — starts last so upstreams are up first.
     # GATEWAY_PORT env var overrides config.json (avoids macOS AirPlay on 7000).
-    echo -e "${GREEN}[12/12]${NC} Starting Gateway on port $GATEWAY_PORT..."
+    echo -e "${GREEN}[13/13]${NC} Starting Gateway on port $GATEWAY_PORT..."
     cd "$SCRIPT_DIR/gateway"
     GATEWAY_PORT="$GATEWAY_PORT" python3 server.py > /tmp/dashboard_gateway.log 2>&1 &
     echo $! > /tmp/dashboard_gateway.pid

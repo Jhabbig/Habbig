@@ -37,6 +37,7 @@ The **gateway** at `gateway/server.py` (port 7000) is the single entry point. Su
 | 7052 | climate-dashboard | climate |
 | 7053 | world-health-dashboard | (TBD) |
 | 7061 | centralbank-dashboard | cb |
+| 7062 | forecast-dashboard | predict |
 
 Port 7060 is reserved by the `disasters` entry in `gateway/config.json` (ecological-disasters-dashboard, not currently in the tree) — don't reuse it.
 

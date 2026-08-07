@@ -159,6 +159,18 @@
       "supports_websocket": false,
       "stripe_price_monthly": "TODO_WORLD_HEALTH_STRIPE_MONTHLY",
       "stripe_price_annual": "TODO_WORLD_HEALTH_STRIPE_ANNUAL"
+    },
+    "forecast": {
+      "subdomain": "predict",
+      "target": 7062,
+      "display_name": "Forecast Board",
+      "description": "What happens next — calibrated probabilities for every market event resolving in the next 7 days, Polymarket × Kalshi",
+      "accent": "#d97757",
+      "monthly_cents": 999,
+      "annual_cents": 9900,
+      "supports_websocket": false,
+      "stripe_price_monthly": "TODO_FORECAST_STRIPE_MONTHLY",
+      "stripe_price_annual": "TODO_FORECAST_STRIPE_ANNUAL"
     }
   }
 }

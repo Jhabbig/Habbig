@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forecast Board — narve.ai</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/narve-shell.js" defer></script>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Forecast Board</h1>
+      <div class="subtitle">Cross-venue prediction markets closing within the horizon</div>
+    </div>
+    <span class="fresh" id="fresh-top"><span class="dot"></span><span class="fresh-text">ingest —</span></span>
+  </div>
+  <nav class="pages">
+    <a href="/" class="active">Board</a>
+    <a href="/accuracy">Accuracy</a>
+  </nav>
+
+  <div class="controls">
+    <label>Days
+      <select id="f-days">
+        <option>1</option><option>2</option><option>3</option><option>4</option>
+        <option>5</option><option>6</option><option selected>7</option>
+      </select>
+    </label>
+    <label>Venue
+      <select id="f-venue">
+        <option value="">all</option>
+        <option value="polymarket">polymarket</option>
+        <option value="kalshi">kalshi</option>
+      </select>
+    </label>
+    <label>Category
+      <select id="f-category"><option value="">all</option></select>
+    </label>
+    <label>Min conf
+      <select id="f-conf">
+        <option value="">any</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+      </select>
+    </label>
+    <span class="count" id="row-count"></span>
+  </div>
+
+  <div id="board"><div class="muted">loading…</div></div>
+
+  <footer>
+    <a href="/accuracy">Accuracy scoreboard →</a>
+    <span class="fresh" id="fresh-foot"><span class="dot"></span><span class="fresh-text">ingest —</span></span>
+    <span id="foot-counts"></span>
+  </footer>
+
+  <script>
+    'use strict';
+    const GROUP_CAP = 150;
+    const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA' };
+    const state = { days: '7', venue: '', category: '', conf: '' };
+    const expanded = new Set();
+    const allCats = new Set();
+    let lastRows = [];
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
+    function pct(p) {
+      if (p == null) return '—';
+      const v = p * 100;
+      return v.toFixed(v < 10 || v > 90 ? 1 : 0) + '%';
+    }
+
+    function pp(v) {
+      const s = (v * 100).toFixed(1);
+      return (v >= 0 ? '+' : '') + s + 'pp';
+    }
+
+    function dayKey(iso) { return (iso || '').slice(0, 10); }
+
+    function dayLabel(key) {
+      const now = new Date();
+      const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const [y, m, d] = key.split('-').map(Number);
+      const diff = Math.round((Date.UTC(y, m - 1, d) - todayUTC) / 86400000);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      if (diff <= 0) return 'Today';
+      if (diff === 1) return 'Tomorrow';
+      return dt.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    }
+
+    function venueBadge(v) {
+      const short = VENUE_SHORT[v] || (v || '?').slice(0, 2).toUpperCase();
+      return `<span class="badge ${short === 'PM' ? 'pm' : 'ka'}">${esc(short)}</span>`;
+    }
+
+    function probCell(r) {
+      let html = `<div class="prob">${pct(r.display_prob)}</div>`;
+      if (r.model_prob != null) {
+        html += `<span class="tag-model">model · ${esc(r.model_source || '?')}</span>`;
+        if (r.baseline_prob != null) html += `<span class="prob-secondary">market ${pct(r.baseline_prob)}</span>`;
+      }
+      return html;
+    }
+
+    function moveCell(r) {
+      if (r.new) return '<span class="muted">new</span>';
+      if (r.move_24h == null) return '<span class="muted">—</span>';
+      if (Math.abs(r.move_24h) < 0.0005) return '<span class="muted">0.0pp</span>';
+      const up = r.move_24h > 0;
+      return `<span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${pp(r.move_24h)}</span>`;
+    }
+
+    function disChip(r) {
+      const d = r.disagreement;
+      if (!d) return '';
+      const links = [
+        { venue: r.venue, url: r.url },
+        { venue: d.counterpart_venue, url: d.counterpart_url },
+      ].filter(x => x.url).map(x =>
+        `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(VENUE_SHORT[x.venue] || x.venue || '?')}↗</a>`
+      ).join('');
+      return `<span class="chip-dis" title="baseline gap vs linked market">Δ ${esc(pp(d.delta))} ${links}</span>`;
+    }
+
+    function rowHtml(r) {
+      const q = r.url
+        ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.question)}</a>`
+        : esc(r.question);
+      const conf = r.confidence || '?';
+      const spread = r.spread == null ? '—' : (r.spread * 100).toFixed(1) + '¢';
+      const ends = (r.end_date || '').slice(11, 16);
+      return `<tr>
+        <td class="prob-cell">${probCell(r)}</td>
+        <td class="question q-cell">${q}${r.category ? ` <span class="cat">${esc(r.category)}</span>` : ''}</td>
+        <td data-label="venue">${venueBadge(r.venue)}</td>
+        <td data-label="ends">${esc(ends)}Z</td>
+        <td data-label="24h">${moveCell(r)}</td>
+        <td data-label="conf"><span class="conf ${esc(conf)}">${esc(conf)}</span></td>
+        <td data-label="spread">${esc(spread)}</td>
+        <td data-label="Δ venues">${disChip(r)}</td>
+      </tr>`;
+    }
+
+    function render() {
+      const board = document.getElementById('board');
+      if (!lastRows.length) {
+        board.innerHTML = '<div class="muted">no markets match — ingest may still be warming up</div>';
+        document.getElementById('row-count').textContent = '';
+        return;
+      }
+      const groups = new Map();
+      for (const r of lastRows) {
+        const k = dayKey(r.end_date);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      }
+      const parts = [];
+      for (const [k, rows] of [...groups.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)) {
+        const shown = expanded.has(k) ? rows : rows.slice(0, GROUP_CAP);
+        parts.push(`<section class="day-group">
+          <h2>${esc(dayLabel(k))}<span class="date">${esc(k)}</span><span class="n">${rows.length} market${rows.length === 1 ? '' : 's'}</span></h2>
+          <table class="board-table">
+            <thead><tr>
+              <th>Prob</th><th>Question</th><th>Venue</th><th>Ends</th>
+              <th>24h</th><th>Conf</th><th>Spread</th><th>Δ venues</th>
+            </tr></thead>
+            <tbody>${shown.map(rowHtml).join('')}</tbody>
+          </table>
+          ${rows.length > shown.length ? `<button class="show-more" data-group="${esc(k)}">show all ${rows.length}</button>` : ''}
+        </section>`);
+      }
+      board.innerHTML = parts.join('');
+      document.getElementById('row-count').textContent = `${lastRows.length} markets`;
+    }
+
+    function rebuildCategorySelect() {
+      const sel = document.getElementById('f-category');
+      const current = state.category;
+      const opts = ['<option value="">all</option>'];
+      for (const c of [...allCats].sort()) {
+        opts.push(`<option value="${esc(c)}"${c === current ? ' selected' : ''}>${esc(c)}</option>`);
+      }
+      sel.innerHTML = opts.join('');
+    }
+
+    async function load() {
+      const qs = new URLSearchParams({ days: state.days });
+      if (state.venue) qs.set('venue', state.venue);
+      if (state.category) qs.set('category', state.category);
+      if (state.conf) qs.set('min_confidence', state.conf);
+      try {
+        const rows = await fetch('/api/board?' + qs).then(r => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        });
+        lastRows = Array.isArray(rows) ? rows : [];
+        for (const r of lastRows) if (r.category) allCats.add(r.category);
+        rebuildCategorySelect();
+        render();
+      } catch (err) {
+        document.getElementById('board').innerHTML =
+          `<div class="muted">failed to load board: ${esc(err.message)}</div>`;
+      }
+    }
+
+    function ago(iso) {
+      if (!iso) return null;
+      return Math.round((Date.now() - Date.parse(iso)) / 60000);
+    }
+
+    async function loadStatus() {
+      try {
+        const st = await fetch('/api/status').then(r => r.json());
+        const mins = ago(st?.loops?.ingest?.last_ok);
+        const err = st?.loops?.ingest?.last_error;
+        const cls = mins == null ? (err ? 'bad' : '') : mins <= 15 ? 'ok' : mins <= 45 ? 'warn' : 'bad';
+        const text = mins == null
+          ? (err ? 'ingest failing' : 'ingest pending')
+          : `ingest ${mins <= 1 ? 'just now' : mins + 'm ago'}`;
+        for (const id of ['fresh-top', 'fresh-foot']) {
+          const el = document.getElementById(id);
+          el.querySelector('.dot').className = 'dot ' + cls;
+          el.querySelector('.fresh-text').textContent = text;
+        }
+        const c = st?.counts;
+        if (c) {
+          document.getElementById('foot-counts').textContent =
+            `${c.markets_active} active markets · ${c.snapshots} snapshots · ${c.model_probs} model probs`;
+        }
+      } catch { /* leave stale indicator */ }
+    }
+
+    document.getElementById('board').addEventListener('click', (e) => {
+      const btn = e.target.closest('.show-more');
+      if (!btn) return;
+      expanded.add(btn.dataset.group);
+      render();
+    });
+
+    const bind = (id, key) => document.getElementById(id).addEventListener('change', (e) => {
+      state[key] = e.target.value;
+      expanded.clear();
+      load();
+    });
+    bind('f-days', 'days');
+    bind('f-venue', 'venue');
+    bind('f-category', 'category');
+    bind('f-conf', 'conf');
+
+    load();
+    loadStatus();
+    setInterval(load, 60000);
+    setInterval(loadStatus, 30000);
+  </script>
+</body>
+</html>
