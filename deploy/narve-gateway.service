@@ -11,7 +11,7 @@ Wants=narve-crypto.service narve-weather.service narve-sports.service narve-worl
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/gateway
-ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+ExecStart=/home/julianhabbig/Polymarket/deploy/venvs/narve-gateway/bin/python server.py
 Restart=always
 RestartSec=5
 Environment=PRODUCTION=1

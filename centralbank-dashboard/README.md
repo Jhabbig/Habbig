@@ -6,7 +6,7 @@ stance — all in one dashboard. Differentiates from `world-state-dashboard` by
 being **financial, time-series, and Polymarket-overlaid** (no map, no general
 news feed).
 
-Port: **7060**.
+Port: **7061**.
 
 ## What's built
 
@@ -131,7 +131,7 @@ cd centralbank-dashboard
 cp .env.example .env       # DEV_MODE=1 lets you skip gateway auth
 pip install -r requirements.txt
 python3 server.py
-# http://localhost:7060
+# http://localhost:7061
 ```
 
 Or via Docker from the repo root:
@@ -184,7 +184,7 @@ centralbank-dashboard/
 │   ├── edge.py                     Cross-venue join: Implied × Polymarket × Kalshi → edges + arb
 │   └── right_now.py                Synthesizes every cache into a one-paragraph "what matters" brief
 ├── index.html                      Single-file UI: SVG chart + 4 panels, no JS deps
-├── Dockerfile                      Python 3.12-slim, non-root, port 7060
+├── Dockerfile                      Python 3.12-slim, non-root, port 7061
 ├── requirements.txt                fastapi, uvicorn, defusedxml
 ├── .env.example
 └── README.md                       (this file)
@@ -278,7 +278,7 @@ Polymarket's own bid-ask plus our modelling slack live below that.
 | `GATEWAY_SSO_SECRET` | unset | Required behind the gateway. |
 | `DEV_MODE` | unset | Set `1` to bypass gateway auth locally; also auto-generates a master key for the trading store at `data/dev_master.key`. |
 | `BIND_HOST` | `0.0.0.0` | Listen address. Set `127.0.0.1` for localhost-only. |
-| `PORT` | `7060` | Override listen port. |
+| `PORT` | `7061` | Override listen port. |
 | `CB_KEY_STORE_SECRET` | required for trading | Fernet master key (urlsafe-base64) used to encrypt user Kalshi credentials at rest. Generate with `python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Without this, all trading endpoints return an error in non-DEV mode. |
 
 ## Caveats / known limits

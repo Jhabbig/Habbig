@@ -6,5 +6,5 @@ COPY . .
 RUN adduser --disabled-password --gecos "" appuser && \
     chown -R appuser:appuser /app
 USER appuser
-EXPOSE 7060
-CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7060"]
+EXPOSE 7061
+CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7061"]

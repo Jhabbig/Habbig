@@ -23,35 +23,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SNAPSHOT_DIR="$SCRIPT_DIR/.snapshots"
 
-# Sites to back up (directories that contain actual website/dashboard code)
-SITES=(
-    gateway
-    crypto-dashboard
-    stock-dashboard
-    sports-dashboard
-    polymarket_weather_dashboard
-    world-state-dashboard
-    midterm-dashboard
-    Dashboard-x-truth-research-prediction
-    polymarket-bot
-    polymarket_weather_bot
-)
-
-# Excluded from snapshots (patterns for tar — databases handled separately)
-EXCLUDES=(
-    "__pycache__"
-    "*.pyc"
-    ".DS_Store"
-    "node_modules"
-    "venv"
-    ".venv"
-    "*.log"
-    "*.db"
-    "*.db-wal"
-    "*.db-shm"
-    "*.sqlite"
-    "*.sqlite3"
-)
+# SITES + EXCLUDES live in deploy/sites.conf (shared with deploy tooling).
+# Databases are excluded from tar and handled separately via sqlite3 .backup.
+SITES_CONF="$SCRIPT_DIR/deploy/sites.conf"
+if [[ ! -f "$SITES_CONF" ]]; then
+    echo "Error: $SITES_CONF not found" >&2
+    exit 1
+fi
+# shellcheck source=deploy/sites.conf
+source "$SITES_CONF"
 
 # Colors
 RED='\033[0;31m'
@@ -66,12 +46,28 @@ mkdir -p "$SNAPSHOT_DIR"
 
 # ── Helpers ──────────────────────────────────────
 
+# .env* stays in tars even though deploys exclude it: restore rm -rfs each
+# site dir, so a tar without .env would destroy secrets that exist nowhere else.
 build_exclude_args() {
     local args=()
     for pat in "${EXCLUDES[@]}"; do
+        [[ "$pat" == ".env"* ]] && continue
         args+=(--exclude="$pat")
     done
     echo "${args[@]}"
+}
+
+# tar --exclude is global, so the *.db patterns would also strip the staged
+# sqlite3 .backup copies under _databases/. Two passes: site trees with
+# excludes, then an exclude-free append of _databases, then gzip.
+create_archive() {
+    local archive_path="$1" db_tmp="$2"
+    shift 2
+    local tar_tmp="$db_tmp/snapshot.tar"
+    tar -cf "$tar_tmp" $(build_exclude_args) -C "$SCRIPT_DIR" "$@"
+    tar -rf "$tar_tmp" -C "$db_tmp" "_databases"
+    gzip -c "$tar_tmp" > "$archive_path"
+    rm -f "$tar_tmp"
 }
 
 # Safely backup SQLite databases using sqlite3 .backup (online, no locking)
@@ -130,6 +126,32 @@ restore_databases() {
             cp "$db_backup" "$dest"
         fi
     done
+}
+
+# Copy a site's .env* files aside before restore's rm -rf; restore_env_files
+# puts back only those the extracted archive didn't provide (archive wins).
+# Guards secrets against archives saved while EXCLUDES still covered .env.
+preserve_env_files() {
+    local site="$1" preserve_dir="$2"
+    [[ -d "$SCRIPT_DIR/$site" ]] || return 0
+    while IFS= read -r env_file; do
+        local rel_path="${env_file#$SCRIPT_DIR/}"
+        mkdir -p "$preserve_dir/$(dirname "$rel_path")"
+        cp -p "$env_file" "$preserve_dir/$rel_path"
+    done < <(find "$SCRIPT_DIR/$site" \( -name venv -o -name .venv -o -name node_modules -o -name .git \) -prune -o -type f -name ".env*" -print 2>/dev/null)
+}
+
+restore_env_files() {
+    local preserve_dir="$1"
+    [[ -d "$preserve_dir" ]] || return 0
+    while IFS= read -r saved; do
+        local rel_path="${saved#$preserve_dir/}"
+        local dest="$SCRIPT_DIR/$rel_path"
+        if [[ ! -e "$dest" ]]; then
+            mkdir -p "$(dirname "$dest")"
+            cp -p "$saved" "$dest"
+        fi
+    done < <(find "$preserve_dir" -type f 2>/dev/null)
 }
 
 get_snapshot_index() {
@@ -204,10 +226,7 @@ cmd_save() {
         fi
         archive_name="${id}_${site}_${timestamp}.tar.gz"
         echo -e "${CYAN}Saving snapshot of ${BOLD}$site${NC}${CYAN}...${NC}"
-        tar -czf "$SNAPSHOT_DIR/$archive_name" \
-            $(build_exclude_args) \
-            -C "$SCRIPT_DIR" "$site" \
-            -C "$db_tmp" "_databases"
+        create_archive "$SNAPSHOT_DIR/$archive_name" "$db_tmp" "$site"
     else
         # All sites
         archive_name="${id}_all_${timestamp}.tar.gz"
@@ -216,10 +235,7 @@ cmd_save() {
         for s in "${SITES[@]}"; do
             [[ -d "$SCRIPT_DIR/$s" ]] && dirs+=("$s")
         done
-        tar -czf "$SNAPSHOT_DIR/$archive_name" \
-            $(build_exclude_args) \
-            -C "$SCRIPT_DIR" "${dirs[@]}" \
-            -C "$db_tmp" "_databases"
+        create_archive "$SNAPSHOT_DIR/$archive_name" "$db_tmp" "${dirs[@]}"
     fi
 
     # Clean up temp dir
@@ -320,11 +336,18 @@ cmd_restore() {
     echo ""
     echo -e "${CYAN}Restoring code files...${NC}"
 
+    local env_preserve db_preserve
+    env_preserve=$(mktemp -d)
+    db_preserve=$(mktemp -d)
+    backup_databases "$db_preserve" "$target" >/dev/null
     if [[ "$target" == "all" ]]; then
         for s in "${SITES[@]}"; do
-            [[ -d "$SCRIPT_DIR/$s" ]] && rm -rf "$SCRIPT_DIR/$s"
+            [[ -d "$SCRIPT_DIR/$s" ]] || continue
+            preserve_env_files "$s" "$env_preserve"
+            rm -rf "$SCRIPT_DIR/$s"
         done
     else
+        preserve_env_files "$target" "$env_preserve"
         rm -rf "$SCRIPT_DIR/$target"
     fi
 
@@ -341,6 +364,14 @@ cmd_restore() {
     else
         [[ -d "$restore_tmp/$target" ]] && mv "$restore_tmp/$target" "$SCRIPT_DIR/$target"
     fi
+
+    restore_env_files "$env_preserve"
+    rm -rf "$env_preserve"
+
+    # Live DBs go back first so archives from before _databases was fixed
+    # (empty staging tree) don't leave sites DB-less; archive copies then win.
+    restore_databases "$db_preserve"
+    rm -rf "$db_preserve"
 
     # Restore databases safely
     if [[ -d "$restore_tmp/_databases" ]]; then

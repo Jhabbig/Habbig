@@ -1,4 +1,4 @@
-# Litestream configuration — streams the gateway SQLite database to S3.
+# Litestream configuration — streams the narve SQLite databases to S3.
 #
 # Litestream replicates SQLite WAL frames continuously, so the off-site copy
 # is at most a few seconds behind production.  Restore is `litestream restore`
@@ -32,4 +32,57 @@ dbs:
         retention-check-interval: 24h
 
         # Sync the WAL every second — bounded data loss if the box dies.
+        sync-interval: 1s
+
+  - path: /home/julianhabbig/Polymarket/Dashboard-x-truth-research-prediction/predictions.db
+    replicas:
+      - type: s3
+        bucket:    ${LITESTREAM_BUCKET}
+        path:      narve/truth-research/predictions.db
+        endpoint:  ${LITESTREAM_ENDPOINT}
+        region:    ${LITESTREAM_REGION}
+        snapshot-interval:  1h
+        retention:          720h
+        retention-check-interval: 24h
+        sync-interval: 1s
+
+  # Runtime path per centralbank-dashboard/trading/key_store.py DEFAULT_DB_PATH.
+  - path: /home/julianhabbig/Polymarket/centralbank-dashboard/data/key_store.db
+    replicas:
+      - type: s3
+        bucket:    ${LITESTREAM_BUCKET}
+        path:      narve/centralbank/key_store.db
+        endpoint:  ${LITESTREAM_ENDPOINT}
+        region:    ${LITESTREAM_REGION}
+        snapshot-interval:  1h
+        retention:          720h
+        retention-check-interval: 24h
+        sync-interval: 1s
+
+  # Runtime path per midterm-dashboard/backend/database.py DB_PATH.
+  - path: /home/julianhabbig/Polymarket/midterm-dashboard/backend/data.db
+    replicas:
+      - type: s3
+        bucket:    ${LITESTREAM_BUCKET}
+        path:      narve/midterm/data.db
+        endpoint:  ${LITESTREAM_ENDPOINT}
+        region:    ${LITESTREAM_REGION}
+        snapshot-interval:  1h
+        retention:          720h
+        retention-check-interval: 24h
+        sync-interval: 1s
+
+  # forecast-dashboard is still being built; Litestream v0.3.x tolerates a
+  # missing DB file (replication idles until the file appears), so this entry
+  # is safe to ship ahead of the first deploy.
+  - path: /home/julianhabbig/Polymarket/forecast-dashboard/data/forecast.sqlite
+    replicas:
+      - type: s3
+        bucket:    ${LITESTREAM_BUCKET}
+        path:      narve/forecast/forecast.sqlite
+        endpoint:  ${LITESTREAM_ENDPOINT}
+        region:    ${LITESTREAM_REGION}
+        snapshot-interval:  1h
+        retention:          720h
+        retention-check-interval: 24h
         sync-interval: 1s

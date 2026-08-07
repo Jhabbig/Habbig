@@ -18,7 +18,7 @@ The **gateway** at `gateway/server.py` (port 7000) is the single entry point. Su
 ## Stack
 
 - Python 3 (venv at `venv/`). FastAPI for most dashboards (uvicorn); Flask for `polymarket_weather_dashboard`. SQLite per-service. Optional Redis (used by gateway).
-- **Lint:** `ruff check <path>` — config in `ruff.toml` (200-char lines, F821 only — bugs, not style).
+- **Lint:** `ruff check <path>` — config in `ruff.toml` (200-char lines, E9+F — bugs, not style).
 - Each dashboard exposes `/healthz` returning 200 — required for docker-compose dependency ordering.
 
 ## Ports (canonical — also in [start_dashboards.sh](start_dashboards.sh))
@@ -36,7 +36,9 @@ The **gateway** at `gateway/server.py` (port 7000) is the single entry point. Su
 | 7051 | voters-dashboard | voters |
 | 7052 | climate-dashboard | climate |
 | 7053 | world-health-dashboard | (TBD) |
-| 7060 | centralbank-dashboard | cb |
+| 7061 | centralbank-dashboard | cb |
+
+Port 7060 is reserved by the `disasters` entry in `gateway/config.json` (ecological-disasters-dashboard, not currently in the tree) — don't reuse it.
 
 ## Common commands
 
@@ -70,6 +72,6 @@ The dashboard handles its own logic; the gateway only routes and gates.
 
 ## When you finish a task
 
-- Run `ruff check` on the dirs you touched. Only F821 errors should ever block.
+- Run `ruff check` on the dirs you touched. Only E9/F errors should ever block.
 - For UI changes, verify with the preview tools, not by claiming success blindly.
 - Don't commit or push unless the user explicitly asks.

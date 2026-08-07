@@ -1,16 +1,15 @@
 [Unit]
-Description=Narve Central Bank Dashboard (port 7061)
+Description=Narve World Health Dashboard (port 7053)
 After=network.target
 
 [Service]
-# Required env vars: PORT (defaults to 7061 if unset)
 # Loads the shared gateway .env so the dashboard can verify X-Gateway-Secret
 # on incoming proxied requests.
 Type=simple
 User=julianhabbig
-WorkingDirectory=/home/julianhabbig/Polymarket/centralbank-dashboard
-Environment=PORT=7061
-ExecStart=/home/julianhabbig/Polymarket/deploy/venvs/narve-centralbank/bin/python -m uvicorn server:app --host 127.0.0.1 --port 7061
+WorkingDirectory=/home/julianhabbig/Polymarket/world-health-dashboard
+Environment=PORT=7053
+ExecStart=/home/julianhabbig/Polymarket/deploy/venvs/narve-world-health/bin/python -m uvicorn server:app --host 127.0.0.1 --port 7053
 Restart=always
 RestartSec=5
 EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
@@ -20,7 +19,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
-ReadWritePaths=/home/julianhabbig/Polymarket/centralbank-dashboard
+ReadWritePaths=/home/julianhabbig/Polymarket/world-health-dashboard
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

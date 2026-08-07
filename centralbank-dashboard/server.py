@@ -170,11 +170,13 @@ async def api_history_summary(keys: str | None = None) -> JSONResponse:
     summaries = await asyncio.to_thread(
         lambda: {k: historical_store.delta_summary(k) for k in safe},
     )
-    return JSONResponse({
-        "requested": requested,
-        "rejected": [k for k in requested if k not in safe],
-        "summaries": summaries,
-    })
+    return JSONResponse(
+        {
+            "requested": requested,
+            "rejected": [k for k in requested if k not in safe],
+            "summaries": summaries,
+        }
+    )
 
 
 @app.get("/api/rates")
@@ -451,4 +453,4 @@ async def healthz() -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=os.environ.get("BIND_HOST", "0.0.0.0"), port=int(os.environ.get("PORT", "7060")))
+    uvicorn.run(app, host=os.environ.get("BIND_HOST", "0.0.0.0"), port=int(os.environ.get("PORT", "7061")))

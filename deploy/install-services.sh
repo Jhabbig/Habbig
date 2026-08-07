@@ -8,10 +8,11 @@ set -e
 if [ "$(id -u)" -ne 0 ]; then echo "Error: must run as root (sudo)"; exit 1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SERVICES="narve-gateway narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock narve-climate narve-centralbank narve-voters"
+# shellcheck source=sites.conf
+source "$SCRIPT_DIR/sites.conf"
 
 echo "Installing systemd service units..."
-for svc in $SERVICES; do
+for svc in "${SERVICES[@]}"; do
     cp "$SCRIPT_DIR/$svc.service" /etc/systemd/system/
     echo "  Installed $svc.service"
 done
@@ -19,8 +20,13 @@ done
 echo "Reloading systemd daemon..."
 systemctl daemon-reload
 
+# Units exec from deploy/venvs/<service>/ — build them before enabling, as
+# the service user so ownership matches the rest of ~/Polymarket.
+echo "Bootstrapping per-service venvs..."
+sudo -u julianhabbig bash "$SCRIPT_DIR/bootstrap-venvs.sh"
+
 echo "Enabling services to start on boot..."
-for svc in $SERVICES; do
+for svc in "${SERVICES[@]}"; do
     systemctl enable "$svc"
 done
 
@@ -30,9 +36,14 @@ if [ -f /home/julianhabbig/Polymarket/gateway/.env.production ]; then
     chown julianhabbig:julianhabbig /home/julianhabbig/Polymarket/gateway/.env.production
 fi
 
+dash_services=()
+for svc in "${SERVICES[@]}"; do
+    [ "$svc" = "narve-gateway" ] || dash_services+=("$svc")
+done
+
 echo ""
 echo "Done. To start everything:"
-echo "  sudo systemctl start narve-crypto narve-weather narve-sports narve-world narve-midterm narve-traders narve-stock narve-climate narve-centralbank narve-voters"
+echo "  sudo systemctl start ${dash_services[*]}"
 echo "  sudo systemctl start narve-gateway"
 echo ""
 echo "To check status:"

@@ -8,7 +8,7 @@ After=network.target
 Type=simple
 User=julianhabbig
 WorkingDirectory=/home/julianhabbig/Polymarket/climate-dashboard
-ExecStart=/home/julianhabbig/Polymarket/venv/bin/python server.py
+ExecStart=/home/julianhabbig/Polymarket/deploy/venvs/narve-climate/bin/python server.py
 Environment=PORT=7052
 Restart=always
 RestartSec=5

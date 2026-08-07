@@ -15,41 +15,13 @@ SERVER="${DEPLOY_SERVER:?Set DEPLOY_SERVER env var (e.g. user@host)}"
 REMOTE_DIR="~/Polymarket"
 LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Sites that get deployed
-SITES=(
-    gateway
-    crypto-dashboard
-    stock-dashboard
-    sports-dashboard
-    polymarket_weather_dashboard
-    world-state-dashboard
-    midterm-dashboard
-    Dashboard-x-truth-research-prediction
-    polymarket-bot
-    polymarket_weather_bot
-    top-traders-dashboard
-    climate-dashboard
-    centralbank-dashboard
-    voters-dashboard
-    world-health-dashboard
-)
-
-# Excluded from rsync
-EXCLUDES=(
-    "__pycache__"
-    "*.pyc"
-    ".DS_Store"
-    "node_modules"
-    "venv"
-    ".venv"
-    ".git"
-    ".snapshots"
-    "*.log"
-    ".env"
-    "*.db"
-    "*.db-wal"
-    "*.db-shm"
-)
+SITES_CONF="$LOCAL_DIR/deploy/sites.conf"
+if [[ ! -f "$SITES_CONF" ]]; then
+    echo "Error: $SITES_CONF not found" >&2
+    exit 1
+fi
+# shellcheck source=deploy/sites.conf
+source "$SITES_CONF"
 
 # Colors
 RED='\033[0;31m'
@@ -96,11 +68,15 @@ if [[ -n "$site" ]]; then
     fi
 fi
 
-# ── Build rsync exclude args ────────────────────
+# ── Build rsync exclude + protect args ──────────
 
 exclude_args=()
 for pat in "${EXCLUDES[@]}"; do
     exclude_args+=(--exclude="$pat")
+done
+filter_args=()
+for rule in "${PROTECT_FILTERS[@]}"; do
+    filter_args+=(--filter="$rule")
 done
 
 # ── Step 1: Snapshot on server ───────────────────
@@ -121,19 +97,21 @@ echo -e "${CYAN}[2/3] Syncing files to server...${NC}"
 
 if [[ -n "$site" ]]; then
     echo -e "  Deploying ${BOLD}$site${NC}"
-    rsync -avz --delete "${exclude_args[@]}" \
+    rsync -avz --delete "${exclude_args[@]}" "${filter_args[@]}" \
         "$LOCAL_DIR/$site/" "$SERVER:$REMOTE_DIR/$site/"
 else
     for s in "${SITES[@]}"; do
         [[ -d "$LOCAL_DIR/$s" ]] || continue
         echo -e "  Deploying ${BOLD}$s${NC}"
-        rsync -avz --delete "${exclude_args[@]}" \
+        rsync -avz --delete "${exclude_args[@]}" "${filter_args[@]}" \
             "$LOCAL_DIR/$s/" "$SERVER:$REMOTE_DIR/$s/"
     done
 fi
 
-# Also sync the snapshot script itself
+# Also sync the snapshot script and deploy/ (snapshot.sh sources deploy/sites.conf)
 rsync -avz "$LOCAL_DIR/snapshot.sh" "$SERVER:$REMOTE_DIR/snapshot.sh"
+# --exclude=venvs: never push local (macOS) venvs over the server's Linux ones
+rsync -avz --exclude=venvs "$LOCAL_DIR/deploy/" "$SERVER:$REMOTE_DIR/deploy/"
 
 # ── Step 3: Done ─────────────────────────────────
 

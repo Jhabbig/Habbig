@@ -1,5 +1,5 @@
 [Unit]
-Description=Litestream — continuous SQLite replication for narve auth.db
+Description=Litestream — continuous SQLite replication for narve databases
 Documentation=https://litestream.io
 After=network-online.target narve-gateway.service
 Wants=network-online.target
@@ -17,7 +17,14 @@ EnvironmentFile=/etc/default/litestream
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadOnlyPaths=/home/julianhabbig/Polymarket/gateway
+# Litestream creates a shadow-WAL dir (<db>-litestream/) next to each DB it
+# replicates, so every DB's parent dir must be ReadWrite under
+# ProtectSystem=strict. The "-" prefix skips dirs not yet present on the box.
+ReadWritePaths=/home/julianhabbig/Polymarket/gateway
+ReadWritePaths=-/home/julianhabbig/Polymarket/Dashboard-x-truth-research-prediction
+ReadWritePaths=-/home/julianhabbig/Polymarket/centralbank-dashboard/data
+ReadWritePaths=-/home/julianhabbig/Polymarket/midterm-dashboard/backend
+ReadWritePaths=-/home/julianhabbig/Polymarket/forecast-dashboard/data
 ReadWritePaths=/var/lib/litestream
 
 [Install]

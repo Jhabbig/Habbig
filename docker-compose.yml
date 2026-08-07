@@ -191,13 +191,13 @@ services:
   centralbank:
     build: ./centralbank-dashboard
     expose:
-      - "7060"
+      - "7061"
     env_file: ./gateway/.env.production
     environment:
       BIND_HOST: "0.0.0.0"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7060/healthz',timeout=4).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7061/healthz',timeout=4).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 3
