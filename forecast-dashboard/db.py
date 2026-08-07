@@ -7,8 +7,10 @@ one per unit of work and close it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
+import string
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -186,7 +188,12 @@ def latest_snapshots(conn: sqlite3.Connection, horizon_days: int) -> list[dict]:
            ORDER BY m.end_date ASC""",
         (now, cutoff),
     ).fetchall()
-    result = [dict(r) for r in rows]
+    return _attach_model_probs(conn, [dict(r) for r in rows])
+
+
+def _attach_model_probs(conn: sqlite3.Connection, result: list[dict]) -> list[dict]:
+    """Adds 'model_probs' ({source: {model_prob, prob_method, ts, detail}},
+    latest per source) to each market-shaped row in place."""
     if not result:
         return result
 
@@ -215,6 +222,82 @@ def latest_snapshots(conn: sqlite3.Connection, horizon_days: int) -> list[dict]:
     for row in result:
         row["model_probs"] = by_uid.get(row["uid"], {})
     return result
+
+
+def _like_escape(term: str) -> str:
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+_SEARCH_STOPWORDS = frozenset("will the a an in on at of to be is are was were do does did it its this that by for with and or what when who how much many".split())
+
+
+def search_terms(q: str) -> list[str]:
+    """Whitespace-split with punctuation stripped from term edges and English
+    stopwords dropped, so natural questions ('Will the Fed cut rates?') match
+    market titles on their content words. If EVERY term is a stopword the
+    original terms are kept — a query like 'will it' should still be a query.
+    Shared by search_markets and the board's q filter."""
+    raw = []
+    for t in (q or "").split():
+        t = t.strip(string.punctuation)
+        if t:
+            raw.append(t)
+    content = [t for t in raw if t.lower() not in _SEARCH_STOPWORDS]
+    # Trailing-s strip so 'rates' matches 'rate' (and, as a substring, 'rates').
+    content = [t[:-1] if len(t) > 3 and t.endswith("s") and not t.endswith("ss") else t for t in content]
+    return content or raw
+
+
+def search_markets(conn: sqlite3.Connection, q: str, limit: int = 50) -> list[dict]:
+    """Active, unresolved markets whose question contains every
+    whitespace-separated term of `q` (case-insensitive AND of LIKEs, edge
+    punctuation ignored), each joined with its latest snapshot and latest
+    model probs (same row shape as latest_snapshots), ordered by liquidity
+    desc.
+    """
+    terms = search_terms(q)
+    if not terms:
+        return []
+    where_likes = " AND ".join(["m.question LIKE ? ESCAPE '\\'"] * len(terms))
+    params = [f"%{_like_escape(t)}%" for t in terms]
+    rows = conn.execute(
+        f"""SELECT m.*, s.ts AS snapshot_ts, s.yes_bid, s.yes_ask, s.last_price,
+                   s.baseline_prob, s.spread, s.liquidity, s.volume_24h
+            FROM markets m
+            JOIN snapshots s ON s.id = (
+                SELECT id FROM snapshots
+                WHERE market_uid = m.uid
+                ORDER BY ts DESC, id DESC LIMIT 1
+            )
+            WHERE m.active = 1 AND m.resolved = 0
+              AND {where_likes}
+            ORDER BY s.liquidity DESC
+            LIMIT ?""",
+        (*params, limit),
+    ).fetchall()
+    return _attach_model_probs(conn, [dict(r) for r in rows])
+
+
+def create_custom_market(conn: sqlite3.Connection, question: str, end_date: str | None = None) -> str:
+    """Upsert a venue='custom' market keyed by the question text (venue_id =
+    sha1(question.lower())[:16], so the same question always maps to the
+    same uid). Returns the uid.
+    """
+    venue_id = hashlib.sha1(question.lower().encode("utf-8")).hexdigest()[:16]
+    uid = make_uid("custom", venue_id)
+    now = _now_iso()
+    # COALESCE: a re-ask without an end_date must not clear one set earlier.
+    conn.execute(
+        """INSERT INTO markets (uid, venue, venue_id, question, category, end_date, active, first_seen, last_seen)
+           VALUES (?, 'custom', ?, ?, 'custom', ?, 1, ?, ?)
+           ON CONFLICT(uid) DO UPDATE SET
+               end_date = COALESCE(excluded.end_date, markets.end_date),
+               active = 1,
+               last_seen = excluded.last_seen""",
+        (uid, venue_id, question, end_date, now, now),
+    )
+    conn.commit()
+    return uid
 
 
 def latest_snapshot(conn: sqlite3.Connection, uid: str) -> dict | None:

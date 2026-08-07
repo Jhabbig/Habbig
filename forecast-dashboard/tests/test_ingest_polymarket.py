@@ -298,6 +298,28 @@ def test_category_canonical_mapping(monkeypatch):
     assert by["0xcat"] == "weather"
 
 
+def test_category_shared_vocabulary_across_venues(monkeypatch):
+    """Same concepts land on the same buckets the kalshi/manifold/metaculus
+    maps emit: economy->economics, crypto->finance — via the category field
+    and via tags alike."""
+    now = datetime.now(timezone.utc)
+    econ_field = _gamma_market("0xecon", now + timedelta(days=1), category="Economy")
+    crypto_field = _gamma_market("0xbtc", now + timedelta(days=2), category="Crypto")
+    econ_tags = _gamma_market("0xtags", now + timedelta(days=3), tags=[{"label": "Macro Indicators"}])
+    crypto_tags = _gamma_market("0xeth", now + timedelta(days=4), tags=[{"label": "Ethereum"}])
+    for m in (econ_field, crypto_field, econ_tags, crypto_tags):
+        m["events"][0]["tags"] = []
+    _install(monkeypatch, [[econ_field, crypto_field, econ_tags, crypto_tags]])
+
+    rows = asyncio.run(ipm.fetch_horizon(7))
+
+    by = {r["venue_id"]: r["category"] for r in rows}
+    assert by["0xecon"] == "economics"
+    assert by["0xbtc"] == "finance"
+    assert by["0xtags"] == "economics"
+    assert by["0xeth"] == "finance"
+
+
 def test_missing_condition_id_row_skipped(monkeypatch):
     now = datetime.now(timezone.utc)
     m = _gamma_market("0xok", now + timedelta(days=1))

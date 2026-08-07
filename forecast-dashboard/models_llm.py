@@ -74,6 +74,17 @@ def _log_auth_once(err: Exception) -> None:
         log.error("llm model: Anthropic auth unavailable (%s); skipping until resolved", err)
 
 
+def has_credentials(client) -> bool:
+    """False when the SDK constructed with zero credentials (it would then
+    raise TypeError on every request, so callers abort up front). The
+    sentinel default keeps duck-typed test doubles — which lack these
+    attributes entirely — out of the gate. Shared with ask._make_client so
+    the credentialless check lives in one place.
+    """
+    _missing = object()
+    return not (getattr(client, "api_key", _missing) is None and getattr(client, "auth_token", _missing) is None and getattr(client, "_token_cache", _missing) is None)
+
+
 def _daily_cap() -> int:
     try:
         return int(os.environ.get("FORECAST_LLM_DAILY_CAP", DEFAULT_DAILY_CAP))
@@ -200,12 +211,7 @@ async def compute(markets: list[dict]) -> list[dict]:
         _log_auth_once(e)
         return []
 
-    # The SDK constructs fine with zero credentials and instead raises TypeError
-    # on every request; detect that state up front so a missing key logs once and
-    # aborts the pass rather than warning per event. The sentinel keeps
-    # duck-typed test doubles (which lack these attributes) out of the gate.
-    _missing = object()
-    if getattr(client, "api_key", _missing) is None and getattr(client, "auth_token", _missing) is None and getattr(client, "_token_cache", _missing) is None:
+    if not has_credentials(client):
         _log_auth_once(RuntimeError("no API key, auth token, or credential profile resolved"))
         return []
 

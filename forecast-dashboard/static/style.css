@@ -178,7 +178,137 @@ pre {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+.controls input[type="search"] {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 5px 10px;
+  width: 190px;
+}
+.controls input[type="search"]::placeholder { color: var(--muted); }
+.controls input[type="search"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .controls .count { color: var(--muted); margin-left: auto; }
+
+/* ── ask ───────────────────────────────────────────────────────────────── */
+
+.ask-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 20px;
+  margin-bottom: 22px;
+  transition: border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ask-panel:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow);
+}
+#ask-form { display: flex; gap: 12px; align-items: center; }
+.ask-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 4px 0;
+}
+.ask-input::placeholder { color: var(--muted); font-style: italic; font-weight: 400; }
+.ask-btn {
+  background: #0d0d0d;
+  color: #f5f5f5;
+  border: none;
+  border-radius: 100px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 8px 22px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ask-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--shadow); }
+.ask-btn:disabled { opacity: 0.45; cursor: default; }
+
+#ask-results:empty { display: none; }
+.ask-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--secondary);
+  padding-top: 14px;
+}
+.spinner {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ask-section-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 16px 0 6px;
+}
+.ask-matches { box-shadow: none; }
+.ask-card {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 16px;
+  padding-top: 14px;
+  animation: fadeUp 0.4s ease-out;
+}
+.ask-prob-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.ask-prob {
+  font-family: var(--font-display);
+  font-size: 2.7rem;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.ask-rationale { color: var(--secondary); margin: 10px 0 0; max-width: 76ch; }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.chip-factor {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--secondary);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 3px 11px;
+  border-radius: 100px;
+}
+.ask-model {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 10px;
+}
+.ask-note { color: var(--muted); font-style: italic; font-size: 0.85rem; margin-top: 12px; }
+.ask-error {
+  color: var(--red);
+  background: var(--red-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-top: 14px;
+}
 
 .day-group { margin-bottom: 30px; }
 .day-group h2 {
@@ -227,6 +357,9 @@ pre {
 .badge.pm { color: var(--violet); background: var(--violet-soft); }
 .badge.ka { color: var(--teal); background: var(--teal-soft); }
 .badge.op { color: var(--amber); background: var(--amber-soft); }
+.badge.mf { color: var(--blue); background: var(--blue-soft); }
+.badge.mc { color: var(--teal); background: var(--teal-soft); }
+.badge.cu { color: var(--accent-hover); background: var(--accent-soft); }
 
 .conf {
   display: inline-block;
@@ -288,6 +421,11 @@ footer {
 
 @media (max-width: 700px) {
   body { padding: 14px; }
+  .ask-panel { padding: 12px 14px; }
+  .ask-input { font-size: 1.05rem; }
+  .ask-btn { padding: 7px 16px; }
+  .ask-prob { font-size: 2.1rem; }
+  .controls input[type="search"] { width: 100%; }
   .board-table { border: none; background: none; box-shadow: none; }
   .board-table thead { display: none; }
   .board-table, .board-table tbody, .board-table tr, .board-table td { display: block; width: 100%; }

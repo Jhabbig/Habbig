@@ -22,8 +22,11 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import ask
 import db
 import ingest_kalshi
+import ingest_manifold
+import ingest_metaculus
 import ingest_options
 import ingest_polymarket
 import matching
@@ -100,9 +103,9 @@ def _now_iso() -> str:
 
 def _horizon_days() -> int:
     try:
-        return int(os.environ.get("FORECAST_HORIZON_DAYS", "7"))
+        return int(os.environ.get("FORECAST_HORIZON_DAYS", "30"))
     except ValueError:
-        return 7
+        return 30
 
 
 def _env_float(name: str, default: float) -> float:
@@ -215,10 +218,12 @@ async def _ingest_loop():
                 ingest_polymarket.fetch_horizon(horizon),
                 ingest_kalshi.fetch_horizon(horizon),
                 ingest_options.fetch_horizon(horizon),
+                ingest_manifold.fetch_horizon(horizon),
+                ingest_metaculus.fetch_horizon(horizon),
                 return_exceptions=True,
             )
             rows: list[dict] = []
-            for res, venue in zip(results, ("polymarket", "kalshi", "options")):
+            for res, venue in zip(results, ("polymarket", "kalshi", "options", "manifold", "metaculus")):
                 if isinstance(res, BaseException):
                     log.error("ingest %s failed: %s", venue, res)
                     continue
@@ -280,6 +285,10 @@ async def _resolve_loop():
         try:
             conn = await asyncio.to_thread(db.get_conn)
             n = await resolver.resolve_pending(conn)
+            try:
+                n += await resolver.adjudicate_custom(conn)
+            except Exception as e:
+                log.error("adjudicate_custom failed: %s", e)
             _loop_state["resolve"].update(last_ok=_now_iso(), last_error=None, resolved=n)
         except Exception as e:
             log.error("resolve loop error: %s", e)
@@ -335,7 +344,7 @@ _MICRO_RE = re.compile(
 )
 
 
-def _board_rows(days: int, category: str | None, venue: str | None, sort: str, min_confidence: str | None = None, include_micro: bool = False) -> list[dict]:
+def _board_rows(days: int, category: str | None, venue: str | None, sort: str, min_confidence: str | None = None, include_micro: bool = False, q: str | None = None) -> list[dict]:
     conn = db.get_conn()
     try:
         rows = db.latest_snapshots(conn, days)
@@ -345,6 +354,11 @@ def _board_rows(days: int, category: str | None, venue: str | None, sort: str, m
             rows = [r for r in rows if (r.get("category") or "").lower() == category.lower()]
         if venue:
             rows = [r for r in rows if (r.get("venue") or "").lower() == venue.lower()]
+        if q:
+            terms = [t.lower() for t in db.search_terms(q)]
+            # A query that parses to zero terms (punctuation-only) matches
+            # nothing rather than silently returning the whole board.
+            rows = [r for r in rows if terms and all(t in (r.get("question") or "").lower() for t in terms)]
 
         link_map: dict[str, str] = {}
         for lk in db.links(conn):
@@ -434,10 +448,19 @@ def api_board(
     sort: str = Query("end_date"),
     min_confidence: str = Query(""),
     include_micro: bool = Query(False),
+    q: str = Query(""),
 ):
     if min_confidence and min_confidence.lower() not in _TIER_RANK:
         raise HTTPException(status_code=400, detail=f"min_confidence must be one of {sorted(_TIER_RANK)}")
-    return _board_rows(days, category or None, venue or None, sort, min_confidence or None, include_micro)
+    return _board_rows(days, category or None, venue or None, sort, min_confidence or None, include_micro, q.strip() or None)
+
+
+@app.get("/api/ask")
+async def api_ask(q: str = Query("")):
+    question = q.strip()
+    if not 5 <= len(question) <= 300:
+        raise HTTPException(status_code=400, detail="q must be between 5 and 300 characters")
+    return await ask.ask(question)
 
 
 @app.get("/api/event/{uid}")

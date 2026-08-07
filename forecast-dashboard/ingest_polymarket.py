@@ -48,10 +48,10 @@ _GENERIC_TAGS = {"all", "trending", "new", "recurring", "hide from new", "weekly
 _CANONICAL_TAGS = [
     ("weather", {"weather", "climate", "temperature", "hurricane", "climate & weather"}),
     ("fed", {"fomc", "fed rates", "federal reserve", "interest rates", "fed"}),
-    ("crypto", {"crypto", "crypto prices", "bitcoin", "ethereum", "up or down"}),
+    ("finance", {"finance", "stocks", "stock market", "crypto", "crypto prices", "bitcoin", "ethereum", "up or down"}),
     ("sports", {"sports", "esports", "games"}),
     ("politics", {"politics", "elections", "geopolitics", "global elections"}),
-    ("economy", {"economy", "economic policy", "inflation", "macro indicators"}),
+    ("economics", {"economics", "economy", "economic policy", "inflation", "macro indicators"}),
 ]
 
 
@@ -95,10 +95,21 @@ def _token_ids(raw) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _canonical(labels: set[str]) -> str | None:
+    for canonical, aliases in _CANONICAL_TAGS:
+        if aliases & labels:
+            return canonical
+    return None
+
+
 def _category(m: dict, event: dict) -> str | None:
+    # The venue's own category field stays authoritative, but is run through
+    # the canonical map so e.g. "Economy"/"Crypto" land on the same buckets
+    # the kalshi/manifold/metaculus maps emit.
     cat = m.get("category")
     if isinstance(cat, str) and cat.strip():
-        return cat.strip().lower()
+        low = cat.strip().lower()
+        return _canonical({low}) or low
     labels = []
     for tags in (m.get("tags"), event.get("tags")):
         if not isinstance(tags, list):
@@ -107,9 +118,9 @@ def _category(m: dict, event: dict) -> str | None:
             label = t.get("label") if isinstance(t, dict) else t
             if isinstance(label, str) and label.strip():
                 labels.append(label.strip().lower())
-    for canonical, aliases in _CANONICAL_TAGS:
-        if aliases & set(labels):
-            return canonical
+    hit = _canonical(set(labels))
+    if hit:
+        return hit
     for label in labels:
         if label not in _GENERIC_TAGS:
             return label

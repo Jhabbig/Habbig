@@ -201,6 +201,70 @@ def test_get_brier_score_empty(conn):
     assert s["buckets"] == {}
 
 
+def test_search_markets_term_and_case_insensitive(conn):
+    u_rain = db.upsert_market(conn, _market(venue_id="m1", question="Will it rain in Berlin on Friday?"))
+    u_summit = db.upsert_market(conn, _market(venue_id="m2", question="Will Berlin host the summit?"))
+    u_oslo = db.upsert_market(conn, _market(venue_id="m3", question="Will it snow in Oslo?"))
+    for uid, liq in ((u_rain, 100), (u_summit, 5000), (u_oslo, 50)):
+        db.insert_snapshot(conn, {"market_uid": uid, "baseline_prob": 0.5, "liquidity": liq})
+    db.insert_model_prob(conn, {"market_uid": u_rain, "source": "llm", "model_prob": 0.7, "prob_method": "llm_forecast"})
+
+    rows = db.search_markets(conn, "will BERLIN")
+    assert [r["uid"] for r in rows] == [u_summit, u_rain]  # liquidity desc
+
+    rows = db.search_markets(conn, "Berlin RAIN")
+    assert [r["uid"] for r in rows] == [u_rain]
+    assert rows[0]["baseline_prob"] == 0.5
+    assert rows[0]["model_probs"]["llm"]["model_prob"] == 0.7
+
+    assert db.search_markets(conn, "berlin oslo") == []
+    assert db.search_markets(conn, "   ") == []
+
+
+def test_search_markets_ignores_edge_punctuation(conn):
+    uid = db.upsert_market(conn, _market(venue_id="m1", question="Will the Fed cut interest rates at the September FOMC meeting?"))
+    db.insert_snapshot(conn, {"market_uid": uid, "baseline_prob": 0.6, "liquidity": 100})
+
+    # Natural questions end in '?'; the trailing term must still match.
+    assert [r["uid"] for r in db.search_markets(conn, "Will the Fed cut interest rates?")] == [uid]
+    assert [r["uid"] for r in db.search_markets(conn, '"fed" rates,')] == [uid]
+    assert db.search_terms("?? !!") == []
+    assert db.search_markets(conn, "?? !!") == []
+
+
+def test_search_markets_excludes_resolved_and_snapshotless(conn):
+    u1 = db.upsert_market(conn, _market(venue_id="m1", question="Will it rain in Berlin?"))
+    u2 = db.upsert_market(conn, _market(venue_id="m2", question="Will it rain in Berlin twice?"))
+    db.upsert_market(conn, _market(venue_id="m3", question="Will it rain in Berlin thrice?"))  # no snapshot
+    db.insert_snapshot(conn, {"market_uid": u1, "baseline_prob": 0.4, "liquidity": 10})
+    db.insert_snapshot(conn, {"market_uid": u2, "baseline_prob": 0.6, "liquidity": 20})
+
+    assert [r["uid"] for r in db.search_markets(conn, "berlin rain")] == [u2, u1]
+
+    db.mark_resolved(conn, u2, outcome=1)
+    assert [r["uid"] for r in db.search_markets(conn, "berlin rain")] == [u1]
+
+
+def test_create_custom_market_upsert(conn):
+    uid = db.create_custom_market(conn, "Will X happen by Friday?", "2026-08-14T00:00:00Z")
+    assert uid.startswith("custom:")
+    m = db.get_market(conn, uid)
+    assert m["venue"] == "custom"
+    assert m["category"] == "custom"
+    assert m["active"] == 1
+    assert m["end_date"] == "2026-08-14T00:00:00Z"
+
+    # same question (any case) -> same uid; missing end_date doesn't clear the stored one
+    uid2 = db.create_custom_market(conn, "WILL X HAPPEN BY FRIDAY?", None)
+    assert uid2 == uid
+    assert conn.execute("SELECT COUNT(*) FROM markets").fetchone()[0] == 1
+    assert db.get_market(conn, uid)["end_date"] == "2026-08-14T00:00:00Z"
+
+    uid3 = db.create_custom_market(conn, "Will Y happen by Friday?")
+    assert uid3 != uid
+    assert db.get_market(conn, uid3)["end_date"] is None
+
+
 def test_status_counts(conn):
     uid = db.upsert_market(conn, _market())
     db.insert_snapshot(conn, {"market_uid": uid, "baseline_prob": 0.5})

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Lora:ital,wght@0,400;0,500;0,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Forecast Board — narve.ai</title>
@@ -21,11 +21,31 @@
     <a href="/accuracy">Accuracy</a>
   </nav>
 
+  <div class="ask-panel">
+    <form id="ask-form" autocomplete="off">
+      <input class="ask-input" id="ask-input" type="text" maxlength="300"
+             placeholder="Ask about any future event…" aria-label="Ask about any future event">
+      <button class="ask-btn" id="ask-btn" type="submit">Forecast</button>
+    </form>
+    <div id="ask-results"></div>
+  </div>
+
   <div class="controls">
+    <label>Search
+      <input type="search" id="f-q" placeholder="filter questions…" aria-label="Search board questions">
+    </label>
     <label>Days
       <select id="f-days">
-        <option>1</option><option>2</option><option>3</option><option>4</option>
-        <option>5</option><option>6</option><option selected>7</option>
+        <option>1</option><option>2</option><option>3</option><option>5</option>
+        <option selected>7</option><option>14</option><option>30</option>
+      </select>
+    </label>
+    <label>Sort
+      <select id="f-sort">
+        <option value="end_date" selected>resolution date</option>
+        <option value="move_24h">biggest 24h move</option>
+        <option value="liquidity">liquidity</option>
+        <option value="spread">tightest spread</option>
       </select>
     </label>
     <label>Venue
@@ -33,6 +53,9 @@
         <option value="">all</option>
         <option value="polymarket">polymarket</option>
         <option value="kalshi">kalshi</option>
+        <option value="manifold">manifold</option>
+        <option value="metaculus">metaculus</option>
+        <option value="options">options</option>
       </select>
     </label>
     <label>Category
@@ -61,10 +84,11 @@
   <script>
     'use strict';
     const GROUP_CAP = 150;
-    const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA', options: 'OPT' };
-    const VENUE_CLS = { PM: 'pm', KA: 'ka', OPT: 'op' };
+    const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA', options: 'OPT', manifold: 'MF', metaculus: 'MC', custom: 'CU' };
+    const VENUE_CLS = { PM: 'pm', KA: 'ka', OPT: 'op', MF: 'mf', MC: 'mc', CU: 'cu' };
     const MODEL_TAG = { llm: { label: 'LLM', cls: ' llm' } };
-    const state = { days: '7', venue: '', category: '', conf: '', micro: false };
+    const SORT_LABEL = { move_24h: 'biggest 24h move', liquidity: 'liquidity', spread: 'tightest spread' };
+    const state = { days: '7', venue: '', category: '', conf: '', micro: false, sort: 'end_date', q: '' };
     const expanded = new Set();
     const allCats = new Set();
     let lastRows = [];
@@ -132,18 +156,18 @@
       return `<span class="chip-dis" title="baseline gap vs linked market">Δ ${esc(pp(d.delta))} ${links}</span>`;
     }
 
-    function rowHtml(r) {
+    function rowHtml(r, endsAsDate = false) {
       const q = r.url
         ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.question)}</a>`
         : esc(r.question);
       const conf = r.confidence || '?';
       const spread = r.spread == null ? '—' : (r.spread * 100).toFixed(1) + '¢';
-      const ends = (r.end_date || '').slice(11, 16);
+      const ends = endsAsDate ? (r.end_date || '').slice(0, 10) : (r.end_date || '').slice(11, 16) + 'Z';
       return `<tr>
         <td class="prob-cell">${probCell(r)}</td>
         <td class="question q-cell">${q}${r.category ? ` <span class="cat">${esc(r.category)}</span>` : ''}</td>
         <td data-label="venue">${venueBadge(r.venue)}</td>
-        <td data-label="ends">${esc(ends)}Z</td>
+        <td data-label="ends">${esc(ends)}</td>
         <td data-label="24h">${moveCell(r)}</td>
         <td data-label="conf"><span class="conf ${esc(conf)}">${esc(conf)}</span></td>
         <td data-label="spread">${esc(spread)}</td>
@@ -151,11 +175,21 @@
       </tr>`;
     }
 
+    const BOARD_HEAD = `<thead><tr>
+      <th>Prob</th><th>Question</th><th>Venue</th><th>Ends</th>
+      <th>24h</th><th>Conf</th><th>Spread</th><th>Δ venues</th>
+    </tr></thead>`;
+
     function render() {
       const board = document.getElementById('board');
       if (!lastRows.length) {
         board.innerHTML = '<div class="muted">no markets match — ingest may still be warming up</div>';
         document.getElementById('row-count').textContent = '';
+        return;
+      }
+      document.getElementById('row-count').textContent = `${lastRows.length} market${lastRows.length === 1 ? '' : 's'}`;
+      if (state.sort !== 'end_date') {
+        renderFlat(board);
         return;
       }
       const groups = new Map();
@@ -170,17 +204,25 @@
         parts.push(`<section class="day-group">
           <h2>${esc(dayLabel(k))}<span class="date">${esc(k)}</span><span class="n">${rows.length} market${rows.length === 1 ? '' : 's'}</span></h2>
           <table class="board-table">
-            <thead><tr>
-              <th>Prob</th><th>Question</th><th>Venue</th><th>Ends</th>
-              <th>24h</th><th>Conf</th><th>Spread</th><th>Δ venues</th>
-            </tr></thead>
-            <tbody>${shown.map(rowHtml).join('')}</tbody>
+            ${BOARD_HEAD}
+            <tbody>${shown.map(r => rowHtml(r)).join('')}</tbody>
           </table>
           ${rows.length > shown.length ? `<button class="show-more" data-group="${esc(k)}">show all ${rows.length}</button>` : ''}
         </section>`);
       }
       board.innerHTML = parts.join('');
-      document.getElementById('row-count').textContent = `${lastRows.length} markets`;
+    }
+
+    function renderFlat(board) {
+      const shown = expanded.has('__all') ? lastRows : lastRows.slice(0, GROUP_CAP);
+      board.innerHTML = `<section class="day-group">
+        <h2>All markets<span class="date">ranked by ${esc(SORT_LABEL[state.sort] || state.sort)}</span><span class="n">${lastRows.length} market${lastRows.length === 1 ? '' : 's'}</span></h2>
+        <table class="board-table">
+          ${BOARD_HEAD}
+          <tbody>${shown.map(r => rowHtml(r, true)).join('')}</tbody>
+        </table>
+        ${lastRows.length > shown.length ? `<button class="show-more" data-group="__all">show all ${lastRows.length}</button>` : ''}
+      </section>`;
     }
 
     function rebuildCategorySelect() {
@@ -199,6 +241,8 @@
       if (state.category) qs.set('category', state.category);
       if (state.conf) qs.set('min_confidence', state.conf);
       if (state.micro) qs.set('include_micro', 'true');
+      if (state.sort !== 'end_date') qs.set('sort', state.sort);
+      if (state.q) qs.set('q', state.q);
       try {
         const rows = await fetch('/api/board?' + qs).then(r => {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -213,6 +257,104 @@
           `<div class="muted">failed to load board: ${esc(err.message)}</div>`;
       }
     }
+
+    // ── ask ──────────────────────────────────────────────────────────────
+
+    function askMatchesHtml(matches) {
+      const rows = matches.map(r => {
+        const q = r.url
+          ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.question)}</a>`
+          : esc(r.question);
+        const conf = r.confidence || '?';
+        return `<tr>
+          <td class="prob-cell"><div class="prob">${pct(r.display_prob)}</div></td>
+          <td class="question q-cell">${q}${r.category ? ` <span class="cat">${esc(r.category)}</span>` : ''}</td>
+          <td data-label="venue">${venueBadge(r.venue)}</td>
+          <td data-label="ends">${esc((r.end_date || '').slice(0, 10))}</td>
+          <td data-label="conf"><span class="conf ${esc(conf)}">${esc(conf)}</span></td>
+        </tr>`;
+      }).join('');
+      return `<div class="ask-section-label">${matches.length} matching market${matches.length === 1 ? '' : 's'} on the board</div>
+        <table class="board-table ask-matches">
+          <thead><tr><th>Prob</th><th>Question</th><th>Venue</th><th>Ends</th><th>Conf</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function askCardHtml(l) {
+      const conf = l.confidence || '?';
+      const factors = Array.isArray(l.key_factors) ? l.key_factors : [];
+      return `<div class="ask-card">
+        <div class="ask-prob-row">
+          <div class="ask-prob">${pct(l.probability)}</div>
+          <span class="conf ${esc(conf)}">${esc(conf)}</span>
+        </div>
+        ${l.rationale ? `<p class="ask-rationale">${esc(l.rationale)}</p>` : ''}
+        ${factors.length ? `<div class="ask-chips">${factors.map(f => `<span class="chip-factor">${esc(f)}</span>`).join('')}</div>` : ''}
+        ${l.model ? `<div class="ask-model">model · ${esc(l.model)}</div>` : ''}
+      </div>`;
+    }
+
+    function askResultsHtml(data) {
+      const parts = [];
+      if (Array.isArray(data.matches) && data.matches.length) parts.push(askMatchesHtml(data.matches));
+      if (data.llm) parts.push(askCardHtml(data.llm));
+      if (data.note) parts.push(`<div class="ask-note">${esc(data.note)}</div>`);
+      if (!parts.length) parts.push('<div class="ask-note">no matching markets and no model forecast yet</div>');
+      return parts.join('');
+    }
+
+    let askAbort = null;
+
+    async function runAsk() {
+      const out = document.getElementById('ask-results');
+      const btn = document.getElementById('ask-btn');
+      const question = document.getElementById('ask-input').value.trim();
+      if (question.length < 5) {
+        out.innerHTML = '<div class="ask-note">questions need at least 5 characters</div>';
+        return;
+      }
+      if (askAbort) askAbort.abort();
+      const ctrl = new AbortController();
+      askAbort = ctrl;
+      btn.disabled = true;
+      out.innerHTML = `<div class="ask-loading"><span class="spinner"></span>
+        Researching — matching board markets and running the model. A fresh forecast can take 30–60 seconds.</div>`;
+      try {
+        const r = await fetch('/api/ask?' + new URLSearchParams({ q: question }), { signal: ctrl.signal });
+        if (!r.ok) {
+          let detail = 'HTTP ' + r.status;
+          try {
+            const j = await r.json();
+            if (j && j.detail) detail = j.detail;
+          } catch { /* keep status text */ }
+          throw new Error(detail);
+        }
+        out.innerHTML = askResultsHtml(await r.json());
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          out.innerHTML = `<div class="ask-error">couldn't get a forecast: ${esc(err.message)} — try again</div>`;
+        }
+      } finally {
+        if (askAbort === ctrl) {
+          askAbort = null;
+          btn.disabled = false;
+        }
+      }
+    }
+
+    document.getElementById('ask-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      runAsk();
+    });
+    document.getElementById('ask-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runAsk();
+      }
+    });
+
+    // ── status / bindings ────────────────────────────────────────────────
 
     function ago(iso) {
       if (!iso) return null;
@@ -254,6 +396,7 @@
       load();
     });
     bind('f-days', 'days');
+    bind('f-sort', 'sort');
     bind('f-venue', 'venue');
     bind('f-category', 'category');
     bind('f-conf', 'conf');
@@ -261,6 +404,18 @@
       state.micro = e.target.checked;
       expanded.clear();
       load();
+    });
+
+    let qTimer = null;
+    document.getElementById('f-q').addEventListener('input', (e) => {
+      clearTimeout(qTimer);
+      qTimer = setTimeout(() => {
+        const v = e.target.value.trim();
+        if (v === state.q) return;
+        state.q = v;
+        expanded.clear();
+        load();
+      }, 300);
     });
 
     load();
