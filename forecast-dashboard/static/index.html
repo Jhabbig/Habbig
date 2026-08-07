@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Lora:ital,wght@0,400;0,500;0,600&display=swap" rel="stylesheet">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Forecast Board — narve.ai</title>
@@ -45,6 +46,7 @@
         <option value="high">high</option>
       </select>
     </label>
+    <label><input type="checkbox" id="f-micro"> 5-min markets</label>
     <span class="count" id="row-count"></span>
   </div>
 
@@ -60,7 +62,7 @@
     'use strict';
     const GROUP_CAP = 150;
     const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA' };
-    const state = { days: '7', venue: '', category: '', conf: '' };
+    const state = { days: '7', venue: '', category: '', conf: '', micro: false };
     const expanded = new Set();
     const allCats = new Set();
     let lastRows = [];
@@ -193,6 +195,7 @@
       if (state.venue) qs.set('venue', state.venue);
       if (state.category) qs.set('category', state.category);
       if (state.conf) qs.set('min_confidence', state.conf);
+      if (state.micro) qs.set('include_micro', 'true');
       try {
         const rows = await fetch('/api/board?' + qs).then(r => {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -251,6 +254,11 @@
     bind('f-venue', 'venue');
     bind('f-category', 'category');
     bind('f-conf', 'conf');
+    document.getElementById('f-micro').addEventListener('change', (e) => {
+      state.micro = e.target.checked;
+      expanded.clear();
+      load();
+    });
 
     load();
     loadStatus();

@@ -14,6 +14,7 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -73,7 +74,8 @@ async def security_and_auth(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'"
     )
     if _sso_secret:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
@@ -309,11 +311,21 @@ def _latest_model(model_probs: dict) -> tuple[str | None, dict | None]:
 
 _TIER_RANK = {"stale": 0, "thin": 1, "low": 2, "medium": 3, "high": 4}
 
+# Recurring intraday series (5-min/hourly crypto up-or-down, per-game micro
+# lines). They drown the board's actual signal, so they're opt-in.
+_MICRO_RE = re.compile(
+    r"\b(up or down|above .* at \d{1,2}:\d{2}\s*(AM|PM)|\d{1,2}:\d{2}\s*(AM|PM)\s*-\s*\d{1,2}:\d{2}\s*(AM|PM)"
+    r"|map \d|total rounds|rounds handicap|games total|game handicap|\bo/u \d|over/under \d+\.5|1st half|first half|quarter \d)\b",
+    re.IGNORECASE,
+)
 
-def _board_rows(days: int, category: str | None, venue: str | None, sort: str, min_confidence: str | None = None) -> list[dict]:
+
+def _board_rows(days: int, category: str | None, venue: str | None, sort: str, min_confidence: str | None = None, include_micro: bool = False) -> list[dict]:
     conn = db.get_conn()
     try:
         rows = db.latest_snapshots(conn, days)
+        if not include_micro:
+            rows = [r for r in rows if not _MICRO_RE.search(r.get("question") or "")]
         if category:
             rows = [r for r in rows if (r.get("category") or "").lower() == category.lower()]
         if venue:
@@ -393,7 +405,7 @@ def _board_rows(days: int, category: str | None, venue: str | None, sort: str, m
         elif sort == "spread":
             out.sort(key=lambda x: x["spread"] if x["spread"] is not None else 1.0)
         else:
-            out.sort(key=lambda x: x["end_date"] or "9999")
+            out.sort(key=lambda x: ((x["end_date"] or "9999")[:10], -_TIER_RANK.get(x["confidence"] or "stale", 0), -(x["liquidity"] or 0), x["end_date"] or "9999"))
         return out
     finally:
         conn.close()
@@ -406,10 +418,11 @@ def api_board(
     venue: str = Query(""),
     sort: str = Query("end_date"),
     min_confidence: str = Query(""),
+    include_micro: bool = Query(False),
 ):
     if min_confidence and min_confidence.lower() not in _TIER_RANK:
         raise HTTPException(status_code=400, detail=f"min_confidence must be one of {sorted(_TIER_RANK)}")
-    return _board_rows(days, category or None, venue or None, sort, min_confidence or None)
+    return _board_rows(days, category or None, venue or None, sort, min_confidence or None, include_micro)
 
 
 @app.get("/api/event/{uid}")
