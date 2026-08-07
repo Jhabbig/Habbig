@@ -97,30 +97,59 @@ class DataStore:
                 conn.execute("SELECT platform FROM trades LIMIT 1")
             except sqlite3.OperationalError:
                 conn.execute("ALTER TABLE trades ADD COLUMN platform TEXT DEFAULT 'polymarket'")
+            try:
+                conn.execute("SELECT price_tier FROM signals LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE signals ADD COLUMN price_tier TEXT DEFAULT 'last'")
+            # Unique per (condition_id, platform) so INSERT OR IGNORE dedupes.
+            # Guarded: pre-existing DBs may already hold duplicate rows.
+            try:
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_cond_plat ON calibration(condition_id, platform)")
+            except sqlite3.OperationalError:
+                pass
 
     def log_signal(self, signal: Signal) -> None:
         now = datetime.now(timezone.utc).isoformat()
         platform = getattr(signal.market, "platform", "polymarket")
+        price_tier = getattr(signal, "price_tier", "last")
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO signals
                    (timestamp, condition_id, question, city, station_icao, target_date,
                     forecast_mean, forecast_std, forecast_source,
-                    model_prob, market_prob, edge, action, confidence, platform)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (now, signal.market.condition_id, signal.market.question,
-                 signal.market.city, signal.market.station_icao,
-                 signal.market.target_date.isoformat() if signal.market.target_date else None,
-                 signal.forecast.mean_temp_f, signal.forecast.std_temp_f,
-                 signal.forecast.source, signal.model_prob, signal.market_prob,
-                 signal.edge, signal.action, signal.confidence, platform),
+                    model_prob, market_prob, edge, action, confidence, platform, price_tier)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    now,
+                    signal.market.condition_id,
+                    signal.market.question,
+                    signal.market.city,
+                    signal.market.station_icao,
+                    signal.market.target_date.isoformat() if signal.market.target_date else None,
+                    signal.forecast.mean_temp_f,
+                    signal.forecast.std_temp_f,
+                    signal.forecast.source,
+                    signal.model_prob,
+                    signal.market_prob,
+                    signal.edge,
+                    signal.action,
+                    signal.confidence,
+                    platform,
+                    price_tier,
+                ),
             )
 
-    def log_trade(self, signal: Signal, position: PositionSize,
-                  paper_mode: bool = True, order_id: str = "", status: str = "filled") -> None:
+    def log_trade(self, signal: Signal, position: PositionSize, paper_mode: bool = True, order_id: str = "", status: str = "filled") -> None:
         now = datetime.now(timezone.utc).isoformat()
         side = "YES" if signal.action == "BUY_YES" else "NO"
-        price = signal.market_prob if side == "YES" else (1.0 - signal.market_prob)
+        if side == "YES":
+            price = getattr(signal, "exec_price_yes", None)
+            if price is None:
+                price = signal.market_prob
+        else:
+            price = getattr(signal, "exec_price_no", None)
+            if price is None:
+                price = 1.0 - signal.market_prob
         platform = getattr(signal.market, "platform", "polymarket")
 
         with sqlite3.connect(self.db_path) as conn:
@@ -130,25 +159,32 @@ class DataStore:
                     amount, price, kelly_fraction, edge, paper_mode, order_id, status,
                     platform)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (now, signal.market.condition_id, signal.market.token_id,
-                 signal.market.question, signal.market.city, signal.action, side,
-                 position.amount, price, position.kelly_fraction, signal.edge,
-                 1 if paper_mode else 0, order_id, status, platform),
+                (
+                    now,
+                    signal.market.condition_id,
+                    signal.market.token_id,
+                    signal.market.question,
+                    signal.market.city,
+                    signal.action,
+                    side,
+                    position.amount,
+                    price,
+                    position.kelly_fraction,
+                    signal.edge,
+                    1 if paper_mode else 0,
+                    order_id,
+                    status,
+                    platform,
+                ),
             )
 
     def get_today_stats(self) -> dict:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            signals = conn.execute(
-                "SELECT COUNT(*) as cnt FROM signals WHERE timestamp LIKE ?",
-                (f"{today}%",)).fetchone()
-            trades = conn.execute(
-                "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total_amount FROM trades WHERE timestamp LIKE ?",
-                (f"{today}%",)).fetchone()
-            actionable = conn.execute(
-                "SELECT COUNT(*) as cnt FROM signals WHERE timestamp LIKE ? AND action != 'NO_TRADE'",
-                (f"{today}%",)).fetchone()
+            signals = conn.execute("SELECT COUNT(*) as cnt FROM signals WHERE timestamp LIKE ?", (f"{today}%",)).fetchone()
+            trades = conn.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total_amount FROM trades WHERE timestamp LIKE ?", (f"{today}%",)).fetchone()
+            actionable = conn.execute("SELECT COUNT(*) as cnt FROM signals WHERE timestamp LIKE ? AND action != 'NO_TRADE'", (f"{today}%",)).fetchone()
         return {
             "date": today,
             "signals_total": signals["cnt"],
@@ -160,26 +196,21 @@ class DataStore:
     def get_recent_trades(self, limit: int = 20) -> list:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
     def get_recent_signals(self, limit: int = 50) -> list:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute("SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
     def get_pnl_summary(self) -> dict:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            total = conn.execute(
-                "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades").fetchone()
-            by_action = conn.execute(
-                "SELECT action, COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades GROUP BY action").fetchall()
-            by_city = conn.execute(
-                "SELECT city, COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades GROUP BY city").fetchall()
+            total = conn.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades").fetchone()
+            by_action = conn.execute("SELECT action, COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades GROUP BY action").fetchall()
+            by_city = conn.execute("SELECT city, COUNT(*) as cnt, COALESCE(SUM(amount), 0) as total FROM trades GROUP BY city").fetchall()
         return {
             "total_trades": total["cnt"],
             "total_wagered": total["total"],
@@ -205,10 +236,17 @@ class DataStore:
                    (condition_id, platform, city, target_date,
                     model_prob, market_prob, outcome, resolved_at, prob_method)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (signal.market.condition_id, platform, signal.market.city,
-                 signal.market.target_date.isoformat() if signal.market.target_date else None,
-                 signal.model_prob, signal.market_prob,
-                 outcome, now, prob_method),
+                (
+                    signal.market.condition_id,
+                    platform,
+                    signal.market.city,
+                    signal.market.target_date.isoformat() if signal.market.target_date else None,
+                    signal.model_prob,
+                    signal.market_prob,
+                    outcome,
+                    now,
+                    prob_method,
+                ),
             )
 
     def get_brier_score(self) -> dict:
@@ -222,10 +260,7 @@ class DataStore:
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT model_prob, market_prob, outcome, prob_method, platform "
-                "FROM calibration WHERE outcome IS NOT NULL"
-            ).fetchall()
+            rows = conn.execute("SELECT model_prob, market_prob, outcome, prob_method, platform FROM calibration WHERE outcome IS NOT NULL").fetchall()
 
         if not rows:
             return {"n": 0, "brier_model": None, "brier_market": None, "edge_vs_market": None}
@@ -270,7 +305,7 @@ class DataStore:
         buckets = {}
         for r in rows:
             bucket = min(int(r["model_prob"] * 10), 9)  # 0-9
-            label = f"{bucket*10}-{bucket*10+10}%"
+            label = f"{bucket * 10}-{bucket * 10 + 10}%"
             if label not in buckets:
                 buckets[label] = {"n": 0, "sum_prob": 0.0, "sum_outcome": 0.0}
             buckets[label]["n"] += 1

@@ -6,7 +6,7 @@ not city center observations. This mapping must match Polymarket's resolution so
 
 from __future__ import annotations
 
-from typing import Optional, List, Tuple
+from typing import Optional
 
 # City name variants → (latitude, longitude, ICAO code, display name)
 STATION_MAP: dict = {

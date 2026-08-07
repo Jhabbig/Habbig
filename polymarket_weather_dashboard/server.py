@@ -20,13 +20,14 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory, make_response
+from flask import Flask, jsonify, request, send_from_directory
 from scipy.stats import norm
 
 app = Flask(__name__, static_folder="static")
 _flask_secret = os.environ.get("FLASK_SECRET")
 if not _flask_secret:
     import secrets as _sec
+
     _flask_secret = _sec.token_urlsafe(32)
     logging.warning("FLASK_SECRET not set — using random key (sessions won't persist across restarts)")
 app.secret_key = _flask_secret
@@ -34,9 +35,11 @@ app.secret_key = _flask_secret
 # Gzip compression — cuts 3.5MB market JSON to ~500KB over the wire
 try:
     from flask_compress import Compress
+
     Compress(app)
 except Exception:
     import gzip as _gzip
+
     @app.after_request
     def _gzip_response(response):
         try:
@@ -61,6 +64,7 @@ except Exception:
         except Exception:
             pass
         return response
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -247,9 +251,11 @@ DEFAULT_USER_SETTINGS = {
     "watched_cities": [],
 }
 
+
 def _is_behind_gateway() -> bool:
     """Check at call time (not import time) so env changes take effect."""
     return bool(os.environ.get("GATEWAY_SSO_SECRET"))
+
 
 _BEHIND_GATEWAY = _is_behind_gateway()  # initial check for startup warning
 _DEV_MODE = os.environ.get("DEV_MODE", "").strip() == "1"
@@ -274,9 +280,7 @@ def _get_user_from_request() -> Optional[dict]:
             # Look up the profile from SQLite for admin status etc.
             try:
                 with _get_conn(readonly=True) as conn:
-                    row = conn.execute(
-                        "SELECT * FROM profiles WHERE id = ? LIMIT 1", (gw_id,)
-                    ).fetchone()
+                    row = conn.execute("SELECT * FROM profiles WHERE id = ? LIMIT 1", (gw_id,)).fetchone()
                     if row:
                         profile = dict(row)
                         return {
@@ -310,6 +314,7 @@ def require_auth(f):
                 return jsonify({"error": "unauthorized"}), 401
         request.user = user
         return f(*args, **kwargs)
+
     return wrapper
 
 
@@ -326,6 +331,7 @@ def require_admin(f):
             return jsonify({"error": "forbidden"}), 403
         request.user = user
         return f(*args, **kwargs)
+
     return wrapper
 
 
@@ -349,6 +355,7 @@ init_db()
 # every time the dict crossed the size threshold and triggered a global refetch
 # storm against the upstream weather APIs.
 from collections import OrderedDict as _OrderedDict
+
 _cache: "_OrderedDict[str, dict]" = _OrderedDict()
 _cache_lock = threading.Lock()
 _CACHE_MAX_SIZE = 1000
@@ -381,61 +388,66 @@ def cache_set(key: str, data):
 # ─── Station Mapping ───────────────────────────────────────────────────────────
 
 STATION_MAP = {
-    "new york":      (40.7772, -73.8726, "KLGA", "LaGuardia Airport, NY"),
-    "nyc":           (40.7772, -73.8726, "KLGA", "LaGuardia Airport, NY"),
-    "chicago":       (41.9742, -87.9073, "KORD", "O'Hare International, IL"),
-    "dallas":        (32.8471, -96.8518, "KDAL", "Dallas Love Field, TX"),
-    "miami":         (25.7959, -80.2870, "KMIA", "Miami International, FL"),
-    "los angeles":   (33.9425, -118.4081, "KLAX", "LAX, CA"),
-    "la":            (33.9425, -118.4081, "KLAX", "LAX, CA"),
-    "london":        (51.5053, -0.0553, "EGLC", "London City Airport"),
-    "paris":         (48.7233, 2.3794, "LFPO", "Paris-Orly"),
-    "tokyo":         (35.5533, 139.7811, "RJTT", "Haneda Airport"),
-    "seoul":         (37.5586, 126.7906, "RKSS", "Gimpo International"),
-    "sydney":        (-33.9461, 151.1772, "YSSY", "Sydney Airport"),
-    "atlanta":       (33.6407, -84.4277, "KATL", "Hartsfield-Jackson, GA"),
-    "austin":        (30.1945, -97.6699, "KAUS", "Austin-Bergstrom, TX"),
-    "houston":       (29.6454, -95.2789, "KHOU", "William P. Hobby Airport, TX"),
-    "denver":        (39.7169, -104.7529, "KBKF", "Buckley Space Force Base, CO"),
+    "new york": (40.7772, -73.8726, "KLGA", "LaGuardia Airport, NY"),
+    "nyc": (40.7772, -73.8726, "KLGA", "LaGuardia Airport, NY"),
+    "chicago": (41.9742, -87.9073, "KORD", "O'Hare International, IL"),
+    "dallas": (32.8471, -96.8518, "KDAL", "Dallas Love Field, TX"),
+    "miami": (25.7959, -80.2870, "KMIA", "Miami International, FL"),
+    "los angeles": (33.9425, -118.4081, "KLAX", "LAX, CA"),
+    "la": (33.9425, -118.4081, "KLAX", "LAX, CA"),
+    "london": (51.5053, -0.0553, "EGLC", "London City Airport"),
+    "paris": (48.7233, 2.3794, "LFPO", "Paris-Orly"),
+    "tokyo": (35.5533, 139.7811, "RJTT", "Haneda Airport"),
+    "seoul": (37.5586, 126.7906, "RKSS", "Gimpo International"),
+    "sydney": (-33.9461, 151.1772, "YSSY", "Sydney Airport"),
+    "atlanta": (33.6407, -84.4277, "KATL", "Hartsfield-Jackson, GA"),
+    "austin": (30.1945, -97.6699, "KAUS", "Austin-Bergstrom, TX"),
+    "houston": (29.6454, -95.2789, "KHOU", "William P. Hobby Airport, TX"),
+    "denver": (39.7169, -104.7529, "KBKF", "Buckley Space Force Base, CO"),
     "san francisco": (37.6213, -122.3790, "KSFO", "SFO, CA"),
-    "seattle":       (47.4502, -122.3088, "KSEA", "Sea-Tac, WA"),
-    "toronto":       (43.6772, -79.6306, "CYYZ", "Pearson International"),
-    "munich":        (48.3537, 11.7750, "EDDM", "Munich Airport"),
-    "milan":         (45.6306, 8.7281, "LIMC", "Malpensa Airport"),
-    "madrid":        (40.4719, -3.5626, "LEMD", "Barajas Airport"),
-    "warsaw":        (52.1657, 20.9671, "EPWA", "Chopin Airport"),
-    "moscow":        (55.4100, 37.9023, "UUDD", "Domodedovo Airport"),
-    "istanbul":      (40.9829, 28.8103, "LTFM", "Istanbul Airport"),
-    "ankara":        (40.1281, 32.9951, "LTAC", "Esenboga Airport"),
-    "tel aviv":      (32.0114, 34.8867, "LLBG", "Ben Gurion Airport"),
-    "hong kong":     (22.3080, 113.9185, "VHHH", "Hong Kong International"),
-    "shanghai":      (31.1443, 121.8083, "ZSPD", "Pudong International"),
-    "beijing":       (40.0799, 116.5849, "ZBAA", "Beijing Capital International"),
-    "shenzhen":      (22.6393, 113.8107, "ZGSZ", "Bao'an International"),
-    "chongqing":     (29.7192, 106.6417, "ZUCK", "Jiangbei International"),
-    "wuhan":         (30.7838, 114.2081, "ZHHH", "Tianhe International"),
-    "chengdu":       (30.5785, 103.9471, "ZUUU", "Shuangliu International"),
-    "taipei":        (25.0777, 121.2328, "RCTP", "Taoyuan International"),
-    "singapore":     (1.3644, 103.9915, "WSSS", "Changi Airport"),
-    "lucknow":       (26.7606, 80.8893, "VILK", "Chaudhary Charan Singh"),
-    "wellington":    (-41.3272, 174.8053, "NZWN", "Wellington Airport"),
-    "buenos aires":  (-34.5592, -58.4156, "SAEZ", "Ezeiza International"),
-    "sao paulo":     (-23.4356, -46.4731, "SBGR", "Guarulhos International"),
-    "mexico city":   (19.4363, -99.0721, "MMMX", "Benito Juárez International"),
-    "busan":         (35.1796, 128.9382, "RKPK", "Gimhae International"),
-    "amsterdam":     (52.3105, 4.7683, "EHAM", "Amsterdam Schiphol"),
-    "helsinki":       (60.3172, 24.9633, "EFHK", "Helsinki Vantaa Airport"),
-    "panama city":   (9.0714, -79.3835, "MPMG", "Marcos A. Gelabert International"),
-    "kuala lumpur":   (2.7456, 101.7099, "WMKK", "Kuala Lumpur International"),
-    "jakarta":       (-6.2666, 106.8910, "WIHH", "Halim Perdanakusuma International"),
+    "seattle": (47.4502, -122.3088, "KSEA", "Sea-Tac, WA"),
+    "toronto": (43.6772, -79.6306, "CYYZ", "Pearson International"),
+    "munich": (48.3537, 11.7750, "EDDM", "Munich Airport"),
+    "milan": (45.6306, 8.7281, "LIMC", "Malpensa Airport"),
+    "madrid": (40.4719, -3.5626, "LEMD", "Barajas Airport"),
+    "warsaw": (52.1657, 20.9671, "EPWA", "Chopin Airport"),
+    "moscow": (55.4100, 37.9023, "UUDD", "Domodedovo Airport"),
+    "istanbul": (40.9829, 28.8103, "LTFM", "Istanbul Airport"),
+    "ankara": (40.1281, 32.9951, "LTAC", "Esenboga Airport"),
+    "tel aviv": (32.0114, 34.8867, "LLBG", "Ben Gurion Airport"),
+    "hong kong": (22.3080, 113.9185, "VHHH", "Hong Kong International"),
+    "shanghai": (31.1443, 121.8083, "ZSPD", "Pudong International"),
+    "beijing": (40.0799, 116.5849, "ZBAA", "Beijing Capital International"),
+    "shenzhen": (22.6393, 113.8107, "ZGSZ", "Bao'an International"),
+    "chongqing": (29.7192, 106.6417, "ZUCK", "Jiangbei International"),
+    "wuhan": (30.7838, 114.2081, "ZHHH", "Tianhe International"),
+    "chengdu": (30.5785, 103.9471, "ZUUU", "Shuangliu International"),
+    "taipei": (25.0777, 121.2328, "RCTP", "Taoyuan International"),
+    "singapore": (1.3644, 103.9915, "WSSS", "Changi Airport"),
+    "lucknow": (26.7606, 80.8893, "VILK", "Chaudhary Charan Singh"),
+    "wellington": (-41.3272, 174.8053, "NZWN", "Wellington Airport"),
+    "buenos aires": (-34.5592, -58.4156, "SAEZ", "Ezeiza International"),
+    "sao paulo": (-23.4356, -46.4731, "SBGR", "Guarulhos International"),
+    "mexico city": (19.4363, -99.0721, "MMMX", "Benito Juárez International"),
+    "busan": (35.1796, 128.9382, "RKPK", "Gimhae International"),
+    "amsterdam": (52.3105, 4.7683, "EHAM", "Amsterdam Schiphol"),
+    "helsinki": (60.3172, 24.9633, "EFHK", "Helsinki Vantaa Airport"),
+    "panama city": (9.0714, -79.3835, "MPMG", "Marcos A. Gelabert International"),
+    "kuala lumpur": (2.7456, 101.7099, "WMKK", "Kuala Lumpur International"),
+    "jakarta": (-6.2666, 106.8910, "WIHH", "Halim Perdanakusuma International"),
 }
 
 CITY_ALIASES = {
-    "new york city": "new york", "manhattan": "new york",
-    "chi-town": "chicago", "l.a.": "la", "l.a": "la",
-    "dfw": "dallas", "fort worth": "dallas",
-    "sf": "san francisco", "são paulo": "sao paulo",
-    "são paulo": "sao paulo", "cdmx": "mexico city",
+    "new york city": "new york",
+    "manhattan": "new york",
+    "chi-town": "chicago",
+    "l.a.": "la",
+    "l.a": "la",
+    "dfw": "dallas",
+    "fort worth": "dallas",
+    "sf": "san francisco",
+    "são paulo": "sao paulo",
+    "cdmx": "mexico city",
 }
 
 # ─── Kalshi API ───────────────────────────────────────────────────────────────
@@ -444,7 +456,7 @@ KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 # Maps Kalshi series tickers to our city keys
 KALSHI_SERIES = {
-    "KXHIGHNY":  "new york",
+    "KXHIGHNY": "new york",
     "KXHIGHCHI": "chicago",
     "KXHIGHMIA": "miami",
     "KXHIGHLAX": "los angeles",
@@ -453,7 +465,10 @@ KALSHI_SERIES = {
 
 # Additional climate/disaster series
 KALSHI_EXTRA_SERIES = [
-    "KXWARMING", "KXERUPTSUPER", "KXEARTHQUAKECALIFORNIA", "KXEARTHQUAKEJAPAN",
+    "KXWARMING",
+    "KXERUPTSUPER",
+    "KXEARTHQUAKECALIFORNIA",
+    "KXEARTHQUAKEJAPAN",
 ]
 
 
@@ -546,8 +561,7 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
     city = KALSHI_SERIES.get(series_ticker)
 
     # Parse temperature from strike info
-    temp_info = {"temp_lower": None, "temp_upper": None, "threshold": None,
-                 "is_over": None, "unit": "F"}
+    temp_info = {"temp_lower": None, "temp_upper": None, "threshold": None, "is_over": None, "unit": "F"}
     strike_type = m.get("strike_type", "")
     floor_strike = m.get("floor_strike")
     cap_strike = m.get("cap_strike")
@@ -575,11 +589,10 @@ def _parse_kalshi_market(m: dict) -> Optional[dict]:
 
     # Parse date from event_ticker (e.g., KXHIGHNY-26APR04 → 2026-04-04)
     target_date = None
-    date_match = re.search(r'-(\d{2})([A-Z]{3})(\d{2})', event_ticker)
+    date_match = re.search(r"-(\d{2})([A-Z]{3})(\d{2})", event_ticker)
     if date_match:
         yr, mon_str, day = date_match.groups()
-        months = {"JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06",
-                  "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"}
+        months = {"JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"}
         mon = months.get(mon_str)
         if mon:
             target_date = f"20{yr}-{mon}-{day}"
@@ -647,31 +660,98 @@ GAMMA_BASE = "https://gamma-api.polymarket.com"
 
 # Tags that are genuinely weather/climate (not sports teams named "Hurricanes")
 WEATHER_TAGS = {
-    "weather", "climate", "climate & weather", "climate change", "global temp",
-    "natural disaster", "natural disasters", "climate & science",
+    "weather",
+    "climate",
+    "climate & weather",
+    "climate change",
+    "global temp",
+    "natural disaster",
+    "natural disasters",
+    "climate & science",
 }
 
 # Keywords in event titles that indicate weather (not in market questions, to avoid sports)
 EVENT_KEYWORDS = [
-    "temperature", "highest temp", "hottest year", "hottest month", "coldest",
-    "heat wave", "°f", "°c", "precipitation", "rainfall", "snowfall",
-    "hurricane", "tropical storm", "arctic", "sea ice",
-    "earthquake", "tornado", "volcano", "eruption", "meteor",
-    "warmest", "climate record",
+    "temperature",
+    "highest temp",
+    "hottest year",
+    "hottest month",
+    "coldest",
+    "heat wave",
+    "°f",
+    "°c",
+    "precipitation",
+    "rainfall",
+    "snowfall",
+    "hurricane",
+    "tropical storm",
+    "arctic",
+    "sea ice",
+    "earthquake",
+    "tornado",
+    "volcano",
+    "eruption",
+    "meteor",
+    "warmest",
+    "climate record",
 ]
 
 # Reject events with these keywords (sports, politics, unrelated)
 REJECT_KEYWORDS = [
-    "nhl", "nba", "nfl", "mlb", "mls", "rugby", "grand prix", "formula 1",
-    "f1", "boxing", "fight", "vs.", "champion", "playoff", "standings",
-    "election", "president", "ceasefire", "ukraine", "nato", "coup",
-    "treaty", "peace deal", "sovereignty", "referendum", "military",
-    "mayor", "governor", "senate", "congress", "parliament",
-    "ipo", "stock", "bitcoin", "crypto", "token", "launch",
-    "ligue 1", "premier league", "la liga", "bundesliga", "serie a",
-    "head-to-head", "podium", "relegat",
-    "spacex", "starship", "ticker", "moon landing", "tesla", "xai",
-    "ackman", "merger", "public ticker",
+    "nhl",
+    "nba",
+    "nfl",
+    "mlb",
+    "mls",
+    "rugby",
+    "grand prix",
+    "formula 1",
+    "f1",
+    "boxing",
+    "fight",
+    "vs.",
+    "champion",
+    "playoff",
+    "standings",
+    "election",
+    "president",
+    "ceasefire",
+    "ukraine",
+    "nato",
+    "coup",
+    "treaty",
+    "peace deal",
+    "sovereignty",
+    "referendum",
+    "military",
+    "mayor",
+    "governor",
+    "senate",
+    "congress",
+    "parliament",
+    "ipo",
+    "stock",
+    "bitcoin",
+    "crypto",
+    "token",
+    "launch",
+    "ligue 1",
+    "premier league",
+    "la liga",
+    "bundesliga",
+    "serie a",
+    "head-to-head",
+    "podium",
+    "relegat",
+    "spacex",
+    "starship",
+    "ticker",
+    "moon landing",
+    "tesla",
+    "xai",
+    "ackman",
+    "merger",
+    "public ticker",
 ]
 
 
@@ -680,17 +760,14 @@ def _fetch_events_by_tag(tag_slug: str, seen_ids: set, all_markets: list, lock=N
     offset = 0
     for _ in range(10):
         try:
-            resp = requests.get(f"{GAMMA_BASE}/events",
-                                params={"tag_slug": tag_slug, "closed": "false",
-                                        "limit": "100", "offset": str(offset)},
-                                timeout=15)
+            resp = requests.get(f"{GAMMA_BASE}/events", params={"tag_slug": tag_slug, "closed": "false", "limit": "100", "offset": str(offset)}, timeout=15)
             if resp.status_code != 200:
                 break
             events = resp.json()
             if not events:
                 break
             for event in events:
-                title = (event.get("title", "") or "")
+                title = event.get("title", "") or ""
                 title_lower = title.lower()
                 if any(k in title_lower for k in REJECT_KEYWORDS):
                     continue
@@ -728,10 +805,12 @@ def fetch_all_weather_markets() -> list[dict]:
     all_markets: list[dict] = []
     seen_ids: set[str] = set()
     import threading as _th
+
     _market_lock = _th.Lock()
 
     # Fetch via targeted tag_slug queries — much faster than paginating all events
     from concurrent.futures import ThreadPoolExecutor
+
     tag_slugs = ["temperature", "weather", "climate-change", "natural-disasters"]
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(_fetch_events_by_tag, slug, seen_ids, all_markets, _market_lock) for slug in tag_slugs]
@@ -745,45 +824,65 @@ def fetch_all_weather_markets() -> list[dict]:
 
 # ─── Parsing ───────────────────────────────────────────────────────────────────
 
+
 def parse_city(title: str) -> Optional[str]:
     title_lower = title.lower()
     all_keys = list(STATION_MAP.keys()) + list(CITY_ALIASES.keys())
     all_keys.sort(key=len, reverse=True)
     for city in all_keys:
         # Word boundary check to avoid "dallas" matching in "vandals"
-        if re.search(r'\b' + re.escape(city) + r'\b', title_lower):
+        if re.search(r"\b" + re.escape(city) + r"\b", title_lower):
             return CITY_ALIASES.get(city, city)
     return None
 
 
 def parse_temperature(title: str) -> dict:
-    result = {"temp_lower": None, "temp_upper": None, "threshold": None,
-              "is_over": None, "unit": "F"}
+    result = {"temp_lower": None, "temp_upper": None, "threshold": None, "is_over": None, "unit": "F"}
     tl = title.lower()
 
     # Skip non-temperature markets that have numbers (earthquake magnitude, tornado counts, etc.)
-    if any(k in tl for k in ["earthquake", "magnitude", "tornado", "hurricane", "landfall",
-                              "sea ice", "arctic", "volcano", "eruption", "meteor",
-                              "measles", "cases", "pandemic",
-                              "snowfall", "rainfall", "inches", "precipitation", "rain", "snow"]):
+    if any(
+        k in tl
+        for k in [
+            "earthquake",
+            "magnitude",
+            "tornado",
+            "hurricane",
+            "landfall",
+            "sea ice",
+            "arctic",
+            "volcano",
+            "eruption",
+            "meteor",
+            "measles",
+            "cases",
+            "pandemic",
+            "snowfall",
+            "rainfall",
+            "inches",
+            "precipitation",
+            "rain",
+            "snow",
+        ]
+    ):
         return result
 
     # Celsius patterns (global temp markets use C)
-    celsius_range = re.search(r'between\s*([\d.]+)\s*[º°]?\s*c?\s*and\s*([\d.]+)\s*[º°]?\s*c', tl)
+    celsius_range = re.search(r"between\s*([\d.]+)\s*[º°]?\s*c?\s*and\s*([\d.]+)\s*[º°]?\s*c", tl)
     if celsius_range:
         result["temp_lower"] = float(celsius_range.group(1))
         result["temp_upper"] = float(celsius_range.group(2))
         result["unit"] = "C"
         return result
 
-    celsius_over = re.search(r'(?:more than|above|over|exceed|at least|greater than)\s*([\d.]+)\s*[º°]\s*c', tl)
+    celsius_over = re.search(r"(?:more than|above|over|exceed|at least|greater than)\s*([\d.]+)\s*[º°]\s*c", tl)
     if celsius_over:
         result["threshold"] = float(celsius_over.group(1))
         result["is_over"] = True
         result["unit"] = "C"
         return result
 
-    celsius_under = re.search(r'(?:less than|below|under)\s*([\d.]+)\s*[º°]\s*c', tl)
+    celsius_under = re.search(r"(?:less than|below|under)\s*([\d.]+)\s*[º°]\s*c", tl)
     if celsius_under:
         result["threshold"] = float(celsius_under.group(1))
         result["is_over"] = False
@@ -791,7 +890,7 @@ def parse_temperature(title: str) -> dict:
         return result
 
     # Also catch "1pt20c" style from Polymarket slugs embedded in titles
-    pt_range = re.search(r'between\s*(\d+)pt(\d+)[º°]?c?\s*and\s*(\d+)pt(\d+)[º°]?c', tl)
+    pt_range = re.search(r"between\s*(\d+)pt(\d+)[º°]?c?\s*and\s*(\d+)pt(\d+)[º°]?c", tl)
     if pt_range:
         result["temp_lower"] = float(f"{pt_range.group(1)}.{pt_range.group(2)}")
         result["temp_upper"] = float(f"{pt_range.group(3)}.{pt_range.group(4)}")
@@ -799,32 +898,28 @@ def parse_temperature(title: str) -> dict:
         return result
 
     # Fahrenheit patterns
-    for pat in [r'(\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)',
-                r'(?:above|over|exceed|at\s+least)\s*(\d+)\s*°?\s*f',
-                r'(\d+)\s*°?\s*f?\s*\+', r'≥\s*(\d+)']:
+    for pat in [r"(\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)", r"(?:above|over|exceed|at\s+least)\s*(\d+)\s*°?\s*f", r"(\d+)\s*°?\s*f?\s*\+", r"≥\s*(\d+)"]:
         m = re.search(pat, tl)
         if m:
             result["threshold"] = float(m.group(1))
             result["is_over"] = True
             return result
 
-    for pat in [r'(\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)',
-                r'(?:below|under)\s*(\d+)\s*°?\s*f', r'≤\s*(\d+)']:
+    for pat in [r"(\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)", r"(?:below|under)\s*(\d+)\s*°?\s*f", r"≤\s*(\d+)"]:
         m = re.search(pat, tl)
         if m:
             result["threshold"] = float(m.group(1))
             result["is_over"] = False
             return result
 
-    for pat in [r'(\d+)\s*[-–]\s*(\d+)\s*°?\s*f',
-                r'between\s*(\d+)\s*(?:°?\s*f?)?\s*and\s*(\d+)\s*°?\s*f']:
+    for pat in [r"(\d+)\s*[-–]\s*(\d+)\s*°?\s*f", r"between\s*(\d+)\s*(?:°?\s*f?)?\s*and\s*(\d+)\s*°?\s*f"]:
         m = re.search(pat, tl)
         if m:
             result["temp_lower"] = float(m.group(1))
             result["temp_upper"] = float(m.group(2))
             return result
 
-    single = re.search(r'(\d+)\s*°\s*f', tl)
+    single = re.search(r"(\d+)\s*°\s*f", tl)
     if single:
         result["threshold"] = float(single.group(1))
         result["is_over"] = True
@@ -835,14 +930,32 @@ def parse_temperature(title: str) -> dict:
 
 def parse_date(title: str) -> Optional[str]:
     month_map = {
-        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
-        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
-        "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        "january": 1,
+        "february": 2,
+        "march": 3,
+        "april": 4,
+        "may": 5,
+        "june": 6,
+        "july": 7,
+        "august": 8,
+        "september": 9,
+        "october": 10,
+        "november": 11,
+        "december": 12,
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
     }
     tl = title.lower()
-    for pat in [r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b',
-                r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\b']:
+    for pat in [r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b", r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\b"]:
         m = re.search(pat, tl)
         if m:
             month = month_map[m.group(1)]
@@ -861,12 +974,12 @@ def parse_date(title: str) -> Optional[str]:
     # "may" is included with word boundary since \bmay\b won't match "maybe"/"mayor"
     full_months = {k: v for k, v in month_map.items() if len(k) > 3 or k == "may"}
     for month_name, month_num in full_months.items():
-        if re.search(r'\b' + month_name + r'\b', tl):
-            year_m = re.search(r'(20\d{2})', title)
+        if re.search(r"\b" + month_name + r"\b", tl):
+            year_m = re.search(r"(20\d{2})", title)
             year = int(year_m.group(1)) if year_m else datetime.now(timezone.utc).year
             return f"{year}-{month_num:02d}-15"  # mid-month
 
-    iso = re.search(r'(\d{4})-(\d{2})-(\d{2})', title)
+    iso = re.search(r"(\d{4})-(\d{2})-(\d{2})", title)
     if iso:
         return f"{iso.group(1)}-{iso.group(2)}-{iso.group(3)}"
     return None
@@ -902,13 +1015,19 @@ def _fetch_ensemble_model(lat: float, lon: float, date_str: str, model: str) -> 
     if _open_meteo_in_cooldown():
         return None
     try:
-        resp = requests.get(ENSEMBLE_URL, params={
-            "latitude": lat, "longitude": lon,
-            "daily": "temperature_2m_max",
-            "temperature_unit": "fahrenheit",
-            "start_date": date_str, "end_date": date_str,
-            "models": model,
-        }, timeout=10)
+        resp = requests.get(
+            ENSEMBLE_URL,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": "temperature_2m_max",
+                "temperature_unit": "fahrenheit",
+                "start_date": date_str,
+                "end_date": date_str,
+                "models": model,
+            },
+            timeout=10,
+        )
         if resp.status_code == 429:
             _open_meteo_trip_cooldown()
             return None
@@ -936,13 +1055,13 @@ def _fetch_ensemble_model(lat: float, lon: float, date_str: str, model: str) -> 
 
 
 WEATHER_MODELS = {
-    "gfs_seamless":   {"name": "GFS",   "org": "NOAA (USA)",         "members": 31},
-    "ecmwf_ifs025":   {"name": "ECMWF", "org": "ECMWF (Europe)",     "members": 51},
-    "icon_seamless":  {"name": "ICON",  "org": "DWD (Germany)",      "members": 40},
-    "gem_global":     {"name": "GEM",   "org": "ECCC (Canada)",      "members": 21},
-    "ukmo_seamless":  {"name": "UKMO",  "org": "Met Office (UK)",    "members": 18},
-    "jma_seamless":   {"name": "JMA",   "org": "JMA (Japan)",        "members": 51},
-    "metno_seamless": {"name": "MET.no","org": "MET Norway (Nordic)", "members": 30},
+    "gfs_seamless": {"name": "GFS", "org": "NOAA (USA)", "members": 31},
+    "ecmwf_ifs025": {"name": "ECMWF", "org": "ECMWF (Europe)", "members": 51},
+    "icon_seamless": {"name": "ICON", "org": "DWD (Germany)", "members": 40},
+    "gem_global": {"name": "GEM", "org": "ECCC (Canada)", "members": 21},
+    "ukmo_seamless": {"name": "UKMO", "org": "Met Office (UK)", "members": 18},
+    "jma_seamless": {"name": "JMA", "org": "JMA (Japan)", "members": 51},
+    "metno_seamless": {"name": "MET.no", "org": "MET Norway (Nordic)", "members": 30},
     "bom_access_global_ensemble": {"name": "BOM", "org": "BOM (Australia)", "members": 18},
 }
 
@@ -950,8 +1069,7 @@ WEATHER_MODELS = {
 RESOLUTION_MODEL = "gfs_seamless"
 
 
-def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
-                               station: Optional[str] = None) -> Optional[dict]:
+def fetch_multi_model_forecast(lat: float, lon: float, date_str: str, station: Optional[str] = None) -> Optional[dict]:
     """Fetch forecasts from all available weather models + NWS + climatology in parallel.
 
     If `station` (a STATION_MAP key) is supplied, also applies per-model bias
@@ -992,7 +1110,7 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
                         info = WEATHER_MODELS[model_id]
                         result["model_name"] = info["name"]
                         result["org"] = info["org"]
-                        result["is_resolution_model"] = (model_id == RESOLUTION_MODEL)
+                        result["is_resolution_model"] = model_id == RESOLUTION_MODEL
                     models_data[model_id] = result
             except Exception as e:
                 logger.warning("Forecast source %s failed: %s", source_id, e)
@@ -1050,9 +1168,7 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
     climo = models_data.get("climatology")
     if climo and climo.get("mean") is not None:
         climo_weight = 0.10
-        consensus_mean = round(
-            consensus_mean * (1 - climo_weight) + climo["mean"] * climo_weight, 1
-        )
+        consensus_mean = round(consensus_mean * (1 - climo_weight) + climo["mean"] * climo_weight, 1)
 
     # Inflate sigma based on lead time to resolution (skill decay)
     lead_mult = lead_time_sigma_inflation(date_str)
@@ -1085,8 +1201,7 @@ def fetch_multi_model_forecast(lat: float, lon: float, date_str: str,
     # Snapshot the consensus and log per-model forecasts for future pairing
     if station:
         try:
-            snapshot_forecast(station, date_str, consensus_mean, consensus_std,
-                              result["min"], result["max"], source_count)
+            snapshot_forecast(station, date_str, consensus_mean, consensus_std, result["min"], result["max"], source_count)
             for mid, m in forecast_models.items():
                 log_forecast_for_bias(station, mid, date_str, m.get("raw_mean", m["mean"]))
         except Exception as e:
@@ -1130,7 +1245,6 @@ def fetch_nws_forecast(lat: float, lon: float, date_str: str) -> Optional[dict]:
             return None
 
         periods = fc_resp.json().get("properties", {}).get("periods", [])
-        target_dt = datetime.strptime(date_str, "%Y-%m-%d").date()
 
         # Find daytime period matching the target date
         for period in periods:
@@ -1242,6 +1356,7 @@ def fetch_climatology(lat: float, lon: float, date_str: str) -> Optional[dict]:
 
 # ─── Live observations (METAR) ─────────────────────────────────────────────────
 
+
 def fetch_metar(icao: str) -> Optional[dict]:
     """Fetch the latest METAR observation for an airport.
 
@@ -1287,10 +1402,7 @@ def fetch_metar(icao: str) -> Optional[dict]:
             "wind_mph": round(wind_speed * 1.15078, 1) if wind_speed is not None else None,
             "wind_gust_mph": round(wind_gust * 1.15078, 1) if wind_gust is not None else None,
             "weather": wx,
-            "cloud_layers": [
-                {"cover": c.get("cover"), "base_ft": c.get("base")}
-                for c in clouds[:3]
-            ],
+            "cloud_layers": [{"cover": c.get("cover"), "base_ft": c.get("base")} for c in clouds[:3]],
             "obs_time": obs_time,
             "raw": latest.get("rawOb", ""),
         }
@@ -1302,6 +1414,7 @@ def fetch_metar(icao: str) -> Optional[dict]:
 
 
 # ─── Hourly forecast at the resolution station ─────────────────────────────────
+
 
 def fetch_hourly_at_station(lat: float, lon: float, date_str: str) -> Optional[dict]:
     """Fetch hourly forecast for the target date and compute the local-day
@@ -1319,11 +1432,13 @@ def fetch_hourly_at_station(lat: float, lon: float, date_str: str) -> Optional[d
         resp = requests.get(
             "https://api.open-meteo.com/v1/forecast",
             params={
-                "latitude": lat, "longitude": lon,
+                "latitude": lat,
+                "longitude": lon,
                 "hourly": "temperature_2m,cloud_cover,wind_speed_10m,wind_direction_10m,relative_humidity_2m",
                 "temperature_unit": "fahrenheit",
                 "wind_speed_unit": "mph",
-                "start_date": date_str, "end_date": date_str,
+                "start_date": date_str,
+                "end_date": date_str,
                 "timezone": "auto",
             },
             timeout=12,
@@ -1360,6 +1475,7 @@ def fetch_hourly_at_station(lat: float, lon: float, date_str: str) -> Optional[d
 
 
 # ─── Per-model bias tracking ───────────────────────────────────────────────────
+
 
 def log_forecast_for_bias(station: str, model: str, target_date: str, forecast_high: float):
     """Record a forecast we made so we can later pair it with the observed
@@ -1398,7 +1514,8 @@ def pair_forecasts_with_observed(station: str, lat: float, lon: float, max_days_
         resp = requests.get(
             "https://archive-api.open-meteo.com/v1/archive",
             params={
-                "latitude": lat, "longitude": lon,
+                "latitude": lat,
+                "longitude": lon,
                 "daily": "temperature_2m_max",
                 "temperature_unit": "fahrenheit",
                 "start_date": targets[0],
@@ -1461,8 +1578,8 @@ def get_model_biases(station: str, lookback_days: int = 30) -> dict[str, float]:
 
 # ─── Forecast snapshots (spread trend) ─────────────────────────────────────────
 
-def snapshot_forecast(station: str, target_date: str, mean: float, std: float,
-                      min_t: float, max_t: float, source_count: int):
+
+def snapshot_forecast(station: str, target_date: str, mean: float, std: float, min_t: float, max_t: float, source_count: int):
     """Record an ensemble snapshot to track how consensus evolves."""
     if not station or mean is None:
         return
@@ -1496,6 +1613,7 @@ def get_spread_trend(station: str, target_date: str, max_points: int = 10) -> li
 
 
 # ─── ENSO / regime context ─────────────────────────────────────────────────────
+
 
 def fetch_enso_state() -> Optional[dict]:
     """Fetch the latest ENSO ONI (Oceanic Niño Index) value from NOAA CPC.
@@ -1586,6 +1704,7 @@ def fetch_enso_state() -> Optional[dict]:
 
 # ─── Teleconnection indices (AO / NAO / PDO) ───────────────────────────────────
 
+
 def fetch_teleconnections() -> Optional[dict]:
     """Pull the latest AO, NAO, and PDO indices from NOAA. These are
     longer-cycle large-scale climate signals. Cached for 24h.
@@ -1637,17 +1756,17 @@ def fetch_teleconnections() -> Optional[dict]:
 # the forecast. The bearing is the direction TO the ocean from the city
 # (so onshore wind = from this direction).
 COASTAL_CITIES = {
-    "los angeles":   {"ocean_bearing": 220, "type": "marine_layer"},
+    "los angeles": {"ocean_bearing": 220, "type": "marine_layer"},
     "san francisco": {"ocean_bearing": 270, "type": "marine_layer"},
-    "seattle":       {"ocean_bearing": 270, "type": "marine_layer"},
-    "miami":         {"ocean_bearing": 90,  "type": "tropical"},
-    "new york":      {"ocean_bearing": 135, "type": "atlantic"},
-    "sydney":        {"ocean_bearing": 90,  "type": "marine_layer"},
-    "tel aviv":      {"ocean_bearing": 270, "type": "mediterranean"},
-    "tokyo":         {"ocean_bearing": 135, "type": "pacific"},
-    "hong kong":     {"ocean_bearing": 180, "type": "tropical"},
-    "singapore":     {"ocean_bearing": 180, "type": "tropical"},
-    "wellington":    {"ocean_bearing": 180, "type": "marine_layer"},
+    "seattle": {"ocean_bearing": 270, "type": "marine_layer"},
+    "miami": {"ocean_bearing": 90, "type": "tropical"},
+    "new york": {"ocean_bearing": 135, "type": "atlantic"},
+    "sydney": {"ocean_bearing": 90, "type": "marine_layer"},
+    "tel aviv": {"ocean_bearing": 270, "type": "mediterranean"},
+    "tokyo": {"ocean_bearing": 135, "type": "pacific"},
+    "hong kong": {"ocean_bearing": 180, "type": "tropical"},
+    "singapore": {"ocean_bearing": 180, "type": "tropical"},
+    "wellington": {"ocean_bearing": 180, "type": "marine_layer"},
 }
 
 
@@ -1714,11 +1833,13 @@ def fetch_nws_synoptic(lat: float, lon: float) -> Optional[dict]:
             text = p.get("detailedForecast", "") or ""
             matches = set(m.lower() for m in _FRONT_KEYWORDS.findall(text))
             if matches:
-                events.append({
-                    "when": p.get("name", ""),
-                    "features": sorted(matches),
-                    "narrative": text[:200],
-                })
+                events.append(
+                    {
+                        "when": p.get("name", ""),
+                        "features": sorted(matches),
+                        "narrative": text[:200],
+                    }
+                )
         result = {"events": events, "had_data": bool(periods)}
         cache_set(cache_key, result)
         return result
@@ -1728,6 +1849,7 @@ def fetch_nws_synoptic(lat: float, lon: float) -> Optional[dict]:
 
 
 # ─── Lead-time uncertainty ────────────────────────────────────────────────────
+
 
 def lead_time_sigma_inflation(target_date: str) -> float:
     """Return a multiplier for the forecast sigma based on days until
@@ -1746,6 +1868,7 @@ def lead_time_sigma_inflation(target_date: str) -> float:
 
 # ─── Persistence + analog forecasts ────────────────────────────────────────────
 
+
 def persistence_forecast(lat: float, lon: float, days_back: int = 1) -> Optional[float]:
     """Naive persistence: use the observed high from N days ago. Beats
     most models in stable regimes."""
@@ -1757,7 +1880,8 @@ def persistence_forecast(lat: float, lon: float, days_back: int = 1) -> Optional
         resp = requests.get(
             "https://archive-api.open-meteo.com/v1/archive",
             params={
-                "latitude": lat, "longitude": lon,
+                "latitude": lat,
+                "longitude": lon,
                 "daily": "temperature_2m_max",
                 "temperature_unit": "fahrenheit",
                 "start_date": start.isoformat(),
@@ -1801,7 +1925,8 @@ def analog_forecast(lat: float, lon: float, target_date: str) -> Optional[dict]:
             resp = requests.get(
                 "https://archive-api.open-meteo.com/v1/archive",
                 params={
-                    "latitude": lat, "longitude": lon,
+                    "latitude": lat,
+                    "longitude": lon,
                     "daily": "temperature_2m_max",
                     "temperature_unit": "fahrenheit",
                     "start_date": d.isoformat(),
@@ -1841,14 +1966,13 @@ def analog_forecast(lat: float, lon: float, target_date: str) -> Optional[dict]:
 # engine tracks those corridors and generates correlated-market alerts.
 #
 
+
 def _haversine_miles(lat1, lon1, lat2, lon2):
     """Great-circle distance between two points in statute miles."""
     R = 3959  # Earth radius in miles
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
-         math.sin(dlon / 2) ** 2)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
@@ -1915,18 +2039,20 @@ def _find_corridors_for_city(city_key: str) -> list[dict]:
         cities = corridor["cities"]
         if city_key in cities:
             idx = cities.index(city_key)
-            out.append({
-                "corridor_id": cid,
-                "label": corridor["label"],
-                "cities": cities,
-                "position": idx,
-                "speed_mph": corridor["speed_mph"],
-                "front_types": corridor["front_types"],
-                # Upstream = cities earlier in the sequence (weather arrives from them)
-                "upstream": cities[:idx],
-                # Downstream = cities later in the sequence (weather propagates to them)
-                "downstream": cities[idx + 1:],
-            })
+            out.append(
+                {
+                    "corridor_id": cid,
+                    "label": corridor["label"],
+                    "cities": cities,
+                    "position": idx,
+                    "speed_mph": corridor["speed_mph"],
+                    "front_types": corridor["front_types"],
+                    # Upstream = cities earlier in the sequence (weather arrives from them)
+                    "upstream": cities[:idx],
+                    # Downstream = cities later in the sequence (weather propagates to them)
+                    "downstream": cities[idx + 1 :],
+                }
+            )
     return out
 
 
@@ -1995,22 +2121,14 @@ def compute_cross_correlations(city_key: str, target_date: str) -> list[dict]:
             if matched_features and up_max is not None:
                 alert["strength"] = "STRONG"
                 front_names = ", ".join(set(f["feature"] for f in matched_features[:2]))
-                alert["detail"] = (
-                    f"{up_city.title()} running max {up_max:.1f}°F · "
-                    f"{front_names} detected · ETA {eta_hours}h ({round(dist)} mi)"
-                )
+                alert["detail"] = f"{up_city.title()} running max {up_max:.1f}°F · {front_names} detected · ETA {eta_hours}h ({round(dist)} mi)"
             elif matched_features:
                 alert["strength"] = "MODERATE"
                 front_names = ", ".join(set(f["feature"] for f in matched_features[:2]))
-                alert["detail"] = (
-                    f"{front_names} at {up_city.title()} · ETA {eta_hours}h ({round(dist)} mi)"
-                )
+                alert["detail"] = f"{front_names} at {up_city.title()} · ETA {eta_hours}h ({round(dist)} mi)"
             elif up_max is not None:
                 alert["strength"] = "WEAK"
-                alert["detail"] = (
-                    f"{up_city.title()} running max {up_max:.1f}°F · "
-                    f"~{eta_hours}h propagation ({round(dist)} mi) — no frontal signal yet"
-                )
+                alert["detail"] = f"{up_city.title()} running max {up_max:.1f}°F · ~{eta_hours}h propagation ({round(dist)} mi) — no frontal signal yet"
             else:
                 continue
 
@@ -2052,14 +2170,10 @@ def compute_cross_correlations(city_key: str, target_date: str) -> list[dict]:
             if my_features:
                 front_names = ", ".join(set(my_features[:2]))
                 alert["strength"] = "MODERATE"
-                alert["detail"] = (
-                    f"This city's {front_names} → {dn_city.title()} in ~{eta_hours}h ({round(dist)} mi)"
-                )
+                alert["detail"] = f"This city's {front_names} → {dn_city.title()} in ~{eta_hours}h ({round(dist)} mi)"
             else:
                 alert["strength"] = "WEAK"
-                alert["detail"] = (
-                    f"Same corridor as {dn_city.title()} · ~{eta_hours}h downstream ({round(dist)} mi)"
-                )
+                alert["detail"] = f"Same corridor as {dn_city.title()} · ~{eta_hours}h downstream ({round(dist)} mi)"
 
             alerts.append(alert)
 
@@ -2094,6 +2208,7 @@ def compute_cross_correlations(city_key: str, target_date: str) -> list[dict]:
 #      - hrrr_remaining_max: hourly forecast peak for remaining hours
 #      - threshold_status: "BREACHED" / "AT RISK" / "SAFE"
 #
+
 
 def update_intraday_max(icao: str):
     """Poll METAR for the station and update the running daily max."""
@@ -2170,8 +2285,7 @@ def estimate_hours_remaining(lat: float, lon: float) -> Optional[float]:
     return max(0.0, round(remaining, 1))
 
 
-def threshold_status(running_max: float, threshold: dict, hours_remaining: float,
-                     forecast_remaining_max: Optional[float] = None) -> dict:
+def threshold_status(running_max: float, threshold: dict, hours_remaining: float, forecast_remaining_max: Optional[float] = None) -> dict:
     """Given running max and a market threshold, classify the intraday state.
 
     threshold is like {"kind": "above", "value": 75} or {"kind": "between", "low": 70, "high": 71}
@@ -2180,39 +2294,29 @@ def threshold_status(running_max: float, threshold: dict, hours_remaining: float
     if kind == "above":
         target = threshold["value"]
         if running_max >= target:
-            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F already ≥ {target}°F",
-                    "confidence": 0.98}
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F already ≥ {target}°F", "confidence": 0.98}
         gap = target - running_max
         if hours_remaining > 0 and forecast_remaining_max is not None and forecast_remaining_max >= target:
-            return {"status": "LIKELY", "detail": f"{gap:.1f}°F below, forecast peak {forecast_remaining_max:.1f}°F still coming",
-                    "confidence": 0.75}
+            return {"status": "LIKELY", "detail": f"{gap:.1f}°F below, forecast peak {forecast_remaining_max:.1f}°F still coming", "confidence": 0.75}
         if hours_remaining <= 1 and gap > 3:
-            return {"status": "SAFE", "detail": f"{gap:.1f}°F below with {hours_remaining:.1f}h warmth left",
-                    "confidence": 0.90}
-        return {"status": "AT_RISK", "detail": f"{gap:.1f}°F below, {hours_remaining:.1f}h warmth remaining",
-                "confidence": 0.5}
+            return {"status": "SAFE", "detail": f"{gap:.1f}°F below with {hours_remaining:.1f}h warmth left", "confidence": 0.90}
+        return {"status": "AT_RISK", "detail": f"{gap:.1f}°F below, {hours_remaining:.1f}h warmth remaining", "confidence": 0.5}
 
     elif kind == "below":
         target = threshold["value"]
         if hours_remaining <= 0.5 and running_max <= target:
-            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F stayed ≤ {target}°F, day ending",
-                    "confidence": 0.95}
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F stayed ≤ {target}°F, day ending", "confidence": 0.95}
         if running_max > target:
-            return {"status": "SAFE", "detail": f"Already exceeded {target}°F (running max {running_max:.1f}°F), NO wins",
-                    "confidence": 0.98}
-        return {"status": "AT_RISK", "detail": f"Currently {running_max:.1f}°F ≤ {target}°F, {hours_remaining:.1f}h warmth left",
-                "confidence": 0.5}
+            return {"status": "SAFE", "detail": f"Already exceeded {target}°F (running max {running_max:.1f}°F), NO wins", "confidence": 0.98}
+        return {"status": "AT_RISK", "detail": f"Currently {running_max:.1f}°F ≤ {target}°F, {hours_remaining:.1f}h warmth left", "confidence": 0.5}
 
     elif kind == "between":
         lo, hi = threshold.get("low", 0), threshold.get("high", 999)
         if running_max > hi:
-            return {"status": "SAFE", "detail": f"Already above range ({running_max:.1f}°F > {hi}°F), NO wins",
-                    "confidence": 0.98}
+            return {"status": "SAFE", "detail": f"Already above range ({running_max:.1f}°F > {hi}°F), NO wins", "confidence": 0.98}
         if hours_remaining <= 0.5 and lo <= round(running_max) <= hi:
-            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F in [{lo}–{hi}] range, day ending",
-                    "confidence": 0.85}
-        return {"status": "AT_RISK", "detail": f"Running max {running_max:.1f}°F, target [{lo}–{hi}], {hours_remaining:.1f}h left",
-                "confidence": 0.5}
+            return {"status": "BREACHED", "detail": f"Running max {running_max:.1f}°F in [{lo}–{hi}] range, day ending", "confidence": 0.85}
+        return {"status": "AT_RISK", "detail": f"Running max {running_max:.1f}°F, target [{lo}–{hi}], {hours_remaining:.1f}h left", "confidence": 0.5}
 
     return {"status": "UNKNOWN", "detail": "Cannot parse threshold", "confidence": 0.0}
 
@@ -2223,6 +2327,7 @@ def _intraday_poll_loop():
     table and creates the real-time alpha edge.
     """
     import time as _time
+
     _time.sleep(60)  # Wait 1 min for server to boot
     while True:
         try:
@@ -2239,8 +2344,7 @@ def _intraday_poll_loop():
                         if s and len(s) > 2:
                             active_icaos.add(s[2])
             # Also poll a baseline set of major US stations
-            baseline = {"KLGA", "KORD", "KDAL", "KMIA", "KLAX", "KATL",
-                        "KAUS", "KHOU", "KBKF", "KSFO", "KSEA"}
+            baseline = {"KLGA", "KORD", "KDAL", "KMIA", "KLAX", "KATL", "KAUS", "KHOU", "KBKF", "KSFO", "KSEA"}
             to_poll = active_icaos | baseline
             for icao in to_poll:
                 try:
@@ -2253,8 +2357,7 @@ def _intraday_poll_loop():
         _time.sleep(300)  # 5 minutes
 
 
-def fetch_forecast(lat: float, lon: float, date_str: str,
-                   station: Optional[str] = None) -> Optional[dict]:
+def fetch_forecast(lat: float, lon: float, date_str: str, station: Optional[str] = None) -> Optional[dict]:
     """Wrapper that returns multi-model forecast."""
     return fetch_multi_model_forecast(lat, lon, date_str, station)
 
@@ -2267,14 +2370,18 @@ def fetch_current_weather(lat: float, lon: float) -> Optional[dict]:
         return cached
 
     try:
-        resp = requests.get(CURRENT_WEATHER_URL, params={
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m",
-            "temperature_unit": "fahrenheit",
-            "wind_speed_unit": "mph",
-            "precipitation_unit": "inch",
-        }, timeout=10)
+        resp = requests.get(
+            CURRENT_WEATHER_URL,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m",
+                "temperature_unit": "fahrenheit",
+                "wind_speed_unit": "mph",
+                "precipitation_unit": "inch",
+            },
+            timeout=10,
+        )
         if resp.status_code == 200:
             current = resp.json().get("current", {})
             if current:
@@ -2347,9 +2454,7 @@ def compute_probability(forecast: dict, temp_info: dict) -> Optional[float]:
             prob = round(norm.cdf(threshold, loc=mean, scale=std), 4)
         return _safe_clamp(prob)
     elif lower is not None and upper is not None:
-        prob = round(
-            norm.cdf(upper + 0.5, loc=mean, scale=std) - norm.cdf(lower - 0.5, loc=mean, scale=std), 4
-        )
+        prob = round(norm.cdf(upper + 0.5, loc=mean, scale=std) - norm.cdf(lower - 0.5, loc=mean, scale=std), 4)
         return _safe_clamp(prob)
     return None
 
@@ -2379,15 +2484,13 @@ def categorize_market(question: str, tags: list) -> str:
 
 # ─── Signal Logging Helper ────────────────────────────────────────────────────
 
-def log_signal(market_id: str, question: str, category: str,
-               yes_price: Optional[float], model_prob: Optional[float],
-               edge: Optional[float], action: str = "auto") -> None:
+
+def log_signal(market_id: str, question: str, category: str, yes_price: Optional[float], model_prob: Optional[float], edge: Optional[float], action: str = "auto") -> None:
     """Insert a signal into the weather_signals_log table."""
     try:
         with _get_conn() as conn:
             conn.execute(
-                "INSERT INTO weather_signals_log (market_id, question, category, yes_price, model_prob, edge, action) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO weather_signals_log (market_id, question, category, yes_price, model_prob, edge, action) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (market_id, question, category, yes_price, model_prob, edge, action),
             )
     except Exception as e:
@@ -2395,6 +2498,7 @@ def log_signal(market_id: str, question: str, category: str,
 
 
 # ─── API ───────────────────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():
@@ -2523,12 +2627,36 @@ _FX_FALLBACK = {
     "base": "USD",
     "date": "fallback",
     "rates": {
-        "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 150.0, "AUD": 1.52,
-        "CAD": 1.36, "CHF": 0.88, "CNY": 7.20, "HKD": 7.83, "NZD": 1.65,
-        "SEK": 10.5, "KRW": 1340.0, "SGD": 1.34, "NOK": 10.6, "MXN": 17.0,
-        "INR": 83.0, "ZAR": 18.5, "TRY": 32.0, "BRL": 5.0, "DKK": 6.85,
-        "PLN": 3.95, "THB": 35.0, "IDR": 15700.0, "HUF": 360.0, "CZK": 23.0,
-        "ILS": 3.7, "PHP": 56.0, "MYR": 4.7, "RON": 4.6, "ISK": 137.0,
+        "USD": 1.0,
+        "EUR": 0.92,
+        "GBP": 0.79,
+        "JPY": 150.0,
+        "AUD": 1.52,
+        "CAD": 1.36,
+        "CHF": 0.88,
+        "CNY": 7.20,
+        "HKD": 7.83,
+        "NZD": 1.65,
+        "SEK": 10.5,
+        "KRW": 1340.0,
+        "SGD": 1.34,
+        "NOK": 10.6,
+        "MXN": 17.0,
+        "INR": 83.0,
+        "ZAR": 18.5,
+        "TRY": 32.0,
+        "BRL": 5.0,
+        "DKK": 6.85,
+        "PLN": 3.95,
+        "THB": 35.0,
+        "IDR": 15700.0,
+        "HUF": 360.0,
+        "CZK": 23.0,
+        "ILS": 3.7,
+        "PHP": 56.0,
+        "MYR": 4.7,
+        "RON": 4.6,
+        "ISK": 137.0,
     },
 }
 
@@ -2584,8 +2712,7 @@ def api_markets():
             try:
                 parsed = _parse_kalshi_market(km)
             except Exception as parse_err:
-                logger.warning("Skipped malformed Kalshi market %s: %s",
-                               (km or {}).get("ticker", "?"), parse_err)
+                logger.warning("Skipped malformed Kalshi market %s: %s", (km or {}).get("ticker", "?"), parse_err)
                 continue
             if parsed is not None:
                 kalshi_parsed.append(parsed)
@@ -2599,10 +2726,10 @@ def api_markets():
             return -float(x.get("volume") or 0)
         except (TypeError, ValueError):
             return 0.0
+
     enriched.sort(key=_sort_key)
 
-    result = {"markets": enriched, "count": len(enriched),
-              "timestamp": datetime.now(timezone.utc).isoformat()}
+    result = {"markets": enriched, "count": len(enriched), "timestamp": datetime.now(timezone.utc).isoformat()}
     cache_set("parsed_markets", result)
     return jsonify(result)
 
@@ -2665,8 +2792,7 @@ def api_forecasts():
                 try:
                     parsed = _parse_kalshi_market(km)
                 except Exception as parse_err:
-                    logger.warning("Skipped malformed Kalshi market %s: %s",
-                                   (km or {}).get("ticker", "?"), parse_err)
+                    logger.warning("Skipped malformed Kalshi market %s: %s", (km or {}).get("ticker", "?"), parse_err)
                     continue
                 if parsed is not None:
                     _kalshi_parsed.append(parsed)
@@ -2716,7 +2842,7 @@ def api_forecasts():
     # Build per-market enrichment: forecast + per-model probabilities
     market_enrichments = {}
     for fc_key, fc in forecast_data.items():
-        for (market_id, yes_price, temp_info) in market_temps.get(fc_key, []):
+        for market_id, yes_price, temp_info in market_temps.get(fc_key, []):
             # Consensus probability
             consensus_prob = compute_probability(fc, temp_info)
             edge = None
@@ -2777,8 +2903,7 @@ def api_forecasts():
                 category = "temperature"
                 log_signal(market_id, question, category, yes_price, consensus_prob, edge, action)
 
-    result = {"forecasts": market_enrichments, "count": len(market_enrichments),
-              "timestamp": datetime.now(timezone.utc).isoformat()}
+    result = {"forecasts": market_enrichments, "count": len(market_enrichments), "timestamp": datetime.now(timezone.utc).isoformat()}
     # Don't cache empty results — force a retry on next request
     if market_enrichments:
         cache_set("all_forecasts", result)
@@ -2786,6 +2911,7 @@ def api_forecasts():
     # Take a price snapshot after enrichment
     try:
         import threading as _th
+
         _th.Thread(target=snapshot_prices, daemon=True).start()
     except Exception:
         pass
@@ -2797,7 +2923,7 @@ def api_forecasts():
 @require_auth
 def api_forecast(city, date):
     # Validate date format
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format, expected YYYY-MM-DD"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -2806,22 +2932,25 @@ def api_forecast(city, date):
     forecast = fetch_forecast(station[0], station[1], date, station=city_key)
     if not forecast:
         return jsonify({"error": "Forecast not available"}), 404
-    return jsonify({
-        "city": city_key,
-        "station": {"lat": station[0], "lon": station[1], "icao": station[2], "name": station[3]},
-        "date": date,
-        "forecast": forecast,
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "station": {"lat": station[0], "lon": station[1], "icao": station[2], "name": station[3]},
+            "date": date,
+            "forecast": forecast,
+        }
+    )
 
 
 # ─── New: Live observation, synoptic, analog, spread trend, ENSO ───────────────
+
 
 @app.route("/api/metar/<icao>")
 @require_auth
 def api_metar(icao):
     """Latest METAR for an airport (the actual resolution station)."""
     icao = (icao or "").upper().strip()
-    if not re.match(r'^[A-Z]{4}$', icao):
+    if not re.match(r"^[A-Z]{4}$", icao):
         return jsonify({"error": "Invalid ICAO code"}), 400
     obs = fetch_metar(icao)
     if obs is None:
@@ -2833,7 +2962,7 @@ def api_metar(icao):
 @require_auth
 def api_hourly(city, date):
     """Hourly forecast at the resolution station for the target date."""
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -2864,10 +2993,12 @@ def api_enso():
     """Current ENSO phase (El Niño / La Niña / Neutral) + AO/NAO indices."""
     enso = fetch_enso_state()
     teleconn = fetch_teleconnections()
-    return jsonify({
-        "enso": enso,
-        "teleconnections": teleconn or {},
-    })
+    return jsonify(
+        {
+            "enso": enso,
+            "teleconnections": teleconn or {},
+        }
+    )
 
 
 @app.route("/api/analog/<city>/<date>")
@@ -2875,7 +3006,7 @@ def api_enso():
 def api_analog(city, date):
     """Persistence (yesterday's high) + 3-year historical analog forecast
     for the target date. Two model-free baselines for comparison."""
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -2883,12 +3014,14 @@ def api_analog(city, date):
         return jsonify({"error": f"Unknown city: {city}"}), 404
     persistence = persistence_forecast(station[0], station[1])
     analog = analog_forecast(station[0], station[1], date)
-    return jsonify({
-        "city": city_key,
-        "date": date,
-        "persistence_high": persistence,
-        "analog": analog,
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "date": date,
+            "persistence_high": persistence,
+            "analog": analog,
+        }
+    )
 
 
 @app.route("/api/spread_trend/<city>/<date>")
@@ -2896,19 +3029,21 @@ def api_analog(city, date):
 def api_spread_trend(city, date):
     """Recent ensemble snapshots so the frontend can render a sparkline of
     how consensus has been evolving for this market."""
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     if city_key not in STATION_MAP:
         return jsonify({"error": f"Unknown city: {city}"}), 404
     snaps = get_spread_trend(city_key, date)
     biases = get_model_biases(city_key)
-    return jsonify({
-        "city": city_key,
-        "date": date,
-        "snapshots": snaps,
-        "model_biases": biases,
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "date": date,
+            "snapshots": snaps,
+            "model_biases": biases,
+        }
+    )
 
 
 @app.route("/api/coastal/<city>")
@@ -2925,11 +3060,13 @@ def api_coastal(city):
     metar = fetch_metar(station[2]) if len(station) > 2 else None
     wind_dir = (metar or {}).get("wind_dir")
     flow = coastal_flow_assessment(city_key, wind_dir)
-    return jsonify({
-        "city": city_key,
-        "coastal": flow,
-        "wind_obs_from_metar": bool(metar),
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "coastal": flow,
+            "wind_obs_from_metar": bool(metar),
+        }
+    )
 
 
 @app.route("/api/market_signals/<city>/<date>")
@@ -2940,7 +3077,7 @@ def api_market_signals(city, date):
     ENSO state, and current model biases. The frontend modal calls this
     instead of hitting six separate endpoints.
     """
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -2950,6 +3087,7 @@ def api_market_signals(city, date):
 
     # Fetch everything in parallel — all of these are independent.
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     payload: dict = {
         "city": city_key,
         "date": date,
@@ -3000,22 +3138,22 @@ def api_correlations(city, date):
     Returns upstream/downstream correlation alerts based on synoptic
     features propagating along known weather corridors.
     """
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     if city_key not in STATION_MAP:
         return jsonify({"error": f"Unknown city: {city}"}), 404
     correlations = compute_cross_correlations(city_key, date)
     corridors = _find_corridors_for_city(city_key)
-    return jsonify({
-        "city": city_key,
-        "date": date,
-        "corridors": [{"id": c["corridor_id"], "label": c["label"],
-                       "upstream": c["upstream"], "downstream": c["downstream"]}
-                      for c in corridors],
-        "correlations": correlations,
-        "count": len(correlations),
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "date": date,
+            "corridors": [{"id": c["corridor_id"], "label": c["label"], "upstream": c["upstream"], "downstream": c["downstream"]} for c in corridors],
+            "correlations": correlations,
+            "count": len(correlations),
+        }
+    )
 
 
 @app.route("/api/intraday/<city>/<date>")
@@ -3027,7 +3165,7 @@ def api_intraday(city, date):
     station, how many hours of warmth remain, and whether the market's
     threshold has already been breached.
     """
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -3068,7 +3206,7 @@ def api_intraday_alert(city, date):
     Returns per-market intraday resolution confidence. This is the "money
     signal": if status is BREACHED, the market outcome is already determined.
     """
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
         return jsonify({"error": "Invalid date format"}), 400
     city_key = CITY_ALIASES.get(city.lower(), city.lower())
     station = STATION_MAP.get(city_key)
@@ -3110,29 +3248,33 @@ def api_intraday_alert(city, date):
         if not thresh:
             continue
         status = threshold_status(running_max, thresh, hours_left, remaining_peak)
-        alerts.append({
-            "market_id": m.get("id"),
-            "question": m.get("question"),
-            "yes_price": m.get("yes_price"),
-            "threshold": thresh,
-            "running_max": running_max,
-            "hours_remaining": hours_left,
-            **status,
-        })
+        alerts.append(
+            {
+                "market_id": m.get("id"),
+                "question": m.get("question"),
+                "yes_price": m.get("yes_price"),
+                "threshold": thresh,
+                "running_max": running_max,
+                "hours_remaining": hours_left,
+                **status,
+            }
+        )
 
     # Sort: BREACHED first, then LIKELY, then by confidence desc
     order = {"BREACHED": 0, "LIKELY": 1, "SAFE": 2, "AT_RISK": 3, "UNKNOWN": 4}
     alerts.sort(key=lambda a: (order.get(a["status"], 5), -a.get("confidence", 0)))
 
-    return jsonify({
-        "city": city_key,
-        "date": date,
-        "icao": icao,
-        "running_max": running_max,
-        "hours_remaining": hours_left,
-        "alerts": alerts,
-        "count": len(alerts),
-    })
+    return jsonify(
+        {
+            "city": city_key,
+            "date": date,
+            "icao": icao,
+            "running_max": running_max,
+            "hours_remaining": hours_left,
+            "alerts": alerts,
+            "count": len(alerts),
+        }
+    )
 
 
 @app.route("/api/weather_history/<city>")
@@ -3159,15 +3301,25 @@ def api_weather_history(city):
         end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
         start_date = end_date - timedelta(days=3 * 365)
 
-        daily_vars = ",".join([
-            "temperature_2m_max", "temperature_2m_min", "temperature_2m_mean",
-            "apparent_temperature_max", "apparent_temperature_min",
-            "precipitation_sum", "rain_sum", "snowfall_sum",
-            "precipitation_hours",
-            "weather_code",
-            "wind_speed_10m_max", "wind_gusts_10m_max", "wind_direction_10m_dominant",
-            "shortwave_radiation_sum", "et0_fao_evapotranspiration",
-        ])
+        daily_vars = ",".join(
+            [
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "temperature_2m_mean",
+                "apparent_temperature_max",
+                "apparent_temperature_min",
+                "precipitation_sum",
+                "rain_sum",
+                "snowfall_sum",
+                "precipitation_hours",
+                "weather_code",
+                "wind_speed_10m_max",
+                "wind_gusts_10m_max",
+                "wind_direction_10m_dominant",
+                "shortwave_radiation_sum",
+                "et0_fao_evapotranspiration",
+            ]
+        )
 
         archive_params = {
             "latitude": lat,
@@ -3182,10 +3334,12 @@ def api_weather_history(city):
         if _open_meteo_in_cooldown():
             with _open_meteo_cooldown_lock:
                 wait_s = max(1, int(_open_meteo_cooldown_until - time.time()))
-            return jsonify({
-                "error": "Open-Meteo rate-limited",
-                "retry_after": wait_s,
-            }), 503
+            return jsonify(
+                {
+                    "error": "Open-Meteo rate-limited",
+                    "retry_after": wait_s,
+                }
+            ), 503
         resp = None
         for attempt in range(3):
             try:
@@ -3196,10 +3350,12 @@ def api_weather_history(city):
                 )
                 if resp.status_code == 429:
                     _open_meteo_trip_cooldown()
-                    return jsonify({
-                        "error": "Open-Meteo rate-limited",
-                        "retry_after": 60,
-                    }), 503
+                    return jsonify(
+                        {
+                            "error": "Open-Meteo rate-limited",
+                            "retry_after": 60,
+                        }
+                    ), 503
                 if resp.status_code == 200:
                     break
             except requests.RequestException as ex:
@@ -3221,24 +3377,26 @@ def api_weather_history(city):
 
         days = []
         for i, d in enumerate(dates):
-            days.append({
-                "date": d,
-                "high": _val("temperature_2m_max", i),
-                "low": _val("temperature_2m_min", i),
-                "mean": _val("temperature_2m_mean", i),
-                "feels_high": _val("apparent_temperature_max", i),
-                "feels_low": _val("apparent_temperature_min", i),
-                "precip": _val("precipitation_sum", i),
-                "rain": _val("rain_sum", i),
-                "snow": _val("snowfall_sum", i),
-                "precip_hrs": _val("precipitation_hours", i),
-                "weather_code": _val("weather_code", i),
-                "wind_max": _val("wind_speed_10m_max", i),
-                "wind_gust": _val("wind_gusts_10m_max", i),
-                "wind_dir": _val("wind_direction_10m_dominant", i),
-                "solar": _val("shortwave_radiation_sum", i),
-                "et0": _val("et0_fao_evapotranspiration", i),
-            })
+            days.append(
+                {
+                    "date": d,
+                    "high": _val("temperature_2m_max", i),
+                    "low": _val("temperature_2m_min", i),
+                    "mean": _val("temperature_2m_mean", i),
+                    "feels_high": _val("apparent_temperature_max", i),
+                    "feels_low": _val("apparent_temperature_min", i),
+                    "precip": _val("precipitation_sum", i),
+                    "rain": _val("rain_sum", i),
+                    "snow": _val("snowfall_sum", i),
+                    "precip_hrs": _val("precipitation_hours", i),
+                    "weather_code": _val("weather_code", i),
+                    "wind_max": _val("wind_speed_10m_max", i),
+                    "wind_gust": _val("wind_gusts_10m_max", i),
+                    "wind_dir": _val("wind_direction_10m_dominant", i),
+                    "solar": _val("shortwave_radiation_sum", i),
+                    "et0": _val("et0_fao_evapotranspiration", i),
+                }
+            )
 
         # Compute summary stats
         def _stats(key):
@@ -3272,14 +3430,16 @@ def api_weather_history(city):
 
         monthly_summary = []
         for month, vals in sorted(monthly.items()):
-            monthly_summary.append({
-                "month": month,
-                "avg_high": round(statistics.mean(vals["highs"]), 1) if vals["highs"] else None,
-                "avg_low": round(statistics.mean(vals["lows"]), 1) if vals["lows"] else None,
-                "total_precip": round(sum(vals["precip"]), 2) if vals["precip"] else 0,
-                "total_snow": round(sum(vals["snow"]), 2) if vals["snow"] else 0,
-                "days": len(vals["highs"]),
-            })
+            monthly_summary.append(
+                {
+                    "month": month,
+                    "avg_high": round(statistics.mean(vals["highs"]), 1) if vals["highs"] else None,
+                    "avg_low": round(statistics.mean(vals["lows"]), 1) if vals["lows"] else None,
+                    "total_precip": round(sum(vals["precip"]), 2) if vals["precip"] else 0,
+                    "total_snow": round(sum(vals["snow"]), 2) if vals["snow"] else 0,
+                    "days": len(vals["highs"]),
+                }
+            )
 
         result = {
             "city": city_key,
@@ -3318,14 +3478,21 @@ def api_stations():
         if icao not in seen:
             seen.add(icao)
             current = fetch_current_weather(lat, lon)
-            stations.append({
-                "city": city, "lat": lat, "lon": lon, "icao": icao, "name": name,
-                "current_weather": current,
-            })
+            stations.append(
+                {
+                    "city": city,
+                    "lat": lat,
+                    "lon": lon,
+                    "icao": icao,
+                    "name": name,
+                    "current_weather": current,
+                }
+            )
     return jsonify({"stations": stations})
 
 
 # ─── History & Accuracy Endpoints ─────────────────────────────────────────────
+
 
 @app.route("/api/history")
 @require_auth
@@ -3354,9 +3521,7 @@ def api_history():
 
         where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM weather_signals_log{where_sql}", params
-        ).fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM weather_signals_log{where_sql}", params).fetchone()[0]
 
         rows = conn.execute(
             f"SELECT * FROM weather_signals_log{where_sql} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
@@ -3364,13 +3529,15 @@ def api_history():
         ).fetchall()
         signals = [dict(r) for r in rows]
 
-    return jsonify({
-        "signals": signals,
-        "page": page,
-        "per_page": per_page,
-        "total": total,
-        "pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
-    })
+    return jsonify(
+        {
+            "signals": signals,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
+        }
+    )
 
 
 @app.route("/api/accuracy")
@@ -3416,8 +3583,7 @@ def api_accuracy():
     for s in all_signals:
         cat = s.get("category") or "other"
         if cat not in cat_data:
-            cat_data[cat] = {"category": cat, "signal_count": 0, "edges": [],
-                             "resolved_count": 0, "wins": 0}
+            cat_data[cat] = {"category": cat, "signal_count": 0, "edges": [], "resolved_count": 0, "wins": 0}
         cat_data[cat]["signal_count"] += 1
         if s.get("edge") is not None:
             cat_data[cat]["edges"].append(s["edge"])
@@ -3434,28 +3600,32 @@ def api_accuracy():
         e = cat["edges"]
         rc = cat["resolved_count"]
         w = cat["wins"]
-        categories.append({
-            "category": cat["category"],
-            "signal_count": cat["signal_count"],
-            "avg_edge": round(statistics.mean(e), 4) if e else None,
-            "avg_abs_edge": round(statistics.mean([abs(x) for x in e]), 4) if e else None,
-            "resolved_count": rc,
-            "wins": w,
-            "win_rate": round(w / rc, 4) if rc > 0 else None,
-        })
+        categories.append(
+            {
+                "category": cat["category"],
+                "signal_count": cat["signal_count"],
+                "avg_edge": round(statistics.mean(e), 4) if e else None,
+                "avg_abs_edge": round(statistics.mean([abs(x) for x in e]), 4) if e else None,
+                "resolved_count": rc,
+                "wins": w,
+                "win_rate": round(w / rc, 4) if rc > 0 else None,
+            }
+        )
 
-    return jsonify({
-        "overall": {
-            "total_signals": total_signals,
-            "avg_edge": avg_edge,
-            "avg_abs_edge": avg_abs_edge,
-            "total_resolved": total_resolved,
-            "wins": wins,
-            "win_rate": win_rate,
-            "avg_payout": avg_payout,
-        },
-        "by_category": categories,
-    })
+    return jsonify(
+        {
+            "overall": {
+                "total_signals": total_signals,
+                "avg_edge": avg_edge,
+                "avg_abs_edge": avg_abs_edge,
+                "total_resolved": total_resolved,
+                "wins": wins,
+                "win_rate": win_rate,
+                "avg_payout": avg_payout,
+            },
+            "by_category": categories,
+        }
+    )
 
 
 def snapshot_prices() -> int:
@@ -3478,25 +3648,25 @@ def snapshot_prices() -> int:
             if not mid:
                 continue
             enrich = forecasts.get(mid, {})
-            rows_to_insert.append((
-                mid,
-                m.get("source", "polymarket"),
-                m.get("question", ""),
-                m.get("city"),
-                m.get("target_date"),
-                m.get("yes_price"),
-                enrich.get("model_prob") if enrich.get("model_prob") is not None else m.get("model_prob"),
-                enrich.get("edge") if enrich.get("edge") is not None else m.get("edge"),
-                _safe_float(m.get("volume")),
-            ))
+            rows_to_insert.append(
+                (
+                    mid,
+                    m.get("source", "polymarket"),
+                    m.get("question", ""),
+                    m.get("city"),
+                    m.get("target_date"),
+                    m.get("yes_price"),
+                    enrich.get("model_prob") if enrich.get("model_prob") is not None else m.get("model_prob"),
+                    enrich.get("edge") if enrich.get("edge") is not None else m.get("edge"),
+                    _safe_float(m.get("volume")),
+                )
+            )
         count = 0
         with _get_conn() as conn:
             for i in range(0, len(rows_to_insert), 500):
-                batch = rows_to_insert[i:i + 500]
+                batch = rows_to_insert[i : i + 500]
                 conn.executemany(
-                    "INSERT INTO weather_price_snapshots "
-                    "(market_id, source, question, city, target_date, yes_price, model_prob, edge, volume) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO weather_price_snapshots (market_id, source, question, city, target_date, yes_price, model_prob, edge, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     batch,
                 )
                 count += len(batch)
@@ -3531,10 +3701,12 @@ def fetch_kalshi_price_history(series_ticker: str, ticker: str, period: int = 14
                             close = _safe_float(raw_price.get("close"))
                         else:
                             close = _safe_float(raw_price)
-                        result.append({
-                            "timestamp": c["end_period_ts"],
-                            "price": close / 100,
-                        })
+                        result.append(
+                            {
+                                "timestamp": c["end_period_ts"],
+                                "price": close / 100,
+                            }
+                        )
                     return result
         return []
     except Exception as e:
@@ -3555,9 +3727,7 @@ def backfill_price_history() -> dict:
         for tag in tag_slugs:
             offset = 0
             while offset < 2000:
-                resp = requests.get(f"{GAMMA_BASE}/events", params={
-                    "tag_slug": tag, "closed": "true", "limit": 100, "offset": offset
-                }, timeout=20)
+                resp = requests.get(f"{GAMMA_BASE}/events", params={"tag_slug": tag, "closed": "true", "limit": 100, "offset": offset}, timeout=20)
                 if resp.status_code != 200:
                     break
                 events = resp.json()
@@ -3583,19 +3753,25 @@ def backfill_price_history() -> dict:
                         ts = end_date if end_date else m.get("updatedAt", "")
                         if not ts:
                             continue
-                        poly_rows.append((
-                            ts, mid, "polymarket", question, city, target_date,
-                            yes_price, _safe_float(m.get("volume")),
-                        ))
+                        poly_rows.append(
+                            (
+                                ts,
+                                mid,
+                                "polymarket",
+                                question,
+                                city,
+                                target_date,
+                                yes_price,
+                                _safe_float(m.get("volume")),
+                            )
+                        )
                 offset += 100
         # Insert in batches (upsert via INSERT OR REPLACE)
         with _get_conn() as conn:
             for i in range(0, len(poly_rows), 500):
-                batch = poly_rows[i:i + 500]
+                batch = poly_rows[i : i + 500]
                 conn.executemany(
-                    "INSERT OR IGNORE INTO weather_price_snapshots "
-                    "(timestamp, market_id, source, question, city, target_date, yes_price, volume) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO weather_price_snapshots (timestamp, market_id, source, question, city, target_date, yes_price, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     batch,
                 )
                 poly_count += len(batch)
@@ -3631,16 +3807,22 @@ def backfill_price_history() -> dict:
                         continue
                     if isinstance(ts, (int, float)):
                         ts = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-                    kalshi_rows.append((
-                        ts, m["id"], "kalshi", m.get("question", ""),
-                        m.get("city"), m.get("target_date"), price, 0,
-                    ))
+                    kalshi_rows.append(
+                        (
+                            ts,
+                            m["id"],
+                            "kalshi",
+                            m.get("question", ""),
+                            m.get("city"),
+                            m.get("target_date"),
+                            price,
+                            0,
+                        )
+                    )
                 if kalshi_rows:
                     with _get_conn() as conn:
                         conn.executemany(
-                            "INSERT OR IGNORE INTO weather_price_snapshots "
-                            "(timestamp, market_id, source, question, city, target_date, yes_price, volume) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            "INSERT OR IGNORE INTO weather_price_snapshots (timestamp, market_id, source, question, city, target_date, yes_price, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                             kalshi_rows,
                         )
                     kalshi_count += len(kalshi_rows)
@@ -3656,6 +3838,7 @@ def backfill_price_history() -> dict:
 def api_backfill_history():
     """Admin-only: trigger a historical price backfill for all markets."""
     import threading as _th
+
     _th.Thread(target=backfill_price_history, daemon=True).start()
     return jsonify({"status": "backfill started in background"})
 
@@ -3668,8 +3851,7 @@ def api_price_history(market_id):
 
     with _get_conn(readonly=True) as conn:
         rows = conn.execute(
-            "SELECT timestamp, yes_price, model_prob, edge, volume "
-            "FROM weather_price_snapshots WHERE market_id = ? ORDER BY timestamp ASC",
+            "SELECT timestamp, yes_price, model_prob, edge, volume FROM weather_price_snapshots WHERE market_id = ? ORDER BY timestamp ASC",
             (market_id,),
         ).fetchall()
     snapshots = [dict(r) for r in rows]
@@ -3684,12 +3866,14 @@ def api_price_history(market_id):
                 daily[day] = s
         snapshots = sorted(daily.values(), key=lambda x: x["timestamp"])
 
-    return jsonify({
-        "market_id": market_id,
-        "snapshots": snapshots,
-        "granularity": granularity,
-        "requires_premium": granularity != "daily",
-    })
+    return jsonify(
+        {
+            "market_id": market_id,
+            "snapshots": snapshots,
+            "granularity": granularity,
+            "requires_premium": granularity != "daily",
+        }
+    )
 
 
 @app.route("/api/price_history_city/<city>")
@@ -3698,8 +3882,7 @@ def api_price_history_city(city):
     """Return price history for all markets in a city, grouped by market_id."""
     with _get_conn(readonly=True) as conn:
         rows = conn.execute(
-            "SELECT market_id, timestamp, yes_price, model_prob, edge, volume, question, source "
-            "FROM weather_price_snapshots WHERE LOWER(city) = ? ORDER BY market_id, timestamp ASC",
+            "SELECT market_id, timestamp, yes_price, model_prob, edge, volume, question, source FROM weather_price_snapshots WHERE LOWER(city) = ? ORDER BY market_id, timestamp ASC",
             (city.lower(),),
         ).fetchall()
 
@@ -3708,10 +3891,15 @@ def api_price_history_city(city):
         mid = r["market_id"]
         if mid not in grouped:
             grouped[mid] = {"market_id": mid, "question": r["question"], "source": r["source"], "snapshots": []}
-        grouped[mid]["snapshots"].append({
-            "timestamp": r["timestamp"], "yes_price": r["yes_price"],
-            "model_prob": r["model_prob"], "edge": r["edge"], "volume": r["volume"],
-        })
+        grouped[mid]["snapshots"].append(
+            {
+                "timestamp": r["timestamp"],
+                "yes_price": r["yes_price"],
+                "model_prob": r["model_prob"],
+                "edge": r["edge"],
+                "volume": r["volume"],
+            }
+        )
     return jsonify({"city": city, "markets": list(grouped.values())})
 
 
@@ -3722,19 +3910,13 @@ def api_snapshot_stats():
     with _get_conn(readonly=True) as conn:
         total = conn.execute("SELECT COUNT(*) FROM weather_price_snapshots").fetchone()[0]
 
-        row = conn.execute(
-            "SELECT timestamp FROM weather_price_snapshots ORDER BY timestamp ASC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT timestamp FROM weather_price_snapshots ORDER BY timestamp ASC LIMIT 1").fetchone()
         oldest = row[0] if row else None
 
-        row = conn.execute(
-            "SELECT timestamp FROM weather_price_snapshots ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT timestamp FROM weather_price_snapshots ORDER BY timestamp DESC LIMIT 1").fetchone()
         newest = row[0] if row else None
 
-        unique_markets = conn.execute(
-            "SELECT COUNT(DISTINCT market_id) FROM weather_price_snapshots"
-        ).fetchone()[0]
+        unique_markets = conn.execute("SELECT COUNT(DISTINCT market_id) FROM weather_price_snapshots").fetchone()[0]
 
     return jsonify({"total_snapshots": total, "unique_markets": unique_markets, "oldest": oldest, "newest": newest})
 
@@ -3761,6 +3943,7 @@ def api_log_signal():
 
 
 # ─── Alerts Endpoints ─────────────────────────────────────────────────────────
+
 
 @app.route("/api/alerts/settings", methods=["GET"])
 @require_auth
@@ -3878,38 +4061,43 @@ def api_alerts_active():
 
         edge = round(model_prob - yes_price, 4)
         if abs(edge) >= edge_threshold:
-            alerts.append({
-                "market_id": m.get("conditionId") or m.get("id", ""),
-                "question": question,
-                "category": category,
-                "city": city,
-                "target_date": target_date,
-                "yes_price": yes_price,
-                "model_prob": model_prob,
-                "edge": edge,
-                "edge_pct": round(edge * 100, 1),
-                "action": "BUY_YES" if edge > 0 else "BUY_NO",
-                "forecast_mean": forecast["mean"],
-                "forecast_std": forecast["std"],
-                "source": forecast.get("source"),
-            })
+            alerts.append(
+                {
+                    "market_id": m.get("conditionId") or m.get("id", ""),
+                    "question": question,
+                    "category": category,
+                    "city": city,
+                    "target_date": target_date,
+                    "yes_price": yes_price,
+                    "model_prob": model_prob,
+                    "edge": edge,
+                    "edge_pct": round(edge * 100, 1),
+                    "action": "BUY_YES" if edge > 0 else "BUY_NO",
+                    "forecast_mean": forecast["mean"],
+                    "forecast_std": forecast["std"],
+                    "source": forecast.get("source"),
+                }
+            )
 
     alerts.sort(key=lambda x: -abs(x["edge"]))
 
     filter_cats_parsed = filter_categories if isinstance(filter_categories, list) else []
 
-    return jsonify({
-        "alerts": alerts,
-        "count": len(alerts),
-        "settings": {
-            "edge_threshold": edge_threshold,
-            "categories": filter_cats_parsed,
-            "push_enabled": bool(settings.get("push_enabled")),
-        },
-    })
+    return jsonify(
+        {
+            "alerts": alerts,
+            "count": len(alerts),
+            "settings": {
+                "edge_threshold": edge_threshold,
+                "categories": filter_cats_parsed,
+                "push_enabled": bool(settings.get("push_enabled")),
+            },
+        }
+    )
 
 
 # ─── Auth Endpoints ──────────────────────────────────────────────────────────
+
 
 @app.route("/api/auth/me")
 def api_me():
@@ -3948,16 +4136,18 @@ def api_me():
             settings = cached.get("settings", {})
             favorites = cached.get("favorites", [])
 
-    return jsonify({
-        "user": {
-            "id": user["id"],
-            "username": user.get("username", ""),
-            "is_admin": bool(user.get("is_admin")),
-            "email": user.get("email"),
-            "settings": settings,
-            "favorites": favorites,
-        },
-    })
+    return jsonify(
+        {
+            "user": {
+                "id": user["id"],
+                "username": user.get("username", ""),
+                "is_admin": bool(user.get("is_admin")),
+                "email": user.get("email"),
+                "settings": settings,
+                "favorites": favorites,
+            },
+        }
+    )
 
 
 @app.route("/api/auth/settings", methods=["PUT"])
@@ -3971,8 +4161,7 @@ def api_user_settings():
         settings_json = json.dumps(data)
         with _get_conn() as conn:
             conn.execute(
-                "INSERT INTO weather_user_prefs (user_id, settings) VALUES (?, ?) "
-                "ON CONFLICT(user_id) DO UPDATE SET settings=excluded.settings",
+                "INSERT INTO weather_user_prefs (user_id, settings) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET settings=excluded.settings",
                 (user_id, settings_json),
             )
     except Exception as e:
@@ -3995,8 +4184,7 @@ def api_user_favorites():
         favorites_json = json.dumps(data)
         with _get_conn() as conn:
             conn.execute(
-                "INSERT INTO weather_user_prefs (user_id, favorites) VALUES (?, ?) "
-                "ON CONFLICT(user_id) DO UPDATE SET favorites=excluded.favorites",
+                "INSERT INTO weather_user_prefs (user_id, favorites) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET favorites=excluded.favorites",
                 (user_id, favorites_json),
             )
     except Exception as e:
@@ -4010,6 +4198,7 @@ def api_user_favorites():
 
 # ─── Admin Endpoints ─────────────────────────────────────────────────────────
 
+
 @app.route("/admin")
 @require_admin
 def admin_page():
@@ -4022,9 +4211,7 @@ def admin_page():
 def api_admin_users():
     """List users from the profiles table (managed by gateway)."""
     with _get_conn(readonly=True) as conn:
-        rows = conn.execute(
-            "SELECT id, username, email, is_admin, created_at FROM profiles ORDER BY created_at DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT id, username, email, is_admin, created_at FROM profiles ORDER BY created_at DESC").fetchall()
     return jsonify({"users": [dict(r) for r in rows]})
 
 
@@ -4040,21 +4227,15 @@ def api_admin_metrics():
         total_users = conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
 
         # Active users from weather_user_activity
-        active_24h = conn.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM weather_user_activity WHERE timestamp >= ?", (day_ago,)
-        ).fetchone()[0]
+        active_24h = conn.execute("SELECT COUNT(DISTINCT user_id) FROM weather_user_activity WHERE timestamp >= ?", (day_ago,)).fetchone()[0]
 
-        active_7d = conn.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM weather_user_activity WHERE timestamp >= ?", (week_ago,)
-        ).fetchone()[0]
+        active_7d = conn.execute("SELECT COUNT(DISTINCT user_id) FROM weather_user_activity WHERE timestamp >= ?", (week_ago,)).fetchone()[0]
 
         # Total signals
         total_signals = conn.execute("SELECT COUNT(*) FROM weather_signals_log").fetchone()[0]
 
         # Activity by day (last 1000 entries, then group by day)
-        recent_rows = conn.execute(
-            "SELECT timestamp FROM weather_user_activity ORDER BY timestamp DESC LIMIT 1000"
-        ).fetchall()
+        recent_rows = conn.execute("SELECT timestamp FROM weather_user_activity ORDER BY timestamp DESC LIMIT 1000").fetchall()
         activity_by_day_map = {}
         for r in recent_rows:
             day = (r[0] or "")[:10]
@@ -4070,15 +4251,17 @@ def api_admin_metrics():
             action_counts[a] = action_counts.get(a, 0) + 1
         popular_actions = [{"action": a, "c": c} for a, c in sorted(action_counts.items(), key=lambda x: -x[1])[:10]]
 
-    return jsonify({
-        "total_users": total_users,
-        "active_24h": active_24h,
-        "active_7d": active_7d,
-        "total_signals": total_signals,
-        "signups_by_day": [],  # Signups tracked by gateway, not this dashboard
-        "activity_by_day": activity_by_day,
-        "popular_actions": popular_actions,
-    })
+    return jsonify(
+        {
+            "total_users": total_users,
+            "active_24h": active_24h,
+            "active_7d": active_7d,
+            "total_signals": total_signals,
+            "signups_by_day": [],  # Signups tracked by gateway, not this dashboard
+            "activity_by_day": activity_by_day,
+            "popular_actions": popular_actions,
+        }
+    )
 
 
 @app.route("/api/admin/activity")
@@ -4086,9 +4269,7 @@ def api_admin_metrics():
 def api_admin_activity():
     lim = request.args.get("limit", 100, type=int)
     with _get_conn(readonly=True) as conn:
-        rows = conn.execute(
-            "SELECT * FROM weather_user_activity ORDER BY timestamp DESC LIMIT ?", (lim,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM weather_user_activity ORDER BY timestamp DESC LIMIT ?", (lim,)).fetchall()
         activities = [dict(r) for r in rows]
 
         # Enrich with usernames from profiles
@@ -4096,9 +4277,7 @@ def api_admin_activity():
         username_map = {}
         if user_ids:
             placeholders = ",".join("?" * len(user_ids))
-            profile_rows = conn.execute(
-                f"SELECT id, username FROM profiles WHERE id IN ({placeholders})", user_ids
-            ).fetchall()
+            profile_rows = conn.execute(f"SELECT id, username FROM profiles WHERE id IN ({placeholders})", user_ids).fetchall()
             for p in profile_rows:
                 username_map[p[0]] = p[1]
 
@@ -4132,9 +4311,7 @@ def api_bot_signals():
     if conn is None:
         return jsonify({"signals": [], "note": "Bot database not found"})
     try:
-        rows = conn.execute(
-            "SELECT * FROM signals ORDER BY timestamp DESC LIMIT 100"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM signals ORDER BY timestamp DESC LIMIT 100").fetchall()
         return jsonify({"signals": [dict(r) for r in rows]})
     finally:
         conn.close()
@@ -4149,9 +4326,7 @@ def api_bot_trades():
     if conn is None:
         return jsonify({"trades": [], "note": "Bot database not found"})
     try:
-        rows = conn.execute(
-            "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
         return jsonify({"trades": [dict(r) for r in rows]})
     finally:
         conn.close()
@@ -4163,19 +4338,12 @@ def api_bot_calibration():
     """Brier score and calibration breakdown from resolved signals."""
     conn = _get_bot_conn()
     if conn is None:
-        return jsonify({"n": 0, "brier_model": None, "brier_market": None,
-                        "note": "Bot database not found"})
+        return jsonify({"n": 0, "brier_model": None, "brier_market": None, "note": "Bot database not found"})
     try:
-        tbl = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='calibration'"
-        ).fetchone()
+        tbl = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='calibration'").fetchone()
         if not tbl:
-            return jsonify({"n": 0, "brier_model": None, "brier_market": None,
-                            "note": "No calibration data yet"})
-        rows = conn.execute(
-            "SELECT model_prob, market_prob, outcome, prob_method, platform "
-            "FROM calibration WHERE outcome IS NOT NULL"
-        ).fetchall()
+            return jsonify({"n": 0, "brier_model": None, "brier_market": None, "note": "No calibration data yet"})
+        rows = conn.execute("SELECT model_prob, market_prob, outcome, prob_method, platform FROM calibration WHERE outcome IS NOT NULL").fetchall()
     finally:
         conn.close()
 
@@ -4198,17 +4366,17 @@ def api_bot_calibration():
 
     cal = {}
     for label, d in sorted(buckets.items()):
-        cal[label] = {"n": d["n"],
-                      "avg_predicted": round(d["sp"] / d["n"], 3),
-                      "avg_actual": round(d["so"] / d["n"], 3)}
+        cal[label] = {"n": d["n"], "avg_predicted": round(d["sp"] / d["n"], 3), "avg_actual": round(d["so"] / d["n"], 3)}
 
-    return jsonify({
-        "n": n,
-        "brier_model": round(brier_model, 4),
-        "brier_market": round(brier_market, 4),
-        "edge_vs_market": round(brier_market - brier_model, 4),
-        "calibration_buckets": cal,
-    })
+    return jsonify(
+        {
+            "n": n,
+            "brier_model": round(brier_model, 4),
+            "brier_market": round(brier_market, 4),
+            "edge_vs_market": round(brier_market - brier_model, 4),
+            "calibration_buckets": cal,
+        }
+    )
 
 
 @app.route("/api/bot/stats")
@@ -4220,46 +4388,242 @@ def api_bot_stats():
         return jsonify({"note": "Bot database not found"})
     try:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        total = conn.execute(
-            "SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades"
-        ).fetchone()
-        td_trades = conn.execute(
-            "SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total "
-            "FROM trades WHERE timestamp LIKE ?", (f"{today}%",)
-        ).fetchone()
-        td_sigs = conn.execute(
-            "SELECT COUNT(*) as cnt FROM signals "
-            "WHERE timestamp LIKE ? AND action != 'NO_TRADE'", (f"{today}%",)
-        ).fetchone()
-        by_plat = conn.execute(
-            "SELECT COALESCE(platform,'polymarket') as plat, COUNT(*) as cnt, "
-            "COALESCE(SUM(amount),0) as total FROM trades GROUP BY plat"
-        ).fetchall()
-        by_city = conn.execute(
-            "SELECT city, COUNT(*) as cnt, COALESCE(SUM(amount),0) as total "
-            "FROM trades GROUP BY city ORDER BY cnt DESC"
-        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades").fetchone()
+        td_trades = conn.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades WHERE timestamp LIKE ?", (f"{today}%",)).fetchone()
+        td_sigs = conn.execute("SELECT COUNT(*) as cnt FROM signals WHERE timestamp LIKE ? AND action != 'NO_TRADE'", (f"{today}%",)).fetchone()
+        by_plat = conn.execute("SELECT COALESCE(platform,'polymarket') as plat, COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades GROUP BY plat").fetchall()
+        by_city = conn.execute("SELECT city, COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM trades GROUP BY city ORDER BY cnt DESC").fetchall()
     finally:
         conn.close()
 
-    return jsonify({
-        "all_time": {"trades": total["cnt"], "wagered": round(total["total"], 2)},
-        "today": {"trades": td_trades["cnt"], "wagered": round(td_trades["total"], 2),
-                  "actionable_signals": td_sigs["cnt"]},
-        "by_platform": {r["plat"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_plat},
-        "by_city": {r["city"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_city},
-    })
+    return jsonify(
+        {
+            "all_time": {"trades": total["cnt"], "wagered": round(total["total"], 2)},
+            "today": {"trades": td_trades["cnt"], "wagered": round(td_trades["total"], 2), "actionable_signals": td_sigs["cnt"]},
+            "by_platform": {r["plat"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_plat},
+            "by_city": {r["city"]: {"trades": r["cnt"], "wagered": round(r["total"], 2)} for r in by_city},
+        }
+    )
+
+
+# ── Market resolution → calibration loop ─────────────────────────────────────
+# Pairs each resolved market's outcome with the model_prob/yes_price the
+# dashboard displayed before resolution, writing weather_resolutions (own DB)
+# and calibration rows into the bot's trades.db so /api/bot/calibration has
+# real data. Schema below mirrors polymarket_weather_bot/datastore.py — keep
+# the two in sync.
+
+_CLOB_BASE = "https://clob.polymarket.com"
+
+_BOT_CALIBRATION_DDL = """
+CREATE TABLE IF NOT EXISTS calibration (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    condition_id    TEXT NOT NULL,
+    platform        TEXT DEFAULT 'polymarket',
+    city            TEXT,
+    target_date     TEXT,
+    model_prob      REAL,
+    market_prob     REAL,
+    outcome         INTEGER,
+    resolved_at     TEXT,
+    prob_method     TEXT DEFAULT 'gaussian'
+);
+CREATE INDEX IF NOT EXISTS idx_calibration_cond ON calibration(condition_id);
+"""
+
+
+def _bot_calibration_conn():
+    conn = sqlite3.connect(str(_BOT_DB), timeout=10)
+    conn.executescript(_BOT_CALIBRATION_DDL)
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_cond_plat ON calibration(condition_id, platform)")
+    except sqlite3.OperationalError:
+        pass
+    return conn
+
+
+def _write_bot_calibration(conn, condition_id, platform, city, target_date, model_prob, market_prob, outcome) -> bool:
+    cur = conn.execute(
+        """INSERT INTO calibration
+           (condition_id, platform, city, target_date, model_prob, market_prob,
+            outcome, resolved_at, prob_method)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'consensus'
+           WHERE NOT EXISTS (SELECT 1 FROM calibration WHERE condition_id = ? AND platform = ?)""",
+        (condition_id, platform, city, target_date, model_prob, market_prob, outcome, datetime.now(timezone.utc).isoformat(), condition_id, platform),
+    )
+    return cur.rowcount > 0
+
+
+def _fetch_polymarket_outcome(http, condition_id: str) -> Optional[int]:
+    """1 if YES won, 0 if NO won, None if unresolved/unknown."""
+    try:
+        resp = http.get(f"{_CLOB_BASE}/markets/{condition_id}", timeout=10)
+        if resp.status_code != 200:
+            return None
+        d = resp.json()
+        if not d.get("closed"):
+            return None
+        for t in d.get("tokens", []):
+            if t.get("winner"):
+                return 1 if t.get("outcome") == "Yes" else 0
+        return None
+    except Exception:
+        return None
+
+
+def _fetch_kalshi_outcome(http, market_id: str) -> Optional[int]:
+    ticker = market_id[len("kalshi_") :] if market_id.startswith("kalshi_") else market_id
+    try:
+        resp = http.get(f"{KALSHI_BASE}/markets/{ticker}", timeout=10)
+        if resp.status_code != 200:
+            return None
+        result = (resp.json().get("market") or {}).get("result")
+        if result == "yes":
+            return 1
+        if result == "no":
+            return 0
+        return None
+    except Exception:
+        return None
+
+
+def _snapshot_price_outcome(conn, market_id: str, target_date: str) -> Optional[int]:
+    """Infer outcome from the last snapshot on/after the target day.
+
+    Only trusted when the price has converged (>=0.97 or <=0.03) — resolved
+    binary markets trade at ~1/0, so this is a safe fallback for markets the
+    upstream APIs have already pruned (old Kalshi tickers).
+    """
+    row = conn.execute(
+        "SELECT yes_price FROM weather_price_snapshots WHERE market_id = ? AND yes_price IS NOT NULL AND timestamp >= ? ORDER BY timestamp DESC LIMIT 1",
+        (market_id, target_date),
+    ).fetchone()
+    if not row or row["yes_price"] is None:
+        return None
+    p = row["yes_price"]
+    if p >= 0.97:
+        return 1
+    if p <= 0.03:
+        return 0
+    return None
+
+
+def resolve_and_calibrate(max_markets: int = 100, lookback_days: Optional[int] = 7, use_price_fallback: bool = False) -> dict:
+    """Walk snapshotted markets whose target day has passed, fetch resolved
+    outcomes, and write weather_resolutions + bot calibration rows.
+
+    Runs incrementally (every snapshot cycle) with a small lookback; the
+    localhost backfill route calls it with lookback_days=None to sweep all
+    history. Idempotent and calibration-driven: a market stays a candidate
+    until its calibration row exists, so an interrupted pass simply resumes.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    params: list = [today]
+    where = "target_date IS NOT NULL AND target_date < ? AND model_prob IS NOT NULL"
+    if lookback_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+        where += " AND target_date >= ?"
+        params.append(cutoff)
+
+    bot_conn = _bot_calibration_conn()
+    have_cal = {r[0] for r in bot_conn.execute("SELECT condition_id FROM calibration")}
+
+    with _get_conn(readonly=True) as conn:
+        rows = conn.execute(
+            f"""SELECT market_id, source, city, target_date
+                FROM weather_price_snapshots
+                WHERE {where}
+                GROUP BY market_id
+                ORDER BY target_date DESC""",
+            params,
+        ).fetchall()
+        known_outcomes = {r["market_id"]: r["actual_outcome"] for r in conn.execute("SELECT market_id, actual_outcome FROM weather_resolutions")}
+
+    candidates = [r for r in rows if r["market_id"] not in have_cal][:max_markets]
+    if not candidates:
+        bot_conn.close()
+        return {"checked": 0, "resolved": 0, "calibration_rows": 0, "skipped": 0}
+
+    http = requests.Session()
+    resolved = calibrated = skipped = 0
+    try:
+        for c in candidates:
+            mid, source = c["market_id"], c["source"] or "polymarket"
+            outcome = {"YES": 1, "NO": 0}.get(known_outcomes.get(mid))
+            fetched = outcome is None
+            if outcome is None:
+                if source == "kalshi":
+                    outcome = _fetch_kalshi_outcome(http, mid)
+                else:
+                    outcome = _fetch_polymarket_outcome(http, mid)
+                time.sleep(0.05)
+            with _get_conn(readonly=not fetched) as conn:
+                if outcome is None and use_price_fallback:
+                    outcome = _snapshot_price_outcome(conn, mid, c["target_date"])
+                if outcome is None:
+                    skipped += 1
+                    continue
+
+                # The calibration pair is the last snapshot strictly before the
+                # target day — the model's genuine day-ahead prediction, not a
+                # post-resolution price that would flatter brier_market.
+                pair = conn.execute(
+                    "SELECT model_prob, yes_price FROM weather_price_snapshots "
+                    "WHERE market_id = ? AND model_prob IS NOT NULL AND yes_price IS NOT NULL "
+                    "AND timestamp < ? ORDER BY timestamp DESC LIMIT 1",
+                    (mid, c["target_date"]),
+                ).fetchone()
+                if not pair:
+                    pair = conn.execute(
+                        "SELECT model_prob, yes_price FROM weather_price_snapshots WHERE market_id = ? AND model_prob IS NOT NULL AND yes_price IS NOT NULL ORDER BY timestamp ASC LIMIT 1",
+                        (mid,),
+                    ).fetchone()
+
+                if fetched:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO weather_resolutions (market_id, actual_outcome, payout, resolved_at) VALUES (?, ?, ?, ?)",
+                        (mid, "YES" if outcome == 1 else "NO", float(outcome), datetime.now(timezone.utc).isoformat()),
+                    )
+                    resolved += 1
+
+            if pair:
+                if _write_bot_calibration(bot_conn, mid, source, c["city"], c["target_date"], pair["model_prob"], pair["yes_price"], outcome):
+                    calibrated += 1
+                bot_conn.commit()
+    finally:
+        bot_conn.close()
+
+    result = {"checked": len(candidates), "resolved": resolved, "calibration_rows": calibrated, "skipped": skipped}
+    logger.info("Resolution pass: %s", result)
+    return result
+
+
+@app.route("/api/admin/backfill_calibration", methods=["POST"])
+def api_backfill_calibration():
+    """One-shot retroactive calibration backfill. Localhost-only maintenance
+    route — refuses gateway-proxied requests (those carry gateway headers even
+    though the proxy connects from 127.0.0.1)."""
+    if request.remote_addr not in ("127.0.0.1", "::1") or request.headers.get("X-Gateway-User-Id"):
+        return jsonify({"error": "forbidden"}), 403
+    limit = request.args.get("limit", 2000, type=int)
+    result = resolve_and_calibrate(max_markets=limit, lookback_days=None, use_price_fallback=True)
+    return jsonify(result)
 
 
 def _snapshot_loop():
     """Background thread: take price snapshots every 30 minutes."""
     import time as _time
+
     _time.sleep(120)  # Wait 2 min for first data to load
     while True:
         try:
             snapshot_prices()
         except Exception as e:
             logger.error("Snapshot loop error: %s", e)
+        try:
+            resolve_and_calibrate(max_markets=100, lookback_days=7)
+        except Exception as e:
+            logger.error("Resolution pass error: %s", e)
         _time.sleep(1800)  # 30 minutes
 
 
@@ -4271,6 +4635,7 @@ def _bias_pairing_loop():
     without ever getting closed out.
     """
     import time as _time
+
     _time.sleep(600)  # Wait 10 min after boot before first pairing
     while True:
         try:
@@ -4304,7 +4669,9 @@ def _add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    )
     if _is_behind_gateway():
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response

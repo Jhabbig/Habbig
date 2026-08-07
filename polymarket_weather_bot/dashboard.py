@@ -78,22 +78,22 @@ def print_daily_report(store: DataStore, config: Optional[Config] = None) -> Non
     print(f"{'='*70}")
 
     if pnl["total_trades"] > 0:
-        print(f"\n  ALL-TIME STATS")
+        print("\n  ALL-TIME STATS")
         print(f"  Total trades:       {pnl['total_trades']}")
         print(f"  Total wagered:      ${pnl['total_wagered']:.2f}")
 
         if pnl["by_action"]:
-            print(f"\n  By Action:")
+            print("\n  By Action:")
             for action, data in pnl["by_action"].items():
                 print(f"    {action:<12} {data['count']:>4} trades  ${data['total']:>8.2f}")
 
         if pnl["by_city"]:
-            print(f"\n  By City:")
+            print("\n  By City:")
             for city, data in pnl["by_city"].items():
                 print(f"    {city:<12} {data['count']:>4} trades  ${data['total']:>8.2f}")
 
     if recent_trades:
-        print(f"\n  RECENT TRADES")
+        print("\n  RECENT TRADES")
         print(f"  {'TIME':<20} {'PLAT':<6} {'ACTION':<10} {'SIDE':<5} {'AMT':>7} {'PRICE':>6} {'EDGE':>6}  {'CITY'}")
         print(f"  {'—'*20} {'—'*6} {'—'*10} {'—'*5} {'—'*7} {'—'*6} {'—'*6}  {'—'*12}")
         for t in recent_trades:

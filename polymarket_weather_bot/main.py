@@ -23,7 +23,8 @@ import aiohttp
 from config import Config
 from gamma_client import fetch_weather_markets, parse_weather_markets
 from weather_client import get_forecast
-from edge_calculator import calculate_edge, Signal
+from edge_calculator import calculate_edge
+from orderbook import fetch_clob_book
 from risk_manager import RiskManager
 from clob_client import TradingClient
 from datastore import DataStore
@@ -37,7 +38,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        RotatingFileHandler(Path(__file__).parent / "weather_bot.log", maxBytes=10*1024*1024, backupCount=5),
+        RotatingFileHandler(Path(__file__).parent / "weather_bot.log", maxBytes=10 * 1024 * 1024, backupCount=5),
     ],
 )
 logger = logging.getLogger("main")
@@ -64,7 +65,8 @@ async def run_scan(
         if config.KALSHI_ENABLED and kalshi_client is not None:
             try:
                 kalshi_markets = await fetch_kalshi_weather_markets(
-                    session, kalshi_client,
+                    session,
+                    kalshi_client,
                 )
                 logger.info("Kalshi: %d weather markets", len(kalshi_markets))
                 markets.extend(kalshi_markets)
@@ -91,15 +93,11 @@ async def run_scan(
                 filtered_markets.append(m)
 
         # Filter: minimum liquidity (skip for Kalshi — no liquidity data)
-        filtered_markets = [
-            m for m in filtered_markets
-            if m.platform == "kalshi" or m.liquidity >= config.MIN_LIQUIDITY or m.liquidity == 0
-        ]
+        filtered_markets = [m for m in filtered_markets if m.platform == "kalshi" or m.liquidity >= config.MIN_LIQUIDITY or m.liquidity == 0]
 
         poly_count = sum(1 for m in filtered_markets if m.platform == "polymarket")
         kalshi_count = sum(1 for m in filtered_markets if m.platform == "kalshi")
-        logger.info("%d markets after filtering (%d Polymarket, %d Kalshi, horizon=%dh)",
-                     len(filtered_markets), poly_count, kalshi_count, config.MAX_FORECAST_HOURS)
+        logger.info("%d markets after filtering (%d Polymarket, %d Kalshi, horizon=%dh)", len(filtered_markets), poly_count, kalshi_count, config.MAX_FORECAST_HOURS)
 
         # Step 3-6: For each market, get forecast and calculate edge
         signals = []
@@ -110,15 +108,30 @@ async def run_scan(
                 continue
 
             forecast = await get_forecast(
-                session, lat=market.lat, lon=market.lon,
+                session,
+                lat=market.lat,
+                lon=market.lon,
                 target_date=market.target_date,
-                city=market.city, icao=market.station_icao,
+                city=market.city,
+                icao=market.station_icao,
             )
 
             if forecast is None:
                 continue
 
-            signal = calculate_edge(forecast, market, config.EDGE_THRESHOLD)
+            yes_book = no_book = None
+            if market.platform == "polymarket":
+                yes_book = await fetch_clob_book(session, market.token_id)
+                no_book = await fetch_clob_book(session, market.no_token_id)
+
+            signal = calculate_edge(
+                forecast,
+                market,
+                config.EDGE_THRESHOLD,
+                yes_book=yes_book,
+                no_book=no_book,
+                probe_notional=config.MAX_POSITION,
+            )
             signals.append(signal)
             store.log_signal(signal)
 
@@ -133,13 +146,10 @@ async def run_scan(
 
                     if result.get("status") in ("filled", "pending"):
                         risk_mgr.record_trade(market.condition_id, position.amount)
-                        store.log_trade(signal, position, paper_mode=config.PAPER_MODE,
-                                        order_id=result.get("order_id", ""),
-                                        status=result["status"])
+                        store.log_trade(signal, position, paper_mode=config.PAPER_MODE, order_id=result.get("order_id", ""), status=result["status"])
                         trades_executed += 1
                     else:
-                        logger.warning("Trade failed: %s — %s",
-                                       market.question[:50], result.get("error", "unknown"))
+                        logger.warning("Trade failed: %s — %s", market.question[:50], result.get("error", "unknown"))
 
     print_run_summary(len(filtered_markets), signals, trades_executed, config)
 
@@ -156,6 +166,7 @@ async def main() -> None:
     if config.KALSHI_ENABLED and config.KALSHI_API_KEY_ID and config.KALSHI_PRIVATE_KEY_PATH:
         try:
             from kalshi_client import KalshiClient
+
             kalshi_client = KalshiClient(config.KALSHI_API_KEY_ID, config.KALSHI_PRIVATE_KEY_PATH)
             logger.info("Kalshi client initialized (key: %s...)", config.KALSHI_API_KEY_ID[:8])
         except Exception as e:
@@ -165,8 +176,7 @@ async def main() -> None:
 
     mode = "PAPER" if config.PAPER_MODE else "LIVE"
     platforms = "Polymarket" + (" + Kalshi" if kalshi_client else "")
-    logger.info("Weather bot starting in %s mode | Platforms: %s | Bankroll: $%.2f | Edge threshold: %.0f%%",
-                mode, platforms, config.BANKROLL, config.EDGE_THRESHOLD * 100)
+    logger.info("Weather bot starting in %s mode | Platforms: %s | Bankroll: $%.2f | Edge threshold: %.0f%%", mode, platforms, config.BANKROLL, config.EDGE_THRESHOLD * 100)
 
     current_day = datetime.now(timezone.utc).date()
 

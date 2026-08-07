@@ -59,16 +59,21 @@ class TradingClient:
         platform = getattr(signal.market, "platform", "polymarket")
 
         if platform == "polymarket" and not self._init_client():
-            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
-                    "error": "Polymarket client not initialized"}
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0, "error": "Polymarket client not initialized"}
 
         side = "YES" if signal.action == "BUY_YES" else "NO"
-        price = signal.market_prob if signal.action == "BUY_YES" else (1.0 - signal.market_prob)
+        if signal.action == "BUY_YES":
+            price = getattr(signal, "exec_price_yes", None)
+            if price is None:
+                price = signal.market_prob
+        else:
+            price = getattr(signal, "exec_price_no", None)
+            if price is None:
+                price = 1.0 - signal.market_prob
         token_id = signal.market.token_id if signal.action == "BUY_YES" else (signal.market.no_token_id or signal.market.token_id)
 
         if price <= 0:
-            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
-                    "error": "Invalid price"}
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0, "error": "Invalid price"}
 
         shares = position.amount / price
 
@@ -78,29 +83,36 @@ class TradingClient:
         # Live Kalshi trading not yet implemented — paper only for now
         if platform == "kalshi":
             logger.warning("[KALSHI] Live trading not implemented — use PAPER_MODE=true")
-            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0,
-                    "error": "Kalshi live trading not yet implemented"}
+            return {"order_id": "", "status": "error", "fill_price": 0, "amount": 0, "error": "Kalshi live trading not yet implemented"}
 
         return await self._live_trade(signal, position, side, price, shares, token_id)
 
-    def _paper_trade(self, signal: Signal, position: PositionSize,
-                     side: str, price: float, shares: float) -> dict:
+    def _paper_trade(self, signal: Signal, position: PositionSize, side: str, price: float, shares: float) -> dict:
         platform = getattr(signal.market, "platform", "polymarket")
         tag = platform.upper()
         logger.info(
             "[PAPER/%s] %s %s | %.1f shares @ $%.3f | Amount: $%.2f | Edge: %+.1f%% | %s",
-            tag, signal.action, signal.market.question[:50],
-            shares, price, position.amount, signal.edge * 100, signal.market.city,
+            tag,
+            signal.action,
+            signal.market.question[:50],
+            shares,
+            price,
+            position.amount,
+            signal.edge * 100,
+            signal.market.city,
         )
         return {
-            "order_id": f"paper_{signal.market.condition_id[:8]}_{int(price*1000)}",
-            "status": "filled", "fill_price": price,
-            "amount": position.amount, "shares": shares,
-            "side": side, "paper": True, "platform": platform,
+            "order_id": f"paper_{signal.market.condition_id[:8]}_{int(price * 1000)}",
+            "status": "filled",
+            "fill_price": price,
+            "amount": position.amount,
+            "shares": shares,
+            "side": side,
+            "paper": True,
+            "platform": platform,
         }
 
-    async def _live_trade(self, signal: Signal, position: PositionSize,
-                          side: str, price: float, shares: float, token_id: str) -> dict:
+    async def _live_trade(self, signal: Signal, position: PositionSize, side: str, price: float, shares: float, token_id: str) -> dict:
         if not self._client:
             return {"order_id": "", "status": "error", "error": "No CLOB client"}
 
@@ -108,16 +120,14 @@ class TradingClient:
             from py_clob_client.clob_types import OrderArgs, OrderType
 
             order_args = OrderArgs(price=price, size=shares, side="BUY", token_id=token_id)
-            logger.info("[LIVE] Placing FOK order: %s %s | %.1f shares @ $%.3f",
-                        signal.action, side, shares, price)
+            logger.info("[LIVE] Placing FOK order: %s %s | %.1f shares @ $%.3f", signal.action, side, shares, price)
 
             resp = self._client.create_and_post_order(order_args, OrderType.FOK)
 
             if resp and resp.get("success"):
                 order_id = resp.get("orderID", "")
                 logger.info("[LIVE] FOK order filled: %s", order_id)
-                return {"order_id": order_id, "status": "filled", "fill_price": price,
-                        "amount": position.amount, "shares": shares, "side": side, "paper": False}
+                return {"order_id": order_id, "status": "filled", "fill_price": price, "amount": position.amount, "shares": shares, "side": side, "paper": False}
 
             # FOK failed — try GTC with 2% slippage
             slippage_price = min(round(price * 1.02, 4), 0.99)
@@ -128,9 +138,7 @@ class TradingClient:
             resp = self._client.create_and_post_order(order_args, OrderType.GTC)
 
             if resp and resp.get("success"):
-                return {"order_id": resp.get("orderID", ""), "status": "pending",
-                        "fill_price": slippage_price, "amount": position.amount,
-                        "shares": shares, "side": side, "paper": False}
+                return {"order_id": resp.get("orderID", ""), "status": "pending", "fill_price": slippage_price, "amount": position.amount, "shares": shares, "side": side, "paper": False}
 
             error = resp.get("errorMsg", "Unknown error") if resp else "No response"
             logger.error("[LIVE] Both FOK and GTC orders failed: %s", error)
