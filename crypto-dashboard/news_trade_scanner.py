@@ -27,7 +27,7 @@ import hashlib
 import tempfile
 import os
 import defusedxml.ElementTree as ET
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
 

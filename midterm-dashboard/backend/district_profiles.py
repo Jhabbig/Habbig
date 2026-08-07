@@ -10,7 +10,6 @@ state with an active race has an up-to-date profile stored in the DB.
 """
 
 import logging
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 

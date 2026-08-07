@@ -39,7 +39,6 @@ import sqlite3
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 DB_PATH = Path(__file__).parent / "trader_quality.sqlite3"
 

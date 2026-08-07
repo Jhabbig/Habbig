@@ -1,5 +1,5 @@
-numpy>=1.26
-requests>=2.31
-yfinance>=0.2
-scikit-learn>=1.4
-cryptography>=42.0
+numpy==2.4.4
+requests==2.33.0
+yfinance==1.2.0
+scikit-learn==1.8.0
+cryptography==46.0.6

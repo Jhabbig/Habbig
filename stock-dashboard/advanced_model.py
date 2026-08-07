@@ -12,7 +12,7 @@ Usage:
 
 import warnings
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -21,8 +21,7 @@ from sklearn.ensemble import (
     GradientBoostingClassifier,
 )
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import KFold, TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.isotonic import IsotonicRegression
@@ -615,7 +614,6 @@ class RegimeDetector:
             }
 
         recent_closes = closes[-lb:]
-        recent_volumes = volumes[-lb:]
 
         # --- Hurst exponent ---
         log_returns = np.diff(np.log(np.clip(recent_closes, 1e-8, None)))

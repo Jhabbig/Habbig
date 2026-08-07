@@ -24,7 +24,7 @@ from aggregators import (
     PredictItAggregator,
     PollingAggregator,
 )
-from race_keys import parse_district_from_title, race_key_to_jurisdiction
+from race_keys import parse_district_from_title
 
 
 def market_race_key(market: dict) -> str:
@@ -1374,7 +1374,7 @@ async def data_race_context(race_key: str):
 
     race_key format: "{race_type}_{state}" e.g. "senate_GA", "governor_FL"
     """
-    from race_context import get_context, get_all_contexts
+    from race_context import get_context
     ctx = get_context(*race_key.split("_", 1)) if "_" in race_key else None
     if ctx:
         return {"race_key": race_key, **ctx}
@@ -1406,7 +1406,7 @@ async def data_district_profile(state_abbr: str):
         }
 
     # Fallback: check static data directly
-    from district_profiles import get_profile, generate_basic_profile
+    from district_profiles import get_profile
     static = get_profile(state_abbr)
     if static:
         # Store it for next time
@@ -1596,7 +1596,7 @@ async def premium_watchlist_remove(race_key: str, request: Request):
 @app.get("/premium/detailed-comparison/{race_key}")
 async def premium_detailed_comparison(race_key: str, request: Request):
     """Deep comparison with orderbook data."""
-    user = await require_tier(request, "premium")
+    await require_tier(request, "premium")
     all_markets = state.db.get_all_markets(active_only=True)
     matched = {}
     for m in all_markets:
@@ -1641,7 +1641,7 @@ async def premium_detailed_comparison(race_key: str, request: Request):
 @app.get("/premium/campaign-finance/{state_abbr}")
 async def premium_campaign_finance(state_abbr: str, request: Request):
     """FEC fundraising data placeholder."""
-    user = await require_tier(request, "premium")
+    await require_tier(request, "premium")
     return {"state": state_abbr, "finance": [], "note": "FEC integration coming soon"}
 
 

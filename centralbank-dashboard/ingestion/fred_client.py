@@ -22,7 +22,6 @@ import logging
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from threading import Lock
 
 log = logging.getLogger(__name__)

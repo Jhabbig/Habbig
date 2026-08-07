@@ -39,7 +39,6 @@ except ImportError:
 # Smart betting integration
 try:
     from smart_betting import (
-        SignalConcordanceFilter, AdaptiveKelly, DynamicEdgeThreshold,
         PerformanceTracker, RiskManager, evaluate_bet_enhanced,
     )
     SMART_BETTING = True
@@ -860,11 +859,10 @@ def run_cycle(state):
     """Run one prediction cycle."""
     _et = ZoneInfo("America/New_York")
     today = datetime.now(_et).strftime("%Y-%m-%d")
-    now_et = datetime.now(_et)
 
     print()
     log("=" * 60)
-    log(f"Stock Prediction Bot — Cycle Start")
+    log("Stock Prediction Bot — Cycle Start")
     log(f"Balance: ${state.balance:.2f} | W/L: {state.wins}/{state.losses} | "
         f"PnL: ${state.total_pnl:+.2f}")
     log("=" * 60)

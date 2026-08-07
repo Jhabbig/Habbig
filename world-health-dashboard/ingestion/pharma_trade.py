@@ -185,9 +185,9 @@ if __name__ == "__main__":
     print(f"Top 3 exporters: {c['top3_share_pct']}%")
     print(f"Top 5 exporters: {c['top5_share_pct']}%")
     print(f"Top 10 exporters: {c['top10_share_pct']}%")
-    print(f"\nTop 5 pharma exporters 2023:")
+    print("\nTop 5 pharma exporters 2023:")
     for r in o["exporters_top_30"][:5]:
         print(f"  {r['country']:20s} ${r['exports_usd_b']:>6.1f}B  ({r['share_pct']:.1f}% of world)")
-    print(f"\nTop 5 importers:")
+    print("\nTop 5 importers:")
     for r in o["importers_top_30"][:5]:
         print(f"  {r['country']:20s} ${r['imports_usd_b']:>6.1f}B  ({r['share_pct']:.1f}% of world)")

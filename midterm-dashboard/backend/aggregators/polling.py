@@ -106,7 +106,7 @@ class PollingAggregator:
                     "source": "538",
                 }
                 polls.append(poll)
-            except (ValueError, KeyError) as e:
+            except (ValueError, KeyError):
                 continue
 
         return polls

@@ -1,8 +1,8 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
+fastapi==0.135.2
+uvicorn[standard]==0.42.0
 defusedxml==0.7.1
 # Phase 2 trading: RSA-PSS request signing for Kalshi orders + Fernet
 # encryption for at-rest API key storage. Pydantic ships transitively with
 # FastAPI but pinning is good practice.
-cryptography>=42.0.0
-pydantic>=2.6.0
+cryptography==46.0.6
+pydantic==2.12.5

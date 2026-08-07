@@ -1,4 +1,7 @@
 line-length = 200
+# Worktree checkouts under .claude/ are stale copies — never lint them.
+# (venv/ dirs at any depth are already in ruff's default excludes.)
+extend-exclude = [".claude", "workdir"]
 
 [lint]
-select = ["F821"]  # only block deploys on undefined names (actual bugs)
+select = ["E9", "F"]  # syntax errors + pyflakes bugs — still no style rules

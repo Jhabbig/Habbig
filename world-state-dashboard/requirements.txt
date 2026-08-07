@@ -1,3 +1,4 @@
-fastapi
-uvicorn
-defusedxml
+fastapi==0.135.2
+uvicorn==0.42.0
+defusedxml==0.7.1
+httpx==0.28.1

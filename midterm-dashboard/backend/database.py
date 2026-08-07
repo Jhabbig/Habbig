@@ -11,7 +11,6 @@ User IDs are UUID strings, not integers.
 
 import json
 import logging
-import os
 import sqlite3
 import threading
 from contextlib import contextmanager

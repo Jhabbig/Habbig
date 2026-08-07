@@ -22,7 +22,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from threading import Lock
 
 from . import outcome_classifier

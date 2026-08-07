@@ -12,7 +12,6 @@ We rank by POTENTIAL PROFIT, not just trade size.
 import requests
 import time
 import json
-import math
 import tempfile
 import os
 from datetime import datetime, timedelta, timezone
@@ -318,16 +317,16 @@ def find_suspicious_trades(trades, market_stats):
         # 5. COMBO BONUS — outsized bets at any odds level
         if price <= 0.15 and usd_value >= 5000:
             score += 15
-            reasons.append(f"Big bet on a long-shot — classic insider pattern")
+            reasons.append("Big bet on a long-shot — classic insider pattern")
         elif price <= 0.25 and usd_value >= 10000:
             score += 10
-            reasons.append(f"Large bet on underdog")
+            reasons.append("Large bet on underdog")
         elif price <= 0.50 and usd_value >= 25000:
             score += 7
-            reasons.append(f"Heavy bet at medium odds — notable")
+            reasons.append("Heavy bet at medium odds — notable")
         elif usd_value >= 50000:
             score += 5
-            reasons.append(f"Very large position at any odds")
+            reasons.append("Very large position at any odds")
 
         # Only keep if meaningful
         if score < 10:

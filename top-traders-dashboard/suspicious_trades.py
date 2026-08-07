@@ -15,7 +15,6 @@ Detects potential insider trading on Polymarket using multiple signals:
 import requests
 import time
 import json
-import math
 import tempfile
 import os
 from datetime import datetime, timedelta, timezone
@@ -209,7 +208,6 @@ def compute_market_stats(trades):
     for market_id, mtrades in market_trades.items():
         sizes = [t["usd_value"] for t in mtrades]
         profits = [t["potential_profit"] for t in mtrades]
-        timestamps = [t["timestamp"] for t in mtrades if t["timestamp"] > 0]
 
         if len(sizes) < MIN_TRADES_FOR_STATS:
             continue
@@ -299,7 +297,6 @@ def find_suspicious_trades(trades, market_stats, markets=None):
     # Pre-compute indices for insider detection
     wallet_counts = _build_wallet_trade_counts(trades)
     market_end_dates = _build_market_end_dates(markets or [])
-    now_ts = int(datetime.now(timezone.utc).timestamp())
 
     for t in trades:
         size = float(t.get("size", 0) or 0)

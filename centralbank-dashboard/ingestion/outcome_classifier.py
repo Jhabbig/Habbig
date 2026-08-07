@@ -107,7 +107,7 @@ def classify_level(text: str, current_rate: float | None) -> str | None:
     # cut/hold/hike interpretation aligned with Polymarket's delta vocabulary.
     m = _RANGE_RX.search(text_l)
     if m:
-        lo, hi = float(m.group(1)), float(m.group(2))
+        lo = float(m.group(1))
         target = lo
     else:
         m = _SINGLE_RX.search(text_l)

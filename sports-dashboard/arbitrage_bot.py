@@ -270,7 +270,6 @@ def analyze_divergences(matched: list[dict], threshold: float) -> list[dict]:
             # Polymarket outcomes are often "Yes"/"No" for binary markets,
             # or team names for multi-outcome markets
             poly_prob = None
-            poly_outcome_key = None
 
             norm_outcome = normalize_team_name(outcome_name)
 
@@ -281,16 +280,13 @@ def analyze_divergences(matched: list[dict], threshold: float) -> list[dict]:
                         or norm_outcome in norm_pk
                         or norm_pk in norm_outcome):
                     poly_prob = pv["implied_prob"]
-                    poly_outcome_key = pk
                     break
 
             # For binary Yes/No markets, "Yes" usually corresponds to a win
             if poly_prob is None and len(poly["outcomes"]) == 2:
                 yes_outcome = poly["outcomes"].get("Yes")
-                no_outcome = poly["outcomes"].get("No")
                 if yes_outcome and outcome_name.lower() in poly["question"].lower():
                     poly_prob = yes_outcome["implied_prob"]
-                    poly_outcome_key = "Yes"
 
             if poly_prob is None:
                 continue
@@ -429,7 +425,7 @@ def main():
         console.print("[red]Error: ODDS_API_KEY not set. Copy .env.example to .env and add your key.[/red]")
         return
 
-    console.print(f"[bold]Polymarket Arbitrage Signal Bot[/bold]")
+    console.print("[bold]Polymarket Arbitrage Signal Bot[/bold]")
     console.print(f"Sport: {SPORT_KEY} | Threshold: {DIVERGENCE_THRESHOLD}% | Poll: {POLL_INTERVAL}s")
     console.print()
 

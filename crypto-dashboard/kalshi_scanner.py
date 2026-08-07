@@ -9,7 +9,7 @@ import time
 import json
 import tempfile
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
@@ -256,6 +256,6 @@ if __name__ == "__main__":
     print(f"\nKalshi Markets: {result['total_markets']}")
     print(f"Events: {result['total_events']}")
     print(f"Categories: {list(result['categories'].keys())}")
-    print(f"\nTop 10 by volume:")
+    print("\nTop 10 by volume:")
     for m in result["all_markets"][:10]:
         print(f"  {m['title'][:60]:60s} | YES: {m['yes_price']:.0%} | Vol: {m['volume']:,}")

@@ -17,7 +17,7 @@ import time
 import argparse
 import urllib.request
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
@@ -122,7 +122,6 @@ def build_html():
     daily_bets = state.get("daily_bets", 0)
 
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-    drawdown = ((peak - balance) / peak * 100) if peak > 0 else 0
     starting_balance = state.get("starting_balance", 10000)
     pnl_pct = (pnl / starting_balance) * 100 if starting_balance else 0
 
@@ -301,7 +300,6 @@ def build_html():
         log_entries += f'<div class="log-entry {css}">{html.escape(line)}</div>'
 
     # Current time
-    now_utc = datetime.now(timezone.utc)
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     page_html = f"""<!DOCTYPE html>

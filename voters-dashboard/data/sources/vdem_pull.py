@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import read_existing, write_overlay  # noqa: E402
+from _common import write_overlay  # noqa: E402
 
 # Bundled fallback values (from V-Dem v14, year 2023 release; replace by
 # pointing --csv at a fresher V-Dem export). Values are the country_year

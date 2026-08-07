@@ -11,10 +11,8 @@ Provides:
 """
 
 import json
-import math
 import os
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -674,7 +672,7 @@ if __name__ == "__main__":
     print("\n--- Signal Concordance Filter ---")
     scf = SignalConcordanceFilter(min_agreement=0.6)
     result = scf.check_concordance(sample_signals, predicted_direction=-1)
-    print(f"  Predicted: DOWN")
+    print("  Predicted: DOWN")
     print(f"  Concordance: {result['concordance_score']:.0%}")
     print(f"  Agreeing groups:   {result['agreeing_groups']}")
     print(f"  Dissenting groups: {result['dissenting_groups']}")

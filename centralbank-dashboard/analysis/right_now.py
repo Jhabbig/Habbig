@@ -31,7 +31,7 @@ from threading import Lock
 
 from analysis import edge as edge_analysis
 from analysis import stance as stance_analysis
-from ingestion import decision_calendar, econ_releases, fred_client, implied_path
+from ingestion import decision_calendar, econ_releases, implied_path
 
 log = logging.getLogger(__name__)
 

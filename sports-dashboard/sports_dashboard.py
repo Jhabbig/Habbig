@@ -21,7 +21,6 @@ import statistics
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -29,7 +28,7 @@ from rapidfuzz import fuzz
 
 # ── Simple encryption for sensitive fields (Telegram tokens) ──
 try:
-    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _InvalidToken
+    from cryptography.fernet import Fernet as _Fernet
 
     def _get_sports_fernet():
         key_file = Path(__file__).parent / ".secret_key"
@@ -4170,7 +4169,6 @@ async def _background_multi_sport_scan():
             raw_odds, _ = await asyncio.to_thread(fetch_odds, sport_key, "h2h")
             if not raw_odds:
                 continue
-            import time as _time
             poly_raw = _poly_cache.get("_global", [])
             if not poly_raw:
                 continue

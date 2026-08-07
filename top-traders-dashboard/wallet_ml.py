@@ -461,6 +461,6 @@ if __name__ == "__main__":
     ]
     result = rank_wallets(fake_winners)
     print(f"\nWallets: {result['wallet_count']}")
-    print(f"\nTop 5 combined:")
+    print("\nTop 5 combined:")
     for r in result["combined"][:5]:
         print(f"  {r['wallet'][:14]}... → combined={r['combined_score']} iso={r['isolation_score']} xgb={r['xgboost_score']}")

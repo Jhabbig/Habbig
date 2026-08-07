@@ -28,6 +28,38 @@ jobs:
           sports-dashboard/
           world-state-dashboard/
           climate-dashboard/
+          voters-dashboard/
+          centralbank-dashboard/
+          world-health-dashboard/
+          forecast-dashboard/
+          Dashboard-x-truth-research-prediction/
+          polymarket-bot/
+          polymarket_weather_bot/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Gateway tests
+        run: |
+          pip install pytest fastapi httpx stripe websockets redis cryptography python-multipart
+          python -m pytest gateway/tests -q
+      - name: Midterm race-key tests
+        # Plain assertion script by design ("no pytest dependency" — pytest
+        # collects zero tests from it and exits 5). Exits 1 on failure.
+        run: |
+          pip install aiohttp "pydantic[email]"
+          cd midterm-dashboard/backend && python test_race_key.py
+      - name: Dashboard-x-truth tests
+        # rumps/pywebview are macOS-only desktop deps that don't install on
+        # Linux; test_desktop.py importorskips itself when they're absent.
+        run: |
+          grep -viE '^(rumps|pywebview)[=><]' Dashboard-x-truth-research-prediction/requirements.txt > /tmp/dx-requirements.txt
+          pip install -r /tmp/dx-requirements.txt
+          cd Dashboard-x-truth-research-prediction && python -m pytest app/tests -q
 
   docker-build:
     runs-on: ubuntu-latest

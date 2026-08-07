@@ -360,7 +360,7 @@ def run_retroactive_scan(days: int = RESOLVED_LOOKBACK_DAYS, max_markets: int = 
 
 if __name__ == "__main__":
     result = run_retroactive_scan(days=30, max_markets=50)
-    print(f"\n  Top 10 retroactive insider candidates:")
+    print("\n  Top 10 retroactive insider candidates:")
     for i, p in enumerate(result["profiles"][:10]):
         print(f"    {i+1}. [{p['insider_score']}] {p['wallet'][:12]}... ({p.get('pseudonym') or p.get('name') or 'anon'})")
         print(f"       Won {p['win_count']} bets across {p['unique_markets_won']} markets")

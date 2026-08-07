@@ -43,7 +43,6 @@ from ingestion import (
     excess_mortality,
     h5n1_surveillance,
     metrics_catalog,
-    outbreak_feeds,
     pheic_tracker,
 )
 

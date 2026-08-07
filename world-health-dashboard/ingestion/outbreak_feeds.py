@@ -39,7 +39,7 @@ import urllib.request
 from pathlib import Path
 from threading import Lock
 
-from .country_codes import normalize as normalize_iso3, INDEX as COUNTRY_INDEX
+from .country_codes import INDEX as COUNTRY_INDEX
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +84,6 @@ WHO_COUNTRY_ALIASES: dict[str, str] = {
     "occupied Palestinian territory, including east Jerusalem": "PSE",
     "Federated States of Micronesia": "FSM",
     "Kingdom of Saudi Arabia": "SAU",
-    "United Republic of Tanzania": "TZA",
     # French overseas territories — DON occasionally tags these directly.
     "La Réunion": "FRA",
     "Mayotte": "FRA",

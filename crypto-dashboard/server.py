@@ -9,25 +9,20 @@ import json
 import time
 import math
 import os
-import hashlib
 import hmac
-import secrets
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
 import html as html_mod
 import defusedxml.ElementTree as ET
 
 import requests
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, Depends, HTTPException, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from btc_analyzer import (
     ASSETS,
-    WINDOW_MINUTES,
-    WINDOW_SECONDS,
     HISTORY_DAYS,
     load_or_fetch,
     parse_klines,
@@ -480,7 +475,6 @@ async def load_all_assets():
     print(f"Loading {HISTORY_DAYS}d data and training models...")
 
     # Phase 1: Load all windows FIRST so all tabs appear on dashboard
-    all_windows = {}
     for ticker, info in ASSETS.items():
         try:
             await asyncio.to_thread(load_asset_windows, ticker, info["symbol"])
@@ -2533,14 +2527,13 @@ async def kalshi_dashboard(request: Request):
         from kalshi_scanner import run_scanner as kalshi_scan
 
         data = await asyncio.to_thread(kalshi_scan)
-    except Exception as e:
+    except Exception:
         data = {"total_markets": 0, "trending": [], "close_calls": [], "top_events": [], "categories": {}}
 
     # Build market rows — each row has a direct Kalshi trade button AND a "Find on Polymarket" button
     def _make_row(m: dict, show_24h: bool = False) -> str:
         title = html_mod.escape(m["title"][:70])
         ticker_raw = m.get("ticker", "")
-        ticker = html_mod.escape(ticker_raw, quote=True)
         kalshi_url = f"https://kalshi.com/markets/{ticker_raw.lower().split('-')[0]}/{ticker_raw.lower()}" if ticker_raw else "https://kalshi.com"
         yes_cls = "positive" if m["yes_price"] >= 0.5 else "negative"
         vol_24h = f"<td>{m.get('volume_24h', 0):,}</td>" if show_24h else ""
@@ -3768,7 +3761,6 @@ async def api_remove_from_watchlist(request: Request):
 async def accuracy_page(request: Request):
     if not _check_auth(request):
         return RedirectResponse("https://narve.ai/login", status_code=302)
-    user = _get_session_user(request)
 
     # Get accuracy stats for each ticker
     stats_html = ""
@@ -4343,7 +4335,6 @@ async def settings_page(request: Request):
         return RedirectResponse("https://narve.ai/login", status_code=302)
     user = _get_session_user(request)
     watchlists = db.get_watchlists(user["id"])
-    alert_prefs = db.get_alert_prefs(user["id"])
 
     wl_html = ""
     for wl in watchlists:

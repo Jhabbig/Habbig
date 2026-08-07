@@ -13,7 +13,6 @@ Supports multiple coins: BTC, ETH, SOL, DOGE, XRP (with pickle data).
 """
 
 import numpy as np
-import pickle
 import requests
 import time
 from datetime import datetime, timezone
@@ -627,7 +626,6 @@ def build_sequence_samples(window_features, window_outcomes, window_times, seq_l
     if n < seq_len + 10:
         return np.array([]), np.array([])
 
-    n_feats = window_features.shape[1]
     X_seqs = []
     y_seqs = []
 

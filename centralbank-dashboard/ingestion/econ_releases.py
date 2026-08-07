@@ -29,9 +29,6 @@ hammers FRED.
 
 from __future__ import annotations
 
-import bisect
-import calendar as _cal
-import concurrent.futures
 import csv
 import io
 import logging

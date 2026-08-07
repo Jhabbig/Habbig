@@ -201,7 +201,7 @@ class TradingBot:
             resp = requests.get(f"{API_BASE}/_internal/bot/signals", timeout=10)
             if resp.ok:
                 return resp.json()
-        except Exception as e:
+        except Exception:
             pass
         return {}
 
@@ -622,7 +622,7 @@ class TradingBot:
         dd = (self.state.peak_balance - self.state.balance) / self.state.peak_balance * 100 if self.state.peak_balance > 0 else 0
 
         print(f"\n  {'='*60}")
-        print(f"  PAPER TRADING STATUS")
+        print("  PAPER TRADING STATUS")
         print(f"  {'='*60}")
         print(f"  Balance:     ${self.state.balance:>10,.2f}  (started: ${STARTING_BALANCE:,.2f})")
         print(f"  Total PnL:   ${self.state.total_pnl:>10,.2f}  ({self.state.total_pnl/STARTING_BALANCE*100:+.2f}%)")

@@ -15,13 +15,12 @@ Usage:
 
 import hashlib
 import hmac as _hmac
-import json
 import os
 import pickle
 import argparse
 import warnings
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -61,8 +60,7 @@ except ImportError:
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import TimeSeriesSplit
-    from sklearn.metrics import accuracy_score, classification_report
+    from sklearn.metrics import accuracy_score
 except ImportError:
     raise ImportError("scikit-learn is required: pip install scikit-learn")
 
@@ -253,8 +251,6 @@ def build_features(df, spy_df=None, vix_df=None):
     atr_pct = np.where(closes > 0, atr_14 / closes, 0)
 
     # Moving averages
-    sma_5 = rolling_mean(closes, 5)
-    sma_10 = rolling_mean(closes, 10)
     sma_20 = rolling_mean(closes, 20)
     sma_50 = rolling_mean(closes, 50)
     sma_200 = rolling_mean(closes, 200)
@@ -534,10 +530,7 @@ class StockMLModel:
 
             except Exception as e:
                 print(f"  [{self.ticker_yf}] Stacking failed ({e}), falling back to simple ensemble")
-                ADVANCED_ML_FAILED = True
                 self.stacking_model = None
-        else:
-            ADVANCED_ML_FAILED = True
 
         # Fallback: simple ensemble — scale features here (not earlier) to
         # avoid double-scaling when StackingEnsemble is used.
