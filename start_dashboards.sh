@@ -115,7 +115,7 @@ start_all() {
     # 7. World State Dashboard (port 7050)
     echo -e "${GREEN}[7/13]${NC} Starting World State Dashboard on port 7050..."
     cd "$SCRIPT_DIR/world-state-dashboard"
-    python3 -m uvicorn server:app --host 127.0.0.1 --port 7050 > /tmp/dashboard_world.log 2>&1 &
+    DEV_MODE=1 python3 -m uvicorn server:app --host 127.0.0.1 --port 7050 > /tmp/dashboard_world.log 2>&1 &
     echo $! > /tmp/dashboard_world.pid
     echo "       PID: $(cat /tmp/dashboard_world.pid)"
     cd "$SCRIPT_DIR"
@@ -123,21 +123,21 @@ start_all() {
     # 8. Voters Atlas Dashboard (port 7051)
     echo -e "${GREEN}[8/13]${NC} Starting Voters Atlas on port 7051..."
     cd "$SCRIPT_DIR/voters-dashboard"
-    python3 -m uvicorn server:app --host 127.0.0.1 --port 7051 > /tmp/dashboard_voters.log 2>&1 &
+    DEV_MODE=1 python3 -m uvicorn server:app --host 127.0.0.1 --port 7051 > /tmp/dashboard_voters.log 2>&1 &
     echo $! > /tmp/dashboard_voters.pid
     echo "       PID: $(cat /tmp/dashboard_voters.pid)"
     cd "$SCRIPT_DIR"
 
     # 9. Climate Change Dashboard (port 7052)
     echo -e "${GREEN}[9/13]${NC} Starting Climate Dashboard on port 7052..."
-    PORT=7052 python3 "$SCRIPT_DIR/climate-dashboard/server.py" > /tmp/dashboard_climate.log 2>&1 &
+    DEV_MODE=1 PORT=7052 python3 "$SCRIPT_DIR/climate-dashboard/server.py" > /tmp/dashboard_climate.log 2>&1 &
     echo $! > /tmp/dashboard_climate.pid
     echo "       PID: $(cat /tmp/dashboard_climate.pid)"
 
     # 10. World Health Dashboard (port 7053)
     echo -e "${GREEN}[10/13]${NC} Starting World Health Dashboard on port 7053..."
     cd "$SCRIPT_DIR/world-health-dashboard"
-    PORT=7053 python3 -m uvicorn server:app --host 127.0.0.1 --port 7053 > /tmp/dashboard_world_health.log 2>&1 &
+    DEV_MODE=1 PORT=7053 python3 -m uvicorn server:app --host 127.0.0.1 --port 7053 > /tmp/dashboard_world_health.log 2>&1 &
     echo $! > /tmp/dashboard_world_health.pid
     echo "       PID: $(cat /tmp/dashboard_world_health.pid)"
     cd "$SCRIPT_DIR"
@@ -145,7 +145,7 @@ start_all() {
     # 11. Central Bank Dashboard (port 7061)
     echo -e "${GREEN}[11/13]${NC} Starting Central Bank Dashboard on port 7061..."
     cd "$SCRIPT_DIR/centralbank-dashboard"
-    PORT=7061 python3 -m uvicorn server:app --host 127.0.0.1 --port 7061 > /tmp/dashboard_centralbank.log 2>&1 &
+    DEV_MODE=1 PORT=7061 python3 -m uvicorn server:app --host 127.0.0.1 --port 7061 > /tmp/dashboard_centralbank.log 2>&1 &
     echo $! > /tmp/dashboard_centralbank.pid
     echo "       PID: $(cat /tmp/dashboard_centralbank.pid)"
     cd "$SCRIPT_DIR"
@@ -153,7 +153,7 @@ start_all() {
     # 12. Forecast Board (port 7062)
     echo -e "${GREEN}[12/13]${NC} Starting Forecast Board on port 7062..."
     cd "$SCRIPT_DIR/forecast-dashboard"
-    python3 -m uvicorn server:app --host 127.0.0.1 --port 7062 > /tmp/dashboard_forecast.log 2>&1 &
+    DEV_MODE=1 python3 -m uvicorn server:app --host 127.0.0.1 --port 7062 > /tmp/dashboard_forecast.log 2>&1 &
     echo $! > /tmp/dashboard_forecast.pid
     echo "       PID: $(cat /tmp/dashboard_forecast.pid)"
     cd "$SCRIPT_DIR"

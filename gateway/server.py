@@ -4751,7 +4751,11 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
                 text = text[: close + 1] + css_tag + text[close + 1 :]
 
     # 2. Inject JS before the *structural* </body> (not any </body> substring
-    # appearing inside inline <script> string literals).
+    # appearing inside inline <script> string literals). Pages that ship their
+    # own suite shell (narve-shell.js) already have navigation — the legacy
+    # switcher bar would double up and overlap it.
+    if "narve-shell.js" in text:
+        return text.encode("utf-8")
     snippet = _switcher_snippet(key, user_id, username, csrf_token=csrf_token, request=request)
     idx = _find_structural_body_close(text)
     if idx != -1:
