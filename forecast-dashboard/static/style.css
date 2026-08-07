@@ -214,6 +214,7 @@ pre {
   border-radius: 100px;
   margin-top: 3px;
 }
+.tag-model.llm { color: var(--violet); background: var(--violet-soft); }
 
 .badge {
   display: inline-block;
@@ -225,6 +226,7 @@ pre {
 }
 .badge.pm { color: var(--violet); background: var(--violet-soft); }
 .badge.ka { color: var(--teal); background: var(--teal-soft); }
+.badge.op { color: var(--amber); background: var(--amber-soft); }
 
 .conf {
   display: inline-block;

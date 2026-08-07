@@ -61,7 +61,9 @@
   <script>
     'use strict';
     const GROUP_CAP = 150;
-    const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA' };
+    const VENUE_SHORT = { polymarket: 'PM', kalshi: 'KA', options: 'OPT' };
+    const VENUE_CLS = { PM: 'pm', KA: 'ka', OPT: 'op' };
+    const MODEL_TAG = { llm: { label: 'LLM', cls: ' llm' } };
     const state = { days: '7', venue: '', category: '', conf: '', micro: false };
     const expanded = new Set();
     const allCats = new Set();
@@ -97,13 +99,14 @@
 
     function venueBadge(v) {
       const short = VENUE_SHORT[v] || (v || '?').slice(0, 2).toUpperCase();
-      return `<span class="badge ${short === 'PM' ? 'pm' : 'ka'}">${esc(short)}</span>`;
+      return `<span class="badge ${VENUE_CLS[short] || 'ka'}">${esc(short)}</span>`;
     }
 
     function probCell(r) {
       let html = `<div class="prob">${pct(r.display_prob)}</div>`;
       if (r.model_prob != null) {
-        html += `<span class="tag-model">model · ${esc(r.model_source || '?')}</span>`;
+        const mt = MODEL_TAG[r.model_source] || { label: r.model_source || '?', cls: '' };
+        html += `<span class="tag-model${mt.cls}">model · ${esc(mt.label)}</span>`;
         if (r.baseline_prob != null) html += `<span class="prob-secondary">market ${pct(r.baseline_prob)}</span>`;
       }
       return html;

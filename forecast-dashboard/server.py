@@ -24,9 +24,11 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 import ingest_kalshi
+import ingest_options
 import ingest_polymarket
 import matching
 import models_fed
+import models_llm
 import models_weather
 import resolver
 
@@ -41,7 +43,7 @@ INGEST_INTERVAL = 600
 MODELS_INTERVAL = 1800
 RESOLVE_INTERVAL = 1800
 
-MODEL_MODULES = (models_weather, models_fed)
+MODEL_MODULES = (models_weather, models_fed, models_llm)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -113,8 +115,20 @@ def _env_float(name: str, default: float) -> float:
 # Kalshi's open 7-day universe exceeds 60k markets (hourly/per-game series);
 # storing a snapshot for each every cycle would bloat the DB by millions of
 # rows a day. Keep liquid/active markets plus the series the models and
-# rulepacks consume regardless of size.
-_KALSHI_KEEP_SERIES = ("KXHIGH", "KXLOW", "KXFED")
+# rulepacks consume regardless of size. The index prefixes are
+# hyphen-terminated so the daily-range series match without dragging in the
+# hourly micro variants (KXINXU, KXNASDAQ100U — hundreds of strikes a day).
+_KALSHI_KEEP_SERIES = (
+    "KXHIGH",
+    "KXLOW",
+    "KXFED",
+    "KXINX-",
+    "KXNASDAQ100-",
+    "KXCPI",
+    "KXPAYROLL",
+    "KXU3",
+    "KXGDP",
+)
 _KALSHI_MIN_LIQ = _env_float("FORECAST_KALSHI_MIN_LIQ", 1000)
 _KALSHI_MIN_VOL24 = _env_float("FORECAST_KALSHI_MIN_VOL24", 500)
 
@@ -200,10 +214,11 @@ async def _ingest_loop():
             results = await asyncio.gather(
                 ingest_polymarket.fetch_horizon(horizon),
                 ingest_kalshi.fetch_horizon(horizon),
+                ingest_options.fetch_horizon(horizon),
                 return_exceptions=True,
             )
             rows: list[dict] = []
-            for res, venue in zip(results, ("polymarket", "kalshi")):
+            for res, venue in zip(results, ("polymarket", "kalshi", "options")):
                 if isinstance(res, BaseException):
                     log.error("ingest %s failed: %s", venue, res)
                     continue

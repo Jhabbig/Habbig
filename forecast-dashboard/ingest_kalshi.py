@@ -49,7 +49,9 @@ _UA = "forecast-dashboard/0.1"
 # The open 7-day universe exceeds the page budget (60k+ rows), and the cursor
 # order does not surface these low-volume series before the cap — yet the
 # weather/fed models and rulepacks depend on them. One targeted request per
-# series guarantees coverage.
+# series guarantees coverage. Finance/macro tickers confirmed live 2026-08-07
+# via /series?category=Financials|Economics + open-market probes; the weekly
+# index series (KXINXW, KXNASDAQ100W) are retired upstream — zero markets.
 SUPPLEMENT_SERIES = (
     "KXHIGHNY",
     "KXHIGHCHI",
@@ -57,6 +59,29 @@ SUPPLEMENT_SERIES = (
     "KXHIGHLAX",
     "KXHIGHDEN",
     "KXFEDDECISION",
+    "KXINX",
+    "KXNASDAQ100",
+    "KXCPI",
+    "KXCPIYOY",
+    "KXCPICORE",
+    "KXPAYROLLS",
+    "KXU3",
+    "KXGDP",
+)
+
+# The public /markets payload ships category=None on every row; infer it from
+# the series prefix so Kalshi rows participate in the board's category filter.
+# First match wins; unmatched prefixes stay None.
+_CATEGORY_BY_PREFIX = (
+    ("KXHIGH", "weather"),
+    ("KXLOW", "weather"),
+    ("KXFED", "fed"),
+    ("KXINX", "finance"),
+    ("KXNASDAQ", "finance"),
+    ("KXCPI", "economics"),
+    ("KXPAYROLL", "economics"),
+    ("KXU3", "economics"),
+    ("KXGDP", "economics"),
 )
 
 _UNINFORMATIVE_SUBTITLES = {"yes", "no", "-", "--"}
@@ -92,6 +117,16 @@ def _cents_to_dollars(v) -> float | None:
     return round(f / 100.0, 2) if f is not None else None
 
 
+def _infer_category(series: str | None) -> str | None:
+    if not series:
+        return None
+    s = series.upper()
+    for prefix, cat in _CATEGORY_BY_PREFIX:
+        if s.startswith(prefix):
+            return cat
+    return None
+
+
 def _pick(raw: dict, *keys):
     for k in keys:
         v = raw.get(k)
@@ -120,7 +155,7 @@ def _normalize_market(raw: dict) -> dict | None:
         "venue_id": ticker,
         "event_ticker": event_ticker,
         "question": question,
-        "category": raw.get("category") or None,
+        "category": raw.get("category") or _infer_category(event_ticker or ticker),
         "url": f"https://kalshi.com/markets/{slug}",
         "end_date": raw.get("close_time") or raw.get("expiration_time") or None,
         "yes_bid": _normalize_price(_pick(raw, "yes_bid_dollars", "yes_bid")),

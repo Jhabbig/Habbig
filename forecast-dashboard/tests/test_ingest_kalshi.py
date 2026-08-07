@@ -198,6 +198,92 @@ def test_supplement_series_fetched_and_deduped(monkeypatch):
         assert c["status"] == "open"
 
 
+def test_infer_category_prefix_map():
+    cases = {
+        "KXHIGHNY-26AUG08": "weather",
+        "KXLOWCHI-26AUG08": "weather",
+        "KXFEDDECISION-26SEP": "fed",
+        "KXFED-26SEP": "fed",
+        "KXINX-26AUG07H1600": "finance",
+        "KXINXY-26DEC31H1600": "finance",
+        "KXNASDAQ100-26AUG07H1600": "finance",
+        "KXCPI-26AUG": "economics",
+        "KXCPIYOY-26AUG": "economics",
+        "KXCPICORE-26AUG": "economics",
+        "KXPAYROLLS-26AUG": "economics",
+        "KXU3-26AUG": "economics",
+        "KXGDP-26OCT30": "economics",
+        "kxhighny-26aug08": "weather",
+        "KXWTAMATCH-26AUG08": None,
+        "": None,
+        None: None,
+    }
+    for series, expected in cases.items():
+        assert ingest_kalshi._infer_category(series) == expected, series
+
+
+def test_category_inferred_only_when_payload_has_none(monkeypatch):
+    def handler(request):
+        markets = [
+            _market(ticker="KXHIGHNY-26AUG08-B85", event_ticker="KXHIGHNY-26AUG08"),
+            _market(ticker="KXINX-26AUG07H1600-B7762", event_ticker="KXINX-26AUG07H1600"),
+            _market(ticker="KXCPIYOY-26AUG-T3.1", event_ticker="KXCPIYOY-26AUG"),
+            _market(ticker="KXHIGHCHI-26AUG08-B90", event_ticker="KXHIGHCHI-26AUG08", category="Climate"),
+            _market(ticker="MYSTERY-1", event_ticker="MYSTERY"),
+            _market(ticker="ORPHAN-NOEVENT", event_ticker=None),
+        ]
+        return httpx.Response(200, json={"markets": markets, "cursor": ""})
+
+    _patch_transport(monkeypatch, handler)
+    rows = _run(ingest_kalshi.fetch_horizon(7))
+    by_id = {r["venue_id"]: r["category"] for r in rows}
+    assert by_id["KXHIGHNY-26AUG08-B85"] == "weather"
+    assert by_id["KXINX-26AUG07H1600-B7762"] == "finance"
+    assert by_id["KXCPIYOY-26AUG-T3.1"] == "economics"
+    assert by_id["KXHIGHCHI-26AUG08-B90"] == "Climate"
+    assert by_id["MYSTERY-1"] is None
+    assert by_id["ORPHAN-NOEVENT"] is None
+
+
+def test_supplement_series_includes_finance_and_macro():
+    for series in ("KXINX", "KXNASDAQ100", "KXCPI", "KXCPIYOY", "KXCPICORE", "KXPAYROLLS", "KXU3", "KXGDP"):
+        assert series in ingest_kalshi.SUPPLEMENT_SERIES
+    # every supplemented series must land in a board category
+    for series in ingest_kalshi.SUPPLEMENT_SERIES:
+        assert ingest_kalshi._infer_category(series) is not None, series
+
+
+def test_supplement_dedup_with_real_series_list(monkeypatch):
+    real_series = ingest_kalshi.SUPPLEMENT_SERIES
+    calls = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        calls.append(params)
+        series = params.get("series_ticker")
+        if series is None:
+            markets = [_market(ticker="KXINX-26AUG07H1600-B7762", event_ticker="KXINX-26AUG07H1600"), _market(ticker="T-MAIN")]
+        else:
+            # every supplement echoes a market already seen on the main page
+            # plus one unique to the series
+            markets = [
+                _market(ticker="KXINX-26AUG07H1600-B7762", event_ticker="KXINX-26AUG07H1600"),
+                _market(ticker=f"{series}-UNIQUE", event_ticker=f"{series}-EV"),
+            ]
+        return httpx.Response(200, json={"markets": markets, "cursor": ""})
+
+    _patch_transport(monkeypatch, handler)
+    monkeypatch.setattr(ingest_kalshi, "SUPPLEMENT_SERIES", real_series)
+    rows = _run(ingest_kalshi.fetch_horizon(7))
+    ids = [r["venue_id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    assert ids.count("KXINX-26AUG07H1600-B7762") == 1
+    for series in real_series:
+        assert f"{series}-UNIQUE" in ids
+    series_calls = [c["series_ticker"] for c in calls if "series_ticker" in c]
+    assert series_calls == list(real_series)
+
+
 def test_uninformative_subtitle_not_appended(monkeypatch):
     def handler(request):
         markets = [
