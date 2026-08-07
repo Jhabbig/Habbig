@@ -1,51 +1,42 @@
 /*  ================================================================
-    narve.ai Unified Theme v2 — "Editorial Light"
-    Injected by the gateway into all dashboards.
-    Canonical spec: DESIGN.md (repo root). Derived from landing.html.
-    Old dark theme preserved at narve-theme-dark.css (opt-in).
+    narve.ai Unified Theme — injected by the gateway into all dashboards
+    Design language: Mubi × Notion × Wispr
     ================================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 /* ── Design Tokens ──────────────────────────────────────────────── */
 
 :root {
-  --hb-bg:             #f5f5f5;
-  --hb-bg-elevated:    #fafafa;
-  --hb-surface:        #ffffff;
-  --hb-surface-hover:  #f0f0ef;
-  --hb-surface-active: #e8e8e6;
-  --hb-border:         rgba(0, 0, 0, 0.09);
-  --hb-border-subtle:  rgba(0, 0, 0, 0.05);
-  --hb-text:           #0d0d0d;
-  --hb-text-secondary: #5a5a5a;
-  --hb-text-muted:     #9a9a9a;
-  --hb-accent:         #d97757;
-  --hb-accent-hover:   #c96442;
-  --hb-accent-soft:    rgba(217, 119, 87, 0.12);
-  --hb-accent-2:       #7c3aed;
-  --hb-green:          #15803d;
-  --hb-green-soft:     rgba(21, 128, 61, 0.10);
-  --hb-red:            #b91c1c;
-  --hb-red-soft:       rgba(185, 28, 28, 0.10);
-  --hb-amber:          #b45309;
-  --hb-amber-soft:     rgba(180, 83, 9, 0.10);
-  --hb-blue:           #2563eb;
-  --hb-blue-soft:      rgba(37, 99, 235, 0.10);
-  --hb-cat-1:          #d97757;
-  --hb-cat-2:          #2563eb;
-  --hb-cat-3:          #0d9488;
-  --hb-cat-4:          #c026d3;
-  --hb-cat-5:          #b45309;
-  --hb-cat-6:          #7c3aed;
+  --hb-bg:             #0c0d10;
+  --hb-bg-elevated:    #131417;
+  --hb-surface:        #18191e;
+  --hb-surface-hover:  #1f2027;
+  --hb-surface-active: #26272e;
+  --hb-border:         rgba(255, 255, 255, 0.06);
+  --hb-border-subtle:  rgba(255, 255, 255, 0.04);
+  --hb-text:           #ebebef;
+  --hb-text-secondary: #8b8d98;
+  --hb-text-muted:     #5c5e6a;
+  --hb-accent:         #6366f1;
+  --hb-accent-hover:   #818cf8;
+  --hb-accent-soft:    rgba(99, 102, 241, 0.10);
+  --hb-accent-2:       #8b5cf6;
+  --hb-green:          #34d399;
+  --hb-green-soft:     rgba(52, 211, 153, 0.10);
+  --hb-red:            #f87171;
+  --hb-red-soft:       rgba(248, 113, 113, 0.10);
+  --hb-amber:          #fbbf24;
+  --hb-amber-soft:     rgba(251, 191, 36, 0.10);
+  --hb-blue:           #60a5fa;
+  --hb-blue-soft:      rgba(96, 165, 250, 0.10);
   --hb-radius:         12px;
   --hb-radius-sm:      8px;
   --hb-radius-xs:      6px;
-  --hb-shadow:         0 1px 2px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.06);
-  --hb-shadow-lg:      0 4px 12px rgba(0,0,0,0.08), 0 12px 40px rgba(0,0,0,0.10);
+  --hb-shadow:         0 1px 3px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2);
+  --hb-shadow-lg:      0 4px 12px rgba(0,0,0,0.3), 0 12px 40px rgba(0,0,0,0.25);
   --hb-transition:     0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  --hb-font:           'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --hb-font-display:   'Lora', 'Georgia', serif;
+  --hb-font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
 /* ── Base Reset ─────────────────────────────────────────────────── */
@@ -64,24 +55,17 @@ html, body {
 
 /* ── Typography ─────────────────────────────────────────────────── */
 
-h1, h2, h3 {
-  font-family: var(--hb-font-display) !important;
-  font-weight: 500;
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--hb-font) !important;
+  font-weight: 600;
   letter-spacing: -0.025em;
   line-height: 1.25;
   color: var(--hb-text);
 }
 
-h1 { font-size: 1.85rem; font-weight: 600; }
-h2 { font-size: 1.4rem; }
+h1 { font-size: 1.75rem; font-weight: 700; }
+h2 { font-size: 1.35rem; }
 h3 { font-size: 1.1rem; }
-
-h4, h5, h6 {
-  font-family: var(--hb-font) !important;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--hb-text);
-}
 
 p { color: var(--hb-text-secondary); }
 
@@ -99,70 +83,60 @@ a:hover { color: var(--hb-text); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.14);
+  background: rgba(255,255,255,0.07);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.24); }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
 
 /* ── Buttons ────────────────────────────────────────────────────── */
 
 button, .btn, [type="submit"], [type="button"] {
   font-family: var(--hb-font) !important;
   font-weight: 500;
-  border-radius: 100px !important;
+  border-radius: var(--hb-radius-sm) !important;
   transition: all var(--hb-transition) !important;
   cursor: pointer;
   letter-spacing: -0.005em;
   border: none;
 }
 
-/* Primary buttons — landing's black pill */
+/* Primary buttons - gradient accent */
 button[type="submit"],
 .btn-primary,
 button.primary {
-  background: #0d0d0d !important;
-  color: #f5f5f5 !important;
+  background: linear-gradient(135deg, var(--hb-accent), var(--hb-accent-2)) !important;
+  color: #fff !important;
   border: none !important;
-  padding: 10px 22px;
+  padding: 10px 20px;
   font-size: 0.875rem;
-  font-weight: 500;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
 }
 button[type="submit"]:hover,
 .btn-primary:hover,
 button.primary:hover {
+  opacity: 0.9;
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-}
-
-/* Accent CTA — coral pill */
-.btn-cta, button.cta {
-  background: var(--hb-accent) !important;
-  color: #fff !important;
-  box-shadow: 0 2px 8px rgba(217, 119, 87, 0.30);
-}
-.btn-cta:hover, button.cta:hover {
-  background: var(--hb-accent-hover) !important;
-  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
 }
 
 /* Ghost/secondary buttons */
-button:not([type="submit"]):not(.primary):not(.btn-primary):not(.cta):not(.btn-cta) {
-  background: transparent !important;
+button:not([type="submit"]):not(.primary):not(.btn-primary) {
+  background: var(--hb-surface) !important;
   color: var(--hb-text-secondary) !important;
   border: 1px solid var(--hb-border) !important;
 }
-button:not([type="submit"]):not(.primary):not(.btn-primary):not(.cta):not(.btn-cta):hover {
-  background: rgba(0, 0, 0, 0.05) !important;
+button:not([type="submit"]):not(.primary):not(.btn-primary):hover {
+  background: var(--hb-surface-hover) !important;
   color: var(--hb-text) !important;
-  border-color: rgba(0, 0, 0, 0.18) !important;
+  border-color: rgba(255,255,255,0.1) !important;
 }
 
 /* ── Inputs ─────────────────────────────────────────────────────── */
 
 input, textarea, select {
   font-family: var(--hb-font) !important;
-  background: var(--hb-surface) !important;
+  background: var(--hb-bg) !important;
   color: var(--hb-text) !important;
   border: 1px solid var(--hb-border) !important;
   border-radius: var(--hb-radius-sm) !important;
@@ -181,7 +155,7 @@ input::placeholder, textarea::placeholder {
 
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239a9a9a' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E") !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%235c5e6a' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E") !important;
   background-repeat: no-repeat !important;
   background-position: right 12px center !important;
   padding-right: 32px !important;
@@ -226,11 +200,10 @@ td {
   border-bottom: 1px solid var(--hb-border-subtle) !important;
   color: var(--hb-text-secondary);
   font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
 }
 
 tr:hover td {
-  background: var(--hb-surface-hover) !important;
+  background: var(--hb-surface) !important;
 }
 
 /* ── Status Indicators ──────────────────────────────────────────── */
@@ -305,9 +278,9 @@ code, pre, [class*="mono"], .address, .wallet {
 /* ── Tooltips ───────────────────────────────────────────────────── */
 
 [class*="tooltip"] {
-  background: var(--hb-text) !important;
-  color: var(--hb-bg) !important;
-  border: none !important;
+  background: var(--hb-surface) !important;
+  color: var(--hb-text) !important;
+  border: 1px solid var(--hb-border) !important;
   border-radius: var(--hb-radius-xs) !important;
   font-size: 0.75rem !important;
   box-shadow: var(--hb-shadow) !important;
@@ -327,7 +300,7 @@ code, pre, [class*="mono"], .address, .wallet {
 /* ── Smooth Animations ──────────────────────────────────────────── */
 
 @keyframes hb-fade-in {
-  from { opacity: 0; transform: translateY(16px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
