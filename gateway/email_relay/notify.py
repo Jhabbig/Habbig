@@ -10,6 +10,7 @@ The user can reply in-thread to drive the bot — the relay matches the
 [<bot_key>] subject prefix and pipes the reply body to `claude -p` in that
 bot's working directory.
 """
+
 from __future__ import annotations
 
 import os
@@ -33,14 +34,14 @@ def _load_env_file() -> None:
         os.environ.setdefault(k.strip(), v.strip())
 
 
-def notify(bot_key: str, summary: str, details: str = "") -> None:
-    """Send a push email '[<bot_key>] <summary>' to NOTIFY_TO."""
+def notify(bot_key: str, summary: str, details: str = "", to: str = "") -> None:
+    """Send a push email '[<bot_key>] <summary>' to `to` (default NOTIFY_TO)."""
     _load_env_file()
     smtp_host = os.environ["SMTP_HOST"]
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ["SMTP_USER"]
     smtp_pass = os.environ["SMTP_PASS"]
-    notify_to = os.environ.get("NOTIFY_TO", smtp_user)
+    notify_to = to or os.environ.get("NOTIFY_TO", smtp_user)
 
     msg = EmailMessage()
     msg["From"] = smtp_user
@@ -51,7 +52,7 @@ def notify(bot_key: str, summary: str, details: str = "") -> None:
     msg["X-Bot-Key"] = bot_key
     msg.set_content(f"{summary}\n\n{details}".strip() if details else summary)
 
-    with smtplib.SMTP(smtp_host, smtp_port) as s:
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as s:
         s.starttls()
         s.login(smtp_user, smtp_pass)
         s.send_message(msg)
@@ -59,6 +60,7 @@ def notify(bot_key: str, summary: str, details: str = "") -> None:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 3:
         sys.exit("usage: python3 -m gateway.email_relay.notify <bot_key> <summary> [details]")
     notify(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "")

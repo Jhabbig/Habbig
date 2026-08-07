@@ -291,8 +291,7 @@ def create_user(email: str, password: str, username: str = "", is_admin: bool = 
     pwd_hash, salt = _hash_password(password)
     with conn() as c:
         cur = c.execute(
-            "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO users (username, email, password_hash, password_salt, created_at, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
             (username, email, pwd_hash, salt, int(time.time()), level),
         )
         return cur.lastrowid
@@ -300,17 +299,13 @@ def create_user(email: str, password: str, username: str = "", is_admin: bool = 
 
 def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
     with conn() as c:
-        row = c.execute(
-            "SELECT * FROM users WHERE email = ?", (email.lower().strip(),)
-        ).fetchone()
+        row = c.execute("SELECT * FROM users WHERE email = ?", (email.lower().strip(),)).fetchone()
     return row
 
 
 def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
     with conn() as c:
-        return c.execute(
-            "SELECT * FROM users WHERE username = ?", (username.strip(),)
-        ).fetchone()
+        return c.execute("SELECT * FROM users WHERE username = ?", (username.strip(),)).fetchone()
 
 
 def get_user_by_email_or_username(identifier: str) -> Optional[sqlite3.Row]:
@@ -380,9 +375,7 @@ def set_default_dashboard(user_id: int, dashboard_key: Optional[str]) -> None:
 
 def get_default_dashboard(user_id: int) -> Optional[str]:
     with conn() as c:
-        row = c.execute(
-            "SELECT default_dashboard FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+        row = c.execute("SELECT default_dashboard FROM users WHERE id = ?", (user_id,)).fetchone()
     return row["default_dashboard"] if row else None
 
 
@@ -409,8 +402,7 @@ def link_invite_token_to_user(user_id: int, token_str: str) -> None:
     """Set the invite_token_id on a user from a token string."""
     with conn() as c:
         c.execute(
-            "UPDATE users SET invite_token_id = "
-            "(SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
+            "UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
             (token_str, user_id),
         )
 
@@ -436,11 +428,7 @@ def get_session(token: str) -> Optional[sqlite3.Row]:
         return None
     with conn() as c:
         row = c.execute(
-            "SELECT s.*, u.username, u.email, u.is_admin, u.suspended, "
-            "u.has_full_access "
-            "FROM sessions s "
-            "JOIN users u ON u.id = s.user_id "
-            "WHERE s.token = ? AND s.expires_at > ?",
+            "SELECT s.*, u.username, u.email, u.is_admin, u.suspended, u.has_full_access FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?",
             (token, int(time.time())),
         ).fetchone()
     return row
@@ -468,9 +456,7 @@ def purge_expired_sessions() -> int:
 
 def list_subscriptions(user_id: int) -> list[sqlite3.Row]:
     with conn() as c:
-        return c.execute(
-            "SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)
-        ).fetchall()
+        return c.execute("SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)).fetchall()
 
 
 def has_active_subscription(user_id: int, dashboard_key: str) -> bool:
@@ -521,8 +507,7 @@ def upsert_subscription(
 def cancel_subscription(user_id: int, dashboard_key: str) -> None:
     with conn() as c:
         c.execute(
-            "UPDATE subscriptions SET status = 'cancelled' "
-            "WHERE user_id = ? AND dashboard_key = ?",
+            "UPDATE subscriptions SET status = 'cancelled' WHERE user_id = ? AND dashboard_key = ?",
             (user_id, dashboard_key),
         )
 
@@ -534,6 +519,22 @@ def cancel_subscription_by_stripe_id(stripe_sub_id: str) -> None:
             "UPDATE subscriptions SET status = 'cancelled' WHERE stripe_sub_id = ?",
             (stripe_sub_id,),
         )
+
+
+def renew_subscription_by_stripe_id(stripe_sub_id: str, expires_at: Optional[int]) -> int:
+    """Reactivate and extend every subscription row paid by this Stripe sub.
+
+    expires_at comes from Stripe's current_period_end (source of truth).
+    Returns the number of rows updated (0 = unknown stripe_sub_id).
+    """
+    if not stripe_sub_id:
+        return 0
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE subscriptions SET status = 'active', expires_at = ? WHERE stripe_sub_id = ?",
+            (expires_at, stripe_sub_id),
+        )
+        return cur.rowcount
 
 
 # ── Invite token operations ──────────────────────────────────────────────────
@@ -563,9 +564,7 @@ def create_invite_token(
     token = generate_invite_token()
     with conn() as c:
         c.execute(
-            "INSERT INTO invite_tokens "
-            "(token, status, note, target_email, created_at, grants_full_access, stripe_sub_id) "
-            "VALUES (?, 'unclaimed', ?, ?, ?, ?, ?)",
+            "INSERT INTO invite_tokens (token, status, note, target_email, created_at, grants_full_access, stripe_sub_id) VALUES (?, 'unclaimed', ?, ?, ?, ?, ?)",
             (
                 token,
                 note,
@@ -594,8 +593,7 @@ def find_invite_token_by_stripe_sub(stripe_sub_id: str) -> Optional[sqlite3.Row]
         return None
     with conn() as c:
         return c.execute(
-            "SELECT * FROM invite_tokens WHERE stripe_sub_id = ? "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT * FROM invite_tokens WHERE stripe_sub_id = ? ORDER BY created_at DESC LIMIT 1",
             (stripe_sub_id,),
         ).fetchone()
 
@@ -610,20 +608,15 @@ def claim_invite_token(token_str: str, user_id: int, email: str) -> bool:
     token_str = token_str.strip()
     with conn() as c:
         cur = c.execute(
-            "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, "
-            "claimed_by_email = ?, claimed_at = ? WHERE token = ? AND status = 'unclaimed'",
+            "UPDATE invite_tokens SET status = 'claimed', claimed_by_user_id = ?, claimed_by_email = ?, claimed_at = ? WHERE token = ? AND status = 'unclaimed'",
             (user_id, email, int(time.time()), token_str),
         )
         if cur.rowcount == 0:
             return False
-        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?",
-                   (token_str, user_id))
+        c.execute("UPDATE users SET invite_token_id = (SELECT id FROM invite_tokens WHERE token = ?) WHERE id = ?", (token_str, user_id))
         # If this token grants full-access, flip the user's has_full_access flag.
         c.execute(
-            "UPDATE users SET has_full_access = 1 "
-            "WHERE id = ? AND EXISTS ("
-            "    SELECT 1 FROM invite_tokens WHERE token = ? AND grants_full_access = 1"
-            ")",
+            "UPDATE users SET has_full_access = 1 WHERE id = ? AND EXISTS (    SELECT 1 FROM invite_tokens WHERE token = ? AND grants_full_access = 1)",
             (user_id, token_str),
         )
         return True
@@ -681,11 +674,7 @@ def set_user_suspended(user_id: int, suspended: bool) -> None:
 
 def list_all_subscriptions() -> list[sqlite3.Row]:
     with conn() as c:
-        return c.execute(
-            "SELECT s.*, u.email, u.username FROM subscriptions s "
-            "JOIN users u ON u.id = s.user_id "
-            "ORDER BY s.started_at DESC"
-        ).fetchall()
+        return c.execute("SELECT s.*, u.email, u.username FROM subscriptions s JOIN users u ON u.id = s.user_id ORDER BY s.started_at DESC").fetchall()
 
 
 def stripe_event_already_processed(event_id: str) -> bool:
@@ -693,9 +682,7 @@ def stripe_event_already_processed(event_id: str) -> bool:
     if not event_id:
         return False
     with conn() as c:
-        row = c.execute(
-            "SELECT 1 FROM stripe_events WHERE event_id = ?", (event_id,)
-        ).fetchone()
+        row = c.execute("SELECT 1 FROM stripe_events WHERE event_id = ?", (event_id,)).fetchone()
     return row is not None
 
 
@@ -721,19 +708,12 @@ def get_revenue_stats() -> dict:
     now = int(time.time())
     with conn() as c:
         total = c.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
-        active = c.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
-            "AND (expires_at IS NULL OR expires_at > ?)", (now,)
-        ).fetchone()[0]
+        active = c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?)", (now,)).fetchone()[0]
         cancelled = c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'cancelled'").fetchone()[0]
-        expired = c.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE status = 'active' "
-            "AND expires_at IS NOT NULL AND expires_at <= ?", (now,)
-        ).fetchone()[0]
+        expired = c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?", (now,)).fetchone()[0]
         per_dashboard = c.execute(
-            "SELECT dashboard_key, plan, COUNT(*) as cnt FROM subscriptions "
-            "WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) "
-            "GROUP BY dashboard_key, plan ORDER BY dashboard_key", (now,)
+            "SELECT dashboard_key, plan, COUNT(*) as cnt FROM subscriptions WHERE status = 'active' AND (expires_at IS NULL OR expires_at > ?) GROUP BY dashboard_key, plan ORDER BY dashboard_key",
+            (now,),
         ).fetchall()
         return {
             "total": total,
@@ -795,8 +775,7 @@ def create_password_reset(user_id: int) -> str:
     now = int(time.time())
     with conn() as c:
         c.execute(
-            "INSERT INTO password_resets (user_id, token, created_at, expires_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO password_resets (user_id, token, created_at, expires_at) VALUES (?, ?, ?, ?)",
             (user_id, token, now, now + RESET_TTL),
         )
     return token
@@ -808,8 +787,7 @@ def get_password_reset(token: str) -> Optional[sqlite3.Row]:
         return None
     with conn() as c:
         return c.execute(
-            "SELECT * FROM password_resets "
-            "WHERE token = ? AND used = 0 AND expires_at > ?",
+            "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?",
             (token, int(time.time())),
         ).fetchone()
 
@@ -817,9 +795,7 @@ def get_password_reset(token: str) -> Optional[sqlite3.Row]:
 def use_password_reset(token: str) -> None:
     """Mark a reset token as used."""
     with conn() as c:
-        c.execute(
-            "UPDATE password_resets SET used = 1 WHERE token = ?", (token,)
-        )
+        c.execute("UPDATE password_resets SET used = 1 WHERE token = ?", (token,))
 
 
 def purge_expired_resets() -> int:
@@ -844,18 +820,12 @@ def _get_fernet() -> Fernet:
         key = os.environ.get(_TRADING_KEY_ENV, "")
         if not key:
             if os.getenv("PRODUCTION", "0") == "1":
-                raise RuntimeError(
-                    "TRADING_ENCRYPTION_KEY must be set in production. "
-                    "Generate with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-                )
+                raise RuntimeError('TRADING_ENCRYPTION_KEY must be set in production. Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"')
             if os.getenv("DEV_MODE", "").strip() != "1":
-                raise RuntimeError(
-                    "TRADING_ENCRYPTION_KEY not set. Set DEV_MODE=1 to use an ephemeral key for development."
-                )
+                raise RuntimeError("TRADING_ENCRYPTION_KEY not set. Set DEV_MODE=1 to use an ephemeral key for development.")
             key = Fernet.generate_key().decode()
             log.warning(
-                "%s not set — using ephemeral key (DEV_MODE). "
-                "Trading credentials will NOT survive restart.",
+                "%s not set — using ephemeral key (DEV_MODE). Trading credentials will NOT survive restart.",
                 _TRADING_KEY_ENV,
             )
         _fernet = Fernet(key.encode() if isinstance(key, str) else key)
@@ -909,9 +879,7 @@ def get_trading_credentials(user_id: int, platform: str) -> Optional[dict]:
 def has_trading_credentials(user_id: int) -> dict[str, bool]:
     """Return which platforms have credentials configured."""
     with conn() as c:
-        rows = c.execute(
-            "SELECT platform FROM trading_credentials WHERE user_id = ?", (user_id,)
-        ).fetchall()
+        rows = c.execute("SELECT platform FROM trading_credentials WHERE user_id = ?", (user_id,)).fetchall()
     platforms = {r["platform"] for r in rows}
     return {
         "polymarket": "polymarket" in platforms,
@@ -932,8 +900,14 @@ def delete_trading_credentials(user_id: int, platform: str) -> None:
 
 
 def create_trading_order(
-    user_id: int, platform: str, market_slug: str, market_question: str,
-    side: str, action: str, amount: float, price: float,
+    user_id: int,
+    platform: str,
+    market_slug: str,
+    market_question: str,
+    side: str,
+    action: str,
+    amount: float,
+    price: float,
     source_dashboard: str | None = None,
 ) -> int:
     """Create a pending order record. Returns the order ID."""
@@ -1027,10 +1001,23 @@ def upsert_position(
                 closed_at       = excluded.closed_at
             """,
             (
-                user_id, platform, external_id, token_or_side, title,
-                qty_open, qty_closed, avg_entry_price, avg_exit_price,
-                realized_pnl, fees_paid, last_mark_price, last_mark_at,
-                status, source_dashboard, opened_at, closed_at,
+                user_id,
+                platform,
+                external_id,
+                token_or_side,
+                title,
+                qty_open,
+                qty_closed,
+                avg_entry_price,
+                avg_exit_price,
+                realized_pnl,
+                fees_paid,
+                last_mark_price,
+                last_mark_at,
+                status,
+                source_dashboard,
+                opened_at,
+                closed_at,
             ),
         )
         return cur.lastrowid
@@ -1126,9 +1113,15 @@ def get_portfolio_summary(user_id: int) -> dict:
         ).fetchone()
     if not row:
         return {
-            "open_count": 0, "open_value": 0, "unrealized_pnl": 0,
-            "realized_pnl": 0, "total_fees": 0, "closed_count": 0,
-            "wins": 0, "losses": 0, "net_pnl": 0,
+            "open_count": 0,
+            "open_value": 0,
+            "unrealized_pnl": 0,
+            "realized_pnl": 0,
+            "total_fees": 0,
+            "closed_count": 0,
+            "wins": 0,
+            "losses": 0,
+            "net_pnl": 0,
         }
     r = dict(row)
     r["net_pnl"] = round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)
@@ -1155,10 +1148,7 @@ def get_portfolio_by_platform(user_id: int) -> list[dict]:
             """,
             (user_id,),
         ).fetchall()
-    return [
-        {**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)}
-        for r in rows
-    ]
+    return [{**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)} for r in rows]
 
 
 def get_portfolio_by_dashboard(user_id: int) -> list[dict]:
@@ -1180,10 +1170,7 @@ def get_portfolio_by_dashboard(user_id: int) -> list[dict]:
             """,
             (user_id,),
         ).fetchall()
-    return [
-        {**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)}
-        for r in rows
-    ]
+    return [{**dict(r), "net_pnl": round(r["realized_pnl"] + r["unrealized_pnl"] - r["total_fees"], 2)} for r in rows]
 
 
 def rebuild_positions_for_user(user_id: int) -> int:
@@ -1213,8 +1200,10 @@ def rebuild_positions_for_user(user_id: int) -> int:
         if key not in agg:
             agg[key] = {
                 "question": o["market_question"],
-                "buy_qty": 0, "buy_cost": 0,
-                "sell_qty": 0, "sell_proceeds": 0,
+                "buy_qty": 0,
+                "buy_cost": 0,
+                "sell_qty": 0,
+                "sell_proceeds": 0,
                 "first_at": o["created_at"],
                 "last_at": o["created_at"],
             }

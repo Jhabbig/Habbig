@@ -52,7 +52,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
-import polymarket_client as poly_client
 import kalshi_client as kalshi_client
 import trading
 from cache import cache
@@ -112,7 +111,8 @@ def _price_str(cfg: dict, kind: str = "monthly", *, decimals: int = 2) -> str:
     cents_field = "annual_cents" if kind == "annual" else "monthly_cents"
     suffix = "/yr" if kind == "annual" else "/mo"
     cents = cfg.get(cents_field, 0)
-    return f"{_currency_symbol(cfg)}{cents/100:.{decimals}f}{suffix}"
+    return f"{_currency_symbol(cfg)}{cents / 100:.{decimals}f}{suffix}"
+
 
 # ── Stripe config ──────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -122,18 +122,20 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 else:
-    logging.getLogger("gateway").warning(
-        "STRIPE_SECRET_KEY not set — billing will use placeholder mode (no real payments)"
-    )
+    logging.getLogger("gateway").warning("STRIPE_SECRET_KEY not set — billing will use placeholder mode (no real payments)")
 
 BUNDLE_PLANS = {
     "trader": {
-        "monthly_cents": 4900, "annual_cents": 39900, "name": "betyc Trader",
+        "monthly_cents": 4900,
+        "annual_cents": 39900,
+        "name": "betyc Trader",
         "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
         "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
     },
     "pro": {
-        "monthly_cents": 14900, "annual_cents": 119900, "name": "betyc Pro",
+        "monthly_cents": 14900,
+        "annual_cents": 119900,
+        "name": "betyc Pro",
         "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
         "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
     },
@@ -327,6 +329,7 @@ def cookie_domain_for(request: Request) -> Optional[str]:
         return f".{base}"
     return None
 
+
 import contextvars
 
 # Per-request context — propagated through async tasks via contextvars.
@@ -342,9 +345,7 @@ class _RequestIdFilter(logging.Filter):
 
 
 _root_handler = logging.StreamHandler()
-_root_handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(levelname)s] gateway[%(request_id)s]: %(message)s"
-))
+_root_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] gateway[%(request_id)s]: %(message)s"))
 _root_handler.addFilter(_RequestIdFilter())
 logging.basicConfig(level=logging.INFO, handlers=[_root_handler], force=True)
 log = logging.getLogger("gateway")
@@ -355,6 +356,7 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 
 def is_valid_email(s: str) -> bool:
     return bool(EMAIL_RE.match(s)) and len(s) <= 254
+
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
@@ -415,7 +417,9 @@ async def _periodic_cleanup():
             if sessions_purged or resets_purged or stripe_purged:
                 log.info(
                     "Cleanup: purged %d expired sessions, %d expired resets, %d old Stripe events",
-                    sessions_purged, resets_purged, stripe_purged,
+                    sessions_purged,
+                    resets_purged,
+                    stripe_purged,
                 )
         except Exception as e:
             log.warning("Cleanup error: %s", e)
@@ -455,10 +459,10 @@ async def _startup():
     # Auto-generate first admin invite token if none exist
     tokens = db.list_invite_tokens()
     if not tokens:
-        first_token = db.create_invite_token("Auto-generated admin token")
+        db.create_invite_token("Auto-generated admin token")
         log.info("=" * 50)
         log.info("  FIRST ADMIN INVITE TOKEN created — retrieve from DB:")
-        log.info("  sqlite3 auth.db \"SELECT token FROM invite_tokens LIMIT 1\"")
+        log.info('  sqlite3 auth.db "SELECT token FROM invite_tokens LIMIT 1"')
         log.info("=" * 50)
 
 
@@ -490,6 +494,7 @@ class CachedStaticFiles(StaticFiles):
                 headers.append(_STATIC_CACHE_HEADER)
                 message = {**message, "headers": headers}
             await send(message)
+
         await super().__call__(scope, receive, send_with_cache)
 
 
@@ -508,22 +513,22 @@ _SECURITY_HEADERS_RAW: list[tuple[bytes, bytes]] = [
     (b"cross-origin-opener-policy", b"same-origin"),
 ]
 if IS_PRODUCTION:
-    _SECURITY_HEADERS_RAW.append(
-        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
-    )
+    _SECURITY_HEADERS_RAW.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
 
-_CSP_VALUE = "; ".join([
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data: https:",
-    "connect-src 'self' https://*.stripe.com https://*.polymarket.com https://*.kalshi.com",
-    "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "form-action 'self' https://checkout.stripe.com",
-]).encode()
+_CSP_VALUE = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: https:",
+        "connect-src 'self' https://*.stripe.com https://*.polymarket.com https://*.kalshi.com",
+        "frame-src https://kalshi.com https://*.kalshi.com https://polymarket.com https://*.polymarket.com",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self' https://checkout.stripe.com",
+    ]
+).encode()
 _SECURITY_HEADERS_RAW.append((b"content-security-policy", _CSP_VALUE))
 
 
@@ -552,6 +557,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # GZip compression — compresses HTML/JSON/CSS responses > 500 bytes.
 from starlette.middleware.gzip import GZipMiddleware
+
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
@@ -683,8 +689,7 @@ def _get_client_ip(request: Request) -> str:
 
 
 RATE_LIMITED_RESPONSE = HTMLResponse(
-    "<h1>Too many requests</h1>"
-    "<p>You've made too many attempts. Please wait a few minutes and try again.</p>",
+    "<h1>Too many requests</h1><p>You've made too many attempts. Please wait a few minutes and try again.</p>",
     status_code=429,
 )
 
@@ -773,8 +778,7 @@ def _validate_csrf(request: Request, form_token: str) -> bool:
 
 def _csrf_error() -> HTMLResponse:
     return HTMLResponse(
-        "<h1>Invalid request</h1>"
-        "<p>Your session may have expired. Please go back and try again.</p>",
+        "<h1>Invalid request</h1><p>Your session may have expired. Please go back and try again.</p>",
         status_code=403,
     )
 
@@ -845,13 +849,13 @@ def _request_base_domain(request: Request) -> tuple[str, str, str]:
     for sub in SUBDOMAIN_TO_KEY:
         prefix = sub + "."
         if base.startswith(prefix):
-            base = base[len(prefix):]
+            base = base[len(prefix) :]
             break
     else:
         # Unknown subdomain — strip the first label as a fallback
         dot_idx = base.find(".")
         if dot_idx > 0 and dot_idx < len(base) - 1:
-            base = base[dot_idx + 1:]
+            base = base[dot_idx + 1 :]
 
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     return scheme, base, port_suffix
@@ -969,6 +973,7 @@ def _get_cached_session(token: str) -> Optional[dict]:
         "is_super_admin": admin_level >= 2,
         "admin_level": admin_level,
         "has_full_access": has_full_access or bool(admin_level),
+        "suspended": bool(session["suspended"]),
     }
     if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
         _SESSION_CACHE.popitem(last=False)
@@ -1066,6 +1071,7 @@ def current_user(request: Request) -> Optional[dict]:
             "is_admin": bool(admin_level),
             "is_super_admin": admin_level >= 2,
             "admin_level": admin_level,
+            "suspended": bool(row["suspended"]),
             "_dev_bypass": True,
         }
     return None
@@ -1195,8 +1201,7 @@ async def metrics_endpoint(request: Request):
     """
     if IS_PRODUCTION:
         client_ip = _get_client_ip(request)
-        if not (client_ip.startswith("127.") or client_ip.startswith("10.")
-                or client_ip.startswith("192.168.") or client_ip == "::1"):
+        if not (client_ip.startswith("127.") or client_ip.startswith("10.") or client_ip.startswith("192.168.") or client_ip == "::1"):
             return Response("forbidden", status_code=403)
 
     # Refresh dynamic gauges before rendering.
@@ -1231,10 +1236,10 @@ def _render_landing() -> HTMLResponse:
     card_html_parts = []
     for _key, cfg in DASHBOARDS.items():
         card_html_parts.append(f"""
-        <div class="landing-dash" style="--accent: {cfg['accent']}">
+        <div class="landing-dash" style="--accent: {cfg["accent"]}">
           <div class="landing-dash-dot"></div>
-          <div class="landing-dash-title">{html.escape(cfg['display_name'])}</div>
-          <div class="landing-dash-desc">{html.escape(cfg['description'])}</div>
+          <div class="landing-dash-title">{html.escape(cfg["display_name"])}</div>
+          <div class="landing-dash-desc">{html.escape(cfg["description"])}</div>
           <div class="landing-dash-price">{_price_str(cfg, "monthly", decimals=0)}</div>
         </div>
         """)
@@ -1321,7 +1326,9 @@ async def login_page(request: Request, token: str = ""):
             token_section = _login_token_section(invite["token"], email_hint)
             footer_link = '<a href="/gate">Use a different token</a>'
     return render_page(
-        "login", request=request, error="",
+        "login",
+        request=request,
+        error="",
         raw_token_section=token_section,
         raw_footer_link=footer_link,
         raw_success="",
@@ -1353,13 +1360,17 @@ async def login_submit(request: Request, identifier: str = Form(""), password: s
             invite = db.get_invite_token(invite_token)
             email_hint = db.mask_email(invite["claimed_by_email"] or "") if invite else ""
             return render_page(
-                "login", request=request, error=msg,
+                "login",
+                request=request,
+                error=msg,
                 raw_token_section=_login_token_section(invite_token, email_hint),
                 raw_footer_link='<a href="/gate">Use a different token</a>',
                 raw_success="",
             )
         return render_page(
-            "login", request=request, error=msg,
+            "login",
+            request=request,
+            error=msg,
             raw_token_section="",
             raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
             raw_success="",
@@ -1534,7 +1545,6 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             return RedirectResponse(f"{scheme}://{dash_cfg['subdomain']}.{base}{port_suffix}/", status_code=302)
 
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-    is_admin_user = bool(user.get("is_admin"))
     # has_full_access also covers admins (set by _get_cached_session) — used
     # here for "can the user open this dashboard" gating.
     has_full_access_user = bool(user.get("has_full_access"))
@@ -1560,28 +1570,28 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
             f'<span class="summary-pill" style="--accent:{s["accent"]}">'
             f'<span class="summary-pill-dot" style="background:{s["accent"]}"></span>'
             f'{html.escape(s["name"])} <span class="summary-pill-price">{s["price"]}</span>'
-            f'</span>'
+            f"</span>"
             for s in active_subs
         )
         summary_html = (
             f'<div class="sub-summary">'
             f'<div class="sub-summary-head">'
             f'<div class="sub-summary-label">Your active plan</div>'
-            f'<div class="sub-summary-total">${total_monthly/100:.2f}<span>/mo equiv.</span></div>'
-            f'</div>'
+            f'<div class="sub-summary-total">${total_monthly / 100:.2f}<span>/mo equiv.</span></div>'
+            f"</div>"
             f'<div class="sub-summary-pills">{pills}</div>'
             f'<a class="sub-summary-link" href="/billing">Manage billing &rarr;</a>'
-            f'</div>'
+            f"</div>"
         )
     else:
         summary_html = (
             '<div class="sub-summary sub-summary-empty">'
             '<div class="sub-summary-head">'
             '<div class="sub-summary-label">No active subscriptions</div>'
-            '</div>'
+            "</div>"
             '<p class="sub-summary-hint">Pick a dashboard below to see what it offers, or '
             '<a href="/billing">view plans</a> to save.</p>'
-            '</div>'
+            "</div>"
         )
 
     # Full Access Pass upsell — shown to logged-in users who don't already
@@ -1591,33 +1601,33 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
     vp = VIEWER_PASS_CFG
     if not has_full_access_user and vp:
         vp_sym = _currency_symbol(vp)
-        vp_mo = f"{vp_sym}{vp.get('monthly_cents', 0)/100:.0f}"
-        vp_yr = f"{vp_sym}{vp.get('annual_cents', 0)/100:.0f}"
+        vp_mo = f"{vp_sym}{vp.get('monthly_cents', 0) / 100:.0f}"
+        vp_yr = f"{vp_sym}{vp.get('annual_cents', 0) / 100:.0f}"
         summary_html += (
             '<div class="viewer-pass-cta" style="'
-            'margin-top:14px;padding:18px 22px;border-radius:14px;'
-            'background:linear-gradient(135deg, rgba(124,92,255,0.14), rgba(124,92,255,0.04));'
-            'border:1px solid rgba(124,92,255,0.25);display:flex;'
+            "margin-top:14px;padding:18px 22px;border-radius:14px;"
+            "background:linear-gradient(135deg, rgba(124,92,255,0.14), rgba(124,92,255,0.04));"
+            "border:1px solid rgba(124,92,255,0.25);display:flex;"
             'align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">'
             '<div style="flex:1;min-width:240px">'
             '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:4px">'
-            f'{html.escape(vp.get("display_name", "Full Access Pass"))}'
-            '</div>'
+            f"{html.escape(vp.get('display_name', 'Full Access Pass'))}"
+            "</div>"
             '<div style="font-size:12px;color:var(--text-muted);line-height:1.45">'
-            f'{html.escape(vp.get("description", "Every dashboard, one subscription."))}'
-            ' One click — your existing account upgrades automatically.'
-            '</div></div>'
+            f"{html.escape(vp.get('description', 'Every dashboard, one subscription.'))}"
+            " One click — your existing account upgrades automatically."
+            "</div></div>"
             '<div style="display:flex;gap:8px;flex-wrap:wrap">'
             '<a href="/checkout/viewer-pass?interval=monthly" '
             'style="padding:9px 16px;border-radius:8px;background:#7c5cff;color:#fff;'
             'text-decoration:none;font-size:13px;font-weight:500;white-space:nowrap">'
-            f'Upgrade — {vp_mo}/mo</a>'
+            f"Upgrade — {vp_mo}/mo</a>"
             '<a href="/checkout/viewer-pass?interval=annual" '
             'style="padding:9px 16px;border-radius:8px;background:transparent;color:#7c5cff;'
-            'text-decoration:none;font-size:13px;font-weight:500;white-space:nowrap;'
+            "text-decoration:none;font-size:13px;font-weight:500;white-space:nowrap;"
             'border:1px solid rgba(124,92,255,0.45)">'
-            f'Annual — {vp_yr}/yr</a>'
-            '</div></div>'
+            f"Annual — {vp_yr}/yr</a>"
+            "</div></div>"
         )
 
     # ── Build dashboard cards with feature highlights ───────────────
@@ -1625,10 +1635,7 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
     cards_html = []
     for key, cfg in DASHBOARDS.items():
         has_sub = _is_sub_active(subs.get(key), has_full_access_user)
-        active_badge = (
-            '<span class="badge badge-active">Active</span>' if has_sub
-            else '<span class="badge badge-locked">Locked</span>'
-        )
+        active_badge = '<span class="badge badge-active">Active</span>' if has_sub else '<span class="badge badge-locked">Locked</span>'
         if has_sub:
             if local_mode:
                 open_url = f"http://localhost:{cfg['target']}"
@@ -1643,23 +1650,17 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         features = preview.get("features", [])[:3]
         highlights_html = ""
         if features:
-            items = "".join(
-                f'<li class="dash-highlight-item">'
-                f'<span class="dash-highlight-icon">{f["icon"]}</span>'
-                f'{html.escape(f["title"])}'
-                f'</li>'
-                for f in features
-            )
+            items = "".join(f'<li class="dash-highlight-item"><span class="dash-highlight-icon">{f["icon"]}</span>{html.escape(f["title"])}</li>' for f in features)
             highlights_html = f'<ul class="dash-highlights">{items}</ul>'
 
         cards_html.append(f"""
-        <div class="dash-card" style="--accent: {cfg['accent']}">
+        <div class="dash-card" style="--accent: {cfg["accent"]}">
           <div class="dash-card-head">
             <div class="dash-accent-dot"></div>
             {active_badge}
           </div>
-          <div class="dash-card-title">{cfg['display_name']}</div>
-          <div class="dash-card-desc">{cfg['description']}</div>
+          <div class="dash-card-title">{cfg["display_name"]}</div>
+          <div class="dash-card-desc">{cfg["description"]}</div>
           {highlights_html}
           <div class="dash-card-price">{_price_str(cfg, "monthly")} · {_price_str(cfg, "annual")}</div>
           <div class="dash-card-foot">{cta}</div>
@@ -1675,29 +1676,29 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
         feat_html = "".join(
             f'<div class="tour-feat">'
             f'<span class="tour-feat-icon">{f["icon"]}</span>'
-            f'<div><strong>{html.escape(f["title"])}</strong><br>'
+            f"<div><strong>{html.escape(f['title'])}</strong><br>"
             f'<span class="tour-feat-desc">{html.escape(f["desc"])}</span></div>'
-            f'</div>'
+            f"</div>"
             for f in features
         )
         includes = preview.get("includes", [])[:4]
-        inc_html = "".join(f'<li>{html.escape(item)}</li>' for item in includes)
+        inc_html = "".join(f"<li>{html.escape(item)}</li>" for item in includes)
         sym = _currency_symbol(cfg)
-        price_mo = f"{sym}{cfg['monthly_cents']/100:.2f}"
-        price_yr = f"{sym}{cfg['annual_cents']/100:.2f}"
+        price_mo = f"{sym}{cfg['monthly_cents'] / 100:.2f}"
+        price_yr = f"{sym}{cfg['annual_cents'] / 100:.2f}"
 
         tour_steps_html.append(
             f'<div class="tour-step" data-step="{i + 2}">'
             f'<div class="tour-step-accent" style="background:{cfg["accent"]}"></div>'
             f'<h2 class="tour-step-title">'
             f'<span class="tour-dot" style="background:{cfg["accent"]}"></span>'
-            f'{html.escape(cfg["display_name"])}'
-            f'</h2>'
+            f"{html.escape(cfg['display_name'])}"
+            f"</h2>"
             f'<p class="tour-step-tagline">{tagline}</p>'
             f'<div class="tour-feats">{feat_html}</div>'
             f'<div class="tour-includes"><h4>Included</h4><ul>{inc_html}</ul></div>'
             f'<div class="tour-price">{price_mo}/mo or {price_yr}/yr</div>'
-            f'</div>'
+            f"</div>"
         )
 
     total_steps = len(DASHBOARDS) + 2  # welcome + each dashboard + finish
@@ -1705,8 +1706,10 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     return render_page(
-        "dashboards", request=request,
-        email=user["email"], username=user.get("username", user["email"]),
+        "dashboards",
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
         dashboard_cards="".join(cards_html),
         raw_admin_link=admin_link,
         raw_sub_summary=summary_html,
@@ -1758,24 +1761,19 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
         else:
             status_label = '<span style="color:var(--text-muted)">Not subscribed</span>'
         sym = _currency_symbol(cfg)
-        monthly_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly {sym}{cfg["monthly_cents"]/100:.2f}</button>'
-        )
+        monthly_btn = f'<button type="submit" name="action" value="sub:{key}:monthly" class="btn btn-primary" style="--accent:{cfg["accent"]}">Monthly {sym}{cfg["monthly_cents"] / 100:.2f}</button>'
         annual_btn = (
-            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual {sym}{cfg["annual_cents"]/100:.2f}</button>'
+            f'<button type="submit" name="action" value="sub:{key}:annual" class="btn btn-primary-outline" style="--accent:{cfg["accent"]}">Annual {sym}{cfg["annual_cents"] / 100:.2f}</button>'
         )
-        cancel_btn = (
-            f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>'
-            if is_active and not is_admin_user else ""
-        )
+        cancel_btn = f'<button type="submit" name="action" value="cancel:{key}" class="btn btn-danger">Cancel</button>' if is_active and not is_admin_user else ""
         highlight = ' style="outline: 2px solid var(--accent); outline-offset: 2px;"' if dashboard == key else ""
         rows_html.append(f"""
         <div class="billing-row" data-key="{key}"{highlight}>
           <div class="billing-row-main">
-            <div class="billing-row-accent" style="background:{cfg['accent']}"></div>
+            <div class="billing-row-accent" style="background:{cfg["accent"]}"></div>
             <div>
-              <div class="billing-row-title">{cfg['display_name']}</div>
-              <div class="billing-row-desc">{cfg['description']}</div>
+              <div class="billing-row-title">{cfg["display_name"]}</div>
+              <div class="billing-row-desc">{cfg["description"]}</div>
             </div>
           </div>
           <div class="billing-row-status">{status_label}</div>
@@ -1795,14 +1793,16 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
     if payment == "success":
         banner = (
             '<div style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);'
-            'border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;'
+            "border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;"
             'color:#10b981;font-size:14px;font-weight:500">'
-            'Payment successful! Your subscription is now active.'
-            '</div>'
+            "Payment successful! Your subscription is now active."
+            "</div>"
         )
     return render_page(
-        "billing", request=request,
-        email=user["email"], username=user.get("username", user["email"]),
+        "billing",
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
         raw_banner=banner,
@@ -1974,6 +1974,7 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
 #   6. If the subscription cancels, the webhook revokes has_full_access via
 #      the stripe_sub_id stored on the token row.
 
+
 @app.get("/checkout/viewer-pass")
 async def checkout_viewer_pass(request: Request, interval: str = "monthly"):
     """Stripe Checkout for the all-dashboards viewer pass.
@@ -2105,6 +2106,7 @@ def _send_viewer_pass_email(to_email: str, token: str, request_origin: str) -> b
     try:
         import smtplib
         from email.mime.text import MIMEText
+
         msg = MIMEText(body_text)
         msg["Subject"] = f"Your {domain} access link"
         msg["From"] = smtp_user
@@ -2123,6 +2125,60 @@ def _send_viewer_pass_email(to_email: str, token: str, request_origin: str) -> b
 
 # ── Stripe webhook & success ──────────────────────────────────────────────
 
+BILLING_ALERT_EMAIL = os.environ.get("BILLING_ALERT_EMAIL", "")
+
+
+def _stripe_obj_get(obj, key):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _stripe_renewal_fields(event_type: str, data_obj) -> tuple[Optional[str], Optional[int]]:
+    """Extract (stripe_sub_id, current_period_end) from a renewal event.
+
+    Handles both the classic API shape (invoice.subscription,
+    subscription.current_period_end) and the 2025+ shape where those fields
+    moved to invoice.parent.subscription_details and subscription items.
+    """
+    if event_type == "customer.subscription.updated":
+        sub_id = _stripe_obj_get(data_obj, "id")
+        period_end = _stripe_obj_get(data_obj, "current_period_end")
+        if not period_end:
+            items = _stripe_obj_get(_stripe_obj_get(data_obj, "items"), "data") or []
+            ends = [e for e in (_stripe_obj_get(i, "current_period_end") for i in items) if e]
+            period_end = max(ends) if ends else None
+        return sub_id, period_end
+
+    sub_id = _stripe_obj_get(data_obj, "subscription")
+    if not sub_id:
+        details = _stripe_obj_get(_stripe_obj_get(data_obj, "parent"), "subscription_details")
+        sub_id = _stripe_obj_get(details, "subscription")
+    if sub_id is not None and not isinstance(sub_id, str):
+        sub_id = _stripe_obj_get(sub_id, "id")
+    lines = _stripe_obj_get(_stripe_obj_get(data_obj, "lines"), "data") or []
+    ends = [e for e in (_stripe_obj_get(_stripe_obj_get(li, "period"), "end") for li in lines) if e]
+    return sub_id, (max(ends) if ends else None)
+
+
+def _alert_billing_failure(event_id, event_type, exc) -> None:
+    """Best-effort admin email on webhook fulfillment failure. Never raises."""
+    if not BILLING_ALERT_EMAIL:
+        return
+    try:
+        from email_relay.notify import notify
+
+        notify(
+            "gateway-billing",
+            f"Stripe webhook fulfillment FAILED: {event_type} ({event_id})",
+            details=f"{type(exc).__name__}: {exc}\nStripe will retry; the event stays unprocessed until fulfillment succeeds.",
+            to=BILLING_ALERT_EMAIL,
+        )
+    except Exception as mail_exc:
+        log.error("Billing failure alert email not sent (event %s): %s", event_id, mail_exc)
+
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
@@ -2132,9 +2188,7 @@ async def stripe_webhook(request: Request):
 
     if STRIPE_WEBHOOK_SECRET:
         try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, STRIPE_WEBHOOK_SECRET
-            )
+            event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid payload")
         except stripe.SignatureVerificationError:
@@ -2154,11 +2208,50 @@ async def stripe_webhook(request: Request):
     event_id = event.get("id") if isinstance(event, dict) else getattr(event, "id", None)
     data_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
 
-    # Idempotency: skip events already processed (Stripe retries on network errors).
-    if event_id and not db.mark_stripe_event_processed(event_id, event_type):
+    # Idempotency fast path: skip events already fulfilled (Stripe retries on
+    # network errors and on our 5xx responses).
+    if event_id and db.stripe_event_already_processed(event_id):
         log.info("Stripe webhook: skipping duplicate event %s (%s)", event_id, event_type)
         return JSONResponse({"status": "ok", "duplicate": True})
 
+    try:
+        response = _fulfill_stripe_event(event_type, data_obj, request)
+    except Exception as exc:
+        log.exception("Stripe webhook: fulfillment failed for event %s (%s)", event_id, event_type)
+        _alert_billing_failure(event_id, event_type, exc)
+        # 500 without marking the event processed → Stripe retries fulfillment.
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
+
+    # Marked only after fulfillment succeeds — marking first would turn a
+    # failed fulfillment into a permanently skipped event on retry.
+    if event_id:
+        db.mark_stripe_event_processed(event_id, event_type)
+    flush_sub_cache()
+    return response
+
+
+def _cancel_stripe_sub_everywhere(stripe_sub_id: str) -> None:
+    """Cancel legacy subscription rows AND revoke any linked viewer pass."""
+    db.cancel_subscription_by_stripe_id(stripe_sub_id)
+    viewer_pass_token = db.find_invite_token_by_stripe_sub(stripe_sub_id)
+    if viewer_pass_token:
+        claimed_user_id = viewer_pass_token["claimed_by_user_id"]
+        if claimed_user_id:
+            db.set_user_has_full_access(claimed_user_id, False)
+            flush_session_cache()
+            log.info(
+                "Stripe: revoked viewer pass for user %s (sub=%s, token id=%s)",
+                claimed_user_id,
+                stripe_sub_id,
+                viewer_pass_token["id"],
+            )
+        # Mark the token revoked even if it was unclaimed — saves a customer
+        # claiming after they've already cancelled the underlying subscription.
+        db.revoke_invite_token(viewer_pass_token["id"])
+
+
+def _fulfill_stripe_event(event_type: str, data_obj, request: Request) -> JSONResponse:
+    """Apply one verified Stripe event to local state. Raises on failure."""
     # ── checkout.session.completed — subscription paid ─────────────────────
     if event_type == "checkout.session.completed":
         meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
@@ -2227,11 +2320,7 @@ async def stripe_webhook(request: Request):
         meta = data_obj.get("metadata", {}) if isinstance(data_obj, dict) else (data_obj.metadata or {})
         if meta.get("type") == "viewer_pass":
             stripe_sub_id = data_obj.get("subscription") if isinstance(data_obj, dict) else data_obj.subscription
-            customer_details = (
-                data_obj.get("customer_details", {})
-                if isinstance(data_obj, dict)
-                else (getattr(data_obj, "customer_details", None) or {})
-            )
+            customer_details = data_obj.get("customer_details", {}) if isinstance(data_obj, dict) else (getattr(data_obj, "customer_details", None) or {})
             customer_email = (
                 (customer_details.get("email") if isinstance(customer_details, dict) else getattr(customer_details, "email", None))
                 or (data_obj.get("customer_email") if isinstance(data_obj, dict) else getattr(data_obj, "customer_email", None))
@@ -2274,7 +2363,8 @@ async def stripe_webhook(request: Request):
                 db.claim_invite_token(tracking_token, existing_user_id, user_row["email"])
                 log.info(
                     "Viewer pass: upgraded existing user %s (sub=%s)",
-                    existing_user_id, stripe_sub_id,
+                    existing_user_id,
+                    stripe_sub_id,
                 )
             else:
                 # Anonymous flow — email the token to the customer
@@ -2299,34 +2389,40 @@ async def stripe_webhook(request: Request):
     # ── customer.subscription.deleted — subscription cancelled ─────────────
     elif event_type == "customer.subscription.deleted":
         stripe_sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
-
-        # Branch 1: legacy per-dashboard / bundle subscription rows.
-        db.cancel_subscription_by_stripe_id(stripe_sub_id)
-
-        # Branch 2: viewer-pass — find the linked invite token, revoke the
-        # claiming user's has_full_access, and mark the token revoked.
-        viewer_pass_token = db.find_invite_token_by_stripe_sub(stripe_sub_id)
-        if viewer_pass_token:
-            claimed_user_id = viewer_pass_token["claimed_by_user_id"]
-            if claimed_user_id:
-                db.set_user_has_full_access(claimed_user_id, False)
-                flush_session_cache()
-                log.info(
-                    "Stripe: revoked viewer pass for user %s (sub=%s, token id=%s)",
-                    claimed_user_id, stripe_sub_id, viewer_pass_token["id"],
-                )
-            # Mark the token revoked even if it was unclaimed — saves a customer
-            # claiming after they've already cancelled the underlying subscription.
-            db.revoke_invite_token(viewer_pass_token["id"])
+        _cancel_stripe_sub_everywhere(stripe_sub_id)
         log.info("Stripe: cancelled subscription %s", stripe_sub_id)
+
+    # ── invoice.paid / customer.subscription.updated — renewals ───────────
+    elif event_type in ("invoice.paid", "invoice.payment_succeeded", "customer.subscription.updated"):
+        stripe_sub_id, period_end = _stripe_renewal_fields(event_type, data_obj)
+        if not stripe_sub_id:
+            log.info("Stripe webhook: %s carries no subscription — ignoring", event_type)
+            return JSONResponse({"status": "ignored"})
+        sub_status = _stripe_obj_get(data_obj, "status") if event_type == "customer.subscription.updated" else None
+        if sub_status in ("canceled", "unpaid", "incomplete_expired"):
+            _cancel_stripe_sub_everywhere(stripe_sub_id)
+            log.info("Stripe: subscription %s reported %s — cancelled locally", stripe_sub_id, sub_status)
+        elif sub_status == "past_due":
+            # Failed renewal payment: keep the current expiry (remaining paid
+            # period is the grace window) rather than extending to a period
+            # Stripe has advanced but not collected.
+            log.warning("Stripe: subscription %s past_due — expiry left unchanged", stripe_sub_id)
+        else:
+            if period_end is None:
+                # Better to over-extend one cycle than lapse a paying customer.
+                period_end = int(time.time()) + 30 * 86400
+                log.warning("Stripe: %s for %s missing current_period_end — falling back to +30d", event_type, stripe_sub_id)
+            renewed = db.renew_subscription_by_stripe_id(stripe_sub_id, int(period_end))
+            if renewed:
+                log.info("Stripe: renewed %d subscription row(s) for %s until %s", renewed, stripe_sub_id, period_end)
+            else:
+                log.info("Stripe: %s for unknown subscription %s — nothing to renew", event_type, stripe_sub_id)
 
     # ── invoice.payment_failed — payment issue ────────────────────────────
     elif event_type == "invoice.payment_failed":
         invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
         log.warning("Stripe: payment failed for invoice %s", invoice_id)
 
-    # Flush subscription cache after any webhook-driven mutation.
-    flush_sub_cache()
     return JSONResponse({"status": "ok"})
 
 
@@ -2356,7 +2452,6 @@ async def preview_page(request: Request, dashboard_key: str):
     preview = DASHBOARD_PREVIEWS.get(dashboard_key, {})
 
     # If the user already has an active subscription, redirect to the dashboard.
-    is_admin_user = bool(user.get("is_admin"))
     has_full_access_user = bool(user.get("has_full_access"))
     subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
     if _is_sub_active(subs.get(dashboard_key), has_full_access_user):
@@ -2370,23 +2465,14 @@ async def preview_page(request: Request, dashboard_key: str):
             f'<div class="preview-feature-icon">{feat["icon"]}</div>'
             f'<div class="preview-feature-title">{html.escape(feat["title"])}</div>'
             f'<div class="preview-feature-desc">{html.escape(feat["desc"])}</div>'
-            f'</div>'
+            f"</div>"
         )
 
     # Build includes list HTML
-    check_svg = (
-        '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">'
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>'
-        '</svg>'
-    )
+    check_svg = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>'
     includes_html_parts = []
     for item in preview.get("includes", []):
-        includes_html_parts.append(
-            f'<li class="preview-includes-item">'
-            f'<span class="preview-includes-check">{check_svg}</span>'
-            f'{html.escape(item)}'
-            f'</li>'
-        )
+        includes_html_parts.append(f'<li class="preview-includes-item"><span class="preview-includes-check">{check_svg}</span>{html.escape(item)}</li>')
 
     sym = _currency_symbol(cfg)
     monthly_price = f"{sym}{cfg['monthly_cents'] / 100:.2f}"
@@ -2398,7 +2484,8 @@ async def preview_page(request: Request, dashboard_key: str):
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
 
     return render_page(
-        "preview", request=request,
+        "preview",
+        request=request,
         dashboard_name=cfg["display_name"],
         dashboard_key=dashboard_key,
         tagline=preview.get("tagline", cfg["description"]),
@@ -2452,6 +2539,7 @@ def _trading_credentials_context(user_id: int, csrf_token: str, scope: str) -> d
 
 def _profile_context(user: dict, banner: str = "", csrf_token: str = "", request: Request = None) -> dict:
     import datetime as _dt
+
     db_user = db.get_user_by_id(user["user_id"])
     if db_user:
         ca = db_user["created_at"]
@@ -2538,7 +2626,9 @@ async def profile_change_password(request: Request, current_password: str = Form
     if len(new_password) < 12 or len(new_password) > 256:
         return render_page("profile", request=request, **_profile_context(user, err_banner("Password must be 12\u2013256 characters."), csrf_token=_csrf, request=request))
     if not re.search(r"[A-Z]", new_password) or not re.search(r"[a-z]", new_password) or not re.search(r"[0-9]", new_password) or not re.search(r"[^A-Za-z0-9]", new_password):
-        return render_page("profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character."), csrf_token=_csrf, request=request))
+        return render_page(
+            "profile", request=request, **_profile_context(user, err_banner("Password must include uppercase, lowercase, number, and special character."), csrf_token=_csrf, request=request)
+        )
 
     db.update_user_password(user["user_id"], new_password)
     # Invalidate all other sessions so a compromised session can't persist
@@ -2556,8 +2646,13 @@ async def profile_change_password(request: Request, current_password: str = Form
 
 
 def _parse_trading_creds(
-    platform: str, private_key: str, api_key: str, api_secret: str,
-    api_passphrase: str, email: str, password: str,
+    platform: str,
+    private_key: str,
+    api_key: str,
+    api_secret: str,
+    api_passphrase: str,
+    email: str,
+    password: str,
 ) -> tuple[Optional[dict], Optional[str]]:
     """Validate trading-credential form input.
 
@@ -2593,10 +2688,14 @@ def _parse_trading_creds(
 
 @app.post("/profile/trading/{platform}")
 async def profile_save_trading_creds(
-    request: Request, platform: str,
-    private_key: str = Form(""), api_key: str = Form(""),
-    api_secret: str = Form(""), api_passphrase: str = Form(""),
-    email: str = Form(""), password: str = Form(""),
+    request: Request,
+    platform: str,
+    private_key: str = Form(""),
+    api_key: str = Form(""),
+    api_secret: str = Form(""),
+    api_passphrase: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
 ):
     sub = get_subdomain(request)
     if sub:
@@ -2612,14 +2711,8 @@ async def profile_save_trading_creds(
     if platform not in ("polymarket", "kalshi", "alpaca"):
         return RedirectResponse("/profile#trading", status_code=302)
 
-    t_err = lambda msg: (
-        f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);'
-        f'font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
-    )
-    t_ok = lambda msg: (
-        f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);'
-        f'font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
-    )
+    t_err = lambda msg: f'<div class="notice notice-error" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--red)">{html.escape(msg)}</div>'
+    t_ok = lambda msg: f'<div class="notice notice-success" style="padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;border:1px solid var(--green)">{html.escape(msg)}</div>'
 
     _csrf = _get_csrf_token(request)
     creds, err = _parse_trading_creds(platform, private_key, api_key, api_secret, api_passphrase, email, password)
@@ -2702,10 +2795,7 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
     email = email.lower().strip()
 
     # Always show success — don't reveal whether the email exists.
-    success_msg = (
-        '<div class="auth-success">If an account with that email exists, '
-        'we\'ve sent a password reset link. Check your inbox.</div>'
-    )
+    success_msg = '<div class="auth-success">If an account with that email exists, we\'ve sent a password reset link. Check your inbox.</div>'
 
     if not email or not is_valid_email(email):
         return render_page("forgot-password", request=request, error="Please enter a valid email address.", raw_success="")
@@ -2768,8 +2858,7 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
             # the actual reset_token/reset_link. Logs may be shipped or persisted,
             # and a leaked token would let an attacker reset that user's password.
             log.warning(
-                "SMTP not configured. Password reset requested for %s but no email sent. "
-                "Configure SMTP_USER/SMTP_PASS to enable reset emails.",
+                "SMTP not configured. Password reset requested for %s but no email sent. Configure SMTP_USER/SMTP_PASS to enable reset emails.",
                 email,
             )
 
@@ -2786,7 +2875,8 @@ async def reset_password_page(request: Request, token: str = ""):
     reset = db.get_password_reset(token) if token else None
     if not reset:
         return render_page(
-            "forgot-password", request=request,
+            "forgot-password",
+            request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
@@ -2814,7 +2904,8 @@ async def reset_password_submit(
     reset = db.get_password_reset(token) if token else None
     if not reset:
         return render_page(
-            "forgot-password", request=request,
+            "forgot-password",
+            request=request,
             error="This reset link is invalid or has expired. Please request a new one.",
             raw_success="",
         )
@@ -2840,7 +2931,8 @@ async def reset_password_submit(
 
     # Redirect to login with a success indicator.
     return render_page(
-        "login", request=request,
+        "login",
+        request=request,
         error="",
         raw_token_section="",
         raw_footer_link='<a href="/gate">Have an invite token? Use it here</a>',
@@ -2923,6 +3015,7 @@ async def api_enquire(request: Request):
         try:
             import smtplib
             from email.mime.text import MIMEText
+
             smtp_host = os.environ.get("SMTP_HOST", "localhost")
             try:
                 smtp_port = int(os.environ.get("SMTP_PORT", "587"))
@@ -2931,12 +3024,7 @@ async def api_enquire(request: Request):
             smtp_user = os.environ.get("SMTP_USER", "")
             smtp_pass = os.environ.get("SMTP_PASS", "")
 
-            body_text = (
-                f"New enquiry from the betyc landing page.\n\n"
-                f"Email: {email}\n"
-                f"Role: {job_title}\n\n"
-                f"Message:\n{message}\n"
-            )
+            body_text = f"New enquiry from the betyc landing page.\n\nEmail: {email}\nRole: {job_title}\n\nMessage:\n{message}\n"
             msg = MIMEText(body_text)
             msg["Subject"] = "New Enquiry \u2014 betyc"
             msg["From"] = smtp_user or enquiry_email
@@ -3019,11 +3107,13 @@ async def api_newsletter(request: Request):
         share_url = "/"
 
     log.info("Newsletter signup: %s (position=%d)", email, position)
-    return JSONResponse({
-        "success": True,
-        "position": position,
-        "share_url": share_url,
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "position": position,
+            "share_url": share_url,
+        }
+    )
 
 
 # ── Admin panel ──────────────────────────────────────────────────────────────
@@ -3062,13 +3152,14 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
         prefix = html.escape(t["token"][:8]) + "..." + html.escape(t["token"][-4:])
         meta_parts = []
         if t["claimed_by_email"]:
-            meta_parts.append(f'User: {html.escape(t["claimed_by_email"])}')
+            meta_parts.append(f"User: {html.escape(t['claimed_by_email'])}")
         if t["note"]:
             meta_parts.append(html.escape(t["note"]))
         import datetime as _dt
+
         meta_parts.append(_dt.datetime.fromtimestamp(t["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M"))
         if t["claimed_at"]:
-            meta_parts.append(f'Claimed {_dt.datetime.fromtimestamp(t["claimed_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d")}')
+            meta_parts.append(f"Claimed {_dt.datetime.fromtimestamp(t['claimed_at'], tz=_dt.timezone.utc).strftime('%Y-%m-%d')}")
         meta = " &middot; ".join(meta_parts)
         revoke_btn = ""
         if status == "unclaimed":
@@ -3088,15 +3179,12 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
 
     # User rows HTML — with checkboxes and full management
     import datetime as _dt
+
     is_super = caller_level >= 2
     csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     pw_style = 'style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);width:140px"'
     pw_field = f'<input name="password" type="password" placeholder="Your password" {pw_style} required>'
     user_rows = []
-    dash_opts = "".join(
-        f'<option value="{k}">{html.escape(cfg["display_name"])}</option>'
-        for k, cfg in DASHBOARDS.items()
-    )
     sel_style = 'style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);appearance:auto"'
 
     for u in users:
@@ -3142,9 +3230,9 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
                 actions += (
                     f'<form method="post" action="/admin/users/{u["id"]}/role" onclick="event.stopPropagation()" '
                     f'onsubmit="return confirm(\'Change role for {uname_js}?\')" style="display:flex;gap:6px;align-items:center">'
-                    f'{csrf_hidden}'
+                    f"{csrf_hidden}"
                     f'<select name="level" {sel_style}>{role_opts}</select>'
-                    f'{pw_field}'
+                    f"{pw_field}"
                     f'<button class="btn btn-primary-outline" style="font-size:11px">Set Role</button></form>'
                 )
             else:
@@ -3162,9 +3250,9 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             detail_extra += (
                 f'<form method="post" action="/admin/users/{u["id"]}/email" onclick="event.stopPropagation()" '
                 f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                f'{csrf_hidden}'
+                f"{csrf_hidden}"
                 f'<input name="new_email" type="email" placeholder="New email" {sel_style} style="padding:6px 10px;font-size:11px;background:#1e2130;color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-xs);flex:1">'
-                f'{pw_field}'
+                f"{pw_field}"
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Change Email</button></form>'
             )
 
@@ -3172,18 +3260,18 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             if u["invite_token_id"]:
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/revoke-token" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Revoke token for {uname_js}? They will not be able to log in.\')"'
+                    f"onsubmit=\"return confirm('Revoke token for {uname_js}? They will not be able to log in.')\""
                     f' style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                    f'{csrf_hidden}{pw_field}'
+                    f"{csrf_hidden}{pw_field}"
                     f'<button class="btn btn-danger" style="font-size:11px">Revoke Invite Token</button></form>'
                 )
 
             # Generate new token for user (admin+)
             detail_extra += (
                 f'<form method="post" action="/admin/users/{u["id"]}/new-token" onclick="event.stopPropagation()" '
-                f'onsubmit="return confirm(\'Generate a new invite token for {uname_js}?\')" '
+                f"onsubmit=\"return confirm('Generate a new invite token for {uname_js}?')\" "
                 f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                f'{csrf_hidden}{pw_field}'
+                f"{csrf_hidden}{pw_field}"
                 f'<button class="btn btn-primary-outline" style="font-size:11px">Generate New Token</button></form>'
             )
 
@@ -3192,21 +3280,21 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             if has_viewer_pass:
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/viewer-pass" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Revoke viewer pass for {uname_js}? They will lose access to dashboards they have not subscribed to.\')" '
+                    f"onsubmit=\"return confirm('Revoke viewer pass for {uname_js}? They will lose access to dashboards they have not subscribed to.')\" "
                     f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                    f'{csrf_hidden}'
+                    f"{csrf_hidden}"
                     f'<input type="hidden" name="action" value="revoke">'
-                    f'{pw_field}'
+                    f"{pw_field}"
                     f'<button class="btn btn-danger" style="font-size:11px" title="Removes read-all-dashboards grant; user falls back to their actual subscriptions">Revoke Viewer Pass</button></form>'
                 )
             elif ulevel == 0:  # only offer for non-admins; admins already see everything
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/viewer-pass" onclick="event.stopPropagation()" '
-                    f'onsubmit="return confirm(\'Grant viewer pass to {uname_js}? They get read access to every dashboard without paying Stripe.\')" '
+                    f"onsubmit=\"return confirm('Grant viewer pass to {uname_js}? They get read access to every dashboard without paying Stripe.')\" "
                     f'style="display:flex;gap:6px;align-items:center;margin-top:8px">'
-                    f'{csrf_hidden}'
+                    f"{csrf_hidden}"
                     f'<input type="hidden" name="action" value="grant">'
-                    f'{pw_field}'
+                    f"{pw_field}"
                     f'<button class="btn btn-primary-outline" style="font-size:11px;color:#7c5cff;border-color:#7c5cff" title="Read access to every dashboard, no Stripe charge">Grant Viewer Pass</button></form>'
                 )
 
@@ -3215,41 +3303,45 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
                 dash_checks = "".join(
                     f'<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-secondary);cursor:pointer">'
                     f'<input type="checkbox" name="dashboard_keys" value="{k}" style="accent-color:var(--green);cursor:pointer">'
-                    f'{html.escape(cfg["display_name"])}</label>'
+                    f"{html.escape(cfg['display_name'])}</label>"
                     for k, cfg in DASHBOARDS.items()
                 )
                 detail_extra += (
                     f'<form method="post" action="/admin/users/{u["id"]}/grant" onclick="event.stopPropagation()" '
                     f'style="margin-top:8px">'
-                    f'{csrf_hidden}'
+                    f"{csrf_hidden}"
                     f'<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:8px">{dash_checks}</div>'
                     f'<div style="display:flex;gap:6px;align-items:center">'
-                    f'<button type="button" onclick="let c=this.closest(\'form\').querySelectorAll(\'input[type=checkbox]\');let all=Array.from(c).every(x=>x.checked);c.forEach(x=>x.checked=!all)" '
+                    f"<button type=\"button\" onclick=\"let c=this.closest('form').querySelectorAll('input[type=checkbox]');let all=Array.from(c).every(x=>x.checked);c.forEach(x=>x.checked=!all)\" "
                     f'class="btn btn-primary-outline" style="font-size:11px">Toggle All</button>'
                     f'<select name="plan" {sel_style}><option value="monthly">Monthly</option><option value="annual">Annual</option></select>'
-                    f'{pw_field}'
+                    f"{pw_field}"
                     f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Grant Free</button>'
-                    f'</div></form>'
+                    f"</div></form>"
                 )
         else:
             actions = '<span style="font-size:12px;color:var(--text-muted)">Insufficient permissions</span>'
 
         can_select = can_manage
-        checkbox = f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">' if can_select else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
+        checkbox = (
+            f'<input type="checkbox" name="user_ids" value="{u["id"]}" class="user-check" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-right:12px">'
+            if can_select
+            else '<span style="width:18px;margin-right:12px;flex-shrink:0"></span>'
+        )
         user_rows.append(
             f'<div class="admin-row" style="align-items:flex-start">'
-            f'{checkbox}'
+            f"{checkbox}"
             f'<div class="admin-row-info" style="cursor:pointer" onclick="toggleUserDetail(this)">'
             f'<div class="admin-row-main"><span style="font-weight:600">{uname}</span> {badges}</div>'
             f'<div class="admin-row-meta">{email_esc} &middot; Joined {joined}</div>'
             f'<div class="user-detail" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">'
             f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:10px;background:var(--surface-hover);border-radius:var(--radius-xs)">'
-            f'<strong>Username:</strong> {uname} &middot; '
-            f'<strong>Email:</strong> {email_esc}'
-            f'</div>'
+            f"<strong>Username:</strong> {uname} &middot; "
+            f"<strong>Email:</strong> {email_esc}"
+            f"</div>"
             f'<div style="display:flex;gap:8px;flex-wrap:wrap">{actions}</div>'
-            f'{detail_extra}'
-            f'</div></div></div>'
+            f"{detail_extra}"
+            f"</div></div></div>"
         )
 
     # Stats
@@ -3273,7 +3365,7 @@ def _build_admin_context(new_token_str: str = "", caller_level: int = 1, csrf_to
             f'<div><div style="font-size:12px;color:var(--green);margin-bottom:4px">New token generated:</div>'
             f'<span class="token-mono">{html.escape(new_token_str)}</span></div>'
             f'<button onclick="copyToken(this)" class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Copy</button>'
-            f'</div></div>'
+            f"</div></div>"
         )
 
     return {
@@ -3291,6 +3383,7 @@ def _build_enquiry_rows(csrf_token: str = "") -> str:
     if not enquiries:
         return '<div class="admin-row"><div class="admin-row-info"><div class="admin-row-meta">No enquiries yet.</div></div></div>'
     import datetime as _dt
+
     csrf_hidden = f'<input type="hidden" name="_csrf_token" value="{html.escape(csrf_token)}">'
     rows = []
     for e in enquiries:
@@ -3298,14 +3391,10 @@ def _build_enquiry_rows(csrf_token: str = "") -> str:
         ts = _dt.datetime.fromtimestamp(e["created_at"], tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
         mark_btn = ""
         if not e["read"]:
-            mark_btn = (
-                f'<form method="post" action="/admin/enquiries/{e["id"]}/read">'
-                f'{csrf_hidden}'
-                f'<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
-            )
+            mark_btn = f'<form method="post" action="/admin/enquiries/{e["id"]}/read">{csrf_hidden}<button class="btn btn-primary-outline" style="font-size:11px">Mark Read</button></form>'
         create_token_btn = (
             f'<form method="post" action="/admin/enquiries/{e["id"]}/create-token">'
-            f'{csrf_hidden}'
+            f"{csrf_hidden}"
             f'<button class="btn btn-primary-outline" style="font-size:11px;color:var(--green);border-color:var(--green)">Create Token</button></form>'
         )
         rows.append(
@@ -3315,7 +3404,7 @@ def _build_enquiry_rows(csrf_token: str = "") -> str:
             f' <span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">{html.escape(e["job_title"])}</span></div>'
             f'<div style="font-size:13px;color:var(--text-secondary);margin:8px 0;line-height:1.5">{html.escape(e["message"][:300])}</div>'
             f'<div class="admin-row-meta">{ts}</div>'
-            f'</div>'
+            f"</div>"
             f'<div class="admin-row-actions" style="display:flex;gap:6px">{create_token_btn}{mark_btn}</div></div>'
         )
     return "".join(rows)
@@ -3323,6 +3412,7 @@ def _build_enquiry_rows(csrf_token: str = "") -> str:
 
 def _build_revenue_content() -> str:
     import datetime as _dt
+
     stats = db.get_revenue_stats()
     subs = db.list_all_subscriptions()
     now = int(time.time())
@@ -3360,7 +3450,7 @@ def _build_revenue_content() -> str:
         f'<div class="stat-value" style="color:var(--amber)">{stats["expired"]}</div></div>'
         f'<div class="stat-card"><div class="stat-label">Total All Time</div>'
         f'<div class="stat-value">{stats["total"]}</div></div>'
-        f'</div>'
+        f"</div>"
     )
 
     # Per-dashboard breakdown
@@ -3376,11 +3466,7 @@ def _build_revenue_content() -> str:
             dashboard_rows[key]["annual"] += row["cnt"]
 
     if dashboard_rows:
-        out += (
-            '<div style="margin-bottom:24px">'
-            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Revenue by Dashboard</div>'
-            '<div class="admin-list">'
-        )
+        out += '<div style="margin-bottom:24px"><div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Revenue by Dashboard</div><div class="admin-list">'
         for key, counts in dashboard_rows.items():
             cfg = DASHBOARDS.get(key, {})
             name = cfg.get("display_name", key)
@@ -3397,23 +3483,19 @@ def _build_revenue_content() -> str:
                 f'<span style="width:8px;height:8px;border-radius:50%;background:{accent};flex-shrink:0"></span>'
                 f'<span style="font-weight:600">{html.escape(name)}</span>'
                 f'<span class="badge" style="background:var(--surface-hover);color:var(--text-secondary)">${mo_price:.0f}/mo &middot; ${yr_price:.0f}/yr</span>'
-                f'</div>'
+                f"</div>"
                 f'<div class="admin-row-meta">'
-                f'{counts["monthly"]} monthly &middot; {counts["annual"]} annual'
-                f'</div></div>'
+                f"{counts['monthly']} monthly &middot; {counts['annual']} annual"
+                f"</div></div>"
                 f'<div style="text-align:right;margin-left:16px">'
                 f'<div style="font-size:18px;font-weight:700;color:var(--green)">${dash_mrr:,.2f}<span style="font-size:11px;font-weight:400;color:var(--text-muted)">/mo</span></div>'
-                f'</div></div>'
+                f"</div></div>"
             )
-        out += '</div></div>'
+        out += "</div></div>"
 
     # Recent subscription activity
     if subs:
-        out += (
-            '<div>'
-            '<div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Recent Activity</div>'
-            '<div class="admin-list">'
-        )
+        out += '<div><div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:16px">Recent Activity</div><div class="admin-list">'
         for s in subs[:20]:
             cfg = DASHBOARDS.get(s["dashboard_key"], {})
             name = cfg.get("display_name", s["dashboard_key"])
@@ -3435,13 +3517,13 @@ def _build_revenue_content() -> str:
                 f'<div class="admin-row-main">'
                 f'<span style="width:6px;height:6px;border-radius:50%;background:{accent};flex-shrink:0"></span>'
                 f'<span style="font-weight:500">{html.escape(name)}</span>'
-                f'{status_badge}'
+                f"{status_badge}"
                 f'<span class="badge" style="background:var(--surface-hover);color:var(--text-muted)">{plan_label}</span>'
-                f'</div>'
+                f"</div>"
                 f'<div class="admin-row-meta">{user_label} &middot; {ts}</div>'
-                f'</div></div>'
+                f"</div></div>"
             )
-        out += '</div></div>'
+        out += "</div></div>"
     else:
         out += '<div style="text-align:center;padding:48px 0;color:var(--text-muted)">No subscriptions yet.</div>'
 
@@ -3482,10 +3564,11 @@ async def admin_generate_token(
     )
     log.info(
         "Admin %s generated %sinvite token (target: %s)",
-        user["email"], "viewer-pass " if is_viewer_pass else "", target_email.strip() or "none",
+        user["email"],
+        "viewer-pass " if is_viewer_pass else "",
+        target_email.strip() or "none",
     )
-    log.debug("Admin %s generated invite token: %s (target: %s, viewer_pass=%s)",
-              user["email"], new_token, target_email.strip() or "none", is_viewer_pass)
+    log.debug("Admin %s generated invite token: %s (target: %s, viewer_pass=%s)", user["email"], new_token, target_email.strip() or "none", is_viewer_pass)
     csrf_token = _get_csrf_token(request)
     ctx = _build_admin_context(new_token_str=new_token, caller_level=user.get("admin_level", 1), csrf_token=csrf_token)
     return render_page("admin", request=request, email=user["email"], username=user.get("username", user["email"]), raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request), **ctx)
@@ -3610,7 +3693,9 @@ async def admin_toggle_viewer_pass(request: Request, user_id: int, action: str =
     flush_session_cache()
     log.info(
         "Admin %s %s viewer pass for user id=%s",
-        admin.get("email"), "granted" if grant else "revoked", user_id,
+        admin.get("email"),
+        "granted" if grant else "revoked",
+        user_id,
     )
     return RedirectResponse("/admin", status_code=302)
 
@@ -3849,13 +3934,13 @@ async def admin_bulk_users(request: Request):
 
 _SETTINGS_BANNER_MESSAGES: dict[str, tuple[str, str]] = {
     # query value → (severity, message)
-    "1":                       ("success", "<strong>Saved.</strong> Your landing preference has been updated."),
-    "trading_poly":            ("success", "Polymarket credentials saved and encrypted."),
-    "trading_kalshi":          ("success", "Kalshi credentials saved and encrypted."),
-    "trading_poly_removed":    ("success", "Polymarket credentials removed."),
-    "trading_kalshi_removed":  ("success", "Kalshi credentials removed."),
-    "err_poly_missing_key":    ("error",   "Polymarket private key is required."),
-    "err_kalshi_missing":      ("error",   "Kalshi API key, or email + password, is required."),
+    "1": ("success", "<strong>Saved.</strong> Your landing preference has been updated."),
+    "trading_poly": ("success", "Polymarket credentials saved and encrypted."),
+    "trading_kalshi": ("success", "Kalshi credentials saved and encrypted."),
+    "trading_poly_removed": ("success", "Polymarket credentials removed."),
+    "trading_kalshi_removed": ("success", "Kalshi credentials removed."),
+    "err_poly_missing_key": ("error", "Polymarket private key is required."),
+    "err_kalshi_missing": ("error", "Kalshi API key, or email + password, is required."),
 }
 
 
@@ -3890,16 +3975,15 @@ async def settings_page(request: Request, saved: Optional[str] = None):
         if not has_access:
             continue
         selected = " selected" if key == current_pref else ""
-        option_html.append(
-            f'<option value="{html.escape(key)}"{selected}>'
-            f'{html.escape(cfg["display_name"])}</option>'
-        )
+        option_html.append(f'<option value="{html.escape(key)}"{selected}>{html.escape(cfg["display_name"])}</option>')
 
     admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
     csrf_token = _get_csrf_token(request)
     return render_page(
-        "settings", request=request,
-        email=user["email"], username=user.get("username", user["email"]),
+        "settings",
+        request=request,
+        email=user["email"],
+        username=user.get("username", user["email"]),
         raw_options="".join(option_html),
         raw_saved_banner=_settings_banner_html(saved),
         raw_admin_link=admin_link,
@@ -3943,10 +4027,14 @@ async def settings_save(request: Request, default_dashboard: str = Form("")):
 
 @app.post("/settings/trading/{platform}")
 async def settings_save_trading_creds(
-    request: Request, platform: str,
-    private_key: str = Form(""), api_key: str = Form(""),
-    api_secret: str = Form(""), api_passphrase: str = Form(""),
-    email: str = Form(""), password: str = Form(""),
+    request: Request,
+    platform: str,
+    private_key: str = Form(""),
+    api_key: str = Form(""),
+    api_secret: str = Form(""),
+    api_passphrase: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
 ):
     sub = get_subdomain(request)
     if sub:
@@ -4015,11 +4103,13 @@ async def trading_credentials_status(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     status = db.has_trading_credentials(user["user_id"])
-    return JSONResponse({
-        "polymarket": status["polymarket"],
-        "kalshi": status["kalshi"],
-        "alpaca": status["alpaca"],
-    })
+    return JSONResponse(
+        {
+            "polymarket": status["polymarket"],
+            "kalshi": status["kalshi"],
+            "alpaca": status["alpaca"],
+        }
+    )
 
 
 @app.post("/api/trading/credentials/{platform}")
@@ -4174,19 +4264,31 @@ async def trading_place_order(request: Request):
 
     # Log the order
     order_id = db.create_trading_order(
-        user_id=user["user_id"], platform=platform, market_slug=slug,
-        market_question=question, side=side, action=action,
-        amount=amount, price=price, source_dashboard=source_dashboard,
+        user_id=user["user_id"],
+        platform=platform,
+        market_slug=slug,
+        market_question=question,
+        side=side,
+        action=action,
+        amount=amount,
+        price=price,
+        source_dashboard=source_dashboard,
     )
 
     try:
         result = await trading.place_order(
-            platform, creds,
-            slug=slug, token_id=token_id, side=side, action=action,
-            amount=amount, price=price,
+            platform,
+            creds,
+            slug=slug,
+            token_id=token_id,
+            side=side,
+            action=action,
+            amount=amount,
+            price=price,
         )
 
-        db.update_trading_order(order_id,
+        db.update_trading_order(
+            order_id,
             status=result.get("status", "error"),
             order_ext_id=result.get("order_id", ""),
             fill_price=result.get("fill_price"),
@@ -4195,7 +4297,12 @@ async def trading_place_order(request: Request):
         )
         log.info(
             "Trade %s: user=%s platform=%s side=%s amount=$%.2f status=%s",
-            order_id, user.get("username"), platform, side, amount, result.get("status"),
+            order_id,
+            user.get("username"),
+            platform,
+            side,
+            amount,
+            result.get("status"),
         )
         return JSONResponse({"ok": True, "order_id": order_id, **result})
 
@@ -4382,16 +4489,18 @@ async def stock_account(request: Request):
     data = await alpaca_api.get_account(creds)
     if "error" in data:
         return JSONResponse({"error": data["error"]}, status_code=502)
-    return JSONResponse({
-        "broker": "alpaca",
-        "account_id": data.get("id", ""),
-        "status": data.get("status", ""),
-        "cash": float(data.get("cash", 0)),
-        "portfolio_value": float(data.get("portfolio_value", 0)),
-        "buying_power": float(data.get("buying_power", 0)),
-        "currency": data.get("currency", "USD"),
-        "paper": creds.get("paper", True),
-    })
+    return JSONResponse(
+        {
+            "broker": "alpaca",
+            "account_id": data.get("id", ""),
+            "status": data.get("status", ""),
+            "cash": float(data.get("cash", 0)),
+            "portfolio_value": float(data.get("portfolio_value", 0)),
+            "buying_power": float(data.get("buying_power", 0)),
+            "currency": data.get("currency", "USD"),
+            "paper": creds.get("paper", True),
+        }
+    )
 
 
 @app.get("/api/trading/stock/positions")
@@ -4406,17 +4515,19 @@ async def stock_positions(request: Request):
     raw = await alpaca_api.get_positions(creds)
     positions = []
     for p in raw:
-        positions.append({
-            "symbol": p.get("symbol", ""),
-            "qty": float(p.get("qty", 0)),
-            "side": p.get("side", "long"),
-            "avg_entry": float(p.get("avg_entry_price", 0)),
-            "current_price": float(p.get("current_price", 0)),
-            "market_value": float(p.get("market_value", 0)),
-            "unrealized_pnl": float(p.get("unrealized_pl", 0)),
-            "unrealized_pnl_pct": float(p.get("unrealized_plpc", 0)),
-            "change_today": float(p.get("change_today", 0)),
-        })
+        positions.append(
+            {
+                "symbol": p.get("symbol", ""),
+                "qty": float(p.get("qty", 0)),
+                "side": p.get("side", "long"),
+                "avg_entry": float(p.get("avg_entry_price", 0)),
+                "current_price": float(p.get("current_price", 0)),
+                "market_value": float(p.get("market_value", 0)),
+                "unrealized_pnl": float(p.get("unrealized_pl", 0)),
+                "unrealized_pnl_pct": float(p.get("unrealized_plpc", 0)),
+                "change_today": float(p.get("change_today", 0)),
+            }
+        )
     return JSONResponse({"positions": positions})
 
 
@@ -4453,18 +4564,20 @@ async def stock_orders(request: Request):
     raw = await alpaca_api.get_orders(creds, status=status, limit=30)
     orders = []
     for o in raw:
-        orders.append({
-            "order_id": o.get("id", ""),
-            "symbol": o.get("symbol", ""),
-            "side": o.get("side", ""),
-            "type": o.get("type", ""),
-            "qty": float(o.get("qty") or 0),
-            "filled_qty": float(o.get("filled_qty") or 0),
-            "filled_avg_price": float(o.get("filled_avg_price") or 0),
-            "limit_price": float(o.get("limit_price") or 0) if o.get("limit_price") else None,
-            "status": o.get("status", ""),
-            "created_at": o.get("created_at", ""),
-        })
+        orders.append(
+            {
+                "order_id": o.get("id", ""),
+                "symbol": o.get("symbol", ""),
+                "side": o.get("side", ""),
+                "type": o.get("type", ""),
+                "qty": float(o.get("qty") or 0),
+                "filled_qty": float(o.get("filled_qty") or 0),
+                "filled_avg_price": float(o.get("filled_avg_price") or 0),
+                "limit_price": float(o.get("limit_price") or 0) if o.get("limit_price") else None,
+                "status": o.get("status", ""),
+                "created_at": o.get("created_at", ""),
+            }
+        )
     return JSONResponse({"orders": orders})
 
 
@@ -4536,19 +4649,17 @@ def _switcher_snippet(dashboard_key: str, user_id: int, username: str = "", csrf
     else:
         portfolio_url = "/portfolio"
 
-    cfg_json = json.dumps({
-        "dashboards": items,
-        "current": dashboard_key,
-        "domain": effective_domain,
-        "username": username,
-        "csrf_token": csrf_token,
-        "portfolio_url": portfolio_url,
-    }).replace("</", "<\\/")  # prevent </script> breakout in HTML context
-    return (
-        f'<script>window.__hbSwitcher={cfg_json};</script>'
-        f'<script src="/_gateway_static/switcher.js"></script>'
-        f'<script src="/_gateway_static/trade.js"></script>'
-    )
+    cfg_json = json.dumps(
+        {
+            "dashboards": items,
+            "current": dashboard_key,
+            "domain": effective_domain,
+            "username": username,
+            "csrf_token": csrf_token,
+            "portfolio_url": portfolio_url,
+        }
+    ).replace("</", "<\\/")  # prevent </script> breakout in HTML context
+    return f'<script>window.__hbSwitcher={cfg_json};</script><script src="/_gateway_static/switcher.js"></script><script src="/_gateway_static/trade.js"></script>'
 
 
 # ── Tab HTML for static gateway pages ─────────────────────────────────────────
@@ -4576,12 +4687,7 @@ def _build_tab_html(user_id: int, active_tab: str = "", request: Request = None)
             url = f"http://{d['subdomain']}.localhost:{gw_port}/"
         else:
             url = f"{scheme}://{d['subdomain']}.{base}{port_suffix}/"
-        tabs.append(
-            f'<a class="{cls}" href="{url}" style="--tab-accent:{d["accent"]}">'
-            f'<span class="gw-tab-dot" style="background:{d["accent"]}"></span>'
-            f'{html.escape(d["display_name"])}'
-            f'</a>'
-        )
+        tabs.append(f'<a class="{cls}" href="{url}" style="--tab-accent:{d["accent"]}"><span class="gw-tab-dot" style="background:{d["accent"]}"></span>{html.escape(d["display_name"])}</a>')
     return "".join(tabs)
 
 
@@ -4642,7 +4748,7 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
         if head_open != -1:
             close = lower.find(">", head_open)
             if close != -1:
-                text = text[:close + 1] + css_tag + text[close + 1:]
+                text = text[: close + 1] + css_tag + text[close + 1 :]
 
     # 2. Inject JS before the *structural* </body> (not any </body> substring
     # appearing inside inline <script> string literals).
@@ -4728,14 +4834,19 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     # Strip hop-by-hop headers; also strip any client-supplied X-Gateway-*
     # headers so a malicious client can't forge upstream identity.
     hop_by_hop = {
-        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-        "te", "trailers", "transfer-encoding", "upgrade", "host",
-        "content-encoding", "content-length",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-encoding",
+        "content-length",
     }
-    fwd_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in hop_by_hop and not k.lower().startswith("x-gateway-")
-    }
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in hop_by_hop and not k.lower().startswith("x-gateway-")}
     fwd_headers["X-Gateway-User-Id"] = str(user["user_id"])
     fwd_headers["X-Gateway-User-Email"] = user["email"]
     # Shared secret lets downstream dashboards trust the identity headers
@@ -4765,9 +4876,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         metrics.inc_upstream_error(key, "connect")
         metrics.inc_request(key, request.method, 502)
         return HTMLResponse(
-            f"<h1>{html.escape(dash_cfg['display_name'])} is offline</h1>"
-            f"<p>The backend on port {target_port} isn't responding. "
-            f"Try <code>./start_dashboards.sh restart</code>.</p>",
+            f"<h1>{html.escape(dash_cfg['display_name'])} is offline</h1><p>The backend on port {target_port} isn't responding. Try <code>./start_dashboards.sh restart</code>.</p>",
             status_code=502,
         )
     except httpx.RequestError as e:
@@ -4780,9 +4889,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         )
 
     # Relay response; strip hop-by-hop headers from upstream.
-    resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
-    }
+    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop}
 
     # Inject dashboard switcher into HTML responses.
     body = _inject_switcher(
@@ -4844,11 +4951,7 @@ async def sse_stream(request: Request):
     if not dashboards:
         return JSONResponse({"error": "No dashboards specified"}, status_code=400)
 
-    allowed = [
-        SUBDOMAIN_TO_KEY.get(d, d) for d in dashboards
-        if cached_has_subscription(user["user_id"], SUBDOMAIN_TO_KEY.get(d, d))
-        or user.get("is_admin")
-    ]
+    allowed = [SUBDOMAIN_TO_KEY.get(d, d) for d in dashboards if cached_has_subscription(user["user_id"], SUBDOMAIN_TO_KEY.get(d, d)) or user.get("is_admin")]
     if not allowed:
         return JSONResponse({"error": "No subscriptions for requested dashboards"}, status_code=403)
 
@@ -4869,11 +4972,13 @@ async def cache_stats_endpoint(request: Request):
     user = current_user(request)
     if not user or not user.get("is_admin"):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
-    return JSONResponse({
-        "cache": cache.stats(),
-        "poller": _poller.stats() if _poller else {"running": False},
-        "sse_connections": active_connection_count(),
-    })
+    return JSONResponse(
+        {
+            "cache": cache.stats(),
+            "poller": _poller.stats() if _poller else {"running": False},
+            "sse_connections": active_connection_count(),
+        }
+    )
 
 
 # Catch-all: anything that isn't an explicit apex route goes through the proxy.
@@ -4954,6 +5059,7 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
             max_size=_WS_MAX_MESSAGE_SIZE,
             open_timeout=_WS_CONNECT_TIMEOUT,
         ) as upstream_ws:
+
             async def client_to_upstream():
                 try:
                     while True:
@@ -5003,6 +5109,7 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     # Single worker: the in-memory rate limiter and CSRF token store are
     # not shared across processes, so multiple workers would allow trivial
     # bypasses. For a small application fronted by Cloudflare this is fine;
