@@ -147,9 +147,19 @@ def test_fetch_horizon_parses_fixture_chain(monkeypatch):
     _patch_transport(monkeypatch, handler)
     rows = _run(ingest_options.fetch_horizon(7))
 
-    assert len(rows) == 5
+    assert len(rows) == 6
     by_id = {r["venue_id"]: r for r in rows}
-    assert set(by_id) == {"TST-%s-C%d" % (expiry.strftime("%Y%m%d"), k) for k in (90, 95, 100, 105, 110)}
+    expected_ids = {"TST-%s-C%d" % (expiry.strftime("%Y%m%d"), k) for k in (90, 95, 100, 105, 110)}
+    expected_ids.add(f"TST-{expiry.strftime('%Y%m%d')}-D100")
+    assert set(by_id) == expected_ids
+
+    # No previousClose in the fixture quote -> the direction anchor falls
+    # back to spot; the D row leads the bucket.
+    direction = by_id[f"TST-{expiry.strftime('%Y%m%d')}-D100"]
+    assert rows[0] is direction
+    assert direction["question"].startswith(f"TST ends UP vs prev close ($100) on {expiry.isoformat()}")
+    assert "expected move ±" in direction["question"]
+    assert direction["volume_24h"] is None
 
     atm = by_id[f"TST-{expiry.strftime('%Y%m%d')}-C100"]
     assert atm["venue"] == "options"
@@ -215,7 +225,8 @@ def test_fetch_horizon_first_expiry_beyond_horizon_when_none_inside(monkeypatch)
     monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "TST")
     _patch_transport(monkeypatch, handler)
     rows = _run(ingest_options.fetch_horizon(7))
-    assert len(rows) == 1
+    assert len(rows) == 2  # ladder row + direction (D) row
+    assert sum(1 for r in rows if ingest_options.is_direction(r["venue_id"])) == 1
     d = datetime.fromtimestamp(e_far, tz=timezone.utc).strftime("%Y%m%d")
     assert rows[0]["event_ticker"] == f"TST-{d}"
 
@@ -232,7 +243,8 @@ def test_failing_symbol_skipped_silently(monkeypatch):
     monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "BAD,TST")
     _patch_transport(monkeypatch, handler)
     rows = _run(ingest_options.fetch_horizon(7))
-    assert [r["venue_id"].split("-")[0] for r in rows] == ["TST"]
+    assert {r["venue_id"].split("-")[0] for r in rows} == {"TST"}
+    assert len(rows) == 2  # ladder row + direction (D) row
 
 
 def test_crumb_dance_on_401(monkeypatch):
@@ -253,8 +265,10 @@ def test_crumb_dance_on_401(monkeypatch):
     monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "TST")
     _patch_transport(monkeypatch, handler)
     rows = _run(ingest_options.fetch_horizon(7))
-    assert len(rows) == 1
-    assert rows[0]["venue_id"] == f"TST-{expiry.strftime('%Y%m%d')}-C100"
+    assert len(rows) == 2  # ladder row + direction (D) row
+    assert sum(1 for r in rows if ingest_options.is_direction(r["venue_id"])) == 1
+    assert rows[0]["venue_id"] == f"TST-{expiry.strftime('%Y%m%d')}-D100"
+    assert rows[1]["venue_id"] == f"TST-{expiry.strftime('%Y%m%d')}-C100"
 
 
 # ── resolver options branch ──────────────────────────────────────────────────
@@ -409,3 +423,57 @@ def test_live_smoke_spy(monkeypatch):
         "sample": [{"venue_id": r["venue_id"], "prob": r["last_price"], "question": r["question"]} for r in rows[:3]],
     }
     print("\nLIVE_SMOKE " + json.dumps(report, indent=2))
+
+
+def test_direction_row_anchored_to_previous_close(monkeypatch):
+    expiry = (_utcnow() + timedelta(days=3)).date()
+    epoch = _epoch_midnight(expiry)
+    calls = [_call(100.0, iv=0.2, oi=500, volume=9, bid=2.0, ask=2.2), _call(105.0, iv=0.21)]
+    payload = _chain_result("TST", 101.37, [epoch], {"expirationDate": epoch, "calls": calls, "puts": []})
+    # Anchor comes from previousClose, NOT the live spot — a moving spot must
+    # not mint a new market id every ingest cycle.
+    payload["optionChain"]["result"][0]["quote"]["regularMarketPreviousClose"] = 100.84
+    monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "TST")
+    _patch_transport(monkeypatch, lambda request: httpx.Response(200, json=payload))
+    rows = _run(ingest_options.fetch_horizon(7))
+
+    vid = f"TST-{expiry.strftime('%Y%m%d')}-D100.84"
+    direction = next(r for r in rows if r["venue_id"] == vid)
+    assert direction["question"].startswith(f"TST ends UP vs prev close ($100.84) on {expiry.isoformat()}")
+    assert ingest_options.is_direction(vid)
+    assert ingest_options.parse_venue_id(vid) == ("TST", expiry, 100.84)
+    # P(S_T > prev close) with spot slightly above the anchor: a bit over 0.5
+    assert 0.48 < direction["last_price"] < 0.62
+    # ladder rows still present alongside, and none are direction-kind
+    assert any(r["venue_id"].endswith("-C100") for r in rows)
+    assert sum(1 for r in rows if ingest_options.is_direction(r["venue_id"])) == 1
+
+
+def test_direction_row_resolves_strictly_greater(conn, monkeypatch):
+    expiry = (_utcnow() - timedelta(days=2)).date()
+    vid = f"TST-{expiry.strftime('%Y%m%d')}-D100.84"
+
+    def chart(close):
+        ts = int(datetime(expiry.year, expiry.month, expiry.day, 14, tzinfo=timezone.utc).timestamp())
+        return {"chart": {"result": [{"timestamp": [ts], "indicators": {"quote": [{"close": [close]}]}}]}}
+
+    class FakeResp:
+        def __init__(self, payload):
+            self._payload = payload
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, close):
+            self._close = close
+        async def get(self, *a, **kw):
+            return FakeResp(chart(self._close))
+
+    # flat close == anchor -> NOT up (strict); a cent above -> up
+    assert _run(resolver._options_outcome(FakeClient(100.84), vid)) == 0
+    assert _run(resolver._options_outcome(FakeClient(100.85), vid)) == 1
+    # ladder kind keeps >= semantics at the same boundary
+    cvid = f"TST-{expiry.strftime('%Y%m%d')}-C100.84"
+    assert _run(resolver._options_outcome(FakeClient(100.84), cvid)) == 1

@@ -158,6 +158,9 @@ async def _options_outcome(client: httpx.AsyncClient, venue_id: str) -> int | No
         if close is None:
             continue
         if datetime.fromtimestamp(ts, tz=timezone.utc).date() == expiry:
+            if ingest_options.is_direction(venue_id):
+                # "ends UP" excludes a flat close: strictly greater.
+                return 1 if float(close) > strike else 0
             return 1 if float(close) >= strike else 0
     return None
 

@@ -28,9 +28,10 @@ Implementation notes:
   under DST, off by one hour in winter — immaterial at these horizons).
 - All model inputs (spot S, strike K, contract IV, T, r) are recoverable:
   K and expiry live in the venue_id, S/IV from the venue at expiry.
-- Output is bounded: <=2 expiries and <=10 strikes per symbol, and a global
-  cap of 60 rows applied round-robin across symbols so a long watchlist
-  degrades evenly instead of dropping its tail.
+- Output is bounded: <=2 expiries per symbol, each contributing <=10 ladder
+  strikes plus one direction (D) row anchored at the previous close; a
+  global cap of 60 rows is applied round-robin across symbols, with
+  direction rows leading each bucket so the cap can never trim them.
 """
 
 from __future__ import annotations
@@ -101,15 +102,17 @@ def _fmt_strike(k: float) -> str:
     return str(int(k)) if float(k).is_integer() else f"{k:g}"
 
 
-def make_venue_id(symbol: str, expiry: date, strike: float) -> str:
-    return f"{symbol}-{expiry.strftime('%Y%m%d')}-C{_fmt_strike(strike)}"
+def make_venue_id(symbol: str, expiry: date, strike: float, kind: str = "C") -> str:
+    return f"{symbol}-{expiry.strftime('%Y%m%d')}-{kind}{_fmt_strike(strike)}"
 
 
 def parse_venue_id(venue_id: str) -> tuple[str, date, float] | None:
     """'SPY-20260814-C630' -> ('SPY', date(2026,8,14), 630.0); None if malformed.
+    Accepts kind C (strike ladder, settles close >= K) and D (direction row
+    anchored at previous close, settles close > K — see is_direction).
     Symbol is joined from the leading parts so tickers containing '-' survive."""
     parts = (venue_id or "").split("-")
-    if len(parts) < 3 or not parts[-1].startswith("C"):
+    if len(parts) < 3 or not parts[-1][:1] in ("C", "D"):
         return None
     symbol = "-".join(parts[:-2])
     if not symbol:
@@ -120,6 +123,11 @@ def parse_venue_id(venue_id: str) -> tuple[str, date, float] | None:
     except ValueError:
         return None
     return symbol, expiry, strike
+
+
+def is_direction(venue_id: str) -> bool:
+    parts = (venue_id or "").split("-")
+    return bool(parts) and parts[-1].startswith("D")
 
 
 # ── chain -> rows ────────────────────────────────────────────────────────────
@@ -175,7 +183,7 @@ def _liquidity(call: dict) -> float | None:
     return oi
 
 
-def _expiry_rows(symbol: str, spot: float, expiry_epoch: int, calls: list[dict], now_dt: datetime) -> list[dict]:
+def _expiry_rows(symbol: str, spot: float, expiry_epoch: int, calls: list[dict], now_dt: datetime, ref: float | None = None) -> list[dict]:
     expiry = datetime.fromtimestamp(expiry_epoch, tz=timezone.utc).date()
     end_dt = datetime(expiry.year, expiry.month, expiry.day, CLOSE_HOUR_UTC, tzinfo=timezone.utc)
     t_years = (end_dt - now_dt).total_seconds() / (365.0 * 86400.0)
@@ -192,6 +200,39 @@ def _expiry_rows(symbol: str, spot: float, expiry_epoch: int, calls: list[dict],
     valid_ivs = [(k, float(c["impliedVolatility"])) for k, c in by_strike.items() if _iv_ok(c.get("impliedVolatility"))]
 
     rows: list[dict] = []
+
+    # Direction row: P(ends UP vs the previous close) at this expiry, priced
+    # off the nearest-strike IV. The anchor is the PREVIOUS CLOSE, not the
+    # live spot — spot moves every ingest cycle and an id keyed on it would
+    # mint a new near-duplicate market per tick; prev close is stable for a
+    # whole trading day, so each day asks exactly one genuine question.
+    # Kind 'D' settles strictly greater in the resolver ("ends UP" excludes
+    # a flat close).
+    if valid_ivs and ref is not None and ref > 0:
+        atm_iv = min(valid_ivs, key=lambda kv: abs(kv[0] - spot))[1]
+        anchor = round(ref, 2)
+        prob_up = prob_above(spot, anchor, atm_iv, t_years)
+        if prob_up is not None:
+            exp_move = atm_iv * math.sqrt(t_years)
+            rows.append(
+                {
+                    "venue": "options",
+                    "venue_id": make_venue_id(symbol, expiry, anchor, kind="D"),
+                    "event_ticker": f"{symbol}-{expiry.strftime('%Y%m%d')}",
+                    "question": (f"{symbol} ends UP vs prev close (${_fmt_strike(anchor)}) on {expiry.isoformat()} (options-implied; expected move ±{exp_move:.1%})"),
+                    "category": "finance",
+                    "url": f"https://finance.yahoo.com/quote/{symbol}/options",
+                    "end_date": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "yes_bid": None,
+                    "yes_ask": None,
+                    "last_price": prob_up,
+                    "liquidity": _liquidity(by_strike[min(by_strike, key=lambda k: abs(k - spot))]),
+                    "volume_24h": None,
+                    "yes_token_id": None,
+                    "no_token_id": None,
+                }
+            )
+
     for k in _select_strikes(list(by_strike), spot):
         call = by_strike[k]
         if _iv_ok(call.get("impliedVolatility")):
@@ -289,10 +330,14 @@ async def _symbol_rows(client: httpx.AsyncClient, symbol: str, state: dict, now_
     if chain is None:
         log.warning("options: no chain for %s; skipping", symbol)
         return []
-    spot = _to_float((chain.get("quote") or {}).get("regularMarketPrice"))
+    quote = chain.get("quote") or {}
+    spot = _to_float(quote.get("regularMarketPrice"))
     if spot is None or spot <= 0:
         log.warning("options: no spot for %s; skipping", symbol)
         return []
+    # Direction anchor: previous close when the venue provides it, else the
+    # current spot (still stable enough intraday to be a fair anchor).
+    ref = _to_float(quote.get("regularMarketPreviousClose")) or spot
     expirations = sorted(int(e) for e in chain.get("expirationDates") or [] if isinstance(e, (int, float)))
     inside = [e for e in expirations if now_ts < e <= max_ts]
     selected = inside[:MAX_EXPIRIES_PER_SYMBOL]
@@ -311,7 +356,10 @@ async def _symbol_rows(client: httpx.AsyncClient, symbol: str, state: dict, now_
             sub = await _fetch_chain(client, symbol, state, date_epoch=epoch)
             calls = ((((sub or {}).get("options") or [{}])[0]) or {}).get("calls") or []
             await asyncio.sleep(_PAUSE)
-        rows.extend(_expiry_rows(symbol, spot, epoch, calls, now_dt))
+        rows.extend(_expiry_rows(symbol, spot, epoch, calls, now_dt, ref=ref))
+    # Direction rows lead the bucket so the global row cap can never trim
+    # them in favor of deep ladder strikes.
+    rows.sort(key=lambda r: 0 if is_direction(r["venue_id"]) else 1)
     return rows
 
 
