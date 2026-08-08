@@ -53,6 +53,7 @@ def _patch_transport(monkeypatch, handler):
     monkeypatch.setattr(ingest_options.httpx, "AsyncClient", fake_client)
     monkeypatch.setattr(ingest_options, "_PAUSE", 0)
     monkeypatch.setattr(ingest_options, "_RETRY_BACKOFF", 0)
+    ingest_options._throttled_until[0] = 0.0
 
 
 # ── N(d2) math ───────────────────────────────────────────────────────────────

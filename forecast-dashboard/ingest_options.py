@@ -74,6 +74,11 @@ MAX_STRIKES_PER_EXPIRY = 10
 NEAREST_STRIKES = 5
 ROUND_BAND = 0.08
 
+THROTTLE_COOLDOWN_S = 3600
+# Single-element list so tests can reset it; module-level because the ban is
+# per-IP and outlives any one fetch_horizon call.
+_throttled_until = [0.0]
+
 
 def watchlist() -> list[str]:
     raw = os.environ.get("FORECAST_EQUITY_WATCHLIST") or DEFAULT_WATCHLIST
@@ -283,6 +288,8 @@ async def _get_crumb(client: httpx.AsyncClient) -> str | None:
 async def _fetch_chain(client: httpx.AsyncClient, symbol: str, state: dict, date_epoch: int | None = None) -> dict | None:
     """Return optionChain.result[0] for the symbol (specific expiry when
     date_epoch given), or None. `state` caches the crumb across calls."""
+    if time.time() < _throttled_until[0]:
+        return None
     params: dict = {}
     if date_epoch is not None:
         params["date"] = int(date_epoch)
@@ -297,7 +304,13 @@ async def _fetch_chain(client: httpx.AsyncClient, symbol: str, state: dict, date
             except Exception:
                 resp = None
                 break
-            if resp.status_code in (429, 500, 502, 503) and attempt == 0:
+            if resp.status_code == 429:
+                # Yahoo bans by IP and every request while banned extends it.
+                # Go quiet for a full hour instead of re-poking each cycle.
+                _throttled_until[0] = time.time() + THROTTLE_COOLDOWN_S
+                log.warning("options: Yahoo 429 — backing off for %d min", THROTTLE_COOLDOWN_S // 60)
+                return None
+            if resp.status_code in (500, 502, 503) and attempt == 0:
                 await asyncio.sleep(_RETRY_BACKOFF)
                 continue
             break
