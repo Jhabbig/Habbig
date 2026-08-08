@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS calibration (
     UNIQUE(market_uid, source, displayed_at)
 );
 CREATE INDEX IF NOT EXISTS idx_calibration_market ON calibration(market_uid);
+
+CREATE TABLE IF NOT EXISTS news (
+    id INTEGER PRIMARY KEY,
+    market_uid TEXT,
+    ts TEXT,
+    title TEXT,
+    source TEXT,
+    url TEXT,
+    published TEXT,
+    UNIQUE(market_uid, url)
+);
+CREATE INDEX IF NOT EXISTS idx_news_market ON news(market_uid, ts);
 """
 
 
@@ -573,3 +585,34 @@ def compute_baseline(bid: float | None, ask: float | None, last: float | None, l
     if has_bid or has_ask:
         return {"baseline": bid if has_bid else ask, "spread": None, "tier": "thin"}
     return {"baseline": last, "spread": None, "tier": "stale"}
+
+
+# ── news ─────────────────────────────────────────────────────────────────────
+
+
+def insert_news(conn: sqlite3.Connection, row: dict) -> None:
+    conn.execute(
+        """INSERT OR IGNORE INTO news (market_uid, ts, title, source, url, published)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (row["market_uid"], row.get("ts") or _now_iso(), row.get("title"), row.get("source"), row.get("url"), row.get("published")),
+    )
+    conn.commit()
+
+
+def news_for(conn: sqlite3.Connection, uid: str, limit: int = 8) -> list[dict]:
+    rows = conn.execute(
+        "SELECT title, source, url, published, ts FROM news WHERE market_uid = ? ORDER BY ts DESC, id DESC LIMIT ?",
+        (uid, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def resolved_calibration_pairs(conn: sqlite3.Connection, platform: str | None = None) -> list[tuple[float, int]]:
+    """(market_prob, outcome) pairs from resolved market_baseline rows — the
+    raw material for empirical recalibration."""
+    q = "SELECT market_prob, outcome FROM calibration WHERE source = 'market_baseline' AND outcome IS NOT NULL AND market_prob IS NOT NULL"
+    args: tuple = ()
+    if platform:
+        q += " AND platform = ?"
+        args = (platform,)
+    return [(float(r[0]), int(r[1])) for r in conn.execute(q, args).fetchall()]

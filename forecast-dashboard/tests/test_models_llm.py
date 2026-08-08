@@ -308,3 +308,35 @@ def test_prompt_excludes_baseline(monkeypatch):
         assert leak not in sent
     assert m["question"] in sent
     assert m["end_date"] in sent
+
+
+# ── headline grounding ───────────────────────────────────────────────────────
+
+
+def test_prompt_includes_headlines_block_when_news_exists(monkeypatch):
+    requests = _install_client(monkeypatch, lambda kw: _json_resp(GOOD))
+    monkeypatch.setattr(
+        db,
+        "news_for",
+        lambda conn, uid, limit=8: [
+            {"title": "Senate schedules final vote", "source": "The Paper", "url": "https://example.com/a1", "published": "Fri, 07 Aug 2026 10:00:00 GMT", "ts": "2026-08-07T10:00:00Z"},
+        ],
+    )
+    rows = asyncio.run(models_llm.compute([_market()]))
+    assert len(rows) == 1
+    user = requests[0]["messages"][0]["content"]
+    assert "Recent headlines:" in user
+    assert "Senate schedules final vote" in user
+    assert "The Paper" in user
+    assert "https://example.com/a1" not in user
+    # The block is context, not a search substitute.
+    assert "web search" in user
+    sent = json.dumps({"system": requests[0].get("system"), "messages": requests[0]["messages"]}, default=str)
+    assert "baseline" not in sent
+    assert "0.4271" not in sent
+
+
+def test_prompt_has_no_headlines_block_without_news(monkeypatch):
+    requests = _install_client(monkeypatch, lambda kw: _json_resp(GOOD))
+    asyncio.run(models_llm.compute([_market()]))
+    assert "Recent headlines:" not in requests[0]["messages"][0]["content"]

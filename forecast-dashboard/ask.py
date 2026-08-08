@@ -254,7 +254,7 @@ async def _claude_json(client, system: str, user_content: str, schema: dict) -> 
     return json.loads(text), searched
 
 
-async def _forecast_question(client, question: str, end_date: str | None) -> tuple[dict | None, bool]:
+async def _forecast_question(client, question: str, end_date: str | None, headlines: list[dict] | None = None) -> tuple[dict | None, bool]:
     lines = [
         f"Question: {question}",
         f"Today's date: {datetime.now(timezone.utc).date().isoformat()}",
@@ -263,7 +263,11 @@ async def _forecast_question(client, question: str, end_date: str | None) -> tup
         lines.append(f"Resolution deadline (UTC): {end_date}")
     else:
         lines.append("No explicit deadline was stated; judge the question as asked.")
-    return await _claude_json(client, models_llm.SYSTEM_PROMPT, "\n".join(lines), models_llm.OUTPUT_SCHEMA)
+    content = "\n".join(lines)
+    block = models_llm.format_headlines(headlines or [])
+    if block:
+        content += "\n\n" + block
+    return await _claude_json(client, models_llm.SYSTEM_PROMPT, content, models_llm.OUTPUT_SCHEMA)
 
 
 # ── storage ──────────────────────────────────────────────────────────────────
@@ -377,7 +381,8 @@ async def ask(question: str) -> dict:
         return {**base, "llm": None, "note": "Forecast unavailable: Anthropic credentials are not configured."}
 
     try:
-        data, searched = await _forecast_question(client, question, stored_end)
+        headlines = await asyncio.to_thread(models_llm.stored_headlines, uid)
+        data, searched = await _forecast_question(client, question, stored_end, headlines)
     except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
         log.error("ask: Anthropic auth unavailable (%s)", e)
         return {**base, "llm": None, "note": "Forecast unavailable: Anthropic authentication failed."}

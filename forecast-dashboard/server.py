@@ -30,9 +30,11 @@ import ingest_metaculus
 import ingest_options
 import ingest_polymarket
 import matching
+import models_calibrated
 import models_fed
 import models_llm
 import models_weather
+import news
 import resolver
 
 app = FastAPI(title="Forecast Dashboard")
@@ -45,8 +47,9 @@ STATIC_DIR = ROOT / "static"
 INGEST_INTERVAL = 600
 MODELS_INTERVAL = 1800
 RESOLVE_INTERVAL = 1800
+NEWS_INTERVAL = 1800
 
-MODEL_MODULES = (models_weather, models_fed, models_llm)
+MODEL_MODULES = (models_weather, models_fed, models_llm, models_calibrated)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -93,6 +96,7 @@ _loop_state: dict[str, dict] = {
     "ingest": {"last_run": None, "last_ok": None, "last_error": None, "markets": 0},
     "models": {"last_run": None, "last_ok": None, "last_error": None, "rows": 0},
     "resolve": {"last_run": None, "last_ok": None, "last_error": None, "resolved": 0},
+    "news": {"last_run": None, "last_ok": None, "last_error": None, "headlines": 0},
 }
 _bg_tasks: set = set()
 
@@ -299,9 +303,28 @@ async def _resolve_loop():
         await asyncio.sleep(RESOLVE_INTERVAL)
 
 
+async def _news_loop():
+    await asyncio.sleep(90)
+    while True:
+        _loop_state["news"]["last_run"] = _now_iso()
+        conn = None
+        try:
+            conn = await asyncio.to_thread(db.get_conn)
+            markets = await asyncio.to_thread(db.latest_snapshots, conn, _horizon_days())
+            n = await news.refresh(conn, markets)
+            _loop_state["news"].update(last_ok=_now_iso(), last_error=None, headlines=n)
+        except Exception as e:
+            log.error("news loop error: %s", e)
+            _loop_state["news"]["last_error"] = str(e)
+        finally:
+            if conn is not None:
+                conn.close()
+        await asyncio.sleep(NEWS_INTERVAL)
+
+
 @app.on_event("startup")
 async def _start_loops():
-    for coro in (_ingest_loop(), _models_loop(), _resolve_loop()):
+    for coro in (_ingest_loop(), _models_loop(), _resolve_loop(), _news_loop()):
         task = asyncio.create_task(coro)
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
@@ -474,6 +497,7 @@ def api_event(uid: str):
             "market": market,
             "snapshots": db.snapshot_history(conn, uid),
             "model_probs": db.model_prob_history(conn, uid),
+            "news": db.news_for(conn, uid),
         }
     finally:
         conn.close()

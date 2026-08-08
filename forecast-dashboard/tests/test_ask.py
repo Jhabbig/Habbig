@@ -289,6 +289,32 @@ def test_prompt_contract_and_stored_row(conn, monkeypatch):
     assert json.loads(row["detail"])["model"] == "claude-opus-5"
 
 
+def test_prompt_includes_headlines_block_when_news_exists(conn, monkeypatch):
+    requests = _install_client(monkeypatch, lambda kw: _json_resp(GOOD))
+    monkeypatch.setattr(
+        db,
+        "news_for",
+        lambda c, uid, limit=8: [
+            {"title": "Rail line testing enters final phase", "source": "The Gazette", "url": "https://example.com/rail", "published": "Fri, 07 Aug 2026 10:00:00 GMT", "ts": "2026-08-07T10:00:00Z"},
+        ],
+    )
+    out = asyncio.run(ask.ask("Will the new rail line open by 2026-12-31?"))
+    assert out["llm"] is not None
+    user = requests[0]["messages"][0]["content"]
+    assert "Recent headlines:" in user
+    assert "Rail line testing enters final phase" in user
+    assert "The Gazette" in user
+    assert "https://example.com/rail" not in user
+    sent = json.dumps({"system": requests[0].get("system"), "messages": requests[0]["messages"]}, default=str)
+    assert "baseline" not in sent
+
+
+def test_prompt_has_no_headlines_block_without_news(conn, monkeypatch):
+    requests = _install_client(monkeypatch, lambda kw: _json_resp(GOOD))
+    asyncio.run(ask.ask("Will the new rail line open by 2026-12-31?"))
+    assert "Recent headlines:" not in requests[0]["messages"][0]["content"]
+
+
 def test_refusal_yields_no_forecast(conn, monkeypatch):
     requests = _install_client(monkeypatch, lambda kw: _Resp([], stop_reason="refusal"))
     out = asyncio.run(ask.ask("Will the new rail line open by 2026-12-31?"))

@@ -133,10 +133,44 @@ def _scored_today_uids() -> set[str]:
         conn.close()
 
 
+def stored_headlines(uid: str, limit: int = 5) -> list[dict]:
+    """Stored headlines for a market via a fresh short-lived conn (same
+    pattern as _scored_today_uids). Shared with ask's forecast path."""
+    conn = db.get_conn()
+    try:
+        return db.news_for(conn, uid, limit)
+    finally:
+        conn.close()
+
+
+def format_headlines(items: list[dict]) -> str | None:
+    """'Recent headlines:' prompt block — title + source + date only. No
+    URLs and no market prices, so the forecast stays independent of market
+    pricing. Shared with ask's forecast path."""
+    lines = []
+    for it in (items or [])[:5]:
+        title = (it.get("title") or "").strip()
+        if not title:
+            continue
+        date = (it.get("published") or (it.get("ts") or "")[:10] or "").strip()
+        meta = ", ".join(x for x in ((it.get("source") or "").strip(), date) if x)
+        lines.append(f"- {title}" + (f" ({meta})" if meta else ""))
+    if not lines:
+        return None
+    return (
+        "Recent headlines:\n"
+        + "\n".join(lines)
+        + "\nThe headlines above are stored context and may be incomplete — you may still use web search when newer or fuller information could move the estimate."
+    )
+
+
 async def _forecast_one(client, m: dict) -> dict | None:
     # The prompt deliberately excludes the market price/baseline so the
     # forecast is independent and the calibration comparison stays honest.
     user_content = f"Question: {m.get('question')}\nResolution time (UTC): {m.get('end_date')}\nToday's date: {datetime.now(timezone.utc).date().isoformat()}"
+    block = format_headlines(await asyncio.to_thread(stored_headlines, _uid(m)))
+    if block:
+        user_content += "\n\n" + block
     request = {
         "model": MODEL,
         "max_tokens": MAX_TOKENS,
