@@ -207,7 +207,8 @@ def test_one_bad_market_never_stops_the_pass(conn, monkeypatch):
     assert good["resolved"] == 1 and good["outcome"] == 1
 
 
-def test_batch_capped_at_100_per_pass(conn, monkeypatch):
+def test_batch_capped_at_batch_limit_per_pass(conn, monkeypatch):
+    monkeypatch.setattr(resolver, "BATCH_LIMIT", 100)
     gamma = {}
     for i in range(105):
         db.upsert_market(conn, _market("polymarket", f"cid-{i:03d}"))
@@ -220,6 +221,31 @@ def test_batch_capped_at_100_per_pass(conn, monkeypatch):
     assert len(client.calls) == 100
     remaining = conn.execute("SELECT COUNT(*) FROM markets WHERE resolved = 0").fetchone()[0]
     assert remaining == 5
+
+
+def test_model_carrying_markets_resolve_before_backlog(conn, monkeypatch):
+    # A deep backlog of generic markets must not starve the ones that have
+    # model/signal predictions attached — those unlock scorecard verdicts.
+    monkeypatch.setattr(resolver, "BATCH_LIMIT", 3)
+    gamma = {}
+    for i in range(10):
+        db.upsert_market(conn, _market("polymarket", f"noise-{i}"))
+        gamma[f"noise-{i}"] = _gamma_payload([1, 0])
+    scored = []
+    for i in range(3):
+        uid = db.upsert_market(conn, _market("polymarket", f"scored-{i}"))
+        db.insert_model_prob(conn, {"market_uid": uid, "source": "weather", "model_prob": 0.7, "prob_method": "ensemble"})
+        gamma[f"scored-{i}"] = _gamma_payload([1, 0])
+        scored.append(uid)
+
+    _install(monkeypatch, FakeClient(gamma_by_cid=gamma))
+
+    n = asyncio.run(resolver.resolve_pending(conn))
+    assert n == 3
+    for uid in scored:
+        assert db.get_market(conn, uid)["resolved"] == 1
+    noise_resolved = conn.execute("SELECT COUNT(*) FROM markets WHERE resolved = 1 AND venue_id LIKE 'noise-%'").fetchone()[0]
+    assert noise_resolved == 0
 
 
 def test_yes_index_follows_outcomes_order(conn, monkeypatch):

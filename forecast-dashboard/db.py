@@ -436,10 +436,18 @@ def log_calibration_row(conn: sqlite3.Connection, row: dict) -> None:
 
 
 def unresolved_past_close(conn: sqlite3.Connection, grace_hours: int = 6) -> list[dict]:
+    """Past-due unresolved markets, model/signal-carrying ones first. The
+    backlog can be tens of thousands of micro markets deep while the
+    resolver works a bounded batch per pass — markets with model or
+    external-signal predictions unlock scorecard verdicts, so they must
+    never wait behind generic rows."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=grace_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
-        """SELECT * FROM markets
-           WHERE resolved = 0 AND end_date IS NOT NULL AND end_date < ?""",
+        """SELECT m.*,
+                  EXISTS (SELECT 1 FROM model_probs mp WHERE mp.market_uid = m.uid) AS has_model
+           FROM markets m
+           WHERE m.resolved = 0 AND m.end_date IS NOT NULL AND m.end_date < ?
+           ORDER BY has_model DESC, m.end_date ASC""",
         (cutoff,),
     ).fetchall()
     return [dict(r) for r in rows]

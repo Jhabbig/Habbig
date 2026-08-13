@@ -47,7 +47,7 @@ STATIC_DIR = ROOT / "static"
 
 INGEST_INTERVAL = 600
 MODELS_INTERVAL = 1800
-RESOLVE_INTERVAL = 1800
+RESOLVE_INTERVAL = 600
 NEWS_INTERVAL = 1800
 
 MODEL_MODULES = (models_weather, models_fed, models_llm, models_calibrated)
