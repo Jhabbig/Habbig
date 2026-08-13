@@ -118,12 +118,12 @@ else:
 
 BUNDLE_PLANS = {
     "trader": {
-        "monthly_cents": 4900, "annual_cents": 39900, "name": "betyc Trader",
+        "monthly_cents": 4900, "annual_cents": 39900, "name": "Narve Trader",
         "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
         "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
     },
     "pro": {
-        "monthly_cents": 14900, "annual_cents": 119900, "name": "betyc Pro",
+        "monthly_cents": 14900, "annual_cents": 119900, "name": "Narve Pro",
         "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
         "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
     },
@@ -136,7 +136,7 @@ DASHBOARD_PREVIEWS = {
         "features": [
             {"icon": "\u26a1", "title": "Live Odds Comparison", "desc": "Side-by-side Polymarket vs. DraftKings, FanDuel, and Pinnacle odds updated every 30 seconds."},
             {"icon": "\U0001f4ca", "title": "Arbitrage Scanner", "desc": "Automated detection of guaranteed-profit spreads across platforms with position sizing."},
-            {"icon": "\U0001f514", "title": "Line Movement Alerts", "desc": "Push notifications when odds shift beyond configurable thresholds on tracked markets."},
+            {"icon": "\U0001f514", "title": "Line Movement Alerts", "desc": "In-dashboard alerts when odds shift beyond configurable thresholds on tracked markets."},
             {"icon": "\U0001f9e0", "title": "Sharpe Ratio Signals", "desc": "Risk-adjusted scoring for every market so you know which bets have the best expected value."},
             {"icon": "\U0001f3af", "title": "Historical Accuracy", "desc": "Track record visualization showing past signal performance across sports categories."},
             {"icon": "\U0001f4b0", "title": "P&L Tracker", "desc": "Portfolio-level performance tracking for positions entered through the dashboard's signals."},
@@ -149,7 +149,6 @@ DASHBOARD_PREVIEWS = {
             "30-second auto-refresh across all panels",
             "WebSocket live feed for instant updates",
             "Exportable CSV reports",
-            "Priority access to new sports markets",
         ],
     },
     "weather": {
@@ -169,7 +168,6 @@ DASHBOARD_PREVIEWS = {
             "Automatic mispricing detection",
             "City-by-city market breakdown",
             "Accuracy tracking and calibration curves",
-            "Daily email digest of top opportunities",
             "All data updated every 5\u201315 minutes",
         ],
     },
@@ -190,7 +188,6 @@ DASHBOARD_PREVIEWS = {
             "Election polling aggregation",
             "Customizable alert thresholds",
             "Historical event-to-market-move analysis",
-            "Weekly geopolitical briefing summary",
             "Data updated every 30 minutes",
         ],
     },
@@ -394,7 +391,7 @@ DASHBOARD_PREVIEWS = {
             "Backtest harness: ROI, annualised Sharpe, max drawdown, category breakdown",
             "Liquidity-aware EV (order-book walk, slippage at $100/$1k/$10k)",
             "Cross-venue Polymarket vs Kalshi arbitrage tab",
-            "Public JSON API + Telegram signal alerts and query bot",
+            "Telegram signal alerts and query bot (bring your own bot token)",
         ],
     },
 }
@@ -1837,7 +1834,8 @@ async def unified_app(request: Request):
 
 
 @app.get("/billing", response_class=HTMLResponse)
-async def billing_page(request: Request, dashboard: Optional[str] = None, payment: Optional[str] = None):
+async def billing_page(request: Request, dashboard: Optional[str] = None, payment: Optional[str] = None,
+                       error: Optional[str] = None):
     sub = get_subdomain(request)
     if sub:
         # Safely forward the validated dashboard key via urlencode to prevent
@@ -1929,12 +1927,52 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
             'Payment successful! Your subscription is now active.'
             '</div>'
         )
+    elif error:
+        # A failed checkout must never be a silent page reload.
+        error_messages = {
+            "stripe_unavailable": "Checkout is temporarily unavailable — nothing was "
+                                  "charged. Please try again shortly, or contact "
+                                  "support if it persists.",
+            "not_purchasable": "This product can't be purchased yet — its checkout "
+                               "isn't fully configured. Nothing was charged.",
+        }
+        banner = (
+            '<div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.3);'
+            'border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;'
+            'color:#ef4444;font-size:14px;font-weight:500">'
+            f'{html.escape(error_messages.get(error, "Something went wrong with checkout. Nothing was charged."))}'
+            '</div>'
+        )
+
+    # Plan summary card (billing.html renders {{ raw_plan_card }}).
+    active_count = sum(
+        1 for key, cfg in DASHBOARDS.items()
+        if not cfg.get("hidden") and not cfg.get("merged_into") and not cfg.get("access_alias")
+        and _is_sub_active(subs.get(key), is_admin_user)
+    )
+    sellable_count = sum(
+        1 for cfg in DASHBOARDS.values()
+        if not cfg.get("hidden") and not cfg.get("merged_into") and not cfg.get("access_alias")
+    )
+    plan_card = (
+        '<div style="background:var(--bg-card,rgba(255,255,255,0.03));border:1px solid '
+        'var(--border,rgba(255,255,255,0.08));border-radius:var(--radius-sm,10px);'
+        'padding:18px 20px;margin-bottom:24px;display:flex;justify-content:space-between;'
+        'align-items:center;gap:16px;flex-wrap:wrap">'
+        f'<div><div style="font-weight:600;font-size:15px">Your access</div>'
+        f'<div style="font-size:13px;color:var(--text-muted);margin-top:4px">'
+        f'{active_count} of {sellable_count} dashboards active'
+        f'{" (admin access)" if is_admin_user else ""}</div></div>'
+        '</div>'
+    )
+
     return render_page(
         "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
         raw_banner=banner,
+        raw_plan_card=plan_card,
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
@@ -1986,9 +2024,13 @@ async def billing_action(request: Request, action: str = Form(...)):
             cfg = DASHBOARDS[key]
             price_key = "stripe_price_monthly" if plan == "monthly" else "stripe_price_annual"
             stripe_price_id = cfg.get(price_key)
-            if not stripe_price_id:
-                log.error("No Stripe price ID configured for %s %s", key, plan)
-                return RedirectResponse("/billing", status_code=302)
+            # Real Stripe price IDs start with "price_". Anything else (null,
+            # or a TODO_ placeholder left in config.json) means this product
+            # is not sellable yet — say so instead of throwing at Stripe and
+            # silently reloading the page.
+            if not stripe_price_id or not str(stripe_price_id).startswith("price_"):
+                log.error("No usable Stripe price ID for %s %s (got %r)", key, plan, stripe_price_id)
+                return RedirectResponse("/billing?error=not_purchasable", status_code=302)
 
             try:
                 customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
@@ -2007,7 +2049,7 @@ async def billing_action(request: Request, action: str = Form(...)):
                         "plan": plan,
                         "type": "dashboard",
                     },
-                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}&dashboard=" + key,
                     cancel_url=base + f"/billing?dashboard={key}",
                 )
             except Exception as exc:
@@ -2196,6 +2238,29 @@ async def stripe_webhook(request: Request):
         db.cancel_subscription_by_stripe_id(stripe_sub_id)
         log.info("Stripe: cancelled subscription %s", stripe_sub_id)
 
+    # ── invoice.paid — RENEWAL. Without this, every monthly subscriber is
+    # locked out on day 31 while Stripe keeps charging them: checkout only
+    # grants the first 30 days. Each successful renewal invoice extends
+    # every subscription row tied to the Stripe subscription.
+    elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
+        inv = data_obj if isinstance(data_obj, dict) else dict(data_obj)
+        stripe_sub_id = inv.get("subscription")
+        if stripe_sub_id:
+            # Prefer the invoice line's billing period; fall back to 30 days.
+            duration = 30
+            try:
+                lines = (inv.get("lines") or {}).get("data") or []
+                if lines:
+                    period = lines[0].get("period") or {}
+                    span = int(period.get("end", 0)) - int(period.get("start", 0))
+                    if span > 0:
+                        duration = max(1, round(span / 86400))
+            except Exception:
+                pass
+            renewed = db.renew_subscriptions_by_stripe_id(stripe_sub_id, duration)
+            log.info("Stripe: renewal invoice for %s -> extended %d subscription row(s) by %dd",
+                     stripe_sub_id, renewed, duration)
+
     # ── invoice.payment_failed — payment issue ────────────────────────────
     elif event_type == "invoice.payment_failed":
         invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
@@ -2207,8 +2272,15 @@ async def stripe_webhook(request: Request):
 
 
 @app.get("/stripe/success")
-async def stripe_success(request: Request, session_id: str = ""):
-    """Redirect back to billing with a success banner after Stripe checkout."""
+async def stripe_success(request: Request, session_id: str = "", dashboard: str = ""):
+    """Land the buyer on what they just bought, not on a billing table.
+
+    The webhook races this redirect, so the destination page must tolerate a
+    subscription that activates a few seconds later — /one shows the tab and
+    the proxy re-checks access per request.
+    """
+    if dashboard and dashboard in DASHBOARDS:
+        return RedirectResponse(f"/one#{dashboard}", status_code=302)
     return RedirectResponse("/billing?payment=success", status_code=302)
 
 
@@ -2221,9 +2293,10 @@ async def preview_page(request: Request, dashboard_key: str):
     if sub:
         return await proxy_request(request, f"/preview/{dashboard_key}")
 
+    # Previews are the product's marketing pages — there is nothing sensitive
+    # on them, and hiding them behind the login gate meant no prospect could
+    # ever see what the products are. Anonymous visitors get the full page.
     user = current_user(request)
-    if not user:
-        return RedirectResponse("/gate", status_code=302)
 
     if dashboard_key not in DASHBOARDS:
         return RedirectResponse("/dashboards", status_code=302)
@@ -2231,11 +2304,12 @@ async def preview_page(request: Request, dashboard_key: str):
     cfg = DASHBOARDS[dashboard_key]
     preview = DASHBOARD_PREVIEWS.get(dashboard_key, {})
 
-    # If the user already has an active subscription, redirect to the dashboard.
-    is_admin_user = bool(user.get("is_admin"))
-    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-    if _is_sub_active(subs.get(dashboard_key), is_admin_user):
-        return RedirectResponse("/dashboards", status_code=302)
+    # A logged-in user with an active subscription goes straight to the app.
+    if user:
+        is_admin_user = bool(user.get("is_admin"))
+        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        if _is_sub_active(subs.get(dashboard_key), is_admin_user):
+            return RedirectResponse("/dashboards", status_code=302)
 
     # Build feature cards HTML
     features_html_parts = []
@@ -2269,7 +2343,7 @@ async def preview_page(request: Request, dashboard_key: str):
     monthly_total = cfg["monthly_cents"] * 12
     savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
 
-    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    admin_link = '<a href="/admin">Admin</a>' if user and user.get("is_admin") else ""
 
     return render_page(
         "preview", request=request,
@@ -2280,11 +2354,11 @@ async def preview_page(request: Request, dashboard_key: str):
         annual_price=annual_price,
         annual_savings=str(savings_pct),
         accent=cfg["accent"],
-        username=user.get("username", user["email"]),
+        username=user.get("username", user["email"]) if user else "Guest",
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
-        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request) if user else "",
     )
 
 
@@ -2616,14 +2690,14 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
 
                 body_text = (
                     f"Hi,\n\n"
-                    f"A password reset was requested for your betyc account.\n\n"
+                    f"A password reset was requested for your Narve account.\n\n"
                     f"Click the link below to set a new password:\n"
                     f"{reset_link}\n\n"
                     f"This link expires in 1 hour.\n\n"
                     f"If you did not request this, you can safely ignore this email.\n"
                 )
                 msg = MIMEText(body_text)
-                msg["Subject"] = "Password Reset \u2014 betyc"
+                msg["Subject"] = "Password Reset \u2014 Narve"
                 msg["From"] = smtp_user
                 msg["To"] = email
 
@@ -2733,6 +2807,82 @@ async def impressum_page(request: Request):
     return render_page("impressum", request=request)
 
 
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/terms")
+    return render_page("terms", request=request)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/privacy")
+    return render_page("privacy", request=request)
+
+
+@app.post("/api/support-ticket")
+async def api_support_ticket(request: Request):
+    """Support form endpoint. The support page shipped pointing at this route
+    before it existed — every ticket ever submitted 404'd. Tickets are stored
+    as enquiries (role 'support') and forwarded by email when configured."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/support-ticket")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "support", 5):
+        return JSONResponse({"success": False, "error": "Too many requests. Please try again later."}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"success": False, "error": "Please enter a valid email address"}, status_code=400)
+    if len(message) < 10:
+        return JSONResponse({"success": False, "error": "Please describe the issue (at least 10 characters)"}, status_code=400)
+    if len(message) > 2000:
+        return JSONResponse({"success": False, "error": "Message is too long (2000 characters max)"}, status_code=400)
+
+    db.create_enquiry(email, "support", message[:1000])
+    log.info("New support ticket from %s", email)
+
+    enquiry_email = os.environ.get("ENQUIRY_EMAIL")
+    if enquiry_email:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            smtp_host = os.environ.get("SMTP_HOST", "localhost")
+            try:
+                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            except (ValueError, TypeError):
+                smtp_port = 587
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            msg = MIMEText(f"Support ticket via narve.ai\n\nFrom: {email}\n\n{message}\n")
+            msg["Subject"] = "Support Ticket — Narve"
+            msg["From"] = smtp_user or enquiry_email
+            msg["To"] = enquiry_email
+            _from, _to, _msg_str = msg["From"], enquiry_email, msg.as_string()
+
+            def _send_ticket():
+                with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                    if smtp_user and smtp_pass:
+                        srv.starttls()
+                        srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(_from, [_to], _msg_str)
+
+            await asyncio.to_thread(_send_ticket)
+        except Exception as exc:
+            log.warning("Support ticket email failed (ticket is stored): %s", exc)
+
+    return JSONResponse({"success": True})
+
+
 @app.get("/support", response_class=HTMLResponse)
 async def support_page(request: Request):
     sub = get_subdomain(request)
@@ -2806,13 +2956,13 @@ async def api_enquire(request: Request):
             smtp_pass = os.environ.get("SMTP_PASS", "")
 
             body_text = (
-                f"New enquiry from the betyc landing page.\n\n"
+                f"New enquiry from the narve.ai landing page.\n\n"
                 f"Email: {email}\n"
                 f"Role: {job_title}\n\n"
                 f"Message:\n{message}\n"
             )
             msg = MIMEText(body_text)
-            msg["Subject"] = "New Enquiry \u2014 betyc"
+            msg["Subject"] = "New Enquiry \u2014 Narve"
             msg["From"] = smtp_user or enquiry_email
             msg["To"] = enquiry_email
 
@@ -4912,12 +5062,12 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # 3. Fail fast if backend is known to be down (circuit breaker).
     if not is_upstream_healthy(key):
-        return HTMLResponse(
-            f"<h1>{html.escape(dash_cfg['display_name'])} is temporarily unavailable</h1>"
-            f"<p>The backend is being checked every {_HEALTH_CHECK_INTERVAL}s and will recover automatically.</p>"
-            f'<p><a href="javascript:location.reload()">Retry</a></p>',
-            status_code=503,
-        )
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg['display_name']} is temporarily unavailable",
+            "We're on it — the service recovers automatically, usually within "
+            "a minute. This page retries on reload.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=503, headers={"Retry-After": str(_HEALTH_CHECK_INTERVAL)})
 
     # 4. Forward the request.
     target_port = dash_cfg["target"]
@@ -4989,12 +5139,12 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
             follow_redirects=False,
         )
     except httpx.ConnectError:
-        return HTMLResponse(
-            f"<h1>{html.escape(dash_cfg['display_name'])} is offline</h1>"
-            f"<p>The backend on port {target_port} isn't responding. "
-            f"Try <code>./start_dashboards.sh restart</code>.</p>",
-            status_code=502,
-        )
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg['display_name']} is temporarily offline",
+            "We've been alerted and are bringing it back. Your subscription "
+            "is unaffected — please check back shortly.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=502)
     except httpx.RequestError as e:
         log.exception("Upstream error for %s: %s", upstream_url, e)
         return HTMLResponse(
@@ -5258,8 +5408,8 @@ async def unified_proxy(request: Request, dash_key: str, sub_path: str):
     except httpx.ConnectError:
         return HTMLResponse(_render_unified_panel(
             f"{dash_cfg.get('display_name', dash_key)} is offline",
-            f"The backend on port {dash_cfg['target']} isn't responding. "
-            "Try ./start_dashboards.sh restart.",
+            "We've been alerted and are bringing it back. Your subscription "
+            "is unaffected — please check back shortly.",
             accent=dash_cfg.get("accent", "#6366f1"),
         ), status_code=502)
     except httpx.RequestError as e:

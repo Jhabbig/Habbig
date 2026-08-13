@@ -1885,3 +1885,23 @@ def get_all_usage_stats(days: int = 30) -> dict:
         ],
         "period_days": days,
     }
+
+
+def renew_subscriptions_by_stripe_id(stripe_sub_id: str, duration_days: int) -> int:
+    """Extend every subscription row tied to a Stripe subscription.
+
+    Called from the invoice.paid webhook on each successful renewal charge
+    (a bundle purchase creates one row per dashboard, all sharing the same
+    stripe_sub_id). The new expiry anchors to now rather than stacking on
+    the old expiry: Stripe is the billing source of truth, and anchoring to
+    now absorbs clock drift and past-due gaps.
+    """
+    now = int(time.time())
+    expires_at = now + duration_days * 86400
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE subscriptions SET status = 'active', expires_at = ? "
+            "WHERE stripe_sub_id = ?",
+            (expires_at, stripe_sub_id),
+        )
+        return cur.rowcount

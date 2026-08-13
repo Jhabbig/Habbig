@@ -29,7 +29,7 @@ from __future__ import annotations
 
 
 # ─── Deceased religious leaders (1900 onwards) ──────────────────────────────
-# 32 entries. All male in this cohort — Catholic and Orthodox top offices
+# 33 entries. All male in this cohort — Catholic and Orthodox top offices
 # excluded women, and the cohort is dominated by those traditions.
 
 HISTORICAL_LEADERS_DECEASED = [
@@ -44,6 +44,7 @@ HISTORICAL_LEADERS_DECEASED = [
     {"name": "John Paul I",     "religion": "Roman Catholic",    "role": "Pope",                          "born": 1912, "died": 1978, "age_at_death": 65, "sex": "M"},
     {"name": "John Paul II",    "religion": "Roman Catholic",    "role": "Pope",                          "born": 1920, "died": 2005, "age_at_death": 84, "sex": "M"},
     {"name": "Benedict XVI",    "religion": "Roman Catholic",    "role": "Pope (Pope Emeritus)",          "born": 1927, "died": 2022, "age_at_death": 95, "sex": "M"},
+    {"name": "Francis",         "religion": "Roman Catholic",    "role": "Pope",                          "born": 1936, "died": 2025, "age_at_death": 88, "sex": "M"},
 
     # ─ Ecumenical Patriarchs of Constantinople ─
     {"name": "Athenagoras I",   "religion": "Eastern Orthodox",  "role": "Ecumenical Patriarch",          "born": 1886, "died": 1972, "age_at_death": 86, "sex": "M"},
@@ -98,7 +99,7 @@ COHORT_MEAN_AGE_AT_DEATH = _cohort_mean_age_at_death()  # ≈ 79 years
 
 
 # ─── Derived hazard ratio ────────────────────────────────────────────────────
-# Cohort mean age at death is ~79 years across the 32 entries above.
+# Cohort mean age at death is ~79 years across the 33 entries above.
 #
 # Under SSA 2022 the expected age at death for a US male alive at age 65
 # is ~83 years (life expectancy ~18 more years at age 65). At age 70 it's
@@ -107,7 +108,7 @@ COHORT_MEAN_AGE_AT_DEATH = _cohort_mean_age_at_death()  # ≈ 79 years
 # medical care was far worse than today's SSA tables assume.
 #
 # A more honest read: the cohort split into pre-1980 deaths (n=16,
-# mean age at death ~76) and post-1980 deaths (n=16, mean ~83). The
+# mean age at death ~76) and post-1980 deaths (n=17, mean ~83). The
 # post-1980 group is the best comparator for contemporary leaders, and
 # at ~83 years they roughly match SSA 2022's conditional expectation
 # at age 65-70.

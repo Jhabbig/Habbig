@@ -17,6 +17,15 @@
 #   ./snapshot.sh list                     # see all snapshots
 #   ./snapshot.sh restore 3               # restore snapshot #3
 #   ./snapshot.sh diff 3                   # see what changed vs snapshot #3
+#
+# Databases:
+#   SQLite files are backed up online via `sqlite3 .backup` into the archive's
+#   _databases/ directory. If DATABASE_URL (from gateway/.env.production or
+#   gateway/.env) points at Postgres — as docker-compose.yml forces and
+#   gateway/.env.example recommends for production — a compressed, timestamped
+#   `pg_dump` is added under _databases/_postgres/ in the same archive, so it
+#   shares the snapshot's retention (prune/delete). Postgres dumps are not
+#   auto-restored; restore manually with:  gunzip -c <dump>.sql.gz | psql "$DATABASE_URL"
 
 set -euo pipefail
 
@@ -113,6 +122,58 @@ backup_databases() {
     echo "$db_count"
 }
 
+# Resolve DATABASE_URL from the gateway env files (first readable file that
+# defines it wins). Prints the URL (quotes stripped), or nothing if unset.
+get_database_url() {
+    local f line url
+    for f in "$SCRIPT_DIR/gateway/.env.production" "$SCRIPT_DIR/gateway/.env"; do
+        [[ -r "$f" ]] || continue
+        line=$(grep -E '^DATABASE_URL=' "$f" 2>/dev/null | tail -1 || true)
+        [[ -n "$line" ]] || continue
+        url="${line#DATABASE_URL=}"
+        # Strip surrounding quotes, if any
+        url="${url%\"}"; url="${url#\"}"
+        url="${url%\'}"; url="${url#\'}"
+        echo "$url"
+        return 0
+    done
+    return 0
+}
+
+# Dump the gateway's Postgres database (if DATABASE_URL points at one) into
+# the _databases staging dir, so the dump rides inside the snapshot archive
+# and shares its retention. No-op when DATABASE_URL is unset or SQLite.
+backup_postgres() {
+    local target_dir="$1"   # the _databases staging dir
+    local timestamp="$2"
+    local db_url
+    db_url="$(get_database_url)"
+
+    # Only act on postgres:// or postgresql:// URLs; otherwise keep the
+    # SQLite-only behavior.
+    [[ "$db_url" == postgres* ]] || return 0
+
+    if ! command -v pg_dump &>/dev/null; then
+        echo -e "  ${YELLOW}Warning:${NC} DATABASE_URL points at Postgres but ${BOLD}pg_dump${NC} is not installed."
+        echo -e "  ${YELLOW}Skipping the Postgres dump — this snapshot will NOT contain the Postgres data.${NC}"
+        echo -e "  Install the client tools (e.g. ${BOLD}apt install postgresql-client${NC}) to include it."
+        return 0
+    fi
+
+    mkdir -p "$target_dir/_postgres"
+    local dump_file="$target_dir/_postgres/gateway_${timestamp}.sql.gz"
+    if pg_dump "$db_url" 2>"$target_dir/_postgres/.pg_dump.err" | gzip > "$dump_file"; then
+        rm -f "$target_dir/_postgres/.pg_dump.err"
+        echo -e "  ${GREEN}Postgres database dumped via pg_dump (compressed)${NC}"
+    else
+        echo -e "  ${RED}Warning:${NC} pg_dump failed — snapshot will not contain the Postgres data."
+        sed 's/^/    /' "$target_dir/_postgres/.pg_dump.err" 2>/dev/null || true
+        rm -f "$dump_file" "$target_dir/_postgres/.pg_dump.err"
+        rmdir "$target_dir/_postgres" 2>/dev/null || true
+    fi
+    return 0
+}
+
 # Restore databases from a snapshot's db backup
 restore_databases() {
     local db_dir="$1"
@@ -190,6 +251,13 @@ cmd_save() {
     local db_count
     db_count=$(backup_databases "$db_staging" "$target")
     echo -e "  ${GREEN}$db_count database(s) backed up via sqlite3 .backup${NC}"
+
+    # Postgres path: the gateway's DATABASE_URL may point at Postgres
+    # (docker-compose.yml forces it; .env.example recommends it for prod).
+    # Dump it too when snapshotting everything or the gateway itself.
+    if [[ "$target" == "all" || "$target" == "gateway" ]]; then
+        backup_postgres "$db_staging" "$timestamp"
+    fi
 
     if [[ -n "$site" ]]; then
         # Single site
@@ -347,6 +415,13 @@ cmd_restore() {
         echo -e "${CYAN}Restoring databases safely...${NC}"
         restore_databases "$restore_tmp/_databases"
         echo -e "  ${GREEN}Databases restored${NC}"
+    fi
+
+    # Postgres dumps are never auto-restored (too destructive to psql blindly)
+    if [[ -d "$restore_tmp/_databases/_postgres" ]]; then
+        echo -e "  ${YELLOW}Note:${NC} this snapshot contains Postgres dump(s) under _databases/_postgres/."
+        echo -e "  They are not auto-restored. Extract from the archive and restore manually:"
+        echo -e "    ${BOLD}gunzip -c <dump>.sql.gz | psql \"\$DATABASE_URL\"${NC}"
     fi
 
     rm -rf "$restore_tmp"

@@ -511,7 +511,9 @@ def api_conclave():
         "source": "Vatican Press Office, College of Cardinals Report, Vaticanist press consensus",
         "sample_size": len(cards),
         "cardinals": cards,
+        # Frozen pre-conclave 2025 book — see conclave_2025 for the outcome.
         "papabile_priors": cd.PAPABILE_PRIORS,
+        "conclave_2025": cd.CONCLAVE_2025,
         "rules": cd.CONCLAVE_RULES,
         "college_aggregates": cd.COLLEGE_AGGREGATES,
         "sample_breakdown": sample_breakdown,
@@ -553,7 +555,9 @@ def api_conclave_live():
         "curated_count": len(cd.CARDINALS),
         "drift": drift,
         "cardinals": merged,
+        # Frozen pre-conclave 2025 book — see conclave_2025 for the outcome.
         "papabile_priors": cd.PAPABILE_PRIORS,
+        "conclave_2025": cd.CONCLAVE_2025,
         "rules": cd.CONCLAVE_RULES,
         "college_aggregates": cd.COLLEGE_AGGREGATES,
     })
@@ -850,7 +854,7 @@ def api_cult_sentinel():
 
 @app.route("/api/pope-health")
 def api_pope_health():
-    """Lexical health-signal scorer for the current Pope.
+    """Lexical health-signal scorer for the current Pope (Leo XIV since 2025-05-08).
 
     Aggregates news items in the past N days (default 14) for phrases
     indicating hospitalisation, cancelled audiences, illness, etc.
@@ -869,8 +873,10 @@ def api_edge():
 
     Each market is matched (when possible) against one of:
       - Leader actuarial (P(alive)/P(dies) for tracked religious leaders)
-      - Vacancy of the Holy See
-      - Papabile prior (P(this cardinal is next Pope))
+      - Vacancy of the Holy See (actuarial over the current Pope, Leo XIV)
+      - Papabile prior — currently NONE: the only curated book is the
+        RESOLVED pre-conclave 2025 one (Prevost → Leo XIV), so succession
+        markets are deliberately left unmatched (see edge.py).
 
     Returns markets sorted by absolute edge in percentage points; unmatched
     markets fall to the bottom and are ranked by volume.

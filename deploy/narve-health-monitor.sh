@@ -14,7 +14,9 @@
 #   1. gateway/.env.production exists AND contains ODDS_API_KEY (was wiped
 #      twice by deploy.sh --delete; that root-cause is now fixed in
 #      deploy.sh itself, but we keep the watch as a tripwire).
-#   2. Each polymarket-* systemd service is active.
+#   2. Every installed narve-*.service unit is active. The roster is read
+#      from systemd at runtime (see SERVICES below), so units added by
+#      deploy/install-services.sh are monitored without editing this file.
 #   3. Each public dashboard URL responds 200/302 (proves Cloudflare can
 #      reach the gateway and the gateway can reach the backend).
 #   4. sports /api/health: status field. When it flips to
@@ -30,10 +32,15 @@ LOG="/tmp/narve-health.log"
 STATE_PREFIX="/tmp/narve-status"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ENV_FILE="/home/julianhabbig/Polymarket/gateway/.env.production"
-# Live products only — parked services (sports, world, traders, centralbank,
-# crypto-trackers, whale) are intentionally stopped and merged ones
-# (disasters, climate) redirect, so probing them would be pure noise.
-SERVICES=(crypto midterm stock weather)
+# The service roster is derived from systemd itself: every narve-*.service
+# unit installed by deploy/install-services.sh is probed. install-services.sh
+# removes parked/merged unit files (e.g. narve-disasters, absorbed into
+# weather), so whatever is installed IS the live fleet — no manual list to
+# keep in sync when a unit is added or retired.
+SERVICES=()
+while IFS= read -r unit; do
+    [ -n "$unit" ] && SERVICES+=("${unit%.service}")
+done < <(systemctl list-unit-files 'narve-*.service' --no-legend 2>/dev/null | awk '{print $1}' | sort)
 DASHBOARDS=(weather.narve.ai crypto.narve.ai midterm.narve.ai stocks.narve.ai)
 WORST_LEVEL=ok  # ok < warn < crit
 
@@ -68,15 +75,20 @@ else
     log "OK    env-file present with required keys"
 fi
 
-# 2. systemd services active
-for s in "${SERVICES[@]}"; do
-    state=$(systemctl is-active "polymarket-$s" 2>&1)
+# 2. systemd services active (roster derived from installed narve-* units)
+if [ "${#SERVICES[@]}" -eq 0 ]; then
+    log "WARN  no narve-*.service units found via systemctl — fleet not installed, or systemd unreachable"
+    bump warn
+    echo "$NOW no narve-* units found" >> "${STATE_PREFIX}.warn"
+fi
+for s in ${SERVICES[@]+"${SERVICES[@]}"}; do
+    state=$(systemctl is-active "$s" 2>&1)
     if [ "$state" = "active" ]; then
-        log "OK    service polymarket-$s active"
+        log "OK    service $s active"
     else
-        log "CRIT  service polymarket-$s state=$state"
+        log "CRIT  service $s state=$state"
         bump crit
-        echo "$NOW polymarket-$s $state" >> "${STATE_PREFIX}.crit"
+        echo "$NOW $s $state" >> "${STATE_PREFIX}.crit"
     fi
 done
 
@@ -104,8 +116,8 @@ done
 log "SUMMARY worst=$WORST_LEVEL"
 echo "$NOW $WORST_LEVEL" > "${STATE_PREFIX}.${WORST_LEVEL}"
 
-# Trim the log to the last ~5000 lines (each cycle adds ~15 lines, so this
-# is roughly a week of history)
+# Trim the log to the last ~5000 lines (each cycle adds ~20 lines with the
+# full fleet, so this is roughly a day or two of 5-minute history)
 if [ -f "$LOG" ]; then
     tail -5000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 fi

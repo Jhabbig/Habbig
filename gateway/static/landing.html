@@ -195,7 +195,7 @@
     <img class="pr-logo-icon" src="/_gateway_static/img/logo.png" alt="narve.ai">
     <span class="pr-logo-text">narve.ai</span>
   </a>
-  <a href="/gate" class="pr-admin">Admin Login</a>
+  <a href="/gate" class="pr-admin">Sign in</a>
 
   <canvas id="particles" style="position:fixed;inset:0;z-index:-1;pointer-events:none"></canvas>
 
@@ -225,8 +225,8 @@
         <button class="pr-ref-copy" type="button" onclick="copyRef()">📋 Copy</button>
       </div>
       <div class="pr-ref-hint">
-        Move up the list by referring friends. Each person who signs up with your link
-        moves you <strong style="color:var(--text-secondary)">5 places forward</strong>.
+        Know someone who'd want this? Share your link — it tells us who to
+        invite first.
       </div>
       <div class="pr-share-row">
         <a class="pr-share-btn" id="pr-share-x" href="#" target="_blank" rel="noopener">Share on X →</a>
@@ -328,7 +328,7 @@ function submitEmail(e) {
 
   fetch('/api/newsletter', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': getCsrf() },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': getCsrf(), 'X-Requested-With': 'XMLHttpRequest' },
     body: formBody.toString()
   })
   .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })

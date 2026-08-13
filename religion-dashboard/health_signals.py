@@ -118,8 +118,9 @@ def compute_health_signal(news_items: list[dict], today: Optional[date] = None,
     sum_weight = 0
     for item in news_items:
         text = ((item.get("title") or "") + " " + (item.get("summary") or "")).lower()
-        if "pope" not in text and "vatican" not in text and "francis" not in text:
-            # Quick rejection — saves regex work
+        # Quick rejection — saves regex work. "leo xiv" catches headlines
+        # naming the current Pope (since 2025-05-08) without "pope"/"vatican".
+        if "pope" not in text and "vatican" not in text and "leo xiv" not in text:
             continue
         # Date filter
         pub = _parse_news_date(item.get("published") or "")
