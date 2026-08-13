@@ -616,3 +616,49 @@ def resolved_calibration_pairs(conn: sqlite3.Connection, platform: str | None = 
         q += " AND platform = ?"
         args = (platform,)
     return [(float(r[0]), int(r[1])) for r in conn.execute(q, args).fetchall()]
+
+
+# ── external signal scorecard ────────────────────────────────────────────────
+
+
+def source_scorecard(conn: sqlite3.Connection) -> list[dict]:
+    """Per-source head-to-head vs the market on the SAME resolved events:
+    paired Brier differences (market - model; positive = model better) with
+    their standard error, so verdicts need evidence, not luck. Only rows
+    where both probs exist and the outcome is settled count."""
+    rows = conn.execute(
+        """SELECT source, model_prob, market_prob, outcome
+           FROM calibration
+           WHERE source != 'market_baseline' AND outcome IS NOT NULL
+             AND model_prob IS NOT NULL AND market_prob IS NOT NULL"""
+    ).fetchall()
+    by_source: dict[str, list[tuple[float, float]]] = {}
+    for r in rows:
+        o = float(r["outcome"])
+        model_b = (float(r["model_prob"]) - o) ** 2
+        market_b = (float(r["market_prob"]) - o) ** 2
+        by_source.setdefault(r["source"], []).append((model_b, market_b))
+    out = []
+    for source, pairs in sorted(by_source.items()):
+        n = len(pairs)
+        model_brier = sum(p[0] for p in pairs) / n
+        market_brier = sum(p[1] for p in pairs) / n
+        diffs = [mkt - mdl for mdl, mkt in pairs]
+        edge = sum(diffs) / n
+        if n > 1:
+            var = sum((d - edge) ** 2 for d in diffs) / (n - 1)
+            se = (var / n) ** 0.5
+        else:
+            se = None
+        out.append(
+            {
+                "source": source,
+                "n": n,
+                "brier_model": round(model_brier, 4),
+                "brier_market": round(market_brier, 4),
+                "edge": round(edge, 4),
+                "se": round(se, 4) if se is not None else None,
+            }
+        )
+    out.sort(key=lambda r: r["edge"], reverse=True)
+    return out

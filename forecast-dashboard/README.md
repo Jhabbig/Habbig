@@ -73,3 +73,31 @@ other. Calibration logs one row per displayed market per source per UTC day
 (`UNIQUE(market_uid, source, displayed_at)`), with outcomes backfilled on
 resolution. Custom (ask-created) markets have no snapshots, so they never
 appear on the board; they resolve via LLM adjudication.
+
+## External signals — plug in your own predictor
+
+Any model (stock predictor, social-sentiment tool, ...) can push probabilities
+and get scored on the public ledger. Set `FORECAST_SIGNALS_TOKEN` on the
+server, then:
+
+```bash
+# Against a tracked market (gets a head-to-head vs-market verdict):
+curl -X POST https://predict.narve.ai/api/signals \
+  -H "Authorization: Bearer $FORECAST_SIGNALS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"source": "julian_stock_model", "market_uid": "options:SPY-20260814-D630.12",
+       "probability": 0.61, "meta": {"model_version": "v3"}}'
+
+# Free-form question (no market to beat -> absolute Brier only; the
+# platform adjudicates the outcome after the deadline):
+curl -X POST ... -d '{"source": "friends_social_tool", "probability": 0.3,
+  "question": "Will $ACME trend on social platforms this month?",
+  "end_date": "2026-09-01T00:00:00Z"}'
+```
+
+Rules of the arena: source names are `[a-z0-9_-]{3,40}` and can't impersonate
+built-ins; probabilities strictly in (0,1); every signal lands in the daily
+calibration ledger; `/api/scorecard` renders the verdict — `beats_market` /
+`below_market` need ≥30 paired resolutions and |edge| > 2 SE, everything else
+is `no demonstrated edge`. The scorecard has no favourites: built-in models
+(weather, llm, calibrated) are scored by exactly the same rule.

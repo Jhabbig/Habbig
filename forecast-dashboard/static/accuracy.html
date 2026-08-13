@@ -104,6 +104,11 @@
 
     table.scores { margin-bottom: 8px; }
     table.scores td.num, table.scores th.num { text-align: right; }
+      .verdict { display: inline-block; font-size: 0.6875rem; font-weight: 600; padding: 2px 10px; border-radius: 100px; letter-spacing: 0.02em; }
+    .v-good { color: var(--green); background: var(--green-soft); }
+    .v-bad { color: var(--red); background: var(--red-soft); }
+    .v-flat { color: var(--secondary); background: rgba(0,0,0,0.05); }
+    .v-thin { color: var(--amber); background: var(--amber-soft); }
   </style>
 </head>
 <body>
@@ -154,6 +159,13 @@
   <table class="scores">
     <thead><tr><th>Source</th><th class="num">N</th><th class="num">Brier</th></tr></thead>
     <tbody id="by-source"><tr><td colspan="3" class="muted">loading…</td></tr></tbody>
+  </table>
+
+  <h2>Signal scorecard</h2>
+  <p class="muted" style="margin:2px 0 8px">Head-to-head vs the market on the same resolved events. A verdict needs &ge;30 paired resolutions and |edge| &gt; 2&thinsp;SE — no source gets credit (or called out) on luck.</p>
+  <table class="scores">
+    <thead><tr><th>Source</th><th class="num">N</th><th class="num">Model Brier</th><th class="num">Market Brier</th><th class="num">Edge</th><th>Verdict</th></tr></thead>
+    <tbody id="scorecard"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
   </table>
 
   <h2>By category</h2>
@@ -234,6 +246,29 @@
         labels.appendChild(lab);
       }
     }
+
+    const VERDICTS = {
+      beats_market: ['beats market', 'v-good'],
+      below_market: ['below market — no edge', 'v-bad'],
+      no_edge_yet: ['no demonstrated edge', 'v-flat'],
+      insufficient_data: ['insufficient data', 'v-thin'],
+    };
+
+    fetch('/api/scorecard')
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(data => {
+        const tb = $('scorecard');
+        if (!data.sources.length) {
+          tb.innerHTML = '<tr><td colspan="6" class="muted">no external or model signals scored yet — POST /api/signals to enter the arena</td></tr>';
+          return;
+        }
+        tb.innerHTML = data.sources.map(s => {
+          const [label, cls] = VERDICTS[s.verdict] || [s.verdict, 'v-thin'];
+          const edge = s.edge > 0 ? '+' + s.edge.toFixed(3) : s.edge.toFixed(3);
+          return `<tr><td>${esc(s.source)}</td><td class="num">${s.n}</td><td class="num">${s.brier_model.toFixed(3)}</td><td class="num">${s.brier_market.toFixed(3)}</td><td class="num">${edge}</td><td><span class="verdict ${cls}">${label}</span></td></tr>`;
+        }).join('');
+      })
+      .catch(() => { $('scorecard').innerHTML = '<tr><td colspan="6" class="muted">unavailable</td></tr>'; });
 
     fetch('/api/accuracy')
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })

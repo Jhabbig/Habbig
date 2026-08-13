@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import re
@@ -68,10 +69,10 @@ if not _sso_secret:
 
 @app.middleware("http")
 async def security_and_auth(request: Request, call_next):
-    if request.url.path != "/healthz":
+    if request.url.path not in ("/healthz", "/api/signals"):
         if _sso_secret:
             client_secret = request.headers.get("x-gateway-secret", "")
-            if not hmac.compare_digest(client_secret, _sso_secret):
+            if not hmac.compare_digest(client_secret.encode(), _sso_secret.encode()):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
         elif not _DEV_MODE:
             return JSONResponse({"error": "Service misconfigured"}, status_code=503)
@@ -510,6 +511,111 @@ def api_disagreements():
         return matching.disagreements(conn)
     finally:
         conn.close()
+
+
+_RESERVED_SOURCES = frozenset({"market_baseline", "calibrated", "llm", "weather", "fed_implied", "weather_model", "fed_model", "market"})
+_SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{2,39}$")
+
+
+@app.post("/api/signals")
+async def api_signals(request: Request):
+    """External predictors (stock models, social-signal tools, ...) push
+    probabilities here. Every signal is logged into the calibration ledger
+    and scored against outcomes — the scorecard settles whether the source
+    has edge. Auth: Bearer FORECAST_SIGNALS_TOKEN (machine-to-machine)."""
+    token = os.environ.get("FORECAST_SIGNALS_TOKEN", "")
+    if not token:
+        return JSONResponse({"error": "signals API disabled — set FORECAST_SIGNALS_TOKEN"}, status_code=503)
+    header = request.headers.get("authorization") or ""
+    if not header.startswith("Bearer "):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    # Bytes compare: hmac.compare_digest raises on non-ASCII str input, which
+    # would turn a garbage header into a 500 instead of a 401.
+    if not hmac.compare_digest(header[len("Bearer "):].encode(), token.encode()):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+
+    source = str(body.get("source") or "").lower()
+    if not _SOURCE_RE.match(source) or source in _RESERVED_SOURCES:
+        raise HTTPException(status_code=400, detail="source must match ^[a-z0-9][a-z0-9_-]{2,39}$ and not be a reserved name")
+    try:
+        prob = float(body.get("probability"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="probability must be a number")
+    if not 0.0 < prob < 1.0:
+        raise HTTPException(status_code=400, detail="probability must be strictly between 0 and 1")
+
+    conn = db.get_conn()
+    try:
+        uid = body.get("market_uid")
+        if uid:
+            market = db.get_market(conn, uid)
+            if market is None:
+                raise HTTPException(status_code=404, detail="unknown market_uid")
+        else:
+            question = (body.get("question") or "").strip()
+            if not 5 <= len(question) <= 300:
+                raise HTTPException(status_code=400, detail="provide market_uid, or a question of 5-300 chars")
+            uid = db.create_custom_market(conn, question, body.get("end_date"))
+            market = db.get_market(conn, uid)
+
+        meta = body.get("meta")
+        if meta is not None and len(json.dumps(meta)) > 4096:
+            raise HTTPException(status_code=413, detail="meta too large (4KB max, serialized)")
+        db.insert_model_prob(
+            conn,
+            {
+                "market_uid": uid,
+                "source": source,
+                "model_prob": round(prob, 4),
+                "prob_method": "external",
+                "detail": json.dumps({"meta": meta} if meta is not None else {}),
+            },
+        )
+        snap = db.latest_snapshot(conn, uid)
+        db.log_calibration_row(
+            conn,
+            {
+                "market_uid": uid,
+                "platform": market.get("venue"),
+                "category": market.get("category"),
+                "target_date": market.get("end_date"),
+                "source": source,
+                "model_prob": round(prob, 4),
+                "market_prob": snap.get("baseline_prob") if snap else None,
+                "displayed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "prob_method": "external",
+            },
+        )
+        scored = bool(snap and snap.get("baseline_prob") is not None)
+        return {"status": "logged", "uid": uid, "source": source, "probability": round(prob, 4), "scored_against_market": scored}
+    finally:
+        conn.close()
+
+
+def _verdict(row: dict) -> str:
+    if row["n"] < 30 or row["se"] is None:
+        return "insufficient_data"
+    if row["edge"] > 2 * row["se"]:
+        return "beats_market"
+    if row["edge"] < -2 * row["se"]:
+        return "below_market"
+    return "no_edge_yet"
+
+
+@app.get("/api/scorecard")
+def api_scorecard():
+    conn = db.get_conn()
+    try:
+        rows = db.source_scorecard(conn)
+    finally:
+        conn.close()
+    for r in rows:
+        r["verdict"] = _verdict(r)
+    return {"sources": rows, "verdict_rule": "beats_market / below_market require |edge| > 2 SE over >= 30 paired resolutions; anything else is unproven"}
 
 
 @app.get("/api/accuracy")
