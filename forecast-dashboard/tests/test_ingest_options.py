@@ -478,3 +478,125 @@ def test_direction_row_resolves_strictly_greater(conn, monkeypatch):
     # ladder kind keeps >= semantics at the same boundary
     cvid = f"TST-{expiry.strftime('%Y%m%d')}-C100.84"
     assert _run(resolver._options_outcome(FakeClient(100.84), cvid)) == 1
+
+
+# ── CBOE fallback ────────────────────────────────────────────────────────────
+
+
+def test_parse_occ():
+    assert ingest_options.parse_occ("AAPL260814C00110000", "AAPL") == (date(2026, 8, 14), "C", 110.0)
+    assert ingest_options.parse_occ("SPY260813P00082500", "SPY") == (date(2026, 8, 13), "P", 82.5)
+    assert ingest_options.parse_occ("AAPL1260814C00110000", "AAPL") is None  # adjusted root
+    assert ingest_options.parse_occ("AAPL260814C00110000", "SPY") is None  # wrong symbol
+    assert ingest_options.parse_occ("AAPL260814X00110000", "AAPL") is None  # bad kind
+    assert ingest_options.parse_occ("AAPL26081C00110000", "AAPL") is None  # short date
+    assert ingest_options.parse_occ("", "AAPL") is None
+
+
+def _cboe_option(symbol, expiry, kind, strike, iv=0.2, oi=500, volume=100, bid=2.0, ask=2.2):
+    occ = f"{symbol}{expiry.strftime('%y%m%d')}{kind}{int(round(strike * 1000)):08d}"
+    return {"option": occ, "iv": iv, "open_interest": oi, "volume": volume, "bid": bid, "ask": ask}
+
+
+def _cboe_payload(symbol, spot, prev_close, options):
+    return {"data": {"symbol": symbol, "current_price": spot, "prev_day_close": prev_close, "options": options}}
+
+
+def test_cboe_fallback_when_yahoo_throttled(monkeypatch):
+    expiry = (_utcnow() + timedelta(days=3)).date()
+    far = (_utcnow() + timedelta(days=200)).date()
+    opts = [
+        _cboe_option("TST", expiry, "C", 100.0),
+        _cboe_option("TST", expiry, "C", 105.0),
+        _cboe_option("TST", expiry, "P", 95.0),  # puts ignored
+        _cboe_option("TST", far, "C", 100.0),  # beyond horizon
+    ]
+
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if "cdn.cboe.com" in str(request.url):
+            return httpx.Response(200, json=_cboe_payload("TST", 102.0, 101.5, opts))
+        return httpx.Response(429)
+
+    _patch_transport(monkeypatch, handler)
+    monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "TST")
+    import time as _time
+
+    ingest_options._throttled_until[0] = _time.time() + 3600  # Yahoo banned
+
+    rows = _run(ingest_options.fetch_horizon(7))
+    assert rows, "CBOE fallback produced no rows"
+    assert all("cdn.cboe.com" in u for u in calls), "Yahoo was contacted while throttled"
+    assert ingest_options.is_direction(rows[0]["venue_id"])  # direction row leads
+    assert rows[0]["venue_id"] == f"TST-{expiry.strftime('%Y%m%d')}-D101.5"  # anchored at prev close
+    ladder_ids = {r["venue_id"] for r in rows[1:]}
+    assert f"TST-{expiry.strftime('%Y%m%d')}-C100" in ladder_ids
+    assert f"TST-{expiry.strftime('%Y%m%d')}-C105" in ladder_ids
+    assert not any(far.strftime("%Y%m%d") in vid for vid in ladder_ids)  # horizon respected
+    for r in rows:
+        assert 0.0 < r["last_price"] < 1.0
+    ingest_options._throttled_until[0] = 0.0
+
+
+def test_cboe_fallback_http_error_skips_symbol(monkeypatch):
+    def handler(request):
+        return httpx.Response(503)
+
+    _patch_transport(monkeypatch, handler)
+    monkeypatch.setenv("FORECAST_EQUITY_WATCHLIST", "TST")
+    import time as _time
+
+    ingest_options._throttled_until[0] = _time.time() + 3600
+    assert _run(ingest_options.fetch_horizon(7)) == []
+    ingest_options._throttled_until[0] = 0.0
+
+
+class FakeCboeResolverClient:
+    """Yahoo chart 429s; CBOE serves the underlying quote."""
+
+    def __init__(self, close, last_trade_time):
+        self.close = close
+        self.last_trade_time = last_trade_time
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, params=None, headers=None):
+        self.calls.append(url)
+        if "cboe.com" in url:
+            return _Resp({"data": {"close": self.close, "last_trade_time": self.last_trade_time}})
+        return _Resp({}, 429)
+
+
+def test_resolver_falls_back_to_cboe_close(conn, monkeypatch):
+    expiry = _past_expiry(days_ago=1)
+    ds = expiry.strftime("%Y%m%d")
+    end = f"{expiry.isoformat()}T21:00:00Z"
+    uid = db.upsert_market(conn, _options_market(f"TSTA-{ds}-C100", end))
+
+    client = FakeCboeResolverClient(close=105.0, last_trade_time=f"{expiry.isoformat()}T16:00:00")
+    monkeypatch.setattr(resolver, "_make_client", lambda: client)
+    n = _run(resolver.resolve_pending(conn))
+    assert n == 1
+    assert db.get_market(conn, uid)["outcome"] == 1
+
+
+def test_resolver_cboe_stale_trade_date_stays_pending(conn, monkeypatch):
+    expiry = _past_expiry(days_ago=3)
+    ds = expiry.strftime("%Y%m%d")
+    end = f"{expiry.isoformat()}T21:00:00Z"
+    uid = db.upsert_market(conn, _options_market(f"TSTA-{ds}-C100", end))
+
+    # CBOE already shows a newer session -> its close is the wrong day's.
+    newer = (_utcnow() - timedelta(days=1)).date()
+    client = FakeCboeResolverClient(close=105.0, last_trade_time=f"{newer.isoformat()}T16:00:00")
+    monkeypatch.setattr(resolver, "_make_client", lambda: client)
+    n = _run(resolver.resolve_pending(conn))
+    assert n == 0
+    assert db.get_market(conn, uid)["resolved"] == 0

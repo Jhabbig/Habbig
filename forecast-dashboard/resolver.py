@@ -19,7 +19,10 @@ are deleted, never backfilled, and the market is deactivated unscored.
 Options (self-issued markets from ingest_options): venue_id encodes symbol,
 expiry, and strike; the official close for the expiry date comes from the
 Yahoo daily chart API and the market resolves close >= strike. Left pending
-until that day's bar exists.
+until that day's bar exists. When Yahoo is banned (per-IP 429s lasting
+days), CBOE delayed quotes serve as fallback — but only while the
+underlying's last_trade_time still carries the expiry date, since that
+endpoint has no history.
 
 Manifold: GET /v0/market/<id> -> isResolved with resolution YES/NO/MKT/CANCEL.
 YES/NO score normally. MKT (resolved to a probability) rounds
@@ -52,6 +55,7 @@ KALSHI_MARKET_URL = "https://api.elections.kalshi.com/trade-api/v2/markets/{tick
 MANIFOLD_MARKET_URL = "https://api.manifold.markets/v0/market/{market_id}"
 METACULUS_QUESTION_URL = "https://www.metaculus.com/api2/questions/{qid}/"
 YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+CBOE_QUOTES_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
 # Yahoo blocks non-browser UAs on some edges (see models_fed.py).
 _YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -129,23 +133,20 @@ async def _kalshi_outcome(client: httpx.AsyncClient, venue_id: str) -> int | Non
     return None
 
 
-async def _options_outcome(client: httpx.AsyncClient, venue_id: str) -> int | None:
-    parsed = ingest_options.parse_venue_id(venue_id)
-    if not parsed:
-        return None
-    symbol, expiry, strike = parsed
-    close_dt = datetime(expiry.year, expiry.month, expiry.day, ingest_options.CLOSE_HOUR_UTC, tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) < close_dt + timedelta(hours=GRACE_HOURS):
-        return None
+async def _yahoo_daily_close(client: httpx.AsyncClient, symbol: str, expiry) -> float | None:
     day_start = datetime(expiry.year, expiry.month, expiry.day, tzinfo=timezone.utc)
     params = {
         "period1": int((day_start - timedelta(days=1)).timestamp()),
         "period2": int((day_start + timedelta(days=2)).timestamp()),
         "interval": "1d",
     }
-    resp = await client.get(YAHOO_CHART_URL.format(symbol=symbol), params=params, headers=_YAHOO_HEADERS)
-    resp.raise_for_status()
-    results = ((resp.json() or {}).get("chart") or {}).get("result") or []
+    try:
+        resp = await client.get(YAHOO_CHART_URL.format(symbol=symbol), params=params, headers=_YAHOO_HEADERS)
+        resp.raise_for_status()
+        results = ((resp.json() or {}).get("chart") or {}).get("result") or []
+    except Exception as e:
+        log.warning("options: Yahoo chart failed for %s: %s", symbol, e)
+        return None
     if not results or not isinstance(results[0], dict):
         return None
     result = results[0]
@@ -158,11 +159,59 @@ async def _options_outcome(client: httpx.AsyncClient, venue_id: str) -> int | No
         if close is None:
             continue
         if datetime.fromtimestamp(ts, tz=timezone.utc).date() == expiry:
-            if ingest_options.is_direction(venue_id):
-                # "ends UP" excludes a flat close: strictly greater.
-                return 1 if float(close) > strike else 0
-            return 1 if float(close) >= strike else 0
+            try:
+                return float(close)
+            except (TypeError, ValueError):
+                return None
     return None
+
+
+async def _cboe_expiry_close(client: httpx.AsyncClient, symbol: str, expiry) -> float | None:
+    """Expiry-day close via CBOE delayed quotes (keyless, no history).
+
+    Only trusted while the underlying's last_trade_time still carries the
+    expiry date — i.e. between that session's close and the next session's
+    first print. With the resolver passing every few minutes that window is
+    hit reliably; outside it the market simply stays pending for Yahoo."""
+    try:
+        resp = await client.get(CBOE_QUOTES_URL.format(symbol=symbol))
+        if resp.status_code != 200:
+            return None
+        data = (resp.json() or {}).get("data") or {}
+    except Exception as e:
+        log.warning("options: CBOE quote failed for %s: %s", symbol, e)
+        return None
+    ltt = str(data.get("last_trade_time") or "")
+    try:
+        traded = datetime.strptime(ltt[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    if traded != expiry:
+        return None
+    try:
+        close = float(data.get("close"))
+    except (TypeError, ValueError):
+        return None
+    return close if close > 0 else None
+
+
+async def _options_outcome(client: httpx.AsyncClient, venue_id: str) -> int | None:
+    parsed = ingest_options.parse_venue_id(venue_id)
+    if not parsed:
+        return None
+    symbol, expiry, strike = parsed
+    close_dt = datetime(expiry.year, expiry.month, expiry.day, ingest_options.CLOSE_HOUR_UTC, tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) < close_dt + timedelta(hours=GRACE_HOURS):
+        return None
+    close = await _yahoo_daily_close(client, symbol, expiry)
+    if close is None:
+        close = await _cboe_expiry_close(client, symbol, expiry)
+    if close is None:
+        return None
+    if ingest_options.is_direction(venue_id):
+        # "ends UP" excludes a flat close: strictly greater.
+        return 1 if close > strike else 0
+    return 1 if close >= strike else 0
 
 
 async def _manifold_settlement(client: httpx.AsyncClient, venue_id: str) -> tuple[str, int | None] | None:

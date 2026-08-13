@@ -22,6 +22,11 @@ Implementation notes:
   Some Yahoo edges demand a cookie+crumb pair; on 401/403 we do the standard
   dance once per cycle (fc.yahoo.com sets the cookie, /v1/test/getcrumb
   returns the crumb) and retry with ?crumb=.
+- When Yahoo is unavailable (its per-IP 429 bans last days), chains fall
+  back to CBOE's keyless delayed-quotes JSON, which returns every expiry in
+  one response with per-contract iv/open_interest/bid/ask. Contracts are
+  OCC-coded (AAPL260814C00110000); only roots that exactly match the symbol
+  are used, so adjusted/weekly roots never masquerade as the underlying.
 - r = 0.04 constant: a short-rate proxy — at day-to-week horizons the rate
   term moves d2 by well under a probability point, so precision is wasted.
 - end_date = expiry date 21:00:00Z approximates the 16:00 ET close (exact
@@ -55,6 +60,7 @@ OPTIONS_URLS = (
 )
 COOKIE_URL = "https://fc.yahoo.com/"
 CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+CBOE_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
 
 TIMEOUT = 20.0
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -133,6 +139,25 @@ def parse_venue_id(venue_id: str) -> tuple[str, date, float] | None:
 def is_direction(venue_id: str) -> bool:
     parts = (venue_id or "").split("-")
     return bool(parts) and parts[-1].startswith("D")
+
+
+def parse_occ(occ: str, symbol: str) -> tuple[date, str, float] | None:
+    """'AAPL260814C00110000' -> (date(2026,8,14), 'C', 110.0) for symbol AAPL.
+
+    The root must equal the symbol exactly — adjusted contracts (AAPL1) and
+    other roots on the same underlying are rejected rather than mispriced.
+    Strike is OCC dollars*1000 in the trailing 8 digits."""
+    if not occ or not occ.startswith(symbol):
+        return None
+    body = occ[len(symbol) :]
+    if len(body) != 15 or body[6] not in ("C", "P"):
+        return None
+    try:
+        expiry = datetime.strptime(body[:6], "%y%m%d").date()
+        strike = int(body[7:]) / 1000.0
+    except ValueError:
+        return None
+    return expiry, body[6], strike
 
 
 # ── chain -> rows ────────────────────────────────────────────────────────────
@@ -270,6 +295,64 @@ def _expiry_rows(symbol: str, spot: float, expiry_epoch: int, calls: list[dict],
     return rows
 
 
+# ── CBOE fallback ────────────────────────────────────────────────────────────
+
+
+async def _cboe_symbol_rows(client: httpx.AsyncClient, symbol: str, now_ts: float, max_ts: float) -> list[dict]:
+    """Chain rows from CBOE delayed quotes — every expiry arrives in one
+    response, so this is a single request per symbol."""
+    try:
+        resp = await client.get(CBOE_URL.format(symbol=symbol))
+        if resp.status_code != 200:
+            return []
+        data = (resp.json() or {}).get("data") or {}
+    except Exception as e:
+        log.warning("options: CBOE fetch failed for %s: %s", symbol, e)
+        return []
+    spot = _to_float(data.get("current_price"))
+    if spot is None or spot <= 0:
+        return []
+    ref = _to_float(data.get("prev_day_close")) or spot
+
+    by_expiry: dict[date, list[dict]] = {}
+    for o in data.get("options") or []:
+        if not isinstance(o, dict):
+            continue
+        parsed = parse_occ(o.get("option") or "", symbol)
+        if not parsed:
+            continue
+        expiry, kind, strike = parsed
+        if kind != "C":
+            continue
+        by_expiry.setdefault(expiry, []).append(
+            {
+                "strike": strike,
+                "impliedVolatility": o.get("iv"),
+                "openInterest": o.get("open_interest"),
+                "bid": o.get("bid"),
+                "ask": o.get("ask"),
+                "volume": o.get("volume"),
+            }
+        )
+    if not by_expiry:
+        return []
+
+    epochs = {e: int(datetime(e.year, e.month, e.day, tzinfo=timezone.utc).timestamp()) for e in by_expiry}
+    inside = sorted(e for e in by_expiry if now_ts < epochs[e] <= max_ts)
+    selected = inside[:MAX_EXPIRIES_PER_SYMBOL]
+    if not selected:
+        selected = sorted(e for e in by_expiry if epochs[e] > now_ts)[:1]
+
+    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    rows: list[dict] = []
+    for e in selected:
+        rows.extend(_expiry_rows(symbol, spot, epochs[e], by_expiry[e], now_dt, ref=ref))
+    rows.sort(key=lambda r: 0 if is_direction(r["venue_id"]) else 1)
+    if rows:
+        log.info("options: %s served from CBOE fallback (%d rows)", symbol, len(rows))
+    return rows
+
+
 # ── Yahoo fetch ──────────────────────────────────────────────────────────────
 
 
@@ -341,8 +424,10 @@ async def _fetch_chain(client: httpx.AsyncClient, symbol: str, state: dict, date
 async def _symbol_rows(client: httpx.AsyncClient, symbol: str, state: dict, now_ts: float, max_ts: float) -> list[dict]:
     chain = await _fetch_chain(client, symbol, state)
     if chain is None:
-        log.warning("options: no chain for %s; skipping", symbol)
-        return []
+        rows = await _cboe_symbol_rows(client, symbol, now_ts, max_ts)
+        if not rows:
+            log.warning("options: no chain for %s (yahoo+cboe); skipping", symbol)
+        return rows
     quote = chain.get("quote") or {}
     spot = _to_float(quote.get("regularMarketPrice"))
     if spot is None or spot <= 0:
