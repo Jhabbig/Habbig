@@ -196,6 +196,7 @@ async def run_pipeline() -> dict:
             )
             trade_filter = TradeFilter()
             opened_trades = []
+            ranked_pairs = []
             for pred in unscore_result.all():
                 try:
                     spr_result = await session.exec(select(SourcePredictionRecord).where(SourcePredictionRecord.prediction_id == pred.id))
@@ -206,6 +207,7 @@ async def run_pipeline() -> dict:
                         source = src_result.first()
                     rank_prediction(pred, source)
                     session.add(pred)
+                    ranked_pairs.append((pred, source))
                     # Now that the prediction has an EV score and risk flags, decide whether
                     # it qualifies as a paper-trade entry. Stake is fixed at $1/signal.
                     if spr is not None:
@@ -216,6 +218,14 @@ async def run_pipeline() -> dict:
                     logger.warning("Rank/open failed for prediction %s: %s", pred.id, exc)
             stats["paper_trades_opened"] = len(opened_trades)
             await session.commit()
+            # Stage 3: fuse every freshly ranked prediction (credibility × metrics
+            # × market) through the Prediction Engine. Best-effort — the audit
+            # trail this writes is what feeds the replay/calibration loop.
+            try:
+                from app.engine.ingest import fuse_ranked_predictions
+                stats["stage3_fused"] = await fuse_ranked_predictions(ranked_pairs)
+            except Exception as exc:
+                logger.warning("Stage-3 fusion pass failed: %s", exc)
             # Fan-out alerts after commit so we never notify about a trade that
             # rolled back. Best-effort — failures are logged, not raised.
             if opened_trades:

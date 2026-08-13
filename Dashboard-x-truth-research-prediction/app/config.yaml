@@ -101,6 +101,7 @@ engine:
     max_entries: 50000
   model_tiers:                   # per job-class model routing; edit + save = live, no redeploy
     interactive: claude-opus-4-8
+    pipeline: claude-haiku-4-5
     batch: claude-haiku-4-5
     replay: claude-haiku-4-5
     default: claude-haiku-4-5

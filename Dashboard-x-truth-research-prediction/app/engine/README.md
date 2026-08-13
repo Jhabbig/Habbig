@@ -145,6 +145,7 @@ accounts carry defamation/profiling risk — they stay internal
 | `metrics.py` | Latency percentiles, cache/degraded rates, tier mix, token + $ accounting, cost alert. |
 | `audit.py` | Non-blocking batched writer into `fusion_audit`. |
 | `service.py` | `PredictionEngine.predict` orchestrator + pure `compute_prediction`. |
+| `ingest.py` | Internal-queue path: maps the scheduler's ranked predictions onto EngineJobs (job class `pipeline`) so every scraped signal flows through Stage 3 and feeds the replay loop. |
 | `batch.py` | Message Batches queue for non-interactive extraction. |
 | `replay.py` | Grading, replay/calibration reporting, cost readout aggregate. |
 | `api.py` | `/api/v1/engine/*` router (auth injected in `app/main.py`). |
