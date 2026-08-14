@@ -668,6 +668,13 @@ def _init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ttp_condition ON top_trader_positions(condition_id);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ttp_wallet ON top_trader_positions(wallet);")
 
+        # sports_market_snapshots gains one row per outcome per poll cycle
+        # (down to every 15s near game time) and is queried on hot paths by
+        # time range (_compute_edge_trends, _detect_steam_moves) and by
+        # (sport, event, outcome, time) point lookups (CLV / closing lines).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_time ON sports_market_snapshots(snapshot_at);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_lookup ON sports_market_snapshots(sport, event_name, outcome, snapshot_at);")
+
 
 _init_db()
 
@@ -2613,13 +2620,34 @@ def is_comparable_market(question: str) -> bool:
 
 
 def _parse_iso_utc(s: str) -> datetime | None:
-    """Parse an ISO-8601 timestamp into a UTC-aware datetime, or None."""
+    """Parse an ISO-8601 timestamp into a UTC-aware datetime, or None.
+
+    Columns populated by SQLite's datetime('now') store naive UTC strings
+    ('YYYY-MM-DD HH:MM:SS'); attach UTC to those so the result is ALWAYS
+    aware and can be compared/subtracted against API timestamps that
+    carry 'Z' or an offset without raising TypeError.
+    """
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _sqlite_ts(dt: datetime) -> str:
+    """Format a datetime as SQLite's datetime('now') text format
+    ('YYYY-MM-DD HH:MM:SS', UTC).
+
+    Columns with a datetime('now') default store that exact format, so
+    boundary values compared against them lexicographically MUST use it
+    too. datetime.isoformat() uses a 'T' separator, which sorts above
+    space and silently breaks same-day comparisons.
+    """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Time window for matching: a Polymarket market resolving more than this long
@@ -2828,6 +2856,7 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
                         kalshi_match = km
 
         # Now compare outcomes
+        ev_market_type = event.get("market_type", "h2h")
         outcome_comparisons = []
         for outcome_name, odds_data in event["sharp_outcomes"].items():
             odds_prob = odds_data["implied_prob"]
@@ -2839,8 +2868,26 @@ def match_and_compare(odds_events: list[dict], poly_markets: list[dict], kalshi_
             poly_token_id = None
             norm_outcome = normalize_name(outcome_name)
 
+            # Spread/total prices are only comparable to a Polymarket market
+            # that encodes the SAME line. A bare team-name outcome on
+            # Polymarket is a MONEYLINE price — a spread label like
+            # "Kansas City Chiefs -7.5" substring-matches it and the cover
+            # probability (~50%) vs the win probability manufactures a large
+            # phantom divergence. Require the book's point value to appear
+            # in the Polymarket outcome/question before matching.
+            point_re = None
+            if ev_market_type in ("spreads", "totals"):
+                point = odds_data.get("point")
+                if point is None:
+                    continue
+                point_txt = re.escape(f"{abs(float(point)):g}")
+                point_re = re.compile(rf"(?<![\d.]){point_txt}(?![\d.])")
+
             for pk, pv in best_match["outcomes"].items():
                 norm_pk = normalize_name(pk)
+                if point_re is not None and not point_re.search(
+                        f"{norm_pk} {best_match['market_question'].lower()}"):
+                    continue
                 score = fuzz.ratio(norm_outcome, norm_pk)
                 if score > 75 or (len(norm_outcome) > 3 and norm_outcome in norm_pk) or (len(norm_pk) > 3 and norm_pk in norm_outcome):
                     poly_prob = pv["implied_prob"]
@@ -3285,7 +3332,8 @@ def compare_outrights(outright_odds: dict, poly_markets: list[dict]) -> list[dic
 
 def _save_edge_history(sport: str, comparisons: list[dict]):
     """Save edge signals to sports_edge_history table, deduplicating within 24h."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    # detected_at defaults to datetime('now') — format the cutoff to match.
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(hours=24))
     with _get_db() as conn:
         for comp in comparisons:
             for oc in comp.get("outcomes", []):
@@ -3363,7 +3411,7 @@ def _compute_clv(sport: str | None = None, days: int = 30) -> dict:
     where direction = +1 if we bet YES on Polymarket (divergence > 0),
     -1 otherwise.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=days))
     with _get_db() as conn:
         if sport:
             rows = conn.execute(
@@ -3389,11 +3437,16 @@ def _compute_clv(sport: str | None = None, days: int = 30) -> dict:
             close_cutoff = r["commence_time"] or r["detected_at"]
             if not close_cutoff:
                 continue
+            # snapshot_at is sqlite format ('YYYY-MM-DD HH:MM:SS') while
+            # commence_time is Odds-API ISO ('...T...Z'). Normalize both
+            # sides via datetime() — a raw lexicographic <= would let every
+            # same-day snapshot (including in-game ones) count as "closing".
             snap = conn.execute(
                 """SELECT poly_prob FROM sports_market_snapshots
                    WHERE sport = ? AND event_name = ? AND outcome = ?
-                         AND snapshot_at <= ? AND snapshot_at >= ?
-                   ORDER BY snapshot_at DESC LIMIT 1""",
+                         AND datetime(snapshot_at) <= datetime(?)
+                         AND datetime(snapshot_at) >= datetime(?)
+                   ORDER BY datetime(snapshot_at) DESC LIMIT 1""",
                 (r["sport"], event_name, r["outcome"], close_cutoff, r["detected_at"]),
             ).fetchone()
             if not snap or snap["poly_prob"] is None or r["poly_prob"] is None:
@@ -3438,7 +3491,7 @@ def _compute_pnl_simulation(
     Returns total PnL, win rate, Sharpe (per-bet, sqrt(N) annualization),
     max drawdown, and the per-bet equity curve.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=days))
     params: list = [cutoff, threshold_pp]
     sql = """SELECT detected_at, sport, divergence, poly_prob, resolution
              FROM sports_edge_history
@@ -3460,7 +3513,13 @@ def _compute_pnl_simulation(
         if poly <= 0 or poly >= 100:
             continue
         if r["resolution"] == "correct":
-            profit = stake * (100.0 / poly - 1.0)
+            # Positive divergence = we bought YES at poly_prob; negative =
+            # we bought NO at (100 - poly_prob). A winning NO bet pays the
+            # NO-side odds, not the YES-side odds.
+            if (r["divergence"] or 0) > 0:
+                profit = stake * (100.0 / poly - 1.0)
+            else:
+                profit = stake * (100.0 / (100.0 - poly) - 1.0)
         else:
             profit = -stake
         bets.append(profit)
@@ -3521,7 +3580,7 @@ def _compute_calibration(sport: str | None = None, days: int = 180) -> dict:
     the count, win rate, and the implied "expected" prob for a perfectly
     calibrated model (= mean sharp_prob in the bin / 100, capped to [0,1]).
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=days))
     params: list = [cutoff]
     sql = """SELECT divergence, sharp_prob, resolution
              FROM sports_edge_history
@@ -3615,7 +3674,7 @@ def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
     max_time_to_event_hours, require_sharp_consensus, require_not_stale,
     require_liquidity_ok.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=days))
     with _get_db() as conn:
         rows = conn.execute(
             """SELECT * FROM sports_edge_history
@@ -3642,7 +3701,13 @@ def _simulate_alert_rule(rule: dict, days: int, stake: float) -> dict:
         if poly <= 0 or poly >= 100:
             continue
         if row.get("resolution") == "correct":
-            profit = stake * (100.0 / poly - 1.0)
+            # Same payout convention as _compute_pnl_simulation: positive
+            # divergence bets YES at poly_prob, negative bets NO at
+            # (100 - poly_prob), and a winning bet pays that side's odds.
+            if (row.get("divergence") or 0) > 0:
+                profit = stake * (100.0 / poly - 1.0)
+            else:
+                profit = stake * (100.0 / (100.0 - poly) - 1.0)
         else:
             profit = -stake
         bets.append(profit)
@@ -3730,7 +3795,8 @@ def _detect_steam_moves(sport: str | None, hours: int = 24,
     """
     min_d = float(min_delta_pp if min_delta_pp is not None else STEAM_MIN_DELTA_PP)
     win = int(window_min if window_min is not None else STEAM_WINDOW_MINUTES)
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    # snapshot_at defaults to datetime('now') — format the cutoff to match.
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(hours=hours))
 
     where = ["snapshot_at >= ?", "book_prob IS NOT NULL"]
     params: list = [cutoff]
@@ -3838,7 +3904,7 @@ def _compute_closing_lines(sport: str | None, days: int = 7) -> list[dict]:
     is unknown for an event, we fall back to the latest snapshot in the
     window (best-effort).
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=days))
     where = ["s.snapshot_at >= ?"]
     params: list = [cutoff]
     if sport:
@@ -3945,21 +4011,31 @@ def _store_scores(sport_key: str, scores: list[dict]):
 
 
 def _auto_resolve_edges():
-    """Resolve unresolved edge_history entries against completed scores."""
+    """Resolve unresolved edge_history entries against completed scores.
+
+    Only h2h (moneyline) edges are auto-resolved: the game winner settles
+    a moneyline bet, but says nothing about spreads (margin vs the line),
+    totals (combined score vs the line), or futures. Those are left
+    unresolved rather than mislabeled against the moneyline winner.
+    """
     resolved_count = 0
     with _get_db() as conn:
-        # Get all completed scores from last 7 days
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        # Get all completed scores from last 7 days.
+        # fetched_at/detected_at default to datetime('now') — format the
+        # cutoff to match.
+        cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=7))
         scores = conn.execute(
             "SELECT * FROM sports_scores WHERE completed = 1 AND fetched_at >= ?", (cutoff,)
         ).fetchall()
+        # Key by sport too — team names are not unique across leagues, and a
+        # cross-sport fuzzy hit would resolve an edge against the wrong game.
         score_map = {}
         for sc in scores:
             sc = dict(sc)
-            key = (normalize_name(sc["home_team"]), normalize_name(sc["away_team"]))
+            key = (sc["sport"], normalize_name(sc["home_team"]), normalize_name(sc["away_team"]))
             score_map[key] = sc
             # Also index by reversed order
-            rev_key = (normalize_name(sc["away_team"]), normalize_name(sc["home_team"]))
+            rev_key = (sc["sport"], normalize_name(sc["away_team"]), normalize_name(sc["home_team"]))
             score_map[rev_key] = sc
 
         # Get unresolved edges from last 7 days
@@ -3969,18 +4045,28 @@ def _auto_resolve_edges():
 
         for edge in unresolved:
             edge = dict(edge)
+            if (edge.get("market_type") or "h2h") != "h2h":
+                continue
+            sport = edge.get("sport") or ""
             home_n = normalize_name(edge["home_team"])
             away_n = normalize_name(edge["away_team"])
-            score = score_map.get((home_n, away_n))
+            score = score_map.get((sport, home_n, away_n))
             if not score:
-                # Try fuzzy match. Use partial_ratio so abbreviations like
-                # "LA Rams" still match "Los Angeles Rams" (ratio is overly
-                # length-sensitive and would mark these as a miss).
-                for (sh, sa), sc_data in score_map.items():
-                    if (fuzz.partial_ratio(home_n, sh) > 85
-                            and fuzz.partial_ratio(away_n, sa) > 85):
-                        score = sc_data
-                        break
+                # Fuzzy fallback, constrained to the edge's sport. We use
+                # partial_ratio so abbreviation-style variants still match,
+                # but require a high score AND a unique candidate: substring
+                # hits ("kansas" in "arkansas" scores 100) and near-identical
+                # names ("manchester united" vs "manchester city" scores ~87)
+                # would otherwise match the wrong game.
+                candidates: dict[int, dict] = {}
+                for (ssport, sh, sa), sc_data in score_map.items():
+                    if ssport != sport:
+                        continue
+                    if (fuzz.partial_ratio(home_n, sh) > 90
+                            and fuzz.partial_ratio(away_n, sa) > 90):
+                        candidates[sc_data["id"]] = sc_data
+                if len(candidates) == 1:
+                    score = next(iter(candidates.values()))
             if not score:
                 continue
 
@@ -3989,26 +4075,36 @@ def _auto_resolve_edges():
             winner_name = normalize_name(score["winner"])
             divergence = edge["divergence"] or 0
 
+            # Skip edges we cannot positively classify (no recorded winner) so
+            # we don't mislabel them via the negative-divergence flip below.
+            if not winner_name:
+                continue
+
             # Draw/tie synonyms — treat "draw", "tie", and "x" as equivalent
             _draw_terms = {"draw", "tie", "x"}
             outcome_is_draw = outcome_name in _draw_terms
             winner_is_draw = winner_name in _draw_terms
 
-            # Match outcome name against the actual winner. partial_ratio so
-            # "LA Rams" vs "Los Angeles Rams" still matches; falling back to
-            # `ratio` would falsely mark this as "outcome did not win", which
-            # then flips to a phantom `is_correct=True` on negative divergence.
             if outcome_is_draw and winner_is_draw:
                 outcome_won = True
             elif outcome_is_draw or winner_is_draw:
                 outcome_won = False
             else:
-                outcome_won = fuzz.partial_ratio(outcome_name, winner_name) > 80
-
-            # Skip edges we cannot positively classify (no recorded winner) so
-            # we don't mislabel them via the negative-divergence flip below.
-            if not winner_name:
-                continue
+                # Resolve which team the outcome refers to by scoring it
+                # against BOTH teams, then compare that team to the winner.
+                # partial_ratio so "LA Rams" still matches "Los Angeles Rams";
+                # a direct fuzzy outcome-vs-winner check would let a losing
+                # "manchester united" outcome match a "manchester city" winner
+                # (~87 > 80) and be marked as having won.
+                home_team_n = normalize_name(score["home_team"])
+                away_team_n = normalize_name(score["away_team"])
+                h_sc = fuzz.partial_ratio(outcome_name, home_team_n)
+                a_sc = fuzz.partial_ratio(outcome_name, away_team_n)
+                if max(h_sc, a_sc) <= 80:
+                    # Outcome names neither team — cannot classify safely.
+                    continue
+                picked = home_team_n if h_sc >= a_sc else away_team_n
+                outcome_won = picked == winner_name
 
             if divergence > 0:
                 # We recommended this outcome — check if it won
@@ -5627,8 +5723,11 @@ def _compute_edge_trends(comparisons: list[dict]) -> dict:
     snapshots in a single query and group them in-memory.
     """
     trends = {}
-    cutoff_2h = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    # snapshot_at defaults to datetime('now') ('YYYY-MM-DD HH:MM:SS');
+    # format the cutoffs to match — an isoformat() cutoff ('T' separator)
+    # sorts above every same-day snapshot and empties the window.
+    cutoff_2h = _sqlite_ts(datetime.now(timezone.utc) - timedelta(hours=2))
+    cutoff_24h = _sqlite_ts(datetime.now(timezone.utc) - timedelta(hours=24))
 
     with _get_db() as conn:
         all_rows = conn.execute(
@@ -7116,12 +7215,38 @@ async def data_updater():
             pass
 
 
+SNAPSHOT_RETENTION_DAYS = 30
+
+
+def _prune_old_snapshots(retention_days: int = SNAPSHOT_RETENTION_DAYS) -> int:
+    """Delete market snapshots older than the retention window.
+
+    Without this, sports_market_snapshots grows without bound (one row per
+    outcome per poll cycle, every 15s near game time) and every range scan
+    over snapshot_at gets progressively slower. No consumer looks further
+    back than the CLV window, so rows past retention are dead weight.
+    """
+    cutoff = _sqlite_ts(datetime.now(timezone.utc) - timedelta(days=retention_days))
+    with _get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM sports_market_snapshots WHERE snapshot_at < ?", (cutoff,)
+        )
+        return cur.rowcount
+
+
 def _run_score_resolution(sport: str):
     """Fetch scores for a sport and auto-resolve edges."""
     scores = fetch_scores(sport)
     if scores:
         _store_scores(sport, scores)
     _auto_resolve_edges()
+    # Piggyback snapshot retention on the same ~30-min maintenance cadence.
+    try:
+        pruned = _prune_old_snapshots()
+        if pruned > 0:
+            print(f"Pruned {pruned} market snapshots older than {SNAPSHOT_RETENTION_DAYS}d", flush=True)
+    except Exception as prune_err:
+        print(f"Snapshot prune error: {prune_err}", flush=True)
 
 
 async def _background_multi_sport_scan():
@@ -7839,15 +7964,21 @@ def _compute_trade_clv(trade: dict) -> tuple[float | None, float | None]:
     outcome = trade.get("outcome") or ""
     sport = trade.get("sport") or ""
     commence = trade.get("commence_time") or trade.get("resolved_at") or ""
-    created = trade.get("created_at") or ""
+    # Missing created_at must not exclude every snapshot (datetime('') is
+    # NULL in SQLite) — fall back to the epoch as an open lower bound.
+    created = trade.get("created_at") or "1970-01-01 00:00:00"
     if not event_name or not outcome or not commence:
         return None, None
     with _get_db() as conn:
+        # snapshot_at is sqlite format while commence_time is ISO from the
+        # Odds API — normalize both sides via datetime() so same-day
+        # in-game snapshots can't lexicographically pass as "closing".
         row = conn.execute(
             """SELECT poly_prob FROM sports_market_snapshots
                WHERE sport = ? AND event_name = ? AND outcome = ?
-                     AND snapshot_at <= ? AND snapshot_at >= ?
-               ORDER BY snapshot_at DESC LIMIT 1""",
+                     AND datetime(snapshot_at) <= datetime(?)
+                     AND datetime(snapshot_at) >= datetime(?)
+               ORDER BY datetime(snapshot_at) DESC LIMIT 1""",
             (sport, event_name, outcome, commence, created),
         ).fetchone()
     if not row or row["poly_prob"] is None:
