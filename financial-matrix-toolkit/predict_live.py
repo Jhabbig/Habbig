@@ -49,14 +49,19 @@ def main():
 
     man = load_manifest()
     md = load_market_data(refresh=args.refresh)
-    # rebuild the CURRENT hybrid feature vector at the latest origin
-    origins, X, _ = build_tracks(md, man["window"], man["stride"], verbose=False)
+    # rebuild the CURRENT hybrid feature vector at the latest origin.
+    # ensure_last fits an extra origin at the newest feasible index (T-1) so the
+    # served features are never up to stride-1 days staler than the data end.
+    origins, X, _ = build_tracks(md, man["window"], man["stride"], verbose=False,
+                                 ensure_last=True)
     ctx = build_context(md, vol_window=5, med_window=63)
     Xraw = build_raw_at_origins(ctx, origins)
     Xhyb = np.concatenate([X, Xraw], axis=2)
     x_now = Xhyb[-1]            # (n_assets, k) - features as of the latest origin
     t_now = origins[-1]
-    asof = md.dates[t_now] if md.dates is not None else f"index {t_now}"
+    # the newest information in x_now is R[t_now], realised on price date
+    # t_now + 1, so that is the honest as-of date of the feature vector
+    asof = md.dates[t_now + 1] if md.dates is not None else f"index {t_now}"
 
     events = list(man["events"]) if args.event == "all" else [args.event]
     print(f"\n{_B}Live event probabilities - {md.n} assets, as of {asof} (source={md.source}){_X}")

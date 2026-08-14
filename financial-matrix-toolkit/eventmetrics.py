@@ -10,6 +10,8 @@ the metrics that actually matter:
     best_threshold     - operating point that maximises balanced accuracy / F1,
                          chosen ON TRAINING DATA ONLY then applied out-of-sample
     bootstrap_auc_ci   - 95% CI on AUC to test whether ranking skill is real
+    bootstrap_auc_ci_clustered - same, but resampling whole time-origin clusters
+                         (in moving blocks) for correlated panel predictions
 """
 
 from __future__ import annotations
@@ -112,6 +114,51 @@ def bootstrap_auc_ci(y_true, scores, n_boot: int = 500, seed: int = 42, alpha: f
     aucs = []
     for _ in range(n_boot):
         idx = rng.integers(0, n, n)
+        yi, si = y[idx], s[idx]
+        if len(np.unique(yi)) < 2:
+            continue
+        aucs.append(roc_auc(yi, si))
+    if not aucs:
+        return (float("nan"), float("nan"))
+    lo = float(np.percentile(aucs, 100 * alpha / 2))
+    hi = float(np.percentile(aucs, 100 * (1 - alpha / 2)))
+    return (lo, hi)
+
+
+def bootstrap_auc_ci_clustered(y_true, scores, groups, n_boot: int = 500, seed: int = 42,
+                               alpha: float = 0.05, block: int = 1):
+    """Cluster/moving-block bootstrap CI for AUC on panel predictions.
+
+    Pooled panel predictions are NOT i.i.d.: every asset observed at the same
+    time origin shares that day's market conditions, and nearby origins are
+    serially dependent, so resampling observations independently (as
+    ``bootstrap_auc_ci`` does) understates the CI width by up to
+    sqrt(cluster size). Here whole clusters -- ``groups`` gives the time-origin
+    id of each observation -- are resampled together, in moving blocks of
+    ``block`` consecutive origins (origin order = sorted group ids), mirroring
+    the block bootstrap used for the Sharpe test in backtest.py.
+
+    Returns (lo, hi); lo > 0.5 means the ranking skill is distinguishable from
+    chance under the panel's dependence structure.
+    """
+    y = np.asarray(y_true, dtype=float)
+    s = np.asarray(scores, dtype=float)
+    g = np.asarray(groups)
+    mask = np.isfinite(y) & np.isfinite(s)
+    y, s, g = y[mask], s[mask], g[mask]
+    if len(y) < 20 or len(np.unique(y)) < 2:
+        return (float("nan"), float("nan"))
+    uniq = np.unique(g)  # sorted ascending = time order for origin indices
+    idx_by_group = [np.where(g == u)[0] for u in uniq]
+    G = len(uniq)
+    block = int(max(1, min(block, G)))
+    n_blocks = int(np.ceil(G / block))
+    rng = np.random.default_rng(seed)
+    aucs = []
+    for _ in range(n_boot):
+        starts = rng.integers(0, G - block + 1, n_blocks)
+        take = np.concatenate([np.arange(st, st + block) for st in starts])[:G]
+        idx = np.concatenate([idx_by_group[j] for j in take])
         yi, si = y[idx], s[idx]
         if len(np.unique(yi)) < 2:
             continue

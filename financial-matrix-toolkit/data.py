@@ -303,18 +303,27 @@ def load_market_data(
         try:
             df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
             df = df[[t for t in tickers if t in df.columns]]
-            source = "cache"
-            # Cache may itself be synthetic; record that if marked.
-            return _build(df, source=source)
+            # Only real (yfinance-fetched) prices are ever written to this path;
+            # the synthetic fallback caches to its own file (step 3 below).
+            return _build(df, source="cache")
         except Exception as exc:
             logger.warning("Cache read failed (%s).", exc)
 
     # 3. synthetic fallback
     if allow_synthetic:
         logger.warning("Using SYNTHETIC data (no network, no cache). Results are illustrative.")
+        # Never write synthetic prices to ``cache_path``: that file is documented
+        # as cached REAL prices, and a later run would reload it with
+        # source="cache", silently presenting synthetic data as market data.
+        # Keep the fallback in its own clearly-named file (as force_synthetic
+        # does) so it is always reloaded with source="synthetic".
+        synth_cache = os.path.join(os.path.dirname(cache_path), "prices_synth_fallback.csv")
+        if os.path.exists(synth_cache) and not refresh:
+            df = pd.read_csv(synth_cache, index_col=0, parse_dates=True)
+            return _build(df, source="synthetic")
         df = generate_synthetic_prices(tickers, start=start)
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        df.to_csv(cache_path)
+        os.makedirs(os.path.dirname(synth_cache), exist_ok=True)
+        df.to_csv(synth_cache)
         return _build(df, source="synthetic")
 
     raise RuntimeError("No data available: network blocked, no cache, synthetic disabled.")

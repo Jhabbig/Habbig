@@ -271,9 +271,14 @@ class RidgeARVol(BaseModel):
         for a in range(n):
             X = self._features(var[:, a])
             y = var[:, a]
-            valid = np.arange(maxlag, T - 1)
+            # X[t] is the trailing mean ending at var[t-1], so pairing it with
+            # y[valid] = var[t] is the 1-step-ahead alignment -- the same one
+            # used at predict() time, where `last` (ending at var[T-1])
+            # forecasts var[T]. Pairing with y[valid + 1] would train a
+            # 2-step-ahead model and deploy it as a 1-step forecast.
+            valid = np.arange(maxlag, T)
             Xs.append(X[valid])
-            ys.append(y[valid + 1])  # predict next-day variance
+            ys.append(y[valid])  # predict next-day variance
             # feature row for forecasting one step past the end
             last = np.array([np.mean(var[T - L:, a]) for L in self.lags])
             last_feats.append(last)

@@ -40,7 +40,7 @@ from calibration import (
     fit_calibrator,
     reliability,
 )
-from eventmetrics import best_threshold, bootstrap_auc_ci, brier, prob_metrics
+from eventmetrics import best_threshold, bootstrap_auc_ci_clustered, brier, prob_metrics
 from predict_events import (
     EVENTS,
     build_context,
@@ -82,18 +82,26 @@ def _avg_offdiag(M):
     return float(np.nanmean(M[iu]))
 
 
-def build_tracks(md, window, stride, hmm_iter=25, verbose=True):
+def build_tracks(md, window, stride, hmm_iter=25, verbose=True, ensure_last=False):
     """Fit the stage-1 models at each origin and return the TRACK matrix.
 
     Returns origins (list of R-indices t), X (len(origins), n, k) track features,
     and the fitted final-window models (fit on the last window) for saving.
+
+    ``ensure_last`` additionally fits the newest feasible origin t = T-1 (the
+    last R-index with raw features available) when the stride grid stops short
+    of it. Without it the last origin can be up to ``stride - 1`` return-days
+    older than the data end, so live serving (predict_live.py) would compute
+    "today's" probabilities from stale features.
     """
     R = md.R
     T, n = R.shape
     origins, rows = [], []
     last_models = None
-    t = window
-    while t < T:
+    ts = list(range(window, T, stride))
+    if ensure_last and T - 1 >= window and (not ts or ts[-1] != T - 1):
+        ts.append(T - 1)
+    for t in ts:
         sub = slice_market_data(md, t - window, t)  # returns R[t-window:t], causal
         try:
             ewma = EWMAVolatility(0.94).fit(sub); es = ewma.state()
@@ -104,7 +112,6 @@ def build_tracks(md, window, stride, hmm_iter=25, verbose=True):
             dmd = DMDReturns(rank=5).fit(sub); dpred = np.atleast_2d(dmd.predict(1))[0]
         except Exception as exc:
             logger.warning("stage-1 fit failed at t=%d (%s); skipping origin.", t, exc)
-            t += stride
             continue
 
         # market-level scalars (same for all assets at this origin)
@@ -136,7 +143,6 @@ def build_tracks(md, window, stride, hmm_iter=25, verbose=True):
         last_models = dict(ewma=ewma, rc=rc, hmm=hmm, pca=pca, rmt=rmt, dmd=dmd)
         if verbose and len(origins) % 25 == 0:
             logger.info("stage-1 tracks: %d origins fit (t=%d/%d)", len(origins), t, T)
-        t += stride
     X = np.stack(rows, axis=0)  # (n_origins, n, k)
     return origins, X, last_models
 
@@ -169,7 +175,7 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         if t + horizon < S.shape[0]:
             lab[i] = S[t + horizon]
 
-    yt, yraw, ycal, ythr = [], [], [], []
+    yt, yraw, ycal, ythr, ygrp = [], [], [], [], []
     for i in range(n_orig):
         t_i = origins[i]
         # purge: only rows whose label was knowable before the test feature time
@@ -198,10 +204,11 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
             yraw.append(praw)
             ycal.append(apply_calibrator(cal, praw))
             ythr.append(np.full(valid.sum(), thr))
+            ygrp.append(np.full(valid.sum(), i))
     if not yt:
         return None
     y = np.concatenate(yt); p_raw = np.concatenate(yraw); p_cal = np.concatenate(ycal)
-    thr_arr = np.concatenate(ythr)
+    thr_arr = np.concatenate(ythr); grp = np.concatenate(ygrp)
     pred = (p_cal >= thr_arr).astype(float)
     m = prob_metrics(y, p_raw, threshold=0.5)           # AUC/AP from raw scores (rank-based)
     tuned = prob_metrics(y, pred, threshold=0.5)         # tuned-threshold operating point
@@ -211,7 +218,13 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["brier_raw"] = brier(y, p_raw); m["brier_cal"] = brier(y, p_cal)
     m["ece_raw"] = expected_calibration_error(y, p_raw)
     m["ece_cal"] = expected_calibration_error(y, p_cal)
-    lo, hi = bootstrap_auc_ci(y, p_raw)
+    # The pooled predictions are a correlated panel (all assets share each
+    # origin's market state, and origins only ``stride`` days apart are serially
+    # dependent), so an i.i.d. bootstrap would understate the CI by roughly
+    # sqrt(n_assets). Resample whole origins instead, in moving blocks long
+    # enough to cover the label-realisation lag (purge + horizon days).
+    block = int(max(1, np.ceil((purge + horizon) / max(stride, 1))))
+    lo, hi = bootstrap_auc_ci_clustered(y, p_raw, grp, block=block)
     m["auc_lo"], m["auc_hi"] = lo, hi
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
     return m
@@ -286,10 +299,20 @@ def train_and_save(md, origins, X, last_models, ctx, args):
         # train the FINAL readout on ALL rows (hybrid features) + a final calibrator; save
         w, mu, sd, fcal = _fit_final(Xhyb, origins, S, args.horizon, calibration=cal)
         importances = None
+        thr_final = hyb["threshold"]
         if w is not None:
+            # Tune the SERVING threshold on the final model's own calibrated
+            # training probabilities. The fold-mean threshold hyb["threshold"]
+            # belongs to the per-fold models/calibrators, whose probability
+            # distributions differ from the final refit's, so applying it to
+            # the saved model would serve an untuned operating point.
+            Xtr, ytr = _final_training_set(Xhyb, origins, S, args.horizon)
+            thr_final = float(best_threshold(
+                ytr, apply_calibrator(fcal, predict_proba_logistic(w, mu, sd, Xtr)),
+                metric="bal"))
             path = os.path.join(TRAINED_DIR, f"readout_{name}.npz")
             np.savez(path, w=w, mu=mu, sd=sd, feature_names=np.array(hyb_names),
-                     tuned_threshold=np.array(hyb["threshold"]),
+                     tuned_threshold=np.array(thr_final),
                      **calibrator_to_arrays(fcal))
             coef = np.abs(w[1:])
             order = np.argsort(coef)[::-1][:5]
@@ -309,7 +332,9 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "tuned_balanced_accuracy": round(hyb["bal_acc"], 4),
             "tuned_recall": round(hyb["recall"], 4),
             "tuned_f1": round(hyb["f1"], 4),
-            "tuned_threshold": round(hyb["threshold"], 4),
+            # serving threshold: tuned on the FINAL saved model (falls back to
+            # the fold-mean threshold when no final model could be fit)
+            "tuned_threshold": round(thr_final, 4),
             "track_auc": round(track["auc"], 4) if track else None,
             "raw_auc": round(raw["auc"], 4) if raw else None,
             "top_features": importances,
@@ -345,7 +370,8 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     print(f"  Trained readouts -> {os.path.relpath(TRAINED_DIR, _HERE)}/ (predict_live.py serves them).\n")
 
 
-def _fit_final(X, origins, S, horizon, calibration="platt"):
+def _final_training_set(X, origins, S, horizon):
+    """Pooled (features, labels) over every origin whose label has realised."""
     origins = np.asarray(origins)
     Xtr, ytr = [], []
     for i, t in enumerate(origins):
@@ -356,9 +382,13 @@ def _fit_final(X, origins, S, horizon, calibration="platt"):
         if m.any():
             Xtr.append(X[i][m]); ytr.append(lab[m])
     if not Xtr:
-        return None, None, None, None
-    Xtr = np.vstack(Xtr); ytr = np.concatenate(ytr)
-    if len(np.unique(ytr)) < 2:
+        return None, None
+    return np.vstack(Xtr), np.concatenate(ytr)
+
+
+def _fit_final(X, origins, S, horizon, calibration="platt"):
+    Xtr, ytr = _final_training_set(X, origins, S, horizon)
+    if Xtr is None or len(np.unique(ytr)) < 2:
         return None, None, None, None
     w, mu, sd = fit_logistic_weighted(Xtr, ytr, l2=1.0, lr=0.3, epochs=400)
     fcal = fit_calibrator(predict_proba_logistic(w, mu, sd, Xtr), ytr, method=calibration)
