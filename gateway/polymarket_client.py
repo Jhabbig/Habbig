@@ -266,10 +266,19 @@ async def get_trades(creds: dict) -> list:
 
 
 async def get_balance(creds: dict) -> dict:
-    """Allowance / balance info for the connected wallet."""
+    """Allowance / balance info for the connected wallet.
+
+    Note: py-clob-client's get_balance_allowance dereferences its params
+    argument unconditionally, so it must be called with explicit
+    COLLATERAL params — a bare call always raises. Returned amounts are
+    USDC base units (6 decimals); the caller converts to dollars.
+    """
     try:
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
         client = _build_clob_client(creds)
-        return await asyncio.to_thread(client.get_balance_allowance) or {}
+        params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        return await asyncio.to_thread(client.get_balance_allowance, params) or {}
     except Exception as exc:
         log.warning("get_balance failed: %s", exc)
         return {"error": str(exc)}

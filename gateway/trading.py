@@ -251,7 +251,10 @@ async def _kalshi_fills(creds: dict, limit: int) -> list[NormalizedFill]:
     raw = await kalshi.get_fills(creds, limit=limit)
     out: list[NormalizedFill] = []
     for f in raw:
-        price_cents = f.get("yes_price") or f.get("no_price") or 0
+        # Kalshi fills carry BOTH yes_price and no_price (complementary
+        # integers), so `yes or no` would price every NO fill at the YES
+        # price. Pick the side's own price.
+        price_cents = f.get("no_price") if f.get("side") == "no" else f.get("yes_price")
         out.append(NormalizedFill(
             platform="kalshi",
             external_id=f.get("ticker", ""),
@@ -321,8 +324,9 @@ async def get_balance(platform: str, creds: dict) -> NormalizedBalance:
         # py-clob-client returns allowances; the "available" USDC is in
         # the allowance data (structure varies by version).
         if isinstance(data, dict) and "error" not in data:
-            # Try common keys
-            avail = float(data.get("balance", 0) or data.get("allowance", 0) or 0)
+            # CLOB returns USDC base units (6 decimals), not dollars.
+            raw = float(data.get("balance", 0) or data.get("allowance", 0) or 0)
+            avail = raw / 1_000_000.0
             return NormalizedBalance(platform="polymarket", available_usd=round(avail, 2), total_usd=round(avail, 2))
         return NormalizedBalance(platform="polymarket", available_usd=0.0, total_usd=0.0)
     if platform == "alpaca":
@@ -353,15 +357,25 @@ async def get_mark_price(platform: str, external_id: str, token_or_side: str = "
         if not book:
             return None
         # Kalshi orderbook: {yes: [[price, qty], ...], no: [[price, qty], ...]}
+        # Levels are sorted ascending by price, so the BEST bid is the last
+        # element, not the first.
         yes_levels = book.get("orderbook", {}).get("yes", []) or book.get("yes", [])
         no_levels = book.get("orderbook", {}).get("no", []) or book.get("no", [])
-        if yes_levels:
-            best_yes = kalshi.normalize_price(yes_levels[0][0]) if yes_levels[0] else None
-            if best_yes is not None:
-                return best_yes
-        if no_levels:
-            best_no = kalshi.normalize_price(no_levels[0][0]) if no_levels[0] else None
-            if best_no is not None:
-                return round(1.0 - best_no, 4)
-        return None
+        best_yes = kalshi.normalize_price(yes_levels[-1][0]) if yes_levels and yes_levels[-1] else None
+        best_no = kalshi.normalize_price(no_levels[-1][0]) if no_levels and no_levels[-1] else None
+        # Yes-side mark: mid of best yes bid and implied yes ask (1 − best
+        # no bid); fall back to whichever side of the book exists.
+        if best_yes is not None and best_no is not None:
+            yes_mark = round((best_yes + (1.0 - best_no)) / 2.0, 4)
+        elif best_yes is not None:
+            yes_mark = best_yes
+        elif best_no is not None:
+            yes_mark = round(1.0 - best_no, 4)
+        else:
+            return None
+        # NO positions must be marked at the no-side price, or their PnL
+        # (qty × (mark − entry)) is computed against the wrong instrument.
+        if token_or_side == "no":
+            return round(1.0 - yes_mark, 4)
+        return yes_mark
     return None

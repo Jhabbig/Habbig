@@ -47,6 +47,16 @@ EXCLUDES=(
     "*.db"
     "*.db-wal"
     "*.db-shm"
+    # Server-side secret files generated at runtime (gitignored, never in the
+    # local checkout) — same failure mode as .env.production above: without
+    # these excludes rsync --delete destroys them on every deploy.
+    # crypto-dashboard/.secret_key is the Fernet key protecting users' stored
+    # trading credentials; losing it makes every encrypted credential
+    # permanently undecryptable.
+    ".secret_key"
+    ".encryption_key"
+    ".csrf_secret"
+    ".session_secret"
 )
 
 # Colors

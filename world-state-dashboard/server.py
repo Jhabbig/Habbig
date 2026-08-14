@@ -221,7 +221,9 @@ def _poly_is_political(market: dict) -> bool:
 def fetch_polymarket():
     now = time.time()
     with _cache_lock:
-        if POLYMARKET_CACHE["data"] and (now - POLYMARKET_CACHE["fetched_at"]) < POLYMARKET_CACHE_TTL:
+        # Serve within TTL even when data is empty: fetched_at marks the last
+        # *attempt*, so failed fetches back off instead of retrying per request.
+        if (now - POLYMARKET_CACHE["fetched_at"]) < POLYMARKET_CACHE_TTL:
             return POLYMARKET_CACHE["data"]
 
     results = []
@@ -304,9 +306,12 @@ def fetch_polymarket():
         print(f"[polymarket] fetch failed: {e}")
 
     with _cache_lock:
-        POLYMARKET_CACHE["data"] = results
+        # Keep the last good data when the fetch failed/came back empty;
+        # always stamp the attempt time so failures still back off for a TTL.
+        if results:
+            POLYMARKET_CACHE["data"] = results
         POLYMARKET_CACHE["fetched_at"] = now
-    return results
+        return POLYMARKET_CACHE["data"]
 
 
 # ── X / Twitter Intelligence Feed ────────────────────────────────────────────
@@ -482,7 +487,10 @@ def fetch_xfeed():
     """Fetch recent posts from key geopolitical figures on X."""
     now = time.time()
     with _cache_lock:
-        if XFEED_CACHE["data"] and (now - XFEED_CACHE["fetched_at"]) < XFEED_CACHE_TTL:
+        # Serve within TTL even when data is empty: fetched_at marks the last
+        # *attempt*, so a failed fetch backs off for a full TTL instead of
+        # re-hitting the rate-limited X API on every request.
+        if (now - XFEED_CACHE["fetched_at"]) < XFEED_CACHE_TTL:
             return XFEED_CACHE["data"]
 
     if not X_BEARER_TOKEN:
@@ -597,9 +605,12 @@ def fetch_xfeed():
         print(f"[xfeed] fetch failed: {e}")
 
     with _cache_lock:
-        XFEED_CACHE["data"] = results
+        # Keep the last good feed when the fetch failed/came back empty;
+        # always stamp the attempt time so failures back off for a TTL.
+        if results:
+            XFEED_CACHE["data"] = results
         XFEED_CACHE["fetched_at"] = now
-    return results
+        return XFEED_CACHE["data"]
 
 
 # ── Conflict Data ────────────────────────────────────────────────────────────

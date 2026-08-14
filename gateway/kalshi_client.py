@@ -41,7 +41,9 @@ def normalize_price(p) -> float:
         v = float(p)
     except (TypeError, ValueError):
         return 0.0
-    if v > 1.0:
+    # Kalshi prices arrive as integer cents (1-100). Anything >= 1 is cents —
+    # a bare 1 is one cent, not $1.00. Only sub-1 values are already decimal.
+    if v >= 1.0:
         v = v / 100.0
     return round(v, 4)
 
@@ -446,7 +448,11 @@ async def fetch_portfolio_summary(creds: dict) -> dict:
                 "side": f.get("side"),
                 "action": f.get("action"),
                 "count": f.get("count"),
-                "price_dollars": normalize_price(f.get("yes_price") or f.get("no_price") or 0),
+                "price_dollars": normalize_price(
+                    # Fills carry BOTH yes_price and no_price (complementary);
+                    # pick the one matching the fill's side.
+                    f.get("no_price") if f.get("side") == "no" else f.get("yes_price")
+                ),
                 "created_time": f.get("created_time"),
             }
             for f in fills[:30]

@@ -223,17 +223,18 @@ async def require_tier(request: Request, tier: str) -> dict:
 # Rate limiter
 # ---------------------------------------------------------------------------
 
-def _check_rate_limit(identity: str, tier: str) -> bool:
+async def _check_rate_limit(identity: str, tier: str) -> bool:
     """Return True if the request is allowed, False if rate-limited.
 
     Backed by Redis when available so quotas are shared across uvicorn
     workers and survive restarts. Falls back to per-process in-memory
-    counters when Redis is offline.
+    counters when Redis is offline. Async so the blocking Redis round-trip
+    runs off the event loop (this is called on every request).
     """
     limit = RATE_LIMITS.get(tier, 60)
     if limit == 0:
         return True  # unlimited
-    return cache.rate_limit_check(identity, limit=limit, window_seconds=60)
+    return await cache.rate_limit_check_async(identity, limit=limit, window_seconds=60)
 
 
 # ---------------------------------------------------------------------------
@@ -390,20 +391,6 @@ async def divergence_calculator():
                 # market_race_key — never compare them across sources.
                 if race_key.startswith("unmatched_"):
                     continue
-                source_probs: dict[str, float] = {}
-                for source, markets in sources.items():
-                    # Use the first market's top outcome probability
-                    for market in markets:
-                        outcomes = market.get("outcomes", [])
-                        if outcomes and outcomes[0].get("probability") is not None:
-                            source_probs[source] = outcomes[0]["probability"]
-                            break
-
-                if len(source_probs) < 1:
-                    continue
-
-                values = list(source_probs.values())
-                max_div = (max(values) - min(values)) if len(values) >= 2 else 0.0
 
                 parts = race_key.split("_", 1)
                 race_type = parts[0] if parts else "other"
@@ -411,6 +398,36 @@ async def divergence_calculator():
                 # House district keys look like "TX-28"; strip district for the state column
                 if race_type == "house" and state_abbr and "-" in state_abbr:
                     state_abbr = state_abbr.split("-", 1)[0]
+
+                # US party races are stored/consumed everywhere (forecast
+                # ensemble, backtest, calibration) as P(Democrat wins), but
+                # sources frame the same race differently — e.g. Kalshi may
+                # ask "Will a Republican win?" while Polymarket lists party
+                # outcomes in arbitrary order. Orient every probability to
+                # P(D) and skip markets whose outcomes can't be classified,
+                # instead of blindly taking outcomes[0].
+                orient_to_d = race_type in (
+                    "senate", "house", "governor", "control", "presidential"
+                )
+                source_probs: dict[str, float] = {}
+                for source, markets in sources.items():
+                    for market in markets:
+                        if orient_to_d:
+                            prob = _market_prob_d(market)
+                        else:
+                            # Non-party races (e.g. world): first market's
+                            # top outcome, as before.
+                            outcomes = market.get("outcomes", [])
+                            prob = outcomes[0].get("probability") if outcomes else None
+                        if prob is not None:
+                            source_probs[source] = prob
+                            break
+
+                if len(source_probs) < 1:
+                    continue
+
+                values = list(source_probs.values())
+                max_div = (max(values) - min(values)) if len(values) >= 2 else 0.0
 
                 state.db.record_divergence(
                     race_key=race_key,
@@ -936,7 +953,7 @@ async def rate_limit_middleware(request: Request, call_next):
 
     identity = _client_identity(request)
 
-    if not _check_rate_limit(identity, tier):
+    if not await _check_rate_limit(identity, tier):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded. Please slow down."},
@@ -1063,6 +1080,40 @@ def _classify_outcome_party(outcome_name: str, market_title: str) -> Optional[st
             return "democrat" if name == "yes" else "republican"
         if "republican" in title or "gop" in title:
             return "republican" if name == "yes" else "democrat"
+    return None
+
+
+def _market_prob_d(market: dict) -> Optional[float]:
+    """P(Democrat wins) implied by a market's outcomes, or None if no outcome
+    can be classified to a party (e.g. candidate-name outcomes).
+
+    Sums the Democrat-classified probability mass; falls back to
+    ``1 - republican mass`` for R-framed questions ("Will a Republican
+    win...?"). Used by the divergence calculator so every stored source
+    probability shares the P(D) orientation the ensemble expects.
+    """
+    title = market.get("title") or ""
+    dem = rep = 0.0
+    has_dem = has_rep = False
+    for o in market.get("outcomes") or []:
+        prob = o.get("probability")
+        if prob is None:
+            continue
+        try:
+            prob = float(prob)
+        except (TypeError, ValueError):
+            continue
+        party = _classify_outcome_party(o.get("name") or "", title)
+        if party == "democrat":
+            dem += prob
+            has_dem = True
+        elif party == "republican":
+            rep += prob
+            has_rep = True
+    if has_dem:
+        return min(dem, 1.0)
+    if has_rep:
+        return max(0.0, 1.0 - min(rep, 1.0))
     return None
 
 
@@ -1827,7 +1878,10 @@ async def data_news_lag_curve(min_delta_pp: float = 1.0, limit: int = 1000):
     return curve
 
 
-@app.get("/data/forecast/{race_key}")
+# NOTE: registered *after* the literal /data/forecast/conditional, /wave and
+# /joint-summary routes below — Starlette matches routes in registration
+# order, so registering this parameterized path first would shadow them
+# (e.g. /data/forecast/conditional would resolve race_key="conditional").
 async def data_forecast(race_key: str):
     """narve.ai house forecast for a single race.
 
@@ -2088,12 +2142,16 @@ async def data_calibration(since_days: int = 365):
     from historical_results import HISTORICAL_RESULTS
 
     # Build {(race_type, state) → outcome_d} from the curated dataset.
+    # Only keep the most recent year per (chamber, state), mirroring
+    # data_backtest — the year must be tracked alongside the outcome or an
+    # older row listed later would overwrite a newer one.
     resolved: dict[tuple[str, str], int] = {}
+    resolved_year: dict[tuple[str, str], int] = {}
     for r in HISTORICAL_RESULTS:
         key = (r["race_type"], r["state"].upper())
-        # Only keep the most recent year per (chamber, state).
-        if key not in resolved or r["year"] > resolved.get(key + ("year",), 0):
+        if key not in resolved or r["year"] > resolved_year[key]:
             resolved[key] = 1 if (r.get("party") or "").upper() == "D" else 0
+            resolved_year[key] = r["year"]
 
     snapshots = state.db.get_divergence_history(since_days=since_days)
     bt = await _backtest_summary_cached()
@@ -2186,6 +2244,12 @@ async def data_forecast_joint_summary():
     for chamber in ("senate", "house", "governor"):
         out[chamber] = joint_distribution_summary(forecasts, chamber=chamber)
     return out
+
+
+# Parameterized single-race forecast — registered AFTER the literal
+# /data/forecast/conditional, /wave and /joint-summary routes above so they
+# aren't shadowed by {race_key} (Starlette matches in registration order).
+app.get("/data/forecast/{race_key}")(data_forecast)
 
 
 @app.get("/data/election-night")

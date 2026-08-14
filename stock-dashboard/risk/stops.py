@@ -211,6 +211,7 @@ class StopManager:
         highest_price: float,
         trailing_pct: float = 2.0,
         side: str = "BUY",
+        lowest_price: Optional[float] = None,
     ) -> Optional[float]:
         """
         Trailing stop: follows profitable positions upward.
@@ -218,9 +219,11 @@ class StopManager:
         Args:
             entry_price: Original entry
             current_price: Current market price
-            highest_price: Highest price since entry
-            trailing_pct: Trail by this % below highest
+            highest_price: Highest price since entry (used for BUY side)
+            trailing_pct: Trail by this % below highest (above lowest for SHORT)
             side: "BUY" or "SHORT"
+            lowest_price: Lowest price since entry (used for SHORT side;
+                defaults to current_price if not provided)
 
         Returns: Stop price if trailing stop should be tighter, else None
         """
@@ -235,7 +238,9 @@ class StopManager:
         else:  # SHORT
             if current_price > entry_price:
                 return None
-            trailing_stop = highest_price * (1 + trailing_pct / 100)
+            # Short: trail follows the LOWEST price since entry downward
+            lowest = lowest_price if lowest_price is not None else current_price
+            trailing_stop = lowest * (1 + trailing_pct / 100)
             return min(entry_price * 1.02, trailing_stop)
 
     @staticmethod

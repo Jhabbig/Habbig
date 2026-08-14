@@ -31,7 +31,11 @@ services:
     build: ./gateway
     ports:
       - "127.0.0.1:7000:7000"
-    env_file: ./gateway/.env
+    # Gitignored — only exists where the operator created it, so it must be
+    # optional for `docker compose config/up` to work in a fresh checkout.
+    env_file:
+      - path: ./gateway/.env
+        required: false
     environment:
       # Point the gateway at the bundled Postgres. Overrides any DATABASE_URL
       # in gateway/.env. Remove this block to fall back to SQLite.
@@ -57,12 +61,16 @@ services:
     build: ./crypto-dashboard
     expose:
       - "8000"
-    env_file: ./crypto-dashboard/.env
+    env_file:
+      - path: ./crypto-dashboard/.env
+        required: false
     volumes:
       - crypto-data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      # python3, not curl: the python:3.12-slim base image ships no curl,
+      # so a curl-based healthcheck can never report healthy.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -71,10 +79,12 @@ services:
     build: ./stock-dashboard
     expose:
       - "8050"
-    env_file: ./gateway/.env.production
+    env_file:
+      - path: ./gateway/.env.production
+        required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8050/"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -83,10 +93,12 @@ services:
     build: ./midterm-dashboard
     expose:
       - "8051"
-    env_file: ./gateway/.env.production
+    env_file:
+      - path: ./gateway/.env.production
+        required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8051/"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8051/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -95,10 +107,12 @@ services:
     build: ./polymarket_weather_dashboard
     expose:
       - "5050"
-    env_file: ./gateway/.env.production
+    env_file:
+      - path: ./gateway/.env.production
+        required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3

@@ -122,7 +122,10 @@ class Poller:
 
                 if resp.status_code == 200:
                     content_type = resp.headers.get("content-type", "application/json")
-                    cache.set_api(dashboard, endpoint.split("?")[0], resp.content, content_type, cache_ttl)
+                    # Key by the full endpoint (query included) — the proxy
+                    # looks up path?query, so stripping the query here would
+                    # serve this variant to bare-path requests.
+                    cache.set_api(dashboard, endpoint, resp.content, content_type, cache_ttl)
                     cache.publish(dashboard, "data_updated", {
                         "endpoint": endpoint,
                         "size": len(resp.content),

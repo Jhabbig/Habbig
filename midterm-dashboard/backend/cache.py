@@ -118,6 +118,20 @@ class Cache:
             log.debug("Redis rate-limit error: %s — using fallback", e)
             return self._fallback.rate_limit_check(identity, limit, window_seconds)
 
+    async def rate_limit_check_async(self, identity: str, limit: int, window_seconds: int = 60) -> bool:
+        """Async variant of :meth:`rate_limit_check` for request middleware.
+
+        The sync Redis pipeline is a blocking network round-trip (up to 1 s on
+        socket timeout); running it directly in an async handler would stall
+        the whole event loop on every request, so it runs in a worker thread.
+        """
+        if limit <= 0:
+            return True
+        if not self.available:
+            # In-memory fallback is pure CPU — no thread hop needed.
+            return self._fallback.rate_limit_check(identity, limit, window_seconds)
+        return await asyncio.to_thread(self.rate_limit_check, identity, limit, window_seconds)
+
     # ── Pub/sub ──────────────────────────────────────────────────────────
 
     def publish(self, event: str, data: Optional[dict] = None) -> None:
@@ -162,7 +176,12 @@ class Cache:
             yield {"event": "connected", "ts": time.time()}
             last_hb = time.time()
             while True:
-                msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                # get_message is a blocking socket read (up to ``timeout``,
+                # or 1 s on a Redis stall) — run it in a worker thread so one
+                # SSE client can't stall the whole event loop.
+                msg = await asyncio.to_thread(
+                    pubsub.get_message, ignore_subscribe_messages=True, timeout=0.1
+                )
                 if msg and msg.get("type") == "message":
                     try:
                         payload = json.loads(msg["data"])

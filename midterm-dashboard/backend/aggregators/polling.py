@@ -103,8 +103,12 @@ class PollingAggregator:
                 "endpoints are reachable, or configure a paid replacement."
             )
 
-        self._polling_cache = results
-        self._cache_time = now
+        # Only cache when at least one source produced data — caching a
+        # total failure would serve {} for the full TTL (an hour) instead of
+        # retrying on the next refresh cycle.
+        if results:
+            self._polling_cache = results
+            self._cache_time = now
         return results
 
     async def _fetch_538_csv(self, url: str, poll_type: str) -> list[dict]:

@@ -57,7 +57,7 @@ import kalshi_client as kalshi_client
 import trading
 from cache import cache
 from sse import event_stream, active_connection_count
-from poller import Poller
+from poller import Poller, POLL_TARGETS
 from mark_to_market import MarkToMarketWorker
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -92,6 +92,20 @@ LEGACY_SUBDOMAIN_REDIRECTS: dict = CONFIG.get("legacy_subdomain_redirects", {})
 
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
+
+# Proxy response cache allowlist. Only the poller's shared feeds are known to
+# serve the same body to every user; any other /api/ or /data/ path may be
+# personalized upstream (e.g. the weather dashboard's /api/alerts/settings
+# returns the requester's own row), so caching it under a user-agnostic key
+# would leak one user's response to every other subscriber.
+CACHEABLE_API_PATHS: dict = {
+    dash: frozenset(t["endpoint"].split("?")[0] for t in targets)
+    for dash, targets in POLL_TARGETS.items()
+}
+
+
+def _is_shared_cacheable(dash_key: str, path: str) -> bool:
+    return path in CACHEABLE_API_PATHS.get(dash_key, frozenset())
 
 # ── Stripe config ──────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -1801,13 +1815,18 @@ async def billing_action(request: Request, action: str = Form(...)):
                 return RedirectResponse("/billing", status_code=302)
 
             try:
-                customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+                # Stripe's SDK is synchronous; run it off the single-worker
+                # event loop so checkout latency can't stall every request.
+                customer_id = await asyncio.to_thread(
+                    _get_or_create_stripe_customer, user["user_id"], user["email"]
+                )
             except StripeProviderError:
                 return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
             base = _stripe_base_url(request)
 
             try:
-                session = stripe.checkout.Session.create(
+                session = await asyncio.to_thread(
+                    stripe.checkout.Session.create,
                     customer=customer_id,
                     mode="subscription",
                     line_items=[{"price": stripe_price_id, "quantity": 1}],
@@ -1835,7 +1854,7 @@ async def billing_action(request: Request, action: str = Form(...)):
                 for s in subs:
                     if s["dashboard_key"] == key and s["stripe_sub_id"]:
                         try:
-                            stripe.Subscription.cancel(s["stripe_sub_id"])
+                            await asyncio.to_thread(stripe.Subscription.cancel, s["stripe_sub_id"])
                         except Exception:
                             log.warning("Stripe cancel failed for %s, cancelling locally", s["stripe_sub_id"])
             db.cancel_subscription(user["user_id"], key)
@@ -1886,13 +1905,16 @@ async def billing_subscribe(request: Request, plan: str = Form(""), interval: st
         return RedirectResponse("/billing", status_code=302)
 
     try:
-        customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
+        customer_id = await asyncio.to_thread(
+            _get_or_create_stripe_customer, user["user_id"], user["email"]
+        )
     except StripeProviderError:
         return RedirectResponse("/billing?error=stripe_unavailable", status_code=302)
     base = _stripe_base_url(request)
 
     try:
-        session = stripe.checkout.Session.create(
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
             customer=customer_id,
             mode="subscription",
             line_items=[{"price": stripe_price_id, "quantity": 1}],
@@ -1944,8 +1966,13 @@ async def stripe_webhook(request: Request):
     event_id = event.get("id") if isinstance(event, dict) else getattr(event, "id", None)
     data_obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
 
-    # Idempotency: skip events already processed (Stripe retries on network errors).
-    if event_id and not db.mark_stripe_event_processed(event_id, event_type):
+    # Idempotency: skip events already processed (Stripe retries on network
+    # errors). The processed marker is written at the END of the handler —
+    # claiming up-front would make a failed handler unretriable, since
+    # Stripe's redelivery would be skipped as a duplicate. All handlers
+    # below are idempotent upserts/updates, so the tiny concurrent-delivery
+    # race this leaves is harmless.
+    if event_id and db.was_stripe_event_processed(event_id):
         log.info("Stripe webhook: skipping duplicate event %s (%s)", event_id, event_type)
         return JSONResponse({"status": "ok", "duplicate": True})
 
@@ -2000,6 +2027,44 @@ async def stripe_webhook(request: Request):
                 )
             log.info("Stripe: activated bundle %s (%s) for user %s", plan_type, interval, user_id)
 
+    # ── invoice.paid — recurring renewal ───────────────────────────────────
+    # checkout.session.completed fires only once per subscription; every
+    # later billing cycle arrives as invoice.paid. Extend the local
+    # expires_at to the paid period's end (plus grace) so paying
+    # subscribers keep access past the first cycle.
+    elif event_type == "invoice.paid":
+        inv = data_obj if isinstance(data_obj, dict) else data_obj.to_dict()
+        # The subscription reference moved on newer Stripe API versions.
+        stripe_sub_id = inv.get("subscription") or (
+            (inv.get("parent") or {}).get("subscription_details") or {}
+        ).get("subscription")
+        if stripe_sub_id:
+            period_end = 0
+            for line in (inv.get("lines") or {}).get("data") or []:
+                period_end = max(period_end, ((line or {}).get("period") or {}).get("end") or 0)
+            if not period_end:
+                period_end = inv.get("period_end") or 0
+            if not period_end:
+                # Last resort: assume a monthly cycle from now.
+                period_end = int(time.time()) + 30 * 86400
+            grace = 3 * 86400
+            updated = db.renew_subscription_by_stripe_id(stripe_sub_id, int(period_end) + grace)
+            log.info(
+                "Stripe: renewal for subscription %s extended %d row(s) to %d",
+                stripe_sub_id, updated, int(period_end) + grace,
+            )
+        else:
+            log.info("Stripe: invoice.paid without subscription reference — ignored")
+
+    # ── customer.subscription.updated — keep expiry in sync ────────────────
+    elif event_type == "customer.subscription.updated":
+        sub = data_obj if isinstance(data_obj, dict) else data_obj.to_dict()
+        stripe_sub_id = sub.get("id")
+        period_end = sub.get("current_period_end")
+        if stripe_sub_id and period_end and sub.get("status") in ("active", "trialing"):
+            db.renew_subscription_by_stripe_id(stripe_sub_id, int(period_end) + 3 * 86400)
+            log.info("Stripe: subscription %s updated, expiry synced", stripe_sub_id)
+
     # ── customer.subscription.deleted — subscription cancelled ─────────────
     elif event_type == "customer.subscription.deleted":
         stripe_sub_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
@@ -2010,6 +2075,10 @@ async def stripe_webhook(request: Request):
     elif event_type == "invoice.payment_failed":
         invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
         log.warning("Stripe: payment failed for invoice %s", invoice_id)
+
+    # Mark processed only after the handlers ran without raising.
+    if event_id:
+        db.mark_stripe_event_processed(event_id, event_type)
 
     # Flush subscription cache after any webhook-driven mutation.
     flush_sub_cache()
@@ -3713,6 +3782,8 @@ async def admin_new_token_for_user(request: Request, user_id: int):
     user = db.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # sqlite3.Row has no .get() — normalize to a dict for both backends.
+    user = dict(user)
     # Revoke previous invite token before issuing replacement to prevent stale-token accumulation
     if user.get("invite_token_id"):
         try:
@@ -4224,7 +4295,10 @@ async def portfolio_closed(request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     platform = request.query_params.get("platform")
-    limit = min(int(request.query_params.get("limit", 50)), 200)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", 50)), 200))
+    except ValueError:
+        limit = 50
     positions = db.get_closed_positions(user["user_id"], platform=platform, limit=limit)
     return JSONResponse({"positions": [dict(p) for p in positions]})
 
@@ -4235,7 +4309,10 @@ async def portfolio_history(request: Request):
     user = _trading_user(request)
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    limit = min(int(request.query_params.get("limit", 50)), 200)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", 50)), 200))
+    except ValueError:
+        limit = 50
     orders = db.get_recent_orders(user["user_id"], limit=limit)
     return JSONResponse({"orders": [dict(o) for o in orders]})
 
@@ -4294,6 +4371,7 @@ async def portfolio_sync(request: Request):
     uid = user["user_id"]
     cred_status = db.has_trading_credentials(uid)
     synced = 0
+    synced_platforms: list[str] = []
 
     for plat, connected in cred_status.items():
         if not connected:
@@ -4317,11 +4395,15 @@ async def portfolio_sync(request: Request):
                     status=pos.status,
                 )
                 synced += 1
+            synced_platforms.append(plat)
         except Exception as exc:
             log.warning("Portfolio sync failed for %s/%s: %s", uid, plat, exc)
 
-    # Also rebuild from local order history
-    rebuilt = db.rebuild_positions_for_user(uid)
+    # Rebuild from local order history only for platforms the venue sync
+    # didn't cover — the venue is authoritative where it succeeded, and the
+    # rebuild keys positions differently (slug/side vs venue-native ids),
+    # which would double-count them.
+    rebuilt = db.rebuild_positions_for_user(uid, exclude_platforms=tuple(synced_platforms))
     return JSONResponse({"ok": True, "synced_from_platforms": synced, "rebuilt_from_orders": rebuilt})
 
 
@@ -4730,10 +4812,11 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     if query:
         upstream_url += f"?{query}"
 
-    # Cache-first: serve GET /api/* and /data/* from Redis when available.
-    # Never cache /api/auth/* — responses are per-user.
+    # Cache-first: serve allowlisted shared feeds from Redis when available.
+    # Only paths in CACHEABLE_API_PATHS are cached — everything else may be
+    # per-user and must never be served across users.
     cache_path = f"{path}?{query}" if query else path
-    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
+    if request.method == "GET" and _is_shared_cacheable(key, path):
         cached = cache.get_api(key, cache_path)
         if cached:
             cached_body, cached_ct = cached
@@ -4842,9 +4925,17 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
         resp_headers["cache-control"] = "no-store, no-cache, must-revalidate"
         resp_headers["pragma"] = "no-cache"
         resp_headers["x-cache"] = "MISS"
-        # Write-through: cache this response for next time.
-        # Never cache /api/auth/* — responses are per-user.
-        if request.method == "GET" and upstream.status_code == 200 and not path.startswith("/api/auth"):
+        # Write-through: cache this response for next time. Restricted to the
+        # shared-feed allowlist, and skipped when upstream marks the response
+        # private/no-store.
+        upstream_cc = upstream.headers.get("cache-control", "").lower()
+        if (
+            request.method == "GET"
+            and upstream.status_code == 200
+            and _is_shared_cacheable(key, path)
+            and "private" not in upstream_cc
+            and "no-store" not in upstream_cc
+        ):
             cache.set_api(key, cache_path, upstream.content, content_type)
 
     # Inject SSE client script into HTML responses for live updates.

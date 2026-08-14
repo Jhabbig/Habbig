@@ -65,6 +65,7 @@ class KalshiAggregator:
         # Fetch all events (paginated)
         cursor = None
         pages = 0
+        event_rate_limit_hits = 0
         while pages < 10:
             try:
                 url = f"{KALSHI_API}/events"
@@ -73,6 +74,13 @@ class KalshiAggregator:
                     params["cursor"] = cursor
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 429:
+                        # Bounded retry budget — without it a sustained 429
+                        # spins this loop forever (pages only advances on a
+                        # successful page with a next cursor).
+                        event_rate_limit_hits += 1
+                        if event_rate_limit_hits >= 5:
+                            logger.warning("Kalshi events rate limited too many times, giving up this cycle")
+                            break
                         logger.warning("Kalshi events rate limited")
                         await asyncio.sleep(2)
                         continue
@@ -310,9 +318,12 @@ class KalshiAggregator:
             yes_price = m.get("yes_bid", 0) or m.get("last_price", 0) or 0
             no_price = m.get("no_bid", 0) or 0
 
-            if isinstance(yes_price, (int, float)) and yes_price > 1:
+            # Kalshi yes_bid/no_bid/last_price are integer cents (0-100), so
+            # divide unconditionally — a "> 1" guard would leave a 1-cent
+            # longshot as probability 1.0 instead of 0.01.
+            if isinstance(yes_price, (int, float)):
                 yes_price = yes_price / 100
-            if isinstance(no_price, (int, float)) and no_price > 1:
+            if isinstance(no_price, (int, float)):
                 no_price = no_price / 100
 
             country = self._extract_country(title + " " + (m.get("_event_title") or ""))
@@ -391,9 +402,12 @@ class KalshiAggregator:
             yes_price = m.get("yes_bid", 0) or m.get("last_price", 0) or 0
             no_price = m.get("no_bid", 0) or 0
 
-            if isinstance(yes_price, (int, float)) and yes_price > 1:
+            # Kalshi yes_bid/no_bid/last_price are integer cents (0-100), so
+            # divide unconditionally — a "> 1" guard would leave a 1-cent
+            # longshot as probability 1.0 instead of 0.01.
+            if isinstance(yes_price, (int, float)):
                 yes_price = yes_price / 100
-            if isinstance(no_price, (int, float)) and no_price > 1:
+            if isinstance(no_price, (int, float)):
                 no_price = no_price / 100
 
             state = self._extract_state(title)

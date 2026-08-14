@@ -1,5 +1,8 @@
 aiohttp>=3.9.0
 scipy>=1.11.0
 python-dotenv>=1.0.0
-py-clob-client>=0.1.0
+# Bounded: this library signs and submits real orders — an unbounded pin let
+# any future (breaking) release reach production untested. 0.17+ is the API
+# the bot uses (create_or_derive_api_creds / set_api_creds), same as gateway.
+py-clob-client~=0.17
 cryptography>=41.0.0

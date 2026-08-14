@@ -25,6 +25,8 @@ jobs:
           midterm-dashboard/
           top-traders-dashboard/
           polymarket_weather_dashboard/
+          polymarket-bot/
+          polymarket_weather_bot/
           sports-dashboard/
           world-state-dashboard/
           climate-dashboard/

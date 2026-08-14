@@ -97,8 +97,12 @@ class MarkToMarketWorker:
                 continue
             price = float(result)
             for pos_id in market_positions[key]:
-                db.update_mark_price(pos_id, price)
-                marked += 1
+                try:
+                    db.update_mark_price(pos_id, price)
+                    marked += 1
+                except Exception as exc:
+                    # One bad row must not abort the rest of the cycle.
+                    log.warning("Mark update failed for position %s: %s", pos_id, exc)
 
         elapsed = time.monotonic() - t0
         self._last_cycle = time.time()

@@ -247,9 +247,9 @@ class PortfolioHeatTracker:
             if pct > 5:
                 alerts.append(f"⚠️ {ticker} at {pct:.1f}% (max 5% per position)")
 
-        # Oversized drawdowns
-        if pos.unrealized_pnl_pct < -10:
-            alerts.append(f"⚠️ {ticker} at {pos.unrealized_pnl_pct:.1f}% loss")
+            # Oversized drawdowns
+            if pos.unrealized_pnl_pct < -10:
+                alerts.append(f"⚠️ {ticker} at {pos.unrealized_pnl_pct:.1f}% loss")
 
         greeks = self.get_portfolio_greeks()
 

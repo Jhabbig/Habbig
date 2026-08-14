@@ -1,12 +1,16 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-httpx>=0.27
-python-multipart>=0.0.9
-websockets>=12.0
-stripe>=6.0
-cryptography>=42.0
-py-clob-client>=0.17
-redis>=5.0
+# Compatible-release (~=) pins: keep the tested floor but refuse the next
+# breaking major/minor series, so a fresh `pip install -r` on the server or in
+# docker-build cannot silently pull an untested breaking release (e.g. a new
+# stripe or py-clob-client major) under the same git SHA.
+fastapi~=0.110
+uvicorn[standard]~=0.29
+httpx~=0.27
+python-multipart~=0.0.9
+websockets~=12.0
+stripe~=6.0
+cryptography~=42.0
+py-clob-client~=0.17
+redis~=5.0
 # PostgreSQL backend (used when DATABASE_URL is set; SQLite needs no driver).
-psycopg[binary]>=3.1
-psycopg-pool>=3.2
+psycopg[binary]~=3.1
+psycopg-pool~=3.2

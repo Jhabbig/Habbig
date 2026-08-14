@@ -783,7 +783,9 @@ def resolve_pending_bets(state):
         ticker_yf = STOCKS.get(ticker, {}).get("yf", ticker.upper())
         try:
             stock = yf.Ticker(ticker_yf)
-            hist = stock.history(period="1mo", interval="1d")
+            # auto_adjust=False: markets resolve on raw close prices, so compare
+            # unadjusted closes (dividend-adjusted data would flip ex-dividend days).
+            hist = stock.history(period="1mo", interval="1d", auto_adjust=False)
             if len(hist) < 2:
                 continue
 
@@ -814,6 +816,16 @@ def resolve_pending_bets(state):
                         bet["resolved"] = True
                         bet["result"] = "push"
                         bet["actual_direction"] = actual_direction
+                        trade_record = {
+                            **bet,
+                            "actual": actual_direction,
+                            "won": False,
+                            "pnl": 0.0,
+                            "balance_after": round(state.balance, 2),
+                            "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        state.trades.append(trade_record)
+                        resolved.append(ticker)
                         break
                     won = actual_direction == bet["direction"]
                     if won:
@@ -831,6 +843,7 @@ def resolve_pending_bets(state):
                     else:
                         # Stake was already deducted at placement; no further deduction
                         state.losses += 1
+                        state.total_pnl -= bet["bet_size"]
                         log(f"  ✗ LOST {ticker.upper()}: bet {bet['direction']}, "
                             f"actual {actual_direction} | -${bet['bet_size']:.2f}")
 
@@ -1015,7 +1028,11 @@ def run_cycle(state):
                         "ticker": ticker,
                         "direction": prediction,
                         "confidence": round(confidence, 4),
-                        "market_prob": market_info.get("market_prob", 0.5),
+                        # Use the direction-specific price (same as evaluate_bet):
+                        # resolution pays out 1/market_prob per share of the side bought.
+                        "market_prob": (market_info.get("up_price", 0.5)
+                                        if prediction == "up"
+                                        else market_info.get("down_price", 0.5)),
                         "edge": bet_result.get("edge", 0),
                         "kelly": bet_result.get("kelly_fraction", 0),
                         "bet_size": bet_result.get("bet_size", 0),

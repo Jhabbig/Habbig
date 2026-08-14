@@ -14,7 +14,7 @@
 #   1. gateway/.env.production exists AND contains ODDS_API_KEY (was wiped
 #      twice by deploy.sh --delete; that root-cause is now fixed in
 #      deploy.sh itself, but we keep the watch as a tripwire).
-#   2. Each polymarket-* systemd service is active.
+#   2. Each narve-* systemd service is active.
 #   3. Each public dashboard URL responds 200/302 (proves Cloudflare can
 #      reach the gateway and the gateway can reach the backend).
 #   4. sports /api/health: status field. When it flips to
@@ -70,13 +70,13 @@ fi
 
 # 2. systemd services active
 for s in "${SERVICES[@]}"; do
-    state=$(systemctl is-active "polymarket-$s" 2>&1)
+    state=$(systemctl is-active "narve-$s" 2>&1)
     if [ "$state" = "active" ]; then
-        log "OK    service polymarket-$s active"
+        log "OK    service narve-$s active"
     else
-        log "CRIT  service polymarket-$s state=$state"
+        log "CRIT  service narve-$s state=$state"
         bump crit
-        echo "$NOW polymarket-$s $state" >> "${STATE_PREFIX}.crit"
+        echo "$NOW narve-$s $state" >> "${STATE_PREFIX}.crit"
     fi
 done
 

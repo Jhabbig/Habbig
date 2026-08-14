@@ -96,8 +96,13 @@ def fetch_polymarket_markets(limit: int = 200) -> list[dict]:
                     yes_idx = i
                     break
             if yes_idx is None:
-                yes_idx = 0
-            yes_price = float(prices[yes_idx]) if yes_idx < len(prices) else 0.0
+                # Multi-outcome / candidate-style market: outcome[0]'s price is
+                # not a YES probability and 1 - price is not a NO price, so a
+                # pairing against a binary Kalshi market fabricates a spread.
+                continue
+            if yes_idx >= len(prices):
+                continue
+            yes_price = float(prices[yes_idx])
 
             out.append({
                 "id": m.get("id") or m.get("conditionId") or "",

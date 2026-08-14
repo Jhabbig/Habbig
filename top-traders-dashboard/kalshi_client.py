@@ -33,18 +33,39 @@ _PUBLIC_HEADERS = {
 }
 
 
-def _normalize_price(p) -> float:
+def _normalize_price(p, *, is_cents: bool = False) -> float:
     """Kalshi v2 prices arrive either as a 0-1 dollar string (yes_ask_dollars
-    = '0.5234') or legacy cents 1-99. Normalize to 0-1 probability."""
+    = '0.5234') or legacy integer cents 1-99. Normalize to 0-1 probability.
+
+    Magnitude alone cannot disambiguate 1 (one cent = 0.01) from 1.0 (a
+    settled $1.00 dollar price), so callers must say which convention the
+    source field uses via ``is_cents``.
+    """
     if p is None:
         return 0.0
     try:
         v = float(p)
     except (TypeError, ValueError):
         return 0.0
-    if v > 1.0:
+    if is_cents:
+        # Cents fields are integers >= 1; a value < 1 is already decimal.
+        if v >= 1.0:
+            v = v / 100.0
+    elif v > 1.0:
+        # Defensive: a decimal-dollar field should never exceed 1.0.
         v = v / 100.0
     return round(v, 4)
+
+
+def _pick_price(m: dict, *fields: str) -> float:
+    """Return the first truthy price among ``fields``, normalized to 0-1.
+    Fields not ending in '_dollars' hold legacy integer cents."""
+    for f in fields:
+        v = m.get(f)
+        if not v:
+            continue
+        return _normalize_price(v, is_cents=not f.endswith("_dollars"))
+    return 0.0
 
 
 def _to_float(v) -> float:
@@ -125,18 +146,11 @@ def fetch_top_markets(limit: int = 100, status: str = "open") -> list[dict]:
             # Kalshi v2 uses *_dollars for already-decimal prices and *_fp
             # (fixed-point shares) for volume/open-interest. Newer responses
             # also still include the legacy *_cents fields on some objects.
-            yes_p = _normalize_price(
-                m.get("yes_ask_dollars")
-                or m.get("yes_ask")
-                or m.get("last_price_dollars")
-                or m.get("last_price")
-                or 0
+            yes_p = _pick_price(
+                m, "yes_ask_dollars", "yes_ask",
+                "last_price_dollars", "last_price",
             )
-            no_p = _normalize_price(
-                m.get("no_ask_dollars")
-                or m.get("no_ask")
-                or 0
-            )
+            no_p = _pick_price(m, "no_ask_dollars", "no_ask")
             if not no_p and yes_p:
                 no_p = round(1.0 - yes_p, 4)
 
@@ -152,12 +166,8 @@ def fetch_top_markets(limit: int = 100, status: str = "open") -> list[dict]:
                 "status": m.get("status") or "",
                 "yes_price": yes_p,
                 "no_price": no_p,
-                "yes_bid": _normalize_price(
-                    m.get("yes_bid_dollars") or m.get("yes_bid") or 0
-                ),
-                "yes_ask": _normalize_price(
-                    m.get("yes_ask_dollars") or m.get("yes_ask") or 0
-                ),
+                "yes_bid": _pick_price(m, "yes_bid_dollars", "yes_bid"),
+                "yes_ask": _pick_price(m, "yes_ask_dollars", "yes_ask"),
                 "volume": volume_total,
                 "volume_24h": volume_24h,
                 "open_interest": open_interest,
@@ -335,7 +345,11 @@ def fetch_portfolio_summary(api_key: str, private_key_pem: str) -> dict:
                 "side": f.get("side"),
                 "action": f.get("action"),
                 "count": f.get("count"),
-                "price_cents": f.get("yes_price") or f.get("no_price") or 0,
+                # Kalshi fills carry BOTH yes_price and no_price (complements),
+                # so pick the executed side's price rather than "first truthy".
+                "price_cents": (
+                    f.get("no_price") if f.get("side") == "no" else f.get("yes_price")
+                ) or 0,
                 "created_time": f.get("created_time"),
             }
             for f in fills[:30]

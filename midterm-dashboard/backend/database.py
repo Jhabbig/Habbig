@@ -828,30 +828,6 @@ class Database:
                     ),
                 )
 
-    def get_divergence_history(self, since_days: int = 30) -> list[dict]:
-        """All divergence snapshots in the last ``since_days`` days, oldest first."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
-        with _get_conn() as conn:
-            rows = conn.execute(
-                """SELECT race_key, race_type, state, polymarket_prob, kalshi_prob,
-                          predictit_prob, polling_avg, max_divergence, snapshot_time,
-                          divergence_details
-                   FROM midterm_divergence_snapshots
-                   WHERE snapshot_time >= ?
-                   ORDER BY snapshot_time""",
-                (cutoff,),
-            ).fetchall()
-        out = []
-        for r in rows:
-            d = _row_to_dict(r)
-            if isinstance(d.get("divergence_details"), str):
-                try:
-                    d["divergence_details"] = json.loads(d["divergence_details"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            out.append(d)
-        return out
-
     def get_latest_divergence(self, race_key: str) -> Optional[dict]:
         """Most recent divergence snapshot for a race, or None."""
         with _get_conn() as conn:
@@ -1011,8 +987,13 @@ class Database:
     # === Divergence history =================================================
 
     def get_divergence_history(
-        self, race_key: str = None, days: int = 30
+        self, race_key: str = None, days: int = 30, since_days: int = None
     ) -> list[dict]:
+        # ``since_days`` is an alias for ``days`` used by the calibration and
+        # backtest endpoints (this class must have exactly one definition of
+        # this method — a second one would silently shadow the first).
+        if since_days is not None:
+            days = since_days
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         if race_key:

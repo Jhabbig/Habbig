@@ -119,8 +119,18 @@ def load_state():
             if isinstance(state.pending, dict) and "slug" in state.pending:
                 old = state.pending
                 state.pending = {"btc": old}
-        except Exception:
-            pass
+        except Exception as e:
+            # Never silently reset: that would wipe the whole PnL record and
+            # orphan pending bets. Back the corrupt file up loudly instead
+            # (the next save_state would otherwise overwrite it).
+            state = BotState()
+            backup = f"{TRADE_LOG}.corrupt-{int(time.time())}"
+            try:
+                os.replace(TRADE_LOG, backup)
+            except OSError as move_err:
+                backup = f"<could not move corrupt file: {move_err}>"
+            log(f"CRITICAL: state file {TRADE_LOG} is corrupt ({e}); "
+                f"backed up to {backup}; starting fresh with ${STARTING_BALANCE:,.2f}")
     return state
 
 
@@ -643,6 +653,9 @@ def evaluate_trade(market, rt_signals, dash_signals, coin):
 
 # ─── Resolution ────────────────────────────────────────────────────────
 
+RESOLVE_EXPIRY = timedelta(hours=2)  # give up on a pending bet this long past market end
+
+
 def resolve_pending(state, coin):
     """Check if a pending bet for a coin has resolved."""
     if coin not in state.pending:
@@ -656,29 +669,59 @@ def resolve_pending(state, coin):
         return
 
     slug = pending["slug"]
+
+    # Hard expiry, independent of API availability: a delisted slug, empty
+    # payloads, or persistent API errors must never deadlock a pending bet
+    # (which would also stop the coin from ever trading again).
+    if now > end_dt + RESOLVE_EXPIRY:
+        log(f"[{coin.upper()}] Market {slug} still unresolved {RESOLVE_EXPIRY} "
+            f"after end — voiding bet, refunding ${pending['amount']:.2f}")
+        state.balance += pending["amount"]
+        del state.pending[coin]
+        save_state(state)
+        return
+
     try:
         resp = requests.get(f"{GAMMA_API}/events", params={"slug": slug}, timeout=10)
         if resp.ok:
             data = resp.json()
             if data:
-                market = data[0].get("markets", [{}])[0]
-                prices = json.loads(market.get("outcomePrices", "[0.5, 0.5]"))
+                ev = data[0]
+                markets = ev.get("markets") or []
+                market = markets[0] if markets else {}
+                prices_raw = market.get("outcomePrices")
+                prices = json.loads(prices_raw) if prices_raw else []
                 if len(prices) < 2:
-                    return
+                    return  # incomplete payload — retry (bounded by RESOLVE_EXPIRY)
                 up_final = float(prices[0])
                 down_final = float(prices[1])
 
-                if up_final > 0.9:
-                    winner = "up"
-                elif down_final > 0.9:
-                    winner = "down"
-                else:
-                    if now > end_dt + timedelta(minutes=5):
-                        log(f"[{coin.upper()}] Market {slug} didn't resolve, skipping")
+                # Settle from the market's official resolution state, not a
+                # live price snapshot: a close finish can trade at 0.9+ and
+                # still resolve the other way once the oracle reports.
+                resolved = bool(market.get("closed") or ev.get("closed")) or \
+                    str(market.get("umaResolutionStatus") or "").lower() == "resolved"
+
+                if resolved:
+                    if up_final >= 0.99:
+                        winner = "up"
+                    elif down_final >= 0.99:
+                        winner = "down"
+                    else:
+                        # Officially closed but prices never went to 0/1:
+                        # voided / no decisive outcome — refund the stake.
+                        log(f"[{coin.upper()}] Market {slug} closed without a decisive "
+                            f"outcome ({up_final:.2f}/{down_final:.2f}) — refunding stake")
                         state.balance += pending["amount"]
                         del state.pending[coin]
                         save_state(state)
-                    return
+                        return
+                elif now > end_dt + timedelta(minutes=5) and (up_final >= 0.99 or down_final >= 0.99):
+                    # Fallback for stale closed/resolved flags: well past the
+                    # end with fully converged prices.
+                    winner = "up" if up_final >= 0.99 else "down"
+                else:
+                    return  # not resolved yet — keep waiting (bounded by RESOLVE_EXPIRY)
 
                 bet_side = pending["side"]
                 buy_price = pending["buy_price"]

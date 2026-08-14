@@ -28,38 +28,59 @@ TAKER_FEE_PCT = {
 }
 
 
-def _normalise_symbol(symbol: str) -> Optional[str]:
-    """Reduce exchange-specific symbol formats to a base ticker.
+# Quote currencies that are USD-equivalent (1:1 with the dollar). Prices
+# quoted in anything else (EUR, GBP, ...) must never be price-compared
+# against USD rows — the FX gap would surface as a large phantom "spread".
+USD_QUOTES = {"USDT", "USDC", "USD", "USDP", "BUSD"}
+
+# Longer quotes first so e.g. BTCBUSD parses as BTC/BUSD, not BTCB/USD.
+_KNOWN_QUOTES = ("USDT", "USDC", "USDP", "BUSD", "USD", "EUR", "GBP")
+
+
+def _split_symbol(symbol: str) -> tuple[Optional[str], Optional[str]]:
+    """Reduce exchange-specific symbol formats to (base, quote).
 
     Examples:
-       BTCUSDT   -> BTC
-       BTC-USD   -> BTC
-       XBTUSD    -> BTC          (Kraken's "XBT" convention)
-       BTC-USDT-SWAP -> BTC      (OKX perps)
+       BTCUSDT   -> (BTC, USDT)
+       BTC-USD   -> (BTC, USD)
+       XBTUSD    -> (BTC, USD)       (Kraken's "XBT" convention)
+       BTC-USDT-SWAP -> (BTC, USDT)  (OKX perps)
+       BTC-EUR   -> (BTC, EUR)
+
+    quote is None when no known quote suffix is recognised.
     """
     if not symbol:
-        return None
+        return None, None
     s = symbol.upper()
     # Strip OKX's -SWAP suffix
     s = s.replace("-SWAP", "")
     # Replace XBT (Kraken) with BTC
     s = s.replace("XBT", "BTC")
     # Strip the quote currency
-    for quote in ("USDT", "USDC", "USD", "EUR", "GBP", "USDP", "BUSD"):
+    for quote in _KNOWN_QUOTES:
         if s.endswith("-" + quote) or s.endswith(quote):
             if s.endswith("-" + quote):
-                s = s[: -len(quote) - 1]
+                base = s[: -len(quote) - 1]
             else:
-                s = s[: -len(quote)]
-            return s or None
-    return s
+                base = s[: -len(quote)]
+            return (base or None), quote
+    return s, None
+
+
+def _normalise_symbol(symbol: str) -> Optional[str]:
+    """Reduce exchange-specific symbol formats to a base ticker (quote dropped)."""
+    return _split_symbol(symbol)[0]
 
 
 def _row_for(exchange: str, ticker: dict, *, symbol_field: str,
               price_field: str) -> Optional[dict]:
     sym = ticker.get(symbol_field) or ticker.get("symbol")
-    base = _normalise_symbol(sym)
+    base, quote = _split_symbol(sym)
     if not base:
+        return None
+    # Only USD-equivalent quotes are comparable: an EUR/GBP-denominated (or
+    # crypto-quoted) price grouped with USD rows fabricates arbitrage.
+    if quote not in USD_QUOTES:
         return None
     price = ticker.get(price_field) if price_field else ticker.get("price")
     if price is None:

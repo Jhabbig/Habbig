@@ -105,7 +105,7 @@ def _trade_to_event(t: dict, market: dict) -> dict | None:
     yes_price_raw = t.get("yes_price")
     if yes_price_raw is None:
         yes_price_raw = t.get("price")
-    yes_price = kalshi_client._normalize_price(yes_price_raw)
+    yes_price = kalshi_client._normalize_price(yes_price_raw, is_cents=True)
 
     # Notional: contracts × price (each contract pays $1 if it resolves true)
     notional = round(count * yes_price, 2)
@@ -174,7 +174,7 @@ def _trade_to_event(t: dict, market: dict) -> dict | None:
             "event_ticker": event_ticker,
             "taker_side": taker or None,
             "yes_price": yes_price,
-            "no_price": kalshi_client._normalize_price(t.get("no_price")),
+            "no_price": kalshi_client._normalize_price(t.get("no_price"), is_cents=True),
             "count": count,
             "created_time": created_time,
             "category": market.get("category"),

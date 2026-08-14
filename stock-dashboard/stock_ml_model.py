@@ -494,10 +494,12 @@ class StockMLModel:
             print(f"  [{self.ticker_yf}] Training Stacking Ensemble (XGB+RF+GB → LogReg)...")
             try:
                 self.stacking_model = StackingEnsemble()
-                # Pass raw (unscaled) features — StackingEnsemble has its own scaler
+                # Pass raw (unscaled) features — StackingEnsemble has its own scaler.
+                # Do NOT pass X_val/y_val: the meta-learner would train on the
+                # validation set, leaking it into the reported val accuracy.
+                # The OOF-prediction path inside fit() is used instead.
                 self.stacking_model.fit(
                     X_train, y_train,
-                    X_val=X_val, y_val=y_val,
                     sample_weight=sample_weights,
                 )
 

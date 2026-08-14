@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -176,10 +177,13 @@ class DashboardCache:
         try:
             info = self._r.info("keyspace")
             db_info = info.get("db0", {})
+            # Redact any password embedded in the Redis URL before it
+            # reaches the admin panel.
+            safe_url = re.sub(r"://([^:@/]*):[^@/]*@", r"://\1:***@", self._url)
             return {
                 "available": True,
                 "keys": db_info.get("keys", 0),
-                "url": self._url,
+                "url": safe_url,
             }
         except redis.RedisError:
             return {"available": False}

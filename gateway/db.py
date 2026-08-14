@@ -815,6 +815,23 @@ def cancel_subscription_by_stripe_id(stripe_sub_id: str) -> None:
         )
 
 
+def renew_subscription_by_stripe_id(stripe_sub_id: str, expires_at: int) -> int:
+    """Extend all subscriptions tied to a Stripe subscription on renewal.
+
+    Stripe fires ``checkout.session.completed`` only once; every subsequent
+    billing cycle arrives as ``invoice.paid``. Without this extension the
+    local hard ``expires_at`` lapses after the first cycle while Stripe keeps
+    charging. Returns the number of rows updated.
+    """
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE subscriptions SET status = 'active', expires_at = ? "
+            "WHERE stripe_sub_id = ?",
+            (expires_at, stripe_sub_id),
+        )
+        return cur.rowcount if cur.rowcount is not None else 0
+
+
 def active_subscription_counts() -> dict:
     """Per-dashboard active subscription tallies for the fleet dashboard.
 
@@ -977,6 +994,28 @@ def mark_stripe_event_processed(event_id: str, event_type: str) -> bool:
         return True
     except IntegrityError:
         return False
+
+
+def was_stripe_event_processed(event_id: str) -> bool:
+    """Read-only duplicate check for Stripe webhook deliveries."""
+    if not event_id:
+        return False
+    with conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM stripe_events WHERE event_id = ?", (event_id,)
+        ).fetchone()
+    return row is not None
+
+
+def unmark_stripe_event(event_id: str) -> None:
+    """Release a claimed Stripe event so a redelivery can retry it.
+
+    Used when processing fails after the atomic claim — without this,
+    Stripe's retry would be skipped as a duplicate and the event lost."""
+    if not event_id:
+        return
+    with conn() as c:
+        c.execute("DELETE FROM stripe_events WHERE event_id = ?", (event_id,))
 
 
 def get_revenue_stats() -> dict:
@@ -1262,13 +1301,16 @@ def upsert_position(
     opened_at: int | None = None,
     closed_at: int | None = None,
 ) -> int:
-    """Insert or update a position. Returns the row ID."""
+    """Insert or update a position. Returns the row ID.
+
+    Uses an explicit RETURNING id (SQLite >= 3.35 and Postgres) because
+    sqlite3's ``lastrowid`` is stale when the ON CONFLICT update path
+    fires — it reports the last genuinely inserted row, not this one."""
     now = int(time.time())
     if opened_at is None:
         opened_at = now
     with conn() as c:
-        return _insert_returning_id(
-            c,
+        row = c.execute(
             """
             INSERT INTO user_positions
                 (user_id, platform, external_id, token_or_side, title,
@@ -1289,6 +1331,7 @@ def upsert_position(
                 status          = excluded.status,
                 source_dashboard = COALESCE(excluded.source_dashboard, user_positions.source_dashboard),
                 closed_at       = excluded.closed_at
+            RETURNING id
             """,
             (
                 user_id, platform, external_id, token_or_side, title,
@@ -1296,7 +1339,8 @@ def upsert_position(
                 realized_pnl, fees_paid, last_mark_price, last_mark_at,
                 status, source_dashboard, opened_at, closed_at,
             ),
-        )
+        ).fetchone()
+        return row[0] if row else 0
 
 
 def update_mark_price(position_id: int, mark_price: float) -> None:
@@ -1449,11 +1493,18 @@ def get_portfolio_by_dashboard(user_id: int) -> list[dict]:
     ]
 
 
-def rebuild_positions_for_user(user_id: int) -> int:
+def rebuild_positions_for_user(user_id: int, exclude_platforms: tuple = ()) -> int:
     """Derive positions from the trading_orders audit log.
 
-    Groups filled orders by (platform, market_slug, side) and computes
-    net qty, VWAP entry/exit, realized P&L. Upserts into user_positions.
+    Replays orders chronologically per (platform, market_slug, side) with a
+    running average cost basis, so realized P&L reflects the entry cost at
+    the time of each sale (a lump-sum VWAP would let buys executed AFTER a
+    sale distort its P&L). Upserts into user_positions.
+
+    ``exclude_platforms`` skips platforms whose positions were just synced
+    authoritatively from the venue — rebuilding those from the local order
+    log would clobber the venue's realized_pnl/fees and double-count
+    positions stored under venue-native keys.
 
     Returns the number of positions upserted.
     """
@@ -1463,21 +1514,27 @@ def rebuild_positions_for_user(user_id: int) -> int:
             SELECT platform, market_slug, market_question, side, action,
                    fill_price, fill_amount, created_at
             FROM trading_orders
-            WHERE user_id = ? AND status = 'submitted' AND fill_price IS NOT NULL AND fill_amount IS NOT NULL
-            ORDER BY created_at ASC
+            WHERE user_id = ?
+              AND status NOT IN ('pending', 'error', 'canceled', 'cancelled')
+              AND fill_price IS NOT NULL AND fill_amount IS NOT NULL
+            ORDER BY created_at ASC, id ASC
             """,
             (user_id,),
         ).fetchall()
 
-    # Aggregate: key = (platform, market_slug, side)
+    # Replay chronologically: key = (platform, market_slug, side)
     agg: dict[tuple, dict] = {}
     for o in orders:
         key = (o["platform"], o["market_slug"], o["side"])
+        if key[0] in exclude_platforms:
+            continue
         if key not in agg:
             agg[key] = {
                 "question": o["market_question"],
-                "buy_qty": 0, "buy_cost": 0,
-                "sell_qty": 0, "sell_proceeds": 0,
+                "open_qty": 0.0, "avg_cost": 0.0,
+                "buy_qty": 0.0, "buy_cost": 0.0,
+                "closed_qty": 0.0, "closed_proceeds": 0.0,
+                "realized": 0.0,
                 "first_at": o["created_at"],
                 "last_at": o["created_at"],
             }
@@ -1485,19 +1542,32 @@ def rebuild_positions_for_user(user_id: int) -> int:
         qty = float(o["fill_amount"])
         price = float(o["fill_price"])
         if o["action"] == "buy":
+            total = a["open_qty"] + qty
+            if total > 0:
+                a["avg_cost"] = (a["open_qty"] * a["avg_cost"] + qty * price) / total
+            a["open_qty"] = total
             a["buy_qty"] += qty
             a["buy_cost"] += qty * price
         else:
-            a["sell_qty"] += qty
-            a["sell_proceeds"] += qty * price
+            # Realize only against quantity we actually hold; an over-sell
+            # (position acquired outside the order log) has no cost basis
+            # here, so the excess is ignored rather than mispriced.
+            covered = min(qty, a["open_qty"])
+            if covered > 0:
+                a["realized"] += covered * (price - a["avg_cost"])
+                a["open_qty"] -= covered
+                a["closed_qty"] += covered
+                a["closed_proceeds"] += covered * price
         a["last_at"] = o["created_at"]
 
     count = 0
     for (platform, slug, side), a in agg.items():
-        net = a["buy_qty"] - a["sell_qty"]
+        net = a["open_qty"]
+        # Report entry as the buy VWAP (stable across the position's life);
+        # realized P&L comes from the chronological replay above.
         avg_entry = (a["buy_cost"] / a["buy_qty"]) if a["buy_qty"] > 0 else 0
-        avg_exit = (a["sell_proceeds"] / a["sell_qty"]) if a["sell_qty"] > 0 else None
-        realized = a["sell_proceeds"] - (a["sell_qty"] * avg_entry) if a["sell_qty"] > 0 else 0
+        avg_exit = (a["closed_proceeds"] / a["closed_qty"]) if a["closed_qty"] > 0 else None
+        realized = a["realized"]
 
         status = "open" if net > 0.001 else "closed"
         upsert_position(
@@ -1507,7 +1577,7 @@ def rebuild_positions_for_user(user_id: int) -> int:
             token_or_side=side,
             title=a["question"],
             qty_open=max(net, 0),
-            qty_closed=a["sell_qty"],
+            qty_closed=a["closed_qty"],
             avg_entry_price=round(avg_entry, 4),
             avg_exit_price=round(avg_exit, 4) if avg_exit is not None else None,
             realized_pnl=round(realized, 4),
@@ -1587,10 +1657,13 @@ def validate_superuser_key(key: str) -> dict | None:
     if row is None:
         return None
 
-    # Update last_used_at and log usage
+    # Update last_used_at and log usage. log_key_usage opens its own
+    # connection, so it must run OUTSIDE this block — nesting conn() holds
+    # two pooled Postgres connections per validation and can exhaust the
+    # pool under concurrent requests.
     with conn() as c:
         c.execute("UPDATE superuser_keys SET last_used_at = ? WHERE key = ?", (now, key))
-        log_key_usage(row["id"])
+    log_key_usage(row["id"])
 
     return {
         "id": row["id"],
@@ -1843,7 +1916,7 @@ def get_all_usage_stats(days: int = 30) -> dict:
                FROM superuser_key_usage_logs ul
                JOIN superuser_keys sk ON ul.key_id = sk.id
                WHERE ul.accessed_at > ?
-               GROUP BY ul.key_id
+               GROUP BY sk.id, sk.name
                ORDER BY cnt DESC LIMIT 10""",
             (cutoff_time,),
         ).fetchall()
@@ -1858,9 +1931,15 @@ def get_all_usage_stats(days: int = 30) -> dict:
             (cutoff_time,),
         ).fetchall()
 
-        # Usage trend (daily)
+        # Usage trend (daily). Epoch→day bucketing has no shared syntax
+        # across the two backends.
+        day_expr = (
+            "to_char(to_timestamp(accessed_at), 'YYYY-MM-DD')"
+            if IS_PG
+            else "DATE(accessed_at, 'unixepoch')"
+        )
         trend = c.execute(
-            """SELECT DATE(accessed_at, 'unixepoch') as day, COUNT(*) as cnt
+            f"""SELECT {day_expr} as day, COUNT(*) as cnt
                FROM superuser_key_usage_logs
                WHERE accessed_at > ?
                GROUP BY day

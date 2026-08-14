@@ -102,7 +102,7 @@ class PositionSizer:
         win_rate = 0.5 + (params.confidence_score * 0.1)  # 0.5 -> 0.6 range
         avg_win_rr = 1.5  # Assume 1.5:1 risk-reward
         kelly_pct = (win_rate * avg_win_rr - (1 - win_rate)) / avg_win_rr if avg_win_rr > 0 else 0.01
-        kelly_pct = max(0.01, min(0.10, kelly_pct))  # Clamp 1-10%
+        kelly_pct = max(0.0, min(0.10, kelly_pct))  # Cap at 10%; negative edge => 0 (no position)
 
         # Apply fractional Kelly
         kelly_pct *= self.kelly_fraction
@@ -213,7 +213,7 @@ class PositionSizer:
         q = 1 - win_rate
 
         kelly = (b * p - q) / b
-        kelly = max(0.01, min(0.1, kelly))  # Clamp 1-10%
+        kelly = max(0.0, min(0.1, kelly))  # Cap at 10%; negative edge => 0 (do not trade)
         kelly *= self.kelly_fraction  # Apply fractional Kelly
 
         return kelly

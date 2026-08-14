@@ -51,14 +51,6 @@ def register(app, *, get_state: Callable):
         out["api_version"] = API_VERSION
         return out
 
-    @app.get("/v1/forecast/{race_key}", tags=["v1"])
-    async def forecast_one(race_key: str):
-        """House forecast for a single race plus the inlined smart-money summary."""
-        from main import data_forecast
-        out = await data_forecast(race_key)
-        out["api_version"] = API_VERSION
-        return out
-
     @app.get("/v1/forecast/conditional", tags=["v1"])
     async def forecast_conditional(given: str = Query(..., description="Format: <race_key>=<D|R>")):
         """Re-score every race conditional on one race resolving D or R.
@@ -81,6 +73,17 @@ def register(app, *, get_state: Callable):
         """
         from main import data_forecast_wave
         out = await data_forecast_wave(swing_pp=swing_pp)
+        out["api_version"] = API_VERSION
+        return out
+
+    # Registered AFTER the literal /v1/forecast/* routes above so the
+    # parameterized path doesn't shadow them (Starlette matches routes in
+    # registration order).
+    @app.get("/v1/forecast/{race_key}", tags=["v1"])
+    async def forecast_one(race_key: str):
+        """House forecast for a single race plus the inlined smart-money summary."""
+        from main import data_forecast
+        out = await data_forecast(race_key)
         out["api_version"] = API_VERSION
         return out
 

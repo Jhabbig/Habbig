@@ -39,23 +39,29 @@ jobs:
       - name: Rsync files to server
         run: |
           SERVER="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+          # Live products + bots only — keep in sync with deploy.sh SITES.
+          # Parked dashboards (sports, world, traders, truth, ...) are not synced.
           SITES=(
             gateway
             crypto-dashboard
             stock-dashboard
-            sports-dashboard
             polymarket_weather_dashboard
-            world-state-dashboard
             midterm-dashboard
-            top-traders-dashboard
-            Dashboard-x-truth-research-prediction
             polymarket-bot
             polymarket_weather_bot
           )
+          # Keep in sync with deploy.sh EXCLUDES.
+          # IMPORTANT: the env pattern is ".env*" (with glob), not bare ".env".
+          # Otherwise rsync --delete wipes server-side .env.production (which is
+          # intentionally not in the checkout) on every deploy. The .secret_key /
+          # .encryption_key / .csrf_secret / .session_secret files are runtime-
+          # generated server-side secrets (gitignored); deleting .secret_key makes
+          # every Fernet-encrypted trading credential permanently undecryptable.
           EXCLUDES=(
             "__pycache__" "*.pyc" ".DS_Store" "node_modules"
             "venv" ".venv" ".git" ".snapshots" "*.log"
-            ".env" "*.db" "*.db-wal" "*.db-shm"
+            ".env*" "*.db" "*.db-wal" "*.db-shm"
+            ".secret_key" ".encryption_key" ".csrf_secret" ".session_secret"
           )
           exclude_args=""
           for pat in "${EXCLUDES[@]}"; do
@@ -75,15 +81,16 @@ jobs:
       - name: Restart services
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'SCRIPT'
+            # Live units only — must match SERVICES in deploy/install-services.sh.
+            # Parked units (narve-sports, narve-world, narve-traders, ...) are
+            # removed from /etc/systemd/system by install-services.sh, so
+            # restarting them would fail every deploy.
             SERVICES=(
               narve-gateway
               narve-crypto
-              narve-sports
-              narve-weather
-              narve-world
-              narve-midterm
-              narve-traders
               narve-stock
+              narve-weather
+              narve-midterm
             )
             # Reload unit files if they changed
             sudo -n systemctl daemon-reload 2>/dev/null || true

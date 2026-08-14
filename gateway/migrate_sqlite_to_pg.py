@@ -40,6 +40,7 @@ TABLES = [
     "superuser_keys",
     "superuser_key_templates",
     "superuser_key_usage_logs",
+    "fleet_counters",
     "user_positions",
 ]
 
