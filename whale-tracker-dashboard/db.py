@@ -267,6 +267,48 @@ CREATE TABLE IF NOT EXISTS uk_psc (
 );
 CREATE INDEX IF NOT EXISTS idx_uk_psc_company ON uk_psc(company_number, notified_at DESC);
 
+-- Unified foreign substantial-shareholder feed: ASX substantial-holder
+-- notices + EDINET (Japan) large-holding reports. UK PSC has its own
+-- schema above because Companies House speaks a different data model.
+CREATE TABLE IF NOT EXISTS foreign_company (
+    source          TEXT NOT NULL,     -- 'asx' | 'edinet'
+    code            TEXT NOT NULL,     -- ticker code on the exchange
+    name            TEXT,
+    last_pulled_at  TEXT,
+    PRIMARY KEY (source, code)
+);
+
+CREATE TABLE IF NOT EXISTS foreign_holder (
+    source            TEXT NOT NULL,
+    notice_id         TEXT NOT NULL,
+    issuer_code       TEXT,
+    issuer_name       TEXT,
+    holder_name       TEXT,
+    notified_at       TEXT,
+    percent_ownership REAL,
+    headline          TEXT,
+    url               TEXT,
+    PRIMARY KEY (source, notice_id)
+);
+CREATE INDEX IF NOT EXISTS idx_foreign_holder_source_date ON foreign_holder(source, notified_at DESC);
+CREATE INDEX IF NOT EXISTS idx_foreign_holder_issuer ON foreign_holder(source, issuer_code);
+
+-- LLM-extracted officer/director rows from DEF 14A proxy statements.
+-- Used to enrich filer_profile.primary_person for companies (issuer_cik).
+CREATE TABLE IF NOT EXISTS def14a_officer (
+    accession     TEXT NOT NULL,
+    issuer_cik    TEXT NOT NULL,
+    issuer_name   TEXT,
+    line_no       INTEGER NOT NULL,
+    person_name   TEXT NOT NULL,
+    role          TEXT,        -- e.g. "CEO", "Director", "CFO"
+    bio           TEXT,
+    extracted_at  TEXT,
+    model         TEXT,
+    PRIMARY KEY (accession, line_no)
+);
+CREATE INDEX IF NOT EXISTS idx_def14a_officer_cik ON def14a_officer(issuer_cik);
+
 -- LLM-extracted structured fields per 13D/G filing.
 CREATE TABLE IF NOT EXISTS activist_intent (
     accession              TEXT PRIMARY KEY,
@@ -319,6 +361,7 @@ CREATE TABLE IF NOT EXISTS filer_outcome (
     benchmark_pct    REAL,            -- SPY return over the same horizon
     alpha_pct        REAL,            -- return_pct - benchmark_pct
     win              INTEGER NOT NULL,-- 1 if directional alpha > 0
+    position_value_usd REAL,          -- dollar size of the position at filing time
     computed_at      TEXT NOT NULL,
     PRIMARY KEY (filer_type, filer_id, source_id, horizon_days)
 );
@@ -331,7 +374,32 @@ CREATE INDEX IF NOT EXISTS idx_filer_outcome_computed ON filer_outcome(computed_
 def init_db() -> None:
     with connect() as cx:
         cx.executescript(SCHEMA)
+        # Lightweight column-additive migrations for pre-existing DBs.
+        _migrate(cx)
         cx.commit()
+
+
+# Adds any missing columns from newer schema versions. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so we introspect PRAGMA table_info first.
+_MIGRATIONS = [
+    ("filer_outcome", "position_value_usd", "REAL"),
+    ("filer_profile", "primary_person_source", "TEXT"),
+    ("filer_profile", "primary_person_role",   "TEXT"),
+    ("filer_profile", "bio",                   "TEXT"),
+]
+
+
+def _migrate(cx) -> None:
+    for table, col, coltype in _MIGRATIONS:
+        try:
+            info = cx.execute(f"PRAGMA table_info({table})").fetchall()
+            existing = {r["name"] for r in info}
+            if col not in existing:
+                cx.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+        except Exception:
+            # If the table itself doesn't exist yet the CREATE above will
+            # have set it up with the current schema — nothing to migrate.
+            continue
 
 
 @contextmanager
@@ -458,6 +526,9 @@ def counts() -> dict[str, int]:
             "filer_profile":      cx.execute("SELECT COUNT(*) FROM filer_profile").fetchone()[0],
             "uk_company":         cx.execute("SELECT COUNT(*) FROM uk_company").fetchone()[0],
             "uk_psc":             cx.execute("SELECT COUNT(*) FROM uk_psc").fetchone()[0],
+            "foreign_company":    cx.execute("SELECT COUNT(*) FROM foreign_company").fetchone()[0],
+            "foreign_holder":     cx.execute("SELECT COUNT(*) FROM foreign_holder").fetchone()[0],
+            "def14a_officer":     cx.execute("SELECT COUNT(*) FROM def14a_officer").fetchone()[0],
         }
 
 
@@ -652,6 +723,51 @@ def pending_ma_extractions(limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def upsert_foreign_holder(row: dict) -> bool:
+    with _lock, connect() as cx:
+        cur = cx.execute(
+            """
+            INSERT OR REPLACE INTO foreign_holder (
+                source, notice_id, issuer_code, issuer_name, holder_name,
+                notified_at, percent_ownership, headline, url
+            ) VALUES (
+                :source, :notice_id, :issuer_code, :issuer_name, :holder_name,
+                :notified_at, :percent_ownership, :headline, :url
+            )
+            """,
+            row,
+        )
+        return cur.rowcount > 0
+
+
+def upsert_def14a_officers(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    with _lock, connect() as cx:
+        cur = cx.executemany(
+            """
+            INSERT OR REPLACE INTO def14a_officer (
+                accession, issuer_cik, issuer_name, line_no,
+                person_name, role, bio, extracted_at, model
+            ) VALUES (
+                :accession, :issuer_cik, :issuer_name, :line_no,
+                :person_name, :role, :bio, :extracted_at, :model
+            )
+            """,
+            rows,
+        )
+        return cur.rowcount
+
+
+def have_def14a(accession: str) -> bool:
+    with connect() as cx:
+        row = cx.execute(
+            "SELECT 1 FROM def14a_officer WHERE accession = ? LIMIT 1",
+            (accession,),
+        ).fetchone()
+    return row is not None
+
+
 def upsert_cusip_tickers(rows: list[dict]) -> int:
     if not rows:
         return 0
@@ -737,17 +853,19 @@ def have_price(ticker: str, date: str) -> bool:
 
 
 def upsert_filer_outcome(row: dict) -> bool:
+    # position_value_usd is optional — older callers omit it and we fall to NULL.
+    row = {"position_value_usd": None, **row}
     with _lock, connect() as cx:
         cur = cx.execute(
             """
             INSERT OR REPLACE INTO filer_outcome (
                 filer_type, filer_id, source_id, direction, ticker,
                 filing_date, horizon_days, return_pct, benchmark_pct,
-                alpha_pct, win, computed_at
+                alpha_pct, win, position_value_usd, computed_at
             ) VALUES (
                 :filer_type, :filer_id, :source_id, :direction, :ticker,
                 :filing_date, :horizon_days, :return_pct, :benchmark_pct,
-                :alpha_pct, :win, :computed_at
+                :alpha_pct, :win, :position_value_usd, :computed_at
             )
             """,
             row,

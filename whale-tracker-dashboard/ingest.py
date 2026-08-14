@@ -23,6 +23,7 @@ import edgar
 import events
 import filings8k
 import filings13d
+import foreign
 import form4
 import form13f
 import identity
@@ -79,20 +80,31 @@ _last_identity_run = 0.0
 UK_INTERVAL_S = int(os.environ.get("UK_INTERVAL_S", "21600"))
 _last_uk_run = 0.0
 
+# Foreign feeds (ASX polling + EDINET daily list).
+FOREIGN_INTERVAL_S = int(os.environ.get("FOREIGN_INTERVAL_S", "21600"))  # 6h
+_last_foreign_run = 0.0
+
+# DEF 14A officer extraction cadence.
+DEF14A_INTERVAL_S = int(os.environ.get("DEF14A_INTERVAL_S", "3600"))
+DEF14A_PER_PASS   = int(os.environ.get("DEF14A_PER_PASS", "5"))
+_last_def14a_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
     global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run
     global _last_llm_extract_run, _last_alert_run, _last_identity_run, _last_uk_run
+    global _last_foreign_run, _last_def14a_run
     results = {
         "form4": 0, "13d": 0, "13g": 0, "8k": 0,
         "13f_filings": 0, "13f_holdings": 0,
         "congress": 0, "skill_labeled": 0,
         "options_flow": 0, "dark_pool": 0,
         "cusips_resolved": 0,
-        "llm_activist": 0, "llm_ma": 0,
+        "llm_activist": 0, "llm_ma": 0, "llm_def14a": 0,
         "alerts_fired": 0,
         "profiles_rebuilt": 0, "uk_psc": 0,
+        "foreign_asx": 0, "foreign_edinet": 0,
     }
 
     # Refresh CIK→ticker map (no-op if already current).
@@ -205,6 +217,28 @@ async def run_once() -> dict[str, int]:
             _last_uk_run = now
         except Exception as e:
             log.exception("uk refresh failed: %s", e)
+
+    # Foreign substantial-holder feeds (ASX + EDINET).
+    if now - _last_foreign_run >= FOREIGN_INTERVAL_S:
+        try:
+            asx_res = await foreign.refresh_asx()
+            results["foreign_asx"] = asx_res.get("rows", 0)
+        except Exception as e:
+            log.exception("foreign asx refresh failed: %s", e)
+        try:
+            ed_res = await foreign.refresh_edinet_recent(days=7)
+            results["foreign_edinet"] = ed_res.get("rows", 0)
+        except Exception as e:
+            log.exception("foreign edinet refresh failed: %s", e)
+        _last_foreign_run = now
+
+    # DEF 14A officer/director extraction via local LLM.
+    if llm_client.is_configured() and now - _last_def14a_run >= DEF14A_INTERVAL_S:
+        try:
+            results["llm_def14a"] = await _llm_extract_def14a()
+            _last_def14a_run = now
+        except Exception as e:
+            log.exception("def14a extraction failed: %s", e)
 
     if any(results.values()):
         events.broadcast("ingest", {"inserted": results, "counts": db.counts()})
@@ -642,6 +676,114 @@ def _safe_float(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+async def _llm_extract_def14a() -> int:
+    """Discover recent DEF 14A filings for companies we track, then LLM-
+    extract officer/director rows into filer_profile enrichment.
+
+    Watchlist strategy: we only pull DEF 14A for issuers that already
+    appear as insider_txn or ma_event issuer_cik. That keeps the LLM
+    workload bounded to companies we already care about.
+    """
+    with db.connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT DISTINCT issuer_cik AS cik, issuer_name AS name
+            FROM insider_txn
+            WHERE issuer_cik IS NOT NULL AND issuer_cik != ''
+              AND issuer_ticker IS NOT NULL
+            LIMIT ?
+            """,
+            (int(DEF14A_PER_PASS),),
+        ).fetchall()
+    if not rows:
+        return 0
+
+    inserted = 0
+    for r in rows:
+        cik = r["cik"]
+        try:
+            hits = await edgar.search_filings("DEF 14A",
+                                              start_date=_shift_days(_today(), -365),
+                                              end_date=_today(), offset=0, size=5)
+        except Exception as e:
+            log.info("def14a search %s failed: %s", cik, e)
+            continue
+        # Filter to filings by this CIK.
+        candidates = [h for h in hits
+                      if (h.get("filer_cik") or "").lstrip("0") == cik.lstrip("0")]
+        if not candidates:
+            continue
+        # Newest first, one per issuer per pass.
+        target = candidates[0]
+        accession = target.get("accession") or ""
+        if not accession or db.have_def14a(accession):
+            continue
+        idx = await edgar.fetch_filing_index(target.get("filer_cik", ""), accession)
+        if not idx:
+            continue
+        doc = edgar.pick_doc(idx, suffixes=(".htm", ".html", ".txt"))
+        if not doc:
+            continue
+        try:
+            body = await edgar.fetch(edgar.filing_primary_doc_url(
+                target.get("filer_cik", ""), accession, doc,
+            ))
+            parsed = await llm_extract.extract_def14a_officers(body)
+        except Exception as e:
+            log.info("def14a fetch/extract %s failed: %s", accession, e)
+            continue
+        officers = (parsed or {}).get("officers") or []
+        if not officers:
+            continue
+        now_iso = _now_iso()
+        officer_rows = []
+        for i, o in enumerate(officers, start=1):
+            name = (o.get("name") or "").strip()
+            if not name:
+                continue
+            officer_rows.append({
+                "accession":   accession,
+                "issuer_cik":  cik,
+                "issuer_name": r["name"] or "",
+                "line_no":     i,
+                "person_name": name[:200],
+                "role":        (o.get("role") or "")[:64] or None,
+                "bio":         (o.get("bio") or "")[:1000] or None,
+                "extracted_at": now_iso,
+                "model":       llm_client.LLM_MODEL,
+            })
+        if officer_rows:
+            n = db.upsert_def14a_officers(officer_rows)
+            inserted += n
+            # Enrich filer_profile for the issuer with the first-listed
+            # officer as primary_person (usually the CEO).
+            primary = officer_rows[0]
+            identity.upsert_profile(
+                cik, kind="issuer",
+                display_name=r["name"] or cik,
+                primary_person=primary["person_name"],
+                fund_type=None, source="llm",
+                confidence=0.75,
+            )
+    return inserted
+
+
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _today() -> str:
+    import datetime as _dt
+    return _dt.date.today().isoformat()
+
+
+def _shift_days(date_str: str, days: int) -> str:
+    import datetime as _dt
+    d = _dt.date.fromisoformat(date_str[:10])
+    return (d + _dt.timedelta(days=days)).isoformat()
 
 
 # ───────────────────────────── Options flow / dark pool ─────────────────────────────

@@ -152,6 +152,7 @@
   <button data-tab="backtest">Backtest</button>
   <button data-tab="watchlist">Watchlist</button>
   <button data-tab="uk">UK</button>
+  <button data-tab="foreign">ASX / JPX</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
 </nav>
@@ -387,9 +388,12 @@
         <th>Filer</th><th>Type</th>
         <th class="num">N</th><th class="num">W/L</th>
         <th class="num">Posterior</th><th class="num">95% CI</th>
-        <th class="num">Avg α</th><th>Status</th>
+        <th class="num">Avg α</th>
+        <th class="num" title="Position-size-weighted mean alpha (larger positions count more)">$-wtd α</th>
+        <th class="num" title="Capital deployed across all labeled filings">Capital</th>
+        <th>Status</th>
       </tr></thead>
-      <tbody><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+      <tbody><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
     </table>
   </section>
 
@@ -401,6 +405,8 @@
       <label>Window (days) <input type="number" id="bt-win" value="90" min="1" max="365"></label>
       <label>Start <input type="text" id="bt-start" placeholder="YYYY-MM-DD"></label>
       <label>End <input type="text" id="bt-end" placeholder="YYYY-MM-DD"></label>
+      <label title="Cap positions held simultaneously; excess signals dropped">Max concurrent <input type="number" id="bt-maxconc" placeholder="unlimited" min="1" max="200"></label>
+      <label title="Exit early if ticker return breaches -this pct">Stop-loss %<input type="number" id="bt-stoploss" placeholder="none" min="0" max="100" step="0.5"></label>
       <button id="bt-go">Run</button>
       <span class="live">First-crossing strategy: buy each ticker the first time synthesis ≥ threshold, hold for N days, compare vs SPY.</span>
     </div>
@@ -410,9 +416,9 @@
       <thead><tr>
         <th>Ticker</th><th>Signal date</th><th>Buy</th><th>Sell</th>
         <th class="num">Score</th><th class="num">Ticker %</th><th class="num">SPY %</th>
-        <th class="num">Alpha %</th><th>Result</th>
+        <th class="num">Alpha %</th><th>Exit</th><th>Result</th>
       </tr></thead>
-      <tbody><tr><td colspan="9" class="empty">Run a backtest above to populate.</td></tr></tbody>
+      <tbody><tr><td colspan="10" class="empty">Run a backtest above to populate.</td></tr></tbody>
     </table>
   </section>
 
@@ -454,6 +460,35 @@
         </tr></thead>
         <tbody><tr><td colspan="5" class="empty">No PSC data yet.</td></tr></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- ── ASX / JPX (EDINET) foreign substantial-shareholder feed ─ -->
+  <section id="tab-foreign" hidden>
+    <div class="controls">
+      <input type="text" id="fx-asx" placeholder="ASX code (e.g. CBA)">
+      <button id="fx-asx-add">Watch ASX</button>
+      <button id="fx-refresh">Refresh both feeds</button>
+      <span class="live">ASX = watchlist-based announcement polling. EDINET (Japan) = daily large-holding reports; needs <code>EDINET_API_KEY</code>.</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+      <div>
+        <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">ASX watched</h3>
+        <table id="fx-asx-table">
+          <thead><tr><th>Code</th><th>Name</th><th>Last pulled</th></tr></thead>
+          <tbody><tr><td colspan="3" class="empty">Add an ASX code above.</td></tr></tbody>
+        </table>
+      </div>
+      <div>
+        <h3 style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Recent holder notices</h3>
+        <table id="fx-holders">
+          <thead><tr>
+            <th>Notified</th><th>Src</th><th>Issuer</th><th>Holder</th>
+            <th class="num">%</th><th>Headline</th>
+          </tr></thead>
+          <tbody><tr><td colspan="6" class="empty">No foreign holder notices yet.</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -904,10 +939,13 @@ async function loadSkill() {
     if (t) q.set("filer_type", t);
     const rows = await fetchJSON(`/api/skill-leaderboard?${q.toString()}`);
     if (!rows.length) {
-      tb.innerHTML = `<tr><td colspan="8" class="empty">Skill model warming up — needs filings older than ${horizon}d with resolved prices.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="10" class="empty">Skill model warming up — needs filings older than ${horizon}d with resolved prices.</td></tr>`;
       return;
     }
-    tb.innerHTML = rows.map(r => `
+    tb.innerHTML = rows.map(r => {
+      const wtd = r.weighted_alpha_pct;
+      const cap = r.weighted_capital_usd || 0;
+      return `
       <tr>
         <td>${esc(r.filer_name||r.filer_id)}<div class="live" style="font-size:11px">${esc(r.filer_id)}</div></td>
         <td><span class="pill">${esc(r.filer_type)}</span></td>
@@ -916,10 +954,13 @@ async function loadSkill() {
         <td class="num">${(r.posterior_mean*100).toFixed(1)}%</td>
         <td class="num">${(r.ci_lower*100).toFixed(0)}–${(r.ci_upper*100).toFixed(0)}%</td>
         <td class="num ${(r.avg_alpha_pct||0)>=0?"pos":"neg"}">${(r.avg_alpha_pct>=0?"+":"")}${(r.avg_alpha_pct||0).toFixed(2)}%</td>
+        <td class="num ${wtd==null?"":(wtd>=0?"pos":"neg")}">${wtd==null?"—":((wtd>=0?"+":"")+wtd.toFixed(2)+"%")}</td>
+        <td class="num">${cap?fmtUSD(cap):"—"}</td>
         <td>${r.high_confidence_skilled?`<span class="pill buy">skilled</span>`:`<span class="pill">building</span>`}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
   } catch(e) {
-    tb.innerHTML = `<tr><td colspan="8" class="err">${esc(e.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="10" class="err">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -939,6 +980,8 @@ async function loadBacktest() {
   const win   = +$("#bt-win").value || 90;
   const start = $("#bt-start").value;
   const end   = $("#bt-end").value;
+  const maxc  = $("#bt-maxconc").value;
+  const stop  = $("#bt-stoploss").value;
   const summary = $("#bt-summary");
   const curve   = $("#bt-curve");
   const tb      = $("#bt-table tbody");
@@ -948,14 +991,20 @@ async function loadBacktest() {
   }
   summary.innerHTML = `<div class="empty">Running…</div>`;
   curve.innerHTML = "";
-  tb.innerHTML = `<tr><td colspan="9" class="empty">Running…</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="10" class="empty">Running…</td></tr>`;
   try {
     const q = new URLSearchParams({threshold: thr, hold_days: hold, window_days: win, start_date: start, end_date: end});
+    if (maxc) q.set("max_concurrent", maxc);
+    if (stop) q.set("stop_loss_pct", stop);
     const r = await fetchJSON(`/api/backtest?${q.toString()}`);
     const s = r.summary || {};
+    const constraintChips = [];
+    if (s.max_concurrent) constraintChips.push(`max ${s.max_concurrent}`);
+    if (s.stop_loss_pct)  constraintChips.push(`SL ${s.stop_loss_pct}%`);
+    if (s.n_stopped_out)  constraintChips.push(`${s.n_stopped_out} stopped out`);
     summary.innerHTML = `
       <div class="syn-grid">
-        <div class="syn-card"><h4>Trades</h4><div class="v">${s.n_trades||0}</div></div>
+        <div class="syn-card"><h4>Trades</h4><div class="v">${s.n_trades||0}</div><div class="live" style="font-size:10px">${constraintChips.join(" · ")}</div></div>
         <div class="syn-card"><h4>Win rate</h4><div class="v">${((s.win_rate||0)*100).toFixed(1)}%</div></div>
         <div class="syn-card"><h4>Mean α</h4><div class="v ${(s.mean_alpha_pct||0)>=0?"pos":"neg"}">${(s.mean_alpha_pct>=0?"+":"")}${(s.mean_alpha_pct||0).toFixed(2)}%</div></div>
         <div class="syn-card"><h4>Median α</h4><div class="v ${(s.median_alpha_pct||0)>=0?"pos":"neg"}">${(s.median_alpha_pct>=0?"+":"")}${(s.median_alpha_pct||0).toFixed(2)}%</div></div>
@@ -968,7 +1017,7 @@ async function loadBacktest() {
       curve.innerHTML = renderEquityCurve(r.equity_curve);
     }
     if (!r.trades || !r.trades.length) {
-      tb.innerHTML = `<tr><td colspan="9" class="empty">No trades fired. Try a lower threshold or wider window.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="10" class="empty">No trades fired. Try a lower threshold or wider window.</td></tr>`;
       return;
     }
     tb.innerHTML = r.trades.map(t => `
@@ -981,11 +1030,12 @@ async function loadBacktest() {
         <td class="num ${t.return_pct>=0?"pos":"neg"}">${(t.return_pct>=0?"+":"")}${t.return_pct}%</td>
         <td class="num ${t.benchmark_pct>=0?"pos":"neg"}">${(t.benchmark_pct>=0?"+":"")}${t.benchmark_pct}%</td>
         <td class="num ${t.alpha_pct>=0?"pos":"neg"}">${(t.alpha_pct>=0?"+":"")}${t.alpha_pct}%</td>
+        <td><span class="pill ${t.sold_reason==='stop_loss'?'ma':''}">${esc(t.sold_reason||'hold')}</span></td>
         <td>${t.win?'<span class="pill buy">win</span>':'<span class="pill ma">loss</span>'}</td>
       </tr>`).join("");
   } catch(e) {
     summary.innerHTML = `<div class="err">${esc(e.message)}</div>`;
-    tb.innerHTML = `<tr><td colspan="9" class="err">${esc(e.message)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="10" class="err">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -1183,6 +1233,51 @@ async function loadUK() {
   }
 }
 
+// ── Foreign (ASX / EDINET) ──
+async function loadForeign() {
+  const asxTb = $("#fx-asx-table tbody");
+  const hTb   = $("#fx-holders tbody");
+  asxTb.innerHTML = `<tr><td colspan="3" class="empty">Loading…</td></tr>`;
+  hTb.innerHTML   = `<tr><td colspan="6" class="empty">Loading…</td></tr>`;
+  try {
+    const [asx, holders] = await Promise.all([
+      fetchJSON("/api/foreign/asx/companies"),
+      fetchJSON("/api/foreign/holders?days=365&limit=200"),
+    ]);
+    if (!asx.length) {
+      asxTb.innerHTML = `<tr><td colspan="3" class="empty">Add an ASX code above.</td></tr>`;
+    } else {
+      asxTb.innerHTML = asx.map(c => `
+        <tr>
+          <td><span class="ticker">${esc(c.code)}</span>
+              <a href="#" data-fx-rm="${esc(c.code)}" style="margin-left:6px;color:var(--sell);font-size:11px">×</a></td>
+          <td>${esc(c.name||"—")}</td>
+          <td>${esc(fmtDate(c.last_pulled_at))}</td>
+        </tr>`).join("");
+      $$("[data-fx-rm]").forEach(a => a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        await fetch(`/api/foreign/asx/companies/${encodeURIComponent(a.dataset.fxRm)}`, {method:"DELETE"});
+        loadForeign();
+      }));
+    }
+    if (!holders.length) {
+      hTb.innerHTML = `<tr><td colspan="6" class="empty">No foreign holder notices yet.</td></tr>`;
+    } else {
+      hTb.innerHTML = holders.map(h => `
+        <tr>
+          <td>${esc(fmtDate(h.notified_at))}</td>
+          <td><span class="pill">${esc(h.source)}</span></td>
+          <td>${esc(h.issuer_code||h.issuer_name||"—")}</td>
+          <td>${esc(h.holder_name||"—")}</td>
+          <td class="num">${h.percent_ownership?Number(h.percent_ownership).toFixed(2)+"%":"—"}</td>
+          <td>${h.url?`<a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.headline||"link")}</a>`:esc(h.headline||"")}</td>
+        </tr>`).join("");
+    }
+  } catch(e) {
+    asxTb.innerHTML = `<tr><td colspan="3" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
 // ── Ticker Synthesis ──
 async function loadSynthesis() {
   const t = $("#sy-ticker").value.trim().toUpperCase();
@@ -1333,6 +1428,7 @@ const loaders = {
   backtest:    () => { /* manual run only */ },
   watchlist:   loadWatchlists,
   uk:          loadUK,
+  foreign:     loadForeign,
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
 };
@@ -1371,6 +1467,17 @@ $("#uk-add").addEventListener("click", async () => {
 $("#uk-refresh").addEventListener("click", async () => {
   await fetch("/api/admin/uk-refresh", {method:"POST"});
   loadUK();
+});
+$("#fx-asx-add").addEventListener("click", async () => {
+  const code = $("#fx-asx").value.trim();
+  if (!code) return;
+  await fetch(`/api/foreign/asx/companies?code=${encodeURIComponent(code)}`, {method:"POST"});
+  $("#fx-asx").value = "";
+  loadForeign();
+});
+$("#fx-refresh").addEventListener("click", async () => {
+  await fetch("/api/admin/foreign-refresh?target=both", {method:"POST"});
+  loadForeign();
 });
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);

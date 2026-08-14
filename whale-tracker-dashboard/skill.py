@@ -85,7 +85,7 @@ def _insider_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> 
         """
         SELECT accession, line_no, reporter_cik, issuer_ticker,
                COALESCE(txn_date, substr(filed_at, 1, 10)) AS filing_date,
-               txn_code, is_buy
+               txn_code, is_buy, value_usd
         FROM insider_txn
         WHERE issuer_ticker IS NOT NULL
           AND COALESCE(txn_date, substr(filed_at, 1, 10)) <= ?
@@ -105,6 +105,7 @@ def _insider_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> 
             "direction":  "buy" if r["is_buy"] else "sell",
             "ticker":     r["issuer_ticker"],
             "filing_date": r["filing_date"],
+            "position_value_usd": r["value_usd"],
         })
     return out
 
@@ -140,7 +141,8 @@ def _congress_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) ->
     out: list[dict] = []
     for r in cx.execute(
         """
-        SELECT transaction_id, representative, ticker, transaction_date, transaction_type
+        SELECT transaction_id, representative, ticker, transaction_date,
+               transaction_type, amount_min, amount_max
         FROM congress_trade
         WHERE ticker IS NOT NULL
           AND representative IS NOT NULL AND representative != ''
@@ -160,6 +162,15 @@ def _congress_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) ->
         filer = _normalise_name(r["representative"])
         if db.have_outcome("congress", filer, r["transaction_id"], horizon_days):
             continue
+        # Congress PTRs disclose amount bands; use the midpoint as the
+        # position-size estimate. Bands like "$1,001 - $15,000" become $8000.
+        amin, amax = r["amount_min"], r["amount_max"]
+        if amin is not None and amax is not None:
+            pos_value = (float(amin) + float(amax)) / 2.0
+        elif amin is not None:
+            pos_value = float(amin)
+        else:
+            pos_value = None
         out.append({
             "filer_type": "congress",
             "filer_id":   filer,
@@ -167,6 +178,7 @@ def _congress_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) ->
             "direction":  direction,
             "ticker":     r["ticker"],
             "filing_date": r["transaction_date"],
+            "position_value_usd": pos_value,
         })
     return out
 
@@ -215,24 +227,25 @@ def _fund_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> lis
             if cur["period_of_report"] > cutoff_date:
                 break
             cur_rows = cx.execute(
-                "SELECT cusip, issuer_ticker FROM fund_holding "
+                "SELECT cusip, issuer_ticker, value FROM fund_holding "
                 "WHERE accession = ? AND issuer_ticker IS NOT NULL",
                 (cur["accession"],),
             ).fetchall()
             prev_rows = cx.execute(
-                "SELECT cusip, issuer_ticker FROM fund_holding "
+                "SELECT cusip, issuer_ticker, value FROM fund_holding "
                 "WHERE accession = ? AND issuer_ticker IS NOT NULL",
                 (prev_acc,),
             ).fetchall()
 
-            prev_cusips = {r["cusip"]: r["issuer_ticker"] for r in prev_rows if r["cusip"]}
-            cur_cusips  = {r["cusip"]: r["issuer_ticker"] for r in cur_rows  if r["cusip"]}
+            prev_map = {r["cusip"]: r for r in prev_rows if r["cusip"]}
+            cur_map  = {r["cusip"]: r for r in cur_rows  if r["cusip"]}
 
-            for cusip, ticker in cur_cusips.items():
+            for cusip, rowc in cur_map.items():
+                ticker = rowc["issuer_ticker"]
                 if not ticker:
                     continue
                 source_id = f"{cur['accession']}:{cusip}:new"
-                if cusip in prev_cusips:
+                if cusip in prev_map:
                     continue  # not new
                 if db.have_outcome("fund", cik, source_id, horizon_days):
                     continue
@@ -243,10 +256,12 @@ def _fund_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> lis
                     "direction":  "buy",
                     "ticker":     ticker,
                     "filing_date": cur["period_of_report"],
+                    "position_value_usd": rowc["value"],
                 })
 
-            for cusip, ticker in prev_cusips.items():
-                if not ticker or cusip in cur_cusips:
+            for cusip, rowp in prev_map.items():
+                ticker = rowp["issuer_ticker"]
+                if not ticker or cusip in cur_map:
                     continue
                 source_id = f"{cur['accession']}:{cusip}:exit"
                 if db.have_outcome("fund", cik, source_id, horizon_days):
@@ -258,6 +273,7 @@ def _fund_candidates(cx, cutoff_date: str, horizon_days: int, limit: int) -> lis
                     "direction":  "sell",
                     "ticker":     ticker,
                     "filing_date": cur["period_of_report"],
+                    "position_value_usd": rowp["value"],
                 })
 
             prev_acc = cur["accession"]
@@ -334,6 +350,7 @@ def _label_one(c: dict, horizon_days: int) -> bool:
         "benchmark_pct": round(r_spy * 100, 4),
         "alpha_pct":     round(alpha * 100, 4),
         "win":           win,
+        "position_value_usd": c.get("position_value_usd"),
         "computed_at":   dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     })
     return True
@@ -372,12 +389,23 @@ def leaderboard(filer_type: str | None = None, min_n: int = 5, limit: int = 50,
     if filer_type in ("insider", "activist", "congress", "fund"):
         where.append("filer_type = ?")
         params.append(filer_type)
+    # Aggregate the plain counts + also the dollar-weighted alpha. A row
+    # without position_value_usd (older backfills, missing data) is excluded
+    # from the weighted sum but still counts in the equal-weighted metrics.
     sql = (
         "SELECT filer_type, filer_id, "
         "       SUM(win)         AS wins, "
         "       SUM(1 - win)     AS losses, "
         "       COUNT(*)         AS n, "
-        "       AVG(alpha_pct)   AS avg_alpha_pct "
+        "       AVG(alpha_pct)   AS avg_alpha_pct, "
+        "       SUM(CASE WHEN position_value_usd > 0 "
+        "                THEN alpha_pct * position_value_usd END) AS w_alpha_num, "
+        "       SUM(CASE WHEN position_value_usd > 0 "
+        "                THEN position_value_usd END)             AS w_alpha_den, "
+        "       SUM(CASE WHEN position_value_usd > 0 AND win = 1 "
+        "                THEN position_value_usd END)             AS w_win_num, "
+        "       SUM(CASE WHEN position_value_usd > 0 "
+        "                THEN position_value_usd END)             AS w_win_den "
         "FROM filer_outcome WHERE " + " AND ".join(where) +
         " GROUP BY filer_type, filer_id"
     )
@@ -391,12 +419,23 @@ def leaderboard(filer_type: str | None = None, min_n: int = 5, limit: int = 50,
             continue
         est = bayesian.estimate(int(r["wins"] or 0), int(r["losses"] or 0))
         display = names.get((r["filer_type"], r["filer_id"]), r["filer_id"])
+        weighted_alpha_pct = (
+            round((r["w_alpha_num"] or 0) / (r["w_alpha_den"] or 1), 3)
+            if r["w_alpha_den"] else None
+        )
+        weighted_win_rate = (
+            round((r["w_win_num"] or 0) / (r["w_win_den"] or 1), 4)
+            if r["w_win_den"] else None
+        )
         out.append({
             "filer_type": r["filer_type"],
             "filer_id":   r["filer_id"],
             "filer_name": display,
             **est.as_dict(),
-            "avg_alpha_pct": round(r["avg_alpha_pct"] or 0, 3),
+            "avg_alpha_pct":      round(r["avg_alpha_pct"] or 0, 3),
+            "weighted_alpha_pct": weighted_alpha_pct,
+            "weighted_win_rate":  weighted_win_rate,
+            "weighted_capital_usd": r["w_alpha_den"] or 0,
         })
 
     out.sort(key=lambda r: (
@@ -426,11 +465,27 @@ def filer_detail(filer_type: str, filer_id: str, horizon_days: int = DEFAULT_HOR
     losses = len(rows) - wins
     est = bayesian.estimate(wins, losses)
     names = _filer_display_names()
+    # Dollar-weighted metrics — skip rows with unknown position value.
+    weighted_rows = [r for r in rows if (r["position_value_usd"] or 0) > 0]
+    w_capital = sum(float(r["position_value_usd"]) for r in weighted_rows)
+    w_alpha = (
+        sum(float(r["alpha_pct"] or 0) * float(r["position_value_usd"])
+            for r in weighted_rows) / w_capital
+        if w_capital else None
+    )
+    w_win_rate = (
+        sum(float(r["position_value_usd"]) for r in weighted_rows if r["win"])
+        / w_capital
+        if w_capital else None
+    )
     return {
         "filer_type": filer_type,
         "filer_id":   filer_id,
         "filer_name": names.get((filer_type, filer_id), filer_id),
         "skill":      est.as_dict(),
+        "weighted_alpha_pct":  round(w_alpha, 3) if w_alpha is not None else None,
+        "weighted_win_rate":   round(w_win_rate, 4) if w_win_rate is not None else None,
+        "weighted_capital_usd": w_capital,
         "outcomes":   [dict(r) for r in rows],
     }
 

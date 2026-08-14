@@ -120,3 +120,41 @@ async def extract_ma_terms(filing_text: str) -> dict | None:
         system=MA_SYSTEM,
         user=f"Filing excerpt:\n\n{excerpt}",
     )
+
+
+# ─── DEF 14A officers / directors ────────────────────────────────────
+
+DEF14A_SYSTEM = """You are a financial analyst extracting officer and director rosters from US SEC DEF 14A proxy statements.
+You will receive an excerpt — typically the "Executive Officers", "Directors", or "Nominees" section.
+
+Return ONLY a single JSON object with this shape. Do not invent. Use short bios (1–2 sentences) verbatim or lightly paraphrased from the source.
+
+{
+  "officers": [
+    {
+      "name": "Full name",
+      "role": "One of: CEO, CFO, COO, President, Chairman, Director, Independent Director, General Counsel, Other",
+      "bio":  "1-2 sentence bio if the excerpt provides one, else null"
+    },
+    ...
+  ]
+}
+
+If the excerpt has no roster, return {"officers": []}.
+"""
+
+
+async def extract_def14a_officers(filing_text: str) -> dict | None:
+    body = strip_html(filing_text)
+    excerpt = _excerpt(body, markers=(
+        "Executive Officers", "Directors and Executive Officers",
+        "Board of Directors", "Nominees for Election",
+        "Information Regarding the Directors", "Our Directors",
+    ), max_chars=24_000)   # rosters can be long
+    if not excerpt:
+        return None
+    return await llm_client.chat_json(
+        system=DEF14A_SYSTEM,
+        user=f"Filing excerpt:\n\n{excerpt}",
+        max_tokens=2048,
+    )

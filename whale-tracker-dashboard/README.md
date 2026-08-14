@@ -227,23 +227,36 @@ EDGAR caps requests at 10/sec and requires a `User-Agent` with contact info
   - UK Companies House PSC integration. Watchlist of UK company numbers;
     PSC fetched every 6h (`UK_INTERVAL_S`) when `UK_COMPANIES_HOUSE_API_KEY`
     is set. UK tab with company watchlist + PSC notices.
-- Phase 8 shipped (this version):
-  - unusual_whales **WebSocket** subscriber (`options_flow_ws.py`)
-    replaces the 2-min poll with sub-second push. Exponential-backoff
-    reconnect, broadcasts every event over the existing SSE stream.
-    Runs alongside the HTTP poller; DB upserts dedupe by id.
-  - Bulk backfill **range** + **first-run auto** — `POST /api/admin/
-    bulk-backfill-range?start_year=&end_year=&forms=&max_per_form=`
-    iterates per-quarter so multi-year history lands in one call.
-    `AUTO_BULK_BACKFILL=1` on first start (empty DB) pulls the
-    trailing 4 quarters automatically.
-  - Alert delivery channels added: **SMS** (Twilio) + **PagerDuty**
-    (Events API v2). Per-rule channel_config supplies destination;
-    global credentials via env.
-- Phase 9 candidates: more foreign filings (EU Transparency Directive 5%
-  notifications, HKEx, ASX); WebSocket push from unusual_whales for true
-  real-time alerting; volume-weighted fund-skill (today's binary win/loss
-  treats a $1B and a $1M position equally); LLM-driven manager bio
-  enrichment from proxy DEF 14A filings; alert delivery to SMS / PagerDuty;
-  backtest extension to portfolio-level constraints (position sizing,
-  max concurrent positions, stop-loss).
+- Phase 8 shipped: unusual_whales WebSocket subscriber, bulk backfill
+  range + first-run auto, SMS / PagerDuty alert channels.
+- Phase 9 shipped (this version):
+  - **Volume-weighted skill**: `filer_outcome.position_value_usd`
+    propagated from insider Form 4 (`value_usd`), congress PTR (band
+    midpoint), and 13F holdings (as-reported value). Leaderboard now
+    surfaces `weighted_alpha_pct` and `weighted_capital_usd` next to
+    the equal-weighted metrics so a $1B activist stake counts more
+    than a $1M drive-by.
+  - **Portfolio backtest constraints**: `max_concurrent`, `stop_loss_pct`,
+    `position_size_pct`. Simulator opens positions in date order,
+    caps concurrency, checks each daily close for stop-loss breaches,
+    records `sold_reason` per trade (`hold_expiry` | `stop_loss` |
+    `backtest_end`) and `n_stopped_out` in the summary.
+  - **Foreign filings — ASX + JPX/EDINET**: unified `foreign_holder`
+    schema, `foreign.py` adapter. ASX is watchlist-based (poll the
+    company-announcements JSON, keep substantial-holder headlines).
+    EDINET (Japan FSA) pulls large-shareholding-report (doc types
+    040 / 041) daily via the free JSON API when `EDINET_API_KEY` is
+    set. Skipped EU TR-1 (30 fragmented national regulators — needs
+    per-country adapters) and HKEx (no clean public API).
+  - **LLM manager bio enrichment (DEF 14A)**: `llm_extract.
+    extract_def14a_officers` prompts the local model to pull officer
+    rosters + short bios from proxy statements. Only fires for
+    companies already tracked (insider_txn issuer_cik universe) so
+    the LLM workload stays bounded. First-listed officer becomes
+    `filer_profile.primary_person`; new `def14a_officer` table
+    persists the roster with roles.
+- Phase 10 candidates: EU Transparency Directive coverage (build a
+  per-regulator adapter registry), HKEx SDI portal, JPX intraday feed
+  (currently daily), backtest per-signal ablation (drop one signal
+  type at a time), watchlist share links, LLM extraction of activist
+  history / prior campaigns, per-user auth for the watchlist API.

@@ -139,52 +139,156 @@ def _return_pct(ticker: str, from_date: str, to_date: str) -> float | None:
 
 
 async def run_backtest(*, threshold: float, hold_days: int,
-                       start_date: str, end_date: str, window_days: int = 90) -> dict:
-    """Run the first-crossing backtest. Returns trades + summary + equity curve."""
+                       start_date: str, end_date: str, window_days: int = 90,
+                       max_concurrent: int | None = None,
+                       stop_loss_pct: float | None = None,
+                       position_size_pct: float | None = None) -> dict:
+    """Run the first-crossing backtest with optional portfolio constraints.
+
+    Additional inputs:
+      - max_concurrent: cap on positions held simultaneously. When the cap is
+        reached, later signals are dropped (not queued) — realistic for a
+        capacity-limited strategy.
+      - stop_loss_pct: exit a position early if its ticker return drops below
+        -stop_loss_pct at any daily close during the hold window.
+      - position_size_pct: capital % allocated per trade. Defaults to
+        100 / max_concurrent (equal weight) when max_concurrent is set,
+        otherwise 100 (single position at a time is the implicit assumption
+        of the unconstrained variant).
+    """
     tickers = _candidate_tickers(start_date, end_date)
     if not tickers:
-        return {"trades": [], "summary": _empty_summary(threshold, hold_days, start_date, end_date)}
+        return {"trades": [], "summary": _empty_summary(
+            threshold, hold_days, start_date, end_date,
+            max_concurrent=max_concurrent, stop_loss_pct=stop_loss_pct)}
 
-    # Make sure prices are local for every ticker we might evaluate plus SPY.
     await prices.ensure_prices_for(tickers)
 
-    trades: list[dict] = []
+    # 1) Gather all first-crossing signals sorted by date.
+    signals: list[tuple[str, str]] = []  # (signal_date, ticker)
     for t in tickers:
         cross = _first_crossing(t, threshold, start_date, end_date, window_days)
-        if not cross:
+        if cross:
+            signals.append((cross, t))
+    signals.sort(key=lambda x: x[0])
+
+    # 2) Portfolio simulation.
+    if position_size_pct is None:
+        position_size_pct = (100.0 / max_concurrent) if max_concurrent else 100.0
+    size_frac = float(position_size_pct) / 100.0
+
+    open_positions: dict[str, dict] = {}  # ticker → {buy_d, sell_d, sold, ...}
+    closed_trades: list[dict] = []
+
+    end_d = _date(end_date)
+    for sig_date, ticker in signals:
+        # Close any position whose hold window ended (or stop-loss triggered)
+        # before this signal date.
+        _close_expired(open_positions, closed_trades, sig_date, hold_days, stop_loss_pct)
+        if max_concurrent is not None and len(open_positions) >= max_concurrent:
             continue
-        # Buy on cross_date + 1 trading day (use price on-or-after cross+1).
-        buy_d = (_date(cross) + dt.timedelta(days=1)).isoformat()
-        sell_d = (_date(cross) + dt.timedelta(days=1 + hold_days)).isoformat()
-        r = _return_pct(t, buy_d, sell_d)
-        b = _return_pct(BENCHMARK, buy_d, sell_d)
+        if ticker in open_positions:
+            continue
+        buy_d = (_date(sig_date) + dt.timedelta(days=1)).isoformat()
+        open_positions[ticker] = {
+            "signal_date": sig_date,
+            "buy_date":    buy_d,
+            "size_frac":   size_frac,
+            "score":       round(synthesis_score_at(ticker, sig_date, window_days=window_days), 2),
+        }
+
+    # Close everything by end_date.
+    _close_expired(open_positions, closed_trades, end_date, hold_days, stop_loss_pct,
+                   force_by=end_date)
+
+    # 3) Convert to trade rows.
+    trades: list[dict] = []
+    for c in closed_trades:
+        r = _return_pct(c["ticker"], c["buy_date"], c["sell_date"])
+        b = _return_pct(BENCHMARK, c["buy_date"], c["sell_date"])
         if r is None or b is None:
             continue
         alpha = r - b
         trades.append({
-            "ticker":          t,
-            "signal_date":     cross,
-            "buy_date":        buy_d,
-            "sell_date":       sell_d,
+            "ticker":          c["ticker"],
+            "signal_date":     c["signal_date"],
+            "buy_date":        c["buy_date"],
+            "sell_date":       c["sell_date"],
             "return_pct":      round(r * 100, 3),
             "benchmark_pct":   round(b * 100, 3),
             "alpha_pct":       round(alpha * 100, 3),
             "win":             int(alpha > 0),
-            "score_at_signal": round(synthesis_score_at(t, cross, window_days=window_days), 2),
+            "score_at_signal": c["score"],
+            "size_frac":       round(c["size_frac"], 4),
+            "sold_reason":     c["sold_reason"],
         })
 
-    summary = _summarise(trades, threshold, hold_days, start_date, end_date)
+    summary = _summarise(trades, threshold, hold_days, start_date, end_date,
+                        max_concurrent=max_concurrent, stop_loss_pct=stop_loss_pct)
     curve = _equity_curve(trades, start_date, end_date)
 
     return {"trades": trades, "summary": summary, "equity_curve": curve}
 
 
-def _empty_summary(threshold: float, hold_days: int, s: str, e: str) -> dict:
+def _close_expired(open_positions: dict, closed_trades: list, as_of: str,
+                   hold_days: int, stop_loss_pct: float | None,
+                   force_by: str | None = None) -> None:
+    """Close positions whose hold window ended by `as_of`, or whose ticker
+    return breached the stop-loss at any point in the window. If force_by
+    is set, close every remaining position by that date."""
+    as_of_d = _date(as_of)
+    to_close = []
+    for ticker, pos in open_positions.items():
+        buy_d = _date(pos["buy_date"])
+        natural_sell = buy_d + dt.timedelta(days=hold_days)
+        # Check stop-loss up to as_of (or natural_sell, whichever is earlier).
+        check_end = min(natural_sell, as_of_d)
+        sold_reason = None
+        sold_date = None
+        if stop_loss_pct is not None and check_end > buy_d:
+            # Walk each daily close in [buy+1, check_end] and see if the
+            # cumulative return breaches -stop_loss_pct/100.
+            threshold_ret = -abs(float(stop_loss_pct)) / 100.0
+            p0 = db.get_close_on_or_after(ticker, pos["buy_date"])
+            if p0 and p0[1] > 0:
+                # Cheap daily walk — okay for MVP-scale backtests.
+                d = buy_d + dt.timedelta(days=1)
+                while d <= check_end:
+                    pn = db.get_close_on_or_before(ticker, d.isoformat())
+                    if pn and pn[1] > 0:
+                        if (pn[1] / p0[1] - 1.0) <= threshold_ret:
+                            sold_reason = "stop_loss"
+                            sold_date = d.isoformat()
+                            break
+                    d += dt.timedelta(days=1)
+        if sold_reason:
+            pos["sell_date"] = sold_date
+            pos["sold_reason"] = sold_reason
+        elif natural_sell <= as_of_d:
+            pos["sell_date"] = natural_sell.isoformat()
+            pos["sold_reason"] = "hold_expiry"
+        elif force_by and _date(force_by) <= as_of_d:
+            pos["sell_date"] = force_by
+            pos["sold_reason"] = "backtest_end"
+        else:
+            continue
+        pos["ticker"] = ticker
+        to_close.append((ticker, pos))
+    for ticker, pos in to_close:
+        closed_trades.append(pos)
+        del open_positions[ticker]
+
+
+def _empty_summary(threshold: float, hold_days: int, s: str, e: str,
+                   max_concurrent: int | None = None,
+                   stop_loss_pct: float | None = None) -> dict:
     return {
         "threshold":   threshold,
         "hold_days":   hold_days,
         "start_date":  s,
         "end_date":    e,
+        "max_concurrent": max_concurrent,
+        "stop_loss_pct":  stop_loss_pct,
         "n_trades":    0,
         "win_rate":    0.0,
         "mean_alpha_pct":   0.0,
@@ -194,13 +298,18 @@ def _empty_summary(threshold: float, hold_days: int, s: str, e: str) -> dict:
         "total_return_pct": 0.0,
         "annualised_alpha_pct": 0.0,
         "sharpe": 0.0,
+        "n_stopped_out": 0,
     }
 
 
 def _summarise(trades: list[dict], threshold: float, hold_days: int,
-               start_date: str, end_date: str) -> dict:
+               start_date: str, end_date: str,
+               max_concurrent: int | None = None,
+               stop_loss_pct: float | None = None) -> dict:
     if not trades:
-        return _empty_summary(threshold, hold_days, start_date, end_date)
+        return _empty_summary(threshold, hold_days, start_date, end_date,
+                              max_concurrent=max_concurrent,
+                              stop_loss_pct=stop_loss_pct)
     alphas = [t["alpha_pct"] for t in trades]
     wins = sum(t["win"] for t in trades)
     # Equal-weighted compounded total alpha — sums of per-trade alpha
@@ -220,12 +329,16 @@ def _summarise(trades: list[dict], threshold: float, hold_days: int,
         sharpe = (mu / sd) * ((365.0 / hold_days) ** 0.5)
     else:
         sharpe = 0.0
+    n_stopped = sum(1 for t in trades if t.get("sold_reason") == "stop_loss")
     return {
         "threshold":   threshold,
         "hold_days":   hold_days,
         "start_date":  start_date,
         "end_date":    end_date,
+        "max_concurrent": max_concurrent,
+        "stop_loss_pct":  stop_loss_pct,
         "n_trades":    len(trades),
+        "n_stopped_out": n_stopped,
         "win_rate":    round(wins / len(trades), 4),
         "mean_alpha_pct":   round(statistics.mean(alphas), 3),
         "median_alpha_pct": round(statistics.median(alphas), 3),

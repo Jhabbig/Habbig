@@ -514,6 +514,89 @@ async def api_admin_uk_refresh():
     return await uk_mod.refresh_all()
 
 
+# ─── Foreign filings (ASX + EDINET) ─────────────────────────────────
+
+@app.get("/api/foreign/asx/companies")
+async def api_foreign_asx_companies():
+    import foreign as foreign_mod
+    return foreign_mod.list_asx_companies()
+
+
+@app.post("/api/foreign/asx/companies")
+async def api_foreign_asx_add(
+    code: str = Query(..., min_length=1, max_length=10),
+    name: str | None = Query(None, max_length=200),
+):
+    import foreign as foreign_mod
+    foreign_mod.add_asx_company(code, name=name)
+    return {"ok": True}
+
+
+@app.delete("/api/foreign/asx/companies/{code}")
+async def api_foreign_asx_remove(code: str):
+    import foreign as foreign_mod
+    foreign_mod.remove_asx_company(code)
+    return {"ok": True}
+
+
+@app.get("/api/foreign/holders")
+async def api_foreign_holders(
+    source: str | None = Query(None, pattern="^(asx|edinet)$"),
+    days: int = Query(90, ge=1, le=3650),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    import foreign as foreign_mod
+    return foreign_mod.recent_holders(source=source, days=days, limit=limit)
+
+
+@app.get("/api/foreign/holders/{source}/{code}")
+async def api_foreign_holders_by_issuer(
+    source: str,
+    code: str,
+):
+    import foreign as foreign_mod
+    return foreign_mod.holders_by_issuer(source, code)
+
+
+@app.post("/api/admin/foreign-refresh")
+async def api_admin_foreign_refresh(
+    target: str = Query("both", pattern="^(asx|edinet|both)$"),
+):
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    import foreign as foreign_mod
+    out: dict = {}
+    if target in ("asx", "both"):
+        out["asx"] = await foreign_mod.refresh_asx()
+    if target in ("edinet", "both"):
+        out["edinet"] = await foreign_mod.refresh_edinet_recent(days=7)
+    _cache.clear()
+    return out
+
+
+# ─── DEF 14A officers (LLM-enriched identity graph) ─────────────────
+
+@app.get("/api/def14a/officers")
+async def api_def14a_officers(
+    cik: str = Query(..., min_length=1, max_length=20),
+):
+    with db.connect() as cx:
+        rows = cx.execute(
+            "SELECT * FROM def14a_officer WHERE issuer_cik = ? "
+            "ORDER BY accession DESC, line_no ASC",
+            (cik,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/admin/def14a-extract")
+async def api_admin_def14a_extract():
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    n = await ingest._llm_extract_def14a()
+    return {"extracted": n, "counts": db.counts()}
+
+
 # ─── Bulk backfill ──────────────────────────────────────────────────
 
 @app.post("/api/admin/bulk-backfill")
@@ -644,17 +727,27 @@ async def api_backtest(
     start_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     end_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     window_days: int = Query(90, ge=1, le=365),
+    max_concurrent: int | None = Query(None, ge=1, le=200,
+        description="Cap positions held simultaneously; excess signals are dropped."),
+    stop_loss_pct: float | None = Query(None, ge=0, le=100,
+        description="Exit early if ticker return breaches -this pct at any daily close."),
+    position_size_pct: float | None = Query(None, ge=0, le=100,
+        description="Capital % per trade. Defaults to equal-weight (100/max_concurrent)."),
 ):
-    """Backtest the synthesis score's predictive power.
+    """Backtest the synthesis score with optional portfolio constraints.
 
     Strategy: for each ticker with any signal activity in [start, end],
     find the earliest date where synthesis_score >= threshold, buy at
-    next-day close, hold for `hold_days`, compute alpha vs SPY. Aggregate.
+    next-day close, hold for `hold_days` (unless stop_loss triggers or
+    max_concurrent caps entry), compute alpha vs SPY. Aggregate.
     """
     return await backtest_mod.run_backtest(
         threshold=threshold, hold_days=hold_days,
         start_date=start_date, end_date=end_date,
         window_days=window_days,
+        max_concurrent=max_concurrent,
+        stop_loss_pct=stop_loss_pct,
+        position_size_pct=position_size_pct,
     )
 
 
