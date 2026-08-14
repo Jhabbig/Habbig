@@ -121,6 +121,66 @@ async def fetch_weather_markets(session: aiohttp.ClientSession) -> list:
     return all_markets
 
 
+async def fetch_market_resolutions(
+    session: aiohttp.ClientSession, condition_ids: list
+) -> dict:
+    """Check which markets have resolved and return their outcomes.
+
+    Returns {condition_id: outcome} with outcome 1 if YES won, 0 if NO won.
+    Markets still open, or closed without a clear winner, are omitted.
+    """
+    resolutions: dict = {}
+
+    for i in range(0, len(condition_ids), 20):
+        batch = condition_ids[i:i + 20]
+        params = [("condition_ids", cid) for cid in batch]
+        try:
+            async with session.get(f"{GAMMA_BASE_URL}/markets", params=params) as resp:
+                if resp.status != 200:
+                    logger.warning("Gamma resolution check returned %d", resp.status)
+                    continue
+                data = await resp.json()
+        except Exception as e:
+            logger.warning("Gamma resolution check failed: %s", e)
+            continue
+
+        if not isinstance(data, list):
+            continue
+
+        for m in data:
+            if not m.get("closed"):
+                continue
+            cid = m.get("conditionId") or m.get("id", "")
+            outcomes = m.get("outcomes", [])
+            prices = m.get("outcomePrices", [])
+            if isinstance(outcomes, str):
+                try:
+                    outcomes = json.loads(outcomes)
+                except json.JSONDecodeError:
+                    outcomes = []
+            if isinstance(prices, str):
+                try:
+                    prices = json.loads(prices)
+                except json.JSONDecodeError:
+                    prices = []
+            if not cid or not prices:
+                continue
+            try:
+                price_floats = [float(p) for p in prices]
+            except (TypeError, ValueError):
+                continue
+            win_idx = max(range(len(price_floats)), key=lambda j: price_floats[j])
+            if price_floats[win_idx] < 0.99:
+                continue  # Closed but no clear winner reported yet
+            if win_idx < len(outcomes):
+                winner = str(outcomes[win_idx]).strip().lower()
+            else:
+                winner = "yes" if win_idx == 0 else "no"
+            resolutions[cid] = 1 if winner == "yes" else 0
+
+    return resolutions
+
+
 def parse_temperature_from_title(title: str) -> dict:
     """Extract temperature thresholds/buckets from a market title."""
     result = {
@@ -133,11 +193,12 @@ def parse_temperature_from_title(title: str) -> dict:
     title_lower = title.lower()
 
     # Pattern: "X°F or higher" / "above X°" / "over X°"
+    # (-?\d+) so winter markets like "-5°F or lower" keep their sign.
     over_patterns = [
-        r'(\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)',
-        r'(?:above|over|exceed|at\s+least)\s*(\d+)\s*°?\s*f?',
-        r'(\d+)\s*°?\s*f?\s*\+',
-        r'≥\s*(\d+)',
+        r'(-?\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)',
+        r'(?:above|over|exceed|at\s+least)\s*(-?\d+)\s*°?\s*f?',
+        r'(-?\d+)\s*°?\s*f?\s*\+',
+        r'≥\s*(-?\d+)',
     ]
     for pat in over_patterns:
         m = re.search(pat, title_lower)
@@ -148,9 +209,9 @@ def parse_temperature_from_title(title: str) -> dict:
 
     # Pattern: "X°F or lower" / "below X°" / "under X°"
     under_patterns = [
-        r'(\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)',
-        r'(?:below|under)\s*(\d+)\s*°?\s*f?',
-        r'≤\s*(\d+)',
+        r'(-?\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)',
+        r'(?:below|under)\s*(-?\d+)\s*°?\s*f?',
+        r'≤\s*(-?\d+)',
     ]
     for pat in under_patterns:
         m = re.search(pat, title_lower)
@@ -160,9 +221,11 @@ def parse_temperature_from_title(title: str) -> dict:
             return result
 
     # Pattern: range "X-Y°F" or "between X and Y"
+    # Lookbehind/lookahead keep fragments of dates like "2026-08-14" from
+    # being read as temperature ranges.
     range_patterns = [
-        r'(\d+)\s*[-–]\s*(\d+)\s*°?\s*f?',
-        r'between\s*(\d+)\s*(?:°?\s*f?)?\s*and\s*(\d+)\s*°?\s*f?',
+        r'(?<![\d/–\-])(-?\d+)\s*[-–]\s*(-?\d+)(?!\d|\s*[-–]\s*\d)\s*°?\s*f?',
+        r'between\s*(-?\d+)\s*(?:°?\s*f?)?\s*and\s*(-?\d+)\s*°?\s*f?',
     ]
     for pat in range_patterns:
         m = re.search(pat, title_lower)
@@ -172,7 +235,7 @@ def parse_temperature_from_title(title: str) -> dict:
             return result
 
     # Pattern: single temperature mentioned
-    single_temp = re.search(r'(\d+)\s*°\s*f', title_lower)
+    single_temp = re.search(r'(-?\d+)\s*°\s*f', title_lower)
     if single_temp:
         result["threshold"] = float(single_temp.group(1))
         result["is_over"] = True
@@ -244,13 +307,26 @@ def parse_date_from_title(title: str) -> Optional[datetime]:
         month = int(slash_match.group(1))
         day = int(slash_match.group(2))
         year_str = slash_match.group(3)
-        year = int(year_str) if year_str else datetime.now(timezone.utc).year
-        if year < 100:
-            year += 2000
-        try:
-            return datetime(year, month, day, tzinfo=timezone.utc)
-        except ValueError:
-            pass
+        if year_str:
+            year = int(year_str)
+            if year < 100:
+                year += 2000
+            try:
+                return datetime(year, month, day, tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        else:
+            # No explicit year: assume current year, but roll forward when the
+            # date is far in the past (e.g. "1/2" parsed in late December
+            # refers to NEXT January, not eleven months ago).
+            now = datetime.now(timezone.utc)
+            try:
+                dt = datetime(now.year, month, day, tzinfo=timezone.utc)
+                if (now - dt).days > 30:
+                    dt = datetime(now.year + 1, month, day, tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                pass
 
     return None
 

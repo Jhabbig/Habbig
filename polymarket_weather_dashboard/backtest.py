@@ -58,6 +58,9 @@ def fetch_observed_highs(lat, lon, start_date, end_date):
                 "temperature_unit": "fahrenheit",
                 "start_date": start_date,
                 "end_date": end_date,
+                # Markets resolve on the station's LOCAL calendar-day high;
+                # without this the daily max is aggregated over the GMT day.
+                "timezone": "auto",
             },
             timeout=30,
         )
@@ -84,29 +87,36 @@ def parse_threshold(question):
     """
     q = question.lower()
 
-    # "between 64-65°F" / "between 64 and 65"
-    m = re.search(r'between\s+(\d+)[–\-]\s*(\d+)', q)
-    if m:
-        return ('between', int(m.group(1)), int(m.group(2)))
-    m = re.search(r'between\s+(\d+)\s+and\s+(\d+)', q)
+    # "between 64°F and 65°F" / "between 64-65" / "between 64 and 65"
+    # (allows a degree suffix after the first number and negative values,
+    # mirroring the live pipeline's parse_temperature)
+    m = re.search(r'between\s+(-?\d+)\s*(?:°\s*f?)?\s*(?:and|[–\-])\s*(-?\d+)', q)
     if m:
         return ('between', int(m.group(1)), int(m.group(2)))
 
     # "X°F or higher" / "above X" / "at least X"
-    m = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(higher|above|more)', q)
+    m = re.search(r'(-?\d+)\s*°?\s*f?\s+or\s+(higher|above|more)', q)
     if m:
         return ('above', int(m.group(1)), None)
-    m = re.search(r'(above|over|at\s+least|exceed)\s+(\d+)', q)
+    m = re.search(r'(above|over|at\s+least|exceed)\s+(-?\d+)', q)
     if m:
         return ('above', int(m.group(2)), None)
 
     # "X°F or below" / "under X" / "at most X"
-    m = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(below|lower|less)', q)
+    m = re.search(r'(-?\d+)\s*°?\s*f?\s+or\s+(below|lower|less)', q)
     if m:
         return ('below', int(m.group(1)), None)
-    m = re.search(r'(below|under|at\s+most)\s+(\d+)', q)
+    m = re.search(r'(below|under|at\s+most)\s+(-?\d+)', q)
     if m:
         return ('below', int(m.group(2)), None)
+
+    # Plain bucket "64-65°F" — the dominant Polymarket bucket format,
+    # which the live pipeline parses (server.py parse_temperature).
+    # Lookbehind/lookahead keep fragments of dates like "2026-08-14" from
+    # being read as temperature ranges.
+    m = re.search(r'(?<![\d/–\-])(-?\d+)\s*°?\s*f?\s*[–\-]\s*(-?\d+)(?!\d|\s*[–\-]\s*\d)\s*°?\s*f', q)
+    if m:
+        return ('between', int(m.group(1)), int(m.group(2)))
 
     return (None, None, None)
 

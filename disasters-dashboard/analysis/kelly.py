@@ -2,13 +2,19 @@
 
 For a binary YES market priced ``p_implied`` with model probability
 ``p_model`` and a bankroll ``B``, the Kelly fraction of bankroll to risk on
-YES is:
+YES (bought at price ``p_implied``) is:
 
-    f* = (p_model - p_implied) / (1 - p_implied)
+    f*_yes = (p_model - p_implied) / (1 - p_implied)
 
-Negative ``f*`` means SELL YES (or BUY NO if the venue allows). We clamp to
-[0, 0.25] - 25% bankroll on a single position is the *maximum* most
-practitioners use even with full edge (full Kelly is too aggressive in
+When the model is BELOW the market the bet is NO, bought at price
+``1 - p_implied`` with win probability ``1 - p_model``, and the Kelly
+fraction for that bet is:
+
+    f*_no = (p_implied - p_model) / p_implied
+
+We keep the sign convention that negative means NO, returning ``-f*_no``.
+We clamp to [0, 0.25] - 25% bankroll on a single position is the *maximum*
+most practitioners use even with full edge (full Kelly is too aggressive in
 practice; half-Kelly to quarter-Kelly is standard).
 
 Returns the suggested fraction plus a ``risk_dollars`` estimate for a
@@ -24,7 +30,13 @@ def kelly_fraction(p_model: Optional[float], p_implied: Optional[float]) -> Opti
         return None
     if p_implied <= 0 or p_implied >= 1:
         return None
-    f = (p_model - p_implied) / (1.0 - p_implied)
+    if p_model >= p_implied:
+        # Buy YES at p_implied: f* = edge / net odds of the YES bet.
+        f = (p_model - p_implied) / (1.0 - p_implied)
+    else:
+        # Buy NO at (1 - p_implied): win prob is (1 - p_model), so
+        # f*_no = (p_implied - p_model) / p_implied. Negative = NO side.
+        f = -(p_implied - p_model) / p_implied
     return max(-1.0, min(1.0, f))
 
 

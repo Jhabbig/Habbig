@@ -512,6 +512,66 @@ CITY_ALIASES = {
     "são paulo": "sao paulo", "cdmx": "mexico city",
 }
 
+# IANA timezone per station — markets resolve on the station's LOCAL calendar
+# day, so intraday observations must be bucketed by local date, not UTC date.
+STATION_TZ = {
+    "KLGA": "America/New_York",    "KORD": "America/Chicago",
+    "KDAL": "America/Chicago",     "KMIA": "America/New_York",
+    "KLAX": "America/Los_Angeles", "EGLC": "Europe/London",
+    "LFPO": "Europe/Paris",        "RJTT": "Asia/Tokyo",
+    "RKSS": "Asia/Seoul",          "YSSY": "Australia/Sydney",
+    "KATL": "America/New_York",    "KAUS": "America/Chicago",
+    "KHOU": "America/Chicago",     "KBKF": "America/Denver",
+    "KSFO": "America/Los_Angeles", "KSEA": "America/Los_Angeles",
+    "CYYZ": "America/Toronto",     "EDDM": "Europe/Berlin",
+    "LIMC": "Europe/Rome",         "LEMD": "Europe/Madrid",
+    "EPWA": "Europe/Warsaw",       "UUDD": "Europe/Moscow",
+    "LTFM": "Europe/Istanbul",     "LTAC": "Europe/Istanbul",
+    "LLBG": "Asia/Jerusalem",      "VHHH": "Asia/Hong_Kong",
+    "ZSPD": "Asia/Shanghai",       "ZBAA": "Asia/Shanghai",
+    "ZGSZ": "Asia/Shanghai",       "ZUCK": "Asia/Shanghai",
+    "ZHHH": "Asia/Shanghai",       "ZUUU": "Asia/Shanghai",
+    "RCTP": "Asia/Taipei",         "WSSS": "Asia/Singapore",
+    "VILK": "Asia/Kolkata",        "NZWN": "Pacific/Auckland",
+    "SAEZ": "America/Argentina/Buenos_Aires",
+    "SBGR": "America/Sao_Paulo",   "MMMX": "America/Mexico_City",
+    "RKPK": "Asia/Seoul",          "EHAM": "Europe/Amsterdam",
+    "EFHK": "Europe/Helsinki",     "MPMG": "America/Panama",
+    "WMKK": "Asia/Kuala_Lumpur",   "WIHH": "Asia/Jakarta",
+}
+
+_station_tz_cache: dict = {}
+
+
+def _station_tzinfo(icao: str):
+    """Return the tzinfo for a station, falling back to a fixed longitude
+    offset when the IANA database is unavailable, then to UTC."""
+    tz = _station_tz_cache.get(icao)
+    if tz is not None:
+        return tz
+    tz = timezone.utc
+    name = STATION_TZ.get(icao)
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(name)
+        except Exception:
+            for vals in STATION_MAP.values():
+                if len(vals) > 2 and vals[2] == icao:
+                    tz = timezone(timedelta(hours=round(vals[1] / 15.0)))
+                    break
+    _station_tz_cache[icao] = tz
+    return tz
+
+
+def _station_local_date(icao: str, dt: Optional[datetime] = None) -> str:
+    """YYYY-MM-DD calendar date at the station's local timezone."""
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_station_tzinfo(icao)).strftime("%Y-%m-%d")
+
 # ─── Kalshi API ───────────────────────────────────────────────────────────────
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
@@ -872,33 +932,34 @@ def parse_temperature(title: str) -> dict:
         result["unit"] = "C"
         return result
 
-    # Fahrenheit patterns
-    for pat in [r'(\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)',
-                r'(?:above|over|exceed|at\s+least)\s*(\d+)\s*°?\s*f',
-                r'(\d+)\s*°?\s*f?\s*\+', r'≥\s*(\d+)']:
+    # Fahrenheit patterns — (-?\d+) so winter markets like "-5°F or lower"
+    # keep their sign instead of parsing as +5.
+    for pat in [r'(-?\d+)\s*°?\s*f?\s*or\s*(?:higher|more|above)',
+                r'(?:above|over|exceed|at\s+least)\s*(-?\d+)\s*°?\s*f',
+                r'(-?\d+)\s*°?\s*f?\s*\+', r'≥\s*(-?\d+)']:
         m = re.search(pat, tl)
         if m:
             result["threshold"] = float(m.group(1))
             result["is_over"] = True
             return result
 
-    for pat in [r'(\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)',
-                r'(?:below|under)\s*(\d+)\s*°?\s*f', r'≤\s*(\d+)']:
+    for pat in [r'(-?\d+)\s*°?\s*f?\s*or\s*(?:lower|less|below)',
+                r'(?:below|under)\s*(-?\d+)\s*°?\s*f', r'≤\s*(-?\d+)']:
         m = re.search(pat, tl)
         if m:
             result["threshold"] = float(m.group(1))
             result["is_over"] = False
             return result
 
-    for pat in [r'(\d+)\s*[-–]\s*(\d+)\s*°?\s*f',
-                r'between\s*(\d+)\s*(?:°?\s*f?)?\s*and\s*(\d+)\s*°?\s*f']:
+    for pat in [r'(?<![\d/–\-])(-?\d+)\s*[-–]\s*(-?\d+)(?!\d|\s*[-–]\s*\d)\s*°?\s*f',
+                r'between\s*(-?\d+)\s*(?:°?\s*f?)?\s*and\s*(-?\d+)\s*°?\s*f']:
         m = re.search(pat, tl)
         if m:
             result["temp_lower"] = float(m.group(1))
             result["temp_upper"] = float(m.group(2))
             return result
 
-    single = re.search(r'(\d+)\s*°\s*f', tl)
+    single = re.search(r'(-?\d+)\s*°\s*f', tl)
     if single:
         result["threshold"] = float(single.group(1))
         result["is_over"] = True
@@ -982,6 +1043,9 @@ def _fetch_ensemble_model(lat: float, lon: float, date_str: str, model: str) -> 
             "temperature_unit": "fahrenheit",
             "start_date": date_str, "end_date": date_str,
             "models": model,
+            # Markets resolve on the station's LOCAL calendar-day high;
+            # without this the daily max is aggregated over the GMT day.
+            "timezone": "auto",
         }, timeout=10)
         if resp.status_code == 429:
             _open_meteo_trip_cooldown()
@@ -1268,6 +1332,7 @@ def fetch_climatology(lat: float, lon: float, date_str: str) -> Optional[dict]:
                 "temperature_unit": "fahrenheit",
                 "start_date": f"{start_year}-01-01",
                 "end_date": f"{end_year}-12-31",
+                "timezone": "auto",  # local-calendar-day highs, not GMT-day
             },
             timeout=20,
         )
@@ -1523,6 +1588,7 @@ def pair_forecasts_with_observed(station: str, lat: float, lon: float, max_days_
                 "temperature_unit": "fahrenheit",
                 "start_date": targets[0],
                 "end_date": targets[-1],
+                "timezone": "auto",  # local-calendar-day highs, not GMT-day
             },
             timeout=20,
         )
@@ -1882,6 +1948,7 @@ def persistence_forecast(lat: float, lon: float, days_back: int = 1) -> Optional
                 "temperature_unit": "fahrenheit",
                 "start_date": start.isoformat(),
                 "end_date": end.isoformat(),
+                "timezone": "auto",  # local-calendar-day highs, not GMT-day
             },
             timeout=15,
         )
@@ -1926,6 +1993,7 @@ def analog_forecast(lat: float, lon: float, target_date: str) -> Optional[dict]:
                     "temperature_unit": "fahrenheit",
                     "start_date": d.isoformat(),
                     "end_date": d.isoformat(),
+                    "timezone": "auto",  # local-calendar-day highs, not GMT-day
                 },
                 timeout=10,
             )
@@ -2230,7 +2298,11 @@ def update_intraday_max(icao: str):
             obs_dt = datetime.now(timezone.utc)
     except Exception:
         obs_dt = datetime.now(timezone.utc)
-    obs_date = obs_dt.strftime("%Y-%m-%d")
+    # Bucket by the STATION-LOCAL calendar day (the schema and every consumer
+    # treat obs_date as the local trading day). Keying by UTC date would roll
+    # every evening US observation into the NEXT day's running max, producing
+    # false BREACHED signals before that day's weather has happened.
+    obs_date = _station_local_date(icao, obs_dt)
 
     try:
         with _get_conn() as conn:
@@ -2346,17 +2418,17 @@ def _intraday_poll_loop():
     _time.sleep(60)  # Wait 1 min for server to boot
     while True:
         try:
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            # Find stations with markets resolving today
+            # Find stations with markets resolving today. "Today" is the
+            # station-local calendar day (same convention as obs_date).
             active_icaos = set()
             cached = cache_get("parsed_markets")
             if cached and cached.get("markets"):
                 for m in cached["markets"]:
                     td = m.get("target_date", "")
                     city = m.get("city")
-                    if td == today and city:
+                    if td and city:
                         s = STATION_MAP.get(city)
-                        if s and len(s) > 2:
+                        if s and len(s) > 2 and td == _station_local_date(s[2]):
                             active_icaos.add(s[2])
             # Also poll a baseline set of major US stations
             baseline = {"KLGA", "KORD", "KDAL", "KMIA", "KLAX", "KATL",
@@ -3303,6 +3375,7 @@ def api_weather_history(city):
             "precipitation_unit": "inch",
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+            "timezone": "auto",  # local-calendar-day aggregates, not GMT-day
         }
         if _open_meteo_in_cooldown():
             with _open_meteo_cooldown_lock:

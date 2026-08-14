@@ -49,6 +49,9 @@ async def fetch_open_meteo_ensemble(
         "start_date": date_str,
         "end_date": date_str,
         "models": "gfs_seamless",
+        # Markets resolve on the station's LOCAL calendar-day high; without
+        # this Open-Meteo aggregates the daily max over the GMT day.
+        "timezone": "auto",
     }
 
     try:
@@ -102,6 +105,8 @@ async def fetch_open_meteo_deterministic(
         "temperature_unit": "fahrenheit",
         "start_date": date_str,
         "end_date": date_str,
+        # Aggregate the daily max over the station's local day, not GMT.
+        "timezone": "auto",
     }
 
     try:
@@ -179,16 +184,21 @@ async def fetch_nws_forecast(
         if not day_temps:
             return None
 
-        mean_temp = sum(day_temps) / len(day_temps)
-        max_temp = max(day_temps)
+        # day_temps are HOURLY temperatures, not independent forecasts of the
+        # daily high. The best point estimate of the daily high is the peak
+        # hourly value. Return a single-member raw_ensemble so the edge
+        # calculator uses the Gaussian model — feeding the hourly series as
+        # ensemble members would compute P(high > X) as the FRACTION OF HOURS
+        # above X, collapsing near-certain outcomes to tiny probabilities.
+        day_high = max(day_temps)
         std_temp = 3.0
 
         return ForecastResult(
             city="", icao="", target_date=target_date,
-            mean_temp_f=mean_temp, std_temp_f=std_temp,
-            min_temp_f=min(day_temps),
-            max_temp_f=max_temp,
-            source="nws", raw_ensemble=day_temps,
+            mean_temp_f=day_high, std_temp_f=std_temp,
+            min_temp_f=day_high - 2 * std_temp,
+            max_temp_f=day_high + 2 * std_temp,
+            source="nws", raw_ensemble=[day_high],
         )
 
     except Exception as e:

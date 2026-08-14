@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from config import Config
-from gamma_client import fetch_weather_markets, parse_weather_markets
+from gamma_client import fetch_weather_markets, fetch_market_resolutions, parse_weather_markets
 from weather_client import get_forecast
 from edge_calculator import calculate_edge, Signal
 from risk_manager import RiskManager
@@ -43,18 +43,76 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
+async def settle_positions(
+    session: aiohttp.ClientSession,
+    risk_mgr: RiskManager,
+    store: DataStore,
+    open_signals: dict,
+) -> None:
+    """Settle open positions whose markets have resolved.
+
+    This is what feeds RiskManager.daily_pnl — and therefore the daily loss
+    circuit breaker — and the calibration table used for Brier scoring.
+    Kalshi positions are skipped (no Gamma resolution data for them).
+    """
+    poly_ids = [
+        cid for cid, sig in open_signals.items()
+        if cid in risk_mgr.open_positions
+        and getattr(sig.market, "platform", "polymarket") == "polymarket"
+    ]
+    if not poly_ids:
+        return
+
+    try:
+        resolutions = await fetch_market_resolutions(session, poly_ids)
+    except Exception as e:
+        logger.warning("Settlement check failed: %s", e)
+        return
+
+    for cid, outcome in resolutions.items():
+        sig = open_signals.pop(cid, None)
+        if sig is None:
+            continue
+        amount = risk_mgr.open_positions.get(cid, 0.0)
+        if sig.action == "BUY_YES":
+            entry_price = sig.market_prob
+            won = outcome == 1
+        else:  # BUY_NO
+            entry_price = 1.0 - sig.market_prob
+            won = outcome == 0
+        if won:
+            pnl = amount * (1.0 / entry_price - 1.0) if entry_price > 0 else 0.0
+        else:
+            pnl = -amount
+
+        store.log_calibration(sig, outcome)
+        risk_mgr.record_pnl(pnl, cid)
+        logger.info(
+            "Settled '%s': outcome=%s pnl=$%+.2f (daily PnL: $%+.2f)",
+            sig.market.question[:50], "YES" if outcome == 1 else "NO",
+            pnl, risk_mgr.daily_pnl,
+        )
+
+
 async def run_scan(
     config: Config,
     risk_mgr: RiskManager,
     trading_client: TradingClient,
     store: DataStore,
     kalshi_client=None,
+    open_signals: dict = None,
 ) -> None:
-    """Run a single scan cycle: fetch markets → forecast → edge → trade."""
+    """Run a single scan cycle: settle → fetch markets → forecast → edge → trade."""
     now = datetime.now(timezone.utc)
     logger.info("Starting scan at %s", now.strftime("%Y-%m-%d %H:%M UTC"))
+    if open_signals is None:
+        open_signals = {}
 
     async with aiohttp.ClientSession() as session:
+        # Step 0: Settle any open positions whose markets have resolved,
+        # so the daily loss limit reflects realized PnL before trading.
+        await settle_positions(session, risk_mgr, store, open_signals)
+
         # Step 1a: Fetch Polymarket weather markets
         raw_markets = await fetch_weather_markets(session)
         markets = parse_weather_markets(raw_markets) if raw_markets else []
@@ -79,15 +137,19 @@ async def run_scan(
         # Filter: only YES outcomes (avoid duplicate signals)
         markets = [m for m in markets if m.outcome == "Yes"]
 
-        # Filter: only markets resolving within MAX_FORECAST_HOURS
+        # Filter: only markets resolving within MAX_FORECAST_HOURS, and not
+        # already in the past — a parsed date more than a day old means the
+        # outcome is already (or nearly) determined and there is no forecast
+        # edge to trade, only stale "signals" on resolved markets.
         max_horizon = now + timedelta(hours=config.MAX_FORECAST_HOURS)
+        min_horizon = now - timedelta(hours=24)
         filtered_markets = []
         for m in markets:
             if not m.target_date and not m.end_date:
                 continue  # Skip markets with no date — can't forecast them
-            if m.target_date and m.target_date <= max_horizon:
+            if m.target_date and min_horizon <= m.target_date <= max_horizon:
                 filtered_markets.append(m)
-            elif m.end_date and m.end_date <= max_horizon:
+            elif m.end_date and min_horizon <= m.end_date <= max_horizon:
                 filtered_markets.append(m)
 
         # Filter: minimum liquidity (skip for Kalshi — no liquidity data)
@@ -133,6 +195,7 @@ async def run_scan(
 
                     if result.get("status") in ("filled", "pending"):
                         risk_mgr.record_trade(market.condition_id, position.amount)
+                        open_signals[market.condition_id] = signal
                         store.log_trade(signal, position, paper_mode=config.PAPER_MODE,
                                         order_id=result.get("order_id", ""),
                                         status=result["status"])
@@ -150,6 +213,9 @@ async def main() -> None:
     risk_mgr = RiskManager(config)
     trading_client = TradingClient(config)
     store = DataStore(config.DB_PATH)
+    # Signals for currently open positions, keyed by condition_id, so
+    # settle_positions can realize PnL and log calibration on resolution.
+    open_signals: dict = {}
 
     # Initialize Kalshi client if enabled and credentials present
     kalshi_client = None
@@ -179,7 +245,8 @@ async def main() -> None:
                 print_daily_report(store, config)
                 current_day = today
 
-            await run_scan(config, risk_mgr, trading_client, store, kalshi_client)
+            await run_scan(config, risk_mgr, trading_client, store, kalshi_client,
+                           open_signals=open_signals)
 
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutting down...")

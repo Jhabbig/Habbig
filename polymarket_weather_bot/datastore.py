@@ -87,6 +87,12 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_signals_condition ON signals(condition_id);
                 CREATE INDEX IF NOT EXISTS idx_calibration_cond ON calibration(condition_id);
+                -- Without a UNIQUE constraint the INSERT OR IGNORE in
+                -- log_calibration would never deduplicate repeated resolution
+                -- passes for the same market. COALESCE because NULLs compare
+                -- distinct in SQLite unique indexes.
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_unique
+                    ON calibration(condition_id, COALESCE(target_date, ''));
             """)
             # Migrate existing databases: add platform column if missing
             try:
