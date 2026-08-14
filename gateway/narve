@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# narve — CLI for the narve.ai gateway engine.
+# Runs from anywhere; resolves the gateway directory it lives in.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m cli "$@"

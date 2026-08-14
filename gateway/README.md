@@ -73,6 +73,7 @@ Change any subdomain name in `config.json`. The internal `key` stays the same
 | `cache.py` | Redis caching + pub/sub layer. Caches dashboard API responses with TTL and publishes `data_updated` events to drive SSE. |
 | `poller.py` | Background poller that fetches each dashboard's main API endpoints, stores responses in Redis, and publishes `data_updated` so SSE clients refresh instantly. |
 | `sse.py` | Server-Sent Events stream — subscribes to Redis pub/sub and forwards events over `EventSource("/api/stream?dashboards=...")`. |
+| `narve` + `cli/` | **Engine CLI** — `./narve fleet`, `users`, `grant`, `revenue`, `health`, … Operates on the same `db.py`/`config.json` as the server; styled as the terminal port of the design system (monochrome, rank tiers). See `cli/README.md`. |
 
 **Config / data**
 | File | Purpose |
