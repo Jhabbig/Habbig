@@ -1386,6 +1386,15 @@ async def api_arbitrage(min_edge: float = 3.0, _user: User = Depends(_require_ap
 
 
 # ---------------------------------------------------------------------------
+# Stage 3 — Prediction Engine (fusion layer). Routes live in app/engine/api.py;
+# auth is injected here so the engine package never imports back into main.
+# ---------------------------------------------------------------------------
+from app.engine.api import router as _engine_router  # noqa: E402
+
+app.include_router(_engine_router, dependencies=[Depends(_require_api_user)])
+
+
+# ---------------------------------------------------------------------------
 # Shareable source cards — public SVG images for embedding in social media.
 # No auth: that's the whole point (the card is the marketing surface).
 # ---------------------------------------------------------------------------

@@ -269,6 +269,53 @@ class ExtractionCache(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class FusionAudit(SQLModel, table=True):
+    """Audit record for every Stage-3 fusion prediction (app/engine/).
+
+    Stores the full inputs (credibility scores, metrics, context), the model
+    versions and prompt hash in play, and the produced output — enough to
+    reproduce any prediction byte-for-byte and to grade it against ground
+    truth later (realized_outcome is backfilled by the replay harness from
+    ResolvedMarket). Legal note: this table is the ONLY permitted training
+    source for a learned fusion model — never X/Reddit content itself.
+    """
+    __tablename__ = "fusion_audit"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: str = Field(index=True)
+    user_id: str = ""
+    job_class: str = "interactive"
+    input_hash: str = Field(index=True)  # sha256 of canonical (credibility, metrics, context)
+    prompt_hash: str = ""  # sha256 of the upstream LLM extraction system prompt
+    inputs_json: str = Field(default="{}", sa_column=Column(Text))
+    signals_json: str = Field(default="[]", sa_column=Column(Text))
+    model_versions_json: str = Field(default="{}", sa_column=Column(Text))
+    fusion_version: str = ""
+    model_tier: str = ""
+    p_yes: float = 0.5
+    confidence: float = 0.0
+    bet_side: str = "YES"
+    degraded: bool = False
+    degraded_reasons_json: str = Field(default="[]", sa_column=Column(Text))
+    cache_hit: bool = False
+    latency_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cached_tokens_in: int = 0
+    cost_usd: float = 0.0
+    market_slug: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    realized_outcome: Optional[bool] = None  # set by replay harness when the market resolves
+    graded_at: Optional[datetime] = None
+
+    @property
+    def degraded_reasons(self) -> list[str]:
+        return json.loads(self.degraded_reasons_json)
+
+    @degraded_reasons.setter
+    def degraded_reasons(self, value: list[str]) -> None:
+        self.degraded_reasons_json = json.dumps(value)
+
+
 class CredibilitySnapshot(SQLModel, table=True):
     __tablename__ = "credibility_snapshot"
     id: Optional[int] = Field(default=None, primary_key=True)

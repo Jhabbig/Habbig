@@ -21,6 +21,7 @@ settings = {
     "LLM_EXTRACTOR_MODEL": os.environ.get("LLM_EXTRACTOR_MODEL", "claude-opus-4-7"),
     "LLM_EXTRACTION_ENABLED": os.environ.get("LLM_EXTRACTION_ENABLED", "1") not in ("0", "false", "False", ""),
     "DATABASE_URL": os.environ.get("DATABASE_URL", f"sqlite+aiosqlite:///{BASE_DIR / 'predictions.db'}"),
+    "REDIS_URL": os.environ.get("REDIS_URL", ""),  # optional — engine dedup cache falls back to in-process
     "LOG_LEVEL": os.environ.get("LOG_LEVEL", "INFO"),
 }
 
