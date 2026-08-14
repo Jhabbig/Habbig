@@ -718,7 +718,8 @@ async def window_refresher():
                     existing[:] = existing[-20000:]
 
                 # Re-analyze the recent data to get latest windows
-                new_windows = analyze_windows(existing)
+                # (CPU-heavy pass over up to 20k ticks — keep it off the loop)
+                new_windows = await asyncio.to_thread(analyze_windows, existing)
 
                 # Merge new windows into stored windows
                 old_windows = asset_state[ticker]["windows"]
@@ -728,6 +729,13 @@ async def window_refresher():
                     for w in new_windows:
                         if w["start"] > last_stored:
                             old_windows.append(w)
+                        elif w["start"] == last_stored:
+                            # The previously stored trailing window was a
+                            # mid-window snapshot (analyze_windows emits the
+                            # in-progress window as soon as it has >=10 ticks).
+                            # Replace it with the recomputed, more complete
+                            # version so history keeps final values.
+                            old_windows[-1] = w
                     # Keep bounded (slice assignment to mutate the original list in-place)
                     if len(old_windows) > 1000:
                         old_windows[:] = old_windows[-1000:]
@@ -740,7 +748,9 @@ async def window_refresher():
                     # Still save the windows even if models aren't trained yet
                     asset_state[ticker].update({"windows": old_windows})
                     continue
-                preds = ensembles[ticker].predict_current_and_recent(old_windows)
+                preds = await asyncio.to_thread(
+                    ensembles[ticker].predict_current_and_recent, old_windows
+                )
 
                 # Log predictions to DB for accuracy tracking
                 for p in preds:
@@ -759,6 +769,16 @@ async def window_refresher():
                             ensemble_agreement=p.get("ensemble_agreement", ""),
                         )
                     elif p.get("actual_direction"):
+                        # Only resolve predictions for windows that have fully
+                        # closed. The trailing window may still be in progress,
+                        # and resolving against its partial end_delta would
+                        # freeze a wrong outcome (resolve_prediction only
+                        # resolves each row once).
+                        if isinstance(ws, datetime) and (
+                            ws + timedelta(minutes=WINDOW_MINUTES)
+                            > datetime.now(timezone.utc)
+                        ):
+                            continue
                         db.resolve_prediction(
                             ticker=ticker, window_start=ws_str,
                             actual_direction=p["actual_direction"],
@@ -1034,17 +1054,41 @@ def _companion_stocks_url(request: Request) -> str:
     return "http://localhost:8050"
 
 
-@app.get("/")
-async def root(request: Request):
-    """Serve the live crypto dashboard."""
-    if not _check_auth(request):
-        return RedirectResponse("https://narve.ai/login", status_code=302)
-    if not asset_state:
-        return HTMLResponse("<html><body style='background:#0d1117;color:#e6edf3;font-family:system-ui'><h1>Loading... refresh in 30s</h1></body></html>")
-    # Generate and serve the dashboard with live JS injected
-    all_results = {}
-    for ticker in asset_state:
+# ── Rendered-dashboard cache ─────────────────────────────────────────
+# generate_dashboard() produces a multi-megabyte page and iterates up to 20k
+# raw ticks per asset. Doing that inline in the async handler stalled the
+# event loop (WS price fan-out, window_refresher, every other request), so we
+# render in a worker thread from a snapshot and reuse the result briefly.
+_dash_cache = {"html": None, "ts": 0.0}
+_dash_cache_lock = asyncio.Lock()
+_DASH_CACHE_TTL = 10.0  # seconds
+
+
+def _snapshot_asset_state():
+    """Shallow-copy per-ticker state (on the event loop) so the render thread
+    never races window_refresher's in-place list mutations."""
+    snap = {}
+    for ticker in list(asset_state):
         st = asset_state[ticker]
+        snap[ticker] = {
+            "data": list(st.get("data") or []),
+            "windows": list(st.get("windows") or []),
+            "summary": st.get("summary"),
+            "volatility": st.get("volatility"),
+            "velocity": st.get("velocity"),
+            "backtest": st.get("backtest"),
+            "predictions": st.get("predictions"),
+            "model_info": st.get("model_info"),
+            "start_dt": st.get("start_dt"),
+            "end_dt": st.get("end_dt"),
+        }
+    return snap
+
+
+def _render_dashboard(snapshot):
+    """Build chart arrays + dashboard HTML (CPU-heavy; run in a thread)."""
+    all_results = {}
+    for ticker, st in snapshot.items():
         # Generate chart data from raw kline data
         raw_data = st.get("data", [])
         chart_24h = []
@@ -1078,7 +1122,24 @@ async def root(request: Request):
             "chart_24h": chart_24h,
             "chart_7d": chart_7d,
         }
-    html = generate_dashboard(all_results)
+    return generate_dashboard(all_results)
+
+
+@app.get("/")
+async def root(request: Request):
+    """Serve the live crypto dashboard."""
+    if not _check_auth(request):
+        return RedirectResponse("https://narve.ai/login", status_code=302)
+    if not asset_state:
+        return HTMLResponse("<html><body style='background:#0d1117;color:#e6edf3;font-family:system-ui'><h1>Loading... refresh in 30s</h1></body></html>")
+    # Generate (or reuse) the rendered dashboard off the event loop
+    now = time.time()
+    async with _dash_cache_lock:
+        if _dash_cache["html"] is None or now - _dash_cache["ts"] > _DASH_CACHE_TTL:
+            snapshot = _snapshot_asset_state()
+            _dash_cache["html"] = await asyncio.to_thread(_render_dashboard, snapshot)
+            _dash_cache["ts"] = time.time()
+        html = _dash_cache["html"]
 
     # Inject nav bar with user info
     user = _get_session_user(request)
@@ -1111,7 +1172,8 @@ async def root(request: Request):
   </div>
 </div>
 """
-    html = html.replace("<body>", "<body>" + nav_html, 1)
+    # (nav_html is spliced into the cached page in a worker thread below —
+    # each replace copies a multi-megabyte string)
 
     # Inject live-update WebSocket script + browser notifications
     ws_script = """
@@ -1334,8 +1396,6 @@ async def root(request: Request):
 })();
 </script>
 """
-    html = html.replace("</body>", ws_script + "</body>")
-
     # Inject Polymarket trade widget — adds openTradeWidget/openTradeWidgetSearch
     # globals plus a per-ticker trade button injector
     trade_widget = _trade_widget_html(has_creds)
@@ -1381,7 +1441,13 @@ async def root(request: Request):
 }})();
 </script>
 """
-    html = html.replace("</body>", trade_widget + dash_trade_script + "</body>")
+    def _splice(base: str) -> str:
+        h = base.replace("<body>", "<body>" + nav_html, 1)
+        h = h.replace("</body>", ws_script + "</body>")
+        h = h.replace("</body>", trade_widget + dash_trade_script + "</body>")
+        return h
+
+    html = await asyncio.to_thread(_splice, html)
 
     return HTMLResponse(html)
 

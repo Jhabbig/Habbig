@@ -317,7 +317,11 @@ def resolve_prediction(ticker: str, window_start: str, actual_direction: str, ac
 
 def get_accuracy_stats(ticker: str = None, days: int = 30) -> dict:
     """Compute accuracy statistics from resolved predictions."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # created_at defaults to SQLite's datetime('now') — 'YYYY-MM-DD HH:MM:SS'
+    # in UTC. The bound must use the same format: isoformat()'s 'T' separator
+    # sorts after ' ', which would lexicographically exclude every row from
+    # the boundary day.
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
     with _conn() as c:
         if ticker:

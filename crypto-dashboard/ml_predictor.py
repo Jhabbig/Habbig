@@ -299,6 +299,91 @@ def build_windows_and_features(timestamps, prices):
             np.array(window_times, dtype=np.int64))
 
 
+def _sample_features(window_features, window_outcomes, window_times, i, lookback):
+    """Build the feature vector for window index *i* (current window plus
+    lookback context). Shared by training-sample construction and live
+    prediction so both use the exact same layout."""
+    n_micro = window_features.shape[1]  # 30 features per window
+
+    f = []
+
+    # 1. Current window's micro-features (30)
+    f.extend(window_features[i])
+
+    # 2. Previous windows' summarized features
+    # Average of last `lookback` windows' features (30)
+    prev_feats = window_features[i - lookback:i]
+    f.extend(prev_feats.mean(axis=0))
+
+    # 3. Trend of each feature over lookback (slope) (30)
+    if lookback >= 3:
+        x = np.arange(lookback, dtype=np.float32)
+        slopes = []
+        for feat_idx in range(n_micro):
+            vals = prev_feats[:, feat_idx]
+            if np.std(vals) > 0:
+                slope = np.polyfit(x, vals, 1)[0]
+            else:
+                slope = 0
+            slopes.append(slope)
+        f.extend(slopes)
+    else:
+        f.extend([0] * n_micro)
+
+    # 4. Cross-window context features (10)
+    # Recent outcomes
+    recent_outcomes = window_outcomes[i - lookback:i]
+    f.append(np.mean(recent_outcomes))  # win rate of recent windows
+
+    # Streak (use previous window's outcome to avoid lookahead)
+    streak = 0
+    direction = window_outcomes[i - 1] if i > 0 else 0
+    for j in range(i - 1, max(i - 11, -1), -1):
+        if j < 0:
+            break
+        if window_outcomes[j] == direction:
+            streak += 1
+        else:
+            break
+    f.append(streak / 10.0)
+
+    # Volatility trend (are windows getting more or less volatile?)
+    vol_idx = 20  # volatility is feature index 20
+    recent_vols = window_features[i - lookback:i + 1, vol_idx]
+    f.append(np.mean(recent_vols[-2:]) / max(np.mean(recent_vols[:-2]), 0.001))
+
+    # Momentum trend (are returns getting bigger or smaller?)
+    ret_idx = 10  # total return is feature index 10
+    recent_rets = window_features[i - lookback:i + 1, ret_idx]
+    f.append(np.mean(recent_rets))
+
+    # Direction consistency (how many of last N went same direction?)
+    f.append(np.std(recent_outcomes))
+
+    # Hour of day (sin + cos encoded)
+    hour = datetime.fromtimestamp(window_times[i] / 1000, tz=timezone.utc).hour
+    f.append(np.sin(2 * np.pi * hour / 24))
+    f.append(np.cos(2 * np.pi * hour / 24))
+
+    # Day of week
+    dow = datetime.fromtimestamp(window_times[i] / 1000, tz=timezone.utc).weekday()
+    f.append(np.sin(2 * np.pi * dow / 7))
+
+    # Current vs average trajectory (how different is this window?)
+    avg_trajectory = prev_feats[:, :10].mean(axis=0)
+    trajectory_diff = np.mean(np.abs(window_features[i, :10] - avg_trajectory))
+    f.append(trajectory_diff)
+
+    # Price range trend
+    range_idx_up = 11  # max_up
+    range_idx_dn = 12  # max_down
+    recent_ranges = (window_features[i - lookback:i + 1, range_idx_up] -
+                    window_features[i - lookback:i + 1, range_idx_dn])
+    f.append(recent_ranges[-1] / max(np.mean(recent_ranges[:-1]), 0.001))
+
+    return f
+
+
 def build_training_samples(window_features, window_outcomes, window_times, lookback=5):
     """
     Build training samples with context from previous windows.
@@ -316,89 +401,11 @@ def build_training_samples(window_features, window_outcomes, window_times, lookb
     if n_windows < lookback + 10:
         return np.array([]), np.array([])
 
-    n_micro = window_features.shape[1]  # 30 features per window
-
     features = []
     targets = []
 
     for i in range(lookback, n_windows - 1):
-        f = []
-
-        # 1. Current window's micro-features (30)
-        f.extend(window_features[i])
-
-        # 2. Previous windows' summarized features
-        # Average of last `lookback` windows' features (30)
-        prev_feats = window_features[i - lookback:i]
-        f.extend(prev_feats.mean(axis=0))
-
-        # 3. Trend of each feature over lookback (slope) (30)
-        if lookback >= 3:
-            x = np.arange(lookback, dtype=np.float32)
-            slopes = []
-            for feat_idx in range(n_micro):
-                vals = prev_feats[:, feat_idx]
-                if np.std(vals) > 0:
-                    slope = np.polyfit(x, vals, 1)[0]
-                else:
-                    slope = 0
-                slopes.append(slope)
-            f.extend(slopes)
-        else:
-            f.extend([0] * n_micro)
-
-        # 4. Cross-window context features (10)
-        # Recent outcomes
-        recent_outcomes = window_outcomes[i - lookback:i]
-        f.append(np.mean(recent_outcomes))  # win rate of recent windows
-
-        # Streak (use previous window's outcome to avoid lookahead)
-        streak = 0
-        direction = window_outcomes[i - 1] if i > 0 else 0
-        for j in range(i - 1, max(i - 11, -1), -1):
-            if j < 0:
-                break
-            if window_outcomes[j] == direction:
-                streak += 1
-            else:
-                break
-        f.append(streak / 10.0)
-
-        # Volatility trend (are windows getting more or less volatile?)
-        vol_idx = 20  # volatility is feature index 20
-        recent_vols = window_features[i - lookback:i + 1, vol_idx]
-        f.append(np.mean(recent_vols[-2:]) / max(np.mean(recent_vols[:-2]), 0.001))
-
-        # Momentum trend (are returns getting bigger or smaller?)
-        ret_idx = 10  # total return is feature index 10
-        recent_rets = window_features[i - lookback:i + 1, ret_idx]
-        f.append(np.mean(recent_rets))
-
-        # Direction consistency (how many of last N went same direction?)
-        f.append(np.std(recent_outcomes))
-
-        # Hour of day (sin + cos encoded)
-        hour = datetime.fromtimestamp(window_times[i] / 1000, tz=timezone.utc).hour
-        f.append(np.sin(2 * np.pi * hour / 24))
-        f.append(np.cos(2 * np.pi * hour / 24))
-
-        # Day of week
-        dow = datetime.fromtimestamp(window_times[i] / 1000, tz=timezone.utc).weekday()
-        f.append(np.sin(2 * np.pi * dow / 7))
-
-        # Current vs average trajectory (how different is this window?)
-        avg_trajectory = prev_feats[:, :10].mean(axis=0)
-        trajectory_diff = np.mean(np.abs(window_features[i, :10] - avg_trajectory))
-        f.append(trajectory_diff)
-
-        # Price range trend
-        range_idx_up = 11  # max_up
-        range_idx_dn = 12  # max_down
-        recent_ranges = (window_features[i - lookback:i + 1, range_idx_up] -
-                        window_features[i - lookback:i + 1, range_idx_dn])
-        f.append(recent_ranges[-1] / max(np.mean(recent_ranges[:-1]), 0.001))
-
-        features.append(f)
+        features.append(_sample_features(window_features, window_outcomes, window_times, i, lookback))
         targets.append(window_outcomes[i + 1])  # predict NEXT window
 
     return np.array(features, dtype=np.float32), np.array(targets, dtype=np.float32)
@@ -406,7 +413,7 @@ def build_training_samples(window_features, window_outcomes, window_times, lookb
 
 # ─── Binance API for recent data ─────────────────────────────────────
 
-def fetch_recent_1s_data(minutes=60):
+def fetch_recent_1s_data(minutes=60, symbol="BTCUSDT"):
     """Fetch recent 1-second klines from Binance for current prediction."""
     all_ts = []
     all_prices = []
@@ -415,7 +422,7 @@ def fetch_recent_1s_data(minutes=60):
     needed = minutes * 60
 
     while len(all_ts) < needed:
-        params = {"symbol": "BTCUSDT", "interval": "1s", "limit": 1000}
+        params = {"symbol": symbol, "interval": "1s", "limit": 1000}
         if end_time:
             params["endTime"] = end_time
         try:
@@ -515,6 +522,11 @@ def train_neural_net(X, y, epochs=100):
 
         for start in range(0, len(X_train), batch_size):
             end = min(start + batch_size, len(X_train))
+            if end - start < 2:
+                # BatchNorm1d raises on single-sample batches in training
+                # mode ("Expected more than 1 value per channel") — skip the
+                # trailing 1-sample batch instead of crashing the whole train.
+                continue
             optimizer.zero_grad()
             out = model(X_shuf[start:end])
             loss = (criterion(out, y_shuf[start:end]) * w_shuf[start:end].unsqueeze(1)).mean()
@@ -1163,19 +1175,66 @@ class MLPredictor:
 
         return nn_acc, gbt_acc, lstm_acc
 
+    def _build_live_features(self, lookback=5):
+        """Fetch fresh 1-second data and build the feature vector for the
+        UPCOMING window (the one after the newest fully-completed window).
+
+        Returns (X_current, live_window_features) or None when live data is
+        unavailable, or the newest completed window is so old that the window
+        being predicted has already closed (stale signal).
+        """
+        try:
+            timestamps, prices = fetch_recent_1s_data(minutes=90, symbol=self.symbol)
+        except Exception:
+            return None
+        if len(timestamps) < 1000:
+            return None
+
+        wf, wo, wt = build_windows_and_features(timestamps, prices)
+        if len(wf) == 0:
+            return None
+
+        # Drop trailing window(s) still in progress — their features would be
+        # computed from partial data.
+        now_ms = int(time.time() * 1000)
+        n = len(wf)
+        while n > 0 and wt[n - 1] + WINDOW_MS > now_ms:
+            n -= 1
+        if n < lookback + 1:
+            return None
+        wf, wo, wt = wf[:n], wo[:n], wt[:n]
+
+        # Freshness guard: we predict the window AFTER the newest completed
+        # one; refuse if that window has itself already closed.
+        if now_ms >= wt[-1] + 2 * WINDOW_MS:
+            return None
+
+        x = np.asarray(
+            _sample_features(wf, wo, wt, n - 1, lookback), dtype=np.float32)
+        return x, wf
+
     def predict(self):
         if self.features is None or len(self.features) == 0:
             return 0.5, {"nn_prob": 0.5, "gbt_prob": 0.5, "lstm_prob": 0.5,
                          "ensemble": 0.5, "confidence": "no_data"}
 
-        X_current = self.features[-1]
+        # Build the input from FRESH market data. The last cached training
+        # sample targets a window whose outcome is already known (and may be
+        # hours old), so it must never be served as the live signal.
+        live = self._build_live_features()
+        if live is None:
+            return 0.5, {"nn_prob": 0.5, "gbt_prob": 0.5, "lstm_prob": 0.5,
+                         "ensemble": 0.5, "confidence": "stale",
+                         "reason": "no fresh tick data for a live prediction"}
+        X_current, live_window_features = live
+
         nn_prob = predict_neural_net(self.nn_model, X_current)
         gbt_prob = predict_gbt(self.gbt_model, X_current)
 
-        # LSTM prediction using recent window features
+        # LSTM prediction using the freshly built window features
         lstm_prob = 0.5
-        if self.lstm_model and self.window_features is not None:
-            lstm_prob = predict_lstm(self.lstm_model, self.window_features)
+        if self.lstm_model:
+            lstm_prob = predict_lstm(self.lstm_model, live_window_features)
 
         nn_acc = self.nn_model["val_acc"] if self.nn_model else 0.5
         gbt_acc = self.gbt_model["val_acc"] if self.gbt_model else 0.5

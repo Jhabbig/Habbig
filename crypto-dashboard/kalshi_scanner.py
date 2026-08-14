@@ -143,14 +143,18 @@ def fetch_markets(limit=200, status="open"):
 def _normalize_kalshi_price(raw_price):
     """Normalize a Kalshi price to a 0-1 probability.
 
-    Kalshi prices can arrive as cents (0-100) or decimals (0-1).
+    The trade-api/v2 endpoints return prices as integer cents (0-100), so a
+    value of 1 means 1 cent (probability 0.01), NOT 100%. Only non-integer
+    values below 1 are treated as already-decimal probabilities (defensive
+    support for mixed formats).
     Returns a probability between 0 and 1.
     """
     if raw_price is None or raw_price == 0:
         return 0.0
-    if 0 < raw_price <= 1:
+    if isinstance(raw_price, float) and not raw_price.is_integer() and 0 < raw_price < 1:
         return round(raw_price, 3)  # already decimal
-    return round(raw_price / 100, 3)  # cents to decimal
+    # cents to decimal, clamped to [0, 1]
+    return round(min(max(raw_price / 100.0, 0.0), 1.0), 3)
 
 
 def fetch_events(limit=100, status="open"):
