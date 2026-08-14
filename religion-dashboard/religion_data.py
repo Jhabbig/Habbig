@@ -423,12 +423,12 @@ RELIGIONS_FULL = [
 
 RELIGIOUS_LEADERS = [
     # ─ Catholic ─
-    {"name": "Pope Francis", "given_name": "Jorge Mario Bergoglio",
+    {"name": "Pope Leo XIV", "given_name": "Robert Francis Prevost",
      "role": "Bishop of Rome, Pope of the Catholic Church", "religion": "Roman Catholic",
-     "born": "1936-12-17", "sex": "M", "country": "Vatican City",
-     "took_office": "2013-03-13", "predecessor": "Benedict XVI (resigned)",
+     "born": "1955-09-14", "sex": "M", "country": "Vatican City",
+     "took_office": "2025-05-08", "predecessor": "Francis (died 2025-04-21)",
      "succession": "Conclave of cardinal electors under 80",
-     "summary": "266th Pope. First Jesuit and first Latin American pope. Hospitalised Feb–Mar 2025 for double pneumonia."},
+     "summary": "267th Pope. First American pope; Augustinian; previously Prefect of the Dicastery for Bishops. Elected 8 May 2025 by the conclave following the death of Francis (21 April 2025)."},
 
     # ─ Eastern Orthodox ─
     {"name": "Bartholomew I", "given_name": "Dimitrios Archondonis",

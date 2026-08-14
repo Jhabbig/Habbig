@@ -15,7 +15,7 @@ Listens on `:7062`. Subdomain: `religion.narve.ai` (registered in
 | World religions adherent counts | Pew Research, baseline 2020 estimates | curated — bumped on new edition |
 | Sub-tradition breakdowns | Pew + World Religion Database | curated |
 | Full registry (100 traditions) | Pew + WRD + ARDA + Britannica + official censuses | curated |
-| Religious leaders + actuarial | Public bios + SSA 2022 + 32-leader historical calibration | curated; actuarial computed at request |
+| Religious leaders + actuarial | Public bios + SSA 2022 + 33-leader historical calibration | curated; actuarial computed at request |
 | College of Cardinals + papabile | Vatican Press Office + College of Cardinals Report + Vaticanist press | curated; bumped at each consistory |
 | Country religion composition | Pew "Religious Composition by Country" (2010-2050 series) | curated — 159 countries, ~98% of world population |
 | Religious calendar (2026) | Ecclesiastical calendars + Pew calendar reference | curated annually |
@@ -52,7 +52,7 @@ python3 server.py
 - `GET /api/religions` — world religions adherent counts + sub-traditions (Pew top-8)
 - `GET /api/religions-full` — 100-tradition registry (filterable: `?family=`, `?q=`)
 - `GET /api/leaders` — religious leaders with life-table actuarial (`?ref=YYYY-MM-DD` overrides today). Returns both raw-SSA and religious-office-adjusted probabilities.
-- `GET /api/historical-leaders` — 32-leader cohort used to calibrate the religious-office hazard ratio (0.85)
+- `GET /api/historical-leaders` — 33-leader cohort used to calibrate the religious-office hazard ratio (0.85)
 - `GET /api/conclave` — curated College of Cardinals sample, papabile priors, conclave rules + college aggregates (filters: `?region=`, `?wing=`, `?electors=1`, `?papabile=1`)
 - `GET /api/conclave/live` — same data, but with factual fields refreshed from press.vatican.va's canonical alphabetical list of cardinals (24h cache). Falls back to curated data on scrape failure. Includes `source` (`live` / `stale-cache` / `fallback-curated`), `age_seconds`, and a `drift` block showing newly-created and missing cardinals.
 - `GET /api/countries` — country religion composition + cross-country rollup (`?religion=` filter)
@@ -81,6 +81,14 @@ Holy See becomes vacant, Polymarket conclave markets get massive volume
 and most retail bettors guess based on flag affinity — there is genuine
 edge.
 
+**Status: the May 2025 conclave is RESOLVED.** Francis died 21 April
+2025; Robert Prevost — a 5.0% name in our papabile book — was elected
+Leo XIV on 8 May 2025. The papabile priors served by the API are the
+frozen pre-conclave 2025 book, kept as historical record and calibration
+data (outcome in the `conclave_2025` response block). The next conclave
+is speculative-future — no vacancy, no date — and has no curated book,
+so `/api/edge` deliberately leaves succession markets unmatched.
+
 The endpoint returns three things:
 
 1. **Cardinal sample** (~80 entries) — the most influential and most-
@@ -90,9 +98,11 @@ The endpoint returns three things:
    3 = top-tier favourite), and a one-line summary.
 
 2. **Papabile priors** (~15 entries) — names, rationale, and a prior
-   probability reflecting Vaticanist + bookmaker consensus. Priors sum
-   to ~59%; the residual ~41% is the "field" (someone outside the
-   shortlist — historically a common outcome).
+   probability reflecting Vaticanist + bookmaker consensus going into
+   the May 2025 conclave (frozen; resolved — Prevost elected). Priors
+   summed to ~59%; the residual ~41% was the "field" (someone outside
+   the shortlist — historically a common outcome, and 2025 nearly was
+   one again).
 
 3. **College aggregates** — full-college breakdown beyond the sample:
    252 cardinals total, ~135 electors, ~80% created by Francis. Used

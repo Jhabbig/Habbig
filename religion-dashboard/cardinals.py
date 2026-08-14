@@ -50,7 +50,8 @@ from __future__ import annotations
 
 CARDINALS = [
     # ═════════════════════════════════════════════════════════════════════════
-    # FRANCIS (Pope 2013-, ~163 cardinals created across 10 consistories)
+    # FRANCIS (Pope 2013-2025, died 2025-04-21; ~163 cardinals created
+    # across 10 consistories)
     # ═════════════════════════════════════════════════════════════════════════
 
     # ── 1st Francis consistory: 2014-02-22 ──
@@ -522,10 +523,10 @@ CARDINALS = [
      "summary": "Aged out."},
 
     # ── 9th Francis consistory: 2023-09-30 ──
-    {"name": "Robert Prevost", "country": "United States", "region": "North America", "born": "1955-09-14", "age": 70, "elector": True,
-     "appointed_by": "Francis", "created_at": "2023-09-30", "role": "Prefect, Dicastery for Bishops",
-     "wing": "moderate", "papabile_tier": 3, "verified": True,
-     "summary": "Augustinian; long mission in Peru. Picks all the world's bishops — most influential curial post."},
+    {"name": "Robert Prevost", "country": "United States", "region": "North America", "born": "1955-09-14", "age": 70, "elector": False,
+     "appointed_by": "Francis", "created_at": "2023-09-30", "role": "Elected Pope Leo XIV (2025-05-08); was Prefect, Dicastery for Bishops",
+     "wing": "moderate", "papabile_tier": 0, "verified": True,
+     "summary": "Augustinian; long mission in Peru. Ran bishop selection 2023-25. Elected Pope Leo XIV on 2025-05-08 — left the college on election (was tier 3 / 5.0% in the pre-conclave 2025 book)."},
     {"name": "Claudio Gugerotti", "country": "Italy", "region": "Europe", "born": "1955-10-07", "age": 70, "elector": True,
      "appointed_by": "Francis", "created_at": "2023-09-30", "role": "Prefect, Dicastery for the Eastern Churches",
      "wing": "moderate", "papabile_tier": 1, "verified": True,
@@ -841,12 +842,31 @@ _seen: set[str] = set()
 CARDINALS = [c for c in CARDINALS if not (c["name"] in _seen or _seen.add(c["name"]))]
 
 
-# ─── Papabile priors ────────────────────────────────────────────────────────
+# ─── Papabile priors — pre-conclave 2025 book (RESOLVED) ────────────────────
 # Aggregated Vaticanist consensus + bookmaker odds (Polymarket, Smarkets,
-# William Hill conclave markets historically). Priors sum to ~55%, leaving
-# ~45% for the field (an under-the-radar cardinal — historically a common
-# outcome: Bergoglio 2013, Wojtyła 1978). Treat as a consensus prior, not
-# a model output.
+# William Hill conclave markets historically) going INTO the May 2025
+# conclave, after the death of Pope Francis (2025-04-21). Priors sum to
+# ~55%, leaving ~45% for the field (an under-the-radar cardinal —
+# historically a common outcome: Bergoglio 2013, Wojtyła 1978).
+#
+# OUTCOME (2025-05-08): Robert Prevost — a 5.0% name in this book — was
+# elected Pope Leo XIV. The table below is kept VERBATIM as the frozen
+# historical record and as calibration data. It is NOT a prior for the
+# next conclave: that event is speculative-future (no vacancy, no date)
+# and no post-Leo book has been curated. Treat as a resolved consensus
+# prior, not a model output.
+
+CONCLAVE_2025 = {
+    "status": "RESOLVED",
+    "vacancy_began": "2025-04-21",   # death of Pope Francis
+    "elected_on": "2025-05-08",
+    "elected": "Robert Prevost",
+    "regnal_name": "Leo XIV",
+    "book_prior_pct": 5.0,           # what this book gave Prevost pre-vote
+    "note": ("PAPABILE_PRIORS is the frozen pre-conclave 2025 book, kept as "
+             "historical record. The next conclave is speculative-future — "
+             "no successor book has been curated."),
+}
 
 PAPABILE_PRIORS = [
     {"name": "Pietro Parolin",          "prior_pct": 11.0, "rationale": "Continuity Secretary of State; default establishment choice."},
@@ -877,13 +897,15 @@ CONCLAVE_RULES = {
     "ballots_per_day": 4,           # after day 1
     "ballots_before_runoff": 33,    # Benedict XVI's 2007 amendment requires 2/3 always
     "regional_blocs": ["Europe", "Latin America", "North America", "Africa", "Asia-Pacific", "Middle East"],
-    "field_residual_pct": 40,       # Probability the next pope is NOT in the public papabile shortlist
+    "field_residual_pct": 40,       # P(next pope NOT in the shortlist) — as frozen in the resolved 2025 book
 }
 
 # Rough aggregate breakdown of the FULL ~135-elector college. Numbers
 # are publicly cited by the College of Cardinals Report as of late 2024
-# (after Francis's 10th consistory). Bump as new cardinals are created
-# or die.
+# (after Francis's 10th and final consistory) and have NOT been re-based
+# since the May 2025 conclave (133 electors actually voted; Prevost left
+# the college on election as Leo XIV, who has yet to create cardinals).
+# Bump as new cardinals are created or die.
 COLLEGE_AGGREGATES = {
     "total_cardinals": 252,
     "total_electors":  135,

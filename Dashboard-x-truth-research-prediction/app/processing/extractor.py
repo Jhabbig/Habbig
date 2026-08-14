@@ -25,35 +25,92 @@ class ExtractionResult:
     category: str = "other"
 
 
+# Explicit probability statements. Each pattern's group(1) is the percentage.
 PERCENTAGE_PATTERNS = [
-    re.compile(r"(?:about|around|~|roughly)?\s*(\d{1,3})\s*%\s*(?:chance|probability|likely|likelihood)", re.IGNORECASE),
+    re.compile(r"(?:about|around|~|roughly)?\s*(\d{1,3})\s*%\s*(?:chance|probability|likely|likelihood|odds)", re.IGNORECASE),
     re.compile(r"(?:I(?:'d| would)\s+(?:say|put it at|estimate|give it))\s+(?:about\s+|around\s+)?(\d{1,3})\s*%", re.IGNORECASE),
     re.compile(r"(\d{1,3})\s*%\s*(?:sure|certain|confident)", re.IGNORECASE),
+    # "the odds/chance of X (happening) is/are at 40%"
+    re.compile(r"\b(?:chance|odds|probability|likelihood)\s+(?:of|that|are|is)\b[^%\n]{0,80}?(?:\bat\s+|\bis\s+|\bare\s+|\baround\s+|\babout\s+)?(\d{1,3})\s*%", re.IGNORECASE),
+    # "I give it/the Chiefs a 65% (chance)"
+    re.compile(r"\bgive\w*\s+(?:it|this|that|him|her|them|the\s+\w+|\w+)\s+(?:a\s+|an\s+)?(\d{1,3})\s*%", re.IGNORECASE),
+    # spelled out: "30 percent chance"
+    re.compile(r"(\d{1,3})\s*(?:percent|pct)\s*(?:chance|probability|likely|likelihood|sure|certain|confident|odds)", re.IGNORECASE),
 ]
 
+# "1 in 5 chance" \u2014 groups are (numerator, denominator).
+FRACTION_ODDS_PATTERN = re.compile(
+    r"\b(\d{1,2})\s+in\s+(\d{1,3})\s+(?:chance|shot|odds|probability|likelihood)\b", re.IGNORECASE
+)
+
+# When an explicit probability co-occurs with one of these, the speaker is
+# giving the probability of the event NOT happening the stated way \u2014
+# "90% sure this won't pass" means No @ 0.90, not Yes.
+PCT_NEGATION_PATTERN = re.compile(
+    r"\b(?:won['\u2019]t|will\s+not|isn['\u2019]t\s+going\s+to|not\s+going\s+to"
+    r"|never\s+(?:happen|pass|hold|win|close|materiali[sz]e|get|make|recover)\w*"
+    r"|doesn['\u2019]t\s+(?:happen|pass|hold|win))\b",
+    re.IGNORECASE,
+)
+
+_FUTURE_EVENT_VERBS = r"(?:win|pass|happen|succeed|be approved|get (?:elected|approved|done)|launch|hit|reach|cut|hold|close|resign|default|survive|recover)"
+
 DIRECTIONAL_POSITIVE = [
-    re.compile(r"\b(?:will|going to|gonna)\b.{0,50}\b(?:win|pass|happen|succeed|be approved|get elected|launch|hit)\b", re.IGNORECASE),
+    re.compile(r"\b(?:will|going to|gonna)\b.{0,50}\b" + _FUTURE_EVENT_VERBS + r"\b", re.IGNORECASE),
     re.compile(r"\b(?:definitely|certainly|absolutely|no doubt)\b.{0,50}\b(?:will|going to|gonna)\b", re.IGNORECASE),
     re.compile(r"\bbet(?:ting)?\s+on\b", re.IGNORECASE),
     re.compile(r"\bmy prediction[:\s]+.+\bwill\b", re.IGNORECASE),
     re.compile(r"\bI (?:predict|think|believe|expect)\b.{0,50}\bwill\b", re.IGNORECASE),
 ]
 
+# Negative direction requires an event verb nearby \u2014 a bare "never" or
+# "impossible" anywhere in a post is not a prediction ("I never said that").
 DIRECTIONAL_NEGATIVE = [
-    re.compile(r"\b(?:will not|won't|won\'t|no way|never|impossible|zero chance)\b", re.IGNORECASE),
-    re.compile(r"\b(?:won't|can't|doesn't|isn't going to|not going to)\b.{0,50}\b(?:win|pass|happen|succeed)\b", re.IGNORECASE),
-    re.compile(r"\bno chance\b", re.IGNORECASE),
+    re.compile(r"\b(?:will\s+not|won['\u2019]t|can['\u2019]t|doesn['\u2019]t|isn['\u2019]t\s+going\s+to|not\s+going\s+to)\b.{0,60}\b(?:" + _FUTURE_EVENT_VERBS + r"|make\s+it)\b", re.IGNORECASE),
+    re.compile(r"\b(?:no\s+way|zero\s+chance|no\s+chance|impossible)\b.{0,80}\b(?:will|going\s+to|gonna|wins?|passes?|happens?|succeeds?|holds?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:will|going\s+to|gonna)\s+never\b|\bnever\s+(?:happen|pass|hold|win|close|survive|recover|make)\w*\b", re.IGNORECASE),
 ]
 
 CONDITIONAL_PATTERN = re.compile(r"\bif\b.{5,60}\bthen\b.{5,60}\bwill\b", re.IGNORECASE)
 
-FALSE_POSITIVE_PATTERNS = [
+# Verbal probability lexicon \u2014 ordered most-specific first; the value is
+# P(event resolves YES) implied by the phrase.
+WORD_PROBABILITIES = [
+    (re.compile(r"\b(?:almost|near(?:ly)?|virtually)\s+certain(?:ly)?\b", re.IGNORECASE), 0.92),
+    (re.compile(r"\b(?:highly|very|extremely)\s+likely\b", re.IGNORECASE), 0.85),
+    (re.compile(r"\bmore\s+likely\s+than\s+not\b", re.IGNORECASE), 0.60),
+    (re.compile(r"\b(?:coin\s*flip|toss[-\s]?up|50[-/]50)\b", re.IGNORECASE), 0.50),
+    (re.compile(r"\b(?:highly|very|extremely)\s+unlikely\b", re.IGNORECASE), 0.15),
+    (re.compile(r"\b(?:long\s+shot|slim\s+chance)\b", re.IGNORECASE), 0.12),
+    (re.compile(r"\b(?:no|zero)\s+chance\b|\bimpossible\b", re.IGNORECASE), 0.03),
+]
+
+_WORD_PROB_EVENT_CONTEXT = re.compile(
+    r"\b(?:win|wins|pass|passes|happen|happens|hold|holds|cut|cuts|approve[sd]?|close[sd]?|reach(?:es)?|hit|hits|elect(?:ed|ion)?|succeed|survive)\b",
+    re.IGNORECASE,
+)
+
+# Hard vetoes: the post can never be a prediction (quotes of someone else,
+# promos, "will X ever ...?" rhetoric). These also gate the LLM path.
+HARD_FALSE_POSITIVE_PATTERNS = [
     re.compile(r"\bwill\s+\w+\s+ever\b.+\?", re.IGNORECASE),
-    re.compile(r"\b(?:won|lost|passed|happened|succeeded|failed|was elected)\b", re.IGNORECASE),
     re.compile(r'^["\u201c].+["\u201d]$'),
     re.compile(r"\b(?:sale|discount|off|coupon|promo|buy now)\b", re.IGNORECASE),
-    re.compile(r"\b(?:dropped|rose|increased|decreased|up|down)\s+\d+%", re.IGNORECASE),
 ]
+
+# Soft vetoes: past-tense reporting. Skipped when the post ALSO carries an
+# explicit probability \u2014 "they won game one, 70% chance they take the series"
+# is a real prediction. NOTE: won(?!['\u2019]t) so "won't" isn't eaten as "won".
+SOFT_FALSE_POSITIVE_PATTERNS = [
+    re.compile(r"\b(?:won(?!['\u2019]t)|lost|passed|happened|succeeded|failed|was elected)\b", re.IGNORECASE),
+    re.compile(r"\b(?:dropped|rose|increased|decreased|up|down)\s+\d+(?:\.\d+)?%", re.IGNORECASE),
+]
+
+MIN_WORDS_GENERAL = 10   # directional/keyword paths need real context
+MIN_WORDS_EXPLICIT = 4   # an explicit % + a named event can be short
+
+# Backwards-compat alias (older callers/tests import FALSE_POSITIVE_PATTERNS).
+FALSE_POSITIVE_PATTERNS = HARD_FALSE_POSITIVE_PATTERNS + SOFT_FALSE_POSITIVE_PATTERNS
 
 _prediction_keywords = yaml_config.get("scraping", {}).get("keywords", {}).get("prediction_keywords", [])
 _category_keywords = yaml_config.get("scraping", {}).get("keywords", {}).get("category_keywords", {})
@@ -162,37 +219,116 @@ def infer_category(text: str) -> str:
     return best_cat
 
 
+def _in_question_sentence(content: str, match_end: int) -> bool:
+    """True if the sentence containing a match ends with '?'.
+
+    "Will the Lakers win the title this year?" is a question, not a
+    prediction — a directional pattern firing inside it is a false positive.
+    """
+    q = content.find("?", match_end)
+    if q == -1:
+        return False
+    return not re.search(r"[.!\n]", content[match_end:q])
+
+
+def _word_probability(content: str) -> Optional[float]:
+    """P(YES) implied by a verbal-probability phrase, if one is present."""
+    for pat, prob in WORD_PROBABILITIES:
+        if pat.search(content):
+            return prob
+    return None
+
+
 class PredictionExtractor:
-    def _extract_regex(self, content: str) -> list[ExtractionResult]:
-        """Precise regex / pattern path. High precision, low recall."""
-        if not content or len(content.split()) < 10:
+    def _extract_explicit(self, content: str) -> list[ExtractionResult]:
+        """Explicit probability statements: percentages and fraction odds.
+
+        These carry enough signal on their own that short posts qualify and
+        past-tense soft vetoes don't apply. If the post also negates the
+        event ("90% sure this won't pass"), the outcome flips to No with the
+        stated probability kept — the speaker is that sure of the No side.
+        """
+        if len(content.split()) < MIN_WORDS_EXPLICIT:
             return []
-        for fp in FALSE_POSITIVE_PATTERNS:
-            if fp.search(content):
-                return []
+        outcome = "No" if PCT_NEGATION_PATTERN.search(content) else "Yes"
+        category = None  # inferred lazily, once
         results: list[ExtractionResult] = []
+        seen_spans: list[tuple[int, int]] = []
+
+        def _overlaps(start: int, end: int) -> bool:
+            return any(s < end and start < e for s, e in seen_spans)
 
         for pat in PERCENTAGE_PATTERNS:
             m = pat.search(content)
-            if m:
-                try:
-                    pct = int(m.group(1))
-                    if 1 <= pct <= 99:
-                        results.append(ExtractionResult("Yes", pct / 100.0, m.group(0).strip(), "percentage", infer_category(content)))
-                except (ValueError, IndexError):
-                    pass
+            if not m or _overlaps(*m.span(1)):
+                continue
+            try:
+                pct = int(m.group(1))
+            except (ValueError, IndexError):
+                continue
+            if not 0 <= pct <= 100:
+                continue
+            prob = min(max(pct / 100.0, 0.02), 0.98)
+            if category is None:
+                category = infer_category(content)
+            seen_spans.append(m.span(1))
+            results.append(ExtractionResult(outcome, prob, m.group(0).strip(), "percentage", category))
+
+        m = FRACTION_ODDS_PATTERN.search(content)
+        if m and not _overlaps(*m.span()):
+            try:
+                num, den = int(m.group(1)), int(m.group(2))
+                if 0 < num < den <= 100:
+                    if category is None:
+                        category = infer_category(content)
+                    results.append(ExtractionResult(outcome, round(num / den, 4), m.group(0).strip(), "fraction_odds", category))
+            except (ValueError, IndexError):
+                pass
+
+        return results
+
+    def _extract_regex(self, content: str) -> list[ExtractionResult]:
+        """Precise regex / pattern path. High precision, low recall."""
+        if not content:
+            return []
+
+        for fp in HARD_FALSE_POSITIVE_PATTERNS:
+            if fp.search(content):
+                return []
+
+        # Explicit probabilities outrank every veto below: a short post or a
+        # past-tense preamble doesn't make "70% chance we close the series"
+        # any less of a prediction.
+        results = self._extract_explicit(content)
         if results:
             return results
 
+        if len(content.split()) < MIN_WORDS_GENERAL:
+            return []
+        for fp in SOFT_FALSE_POSITIVE_PATTERNS:
+            if fp.search(content):
+                return []
+
         for pat in DIRECTIONAL_NEGATIVE:
             m = pat.search(content)
-            if m:
-                return [ExtractionResult("No", None, m.group(0).strip(), "directional", infer_category(content))]
+            if m and not _in_question_sentence(content, m.end()):
+                word_prob = _word_probability(content)
+                # For a No prediction only the low band is unambiguous:
+                # "no chance/long shot/unlikely" state P(YES) directly.
+                prob = word_prob if word_prob is not None and word_prob <= 0.30 else None
+                return [ExtractionResult("No", prob, m.group(0).strip(), "directional", infer_category(content))]
 
         for pat in DIRECTIONAL_POSITIVE:
             m = pat.search(content)
-            if m:
-                return [ExtractionResult("Yes", None, m.group(0).strip(), "directional", infer_category(content))]
+            if m and not _in_question_sentence(content, m.end()):
+                return [ExtractionResult("Yes", _word_probability(content), m.group(0).strip(), "directional", infer_category(content))]
+
+        # A verbal-probability phrase next to an event verb is itself a
+        # prediction: "the challenger is a long shot to win the runoff".
+        for pat, prob in WORD_PROBABILITIES:
+            m = pat.search(content)
+            if m and not _in_question_sentence(content, m.end()) and _WORD_PROB_EVENT_CONTEXT.search(content):
+                return [ExtractionResult("Yes", prob, m.group(0).strip(), "word_probability", infer_category(content))]
 
         m = CONDITIONAL_PATTERN.search(content)
         if m:
@@ -208,13 +344,35 @@ class PredictionExtractor:
                 return [ExtractionResult("Yes", None, content[:200], "keyword", infer_category(content))]
         return []
 
+    def _vetoed_for_llm(self, content: str) -> bool:
+        """Whether the post is a waste of an LLM call.
+
+        Hard vetoes always gate. Soft (past-tense) vetoes gate only when the
+        post carries no future marker at all — "they won last night, book the
+        repeat" is exactly the kind of post the LLM disambiguates well.
+        """
+        for fp in HARD_FALSE_POSITIVE_PATTERNS:
+            if fp.search(content):
+                return True
+        has_future_marker = re.search(
+            r"\b(?:will|going\s+to|gonna|chance|odds|predict|bet|expect|forecast|likely)\b",
+            content, re.IGNORECASE,
+        )
+        if not has_future_marker:
+            for fp in SOFT_FALSE_POSITIVE_PATTERNS:
+                if fp.search(content):
+                    return True
+        return False
+
     def extract(self, content: str) -> list[ExtractionResult]:
         """Synchronous regex + keyword fallback (legacy callers + unit tests)."""
-        if not content or len(content.split()) < 10:
+        if not content:
             return []
         results = self._extract_regex(content)
         if results:
             return results
+        if len(content.split()) < MIN_WORDS_GENERAL:
+            return []
         return self._extract_keyword_fallback(content)
 
     async def extract_async(self, content: str) -> list[ExtractionResult]:
@@ -225,14 +383,13 @@ class PredictionExtractor:
         a generic "Yes" with no probability and noisy categorization — fine as
         a fallback when the LLM is unavailable, but the LLM strictly dominates it.
         """
-        if not content or len(content.split()) < 10:
+        if not content or len(content.split()) < MIN_WORDS_EXPLICIT:
             return []
-        for fp in FALSE_POSITIVE_PATTERNS:
-            if fp.search(content):
-                return []
         results = self._extract_regex(content)
         if results:
             return results
+        if self._vetoed_for_llm(content):
+            return []
         try:
             from app.processing import llm_extractor
             if llm_extractor.is_available():
@@ -241,4 +398,6 @@ class PredictionExtractor:
                     return llm_results
         except Exception as exc:
             logger.warning("LLM extractor invocation failed: %s", exc)
+        if len(content.split()) < MIN_WORDS_GENERAL:
+            return []
         return self._extract_keyword_fallback(content)

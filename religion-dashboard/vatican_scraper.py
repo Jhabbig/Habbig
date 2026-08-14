@@ -121,7 +121,7 @@ _POPE_NORMALISE = {
     "john paul ii":    "John Paul II",
     "giovanni paolo ii":"John Paul II",
     "juan pablo ii":   "John Paul II",
-    "leo xiv":         "Leo XIV",        # in case of a 2025+ pope
+    "leo xiv":         "Leo XIV",        # elected 2025-05-08 (Robert Prevost)
 }
 
 

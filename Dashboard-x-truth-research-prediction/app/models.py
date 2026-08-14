@@ -264,7 +264,7 @@ class ExtractionCache(SQLModel, table=True):
     )
     id: Optional[int] = Field(default=None, primary_key=True)
     content_hash: str = Field(index=True)  # sha256 of the post content
-    model: str = Field(default="")  # e.g. "claude-opus-4-7"
+    model: str = Field(default="")  # e.g. "claude-opus-4-8#p2" (model + prompt version)
     predictions_json: str = Field(default="[]", sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

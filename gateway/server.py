@@ -30,7 +30,7 @@ import time
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 # Load .env.production before any config reads
 _env_file = Path(__file__).parent / ".env.production"
@@ -93,6 +93,17 @@ LEGACY_SUBDOMAIN_REDIRECTS: dict = CONFIG.get("legacy_subdomain_redirects", {})
 # Build reverse lookup: subdomain → dashboard_key
 SUBDOMAIN_TO_KEY = {cfg["subdomain"]: key for key, cfg in DASHBOARDS.items()}
 
+# Upstream host resolution. Bare metal/systemd runs every dashboard on
+# localhost; docker-compose runs each in its own container, reachable only by
+# a network alias. The pattern substitutes {key} (underscores sanitized to
+# dashes) so compose can set GATEWAY_UPSTREAM_HOST_PATTERN=dash-{key} while
+# bare metal keeps the 127.0.0.1 default.
+UPSTREAM_HOST_PATTERN = os.environ.get("GATEWAY_UPSTREAM_HOST_PATTERN", "127.0.0.1")
+
+
+def upstream_host(dashboard_key: str) -> str:
+    return UPSTREAM_HOST_PATTERN.replace("{key}", dashboard_key.replace("_", "-"))
+
 # ── Stripe config ──────────────────────────────────────────────────────────────
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
@@ -107,12 +118,12 @@ else:
 
 BUNDLE_PLANS = {
     "trader": {
-        "monthly_cents": 4900, "annual_cents": 39900, "name": "betyc Trader",
+        "monthly_cents": 4900, "annual_cents": 39900, "name": "Narve Trader",
         "stripe_price_monthly": "price_1TJXulQq4pCmZ5172Svy34cn",
         "stripe_price_annual": "price_1TJXulQq4pCmZ517VPw60dds",
     },
     "pro": {
-        "monthly_cents": 14900, "annual_cents": 119900, "name": "betyc Pro",
+        "monthly_cents": 14900, "annual_cents": 119900, "name": "Narve Pro",
         "stripe_price_monthly": "price_1TJXumQq4pCmZ517nHAuSv3b",
         "stripe_price_annual": "price_1TJXunQq4pCmZ517pIJRjiDp",
     },
@@ -125,7 +136,7 @@ DASHBOARD_PREVIEWS = {
         "features": [
             {"icon": "\u26a1", "title": "Live Odds Comparison", "desc": "Side-by-side Polymarket vs. DraftKings, FanDuel, and Pinnacle odds updated every 30 seconds."},
             {"icon": "\U0001f4ca", "title": "Arbitrage Scanner", "desc": "Automated detection of guaranteed-profit spreads across platforms with position sizing."},
-            {"icon": "\U0001f514", "title": "Line Movement Alerts", "desc": "Push notifications when odds shift beyond configurable thresholds on tracked markets."},
+            {"icon": "\U0001f514", "title": "Line Movement Alerts", "desc": "In-dashboard alerts when odds shift beyond configurable thresholds on tracked markets."},
             {"icon": "\U0001f9e0", "title": "Sharpe Ratio Signals", "desc": "Risk-adjusted scoring for every market so you know which bets have the best expected value."},
             {"icon": "\U0001f3af", "title": "Historical Accuracy", "desc": "Track record visualization showing past signal performance across sports categories."},
             {"icon": "\U0001f4b0", "title": "P&L Tracker", "desc": "Portfolio-level performance tracking for positions entered through the dashboard's signals."},
@@ -138,7 +149,6 @@ DASHBOARD_PREVIEWS = {
             "30-second auto-refresh across all panels",
             "WebSocket live feed for instant updates",
             "Exportable CSV reports",
-            "Priority access to new sports markets",
         ],
     },
     "weather": {
@@ -158,7 +168,6 @@ DASHBOARD_PREVIEWS = {
             "Automatic mispricing detection",
             "City-by-city market breakdown",
             "Accuracy tracking and calibration curves",
-            "Daily email digest of top opportunities",
             "All data updated every 5\u201315 minutes",
         ],
     },
@@ -179,7 +188,6 @@ DASHBOARD_PREVIEWS = {
             "Election polling aggregation",
             "Customizable alert thresholds",
             "Historical event-to-market-move analysis",
-            "Weekly geopolitical briefing summary",
             "Data updated every 30 minutes",
         ],
     },
@@ -266,6 +274,124 @@ DASHBOARD_PREVIEWS = {
             "Polymarket cross-links — edge tracking at +24h / +7d / +30d after each filing",
             "Real-time WebSocket fanout + per-user alert rules",
             "Updated every 6 hours (Form 4 / 13D feeds within hours of filing)",
+        ],
+    },
+    "centralbank": {
+        "tagline": "Every central bank on one screen. Policy rates, the decision calendar, the market-implied path, and Polymarket FOMC mispricings — see where rates are going before the statement drops.",
+        "features": [
+            {"icon": "\U0001f3db️", "title": "Global Rate Board", "desc": "Fed, ECB, BoE, BoJ, and more — current policy rates with the full decision history."},
+            {"icon": "\U0001f4c5", "title": "Decision Calendar", "desc": "Every upcoming rate decision with countdown, prior moves, and consensus expectations."},
+            {"icon": "\U0001f4c8", "title": "Implied Rate Path", "desc": "Market-implied path from futures pricing, charted against the official dot plot."},
+            {"icon": "\U0001f3af", "title": "FOMC Market Edge", "desc": "Polymarket rate-decision markets overlaid with the implied path to surface mispricings."},
+            {"icon": "\U0001f4dd", "title": "Statement Stance", "desc": "Hawkish/dovish stance tracking across successive statements and pressers."},
+            {"icon": "\U0001f514", "title": "Decision Alerts", "desc": "Know the moment a decision lands and how markets reprice around it."},
+        ],
+        "includes": [
+            "Policy rates and history for the major central banks",
+            "Full decision calendar with market expectations",
+            "Market-implied rate path vs official guidance",
+            "Polymarket FOMC and rate-market overlays",
+            "Statement stance tracking over time",
+            "Time-series charts for every tracked bank",
+        ],
+    },
+    "airace": {
+        "tagline": "Who's winning the AI race? Frontier-lab leaderboards on the benchmarks that matter, the capability frontier over time, and live AI prediction markets — one tab for the fastest-moving story in tech.",
+        "features": [
+            {"icon": "\U0001f3c1", "title": "Frontier Leaderboard", "desc": "Best public scores on MMLU-Pro, GPQA Diamond, SWE-bench Verified, AIME, HLE, LMArena Elo, and LiveCodeBench."},
+            {"icon": "\U0001f4c8", "title": "Capability Frontier", "desc": "How the state of the art has moved over time, lab by lab and benchmark by benchmark."},
+            {"icon": "\U0001f52e", "title": "AI Prediction Markets", "desc": "Live Polymarket odds on model releases, benchmark milestones, and lab races."},
+            {"icon": "\U0001f4f0", "title": "Release Tracker", "desc": "Model launches and capability announcements across the major frontier labs."},
+            {"icon": "⚖️", "title": "Lab vs Lab", "desc": "Head-to-head comparisons across benchmarks, modalities, and timelines."},
+            {"icon": "\U0001f4ca", "title": "Milestone Watch", "desc": "Progress toward headline milestones with market-implied timelines."},
+        ],
+        "includes": [
+            "Leaderboards across 7+ frontier benchmarks",
+            "Capability-over-time frontier charts",
+            "Live AI-related Polymarket markets",
+            "Model release and announcement tracking",
+            "Lab-by-lab comparison views",
+            "Regular benchmark data refreshes",
+        ],
+    },
+    "crypto_trackers": {
+        "tagline": "Every coin, every venue, no fortune-telling. Multi-exchange spot and perps, cross-exchange arbitrage, funding rates, DeFi TVL, and Fear & Greed — mirrored from canonical sources with verifiable timestamps.",
+        "features": [
+            {"icon": "\U0001fa99", "title": "Every-Coin Trackers", "desc": "Spot and perpetuals across major exchanges, with per-source latency shown for every datapoint."},
+            {"icon": "⚖️", "title": "Cross-Exchange Arb", "desc": "Price spreads across venues surfaced in real time, with the venues to execute both legs."},
+            {"icon": "\U0001f4b8", "title": "Funding Rates", "desc": "Perpetual funding across exchanges — spot the crowded side of the boat."},
+            {"icon": "\U0001f3e6", "title": "DeFi TVL", "desc": "Protocol and chain TVL tracking from canonical on-chain sources."},
+            {"icon": "\U0001f628", "title": "Fear & Greed", "desc": "Sentiment gauges tracked over time against price."},
+            {"icon": "✅", "title": "Data Fidelity First", "desc": "No neural-net predictions — every datapoint mirrored from source-of-truth with verifiable timestamps."},
+        ],
+        "includes": [
+            "Multi-exchange spot + perpetuals coverage",
+            "Cross-exchange arbitrage spread scanner",
+            "Funding-rate comparison across venues",
+            "DeFi TVL by protocol and chain",
+            "Fear & Greed index history",
+            "Per-source latency and timestamp verification",
+        ],
+    },
+    "religion": {
+        "tagline": "The global religious landscape, tracked like a market. World religions, a curated NRM and cult watchlist, USCIRF religious-freedom designations, and live signal from Polymarket religion markets.",
+        "features": [
+            {"icon": "\U0001f30d", "title": "World Religions Atlas", "desc": "Adherents, trends, and geography for the world's major religions."},
+            {"icon": "\U0001f440", "title": "NRM / Cult Watchlist", "desc": "Curated watchlist of new religious movements and notable historical cults."},
+            {"icon": "\U0001f4dc", "title": "USCIRF Designations", "desc": "Religious-freedom designations and country-level tracking."},
+            {"icon": "\U0001f4c8", "title": "Religion Markets", "desc": "Live Polymarket religion-tagged markets — papal succession, religious events, and more."},
+            {"icon": "\U0001f4f0", "title": "News Signal", "desc": "Public RSS and news feeds filtered to the religious landscape, including Vatican sources."},
+            {"icon": "\U0001f514", "title": "Watchlist Alerts", "desc": "Alerts on watchlist developments and market moves."},
+        ],
+        "includes": [
+            "World religions data and trends",
+            "Curated NRM / cult watchlist",
+            "USCIRF designation tracking",
+            "Live Polymarket religion markets",
+            "News and RSS signal feeds",
+            "Alert rules on watchlist entries",
+        ],
+    },
+    "voters": {
+        "tagline": "The state of voters around the world. Who they are, what they want, and when they vote next — an atlas of voter concerns and upcoming elections, country by country.",
+        "features": [
+            {"icon": "\U0001f5f3️", "title": "Election Timeline", "desc": "Every upcoming national election on one scrolling timeline, 18 months out."},
+            {"icon": "\U0001f30d", "title": "Country Atlas", "desc": "Voter counts, top concerns, and next-vote countdowns for every tracked country, tiered by depth."},
+            {"icon": "\U0001f4ca", "title": "Voter Concerns", "desc": "The issues voters actually rank first — inflation, security, housing — with share-of-concern data."},
+            {"icon": "\U0001f4c8", "title": "Concern → Policy Chains", "desc": "How voter concerns translate into policy and market impact (expanding coverage)."},
+            {"icon": "\U0001f50e", "title": "Tiered Depth", "desc": "Tier A full-depth countries, Tier B election-cycle deep dives, Tier C watchlist."},
+            {"icon": "\U0001f4dd", "title": "Curated Data", "desc": "Hand-curated political context with a review queue and freshness dates."},
+        ],
+        "includes": [
+            "Global election calendar, 18 months forward",
+            "Country-by-country voter profiles",
+            "Top-concern rankings with data shares",
+            "Tiered coverage depth (A/B/C)",
+            "Curated, dated political context",
+            "Regular curation refreshes",
+        ],
+    },
+    "truth": {
+        "tagline": "The prediction-extraction engine. A two-stage LLM pipeline reads X, TruthSocial, Reddit, and RSS, turns loose talk into structured, falsifiable predictions, prices every one against live Polymarket & Kalshi odds, and keeps score — so you follow the voices that are actually right.",
+        "features": [
+            {"icon": "\U0001f9e0", "title": "LLM Extraction Engine", "desc": "Two-stage extraction: precise regex first (free, fast), then a Claude-powered parser for hedged, indirect, multi-clause predictions. Structured JSON output, content-hash cached so repeat posts cost nothing."},
+            {"icon": "\U0001f4e1", "title": "Four Live Sources", "desc": "X, TruthSocial, Reddit, and any RSS/Substack feed, scraped every 5 minutes and fed straight into the extractor."},
+            {"icon": "\U0001f3af", "title": "Market Matching", "desc": "Every extracted prediction is matched to Polymarket AND Kalshi markets — multi-outcome aware, so a 'Trump will win' post can't be misrouted to the Harris market."},
+            {"icon": "\U0001f4c8", "title": "Best-Side EV Signals", "desc": "For each matched prediction the engine prices YES vs NO at the live quote and fires the higher-EV side as a BUY signal, filtered by source credibility."},
+            {"icon": "\U0001f3c6", "title": "Credibility Leaderboard", "desc": "Bayesian-smoothed, decay-weighted accuracy per source with Brier-score calibration — the engine learns who to trust by settling every call."},
+            {"icon": "\U0001f9fe", "title": "Paper-Trade Ledger + Backtest", "desc": "Every signal opens a $1 paper trade, settled on market resolution. Backtest with tunable thresholds: ROI, Sharpe, max drawdown, P&L curve."},
+        ],
+        "includes": [
+            "Two-stage regex + Claude LLM prediction extraction (content-hash cached)",
+            "X, TruthSocial, Reddit, and RSS/Substack scraping every 5 minutes",
+            "Polymarket + Kalshi market matching with multi-outcome disambiguation",
+            "Best-side EV scoring and BUY YES / BUY NO signals",
+            "Source credibility leaderboard with Brier calibration",
+            "Automatic $1 paper-trade ledger with live P&L",
+            "Backtest harness: ROI, annualised Sharpe, max drawdown, category breakdown",
+            "Liquidity-aware EV (order-book walk, slippage at $100/$1k/$10k)",
+            "Cross-venue Polymarket vs Kalshi arbitrage tab",
+            "Telegram signal alerts and query bot (bring your own bot token)",
         ],
     },
 }
@@ -360,7 +486,7 @@ async def _health_check_loop():
                 stats = _upstream_stats.setdefault(key, {})
                 stats["last_check"] = started
                 try:
-                    resp = await probe_client.get(f"http://127.0.0.1:{port}/")
+                    resp = await probe_client.get(f"http://{upstream_host(key)}:{port}/")
                     healthy = resp.status_code < 500
                     _upstream_health[key] = healthy
                     if healthy:
@@ -1583,6 +1709,67 @@ async def my_dashboards(request: Request, hub: Optional[str] = None):
     )
 
 
+@app.get("/one", response_class=HTMLResponse)
+async def unified_dashboard_page(request: Request):
+    """Narve One — every dashboard consolidated into one tabbed page.
+
+    Live products render fully inside same-origin iframes served by the
+    /d/<key>/ path proxy; parked and merged dashboards get status cards.
+    The tab rail is built from config.json so it always matches the fleet.
+    (Sibling of the /app terminal, which frames dashboard subdomains
+    directly — /one stays on one origin via the path proxy.)
+    """
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/one")
+
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/gate", status_code=302)
+
+    entries = []
+    for key, cfg in DASHBOARDS.items():
+        if cfg.get("merged_into"):
+            status = "merged"
+        elif cfg.get("parked"):
+            status = "parked"
+        elif _is_navigable(cfg):
+            status = "live"
+        else:
+            # Hidden, not parked, not alias-navigable — keep it off the rail,
+            # same as every other storefront surface.
+            continue
+        merged_target = cfg.get("merged_into") or ""
+        entries.append({
+            "key": key,
+            "name": cfg.get("display_name", key),
+            "desc": cfg.get("description", ""),
+            "accent": cfg.get("accent", "#6366f1"),
+            "status": status,
+            "merged_into": merged_target,
+            "merged_into_name": DASHBOARDS.get(merged_target, {}).get("display_name", "") if merged_target else "",
+            "subscribed": bool(
+                status == "live" and cached_has_subscription(user["user_id"], key)
+            ),
+        })
+    order = {"live": 0, "parked": 1, "merged": 2}
+    entries.sort(key=lambda e: order[e["status"]])
+
+    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    return render_page(
+        "one", request=request,
+        username=user.get("username", user["email"]),
+        raw_admin_link=admin_link,
+        # Escape so config text can never break out of the JSON <script> block.
+        raw_dash_data=(
+            json.dumps(entries)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        ),
+    )
+
+
 @app.get("/app", response_class=HTMLResponse)
 async def unified_app(request: Request):
     """Unified terminal — a single shell with a dashboard sidebar; each dashboard
@@ -1647,7 +1834,8 @@ async def unified_app(request: Request):
 
 
 @app.get("/billing", response_class=HTMLResponse)
-async def billing_page(request: Request, dashboard: Optional[str] = None, payment: Optional[str] = None):
+async def billing_page(request: Request, dashboard: Optional[str] = None, payment: Optional[str] = None,
+                       error: Optional[str] = None):
     sub = get_subdomain(request)
     if sub:
         # Safely forward the validated dashboard key via urlencode to prevent
@@ -1739,12 +1927,52 @@ async def billing_page(request: Request, dashboard: Optional[str] = None, paymen
             'Payment successful! Your subscription is now active.'
             '</div>'
         )
+    elif error:
+        # A failed checkout must never be a silent page reload.
+        error_messages = {
+            "stripe_unavailable": "Checkout is temporarily unavailable — nothing was "
+                                  "charged. Please try again shortly, or contact "
+                                  "support if it persists.",
+            "not_purchasable": "This product can't be purchased yet — its checkout "
+                               "isn't fully configured. Nothing was charged.",
+        }
+        banner = (
+            '<div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.3);'
+            'border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:20px;'
+            'color:#ef4444;font-size:14px;font-weight:500">'
+            f'{html.escape(error_messages.get(error, "Something went wrong with checkout. Nothing was charged."))}'
+            '</div>'
+        )
+
+    # Plan summary card (billing.html renders {{ raw_plan_card }}).
+    active_count = sum(
+        1 for key, cfg in DASHBOARDS.items()
+        if not cfg.get("hidden") and not cfg.get("merged_into") and not cfg.get("access_alias")
+        and _is_sub_active(subs.get(key), is_admin_user)
+    )
+    sellable_count = sum(
+        1 for cfg in DASHBOARDS.values()
+        if not cfg.get("hidden") and not cfg.get("merged_into") and not cfg.get("access_alias")
+    )
+    plan_card = (
+        '<div style="background:var(--bg-card,rgba(255,255,255,0.03));border:1px solid '
+        'var(--border,rgba(255,255,255,0.08));border-radius:var(--radius-sm,10px);'
+        'padding:18px 20px;margin-bottom:24px;display:flex;justify-content:space-between;'
+        'align-items:center;gap:16px;flex-wrap:wrap">'
+        f'<div><div style="font-weight:600;font-size:15px">Your access</div>'
+        f'<div style="font-size:13px;color:var(--text-muted);margin-top:4px">'
+        f'{active_count} of {sellable_count} dashboards active'
+        f'{" (admin access)" if is_admin_user else ""}</div></div>'
+        '</div>'
+    )
+
     return render_page(
         "billing", request=request,
         email=user["email"], username=user.get("username", user["email"]),
         billing_rows="".join(rows_html),
         raw_admin_link=admin_link,
         raw_banner=banner,
+        raw_plan_card=plan_card,
         raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
     )
 
@@ -1796,9 +2024,13 @@ async def billing_action(request: Request, action: str = Form(...)):
             cfg = DASHBOARDS[key]
             price_key = "stripe_price_monthly" if plan == "monthly" else "stripe_price_annual"
             stripe_price_id = cfg.get(price_key)
-            if not stripe_price_id:
-                log.error("No Stripe price ID configured for %s %s", key, plan)
-                return RedirectResponse("/billing", status_code=302)
+            # Real Stripe price IDs start with "price_". Anything else (null,
+            # or a TODO_ placeholder left in config.json) means this product
+            # is not sellable yet — say so instead of throwing at Stripe and
+            # silently reloading the page.
+            if not stripe_price_id or not str(stripe_price_id).startswith("price_"):
+                log.error("No usable Stripe price ID for %s %s (got %r)", key, plan, stripe_price_id)
+                return RedirectResponse("/billing?error=not_purchasable", status_code=302)
 
             try:
                 customer_id = _get_or_create_stripe_customer(user["user_id"], user["email"])
@@ -1817,7 +2049,7 @@ async def billing_action(request: Request, action: str = Form(...)):
                         "plan": plan,
                         "type": "dashboard",
                     },
-                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}",
+                    success_url=base + "/stripe/success?session_id={CHECKOUT_SESSION_ID}&dashboard=" + key,
                     cancel_url=base + f"/billing?dashboard={key}",
                 )
             except Exception as exc:
@@ -2006,6 +2238,29 @@ async def stripe_webhook(request: Request):
         db.cancel_subscription_by_stripe_id(stripe_sub_id)
         log.info("Stripe: cancelled subscription %s", stripe_sub_id)
 
+    # ── invoice.paid — RENEWAL. Without this, every monthly subscriber is
+    # locked out on day 31 while Stripe keeps charging them: checkout only
+    # grants the first 30 days. Each successful renewal invoice extends
+    # every subscription row tied to the Stripe subscription.
+    elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
+        inv = data_obj if isinstance(data_obj, dict) else dict(data_obj)
+        stripe_sub_id = inv.get("subscription")
+        if stripe_sub_id:
+            # Prefer the invoice line's billing period; fall back to 30 days.
+            duration = 30
+            try:
+                lines = (inv.get("lines") or {}).get("data") or []
+                if lines:
+                    period = lines[0].get("period") or {}
+                    span = int(period.get("end", 0)) - int(period.get("start", 0))
+                    if span > 0:
+                        duration = max(1, round(span / 86400))
+            except Exception:
+                pass
+            renewed = db.renew_subscriptions_by_stripe_id(stripe_sub_id, duration)
+            log.info("Stripe: renewal invoice for %s -> extended %d subscription row(s) by %dd",
+                     stripe_sub_id, renewed, duration)
+
     # ── invoice.payment_failed — payment issue ────────────────────────────
     elif event_type == "invoice.payment_failed":
         invoice_id = data_obj.get("id") if isinstance(data_obj, dict) else data_obj.id
@@ -2017,8 +2272,15 @@ async def stripe_webhook(request: Request):
 
 
 @app.get("/stripe/success")
-async def stripe_success(request: Request, session_id: str = ""):
-    """Redirect back to billing with a success banner after Stripe checkout."""
+async def stripe_success(request: Request, session_id: str = "", dashboard: str = ""):
+    """Land the buyer on what they just bought, not on a billing table.
+
+    The webhook races this redirect, so the destination page must tolerate a
+    subscription that activates a few seconds later — /one shows the tab and
+    the proxy re-checks access per request.
+    """
+    if dashboard and dashboard in DASHBOARDS:
+        return RedirectResponse(f"/one#{dashboard}", status_code=302)
     return RedirectResponse("/billing?payment=success", status_code=302)
 
 
@@ -2031,9 +2293,10 @@ async def preview_page(request: Request, dashboard_key: str):
     if sub:
         return await proxy_request(request, f"/preview/{dashboard_key}")
 
+    # Previews are the product's marketing pages — there is nothing sensitive
+    # on them, and hiding them behind the login gate meant no prospect could
+    # ever see what the products are. Anonymous visitors get the full page.
     user = current_user(request)
-    if not user:
-        return RedirectResponse("/gate", status_code=302)
 
     if dashboard_key not in DASHBOARDS:
         return RedirectResponse("/dashboards", status_code=302)
@@ -2041,11 +2304,12 @@ async def preview_page(request: Request, dashboard_key: str):
     cfg = DASHBOARDS[dashboard_key]
     preview = DASHBOARD_PREVIEWS.get(dashboard_key, {})
 
-    # If the user already has an active subscription, redirect to the dashboard.
-    is_admin_user = bool(user.get("is_admin"))
-    subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
-    if _is_sub_active(subs.get(dashboard_key), is_admin_user):
-        return RedirectResponse("/dashboards", status_code=302)
+    # A logged-in user with an active subscription goes straight to the app.
+    if user:
+        is_admin_user = bool(user.get("is_admin"))
+        subs = {s["dashboard_key"]: s for s in db.list_subscriptions(user["user_id"])}
+        if _is_sub_active(subs.get(dashboard_key), is_admin_user):
+            return RedirectResponse("/dashboards", status_code=302)
 
     # Build feature cards HTML
     features_html_parts = []
@@ -2079,7 +2343,7 @@ async def preview_page(request: Request, dashboard_key: str):
     monthly_total = cfg["monthly_cents"] * 12
     savings_pct = round((1 - cfg["annual_cents"] / monthly_total) * 100) if monthly_total > 0 else 0
 
-    admin_link = '<a href="/admin">Admin</a>' if user.get("is_admin") else ""
+    admin_link = '<a href="/admin">Admin</a>' if user and user.get("is_admin") else ""
 
     return render_page(
         "preview", request=request,
@@ -2090,11 +2354,11 @@ async def preview_page(request: Request, dashboard_key: str):
         annual_price=annual_price,
         annual_savings=str(savings_pct),
         accent=cfg["accent"],
-        username=user.get("username", user["email"]),
+        username=user.get("username", user["email"]) if user else "Guest",
         raw_features_html="".join(features_html_parts),
         raw_includes_html="".join(includes_html_parts),
         raw_admin_link=admin_link,
-        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request),
+        raw_dashboard_tabs=_build_tab_html(user["user_id"], request=request) if user else "",
     )
 
 
@@ -2426,14 +2690,14 @@ async def forgot_password_submit(request: Request, email: str = Form("")):
 
                 body_text = (
                     f"Hi,\n\n"
-                    f"A password reset was requested for your betyc account.\n\n"
+                    f"A password reset was requested for your Narve account.\n\n"
                     f"Click the link below to set a new password:\n"
                     f"{reset_link}\n\n"
                     f"This link expires in 1 hour.\n\n"
                     f"If you did not request this, you can safely ignore this email.\n"
                 )
                 msg = MIMEText(body_text)
-                msg["Subject"] = "Password Reset \u2014 betyc"
+                msg["Subject"] = "Password Reset \u2014 Narve"
                 msg["From"] = smtp_user
                 msg["To"] = email
 
@@ -2543,6 +2807,82 @@ async def impressum_page(request: Request):
     return render_page("impressum", request=request)
 
 
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/terms")
+    return render_page("terms", request=request)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page(request: Request):
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/privacy")
+    return render_page("privacy", request=request)
+
+
+@app.post("/api/support-ticket")
+async def api_support_ticket(request: Request):
+    """Support form endpoint. The support page shipped pointing at this route
+    before it existed — every ticket ever submitted 404'd. Tickets are stored
+    as enquiries (role 'support') and forwarded by email when configured."""
+    sub = get_subdomain(request)
+    if sub:
+        return await proxy_request(request, "/api/support-ticket")
+    ip = _get_client_ip(request)
+    if _is_rate_limited(ip, "support", 5):
+        return JSONResponse({"success": False, "error": "Too many requests. Please try again later."}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid request body"}, status_code=400)
+
+    email = (body.get("email") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"success": False, "error": "Please enter a valid email address"}, status_code=400)
+    if len(message) < 10:
+        return JSONResponse({"success": False, "error": "Please describe the issue (at least 10 characters)"}, status_code=400)
+    if len(message) > 2000:
+        return JSONResponse({"success": False, "error": "Message is too long (2000 characters max)"}, status_code=400)
+
+    db.create_enquiry(email, "support", message[:1000])
+    log.info("New support ticket from %s", email)
+
+    enquiry_email = os.environ.get("ENQUIRY_EMAIL")
+    if enquiry_email:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            smtp_host = os.environ.get("SMTP_HOST", "localhost")
+            try:
+                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+            except (ValueError, TypeError):
+                smtp_port = 587
+            smtp_user = os.environ.get("SMTP_USER", "")
+            smtp_pass = os.environ.get("SMTP_PASS", "")
+            msg = MIMEText(f"Support ticket via narve.ai\n\nFrom: {email}\n\n{message}\n")
+            msg["Subject"] = "Support Ticket — Narve"
+            msg["From"] = smtp_user or enquiry_email
+            msg["To"] = enquiry_email
+            _from, _to, _msg_str = msg["From"], enquiry_email, msg.as_string()
+
+            def _send_ticket():
+                with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                    if smtp_user and smtp_pass:
+                        srv.starttls()
+                        srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(_from, [_to], _msg_str)
+
+            await asyncio.to_thread(_send_ticket)
+        except Exception as exc:
+            log.warning("Support ticket email failed (ticket is stored): %s", exc)
+
+    return JSONResponse({"success": True})
+
+
 @app.get("/support", response_class=HTMLResponse)
 async def support_page(request: Request):
     sub = get_subdomain(request)
@@ -2616,13 +2956,13 @@ async def api_enquire(request: Request):
             smtp_pass = os.environ.get("SMTP_PASS", "")
 
             body_text = (
-                f"New enquiry from the betyc landing page.\n\n"
+                f"New enquiry from the narve.ai landing page.\n\n"
                 f"Email: {email}\n"
                 f"Role: {job_title}\n\n"
                 f"Message:\n{message}\n"
             )
             msg = MIMEText(body_text)
-            msg["Subject"] = "New Enquiry \u2014 betyc"
+            msg["Subject"] = "New Enquiry \u2014 Narve"
             msg["From"] = smtp_user or enquiry_email
             msg["To"] = enquiry_email
 
@@ -4616,6 +4956,13 @@ def _inject_switcher(content: bytes, content_type: str, key: str, user_id: int, 
 
 # ── Reverse proxy for dashboard subdomains ────────────────────────────────────
 
+# Hop-by-hop headers stripped in both directions by every proxy path.
+_HOP_BY_HOP = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "host",
+    "content-encoding", "content-length",
+}
+
 
 def _bump_fleet_counter_safe(key: str) -> None:
     """Persist a fleet tally without ever letting a DB hiccup break a request."""
@@ -4715,18 +5062,18 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # 3. Fail fast if backend is known to be down (circuit breaker).
     if not is_upstream_healthy(key):
-        return HTMLResponse(
-            f"<h1>{html.escape(dash_cfg['display_name'])} is temporarily unavailable</h1>"
-            f"<p>The backend is being checked every {_HEALTH_CHECK_INTERVAL}s and will recover automatically.</p>"
-            f'<p><a href="javascript:location.reload()">Retry</a></p>',
-            status_code=503,
-        )
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg['display_name']} is temporarily unavailable",
+            "We're on it — the service recovers automatically, usually within "
+            "a minute. This page retries on reload.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=503, headers={"Retry-After": str(_HEALTH_CHECK_INTERVAL)})
 
     # 4. Forward the request.
     target_port = dash_cfg["target"]
     path = forced_path if forced_path is not None else request.url.path
     query = request.url.query
-    upstream_url = f"http://127.0.0.1:{target_port}{path}"
+    upstream_url = f"http://{upstream_host(key)}:{target_port}{path}"
     if query:
         upstream_url += f"?{query}"
 
@@ -4749,14 +5096,9 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # Strip hop-by-hop headers; also strip any client-supplied X-Gateway-*
     # headers so a malicious client can't forge upstream identity.
-    hop_by_hop = {
-        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-        "te", "trailers", "transfer-encoding", "upgrade", "host",
-        "content-encoding", "content-length",
-    }
     fwd_headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in hop_by_hop and not k.lower().startswith("x-gateway-")
+        if k.lower() not in _HOP_BY_HOP and not k.lower().startswith("x-gateway-")
     }
 
     # Set user identity headers (if user is logged in or using superuser key)
@@ -4797,12 +5139,12 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
             follow_redirects=False,
         )
     except httpx.ConnectError:
-        return HTMLResponse(
-            f"<h1>{html.escape(dash_cfg['display_name'])} is offline</h1>"
-            f"<p>The backend on port {target_port} isn't responding. "
-            f"Try <code>./start_dashboards.sh restart</code>.</p>",
-            status_code=502,
-        )
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg['display_name']} is temporarily offline",
+            "We've been alerted and are bringing it back. Your subscription "
+            "is unaffected — please check back shortly.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=502)
     except httpx.RequestError as e:
         log.exception("Upstream error for %s: %s", upstream_url, e)
         return HTMLResponse(
@@ -4812,7 +5154,7 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
 
     # Relay response; strip hop-by-hop headers from upstream.
     resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in hop_by_hop
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
     }
 
     # Inject dashboard switcher into HTML responses. Superuser/investor
@@ -4863,6 +5205,272 @@ async def proxy_request(request: Request, forced_path: Optional[str] = None) -> 
     if has_superuser_access and request.query_params.get("superuser_key") == superuser_key:
         set_superuser_cookie(resp, superuser_key, request)
     return resp
+
+
+# ── Unified view path proxy (/one frames every dashboard same-origin) ─────────
+
+# Matches "/d/<key>/" inside a Referer path — used to recover which dashboard
+# an absolute-path asset/API request belongs to when it escapes its prefix.
+_UNIFIED_REF_RE = re.compile(r"/d/([A-Za-z0-9_-]+)/")
+
+
+def _render_unified_panel(title: str, message: str, accent: str = "#6366f1",
+                          link_href: str = "", link_label: str = "") -> str:
+    """Small status card rendered inside a unified-view iframe (parked,
+    offline, sign-in, subscribe). Links break out of the frame via target=_top."""
+    link = ""
+    if link_href:
+        link = (f'<a href="{html.escape(link_href, quote=True)}" target="_top">'
+                f"{html.escape(link_label or 'Continue')}</a>")
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0b0e14; color:#e6e8ee; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
+  .card {{ max-width:430px; padding:36px 40px; background:#11151f; border:1px solid #232938;
+          border-radius:16px; text-align:center; }}
+  .dot {{ width:12px; height:12px; border-radius:50%; background:{accent}; display:inline-block; margin-bottom:14px; }}
+  h1 {{ font-size:18px; margin:0 0 10px; }}
+  p {{ font-size:14px; line-height:1.65; color:#9aa3b5; margin:0 0 22px; }}
+  a {{ display:inline-block; padding:10px 22px; background:{accent}; color:#fff; border-radius:8px;
+      text-decoration:none; font-size:14px; font-weight:600; }}
+</style></head><body>
+<div class="card"><span class="dot"></span><h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>{link}</div>
+</body></html>"""
+
+
+def _inject_ws_prefix_shim(content: bytes, dash_key: str) -> bytes:
+    """Wrap window.WebSocket so root-absolute WS URLs stay under /d/<key>/.
+
+    Browsers send no Referer on WebSocket handshakes, so a dashboard framed
+    at /d/<key>/ that opens ws://<host>/ws would otherwise arrive at the apex
+    with no way to recover which dashboard it belongs to. The shim rewrites
+    same-host WS URLs to the /d/<key> prefix, which the WS proxy routes
+    explicitly. Injected at the top of <head> so it runs before any app JS.
+    """
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    shim = (
+        "<script>(function(){"
+        f"var PFX='/d/{dash_key}';"
+        "var NativeWS=window.WebSocket;if(!NativeWS)return;"
+        "function rw(u){try{var url=new URL(u,location.href);"
+        "if((url.protocol==='ws:'||url.protocol==='wss:')&&url.host===location.host"
+        "&&url.pathname.indexOf(PFX+'/')!==0){url.pathname=PFX+url.pathname;return url.href;}"
+        "}catch(e){}return u;}"
+        "var W=function(u,p){return p===undefined?new NativeWS(rw(u)):new NativeWS(rw(u),p);};"
+        "W.prototype=NativeWS.prototype;"
+        "W.CONNECTING=NativeWS.CONNECTING;W.OPEN=NativeWS.OPEN;"
+        "W.CLOSING=NativeWS.CLOSING;W.CLOSED=NativeWS.CLOSED;"
+        "window.WebSocket=W;})();</script>"
+    )
+    lower = text.lower()
+    head_open = lower.find("<head")
+    if head_open != -1:
+        close = lower.find(">", head_open)
+        if close != -1:
+            text = text[:close + 1] + shim + text[close + 1:]
+            return text.encode("utf-8")
+    html_open = lower.find("<html")
+    if html_open != -1:
+        close = lower.find(">", html_open)
+        if close != -1:
+            text = text[:close + 1] + shim + text[close + 1:]
+            return text.encode("utf-8")
+    return (shim + text).encode("utf-8")
+
+
+@app.api_route("/d/{dash_key}", methods=["GET", "HEAD"])
+async def unified_proxy_bare(request: Request, dash_key: str):
+    """Normalize /d/<key> to /d/<key>/ so relative URLs resolve under the prefix."""
+    query = request.url.query
+    return RedirectResponse(f"/d/{dash_key}/" + (f"?{query}" if query else ""), status_code=307)
+
+
+@app.api_route("/d/{dash_key}/{sub_path:path}",
+               methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def unified_proxy(request: Request, dash_key: str, sub_path: str):
+    """Path-based reverse proxy for the unified view at /one.
+
+    Same auth, subscription, parked/merged, circuit-breaker, and Redis-cache
+    semantics as the subdomain proxy, but keyed by URL prefix so dashboards
+    can be framed same-origin as tabs of a single page.
+    """
+    if get_subdomain(request):
+        # /d/... has no meaning on a dashboard subdomain — let that dashboard
+        # handle (and most likely 404) its own path.
+        return await proxy_request(request)
+
+    dash_cfg = DASHBOARDS.get(dash_key)
+    if not dash_cfg:
+        return HTMLResponse(
+            _render_unified_panel("Unknown dashboard",
+                                  f"No dashboard is registered under the key '{dash_key}'.",
+                                  link_href="/one", link_label="Back to Narve One"),
+            status_code=404,
+        )
+
+    merged_into = dash_cfg.get("merged_into")
+    if merged_into and merged_into in DASHBOARDS:
+        _bump_fleet_counter_safe(f"legacy_redirect:{dash_cfg.get('subdomain', dash_key)}")
+        query = request.url.query
+        target = f"/d/{merged_into}/{sub_path}" + (f"?{query}" if query else "")
+        return RedirectResponse(target, status_code=307)
+
+    if dash_cfg.get("parked"):
+        _bump_fleet_counter_safe(f"parked_visit:{dash_key}")
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is parked",
+            "This dashboard has been taken out of the active line-up and its "
+            "service is not currently running.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href="/dashboards", link_label="Go to your dashboards",
+        ))
+
+    superuser_key = _get_superuser_key_from_request(request)
+    has_superuser_access = bool(
+        superuser_key and db.has_superuser_key_access(superuser_key, dash_key)
+    )
+
+    user = current_user(request)
+    if not user and not has_superuser_access:
+        return HTMLResponse(_render_unified_panel(
+            "Sign in required", "Log in at the apex to use the unified view.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href="/gate", link_label="Sign in",
+        ), status_code=401)
+
+    if user and not has_superuser_access and not cached_has_subscription(user["user_id"], dash_key):
+        return HTMLResponse(_render_unified_panel(
+            f"Subscribe to {dash_cfg.get('display_name', dash_key)}",
+            "Your account doesn't have an active subscription for this dashboard yet.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+            link_href=f"/billing?dashboard={dash_key}", link_label="Go to billing",
+        ), status_code=403)
+
+    if not is_upstream_healthy(dash_key):
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is temporarily unavailable",
+            f"The backend is being checked every {_HEALTH_CHECK_INTERVAL}s and "
+            "will recover automatically.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=503)
+
+    path = "/" + sub_path
+    query = request.url.query
+    upstream_url = f"http://{upstream_host(dash_key)}:{dash_cfg['target']}{path}"
+    if query:
+        upstream_url += f"?{query}"
+
+    # Cache-first for GETs — same namespace as the subdomain proxy and the
+    # poller, since the prefix-stripped path matches what they store.
+    cache_path = f"{path}?{query}" if query else path
+    if request.method == "GET" and (path.startswith("/api") or path.startswith("/data")) and not path.startswith("/api/auth"):
+        cached = cache.get_api(dash_key, cache_path)
+        if cached:
+            cached_body, cached_ct = cached
+            return Response(
+                content=cached_body,
+                status_code=200,
+                headers={"content-type": cached_ct, "x-cache": "HIT", "cache-control": "no-store"},
+            )
+
+    fwd_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP and not k.lower().startswith("x-gateway-")
+    }
+    if user:
+        fwd_headers["X-Gateway-User-Id"] = str(user["user_id"])
+        fwd_headers["X-Gateway-User-Email"] = user["email"]
+    elif has_superuser_access:
+        fwd_headers["X-Gateway-User-Id"] = "superuser"
+        fwd_headers["X-Gateway-User-Email"] = "investor@dashboard"
+    if has_superuser_access:
+        fwd_headers["X-Gateway-Investor-Mode"] = "true"
+        key_info = db.validate_superuser_key(superuser_key)
+        if key_info and key_info.get("aspects"):
+            fwd_headers["X-Gateway-Key-Aspects"] = ",".join(key_info["aspects"])
+    _sso_secret = os.environ.get("GATEWAY_SSO_SECRET")
+    if _sso_secret:
+        fwd_headers["X-Gateway-Secret"] = _sso_secret
+    fwd_headers["X-Forwarded-Host"] = request.headers.get("host", "")
+    fwd_headers["X-Forwarded-Proto"] = request.url.scheme
+
+    body = await request.body()
+    try:
+        upstream = await HTTP_CLIENT.request(
+            request.method, upstream_url, headers=fwd_headers, content=body,
+            follow_redirects=False,
+        )
+    except httpx.ConnectError:
+        return HTMLResponse(_render_unified_panel(
+            f"{dash_cfg.get('display_name', dash_key)} is offline",
+            "We've been alerted and are bringing it back. Your subscription "
+            "is unaffected — please check back shortly.",
+            accent=dash_cfg.get("accent", "#6366f1"),
+        ), status_code=502)
+    except httpx.RequestError as e:
+        log.exception("Unified upstream error for %s: %s", upstream_url, e)
+        return HTMLResponse(_render_unified_panel("Upstream error", str(e)), status_code=502)
+
+    resp_headers = {
+        k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
+    }
+
+    # Dashboards ship their own anti-framing headers (X-Frame-Options: DENY,
+    # frame-ancestors 'none'). Fine when they're the top-level document on a
+    # subdomain, fatal inside the unified view: browsers enforce the most
+    # restrictive of the duplicated headers and blank the iframe. Strip the
+    # upstream frame directives here — the gateway's SecurityHeadersMiddleware
+    # appends the single authoritative policy (SAMEORIGIN / 'self') instead.
+    # Upstreams may legally send multiple CSP headers (httpx comma-joins
+    # them), so remove the directive per policy rather than regexing the
+    # joined value — a naive regex would eat unrelated directives through
+    # the comma.
+    resp_headers.pop("x-frame-options", None)
+    _upstream_csp = resp_headers.get("content-security-policy")
+    if _upstream_csp and "frame-ancestors" in _upstream_csp.lower():
+        _cleaned_policies = []
+        for _policy in _upstream_csp.split(","):
+            _directives = [d.strip() for d in _policy.split(";") if d.strip()]
+            _directives = [
+                d for d in _directives
+                if not d.lower().startswith("frame-ancestors")
+            ]
+            if _directives:
+                _cleaned_policies.append("; ".join(_directives))
+        if _cleaned_policies:
+            resp_headers["content-security-policy"] = ", ".join(_cleaned_policies)
+        else:
+            resp_headers.pop("content-security-policy", None)
+
+    # Keep upstream redirects inside the /d/<key> prefix.
+    loc = resp_headers.get("location")
+    if loc and loc.startswith("/") and not loc.startswith("//"):
+        resp_headers["location"] = f"/d/{dash_key}{loc}"
+
+    content = upstream.content
+    content_type = upstream.headers.get("content-type", "")
+    if "application/json" in content_type or path.startswith("/api") or path.startswith("/data"):
+        resp_headers["cache-control"] = "no-store, no-cache, must-revalidate"
+        resp_headers["pragma"] = "no-cache"
+        resp_headers["x-cache"] = "MISS"
+        if request.method == "GET" and upstream.status_code == 200 and not path.startswith("/api/auth"):
+            cache.set_api(dash_key, cache_path, upstream.content, content_type)
+
+    # Live updates inside tabs: the SSE client talks to /api/stream on this
+    # same origin, so it works unchanged under the unified view. The WS shim
+    # keeps the dashboard's own WebSockets routable under /d/<key>/.
+    if "text/html" in (content_type or ""):
+        content = _inject_ws_prefix_shim(_inject_sse_client(content), dash_key)
+    if content is not upstream.content:
+        resp_headers.pop("content-length", None)
+        resp_headers["content-length"] = str(len(content))
+
+    return Response(content=content, status_code=upstream.status_code, headers=resp_headers)
 
 
 # ── SSE stream endpoint ────────────────────────────────────────────────────────
@@ -4919,6 +5527,23 @@ async def cache_stats_endpoint(request: Request):
 async def catch_all(request: Request, full_path: str):
     sub = get_subdomain(request)
     if not sub:
+        # Unified-view fallback: dashboards framed under /d/<key>/ request
+        # root-absolute assets and APIs (/static/app.js, /api/...) that land
+        # here. Recover the owning dashboard from the (same-origin) Referer
+        # and bounce the request back under its prefix — 307 keeps method+body.
+        referer = request.headers.get("referer", "")
+        if referer:
+            try:
+                ref = urlparse(referer)
+                same_origin = ref.netloc.lower() == request.headers.get("host", "").lower()
+            except ValueError:
+                same_origin = False
+            if same_origin:
+                m = _UNIFIED_REF_RE.search(ref.path)
+                if m and m.group(1) in DASHBOARDS:
+                    query = request.url.query
+                    target = f"/d/{m.group(1)}/{full_path}" + (f"?{query}" if query else "")
+                    return RedirectResponse(target, status_code=307)
         # Apex fallthrough — 404 (escape the path to prevent reflected XSS).
         return HTMLResponse(
             f"<h1>Not found</h1><p>No such page at <code>{html.escape(request.url.path)}</code>.</p>",
@@ -4945,6 +5570,26 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
         sub = host[: -len(".localhost")]
 
     key = SUBDOMAIN_TO_KEY.get(sub)
+
+    # Unified view: /one frames dashboards on the apex origin, so their
+    # WebSocket URLs arrive here either as /d/<key>/<path> (explicit prefix)
+    # or as the dashboard's own absolute path (browsers send no Referer on a
+    # WS handshake, so the prefix can't be recovered). Map the explicit
+    # prefix first; failing that, if exactly one live dashboard speaks
+    # WebSocket, route to it. Auth + subscription are still enforced below.
+    if not key and not sub:
+        parts = full_path.split("/", 2)
+        if len(parts) >= 2 and parts[0] == "d" and parts[1] in DASHBOARDS:
+            key = parts[1]
+            full_path = parts[2] if len(parts) > 2 else ""
+        else:
+            ws_capable = [
+                k for k, c in DASHBOARDS.items()
+                if c.get("supports_websocket") and not c.get("parked") and not c.get("merged_into")
+            ]
+            if len(ws_capable) == 1:
+                key = ws_capable[0]
+
     if not key:
         await ws.close(code=1008, reason="Unknown subdomain")
         return
@@ -4984,7 +5629,7 @@ async def websocket_proxy(ws: WebSocket, full_path: str):
 
     target_port = dash_cfg["target"]
     query = ws.url.query
-    upstream_url = f"ws://127.0.0.1:{target_port}/{full_path}"
+    upstream_url = f"ws://{upstream_host(key)}:{target_port}/{full_path}"
     if query:
         upstream_url += f"?{query}"
 

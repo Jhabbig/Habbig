@@ -8,9 +8,12 @@ models:
   - Leader-mortality: "Will [Leader] die by [date]?"
     → P(yes) = 1 - survival_prob(...)
   - Papabile: "Will [Cardinal] be the next Pope?"
-    → P(yes) = papabile_prior / 100  (capped at the prior)
+    → currently UNMATCHED. The only papabile book we hold is the frozen
+      pre-conclave 2025 book, RESOLVED 2025-05-08 (Prevost → Leo XIV);
+      it is not a prior for the next, speculative-future conclave.
   - Vacancy: "Will the Holy See be vacant before [date]?"
-    → P(yes) = 1 - survival_prob(Francis's age, M, months, hr=0.85)
+    → P(yes) = 1 - survival_prob(current Pope's age, M, months, hr=0.85)
+      (the current Pope is Leo XIV, b. 1955, since 2025-05-08)
 
 Edge = model_p − implied_p (in percentage points). Positive edge means
 the market under-prices YES (buy YES is profitable in expectation);
@@ -20,9 +23,10 @@ model fields and are excluded from the ranking.
 CAVEATS:
   - The actuarial prior is SSA + a 0.85 hazard ratio. It's a baseline,
     not the truth — domain news (e.g., Pope hospitalised) should adjust.
-  - The papabile prior is journalistic consensus, not a fundamental.
-    Once a conclave starts, market liquidity and our model both move
-    on new information faster than this static table.
+  - The papabile prior is journalistic consensus, not a fundamental —
+    and the current table is the RESOLVED pre-conclave 2025 book, so
+    succession markets are deliberately left unmatched until a
+    post-Leo book is curated.
   - Many Polymarket questions are ambiguously worded ("Pope dies in
     2025?" vs "death of current Pope?"). Conservative matchers only —
     when in doubt, return None.
@@ -69,8 +73,8 @@ def _months_between(d1: date, d2: date) -> float:
 _DEATH_WORDS  = ("die", "died", "dies", "dying", "death", "pass away", "passing")
 _ALIVE_WORDS  = ("alive", "still alive", "survive", "survives", "live to")
 _VACANCY_WORDS= ("sede vacante", "holy see vacant", "vacancy", "vacate", "vacant")
-_NEXT_POPE    = ("next pope", "next pontiff", "successor of francis", "successor pope",
-                 "new pope", "elected pope", "to be pope", "be pope")
+_NEXT_POPE    = ("next pope", "next pontiff", "successor of francis", "successor of leo",
+                 "successor pope", "new pope", "elected pope", "to be pope", "be pope")
 
 
 def _classify_intent(q: str) -> Optional[str]:
@@ -98,7 +102,16 @@ def _find_leader(q: str, leaders: list[dict]) -> Optional[dict]:
     for L in leaders:
         if L["name"].lower() in ql:
             return L
-    # Then last-token surname match (e.g. "Francis", "Khamenei", "Dalai Lama")
+    # Then the regnal name without the "Pope " honorific (e.g. "Leo XIV"
+    # for "Pope Leo XIV") — regnal tokens are too short for the ≥4-char
+    # surname pass below.
+    for L in leaders:
+        name = L["name"].lower()
+        if name.startswith("pope "):
+            regnal = name[len("pope "):]
+            if re.search(r"\b" + re.escape(regnal) + r"\b", ql):
+                return L
+    # Then last-token surname match (e.g. "Khamenei", "Bartholomew", "Dalai Lama")
     for L in leaders:
         toks = [t.lower() for t in L["name"].split() if len(t) > 3]
         for t in toks:
@@ -161,32 +174,32 @@ def attach_edge(market: dict, leaders: list[dict], papabile: list[dict],
 
     # ─ Conclave / succession ─
     if intent == "succession":
-        p = _find_papabile(question, papabile)
-        if not p:
-            return out
-        model_p = p["prior_pct"] / 100.0
-        out["model_p"] = round(model_p, 4)
-        out["edge_pp"] = round((model_p - yes) * 100, 2)
-        out["side"]   = "YES" if model_p > yes else "NO"
-        out["model_type"] = "papabile"
-        out["model_basis"] = f"papabile prior {p['prior_pct']:.1f}% — {p['rationale']}"
+        # The May 2025 conclave RESOLVED (2025-05-08: Robert Prevost
+        # elected Leo XIV). PAPABILE_PRIORS is that conclave's frozen
+        # pre-vote book, kept for the historical record — it is NOT a
+        # prior for the next (speculative-future, unscheduled) conclave.
+        # Per the conservative-matcher rule, succession markets go
+        # unmatched until a post-Leo book is curated; _find_papabile is
+        # kept for that day.
         return out
 
     # ─ Vacancy = current Pope dies before [date] ─
     if intent == "vacancy":
-        francis = next((L for L in leaders if "francis" in L["name"].lower() and "pope" in L["role"].lower()), None)
-        if not francis:
+        # The Bishop of Rome entry in RELIGIOUS_LEADERS is whoever
+        # currently holds the office (Leo XIV since 2025-05-08).
+        pope = next((L for L in leaders if "bishop of rome" in L.get("role", "").lower()), None)
+        if not pope:
             return out
         try:
-            age = actuarial.age_on(francis["born"], today)
+            age = actuarial.age_on(pope["born"], today)
         except Exception:
             return out
-        p_dies = 1.0 - actuarial.survival_prob(age, francis.get("sex", "M"), months, hazard_ratio=hazard_ratio)
+        p_dies = 1.0 - actuarial.survival_prob(age, pope.get("sex", "M"), months, hazard_ratio=hazard_ratio)
         out["model_p"] = round(p_dies, 4)
         out["edge_pp"] = round((p_dies - yes) * 100, 2)
         out["side"]   = "YES" if p_dies > yes else "NO"
         out["model_type"] = "actuarial-vacancy"
-        out["model_basis"] = (f"P(Pope Francis dies by {end_date.isoformat()}) "
+        out["model_basis"] = (f"P({pope['name']} dies by {end_date.isoformat()}) "
                               f"= {p_dies*100:.1f}% (age {age:.1f}y, SSA × {hazard_ratio:.2f} HR)")
         return out
 

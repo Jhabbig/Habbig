@@ -282,14 +282,15 @@
     <h2 data-i18n="panel.leaders">Religious leaders — actuarial</h2>
     <div id="pope-health-banner" style="margin-bottom:12px"></div>
     <div id="leaders">loading…</div>
-    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 32 historical religious leaders (mean age at death 79.2y). Sorted by 1-year mortality probability — most market-relevant first.</p>
+    <p class="footnote">P(alive) computed against the SSA 2022 period life table (US baseline). 'adj' applies a religious-office hazard ratio of 0.85, calibrated against 33 historical religious leaders (mean age at death 79.5y). Sorted by 1-year mortality probability — most market-relevant first.</p>
   </section>
 
   <section class="panel">
     <h2 data-i18n="panel.conclave">Conclave model — College of Cardinals + papabile</h2>
     <div id="conclave-source" style="margin-bottom:12px;font-size:12px;color:var(--muted)">checking Vatican feed…</div>
+    <div id="conclave-resolved" style="margin-bottom:12px"></div>
     <div id="conclave-hero" class="conclave-hero"></div>
-    <h3>Papabile — Vaticanist consensus priors</h3>
+    <h3 data-i18n="conclave.papabile_heading">Papabile — pre-conclave 2025 book (resolved: Leo XIV)</h3>
     <div id="papabile" class="papabile-list">loading…</div>
     <h3>Cardinal-electors</h3>
     <div class="registry-controls" style="margin-bottom:8px">
@@ -298,7 +299,7 @@
     </div>
     <div id="card-filters" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px"></div>
     <div id="cardinals">loading…</div>
-    <p class="footnote">Sources: Vatican Press Office, the College of Cardinals Report (cardinalsreport.com), Vaticanist English-language press (Allen/Crux, Magister, La Croix, The Pillar). 'Wing' assignments are journalistic shorthand — cardinals don't run on platforms. Priors sum to ~59%; the residual ~41% is the field (historically, the next pope is often not a top-tier papabile — Bergoglio 2013, Wojtyła 1978). Updated at each consistory.</p>
+    <p class="footnote">Sources: Vatican Press Office, the College of Cardinals Report (cardinalsreport.com), Vaticanist English-language press (Allen/Crux, Magister, La Croix, The Pillar). 'Wing' assignments are journalistic shorthand — cardinals don't run on platforms. The papabile priors are the frozen pre-conclave 2025 book (they summed to ~59%; the residual ~41% was the field). Resolved 8 May 2025: Robert Prevost — a 5% name here — was elected Leo XIV, again showing the next pope is often not a top-tier papabile (Bergoglio 2013, Wojtyła 1978). No book exists yet for the next conclave, which is speculative-future. Updated at each consistory.</p>
   </section>
 
   <section class="panel">
@@ -387,7 +388,7 @@
     <h2 data-i18n="panel.edge">Edge — model vs market</h2>
     <div id="edge-summary" style="margin-bottom:12px;font-size:12px;color:var(--muted)">loading…</div>
     <div id="edge-rows">loading…</div>
-    <p class="footnote">For each market matched to a leader actuarial or papabile prior, we compute <code>edge = model_p − market_p</code>. Positive edge = buy YES; negative = buy NO. Sorted by |edge|. Actuarial uses SSA 2022 × HR 0.85 (religious-office adjustment); papabile uses Vaticanist-consensus priors. Treat as a screening signal, not a recommendation.</p>
+    <p class="footnote">For each market matched to a leader actuarial model, we compute <code>edge = model_p − market_p</code>. Positive edge = buy YES; negative = buy NO. Sorted by |edge|. Actuarial uses SSA 2022 × HR 0.85 (religious-office adjustment). Papabile succession markets are currently left unmatched — the only curated book is the resolved pre-conclave 2025 one (Prevost → Leo XIV), which is not a valid prior for a future conclave. Treat as a screening signal, not a recommendation.</p>
   </section>
 
   <section class="panel">
@@ -815,6 +816,23 @@ function renderConclave(d) {
       ` · <a href="${escapeHtml(d.vatican_url || "#")}" target="_blank" rel="noopener" style="color:var(--accent)">source</a>`;
   }
 
+  // Resolved-conclave banner — the papabile book below is historical, not
+  // a prior for the (speculative-future) next conclave.
+  const resolvedBox = document.getElementById("conclave-resolved");
+  const cr = d.conclave_2025;
+  if (resolvedBox) {
+    if (cr && cr.status === "RESOLVED") {
+      resolvedBox.innerHTML = `<div style="border:1px solid var(--grid);border-left:3px solid #56d364;border-radius:4px;padding:8px 10px;font-size:12px;line-height:1.5">
+        <strong style="color:#56d364">2025 CONCLAVE — RESOLVED</strong> · sede vacante ${escapeHtml(cr.vacancy_began)} (death of Francis) ·
+        ${escapeHtml(cr.elected)} elected <strong>Pope ${escapeHtml(cr.regnal_name)}</strong> on ${escapeHtml(cr.elected_on)}
+        (${cr.book_prior_pct.toFixed(1)}% in the book below).
+        <span style="color:var(--muted)">The priors shown are the frozen pre-conclave 2025 book, kept as historical record.
+        The next conclave is speculative-future — no vacancy, no date, no curated book.</span></div>`;
+    } else {
+      resolvedBox.innerHTML = "";
+    }
+  }
+
   const hero = document.getElementById("conclave-hero");
   hero.innerHTML = [
     {l: "Total cardinals (college)", v: ag.total_cardinals},
@@ -827,13 +845,14 @@ function renderConclave(d) {
     {l: "Field residual",            v: d.rules.field_residual_pct + "%"},
   ].map(s => `<div class="stat"><div class="label">${escapeHtml(s.l)}</div><div class="value">${escapeHtml(String(s.v))}</div></div>`).join("");
 
-  // Papabile cards
+  // Papabile cards (frozen 2025 book) — badge the actual winner.
+  const electedName = cr && cr.elected ? cr.elected : null;
   const papabileSorted = [...d.papabile_priors].sort((a, b) => b.prior_pct - a.prior_pct);
   document.getElementById("papabile").innerHTML = papabileSorted.map(p => `
     <div class="papabile-row">
       <div class="pct">${p.prior_pct.toFixed(1)}%</div>
       <div>
-        <div class="who">${escapeHtml(p.name)}</div>
+        <div class="who">${escapeHtml(p.name)}${p.name === electedName ? ` <span style="color:#56d364;font-weight:700">✓ ELECTED — ${escapeHtml(cr.regnal_name)}</span>` : ""}</div>
         <div class="why">${escapeHtml(p.rationale)}</div>
       </div>
     </div>`).join("");

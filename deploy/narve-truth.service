@@ -1,0 +1,31 @@
+[Unit]
+Description=Narve Truth Research Dashboard (port 18789)
+After=network.target
+
+[Service]
+# Required env vars: GATEWAY_SSO_SECRET; ANTHROPIC_API_KEY enables the LLM
+# extraction stage (regex-only without it)
+# Note: This service loads the shared gateway .env but only needs the above vars
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/Dashboard-x-truth-research-prediction
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18789
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/Dashboard-x-truth-research-prediction
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

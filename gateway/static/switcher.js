@@ -1,5 +1,5 @@
 /**
- * betyc Dashboard Switcher + Theme System (v3 — Tab Bar)
+ * Narve Dashboard Switcher + Theme System (v3 — Tab Bar)
  * ──────────────────────────────────────────────────────
  * Single UI component (Shadow DOM-isolated):
  *   Persistent top header bar with dashboard tabs, nav links, themes, user pill.
@@ -263,7 +263,7 @@
   brandMark.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="#e2e2e8"><polygon points="8,5 18,12 8,19"/></svg>';
   var brandText = document.createElement('span');
   brandText.className = 'hb-brand-text';
-  brandText.textContent = 'betyc';
+  brandText.textContent = 'Narve';
   brand.appendChild(brandMark);
   brand.appendChild(brandText);
   bar.appendChild(brand);

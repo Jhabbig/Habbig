@@ -26,6 +26,7 @@ Each page is a self-contained `<html>` document. They share styling via
 | `forgot-password.html` | Request a password-reset email. POSTs to `/auth/forgot-password`. |
 | `reset-password.html` | Land here from the reset email — sets a new password via `/auth/reset-password`. |
 | `dashboards.html` | Logged-in landing — grid of dashboards the user has access to, with deep links into each subdomain. |
+| `one.html` | **Narve One** unified view at `/one` — every dashboard consolidated into one tabbed page. Live products render inside same-origin iframes served by the `/d/<key>/` path proxy; parked and merged dashboards get status cards. The tab rail is a JSON blob the server derives from `config.json`. |
 | `subscribe.html` | Per-dashboard subscription / upgrade flow. Lists plans, hands the user off to Stripe Checkout. |
 | `billing.html` | Stripe-managed billing portal redirect + invoice history. |
 | `account.html` | Account overview — email, plan, subscription status, danger-zone delete. |
