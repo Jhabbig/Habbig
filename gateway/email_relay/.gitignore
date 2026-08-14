@@ -1,0 +1,5 @@
+# Local-only state — never commit.
+.env
+state.json
+threads.json
+__pycache__/

@@ -54,12 +54,35 @@ def compute_risk_flags(prediction: Prediction, source: Source | None) -> tuple[b
         lo, hi = cfg.get("extreme_market_bounds", [0.05, 0.95])
         if prediction.market_implied_probability < lo or prediction.market_implied_probability > hi:
             reasons.append("Extreme market — low signal")
-    if prediction.ev_score is not None and prediction.ev_score < 0:
+    # `best_side_ev` is always ≥ 0, so the legacy "< 0" check was unreachable.
+    # Flag tiny edges instead — anything below ~2% won't survive fees and slippage.
+    min_signal_ev = cfg.get("min_signal_ev", 0.02)
+    if prediction.ev_score is not None and prediction.ev_score < min_signal_ev:
         reasons.append("Negative expected value")
     if prediction.hours_remaining_at_prediction is not None and prediction.hours_remaining_at_prediction < 12:
         reasons.append("Prediction too close to market close")
 
     return (len(reasons) > 0, reasons)
+
+
+def _pred_prob_yes(prediction: Prediction, source: Source | None) -> float:
+    """Translate the source's stated outcome + skill into a P(YES) belief.
+
+    - If the extractor produced an explicit probability (e.g. "75% chance"),
+      treat that as P(YES).
+    - Otherwise we fall back to the source's category credibility (or global
+      credibility), and flip it when the source predicted "No": a 0.65-credible
+      source saying NO implies P(YES) = 0.35.
+    """
+    if prediction.predicted_probability is not None:
+        return prediction.predicted_probability
+    if source is None:
+        return 0.5
+    cat_cred = source.category_credibility.get(prediction.category) if source.category_credibility else None
+    cred = cat_cred if cat_cred is not None else source.global_credibility
+    if (prediction.predicted_outcome or "").strip().lower() in ("no", "false"):
+        return max(0.0, min(1.0, 1.0 - cred))
+    return max(0.0, min(1.0, cred))
 
 
 def rank_prediction(prediction: Prediction, source: Source | None) -> Prediction:

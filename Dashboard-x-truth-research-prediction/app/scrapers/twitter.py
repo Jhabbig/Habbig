@@ -12,8 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class TwitterScraper(BaseScraper):
-    def __init__(self) -> None:
-        self._bearer_token: str = settings["TWITTER_BEARER_TOKEN"]
+    def __init__(self, bearer_token: str | None = None) -> None:
+        # Allow callers (the scheduler / a per-user pipeline) to inject a token;
+        # fall back to the env-var setting so tests and single-tenant deploys keep working.
+        self._bearer_token: str = bearer_token if bearer_token is not None else settings["TWITTER_BEARER_TOKEN"]
         self._monthly_quota: int = settings["TWITTER_MONTHLY_QUOTA"]
         self._client = None
         if self._bearer_token:

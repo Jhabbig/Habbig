@@ -87,6 +87,20 @@ def fuzzy_match_score(text_a: str, text_b: str) -> float:
     return _jaccard(_tokenize(text_a), _tokenize(text_b))
 
 
+def _outcome_appears_in(prediction_tokens: set[str], outcome_name: str) -> bool:
+    """True if every word of ``outcome_name`` appears in the prediction tokens.
+
+    Used to gate multi-outcome markets so a prediction about Trump can't get
+    matched to the Harris market just because the question stems are 90%
+    identical. Multi-word outcomes ("RFK Jr.") require ALL tokens to appear
+    so we don't match "Jr." standalone.
+    """
+    name_tokens = _tokenize(outcome_name)
+    if not name_tokens:
+        return True  # No outcome to gate on → don't filter
+    return name_tokens.issubset(prediction_tokens)
+
+
 def match_to_market(
     prediction_text: str,
     markets: list[dict],
@@ -98,6 +112,12 @@ def match_to_market(
     Strictly filters by category when one is given: a politics prediction
     will never match a sports market, even if no politics markets exist
     (in which case `(None, 0.0)` is returned).
+
+    For multi-outcome markets (those with a non-null ``outcome_name``), the
+    outcome name must appear as a whole-word match in the prediction text —
+    otherwise the candidate is skipped. This fixes the failure mode where a
+    "Trump will win" prediction matched the Harris market because the
+    question stems share ~90% of their tokens in an N-candidate event.
     """
     if threshold is None:
         threshold = MARKET_MATCH_THRESHOLD
@@ -108,6 +128,11 @@ def match_to_market(
     pred_tokens = _tokenize(prediction_text)
     best: tuple[dict | None, float] = (None, 0.0)
     for m in markets:
+        # Multi-outcome gating — skip candidates whose outcome name isn't named
+        # in the prediction. Binary markets (outcome_name = None or empty) pass.
+        outcome_name = (m.get("outcome_name") or "").strip()
+        if outcome_name and not _outcome_appears_in(pred_tokens, outcome_name):
+            continue
         mkt_tokens = m.get("_tokens")
         if mkt_tokens is None:
             mkt_tokens = _tokenize(m.get("market_question", "") or m.get("question", ""))
@@ -138,7 +163,8 @@ def infer_category(text: str) -> str:
 
 
 class PredictionExtractor:
-    def extract(self, content: str) -> list[ExtractionResult]:
+    def _extract_regex(self, content: str) -> list[ExtractionResult]:
+        """Precise regex / pattern path. High precision, low recall."""
         if not content or len(content.split()) < 10:
             return []
         for fp in FALSE_POSITIVE_PATTERNS:
@@ -172,9 +198,47 @@ class PredictionExtractor:
         if m:
             return [ExtractionResult("Yes", None, m.group(0).strip(), "conditional", infer_category(content))]
 
+        return []
+
+    def _extract_keyword_fallback(self, content: str) -> list[ExtractionResult]:
+        """Last-resort keyword match. Low precision — used only when no LLM is available."""
         content_lower = content.lower()
         for kw in _prediction_keywords:
             if kw.lower() in content_lower:
                 return [ExtractionResult("Yes", None, content[:200], "keyword", infer_category(content))]
-
         return []
+
+    def extract(self, content: str) -> list[ExtractionResult]:
+        """Synchronous regex + keyword fallback (legacy callers + unit tests)."""
+        if not content or len(content.split()) < 10:
+            return []
+        results = self._extract_regex(content)
+        if results:
+            return results
+        return self._extract_keyword_fallback(content)
+
+    async def extract_async(self, content: str) -> list[ExtractionResult]:
+        """Regex first, LLM second, keyword last.
+
+        The regex path is fast and free; we only pay the LLM when nothing
+        precise matched. Keyword fallback is below the LLM because it produces
+        a generic "Yes" with no probability and noisy categorization — fine as
+        a fallback when the LLM is unavailable, but the LLM strictly dominates it.
+        """
+        if not content or len(content.split()) < 10:
+            return []
+        for fp in FALSE_POSITIVE_PATTERNS:
+            if fp.search(content):
+                return []
+        results = self._extract_regex(content)
+        if results:
+            return results
+        try:
+            from app.processing import llm_extractor
+            if llm_extractor.is_available():
+                llm_results = await llm_extractor.extract(content)
+                if llm_results:
+                    return llm_results
+        except Exception as exc:
+            logger.warning("LLM extractor invocation failed: %s", exc)
+        return self._extract_keyword_fallback(content)

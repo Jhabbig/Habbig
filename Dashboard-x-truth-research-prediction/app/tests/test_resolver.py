@@ -21,3 +21,18 @@ def test_categorize_other(): assert c.categorize_market("Something completely un
 def test_check_correct_yes(): assert MarketResolver._check_correct("Yes", "Yes") is True
 def test_check_correct_no(): assert MarketResolver._check_correct("Yes", "No") is False
 def test_check_correct_case(): assert MarketResolver._check_correct("yes", "Yes") is True
+
+
+def _p(side, outcome="Yes"):
+    from app.models import Prediction
+    return Prediction(raw_post_id="x:1", category="other", predicted_outcome=outcome, bet_side=side)
+
+
+def test_bet_won_yes_side_yes_outcome(): assert MarketResolver._bet_won(_p("YES"), "Yes") is True
+def test_bet_won_yes_side_no_outcome(): assert MarketResolver._bet_won(_p("YES"), "No") is False
+def test_bet_won_no_side_yes_outcome(): assert MarketResolver._bet_won(_p("NO"), "Yes") is False
+def test_bet_won_no_side_no_outcome(): assert MarketResolver._bet_won(_p("NO"), "No") is True
+def test_bet_won_named_outcome_match(): assert MarketResolver._bet_won(_p("YES", "Trump"), "Trump") is True
+def test_bet_won_named_outcome_mismatch(): assert MarketResolver._bet_won(_p("YES", "Trump"), "Harris") is False
+def test_bet_won_true_synonym(): assert MarketResolver._bet_won(_p("YES"), "true") is True
+def test_bet_won_false_synonym(): assert MarketResolver._bet_won(_p("NO"), "false") is True

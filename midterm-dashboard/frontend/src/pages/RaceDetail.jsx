@@ -4,32 +4,10 @@ import { api } from '../lib/api'
 import { fmtMoney, fmtNum } from '../lib/settings'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, BarChart, Bar, Cell } from 'recharts'
 import { ArrowLeft, Clock, Eye, EyeOff, TrendingUp, BarChart3, History, Trophy, MapPin, Users, Building2, Landmark, GraduationCap, Lightbulb, Flag, ShieldCheck, X } from 'lucide-react'
-
-const sourceColors = { polymarket: '#8b5cf6', kalshi: '#3b82f6', predictit: '#f59e0b', polling: '#10b981', metaculus: '#a855f7' }
-const sourceLabels = { polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt', polling: '538 Polling', metaculus: 'Metaculus' }
-
-const PARTY_COLORS = { DEM: '#3b82f6', REP: '#ef4444', IND: '#f59e0b' }
-function partyColor(party) {
-  if (!party) return '#78716c'
-  const p = party.toUpperCase()
-  if (p.startsWith('DEM') || p === 'D') return PARTY_COLORS.DEM
-  if (p.startsWith('REP') || p === 'R') return PARTY_COLORS.REP
-  return '#78716c'
-}
-
-function OutcomeBar({ name, probability, maxProb, color }) {
-  const pct = (probability || 0) * 100
-  const width = maxProb > 0 ? (probability / maxProb) * 100 : 0
-  return (
-    <div className="flex items-center gap-3 py-1">
-      <span className="text-xs text-stone-600 w-28 truncate flex-shrink-0" title={name}>{name}</span>
-      <div className="flex-1 h-5 bg-stone-100 rounded overflow-hidden relative">
-        <div className="h-full rounded transition-all" style={{ width: `${width}%`, backgroundColor: color || '#78716c' }}></div>
-      </div>
-      <span className="text-xs font-bold text-stone-800 tabular-nums w-12 text-right">{pct.toFixed(1)}%</span>
-    </div>
-  )
-}
+import { sourceColors, sourceLabels, partyColor, OutcomeBar } from '../lib/raceTheme.jsx'
+import { useDataStream } from '../lib/useDataStream.js'
+import ForecastBadge from '../components/ForecastBadge.jsx'
+import NewsTimeline from '../components/NewsTimeline.jsx'
 
 export default function RaceDetail() {
   const { raceKey } = useParams()
@@ -163,6 +141,13 @@ export default function RaceDetail() {
     }).finally(() => setLoading(false))
   }, [raceKey])
 
+  // Live updates: when the backend signals new data, re-fetch the race only.
+  // Other panels (district profile, candidates) are stable enough that we
+  // don't need to refresh them on every market poll.
+  useDataStream(() => {
+    api.race(raceKey).then(setRace).catch(() => {})
+  })
+
   const toggleSource = (source) => {
     setVisibleSources(prev => {
       const next = new Set(prev)
@@ -222,6 +207,16 @@ export default function RaceDetail() {
       <Link to="/races" className="flex items-center gap-1 text-stone-500 hover:text-stone-700 text-sm mb-4">
         <ArrowLeft className="h-4 w-4" /> Back to Races
       </Link>
+
+      {/* narve.ai house forecast — single ensemble probability */}
+      <div className="mb-6">
+        <ForecastBadge raceKey={race.race_key || raceKey} />
+      </div>
+
+      {/* News timeline + market-reaction chips */}
+      <div className="mb-6">
+        <NewsTimeline raceKey={race.race_key || raceKey} />
+      </div>
 
       {/* Header */}
       <div className="bg-white shadow-sm border border-stone-100 rounded-xl p-6 mb-6">

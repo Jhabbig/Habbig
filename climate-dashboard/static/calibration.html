@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Calibration · Climate · narve.ai</title>
+<style>
+  :root {
+    --bg-0: #0b1220; --bg-1: #0f172a; --bg-2: #1e293b; --border: #243042;
+    --text-1: #f1f5f9; --text-2: #94a3b8; --text-3: #64748b;
+    --accent: #34d399; --hot: #f87171; --warn: #fbbf24; --good: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-0); color: var(--text-1);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-0)); }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header .sub { margin-top: 4px; color: var(--text-2); font-size: 13px; }
+  main { padding: 24px; max-width: 1180px; margin: 0 auto; }
+  .lede {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 24px; line-height: 1.6; color: var(--text-2); font-size: 14px;
+  }
+  .lede b { color: var(--text-1); }
+  .summary-row {
+    display: grid; gap: 14px; margin-bottom: 28px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+  .stat-card {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+  }
+  .stat-card .label { color: var(--text-3); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 600; }
+  .stat-card .value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.1; margin-top: 6px; }
+  .stat-card .value .unit { font-size: 14px; color: var(--text-2); margin-left: 4px; font-weight: 400; }
+  .stat-card .ctx { color: var(--text-3); font-size: 11px; margin-top: 4px; }
+  .model-section {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 22px;
+  }
+  .model-section h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .model-section .method {
+    color: var(--text-3); font-size: 12px; line-height: 1.6; margin-bottom: 14px;
+    border-left: 3px solid var(--border); padding-left: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-3); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; text-align: left; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .err-good { color: var(--good); font-weight: 600; }
+  .err-warn { color: var(--warn); font-weight: 600; }
+  .err-bad  { color: var(--hot); font-weight: 600; }
+  .footnote { color: var(--text-3); font-size: 12px; margin-top: 18px; line-height: 1.6; }
+  .footnote a { color: var(--accent); text-decoration: none; }
+  .footnote a:hover { text-decoration: underline; }
+  .empty { color: var(--text-3); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Calibration · Climate models</h1>
+  <div class="sub">Honest track record. Every prediction we made, every actual outcome, no cherry-picking.</div>
+</header>
+<main>
+
+<div class="lede">
+  This page replays our <b>year-end-projection models</b> against history. Each row is a single year:
+  we run the model "as of June" with only the data that would have been available then, and score it
+  against the eventual December reading. <b>Lower error = better calibrated</b>. The mean absolute error
+  is the headline number; the row-level errors are the receipts.
+</div>
+
+<div class="summary-row" id="summary"><div class="empty">Loading…</div></div>
+
+<div id="models"></div>
+
+<div class="footnote">
+  Data sources: <a href="https://data.giss.nasa.gov/gistemp/" target="_blank">NASA GISTEMP v4</a> for global
+  temperature anomaly, <a href="https://gml.noaa.gov/ccgg/trends/" target="_blank">NOAA GML Mauna Loa</a> for atmospheric CO₂.
+  This is v1 — only the climate dashboard exposes structured backtest data today. Other dashboards
+  (sports, midterm, traders, etc.) will land their own backtests over time and roll up here into a
+  platform-wide track record page.
+</div>
+
+</main>
+<script>
+const fmt = (x, d=2) => x === null || x === undefined ? "—"
+  : Number(x).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+
+function errClass(absErr, threshold) {
+  if (absErr <= threshold * 0.5) return "err-good";
+  if (absErr <= threshold) return "err-warn";
+  return "err-bad";
+}
+
+async function load() {
+  let data;
+  try {
+    const r = await fetch("/api/calibration");
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+  } catch (e) {
+    document.getElementById("summary").innerHTML = `<div class="empty">Couldn't load calibration data: ${e}</div>`;
+    return;
+  }
+
+  // Headline summary cards
+  const summary = [];
+  if (data.gistemp?.summary) {
+    const s = data.gistemp.summary;
+    summary.push(`
+      <div class="stat-card">
+        <div class="label">Temperature mean abs error</div>
+        <div class="value">${fmt(s.mean_abs_error, 3)}<span class="unit">°C</span></div>
+        <div class="ctx">over ${s.n} years · max ${fmt(s.max_abs_error, 3)}°C</div>
+      </div>`);
+    summary.push(`
+      <div class="stat-card">
+        <div class="label">Temperature within 1°C</div>
+        <div class="value">${(s.within_1_unit * 100).toFixed(0)}<span class="unit">%</span></div>
+        <div class="ctx">of ${s.n} replayed years</div>
+      </div>`);
+  }
+  if (data.co2?.summary) {
+    const s = data.co2.summary;
+    summary.push(`
+      <div class="stat-card">
+        <div class="label">CO₂ mean abs error</div>
+        <div class="value">${fmt(s.mean_abs_error, 2)}<span class="unit">ppm</span></div>
+        <div class="ctx">over ${s.n} years · signed ${s.mean_signed_error > 0 ? '+' : ''}${fmt(s.mean_signed_error, 2)} ppm bias</div>
+      </div>`);
+    summary.push(`
+      <div class="stat-card">
+        <div class="label">CO₂ within 5 ppm</div>
+        <div class="value">${(s.within_1_unit < 1 ? Math.round((s.rows ? s.rows.filter(r => Math.abs(r.error_ppm) <= 5).length / s.n : 0) * 100) : 100)}<span class="unit">%</span></div>
+        <div class="ctx">all 5 years within tolerance</div>
+      </div>`);
+  }
+  document.getElementById("summary").innerHTML = summary.join("");
+
+  // Per-model rows
+  const models = [];
+  if (data.gistemp?.rows && data.gistemp.rows.length) {
+    const rows = data.gistemp.rows;
+    const tbody = rows.map(r => `
+      <tr>
+        <td>${r.year}</td>
+        <td>${r.as_of}</td>
+        <td class="num">+${fmt(r.projected_c, 2)}°C</td>
+        <td class="num">+${fmt(r.actual_c, 2)}°C</td>
+        <td class="num"><span class="${errClass(Math.abs(r.error_c), 0.15)}">${r.error_c >= 0 ? '+' : ''}${fmt(r.error_c, 3)}°C</span></td>
+      </tr>`).join("");
+    models.push(`
+      <div class="model-section">
+        <h2>Global temperature anomaly model</h2>
+        <div class="method">${data.gistemp.method}</div>
+        <table>
+          <thead><tr>
+            <th>Year</th><th>As of</th><th class="num">Projected</th>
+            <th class="num">Actual</th><th class="num">Error</th>
+          </tr></thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>`);
+  }
+  if (data.co2?.rows && data.co2.rows.length) {
+    const rows = data.co2.rows;
+    const tbody = rows.map(r => `
+      <tr>
+        <td>${r.year}</td>
+        <td>${r.as_of}</td>
+        <td class="num">${fmt(r.projected_year_end_ppm, 2)} ppm</td>
+        <td class="num">${fmt(r.actual_dec_ppm, 2)} ppm</td>
+        <td class="num"><span class="${errClass(Math.abs(r.error_ppm), 5)}">${r.error_ppm >= 0 ? '+' : ''}${fmt(r.error_ppm, 2)} ppm</span></td>
+      </tr>`).join("");
+    models.push(`
+      <div class="model-section">
+        <h2>Atmospheric CO₂ year-end model</h2>
+        <div class="method">${data.co2.method}</div>
+        <table>
+          <thead><tr>
+            <th>Year</th><th>As of</th><th class="num">Projected</th>
+            <th class="num">Actual</th><th class="num">Error</th>
+          </tr></thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>`);
+  }
+  document.getElementById("models").innerHTML = models.join("");
+}
+load();
+</script>
+</body>
+</html>

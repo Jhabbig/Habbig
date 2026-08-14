@@ -1,7 +1,7 @@
 [Unit]
 Description=Narve Gateway (port 7000)
 After=network.target
-Wants=narve-crypto.service narve-weather.service narve-sports.service narve-world.service narve-midterm.service narve-traders.service narve-stock.service
+Wants=narve-crypto.service narve-weather.service narve-sports.service narve-world.service narve-midterm.service narve-traders.service narve-stock.service narve-whale.service
 
 [Service]
 # Required env vars: GATEWAY_SSO_SECRET, GATEWAY_COOKIE_SECRET, STRIPE_SECRET_KEY,

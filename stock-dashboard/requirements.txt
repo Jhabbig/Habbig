@@ -3,3 +3,8 @@ requests==2.33.0
 yfinance==1.2.0
 scikit-learn==1.8.0
 cryptography==46.0.6
+xgboost>=2.0
+pandas>=1.5
+scipy>=1.10
+websockets>=11.0
+aiohttp>=3.8

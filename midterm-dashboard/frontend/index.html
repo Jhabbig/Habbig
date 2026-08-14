@@ -6,9 +6,20 @@
   <meta name="description" content="Midterm Elections Prediction Dashboard - Compare prediction markets, polls, and expert forecasts" />
   <title>MidtermEdge - Election Prediction Dashboard</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body class="bg-stone-50 text-stone-800">
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {})
+      })
+    }
+  </script>
 </body>
 </html>

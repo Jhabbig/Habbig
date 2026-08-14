@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whale Watch — Institutional Flow</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🐋</span>
+      <span class="title">Whale Watch</span>
+      <span class="tag">institutional flow · 13F · Form 4 · 13D</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="feed" class="active">Live Feed</button>
+      <button data-tab="whales">Whales</button>
+      <button data-tab="ticker">Ticker</button>
+      <button data-tab="activist">Activist (13D)</button>
+      <button data-tab="cluster">Cluster Buys</button>
+      <button data-tab="correlations">Polymarket Edge</button>
+      <button data-tab="consensus">Consensus</button>
+      <button data-tab="crowded">Crowded</button>
+      <button data-tab="cot">COT</button>
+      <button data-tab="watchlist">My Watchlist</button>
+    </nav>
+    <div id="ws-indicator" class="ws-indicator" title="real-time feed">offline</div>
+  </header>
+
+  <main>
+    <!-- Live feed --------------------------------------------------------- -->
+    <section id="tab-feed" class="tab active">
+      <h2>Recent filings (newest first)</h2>
+      <p class="hint">Union of 13F-HR, 13D/G, and Form 4 filings for the seeded whale list. The Form 4 / 13D feeds are real-time-ish (within hours of filing); 13F-HR has a 45-day disclosure lag.</p>
+      <div class="loading" id="feed-status">loading…</div>
+      <table class="rows" id="feed-table" hidden>
+        <thead><tr>
+          <th>When</th><th>Source</th><th>Type</th><th>Filer</th><th>Target</th><th>Value / %</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Whales -->
+    <section id="tab-whales" class="tab">
+      <h2>Tracked entities</h2>
+      <p class="hint">Each row collapses ~5–30 sub-CIKs into a single parent (so JPMorgan's 30-odd 13F filers count as one book). Click a row for the deep dive.</p>
+      <div class="loading" id="whales-status">loading…</div>
+      <table class="rows" id="whales-table" hidden>
+        <thead><tr>
+          <th>Entity</th><th>Type</th><th>Sub-CIKs</th><th>Latest 13F</th><th>Book (USD)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="whale-detail" hidden></div>
+    </section>
+
+    <!-- Ticker -->
+    <section id="tab-ticker" class="tab">
+      <h2>Ticker lookup</h2>
+      <form id="ticker-form" class="row-form">
+        <input id="ticker-input" placeholder="e.g. NVDA" autocomplete="off" />
+        <button type="submit">Look up</button>
+      </form>
+      <div id="ticker-result"></div>
+    </section>
+
+    <!-- Activist -->
+    <section id="tab-activist" class="tab">
+      <h2>Schedule 13D / 13G filings</h2>
+      <p class="hint">5%+ stake disclosures. 13D = activist intent; 13G = passive (mostly index funds). The intent excerpt comes from Item 4 of the filing — read it raw, not interpretation.</p>
+      <div class="loading" id="activist-status">loading…</div>
+      <table class="rows" id="activist-table" hidden>
+        <thead><tr>
+          <th>Filed</th><th>Schedule</th><th>Filer</th><th>Target</th><th>Stake</th><th>Item 4 excerpt</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Cluster buys -->
+    <section id="tab-cluster" class="tab">
+      <h2>Insider cluster buys</h2>
+      <p class="hint">Tickers where ≥3 distinct insiders made open-market purchases in the last 14 days. Independent insiders converging on the buy side is a stronger signal than any single transaction.</p>
+      <div class="loading" id="cluster-status">loading…</div>
+      <table class="rows" id="cluster-table" hidden>
+        <thead><tr>
+          <th>Ticker</th><th>Issuer</th><th>Insiders</th><th>Shares</th><th>Total $</th><th>Window</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Consensus -->
+    <section id="tab-consensus" class="tab">
+      <h2>Smart-money consensus</h2>
+      <p class="hint">Per-ticker score across all tracked whales: <code>(added − trimmed) / (added + trimmed)</code> from latest 13F. +1 = unanimous accumulation, −1 = unanimous distribution. Filter to tickers with at least 5 long whales.</p>
+      <div class="row-form">
+        <select id="consensus-direction">
+          <option value="long">Most accumulated</option>
+          <option value="short">Most distributed</option>
+          <option value="any" selected>By absolute conviction</option>
+        </select>
+      </div>
+      <div class="loading" id="consensus-status">loading…</div>
+      <table class="rows" id="consensus-table" hidden>
+        <thead><tr>
+          <th>Ticker</th><th>Issuer</th><th class="right">Whales long</th><th class="right">Added</th><th class="right">Trimmed</th><th class="right">Score</th><th class="right">Crowd %ile</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Crowdedness -->
+    <section id="tab-crowded" class="tab">
+      <h2>Crowdedness leaderboard</h2>
+      <p class="hint">Tickers held by the most whales as a percentile rank within the latest quarter. Crowded longs are crash-risk; the same data surfaces squeeze candidates if you flip your assumption about what's crowded short.</p>
+      <div class="loading" id="crowd-status">loading…</div>
+      <table class="rows" id="crowd-table" hidden>
+        <thead><tr>
+          <th>Ticker</th><th>Issuer</th><th class="right">Whales long</th><th class="right">%ile</th><th class="right">Aggregate $</th><th class="right">Consensus</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- COT -->
+    <section id="tab-cot" class="tab">
+      <h2>CFTC Commitment of Traders</h2>
+      <p class="hint">Weekly futures positioning. <em>Commercial</em> = hedgers (producers, end-users). <em>Non-commercial</em> = speculators (macro funds, CTAs). Net length = long − short. Big extremes in either group are classic mean-reversion / breakout setups.</p>
+      <div class="loading" id="cot-status">loading…</div>
+      <table class="rows" id="cot-table" hidden>
+        <thead><tr>
+          <th>Code</th><th>Market</th><th>Report</th><th class="right">Spec net</th><th class="right">Comm net</th><th class="right">Open Int</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Watchlist & Alerts -->
+    <section id="tab-watchlist" class="tab">
+      <h2>Watchlist & alerts</h2>
+      <p class="hint">Watchlist a ticker or whale to filter the live feed. Add an alert rule to fire a webhook when a 13D crosses your threshold, an insider cluster forms, or a watched whale takes a big position.</p>
+
+      <h3 style="margin-top:18px">Watchlist</h3>
+      <form id="wl-form" class="row-form">
+        <select id="wl-kind">
+          <option value="ticker">Ticker</option>
+          <option value="whale">Whale slug</option>
+        </select>
+        <input id="wl-target" placeholder="NVDA or jpmorgan" />
+        <button type="submit">Add</button>
+      </form>
+      <table class="rows" id="wl-table">
+        <thead><tr><th>Kind</th><th>Target</th><th>Added</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 style="margin-top:24px">Alert rules</h3>
+      <form id="alert-form" class="row-form">
+        <select id="alert-type">
+          <option value="13d_filed">13D filed</option>
+          <option value="cluster_buy">Cluster buy</option>
+          <option value="whale_move">Whale move</option>
+          <option value="consensus_cross">Consensus cross</option>
+        </select>
+        <input id="alert-target" placeholder="NVDA / jpmorgan / blank=any" />
+        <input id="alert-threshold" placeholder="threshold (e.g. 5.0)" type="number" step="0.1" />
+        <input id="alert-webhook" placeholder="webhook URL (optional)" />
+        <button type="submit">Create</button>
+      </form>
+      <table class="rows" id="alerts-table">
+        <thead><tr><th>Type</th><th>Target</th><th>Threshold</th><th>Webhook</th><th>Last fired</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 style="margin-top:24px">Recent deliveries</h3>
+      <table class="rows" id="deliveries-table">
+        <thead><tr><th>Fired</th><th>Source</th><th>Status</th><th>Code</th><th>Error</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Correlations -->
+    <section id="tab-correlations" class="tab">
+      <h2>Polymarket cross-links</h2>
+      <p class="hint">When a whale filing references a ticker that also has an active Polymarket market (M&amp;A, CEO, earnings markets, etc.), we snapshot the price at filing and again at +24h / +7d / +30d. <em>edge_bps</em> is absolute price move in basis points.</p>
+      <div class="loading" id="corr-status">loading…</div>
+      <table class="rows" id="corr-table" hidden>
+        <thead><tr>
+          <th>When</th><th>Source</th><th>Market</th><th>@Filing</th><th>+24h</th><th>+7d</th><th>+30d</th><th>Edge (bps)</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    Data: <a href="https://www.sec.gov/edgar" target="_blank" rel="noopener">SEC EDGAR</a> ·
+    <a href="https://gamma-api.polymarket.com" target="_blank" rel="noopener">Polymarket Gamma</a> ·
+    13F is long-only US equities + select options · 45-day filing lag.
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

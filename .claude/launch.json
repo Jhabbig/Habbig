@@ -1,0 +1,89 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "forecast",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "DEV_MODE=1 venv/bin/python -m uvicorn --app-dir forecast-dashboard server:app --host 127.0.0.1 --port 7062"],
+      "port": 7062
+    },
+    {
+      "name": "weather-dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["polymarket_weather_dashboard/server.py"],
+      "port": 5050
+    },
+    {
+      "name": "stock-dashboard",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd stock-dashboard && DEV_MODE=1 PORT=8051 python3 stock_dashboard.py --port 8051"],
+      "port": 8051
+    },
+    {
+      "name": "world-state-dashboard",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "DEV_MODE=1 venv/bin/python world-state-dashboard/server.py"],
+      "port": 7050
+    },
+    {
+      "name": "top-traders-dashboard",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "DEV_MODE=1 venv/bin/python top-traders-dashboard/server.py"],
+      "port": 8052
+    },
+    {
+      "name": "crypto-dashboard",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd crypto-dashboard && DEV_MODE=1 DEV_LOCALHOST_BYPASS=1 ../venv/bin/python server.py"],
+      "port": 8000
+    },
+    {
+      "name": "gateway",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "DEV_MODE=1 GATEWAY_PORT=7001 venv/bin/python gateway/server.py"],
+      "port": 7001
+    },
+    {
+      "name": "midterm-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd midterm-dashboard/backend && ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8050"],
+      "port": 8050
+    },
+    {
+      "name": "midterm-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd midterm-dashboard/frontend && node_modules/.bin/vite"],
+      "port": 3000
+    },
+    {
+      "name": "polymarket-signal",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd Dashboard-x-truth-research-prediction && exec venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18789"],
+      "port": 18789
+    },
+    {
+      "name": "mockup",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "7777", "--directory", "gateway/static"],
+      "port": 7777
+    },
+    {
+      "name": "sports-dashboard",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd sports-dashboard && DEV_MODE=1 python3 sports_dashboard.py"],
+      "port": 8888
+    },
+    {
+      "name": "sports-arbitrage-bot",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd sports-dashboard && python3 arbitrage_bot.py"],
+      "port": 0
+    },
+    {
+      "name": "sports-pitch-generator",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd sports-dashboard && python3 sharpe_pitch.py"],
+      "port": 0
+    }
+  ]
+}

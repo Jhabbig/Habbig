@@ -143,6 +143,8 @@ async def fetch_race_financials(
             "disbursements": round(disbursements),
             "cash_on_hand": round(cash),
             "candidate_id": c.get("candidate_id"),
+            "district": c.get("district") or c.get("district_number"),
+            "incumbent_challenge": c.get("incumbent_challenge_full"),
         })
     return results
 

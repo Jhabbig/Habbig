@@ -97,8 +97,29 @@ class KalshiClient:
             title = m.get("title", m.get("yes_sub_title", ""))
             category = self.categorize_market(title, m.get("no_sub_title", ""))
 
-            # Price: Kalshi returns dollars as strings like "0.6500"
-            yes_price = float(m.get("yes_bid_dollars") or m.get("last_price_dollars") or 0)
+            # Price: Kalshi returns dollars as strings like "0.6500".
+            # Prefer last-trade > mid(bid,ask) > bid as the canonical price.
+            # The previous code used bid alone, which systematically
+            # under-quoted YES — bid is below the spread mid, so every
+            # EV/arb calculation against Kalshi was biased downward.
+            try:
+                last = float(m.get("last_price_dollars") or 0) or None
+            except (TypeError, ValueError):
+                last = None
+            try:
+                bid = float(m.get("yes_bid_dollars") or 0) or None
+            except (TypeError, ValueError):
+                bid = None
+            try:
+                ask = float(m.get("yes_ask_dollars") or 0) or None
+            except (TypeError, ValueError):
+                ask = None
+            if last is not None:
+                yes_price = last
+            elif bid is not None and ask is not None:
+                yes_price = (bid + ask) / 2.0
+            else:
+                yes_price = bid or ask or 0.0
 
             volume = float(m.get("volume_fp") or m.get("notional_value_dollars") or 0)
 
@@ -109,6 +130,14 @@ class KalshiClient:
                     close_time = datetime.fromisoformat(str(close_str).replace("Z", "+00:00"))
                 except ValueError:
                     pass
+
+            # Kalshi groups markets into events via `event_ticker`. Each market
+            # in an event is one candidate / outcome. yes_sub_title is the
+            # candidate name when the event is multi-outcome (and absent for
+            # standalone binaries).
+            event_ticker = (m.get("event_ticker") or "").strip() or None
+            outcome_name = (m.get("yes_sub_title") or "").strip() or None
+            event_title = title if event_ticker else None  # best available
 
             # Check existing
             stmt = select(MarketSnapshot).where(
@@ -122,6 +151,9 @@ class KalshiClient:
                 existing.yes_price = yes_price
                 existing.volume_usd = volume
                 existing.close_time = close_time
+                existing.event_slug = event_ticker
+                existing.event_title = event_title
+                existing.outcome_name = outcome_name
                 existing.snapshotted_at = datetime.now(timezone.utc)
                 session.add(existing)
                 updated_count += 1
@@ -134,6 +166,9 @@ class KalshiClient:
                     volume_usd=volume,
                     close_time=close_time,
                     platform="kalshi",
+                    event_slug=event_ticker,
+                    event_title=event_title,
+                    outcome_name=outcome_name,
                     snapshotted_at=datetime.now(timezone.utc),
                 ))
                 new_count += 1

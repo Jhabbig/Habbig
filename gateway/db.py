@@ -134,6 +134,35 @@ CREATE TABLE IF NOT EXISTS stripe_events (
     processed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS superuser_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT UNIQUE NOT NULL,
+    name            TEXT NOT NULL,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER,
+    last_used_at    INTEGER,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_templates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    dashboards      TEXT NOT NULL DEFAULT '',
+    aspects         TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS superuser_key_usage_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id          INTEGER NOT NULL,
+    accessed_at     INTEGER NOT NULL,
+    dashboard_key   TEXT,
+    FOREIGN KEY (key_id) REFERENCES superuser_keys(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS user_positions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL,
@@ -169,6 +198,11 @@ CREATE INDEX IF NOT EXISTS idx_stripe_events_processed ON stripe_events(processe
 CREATE INDEX IF NOT EXISTS idx_positions_user ON user_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_positions_platform ON user_positions(user_id, platform);
+CREATE INDEX IF NOT EXISTS idx_superuser_keys ON superuser_keys(key);
+CREATE INDEX IF NOT EXISTS idx_superuser_active ON superuser_keys(active);
+CREATE INDEX IF NOT EXISTS idx_templates_created ON superuser_key_templates(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_key ON superuser_key_usage_logs(key_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_accessed ON superuser_key_usage_logs(accessed_at);
 """
 
 
@@ -1258,3 +1292,129 @@ def purge_old_stripe_events(older_than_days: int = 90) -> int:
             (cutoff,),
         )
         return cur.rowcount
+
+
+# ── superuser / investor keys ────────────────────────────────────────────────
+# The admin UI and proxy gate in server.py were merged ahead of this data
+# layer; these implement the contract those call sites expect. dashboards and
+# aspects are stored comma-joined and returned as lists; an empty dashboards
+# list means "all dashboards".
+
+
+def _parse_key_row(row) -> dict:
+    d = dict(row)
+    d["dashboards"] = [s for s in (d.get("dashboards") or "").split(",") if s]
+    d["aspects"] = [s for s in (d.get("aspects") or "").split(",") if s]
+    return d
+
+
+def create_superuser_key(
+    name: str,
+    dashboards: Optional[list] = None,
+    expires_in_days: Optional[int] = None,
+    custom_key: Optional[str] = None,
+    aspects: Optional[list] = None,
+) -> str:
+    key = (custom_key or "").strip() or f"nrv_{secrets.token_urlsafe(24)}"
+    now = int(time.time())
+    expires_at = now + int(expires_in_days) * 86400 if expires_in_days else None
+    with conn() as c:
+        try:
+            c.execute(
+                "INSERT INTO superuser_keys (key, name, dashboards, aspects, created_at, expires_at, active) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                (key, name, ",".join(dashboards or []), ",".join(aspects or []), now, expires_at),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("key already exists")
+    return key
+
+
+def validate_superuser_key(key: str) -> Optional[dict]:
+    if not key:
+        return None
+    now = int(time.time())
+    with conn() as c:
+        row = c.execute(
+            "SELECT * FROM superuser_keys WHERE key = ? AND active = 1 AND (expires_at IS NULL OR expires_at > ?)",
+            (key, now),
+        ).fetchone()
+        if row is None:
+            return None
+        c.execute("UPDATE superuser_keys SET last_used_at = ? WHERE id = ?", (now, row["id"]))
+    return _parse_key_row(row)
+
+
+def has_superuser_key_access(key: str, dashboard_key: str) -> bool:
+    info = validate_superuser_key(key)
+    if info is None:
+        return False
+    if info["dashboards"] and dashboard_key not in info["dashboards"]:
+        return False
+    with conn() as c:
+        c.execute(
+            "INSERT INTO superuser_key_usage_logs (key_id, accessed_at, dashboard_key) VALUES (?, ?, ?)",
+            (info["id"], int(time.time()), dashboard_key),
+        )
+    return True
+
+
+def list_superuser_keys() -> list:
+    with conn() as c:
+        rows = c.execute("SELECT * FROM superuser_keys ORDER BY created_at DESC").fetchall()
+    return [_parse_key_row(r) for r in rows]
+
+
+def revoke_superuser_key(key_id: int) -> bool:
+    with conn() as c:
+        cur = c.execute("DELETE FROM superuser_keys WHERE id = ?", (key_id,))
+        return cur.rowcount > 0
+
+
+def toggle_superuser_key(key_id: int) -> Optional[dict]:
+    with conn() as c:
+        cur = c.execute("UPDATE superuser_keys SET active = 1 - active WHERE id = ?", (key_id,))
+        if cur.rowcount == 0:
+            return None
+        row = c.execute("SELECT * FROM superuser_keys WHERE id = ?", (key_id,)).fetchone()
+    return _parse_key_row(row)
+
+
+def enable_superuser_key(key_id: int) -> bool:
+    with conn() as c:
+        return c.execute("UPDATE superuser_keys SET active = 1 WHERE id = ?", (key_id,)).rowcount > 0
+
+
+def disable_superuser_key(key_id: int) -> bool:
+    with conn() as c:
+        return c.execute("UPDATE superuser_keys SET active = 0 WHERE id = ?", (key_id,)).rowcount > 0
+
+
+def create_superuser_key_template(
+    name: str,
+    description: str = "",
+    dashboards: Optional[list] = None,
+    aspects: Optional[list] = None,
+) -> int:
+    with conn() as c:
+        cur = c.execute(
+            "INSERT INTO superuser_key_templates (name, description, dashboards, aspects, created_at) VALUES (?, ?, ?, ?, ?)",
+            (name, description, ",".join(dashboards or []), ",".join(aspects or []), int(time.time())),
+        )
+        return cur.lastrowid
+
+
+def list_superuser_key_templates() -> list:
+    with conn() as c:
+        rows = c.execute("SELECT * FROM superuser_key_templates ORDER BY created_at DESC").fetchall()
+    return [_parse_key_row(r) for r in rows]
+
+
+def get_superuser_key_template(template_id: int) -> Optional[dict]:
+    with conn() as c:
+        row = c.execute("SELECT * FROM superuser_key_templates WHERE id = ?", (template_id,)).fetchone()
+    return _parse_key_row(row) if row else None
+
+
+def delete_superuser_key_template(template_id: int) -> bool:
+    with conn() as c:
+        return c.execute("DELETE FROM superuser_key_templates WHERE id = ?", (template_id,)).rowcount > 0

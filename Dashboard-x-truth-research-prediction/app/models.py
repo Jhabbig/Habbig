@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Column, Field, SQLModel, Text
 
 
@@ -31,6 +32,9 @@ class User(SQLModel, table=True):
     truthsocial_username: str = ""
     truthsocial_password: str = ""
     truthsocial_access_token: str = ""
+    telegram_bot_token: str = ""  # Fernet-encrypted (set via /profile/update)
+    telegram_chat_id: str = ""  # plain — chat IDs aren't secret on their own
+    telegram_alerts_enabled: bool = False
     preferred_platform: str = Field(default="polymarket")  # "polymarket" or "kalshi"
     preferred_theme: str = Field(default="dark")  # "dark" or "light"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -73,6 +77,7 @@ class Prediction(SQLModel, table=True):
     predicted_probability: Optional[float] = None
     market_implied_probability: Optional[float] = None
     ev_score: Optional[float] = None
+    bet_side: str = Field(default="YES")  # "YES" or "NO" — which side carries the EV
     global_credibility_at_time: float = 0.0
     category_credibility_at_time: Optional[float] = None
     risk_flag: bool = False
@@ -107,6 +112,8 @@ class Source(SQLModel, table=True):
     accuracy_unlocked: bool = False
     accuracy_global: Optional[float] = None
     decay_weighted_accuracy: Optional[float] = None
+    brier_score: Optional[float] = None  # lower is better; null when no probability-bearing predictions
+    brier_n: int = 0  # number of resolved probability predictions that fed Brier
     last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -151,6 +158,14 @@ class MarketSnapshot(SQLModel, table=True):
     volume_usd: float = 0.0
     close_time: Optional[datetime] = None
     platform: str = Field(default="polymarket", index=True)  # "polymarket" or "kalshi"
+    # Multi-outcome event grouping. When a market is one option inside a
+    # multi-candidate event ("Will Trump win 2028?" inside the "2028 Election
+    # Winner" event), these fields link it to the parent. For binary markets
+    # ("Will the Fed cut in March?") they're null and the market matches as a
+    # standalone binary.
+    event_slug: Optional[str] = Field(default=None, index=True)  # parent event id
+    event_title: Optional[str] = None  # parent event title (e.g. "2028 Presidential Election Winner")
+    outcome_name: Optional[str] = None  # this market's outcome (e.g. "Trump", "Harris")
     snapshotted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -168,6 +183,90 @@ class MonthlyQuota(SQLModel, table=True):
     year_month: str = ""
     tweets_read: int = 0
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class APIKey(SQLModel, table=True):
+    """A revocable API key for programmatic access to /api/v1/*."""
+    __tablename__ = "api_key"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    key_hash: str = Field(index=True, unique=True)  # sha256 of the plaintext key
+    key_prefix: str = Field(default="")  # first 8 chars for display ("narve_ab...")
+    label: str = Field(default="")  # operator-supplied description
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used_at: Optional[datetime] = None
+    revoked: bool = False
+
+
+class UserPrediction(SQLModel, table=True):
+    """A prediction the *user* recorded for themselves (calibration mode).
+
+    Distinct from `Prediction` — those are extracted from scraped posts. This
+    table lets users build their own Brier-scored track record on the dashboard
+    so the source-credibility methodology applies to them too.
+    """
+    __tablename__ = "user_prediction"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    market_slug: str = Field(index=True)
+    market_question: str = ""
+    category: str = Field(default="other")
+    predicted_probability: float = 0.5  # the user's P(YES)
+    bet_side: str = Field(default="YES")  # which side they'd take if forced (YES iff prob >= market mid)
+    market_implied_probability: Optional[float] = None  # snapshot at recording time
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved: bool = False
+    resolved_correct: Optional[bool] = None
+    resolved_at: Optional[datetime] = None
+    note: str = Field(default="", sa_column=Column(Text))
+
+
+class UserSession(SQLModel, table=True):
+    __tablename__ = "user_session"
+    token: str = Field(primary_key=True)
+    username: str = Field(index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PaperTrade(SQLModel, table=True):
+    """An open or closed simulated bet that the system would have taken given
+    its EV signal and the source's credibility at signal time."""
+    __tablename__ = "paper_trade"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    prediction_id: int = Field(foreign_key="prediction.id", index=True)
+    handle: str = Field(index=True)
+    market_slug: str = Field(index=True)
+    platform: str = Field(default="polymarket")
+    bet_side: str = Field(default="YES")
+    stake_usd: float = 1.0
+    entry_price: float = 0.5  # market YES price at entry, or NO price = 1 - YES if bet_side == "NO"
+    entry_ev_score: float = 0.0
+    entry_credibility: float = 0.0
+    opened_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved: bool = False
+    resolved_correct: Optional[bool] = None
+    pnl_usd: Optional[float] = None
+    closed_at: Optional[datetime] = None
+
+
+class ExtractionCache(SQLModel, table=True):
+    """Cache of LLM extraction results, keyed by content hash + model.
+
+    Posts are scraped multiple times across pipeline runs, and the same trending
+    quote often appears verbatim across many accounts. Caching by content hash
+    lets us skip the LLM call on every duplicate for free.
+    """
+    __tablename__ = "extraction_cache"
+    __table_args__ = (
+        UniqueConstraint("content_hash", "model", name="uq_extraction_cache_hash_model"),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content_hash: str = Field(index=True)  # sha256 of the post content
+    model: str = Field(default="")  # e.g. "claude-opus-4-7"
+    predictions_json: str = Field(default="[]", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CredibilitySnapshot(SQLModel, table=True):

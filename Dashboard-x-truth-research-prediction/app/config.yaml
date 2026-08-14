@@ -1,5 +1,18 @@
 scraping:
   limit_per_source: 100
+  reddit:
+    # Public JSON endpoint — no OAuth needed for read-only access.
+    # Set to an empty list to disable Reddit scraping.
+    subreddits:
+      - PredictionMarkets
+      - politics
+      - sportsbook
+      - CryptoCurrency
+      - geopolitics
+  rss:
+    # Substack & blog RSS feeds. Add any feed URL — the scraper handles
+    # RSS 2.0 and Atom. Substack feeds are at https://<slug>.substack.com/feed.
+    feeds: []
   keywords:
     prediction_keywords:
       - "will win"

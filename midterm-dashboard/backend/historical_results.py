@@ -108,3 +108,11 @@ def get_results(year: int = None, race_type: str = None, state: str = None) -> l
     if state:
         results = [r for r in results if r["state"].upper() == state.upper()]
     return results
+
+
+def winning_party(year: int, race_type: str, state: str) -> str | None:
+    """Return ``"D"`` / ``"R"`` for the historical winner of (year, race_type, state)."""
+    for r in HISTORICAL_RESULTS:
+        if r["year"] == year and r["race_type"] == race_type and r["state"].upper() == state.upper():
+            return r.get("party")
+    return None

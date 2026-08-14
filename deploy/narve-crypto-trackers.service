@@ -1,0 +1,29 @@
+[Unit]
+Description=Narve Crypto Trackers Dashboard (port 7054)
+After=network.target
+
+[Service]
+Type=simple
+User=julianhabbig
+WorkingDirectory=/home/julianhabbig/Polymarket/crypto-trackers-dashboard
+Environment=PORT=7054
+ExecStart=/home/julianhabbig/Polymarket/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 7054
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/julianhabbig/Polymarket/gateway/.env.production
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/julianhabbig/Polymarket/crypto-trackers-dashboard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

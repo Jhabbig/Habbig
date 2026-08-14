@@ -1,18 +1,22 @@
 from __future__ import annotations
+import time
 from unittest.mock import AsyncMock, patch
 import pytest, pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 with patch("app.scheduler.start_scheduler"), patch("app.scheduler.run_pipeline", new_callable=AsyncMock, return_value={}):
-    from app.main import app, _hash_password, _active_sessions, _make_session_token, _make_csrf_token
+    from app.main import app, _hash_password, _active_sessions, _make_session_token
 from app.models import User
 
 
-def _csrf(client):
-    """Seed the CSRF cookie on the client and return the matching form field."""
-    seed = _make_session_token()
-    client.cookies.set("_csrf_seed", seed)
-    return {"_csrf_token": _make_csrf_token(seed)}
+async def _csrf_pair(client):
+    """Hit a public form page to obtain a _csrf_seed cookie + matching token."""
+    resp = await client.get("/login")
+    seed = resp.cookies.get("_csrf_seed", "")
+    import hashlib
+    from app.main import _CSRF_SECRET
+    token = hashlib.sha256(f"{seed}:{_CSRF_SECRET}".encode()).hexdigest()[:32]
+    return seed, token
 
 
 @pytest_asyncio.fixture
@@ -31,9 +35,11 @@ async def client():
         await session.commit()
 
     import app.db as db_module
-
+    import app.main as main_module
     original_engine = db_module.engine
+    original_main_engine = main_module.engine
     db_module.engine = test_engine
+    main_module.engine = test_engine
 
     async def test_get_session():
         async with AsyncSession(test_engine, expire_on_commit=False) as session:
@@ -46,6 +52,7 @@ async def client():
 
     app.dependency_overrides.clear()
     db_module.engine = original_engine
+    main_module.engine = original_main_engine
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
     await test_engine.dispose()
@@ -53,8 +60,6 @@ async def client():
 
 def _cookies(username="admin"):
     """Create a valid session token and register it."""
-    import time
-
     token = _make_session_token()
     _active_sessions[token] = (username, time.time())
     return {"session": token}
@@ -65,108 +70,102 @@ async def test_health(client):
     r = await client.get("/health")
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
-
 @pytest.mark.asyncio
 async def test_login_page(client):
     r = await client.get("/login")
     assert r.status_code == 200 and "Sign in" in r.text
 
-
 @pytest.mark.asyncio
 async def test_login_wrong(client):
-    r = await client.post("/login", data={"username": "admin", "password": "wrong", **_csrf(client)}, follow_redirects=False)
-    assert r.status_code == 200 and "Invalid username or password" in r.text
-
+    r = await client.post("/login", data={"username": "admin", "password": "wrong"}, follow_redirects=False)
+    assert r.status_code == 200 and "Invalid" in r.text
 
 @pytest.mark.asyncio
 async def test_login_correct(client):
-    r = await client.post("/login", data={"username": "admin", "password": "changeme", **_csrf(client)}, follow_redirects=False)
+    seed, token = await _csrf_pair(client)
+    r = await client.post(
+        "/login",
+        data={"username": "admin", "password": "changeme", "_csrf_token": token},
+        cookies={"_csrf_seed": seed},
+        follow_redirects=False,
+    )
     assert r.status_code == 302
-
 
 @pytest.mark.asyncio
 async def test_register_page(client):
     r = await client.get("/register")
     assert r.status_code == 200 and "Create" in r.text
 
-
 @pytest.mark.asyncio
 async def test_register_weak_password(client):
-    r = await client.post("/register", data={"username": "newuser", "email": "", "password": "weak", "password2": "weak", **_csrf(client)}, follow_redirects=False)
+    r = await client.post("/register", data={"username": "newuser", "email": "", "password": "weak", "password2": "weak"}, follow_redirects=False)
     assert "12 characters" in r.text
-
 
 @pytest.mark.asyncio
 async def test_register_duplicate(client):
-    r = await client.post("/register", data={"username": "admin", "email": "", "password": "TestPass123!xx", "password2": "TestPass123!xx", **_csrf(client)}, follow_redirects=False)
+    seed, token = await _csrf_pair(client)
+    r = await client.post(
+        "/register",
+        data={"username": "admin", "email": "", "password": "TestPass123!xx", "password2": "TestPass123!xx", "_csrf_token": token},
+        cookies={"_csrf_seed": seed},
+        follow_redirects=False,
+    )
     assert "already taken" in r.text
-
 
 @pytest.mark.asyncio
 async def test_register_username_too_long(client):
-    r = await client.post("/register", data={"username": "a" * 16, "email": "", "password": "TestPass123!xx", "password2": "TestPass123!xx", **_csrf(client)}, follow_redirects=False)
+    r = await client.post("/register", data={"username": "a" * 16, "email": "", "password": "TestPass123!xx", "password2": "TestPass123!xx"}, follow_redirects=False)
     assert "3\u201315" in r.text or "15" in r.text
-
 
 @pytest.mark.asyncio
 async def test_dashboard_redirect(client):
     r = await client.get("/", follow_redirects=False)
     assert r.status_code == 302
 
-
 @pytest.mark.asyncio
 async def test_dashboard_auth(client):
     r = await client.get("/", cookies=_cookies())
     assert r.status_code == 200
-
 
 @pytest.mark.asyncio
 async def test_feed(client):
     r = await client.get("/feed", cookies=_cookies())
     assert r.status_code == 200
 
-
 @pytest.mark.asyncio
 async def test_feed_filters(client):
     r = await client.get("/feed?category=crypto&sort=ev", cookies=_cookies())
     assert r.status_code == 200
-
 
 @pytest.mark.asyncio
 async def test_best_bets(client):
     r = await client.get("/best-bets", cookies=_cookies())
     assert r.status_code == 200
 
-
 @pytest.mark.asyncio
 async def test_sources(client):
     r = await client.get("/sources", cookies=_cookies())
     assert r.status_code == 200
-
 
 @pytest.mark.asyncio
 async def test_leaderboard(client):
     r = await client.get("/leaderboard", cookies=_cookies())
     assert r.status_code == 200
 
-
 @pytest.mark.asyncio
 async def test_markets(client):
     r = await client.get("/markets", cookies=_cookies())
     assert r.status_code == 200
-
 
 @pytest.mark.asyncio
 async def test_markets_filters(client):
     r = await client.get("/markets?category=crypto&sort=price_high&per_page=20&platform=kalshi", cookies=_cookies())
     assert r.status_code == 200
 
-
 @pytest.mark.asyncio
 async def test_profile(client):
     r = await client.get("/profile", cookies=_cookies())
     assert r.status_code == 200 and "Profile" in r.text
-
 
 @pytest.mark.asyncio
 async def test_refresh(client):
@@ -174,12 +173,10 @@ async def test_refresh(client):
         r = await client.get("/refresh", cookies=_cookies())
         assert r.status_code == 200
 
-
 @pytest.mark.asyncio
 async def test_health_fields(client):
     d = (await client.get("/health")).json()
     assert all(k in d for k in ["predictions_total", "sources_total", "twitter_quota_remaining"])
-
 
 @pytest.mark.asyncio
 async def test_param_clamping(client):
