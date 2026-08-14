@@ -29,10 +29,12 @@ import form13f
 import identity
 import llm_client
 import llm_extract
+import news as news_mod
 import openfigi
 import options_flow
 import skill as skill_mod
 import uk as uk_mod
+import xbrl as xbrl_mod
 
 log = logging.getLogger("ingest")
 
@@ -89,12 +91,19 @@ DEF14A_INTERVAL_S = int(os.environ.get("DEF14A_INTERVAL_S", "3600"))
 DEF14A_PER_PASS   = int(os.environ.get("DEF14A_PER_PASS", "5"))
 _last_def14a_run = 0.0
 
+# XBRL fundamentals refresh (SEC companyfacts, free) + news polling.
+XBRL_INTERVAL_S = int(os.environ.get("XBRL_INTERVAL_S", "21600"))   # 6h
+XBRL_PER_PASS   = int(os.environ.get("XBRL_PER_PASS", "10"))
+_last_xbrl_run = 0.0
+NEWS_INTERVAL_S = int(os.environ.get("NEWS_INTERVAL_S", "900"))     # 15 min
+_last_news_run = 0.0
+
 
 async def run_once() -> dict[str, int]:
     """One ingest pass over all feeds. Returns counts inserted per feed."""
     global _last_congress_run, _last_skill_run, _last_options_run, _last_openfigi_run
     global _last_llm_extract_run, _last_alert_run, _last_identity_run, _last_uk_run
-    global _last_foreign_run, _last_def14a_run
+    global _last_foreign_run, _last_def14a_run, _last_xbrl_run, _last_news_run
     results = {
         "form4": 0, "13d": 0, "13g": 0, "8k": 0,
         "13f_filings": 0, "13f_holdings": 0,
@@ -105,6 +114,7 @@ async def run_once() -> dict[str, int]:
         "alerts_fired": 0,
         "profiles_rebuilt": 0, "uk_psc": 0,
         "foreign_asx": 0, "foreign_edinet": 0,
+        "xbrl_facts": 0, "news_items": 0,
     }
 
     # Refresh CIK→ticker map (no-op if already current).
@@ -239,6 +249,22 @@ async def run_once() -> dict[str, int]:
             _last_def14a_run = now
         except Exception as e:
             log.exception("def14a extraction failed: %s", e)
+
+    # XBRL fundamentals — pull companyfacts for tracked issuers (free).
+    if now - _last_xbrl_run >= XBRL_INTERVAL_S:
+        try:
+            results["xbrl_facts"] = await xbrl_mod.refresh_for_tracked(limit=XBRL_PER_PASS)
+            _last_xbrl_run = now
+        except Exception as e:
+            log.exception("xbrl refresh failed: %s", e)
+
+    # News — RSS free tier + Benzinga when configured.
+    if now - _last_news_run >= NEWS_INTERVAL_S:
+        try:
+            results["news_items"] = await news_mod.refresh()
+            _last_news_run = now
+        except Exception as e:
+            log.exception("news refresh failed: %s", e)
 
     if any(results.values()):
         events.broadcast("ingest", {"inserted": results, "counts": db.counts()})

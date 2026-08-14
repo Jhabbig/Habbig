@@ -36,7 +36,11 @@ import ingest
 import options_flow_ws
 import signals as signals_mod
 import skill as skill_mod
+import market_data as market_data_mod
+import news as news_mod
+import screener as screener_mod
 import uk as uk_mod
+import xbrl as xbrl_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("whale")
@@ -117,6 +121,13 @@ def _cached(key: str, builder):
 @app.on_event("startup")
 async def _startup():
     db.init_db()
+    # Terminal-module schemas are module-owned (see BLOOMBERG_PARITY_PLAN.md §4);
+    # run them here so first requests never race table creation.
+    for mod in (xbrl_mod, news_mod, market_data_mod, screener_mod):
+        try:
+            mod.ensure_schema()
+        except Exception as e:
+            log.warning("ensure_schema failed for %s: %s", mod.__name__, e)
     # Warm the CIK→ticker map so the very first request gets enriched data.
     asyncio.create_task(cik_ticker.ensure_loaded())
 
@@ -130,6 +141,11 @@ async def _startup():
     # (DB upserts dedupe by alert_id / print_id).
     if options_flow_ws.is_configured():
         asyncio.create_task(options_flow_ws.run_forever())
+
+    # Real-time quote streaming (Polygon WS). No-op without POLYGON_API_KEY
+    # + MARKET_DATA_WS_TICKERS.
+    if market_data_mod.is_realtime_configured():
+        asyncio.create_task(market_data_mod.run_ws_forever())
 
     # First-run auto bulk backfill — fires only if the DB is empty AND
     # AUTO_BULK_BACKFILL is on. Defaults to the last 4 quarters so the
@@ -716,6 +732,85 @@ async def api_skill_detail(
             horizon_days=horizon_days, recent_limit=recent_limit,
         ),
     )
+
+
+# ─── Fundamentals (SEC XBRL) ────────────────────────────────────────
+
+@app.get("/api/fundamentals")
+async def api_fundamentals(ticker: str = Query(..., min_length=1, max_length=10)):
+    t = ticker.upper().strip()
+    return _cached(f"fund:{t}", lambda: xbrl_mod.snapshot(t) or {"ticker": t, "error": "no data"})
+
+
+@app.post("/api/admin/xbrl-refresh")
+async def api_admin_xbrl_refresh(limit: int = Query(10, ge=1, le=100)):
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    n = await xbrl_mod.refresh_for_tracked(limit=limit)
+    _cache.clear()
+    return {"facts_upserted": n}
+
+
+# ─── News ───────────────────────────────────────────────────────────
+
+@app.get("/api/news")
+async def api_news(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(100, ge=1, le=500),
+    ticker: str | None = Query(None, max_length=10),
+):
+    t = ticker.upper().strip() if ticker else None
+    key = f"news:{days}:{limit}:{t or 'all'}"
+    return _cached(key, lambda: news_mod.recent(days=days, limit=limit, ticker=t))
+
+
+@app.post("/api/admin/news-refresh")
+async def api_admin_news_refresh():
+    if not _DEV_MODE:
+        return JSONResponse({"error": "DEV_MODE only"}, status_code=403)
+    n = await news_mod.refresh()
+    _cache.clear()
+    return {"new_items": n}
+
+
+# ─── Quotes (market-data abstraction) ───────────────────────────────
+
+@app.get("/api/quote")
+async def api_quote(ticker: str = Query(..., min_length=1, max_length=10)):
+    q = await market_data_mod.get_quote(ticker.upper().strip())
+    return q or {"ticker": ticker.upper().strip(), "error": "no quote"}
+
+
+@app.get("/api/quotes")
+async def api_quotes(tickers: str = Query(..., min_length=1, max_length=200)):
+    ts = [t.strip().upper() for t in tickers.split(",") if t.strip()][:50]
+    return await market_data_mod.get_quotes(ts)
+
+
+# ─── Screener ───────────────────────────────────────────────────────
+
+@app.get("/api/screener/fields")
+async def api_screener_fields():
+    return screener_mod.FIELDS
+
+
+@app.post("/api/screener")
+async def api_screener(body: dict, format: str | None = Query(None, pattern="^csv$")):
+    """Run a screen. Body: {conditions: [{field, op, value}], sort, desc, limit, window_days}."""
+    try:
+        rows = screener_mod.run_screen(
+            conditions=body.get("conditions") or [],
+            sort=body.get("sort") or "synthesis_score",
+            desc=bool(body.get("desc", True)),
+            limit=int(body.get("limit") or 50),
+            window_days=int(body.get("window_days") or 90),
+        )
+    except (ValueError, RuntimeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if format == "csv":
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(screener_mod.to_csv(rows), media_type="text/csv")
+    return rows
 
 
 # ─── Backtest ───────────────────────────────────────────────────────

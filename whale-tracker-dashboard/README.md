@@ -62,7 +62,11 @@ docker compose up --build whales
 | `prices.py` | Stooq daily-close fetcher with local SQLite cache. Concurrency-capped, normalises tickers to `<ticker>.us`. Co-fetches SPY as the benchmark. |
 | `bayesian.py` | Beta(α,β) posterior + Wilson-score 95% confidence interval. Hand-rolled to avoid pulling scipy. |
 | `skill.py` | Outcome labeler + skill leaderboards. For each insider buy/sell, activist filing, and congressional trade older than `SKILL_HORIZON_DAYS`, compares ticker forward return to SPY → win/loss. Aggregates per filer into a posterior. |
-| `backtest.py` | First-crossing backtest of the synthesis score. For each ticker, finds the earliest date its synthesis crosses a threshold, buys at the next close, holds N days, computes alpha vs SPY. Emits per-trade rows, summary stats (win rate, mean / total / annualised alpha, Sharpe), and a daily equity curve for plotting. |
+| `backtest.py` | First-crossing backtest of the synthesis score with portfolio constraints (max concurrent positions, stop-loss, position sizing). Emits per-trade rows with exit reasons, summary stats, and a daily equity curve. |
+| `xbrl.py` | SEC XBRL companyfacts ingest (free). Extracts revenue / net income / EPS / balance-sheet tags into `fundamental_fact`; computes TTM snapshots with margins, ROE, P/E, P/B, market cap, YoY growth. Module-owned schema via `ensure_schema()`. |
+| `news.py` | News ingestion: free RSS feeds (stdlib XML parsing, no deps) + Benzinga wire adapter (activates on `BENZINGA_API_KEY`). Ticker-tags headlines via exchange patterns like `(NASDAQ: XYZ)`. |
+| `market_data.py` | Quote provider abstraction: Stooq (free, delayed) → Polygon (real-time REST + WebSocket) on `POLYGON_API_KEY`. In-memory cache; WS streaming broadcasts over the SSE bus. |
+| `screener.py` | Cross-signal screening engine: AND-composed conditions over fundamentals (via `xbrl.snapshot`) and signals (via `signals.ticker_synthesis`), CSV export. The only screener anywhere that can filter on Bayesian filer skill next to P/E. |
 | `signals.py` | Computes ranked feeds over the persisted DB: insider clusters (now annotated with each buyer's skill posterior), recent buys, activist stakes, M&A events, fund list / fund holdings / position changes, ticker holders, congress trades, ticker synthesis (now incorporates fund + congress signals), hot leaderboard. |
 | `db.py` | SQLite schema + helpers. Tables: `insider_txn`, `activist_stake`, `ma_event`, `fund_filing`, `fund_holding`, `congress_trade`, `price_daily`, `filer_outcome`, `ingest_state`. WAL mode. |
 
@@ -100,7 +104,11 @@ docker compose up --build whales
 | `GET /api/options-by-ticker?ticker=<X>&days=` | Options flow for one ticker. |
 | `GET /api/dark-pool?days=&min_premium=&limit=` | Dark pool prints (paid feed). |
 | `GET /api/dark-pool-by-ticker?ticker=<X>&days=` | Dark pool prints for one ticker. |
-| `GET /api/backtest?threshold=&hold_days=&start_date=&end_date=&window_days=` | First-crossing backtest of the synthesis score. Returns `{trades, summary, equity_curve}` with per-trade alpha vs SPY, win rate, mean/median/total/annualised alpha, Sharpe, best/worst trade, and a daily equity curve. |
+| `GET /api/backtest?threshold=&hold_days=&start_date=&end_date=&window_days=&max_concurrent=&stop_loss_pct=` | First-crossing backtest of the synthesis score with optional portfolio constraints. Returns `{trades, summary, equity_curve}`. |
+| `GET /api/fundamentals?ticker=` | SEC XBRL fundamentals snapshot: revenue/net-income TTM, margins, ROE, P/E, P/B, market cap, YoY growth. Free data (companyfacts). |
+| `GET /api/news?days=&limit=&ticker=` | News feed — free RSS tier + Benzinga wire when `BENZINGA_API_KEY` is set. Ticker-tagged via exchange patterns in headlines. |
+| `GET /api/quote?ticker=` / `GET /api/quotes?tickers=a,b` | Quotes via the market-data abstraction: Stooq (free, delayed) or Polygon (real-time, `POLYGON_API_KEY`). |
+| `POST /api/screener` (`?format=csv` optional) | Cross-signal screen: conditions over fundamentals (pe, pb, roe, revenue_growth_yoy, …) AND signals (synthesis_score, insider_buy_count, …). `GET /api/screener/fields` lists legal fields. |
 | `POST /api/admin/llm-extract?target=<activist\|ma\|both>&limit=` | Run a local-LLM extraction pass over pending 13D/G and/or 8-K filings. DEV_MODE only. |
 | `POST /api/admin/resolve-cusips?limit=` | Resolve unresolved 13F CUSIPs via OpenFIGI; backfills `fund_holding.issuer_ticker`. DEV_MODE only. |
 | `GET /api/skill-leaderboard?filer_type=<insider\|activist\|congress>&min_n=5&horizon_days=30&limit=50` | Bayesian skill leaderboard — posterior mean + 95% Wilson CI per filer, ranked high-confidence first. |

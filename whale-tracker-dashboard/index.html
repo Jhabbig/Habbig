@@ -153,6 +153,8 @@
   <button data-tab="watchlist">Watchlist</button>
   <button data-tab="uk">UK</button>
   <button data-tab="foreign">ASX / JPX</button>
+  <button data-tab="news">News</button>
+  <button data-tab="screener">Screener</button>
   <button data-tab="synthesis">Ticker Synthesis</button>
   <button data-tab="leaderboard">Whale Leaderboard</button>
 </nav>
@@ -492,6 +494,39 @@
     </div>
   </section>
 
+  <!-- ── News ─────────────────────────────────────────────────── -->
+  <section id="tab-news" hidden>
+    <div class="controls">
+      <label>Window (days) <input type="number" id="nw-days" value="7" min="1" max="90"></label>
+      <label>Ticker filter <input type="text" id="nw-ticker" placeholder="(all)"></label>
+      <label>Limit <input type="number" id="nw-limit" value="100" min="1" max="500"></label>
+      <button id="nw-go">Refresh</button>
+      <span class="live">Free RSS tier. Set <code>BENZINGA_API_KEY</code> for the sub-minute wire.</span>
+    </div>
+    <table id="nw-table">
+      <thead><tr>
+        <th>Published</th><th>Source</th><th>Headline</th><th>Tickers</th>
+      </tr></thead>
+      <tbody><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ── Screener ─────────────────────────────────────────────── -->
+  <section id="tab-screener" hidden>
+    <div class="controls" style="align-items:flex-start">
+      <label style="flex:1;min-width:340px">Conditions (JSON)
+        <textarea id="sc-conditions" rows="3" style="width:100%;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);font-size:12px;padding:6px">[{"field":"synthesis_score","op":"gte","value":3}]</textarea>
+      </label>
+      <label>Sort <input type="text" id="sc-sort" value="synthesis_score" style="width:140px"></label>
+      <label>Limit <input type="number" id="sc-limit" value="50" min="1" max="200"></label>
+      <button id="sc-go">Run</button>
+      <button id="sc-csv">CSV</button>
+      <button id="sc-fields">Fields</button>
+    </div>
+    <div id="sc-fields-out" class="live" style="font-size:11px;margin-bottom:8px"></div>
+    <div id="sc-out"><div class="empty">Run a screen. Fields span fundamentals (pe, pb, roe, revenue_growth_yoy…) and signals (synthesis_score, insider_buy_count…).</div></div>
+  </section>
+
   <!-- ── Ticker Synthesis ─────────────────────────────────────── -->
   <section id="tab-synthesis" hidden>
     <div class="controls">
@@ -499,6 +534,7 @@
       <label>Window (days) <input type="number" id="sy-days" value="90" min="1" max="365"></label>
       <button id="sy-go">Look up</button>
     </div>
+    <div id="sy-fund"></div>
     <div id="sy-out"></div>
   </section>
 
@@ -1278,13 +1314,106 @@ async function loadForeign() {
   }
 }
 
+// ── News ──
+async function loadNews() {
+  const days = +$("#nw-days").value || 7;
+  const tick = $("#nw-ticker").value.trim().toUpperCase();
+  const limit = +$("#nw-limit").value || 100;
+  const tb = $("#nw-table tbody");
+  tb.innerHTML = `<tr><td colspan="4" class="empty">Loading…</td></tr>`;
+  try {
+    const q = new URLSearchParams({days, limit});
+    if (tick) q.set("ticker", tick);
+    const rows = await fetchJSON(`/api/news?${q.toString()}`);
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="4" class="empty">No news yet — ingest polls every 15 min, or hit admin news-refresh.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = rows.map(n => `
+      <tr>
+        <td>${esc(fmtDate(n.published_at))}</td>
+        <td><span class="pill">${esc(n.source||"rss")}</span></td>
+        <td>${n.url?`<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.title||"")}</a>`:esc(n.title||"")}</td>
+        <td>${(n.tickers||"").split(",").filter(Boolean).map(t=>`<span class="ticker">${esc(t)}</span>`).join(" ")}</td>
+      </tr>`).join("");
+  } catch(e) {
+    tb.innerHTML = `<tr><td colspan="4" class="err">${esc(e.message)}</td></tr>`;
+  }
+}
+
+// ── Screener ──
+async function runScreen(asCsv) {
+  const out = $("#sc-out");
+  let conditions;
+  try { conditions = JSON.parse($("#sc-conditions").value || "[]"); }
+  catch { out.innerHTML = `<div class="err">Conditions JSON invalid.</div>`; return; }
+  const body = {
+    conditions,
+    sort: $("#sc-sort").value.trim() || "synthesis_score",
+    desc: true,
+    limit: +$("#sc-limit").value || 50,
+  };
+  out.innerHTML = `<div class="empty">Running…</div>`;
+  try {
+    const url = asCsv ? "/api/screener?format=csv" : "/api/screener";
+    const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if (!r.ok) {
+      const err = await r.json().catch(()=>({error:r.status}));
+      out.innerHTML = `<div class="err">${esc(err.error||("HTTP "+r.status))}</div>`;
+      return;
+    }
+    if (asCsv) {
+      const text = await r.text();
+      out.innerHTML = `<pre style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;font-size:11px">${esc(text)}</pre>`;
+      return;
+    }
+    const rows = await r.json();
+    if (!rows.length) { out.innerHTML = `<div class="empty">No matches.</div>`; return; }
+    const cols = ["ticker","synthesis_score","insider_buy_count","fund_holder_count","pe","pb","roe","revenue_growth_yoy","market_cap"];
+    out.innerHTML = `
+      <table>
+        <thead><tr>${cols.map(c=>`<th class="${c==='ticker'?'':'num'}">${esc(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map(r=>`
+          <tr>${cols.map(c=>{
+            const v = r[c];
+            if (c==="ticker") return `<td><span class="ticker">${esc(v||"")}</span></td>`;
+            if (v==null) return `<td class="num">—</td>`;
+            if (c==="market_cap") return `<td class="num">${fmtUSD(v)}</td>`;
+            if (c==="roe"||c==="revenue_growth_yoy") return `<td class="num ${v>=0?"pos":"neg"}">${(v*100).toFixed(1)}%</td>`;
+            return `<td class="num">${Number(v).toFixed(2)}</td>`;
+          }).join("")}</tr>`).join("")}</tbody>
+      </table>`;
+  } catch(e) {
+    out.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
 // ── Ticker Synthesis ──
 async function loadSynthesis() {
   const t = $("#sy-ticker").value.trim().toUpperCase();
   const days = +$("#sy-days").value || 90;
   const out  = $("#sy-out");
-  if (!t) { out.innerHTML = `<div class="empty">Enter a ticker and click Look up.</div>`; return; }
+  const fund = $("#sy-fund");
+  if (!t) { out.innerHTML = `<div class="empty">Enter a ticker and click Look up.</div>`; fund.innerHTML = ""; return; }
   out.innerHTML = `<div class="empty">Loading…</div>`;
+  fund.innerHTML = "";
+  // Fundamentals card row — independent fetch so a missing snapshot never blocks signals.
+  fetchJSON(`/api/fundamentals?ticker=${encodeURIComponent(t)}`).then(f => {
+    if (!f || f.error) return;
+    const pct = v => v==null ? "—" : `<span class="${v>=0?"pos":"neg"}">${(v*100).toFixed(1)}%</span>`;
+    const num = v => v==null ? "—" : Number(v).toFixed(2);
+    fund.innerHTML = `
+      <div class="syn-grid" style="margin-bottom:8px">
+        <div class="syn-card"><h4>Mkt Cap</h4><div class="v">${f.market_cap?fmtUSD(f.market_cap):"—"}</div></div>
+        <div class="syn-card"><h4>P/E</h4><div class="v">${num(f.pe)}</div></div>
+        <div class="syn-card"><h4>P/B</h4><div class="v">${num(f.pb)}</div></div>
+        <div class="syn-card"><h4>Revenue TTM</h4><div class="v">${f.revenue_ttm?fmtUSD(f.revenue_ttm):"—"}</div></div>
+        <div class="syn-card"><h4>Net Margin</h4><div class="v">${pct(f.net_margin)}</div></div>
+        <div class="syn-card"><h4>ROE</h4><div class="v">${pct(f.roe)}</div></div>
+        <div class="syn-card"><h4>Rev Growth</h4><div class="v">${pct(f.revenue_growth_yoy)}</div></div>
+        <div class="syn-card"><h4>As of</h4><div class="v" style="font-size:14px">${esc(f.as_of||"—")}</div></div>
+      </div>`;
+  }).catch(()=>{});
   try {
     const r = await fetchJSON(`/api/synthesis?ticker=${encodeURIComponent(t)}&days=${days}`);
     out.innerHTML = `
@@ -1429,6 +1558,8 @@ const loaders = {
   watchlist:   loadWatchlists,
   uk:          loadUK,
   foreign:     loadForeign,
+  news:        loadNews,
+  screener:    () => { /* manual run */ },
   synthesis:   loadSynthesis,
   leaderboard: loadLeaderboard,
 };
@@ -1478,6 +1609,16 @@ $("#fx-asx-add").addEventListener("click", async () => {
 $("#fx-refresh").addEventListener("click", async () => {
   await fetch("/api/admin/foreign-refresh?target=both", {method:"POST"});
   loadForeign();
+});
+$("#nw-go").addEventListener("click", loadNews);
+$("#sc-go").addEventListener("click", () => runScreen(false));
+$("#sc-csv").addEventListener("click", () => runScreen(true));
+$("#sc-fields").addEventListener("click", async () => {
+  const el = $("#sc-fields-out");
+  try {
+    const f = await fetchJSON("/api/screener/fields");
+    el.textContent = Object.keys(f).sort().join(" · ");
+  } catch(e) { el.textContent = e.message; }
 });
 $("#sy-go").addEventListener("click", loadSynthesis);
 $("#lb-go").addEventListener("click", loadLeaderboard);
