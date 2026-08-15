@@ -216,6 +216,30 @@ def test_bootstrap_auc_ci_still_accepts_its_original_signature():
     assert np.isfinite(lo_g) and np.isfinite(hi_g)
 
 
+def test_lift_efficiency_is_zero_for_random_on_every_base_rate():
+    """The whole point of the column: a coin flip must score 0 whether the event
+    is common or rare. lift/max_lift would give 85% and 10% respectively."""
+    rng = np.random.default_rng(50)
+    # Tolerance is loose for the common event on purpose: when the base rate is
+    # high the ceiling sits just above 1, so dividing by (ceiling - 1) magnifies
+    # sampling noise. That is a real property of the estimator - efficiency is
+    # noisiest exactly where the headroom is smallest - not a bug.
+    for base, tol in ((0.09, 0.06), (0.30, 0.10), (0.85, 0.25)):
+        n = 20000
+        y = (rng.random(n) < base).astype(float)
+        s = rng.random(n)                                  # no information
+        assert lift_efficiency(y, s, 0.10) == pytest.approx(0.0, abs=tol)
+        # the naive ratio would be near 1/ceiling, i.e. wildly base-rate dependent
+        naive = lift_at_k(y, s, 0.10) / max_lift_at_k(y, 0.10)
+        assert naive == pytest.approx(1.0 / max_lift_at_k(y, 0.10), abs=0.06)
+
+
+def test_lift_efficiency_is_one_for_a_perfect_ranker():
+    y = np.r_[np.ones(10), np.zeros(90)]
+    s = np.r_[np.linspace(1.0, 0.9, 10), np.linspace(0.5, 0.0, 90)]
+    assert lift_efficiency(y, s, 0.10) == pytest.approx(1.0)
+
+
 def test_lift_ceiling_makes_events_comparable():
     """Raw lift is capped at min(1/base_rate, 1/frac), so a COMMON event can look
     weak at its mathematical maximum while a rare event looks strong far below
@@ -225,7 +249,7 @@ def test_lift_ceiling_makes_events_comparable():
     s_perfect = np.r_[np.linspace(1.0, 0.6, 80), np.linspace(0.4, 0.0, 20)]
     assert abs(max_lift_at_k(y_common, 0.10) - 1.25) < 1e-9
     assert abs(lift_at_k(y_common, s_perfect, 0.10) - 1.25) < 1e-9
-    assert abs(lift_efficiency(y_common, s_perfect, 0.10) - 1.0) < 1e-9   # PERFECT
+    assert lift_efficiency(y_common, s_perfect, 0.10) == pytest.approx(1.0)  # PERFECT
 
     # rare event: 10% base rate -> ceiling 10x; a 2.5x lift is only 25% of it
     y_rare = np.r_[np.ones(10), np.zeros(90)]

@@ -21,7 +21,7 @@ _README = os.path.join(_ROOT, "README.md")
 _MANIFEST = os.path.join(_ROOT, "trained", "pipeline_manifest.json")
 
 # the table introduced by this header line
-_HEADER = "| event | BSS (95% CI) | verdict | MCC | KS | lift@10% | of its max |"
+_HEADER = "| event | BSS (95% CI) | verdict | MCC | KS | lift@10% (95% CI) | of its max |"
 
 
 def _manifest():
@@ -91,5 +91,10 @@ def test_readme_effectiveness_row_matches_manifest(event):
     assert _num(mcc_cell) == pytest.approx(info["tuned_mcc"], abs=0.005)
     assert _num(ks_cell) == pytest.approx(info["ks"], abs=0.005)
     assert _num(lift_cell) == pytest.approx(info["lift_at_10pct"], abs=0.05)
+    # a lift whose interval covers 1.0 must be flagged as such in prose
+    if not info["lift_beats_random"]:
+        assert "covers 1.0" in lift_cell, (
+            f"{event}: lift CI {info['lift_at_10pct_ci']} covers 1.0 but the README "
+            "does not say so")
     assert _num(ofmax_cell) / 100.0 == pytest.approx(
         info["lift_efficiency_at_10pct"], abs=0.01)

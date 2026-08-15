@@ -69,25 +69,40 @@ def main():
         d = np.load(os.path.join(TRAINED_DIR, info["readout_file"]), allow_pickle=True)
         raw = predict_proba_logistic(d["w"], d["mu"], d["sd"], x_now)
         prob = apply_calibrator(calibrator_from_arrays(d), raw)   # calibrated probabilities
-        thr = info.get("tuned_threshold", 0.5)
-        auc = info.get("auc", float("nan"))
-        sig = info.get("auc_significant", False)
+        # The manifest writes JSON null (not NaN, which is not legal JSON) for any
+        # metric that could not be computed - a degenerate low-data run. Coerce
+        # back to NaN so the formatting below behaves, instead of raising.
+        def _num(key, default=float("nan")):
+            v = info.get(key, default)
+            return float("nan") if v is None else v
+
+        thr = _num("tuned_threshold", 0.5)
+        if not np.isfinite(thr):
+            thr = 0.5                       # no usable operating point -> neutral
+        auc = _num("auc")
+        sig = bool(info.get("auc_significant", False))
         # Two DIFFERENT questions, and AUC only answers the first. Ranking skill
         # (AUC) says the ordering of assets is meaningful; Brier skill says the
         # PROBABILITY itself beats climatology and is safe to size a bet on. An
         # event can pass the first and fail the second - vol_transition does.
-        bss = info.get("brier_skill_score", float("nan"))
-        bss_sig = info.get("brier_skill_significant", False)
-        rank = (f"{_G}rank AUC {auc:.2f}{_X}" if sig
-                else f"{_R}rank AUC {auc:.2f} (not significant){_X}")
-        if bss_sig:
-            prob_trust = f"{_G}P usable (BSS {bss:+.2f}){_X}"
-        elif np.isfinite(bss) and bss > 0:
-            prob_trust = f"{_Y}P WITHIN NOISE (BSS {bss:+.2f}){_X}"
+        bss = _num("brier_skill_score")
+        bss_sig = bool(info.get("brier_skill_significant", False))
+        auc_txt = f"{auc:.2f}" if np.isfinite(auc) else "n/a"
+        rank = (f"{_G}rank AUC {auc_txt}{_X}" if sig
+                else f"{_R}rank AUC {auc_txt} (not significant){_X}")
+        bss_txt = f"{bss:+.2f}" if np.isfinite(bss) else "n/a"
+        if not np.isfinite(bss):
+            prob_trust = f"{_R}P UNSCORED (no Brier skill estimate){_X}"
+        elif bss_sig:
+            prob_trust = f"{_G}P usable (BSS {bss_txt}){_X}"
+        elif bss > 0:
+            prob_trust = f"{_Y}P WITHIN NOISE (BSS {bss_txt}){_X}"
         else:
-            prob_trust = f"{_R}P NO better than base rate (BSS {bss:+.2f}){_X}"
+            prob_trust = f"{_R}P NO better than base rate (BSS {bss_txt}){_X}"
         n_flag = int(np.sum(prob >= thr))
-        print(f"  {_B}{name}{_X}  base rate {info['base_rate']:.0%}, threshold {thr:.2f}"
+        base = _num("base_rate")
+        base_txt = f"{base:.0%}" if np.isfinite(base) else "n/a"
+        print(f"  {_B}{name}{_X}  base rate {base_txt}, threshold {thr:.2f}"
               f"  ->  {rank} | {prob_trust}")
         order = np.argsort(prob)[::-1]
         top = order[:5]

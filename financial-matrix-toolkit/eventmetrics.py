@@ -513,17 +513,25 @@ def max_lift_at_k(y_true, frac: float = 0.10) -> float:
 
 
 def lift_efficiency(y_true, scores, frac: float = 0.10) -> float:
-    """lift_at_k as a fraction of its achievable ceiling: 1.0 = the top-k alert
-    list is the best one that could possibly exist for this target, 0 = random.
-    THIS is the number to compare across events with different base rates."""
+    """How much of the ACHIEVABLE alert-list quality was captured, as a skill
+    score anchored at both ends:
+
+        (lift - 1) / (max_lift - 1)      0 = random flagging, 1 = the best list
+                                         that could exist for this target
+
+    Note it is NOT lift/max_lift. That form looks normalised but its floor is the
+    base rate, not 0: a random ranker scores lift 1.0, which is 85% of drawdown's
+    1.17x ceiling but only 10% of big_move's 10x ceiling. Dividing would report a
+    coin flip as "85% of maximum" on a common event and "10%" on a rare one - the
+    very cross-event incomparability the ceiling was introduced to remove.
+    Subtracting the floor first is what makes the number mean the same thing on
+    every event."""
     y, s = _clean(y_true, scores)
     ceil = max_lift_at_k(y, frac)
-    if not np.isfinite(ceil) or ceil <= 0:
-        return float("nan")
     lift = lift_at_k(y, s, frac)
-    if not np.isfinite(lift):
-        return float("nan")
-    return float(lift / ceil)
+    if not np.isfinite(ceil) or not np.isfinite(lift) or ceil <= 1.0:
+        return float("nan")          # ceiling == 1 -> no headroom to measure
+    return float((lift - 1.0) / (ceil - 1.0))
 
 
 def prob_metrics(y_true, proba, threshold: float = 0.5) -> dict:

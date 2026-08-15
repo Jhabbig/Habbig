@@ -47,6 +47,8 @@ from eventmetrics import (
     bootstrap_metric_ci,
     brier,
     brier_skill_score,
+    ks_statistic,
+    lift_at_k,
     lift_efficiency,
     log_loss,
     max_lift_at_k,
@@ -282,6 +284,14 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     # Raw lift has a base-rate ceiling, so also record how much of it was captured.
     m["max_lift_at_10"] = max_lift_at_k(y, 0.10)
     m["lift_efficiency_10"] = lift_efficiency(y, p_raw, 0.10)
+    # The alert-list numbers carry a README conclusion, and they are estimated
+    # from the top decile alone (~200 rows here), so they need an interval as
+    # much as BSS does. Same cluster bootstrap over origins.
+    m["lift_lo"], m["lift_hi"] = bootstrap_metric_ci(
+        y, p_raw, lambda yy, ss: lift_at_k(yy, ss, 0.10), groups=grp)
+    m["lift_eff_lo"], m["lift_eff_hi"] = bootstrap_metric_ci(
+        y, p_raw, lambda yy, ss: lift_efficiency(yy, ss, 0.10), groups=grp)
+    m["ks_lo"], m["ks_hi"] = bootstrap_metric_ci(y, p_raw, ks_statistic, groups=grp)
     # which calibrator the per-origin fits actually selected (constant unless "auto")
     m["calibrator_used"] = (max(set(chosen), key=chosen.count) if chosen else calibration)
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
@@ -420,10 +430,14 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "spiegelhalter_p": round(hyb["spieg_p"], 4),
             "calibration_consistent": bool(np.isfinite(hyb["spieg_p"]) and hyb["spieg_p"] >= 0.05),
             "ks": round(hyb["ks"], 4),
+            "ks_ci": [round(hyb["ks_lo"], 4), round(hyb["ks_hi"], 4)],
             "precision_at_10pct": round(hyb["precision_at_10"], 4),
             "lift_at_10pct": round(hyb["lift_at_10"], 4),
+            "lift_at_10pct_ci": [round(hyb["lift_lo"], 4), round(hyb["lift_hi"], 4)],
             "max_lift_at_10pct": round(hyb["max_lift_at_10"], 4),
             "lift_efficiency_at_10pct": round(hyb["lift_efficiency_10"], 4),
+            "lift_efficiency_at_10pct_ci": [round(hyb["lift_eff_lo"], 4), round(hyb["lift_eff_hi"], 4)],
+            "lift_beats_random": bool(np.isfinite(hyb["lift_lo"]) and hyb["lift_lo"] > 1.0),
             "n_origins": hyb["n_origins"],
             "track_auc": round(track["auc"], 4) if track else None,
             "raw_auc": round(raw["auc"], 4) if raw else None,
@@ -474,9 +488,12 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             verdict = f"{_Y}positive but WITHIN NOISE{_X}"
         else:
             verdict = f"{_Y}negative but WITHIN NOISE{_X}"
+        # a lift whose CI covers 1.0 is not distinguishable from random flagging
+        lift_mark = "" if info["lift_beats_random"] else "?"
         print(f"  {name:<15s}{bss:>7.2f}{f'[{lo:+.2f},{hi:+.2f}]':>17s}"
               f"{info['tuned_mcc']:>6.2f}{info['ks']:>6.2f}"
-              f"{info['lift_at_10pct']:>9.1f}x{info['lift_efficiency_at_10pct']:>7.0%}"
+              f"{info['lift_at_10pct']:>8.1f}x{lift_mark:<1s}"
+              f"{info['lift_efficiency_at_10pct']:>7.0%}"
               f"   {verdict}")
     print("  BSS = Brier skill vs climatology (0 = knowing only the base rate, 1 = perfect).")
     print("  Its 95% CI is a CLUSTER bootstrap over forecast origins - the 15 assets scored at")
@@ -484,7 +501,10 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     print("  A positive BSS whose CI still includes 0 is NOT skill; that is the yellow state.")
     print("  MCC at the tuned threshold (0 = chance under any imbalance). lift@10% = how many")
     print("  times more events the top-decile alert list catches than random flagging - but")
-    print("  lift has a base-rate ceiling, so 'of max' is what compares across events.")
+    print("  lift has a base-rate ceiling, so 'of max' is what compares across events - it is")
+    print("  (lift-1)/(ceiling-1), so 0 = random and 100% = the best list this target allows.")
+    print("  A '?' after lift means its 95% CI still covers 1.0: not distinguishable from")
+    print("  flagging days at random, however large the point estimate looks.")
     fw = [n for n in names
           if manifest["events"].get(n, {}).get("brier_skill_significant_familywise")]
     per = [n for n in names if manifest["events"].get(n, {}).get("brier_skill_significant")]

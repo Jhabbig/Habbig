@@ -80,10 +80,23 @@
       "spiegelhalter_p": 0.3536,
       "calibration_consistent": true,
       "ks": 0.749,
+      "ks_ci": [
+        0.7198,
+        0.7785
+      ],
       "precision_at_10pct": 0.9952,
       "lift_at_10pct": 1.9508,
+      "lift_at_10pct_ci": [
+        1.8046,
+        2.1178
+      ],
       "max_lift_at_10pct": 1.9602,
-      "lift_efficiency_at_10pct": 0.9952,
+      "lift_efficiency_at_10pct": 0.9901,
+      "lift_efficiency_at_10pct_ci": [
+        0.9689,
+        1.0
+      ],
+      "lift_beats_random": true,
       "n_origins": 138,
       "track_auc": 0.8676,
       "raw_auc": 0.936,
@@ -167,10 +180,23 @@
       "spiegelhalter_p": 0.3433,
       "calibration_consistent": true,
       "ks": 0.1659,
+      "ks_ci": [
+        0.1225,
+        0.235
+      ],
       "precision_at_10pct": 0.1449,
       "lift_at_10pct": 1.1194,
+      "lift_at_10pct_ci": [
+        0.7219,
+        1.5626
+      ],
       "max_lift_at_10pct": 7.7239,
-      "lift_efficiency_at_10pct": 0.1449,
+      "lift_efficiency_at_10pct": 0.0178,
+      "lift_efficiency_at_10pct_ci": [
+        -0.0417,
+        0.0854
+      ],
+      "lift_beats_random": false,
       "n_origins": 138,
       "track_auc": 0.5463,
       "raw_auc": 0.5831,
@@ -254,10 +280,23 @@
       "spiegelhalter_p": 0.7436,
       "calibration_consistent": true,
       "ks": 0.2814,
+      "ks_ci": [
+        0.2266,
+        0.3629
+      ],
       "precision_at_10pct": 0.2271,
       "lift_at_10pct": 2.4103,
+      "lift_at_10pct_ci": [
+        1.8087,
+        2.9609
+      ],
       "max_lift_at_10pct": 10.0,
-      "lift_efficiency_at_10pct": 0.241,
+      "lift_efficiency_at_10pct": 0.1567,
+      "lift_efficiency_at_10pct_ci": [
+        0.0909,
+        0.2236
+      ],
+      "lift_beats_random": true,
       "n_origins": 138,
       "track_auc": 0.5989,
       "raw_auc": 0.6953,
@@ -341,10 +380,23 @@
       "spiegelhalter_p": 0.1373,
       "calibration_consistent": true,
       "ks": 0.9174,
+      "ks_ci": [
+        0.8949,
+        0.9438
+      ],
       "precision_at_10pct": 1.0,
       "lift_at_10pct": 1.1715,
+      "lift_at_10pct_ci": [
+        1.1364,
+        1.2148
+      ],
       "max_lift_at_10pct": 1.1715,
       "lift_efficiency_at_10pct": 1.0,
+      "lift_efficiency_at_10pct_ci": [
+        1.0,
+        1.0
+      ],
+      "lift_beats_random": true,
       "n_origins": 138,
       "track_auc": 0.9846,
       "raw_auc": 0.9877,
@@ -428,10 +480,23 @@
       "spiegelhalter_p": 0.9988,
       "calibration_consistent": true,
       "ks": 0.7469,
+      "ks_ci": [
+        0.7176,
+        0.7827
+      ],
       "precision_at_10pct": 0.9903,
       "lift_at_10pct": 1.9487,
+      "lift_at_10pct_ci": [
+        1.8157,
+        2.0927
+      ],
       "max_lift_at_10pct": 1.9677,
-      "lift_efficiency_at_10pct": 0.9903,
+      "lift_efficiency_at_10pct": 0.9804,
+      "lift_efficiency_at_10pct_ci": [
+        0.9426,
+        1.0
+      ],
+      "lift_beats_random": true,
       "n_origins": 138,
       "track_auc": 0.813,
       "raw_auc": 0.9477,

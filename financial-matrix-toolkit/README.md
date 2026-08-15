@@ -159,13 +159,13 @@ estimate** — in the spirit of the after-cost edge test in `harness.py`. A BSS 
 −0.01 whose interval covers 0 is not established harm any more than +0.02 is
 established skill; both read as noise. Findings on the cached panel:
 
-| event | BSS (95% CI) | verdict | MCC | KS | lift@10% | of its max |
-|-------|--------------|---------|-----|-----|----------|------------|
-| drawdown | **+0.76** [+0.71,+0.80] | significant | 0.85 | 0.92 | 1.2× | **100%** |
-| trend_up | **+0.61** [+0.57,+0.66] | significant | 0.73 | 0.75 | 1.9× | 99% |
-| vol_state | **+0.60** [+0.57,+0.64] | significant | 0.74 | 0.75 | 2.0× | **100%** |
-| big_move | +0.02 [−0.02,+0.06] | *within noise* | 0.14 | 0.28 | 2.4× | 24% |
-| vol_transition | −0.01 [−0.04,+0.01] | *within noise* | 0.09 | 0.17 | 1.1× | 14% |
+| event | BSS (95% CI) | verdict | MCC | KS | lift@10% (95% CI) | of its max |
+|-------|--------------|---------|-----|-----|-------------------|------------|
+| drawdown | **+0.76** [+0.71,+0.80] | significant | 0.85 | 0.92 | 1.2× [1.1,1.2] | 100% |
+| trend_up | **+0.61** [+0.57,+0.66] | significant | 0.73 | 0.75 | 1.9× [1.8,2.1] | 98% |
+| vol_state | **+0.60** [+0.57,+0.64] | significant | 0.74 | 0.75 | 2.0× [1.8,2.1] | 99% |
+| big_move | **+0.02** [-0.02,+0.06] | *within noise* | 0.14 | 0.28 | 2.4× [1.8,3.0] | 16% |
+| vol_transition | **-0.01** [-0.04,+0.01] | *within noise* | 0.09 | 0.17 | 1.1× [0.7,1.6] *(covers 1.0)* | 2% |
 
 These sharpen the honest story in four ways.
 
@@ -185,10 +185,20 @@ These sharpen the honest story in four ways.
 
 3. **Raw lift is not comparable across events.** Lift has a ceiling of
    min(1/base rate, 1/k) — at `drawdown`'s 85.4% base rate the *best possible*
-   lift@10% is 1.17×. So `drawdown`'s unimpressive-looking 1.2× is a **perfect** alert list,
-   while `big_move`'s headline 2.4× is only **24%** of what its 9% base rate
-   allows. The naive reading inverts the truth; the "of its max" column is what
-   compares across events.
+   lift@10% is 1.17×. So `drawdown`'s unimpressive-looking 1.2× is a **perfect**
+   alert list, while `big_move`'s headline 2.4× captures only **16%** of what its
+   9% base rate allows. The naive reading inverts the truth. The "of its max"
+   column is `(lift − 1)/(ceiling − 1)`, a skill score anchored at both ends:
+   **0 = random flagging, 100% = the best list this target permits.** Dividing by
+   the ceiling instead would look normalised but its floor is the base rate — a
+   coin flip would score 85% on `drawdown` and 10% on `big_move`, reintroducing
+   the incomparability the ceiling was meant to remove.
+
+   Lift gets an interval too, because it is estimated from the top decile alone
+   (~200 rows). That matters: `vol_transition`'s 1.1× has a CI of [0.7, 1.6],
+   which **covers 1.0** — its alert list is not distinguishable from flagging
+   days at random, and its efficiency is 2%, i.e. essentially none of the
+   available headroom. The point estimate alone would have read as a mild edge.
 
 4. **A small ECE is not proof of honesty — and the test found a real bug.** With
    the old fixed Platt calibrator, `drawdown` and `trend_up` showed statistically
