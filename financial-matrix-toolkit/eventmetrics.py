@@ -158,7 +158,12 @@ def bootstrap_metric_ci(y_true, scores, stat, groups=None, n_boot: int = 500,
         def draw():                                   # i.i.d. rows
             return rng.integers(0, n, n)
     else:
-        g = np.asarray(groups)[mask]                  # drop the same rows as y/s
+        g_all = np.asarray(groups)
+        if g_all.shape[0] != mask.shape[0]:
+            raise ValueError(
+                f"groups has length {g_all.shape[0]} but there are {mask.shape[0]} "
+                "observations; it must carry one id per row of y_true/scores")
+        g = g_all[mask]                               # drop the same rows as y/s
         members = [np.where(g == u)[0] for u in np.unique(g)]
         n_g = len(members)
         if n_g < 2:

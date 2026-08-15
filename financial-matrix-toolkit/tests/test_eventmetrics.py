@@ -244,3 +244,26 @@ def test_effectiveness_metrics_handle_degenerate_input():
     assert np.isnan(brier_skill_score(one_class, p))           # no climatology variance
     assert mcc(one_class, np.zeros(50)) == 0.0
     assert np.isnan(lift_at_k(np.zeros(50), p))                # no positives -> no lift
+
+
+def test_bootstrap_metric_ci_rejects_mismatched_groups():
+    import pytest
+    rng = np.random.default_rng(24)
+    y = (rng.random(200) < 0.4).astype(float)
+    s = rng.random(200)
+    with pytest.raises(ValueError, match="one id per row"):
+        bootstrap_metric_ci(y, s, roc_auc, groups=np.arange(50), n_boot=10)
+
+
+def test_bootstrap_metric_ci_masks_groups_alongside_nans():
+    """NaN rows are dropped from y/s; the group ids must be dropped in lockstep
+    or every cluster would be misaligned."""
+    rng = np.random.default_rng(25)
+    n = 400
+    y = (rng.random(n) < 0.4).astype(float)
+    s = rng.random(n) + y * 0.6
+    groups = np.repeat(np.arange(n // 10), 10)
+    s[::7] = np.nan                                    # punch holes
+    lo, hi = bootstrap_metric_ci(y, s, roc_auc, groups=groups, n_boot=200)
+    assert np.isfinite(lo) and np.isfinite(hi) and lo < hi
+    assert lo <= roc_auc(y, s) <= hi
