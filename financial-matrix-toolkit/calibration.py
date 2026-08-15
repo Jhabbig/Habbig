@@ -84,6 +84,40 @@ def fit_calibrator(scores, y, method="platt"):
     return platt_fit(scores, y)
 
 
+def select_calibrator(scores, y, methods=("platt", "isotonic"), holdout=0.3, min_n=80):
+    """Pick the calibrator that is most honest on HELD-OUT TRAINING data.
+
+    Which recalibrator wins is event-dependent: Platt is a stable 2-parameter
+    sigmoid that works on little data, while isotonic is far more flexible but
+    overfits when positives are rare. On this panel isotonic makes ``trend_up``
+    statistically well-calibrated (Spiegelhalter p 0.006 -> 0.81) yet makes the
+    rare ``vol_transition`` worse, so a single global default is wrong.
+
+    The choice is made on a CHRONOLOGICAL inner split of the training rows and
+    never on the evaluation set - picking the calibrator by its test-set score
+    would be exactly the look-ahead this toolkit exists to refuse. Returns the
+    chosen method name; the caller refits it on all training rows.
+    """
+    s = np.asarray(scores, dtype=float)
+    yv = np.asarray(y, dtype=float)
+    n = len(yv)
+    cut = int(n * (1.0 - holdout))
+    # too little data, or a degenerate split -> fall back to the stable option
+    if n < min_n or cut < 20 or (n - cut) < 20:
+        return methods[0]
+    s_fit, y_fit = s[:cut], yv[:cut]
+    s_val, y_val = s[cut:], yv[cut:]
+    if len(np.unique(y_fit)) < 2 or len(np.unique(y_val)) < 2:
+        return methods[0]
+    best, best_ece = methods[0], np.inf
+    for method in methods:
+        cal = fit_calibrator(s_fit, y_fit, method=method)
+        ece = expected_calibration_error(y_val, apply_calibrator(cal, s_val))
+        if np.isfinite(ece) and ece < best_ece:
+            best, best_ece = method, ece
+    return best
+
+
 def apply_calibrator(m, scores):
     if m.get("kind") == "identity":
         return np.asarray(scores, dtype=float)

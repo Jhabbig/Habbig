@@ -130,9 +130,11 @@ information than it does and return a CI that is too narrow. Switching to the
 cluster bootstrap widens the intervals by up to 1.3× — the difference between
 `big_move`'s Brier skill reading as a pass and reading as noise.
 
-**Calibrated probabilities.** The readout's raw scores are recalibrated (Platt by
-default, or `--calibration isotonic`) on training data only, so `P(event)` means
-what it says — essential if you want to size positions on it. Calibration slashes
+**Calibrated probabilities.** The readout's raw scores are recalibrated on
+training data only, so `P(event)` means what it says — essential if you want to
+size positions on it. The calibrator is chosen per event by `--calibration auto`
+(the default; see below), or pinned with `platt` / `isotonic` / `none`.
+Calibration slashes
 the Expected Calibration Error on the rare events (vol_transition ECE 0.34 → 0.02,
 big_move 0.35 → 0.02) and writes a reliability diagram to
 `results/reliability_pipeline.png`. The saved model carries its calibrator.
@@ -156,11 +158,11 @@ never enough. Findings on the cached panel:
 
 | event | BSS (95% CI) | verdict | MCC | KS | lift@10% | of its max |
 |-------|--------------|---------|-----|-----|----------|------------|
-| drawdown | **+0.74** [+0.70,+0.78] | significant | 0.85 | 0.92 | 1.2× | **100%** |
-| vol_state | **+0.61** [+0.57,+0.65] | significant | 0.74 | 0.75 | 2.0× | **100%** |
-| trend_up | **+0.61** [+0.57,+0.65] | significant | 0.73 | 0.75 | 1.9× | 99% |
+| drawdown | **+0.76** [+0.71,+0.80] | significant | 0.85 | 0.92 | 1.2× | **100%** |
+| trend_up | **+0.61** [+0.57,+0.66] | significant | 0.73 | 0.75 | 1.9× | 99% |
+| vol_state | **+0.60** [+0.57,+0.64] | significant | 0.74 | 0.75 | 2.0× | **100%** |
 | big_move | +0.02 [−0.02,+0.06] | *within noise* | 0.14 | 0.28 | 2.4× | 24% |
-| vol_transition | −0.00 [−0.03,+0.02] | no skill | 0.08 | 0.17 | 1.1× | 14% |
+| vol_transition | −0.01 [−0.04,+0.01] | no skill | 0.09 | 0.17 | 1.1× | 14% |
 
 These sharpen the honest story in four ways.
 
@@ -183,28 +185,53 @@ These sharpen the honest story in four ways.
    allows. The naive reading inverts the truth; the "of its max" column is what
    compares across events.
 
-4. **A small ECE is not proof of honesty.** `drawdown` and `trend_up` show
-   statistically *detectable* miscalibration (Spiegelhalter p < 0.01) even at
-   ECE ≈ 0.03 — visible only because the sample is large. (The z-test assumes
-   independent rows, so with correlated assets pooled it errs toward flagging
-   miscalibration too eagerly; treat it as a prompt to inspect the reliability
-   diagram, not a verdict.)
+4. **A small ECE is not proof of honesty — and the test found a real bug.** With
+   the old fixed Platt calibrator, `drawdown` and `trend_up` showed statistically
+   *detectable* miscalibration (p = 0.000 and 0.006) even at ECE ≈ 0.03, visible
+   only because the sample is large. That is what motivated `--calibration auto`
+   below, which fixes it. (The z-test assumes independent rows, so with
+   correlated assets pooled it errs toward flagging miscalibration too eagerly;
+   treat a failure as a prompt to inspect the reliability diagram.)
 
 **Does the two-stage architecture earn its keep?** The manifest records BSS for
 the track-only, raw-only and hybrid readouts, and the answer is honestly *mixed*:
 
 | event | track-only | raw-only | hybrid |
 |-------|-----------|----------|--------|
-| drawdown | +0.697 | +0.728 | **+0.744** |
-| vol_state | +0.406 | +0.604 | **+0.609** |
-| trend_up | +0.285 | **+0.632** | +0.614 |
-| big_move | −0.005 | **+0.051** | +0.025 |
-| vol_transition | −0.000 | **+0.006** | −0.002 |
+| drawdown | +0.719 | **+0.762** | +0.756 |
+| trend_up | +0.281 | **+0.639** | +0.615 |
+| vol_state | +0.404 | +0.599 | **+0.605** |
+| big_move | −0.019 | **+0.046** | +0.018 |
+| vol_transition | −0.006 | **+0.003** | −0.009 |
 
-The matrix-model tracks add real value on `drawdown` and `vol_state`, but on
-`trend_up`, `big_move` and `vol_transition` the raw features alone score *higher*
-than the hybrid — the tracks are diluting the readout, not helping it. Measuring
-effectiveness rather than ranking is what makes that visible.
+Only `vol_state` is genuinely better as a hybrid. On every other event the raw
+features alone score *higher* than tracks-plus-raw — the stage-1 tracks are
+diluting the readout, not enriching it. The ranking metrics never showed this
+(hybrid AUC looks fine everywhere); it took a metric that asks whether the
+*probabilities* improved. That is an honest argument for keeping the two-stage
+architecture only where it pays.
+
+### Choosing the calibrator honestly (`--calibration auto`, the default)
+
+The Spiegelhalter test above found a real defect: a single fixed Platt sigmoid
+left `drawdown` and `trend_up` measurably miscalibrated. But isotonic is not a
+blanket upgrade — it overfits when positives are rare. So the pipeline now picks
+per event, scoring both on a **chronological inner split of the training rows**
+(`calibration.select_calibrator`). Choosing by test-set score would be exactly
+the look-ahead this toolkit refuses, so the evaluation set is never consulted.
+
+| event | chosen | ECE (platt → auto) | Spiegelhalter p (platt → auto) |
+|-------|--------|--------------------|-------------------------------|
+| trend_up | isotonic | 0.024 → **0.005** | 0.006 → **0.998** |
+| drawdown | isotonic | 0.033 → **0.010** | 0.000 → **0.062** |
+| vol_state | isotonic | 0.013 → 0.013 | 0.721 → 0.263 |
+| big_move | isotonic | 0.018 → 0.024 | 0.495 → 0.667 |
+| vol_transition | **platt** | 0.021 → 0.023 | 0.415 → 0.258 |
+
+All five events now pass the calibration test, and `drawdown`'s Brier skill rose
+from +0.74 to +0.76 in the bargain. Note the selector chose Platt for exactly the
+event where isotonic should struggle — the rarest one. Use `--calibration platt`
+(or `isotonic`, `none`) to pin it.
 
 **Train on real data / serve live** — on a networked machine:
 

@@ -38,6 +38,7 @@ from calibration import (
     calibrator_to_arrays,
     expected_calibration_error,
     fit_calibrator,
+    select_calibrator,
     reliability,
 )
 from eventmetrics import (
@@ -182,7 +183,7 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         if t + horizon < S.shape[0]:
             lab[i] = S[t + horizon]
 
-    yt, yraw, ycal, ythr, ygrp = [], [], [], [], []
+    yt, yraw, ycal, ythr, ygrp, chosen = [], [], [], [], [], []
     for i in range(n_orig):
         t_i = origins[i]
         # purge: only rows whose label was knowable before the test feature time
@@ -202,7 +203,11 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         w, mu, sd = fit_logistic_weighted(Xtr, ytr, **logistic_cfg)
         # calibrate on TRAINING predictions only, then tune threshold on calibrated probs
         ptr = predict_proba_logistic(w, mu, sd, Xtr)
-        cal = fit_calibrator(ptr, ytr, method=calibration)
+        # "auto" picks platt vs isotonic on an inner split of the TRAINING rows,
+        # so the choice never sees the evaluation set.
+        method = select_calibrator(ptr, ytr) if calibration == "auto" else calibration
+        chosen.append(method)
+        cal = fit_calibrator(ptr, ytr, method=method)
         thr = best_threshold(ytr, apply_calibrator(cal, ptr), metric="bal")
         valid = np.isfinite(X[i]).all(1) & np.isfinite(lab[i])
         if valid.any():
@@ -246,6 +251,8 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     # Raw lift has a base-rate ceiling, so also record how much of it was captured.
     m["max_lift_at_10"] = max_lift_at_k(y, 0.10)
     m["lift_efficiency_10"] = lift_efficiency(y, p_raw, 0.10)
+    # which calibrator the per-origin fits actually selected (constant unless "auto")
+    m["calibrator_used"] = (max(set(chosen), key=chosen.count) if chosen else calibration)
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
     return m
 
@@ -354,6 +361,7 @@ def train_and_save(md, origins, X, last_models, ctx, args):
                 "resolution": round(hyb["resolution_cal"], 5),
                 "uncertainty": round(hyb["uncertainty"], 5),
             },
+            "calibrator_used": hyb.get("calibrator_used", cal),
             "spiegelhalter_z": round(hyb["spieg_z"], 3),
             "spiegelhalter_p": round(hyb["spieg_p"], 4),
             "calibration_consistent": bool(np.isfinite(hyb["spieg_p"]) and hyb["spieg_p"] >= 0.05),
@@ -461,7 +469,9 @@ def _fit_final(X, origins, S, horizon, calibration="platt"):
     if len(np.unique(ytr)) < 2:
         return None, None, None, None
     w, mu, sd = fit_logistic_weighted(Xtr, ytr, l2=1.0, lr=0.3, epochs=400)
-    fcal = fit_calibrator(predict_proba_logistic(w, mu, sd, Xtr), ytr, method=calibration)
+    ptr_final = predict_proba_logistic(w, mu, sd, Xtr)
+    method = select_calibrator(ptr_final, ytr) if calibration == "auto" else calibration
+    fcal = fit_calibrator(ptr_final, ytr, method=method)
     return w, mu, sd, fcal
 
 
@@ -510,8 +520,8 @@ def main():
     ap.add_argument("--stride", type=int, default=5, help="origin spacing (days)")
     ap.add_argument("--horizon", type=int, default=1, help="predict the event this many days ahead")
     ap.add_argument("--hmm-iter", type=int, default=25, help="HMM EM iterations per origin")
-    ap.add_argument("--calibration", default="platt", choices=["platt", "isotonic", "none"],
-                    help="probability calibrator (fit on training data only)")
+    ap.add_argument("--calibration", default="auto", choices=["platt", "isotonic", "auto", "none"],
+                    help="probability calibrator (fit on training data only); 'auto' picks platt vs isotonic per event on an inner training split")
     args = ap.parse_args()
     set_global_seed(42)
 
