@@ -167,10 +167,11 @@ never enough. Findings on the cached panel:
 These sharpen the honest story in four ways.
 
 1. **Ranking skill does not imply usable probabilities.** `vol_transition`'s AUC
-   is significantly above 0.5, yet its Brier skill is **zero** — resolution 0.001
-   < reliability 0.002, so the calibrated probabilities carry no information
-   beyond the base rate. Ranking skill that thin does not survive conversion into
-   something you could size a position on.
+   is significantly above 0.5, yet its Brier skill is **negative** — the Murphy
+   decomposition shows resolution 0.0013 *below* reliability 0.0024, so what
+   little the forecasts discriminate is more than eaten by what they get wrong.
+   Ranking skill that thin does not survive conversion into a probability you
+   could size a position on.
 
 2. **`big_move`'s apparent edge is noise.** Its BSS is +0.02, but the cluster
    bootstrap CI is [−0.02, +0.06] — it straddles zero, so the model is *not*
