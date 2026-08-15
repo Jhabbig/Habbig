@@ -107,20 +107,28 @@ cached panel:
 
 | event | base rate | AUC (95% CI) | PR-AUC | tuned recall |
 |-------|-----------|--------------|--------|--------------|
-| drawdown | 90% | **0.99** [0.99,0.99] | 1.00 | 98% |
-| vol_state | 51% | **0.94** [0.93,0.95] | 0.94 | 87% |
-| trend_up | 47% | **0.94** [0.93,0.95] | 0.93 | 85% |
-| big_move | 10% | **0.68** [0.64,0.71] | 0.20 | 63% |
-| vol_transition | 13% | **0.60** [0.57,0.64] | 0.17 | 53% |
+| drawdown | 85% | **0.99** [0.99,0.99] | 1.00 | 97% |
+| vol_state | 51% | **0.94** [0.93,0.95] | 0.94 | 88% |
+| trend_up | 51% | **0.94** [0.93,0.95] | 0.94 | 82% |
+| big_move | 9% | **0.68** [0.63,0.72] | 0.20 | 66% |
+| vol_transition | 13% | **0.60** [0.56,0.64] | 0.16 | 53% |
 
 Every event's AUC CI clears 0.5, so all have *real* ranking skill — but honestly
 graded: persistent events are near-perfect, tail/transition events have modest
 (but significant) AUC ~0.6–0.7. The manifest also records track-only vs raw-only
 AUC and each event's **top feature drivers** (e.g. `drawdown` driven by drawdown
-depth; `vol_transition` partly by the HMM crisis-probability track — the two-stage
-idea earning its keep). Verified leak-free by a 4-agent adversarial audit (which
-caught and fixed a stride-dependent purge off-by-one) and a "noise features must
-score 0.5" regression test.
+depth; `vol_transition` partly by the HMM crisis-probability track). Verified
+leak-free by a 4-agent adversarial audit (which caught and fixed a
+stride-dependent purge off-by-one) and a "noise features must score 0.5"
+regression test.
+
+Those CIs are **cluster bootstraps over forecast origins**, not over rows. The
+readout pools 15 assets at each of ~138 origins into one vector, but those assets
+share a market factor (mean pairwise correlation 0.30 on the cached panel), so
+resampling rows i.i.d. would pretend the sample carries ~15× more independent
+information than it does and return a CI that is too narrow. Switching to the
+cluster bootstrap widens the intervals by up to 1.3× — the difference between
+`big_move`'s Brier skill reading as a pass and reading as noise.
 
 **Calibrated probabilities.** The readout's raw scores are recalibrated (Platt by
 default, or `--calibration isotonic`) on training data only, so `P(event)` means
@@ -129,37 +137,74 @@ the Expected Calibration Error on the rare events (vol_transition ECE 0.34 → 0
 big_move 0.35 → 0.02) and writes a reliability diagram to
 `results/reliability_pipeline.png`. The saved model carries its calibrator.
 
-**Effectiveness metrics — is the model *useful*, not just *ranked well*?** Beyond
-AUC/AP/Brier, every event is scored with metrics anchored to a no-skill null
-(`eventmetrics.py`): the **Brier skill score** (1 − Brier/climatology; > 0 = the
-calibrated probabilities beat always-predicting-the-base-rate), the **Murphy
-decomposition** (Brier = reliability − resolution + uncertainty: honesty cost vs
-information content vs target difficulty), **Spiegelhalter's z-test** (is the
-miscalibration statistically detectable, or just binning noise?), **MCC** at the
-tuned threshold (uses all four confusion cells, so base-rate guessing scores
-exactly 0 under any imbalance), **KS** separation, and **precision@10% /
-lift@10%** (of the top-decile loudest alerts, how many are real — and how many
-times better than flagging days at random?). Findings on the cached panel:
+**Effectiveness metrics — is the model *useful*, not just *ranked well*?** A high
+AUC only says the model ORDERS days correctly. It does not say the probabilities
+are worth acting on. So beyond AUC/AP/Brier, every event is scored with metrics
+anchored to a no-skill null (`eventmetrics.py`): the **Brier skill score** (1 −
+Brier/climatology; > 0 = the calibrated probabilities beat
+always-predicting-the-base-rate) **with a cluster-bootstrap 95% CI**, the
+**Murphy decomposition** (Brier = reliability − resolution + uncertainty: honesty
+cost vs information content vs target difficulty), **Spiegelhalter's z-test** (is
+the miscalibration statistically detectable, or just binning noise?), **MCC** at
+the tuned threshold (uses all four confusion cells, so base-rate guessing scores
+exactly 0 under any imbalance), **KS** separation, and **lift@10%** (how many
+times more real events the top-decile alert list catches than random flagging).
 
-| event | BSS | MCC | KS | lift@10% | calibration consistent? |
-|-------|-----|-----|-----|----------|-------------------------|
-| drawdown | **+0.74** | 0.85 | 0.92 | 1.2× | no (z-test p < 0.01) |
-| vol_state | **+0.61** | 0.74 | 0.75 | 2.0× | yes (p = 0.72) |
-| trend_up | **+0.61** | 0.73 | 0.75 | 1.9× | no (p < 0.01) |
-| big_move | +0.02 | 0.14 | 0.28 | **2.4×** | yes (p = 0.50) |
-| vol_transition | **−0.00** | 0.08 | 0.17 | 1.1× | yes (p = 0.42) |
+Every verdict is three-state, exactly as the after-cost edge test in `harness.py`
+is: *no skill* / *positive but within noise* / *significant*. A point estimate is
+never enough. Findings on the cached panel:
 
-These sharpen the honest story in three ways. (1) `vol_transition`'s AUC is
-significantly above 0.5, yet its Brier skill is **zero** — resolution 0.001 <
-reliability 0.002, so the calibrated probabilities carry no usable information
-beyond the base rate: ranking skill that thin does not survive conversion into
-probabilities you could size a position on. (2) `big_move` is the mirror image:
-BSS barely positive but a **2.4× lift** — used as a top-decile alert list it
-catches 2.4× more real tail moves than random flagging, which is exactly how a
-rare-event model with AUC 0.68 should be consumed. (3) The strong events show
-statistically *detectable* miscalibration (Spiegelhalter p < 0.01) even at
-ECE ≈ 0.03 — visible only because the sample is large. A small ECE is not proof
-of honesty; only the significance test is.
+| event | BSS (95% CI) | verdict | MCC | KS | lift@10% | of its max |
+|-------|--------------|---------|-----|-----|----------|------------|
+| drawdown | **+0.74** [+0.70,+0.78] | significant | 0.85 | 0.92 | 1.2× | **100%** |
+| vol_state | **+0.61** [+0.57,+0.65] | significant | 0.74 | 0.75 | 2.0× | **100%** |
+| trend_up | **+0.61** [+0.57,+0.65] | significant | 0.73 | 0.75 | 1.9× | 99% |
+| big_move | +0.02 [−0.02,+0.06] | *within noise* | 0.14 | 0.28 | 2.4× | 24% |
+| vol_transition | −0.00 [−0.03,+0.02] | no skill | 0.08 | 0.17 | 1.1× | 14% |
+
+These sharpen the honest story in four ways.
+
+1. **Ranking skill does not imply usable probabilities.** `vol_transition`'s AUC
+   is significantly above 0.5, yet its Brier skill is **zero** — resolution 0.001
+   < reliability 0.002, so the calibrated probabilities carry no information
+   beyond the base rate. Ranking skill that thin does not survive conversion into
+   something you could size a position on.
+
+2. **`big_move`'s apparent edge is noise.** Its BSS is +0.02, but the cluster
+   bootstrap CI is [−0.02, +0.06] — it straddles zero, so the model is *not*
+   distinguishable from climatology. The old i.i.d. bootstrap gave [−0.01, +0.06]
+   and made this look like a pass. This is the toolkit's own thesis applied to
+   its own new metric.
+
+3. **Raw lift is not comparable across events.** Lift has a ceiling of
+   min(1/base rate, 1/k) — at an 85% base rate the *best possible* lift@10% is
+   1.18×. So `drawdown`'s unimpressive-looking 1.2× is a **perfect** alert list,
+   while `big_move`'s headline 2.4× is only **24%** of what its 9% base rate
+   allows. The naive reading inverts the truth; the "of its max" column is what
+   compares across events.
+
+4. **A small ECE is not proof of honesty.** `drawdown` and `trend_up` show
+   statistically *detectable* miscalibration (Spiegelhalter p < 0.01) even at
+   ECE ≈ 0.03 — visible only because the sample is large. (The z-test assumes
+   independent rows, so with correlated assets pooled it errs toward flagging
+   miscalibration too eagerly; treat it as a prompt to inspect the reliability
+   diagram, not a verdict.)
+
+**Does the two-stage architecture earn its keep?** The manifest records BSS for
+the track-only, raw-only and hybrid readouts, and the answer is honestly *mixed*:
+
+| event | track-only | raw-only | hybrid |
+|-------|-----------|----------|--------|
+| drawdown | +0.697 | +0.728 | **+0.744** |
+| vol_state | +0.406 | +0.604 | **+0.609** |
+| trend_up | +0.285 | **+0.632** | +0.614 |
+| big_move | −0.005 | **+0.051** | +0.025 |
+| vol_transition | −0.000 | **+0.006** | −0.002 |
+
+The matrix-model tracks add real value on `drawdown` and `vol_state`, but on
+`trend_up`, `big_move` and `vol_transition` the raw features alone score *higher*
+than the hybrid — the tracks are diluting the readout, not helping it. Measuring
+effectiveness rather than ranking is what makes that visible.
 
 **Train on real data / serve live** — on a networked machine:
 

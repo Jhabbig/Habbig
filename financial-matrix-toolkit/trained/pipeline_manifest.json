@@ -39,8 +39,8 @@
       "base_rate": 0.5101,
       "auc": 0.9365,
       "auc_ci": [
-        0.9257,
-        0.9464
+        0.9254,
+        0.9475
       ],
       "auc_significant": true,
       "average_precision": 0.9432,
@@ -55,6 +55,11 @@
       "tuned_threshold": 0.3764,
       "tuned_mcc": 0.741,
       "brier_skill_score": 0.6089,
+      "brier_skill_ci": [
+        0.5689,
+        0.6465
+      ],
+      "brier_skill_significant": true,
       "log_loss_calibrated": 0.319,
       "murphy": {
         "reliability": 0.00037,
@@ -67,8 +72,13 @@
       "ks": 0.749,
       "precision_at_10pct": 0.9952,
       "lift_at_10pct": 1.9508,
+      "max_lift_at_10pct": 1.9602,
+      "lift_efficiency_at_10pct": 0.9952,
+      "n_origins": 138,
       "track_auc": 0.8676,
       "raw_auc": 0.936,
+      "track_brier_skill_score": 0.4059,
+      "raw_brier_skill_score": 0.6044,
       "top_features": [
         [
           "vol_rel_raw",
@@ -97,8 +107,8 @@
       "base_rate": 0.1295,
       "auc": 0.6003,
       "auc_ci": [
-        0.5661,
-        0.6374
+        0.563,
+        0.6357
       ],
       "auc_significant": true,
       "average_precision": 0.1638,
@@ -113,6 +123,11 @@
       "tuned_threshold": 0.1355,
       "tuned_mcc": 0.0819,
       "brier_skill_score": -0.0023,
+      "brier_skill_ci": [
+        -0.0265,
+        0.0168
+      ],
+      "brier_skill_significant": false,
       "log_loss_calibrated": 0.3832,
       "murphy": {
         "reliability": 0.00174,
@@ -125,8 +140,13 @@
       "ks": 0.1659,
       "precision_at_10pct": 0.1449,
       "lift_at_10pct": 1.1194,
+      "max_lift_at_10pct": 7.7239,
+      "lift_efficiency_at_10pct": 0.1449,
+      "n_origins": 138,
       "track_auc": 0.5463,
       "raw_auc": 0.5831,
+      "track_brier_skill_score": -0.0003,
+      "raw_brier_skill_score": 0.0063,
       "top_features": [
         [
           "absr",
@@ -155,8 +175,8 @@
       "base_rate": 0.0942,
       "auc": 0.6777,
       "auc_ci": [
-        0.6412,
-        0.7153
+        0.6331,
+        0.7205
       ],
       "auc_significant": true,
       "average_precision": 0.197,
@@ -171,6 +191,11 @@
       "tuned_threshold": 0.0899,
       "tuned_mcc": 0.1389,
       "brier_skill_score": 0.0245,
+      "brier_skill_ci": [
+        -0.0191,
+        0.0635
+      ],
+      "brier_skill_significant": false,
       "log_loss_calibrated": 0.2982,
       "murphy": {
         "reliability": 0.00178,
@@ -183,8 +208,13 @@
       "ks": 0.2814,
       "precision_at_10pct": 0.2271,
       "lift_at_10pct": 2.4103,
+      "max_lift_at_10pct": 10.0,
+      "lift_efficiency_at_10pct": 0.241,
+      "n_origins": 138,
       "track_auc": 0.5989,
       "raw_auc": 0.6953,
+      "track_brier_skill_score": -0.0053,
+      "raw_brier_skill_score": 0.0512,
       "top_features": [
         [
           "logvol",
@@ -214,7 +244,7 @@
       "auc": 0.9895,
       "auc_ci": [
         0.9859,
-        0.9925
+        0.9928
       ],
       "auc_significant": true,
       "average_precision": 0.9982,
@@ -229,6 +259,11 @@
       "tuned_threshold": 0.5249,
       "tuned_mcc": 0.8514,
       "brier_skill_score": 0.7444,
+      "brier_skill_ci": [
+        0.7025,
+        0.7806
+      ],
+      "brier_skill_significant": true,
       "log_loss_calibrated": 0.11,
       "murphy": {
         "reliability": 0.00337,
@@ -241,8 +276,13 @@
       "ks": 0.9174,
       "precision_at_10pct": 1.0,
       "lift_at_10pct": 1.1715,
+      "max_lift_at_10pct": 1.1715,
+      "lift_efficiency_at_10pct": 1.0,
+      "n_origins": 138,
       "track_auc": 0.9846,
       "raw_auc": 0.9877,
+      "track_brier_skill_score": 0.6969,
+      "raw_brier_skill_score": 0.7277,
       "top_features": [
         [
           "drawdown_raw",
@@ -271,8 +311,8 @@
       "base_rate": 0.5082,
       "auc": 0.9413,
       "auc_ci": [
-        0.9304,
-        0.951
+        0.9276,
+        0.9536
       ],
       "auc_significant": true,
       "average_precision": 0.9421,
@@ -287,6 +327,11 @@
       "tuned_threshold": 0.5914,
       "tuned_mcc": 0.7326,
       "brier_skill_score": 0.6139,
+      "brier_skill_ci": [
+        0.5723,
+        0.654
+      ],
+      "brier_skill_significant": true,
       "log_loss_calibrated": 0.3151,
       "murphy": {
         "reliability": 0.00125,
@@ -299,8 +344,13 @@
       "ks": 0.7469,
       "precision_at_10pct": 0.9903,
       "lift_at_10pct": 1.9487,
+      "max_lift_at_10pct": 1.9677,
+      "lift_efficiency_at_10pct": 0.9903,
+      "n_origins": 138,
       "track_auc": 0.813,
       "raw_auc": 0.9477,
+      "track_brier_skill_score": 0.2852,
+      "raw_brier_skill_score": 0.6325,
       "top_features": [
         [
           "ma_ratio",

@@ -33,6 +33,14 @@ so a number is only ever "good" relative to what a no-skill forecaster scores:
                            the model flags loudest, how many were real?"
     lift_at_k            - precision_at_k / base rate; 1.0 = no better than random
                            flagging, the honest multiplier for rare-event alerts
+    lift_efficiency      - lift_at_k / its base-rate-dependent CEILING; the only
+                           form of lift that is comparable ACROSS events
+
+None of these is trusted as a point estimate. ``bootstrap_metric_ci`` puts a
+confidence interval on any of them, and - because the readout pools correlated
+assets at each origin - it takes a ``groups`` argument so whole origins are
+resampled together. An i.i.d. row bootstrap over pooled assets returns a CI that
+is too narrow and would let noise pass as skill.
 """
 
 from __future__ import annotations
@@ -121,29 +129,67 @@ def best_threshold(y_true, scores, metric: str = "bal", n_grid: int = 101) -> fl
     return best_t
 
 
-def bootstrap_auc_ci(y_true, scores, n_boot: int = 500, seed: int = 42, alpha: float = 0.05):
-    """Percentile bootstrap CI for AUC. Returns (lo, hi). If lo > 0.5 the ranking
-    skill is statistically distinguishable from chance."""
-    y = np.asarray(y_true, dtype=float)
-    s = np.asarray(scores, dtype=float)
-    mask = np.isfinite(y) & np.isfinite(s)
-    y, s = y[mask], s[mask]
+def bootstrap_metric_ci(y_true, scores, stat, groups=None, n_boot: int = 500,
+                        seed: int = 42, alpha: float = 0.05):
+    """Percentile bootstrap CI for ANY metric ``stat(y, s) -> float``.
+
+    ``groups`` turns this into a CLUSTER bootstrap: pass one group id per
+    observation (here, the forecast origin) and whole groups are resampled
+    together, so observations that share a group keep their dependence.
+
+    This matters. The event readout pools every asset at every origin into one
+    flat vector, but those assets share a market factor (mean pairwise
+    correlation ~0.30 on the cached panel), so rows from the same origin are far
+    from independent. Resampling rows i.i.d. pretends the sample carries more
+    information than it does and returns a CI that is too NARROW - the classic
+    way to crown noise as skill, which is exactly what this toolkit exists to
+    refuse. Always pass ``groups`` when the rows are pooled across assets.
+    """
+    y_all = np.asarray(y_true, dtype=float)
+    s_all = np.asarray(scores, dtype=float)
+    mask = np.isfinite(y_all) & np.isfinite(s_all)
+    y, s = y_all[mask], s_all[mask]
     n = len(y)
     if n < 20 or len(np.unique(y)) < 2:
         return (float("nan"), float("nan"))
     rng = np.random.default_rng(seed)
-    aucs = []
+
+    if groups is None:
+        def draw():                                   # i.i.d. rows
+            return rng.integers(0, n, n)
+    else:
+        g = np.asarray(groups)[mask]                  # drop the same rows as y/s
+        members = [np.where(g == u)[0] for u in np.unique(g)]
+        n_g = len(members)
+        if n_g < 2:
+            return (float("nan"), float("nan"))
+
+        def draw():                                   # whole clusters together
+            return np.concatenate([members[j] for j in rng.integers(0, n_g, n_g)])
+
+    vals = []
     for _ in range(n_boot):
-        idx = rng.integers(0, n, n)
+        idx = draw()
         yi, si = y[idx], s[idx]
         if len(np.unique(yi)) < 2:
             continue
-        aucs.append(roc_auc(yi, si))
-    if not aucs:
+        v = stat(yi, si)
+        if np.isfinite(v):
+            vals.append(v)
+    if not vals:
         return (float("nan"), float("nan"))
-    lo = float(np.percentile(aucs, 100 * alpha / 2))
-    hi = float(np.percentile(aucs, 100 * (1 - alpha / 2)))
+    lo = float(np.percentile(vals, 100 * alpha / 2))
+    hi = float(np.percentile(vals, 100 * (1 - alpha / 2)))
     return (lo, hi)
+
+
+def bootstrap_auc_ci(y_true, scores, n_boot: int = 500, seed: int = 42,
+                     alpha: float = 0.05, groups=None):
+    """Percentile bootstrap CI for AUC. Returns (lo, hi). If lo > 0.5 the ranking
+    skill is statistically distinguishable from chance. Pass ``groups`` (one id
+    per forecast origin) for a cluster bootstrap - see ``bootstrap_metric_ci``."""
+    return bootstrap_metric_ci(y_true, scores, roc_auc, groups=groups,
+                               n_boot=n_boot, seed=seed, alpha=alpha)
 
 
 def _clean(y_true, scores):
@@ -282,12 +328,52 @@ def lift_at_k(y_true, scores, frac: float = 0.10) -> float:
     """precision_at_k divided by the base rate. 1.0 = flagging days at random;
     3.0 = an alert from this model is 3x more likely to be a real event. The
     honest usefulness multiplier for rare events, where even a skilled model's
-    precision LOOKS low because the base rate is low."""
+    precision LOOKS low because the base rate is low.
+
+    WARNING: lift has a base-rate-dependent CEILING (see ``max_lift_at_k``), so
+    raw lift is NOT comparable across events. Use ``lift_efficiency`` for that."""
     y, s = _clean(y_true, scores)
     base = float(np.mean(y)) if len(y) else float("nan")
     if not np.isfinite(base) or base <= 0:
         return float("nan")
     return float(precision_at_k(y, s, frac) / base)
+
+
+def max_lift_at_k(y_true, frac: float = 0.10) -> float:
+    """The largest lift@k any forecaster could achieve on this target.
+
+    A perfect ranker fills the top k slots with positives until it runs out of
+    either slots or positives, so max precision = min(1, n_pos/k) and
+
+        max lift = min(1/base_rate, 1/frac)
+
+    For a common event this ceiling is brutally low: at an 85% base rate the best
+    possible lift@10% is 1.18x. Reading a raw 1.2x as "weak" next to a rare
+    event's 2.4x inverts the truth - the first is perfect, the second is not."""
+    y = np.asarray(y_true, dtype=float)
+    y = y[np.isfinite(y)]
+    if len(y) == 0:
+        return float("nan")
+    base = float(np.mean(y))
+    if base <= 0 or frac <= 0:
+        return float("nan")
+    n = len(y)
+    k = max(1, int(np.ceil(frac * n)))
+    return float(min(1.0, (base * n) / k) / base)
+
+
+def lift_efficiency(y_true, scores, frac: float = 0.10) -> float:
+    """lift_at_k as a fraction of its achievable ceiling: 1.0 = the top-k alert
+    list is the best one that could possibly exist for this target, 0 = random.
+    THIS is the number to compare across events with different base rates."""
+    y, s = _clean(y_true, scores)
+    ceil = max_lift_at_k(y, frac)
+    if not np.isfinite(ceil) or ceil <= 0:
+        return float("nan")
+    lift = lift_at_k(y, s, frac)
+    if not np.isfinite(lift):
+        return float("nan")
+    return float(lift / ceil)
 
 
 def prob_metrics(y_true, proba, threshold: float = 0.5) -> dict:

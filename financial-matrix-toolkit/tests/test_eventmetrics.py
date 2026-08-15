@@ -6,11 +6,14 @@ from eventmetrics import (
     average_precision,
     best_threshold,
     bootstrap_auc_ci,
+    bootstrap_metric_ci,
     brier,
     brier_skill_score,
     ks_statistic,
     lift_at_k,
+    lift_efficiency,
     log_loss,
+    max_lift_at_k,
     mcc,
     murphy_decomposition,
     precision_at_k,
@@ -157,6 +160,81 @@ def test_precision_and_lift_at_k():
     yr = (rng.random(5000) < 0.10).astype(float)
     sr = rng.random(5000)
     assert abs(lift_at_k(yr, sr, frac=0.10) - 1.0) < 0.35
+
+
+def test_cluster_bootstrap_is_wider_than_iid_when_rows_are_correlated():
+    """The pipeline pools 15 correlated assets per origin. Resampling rows i.i.d.
+    pretends they carry independent information and returns too NARROW a CI; the
+    cluster bootstrap must be honest about that."""
+    rng = np.random.default_rng(11)
+    n_grp, per_grp = 120, 15
+    groups, y, s = [], [], []
+    for g in range(n_grp):
+        shock = rng.normal(0, 1.2)                 # shared "market factor"
+        yg = (rng.random(per_grp) < 0.4).astype(float)
+        sg = yg * 0.7 + shock + rng.normal(0, 0.5, per_grp)   # same shock for all
+        groups.append(np.full(per_grp, g)); y.append(yg); s.append(sg)
+    groups = np.concatenate(groups); y = np.concatenate(y); s = np.concatenate(s)
+
+    lo_i, hi_i = bootstrap_metric_ci(y, s, roc_auc, n_boot=400)
+    lo_c, hi_c = bootstrap_metric_ci(y, s, roc_auc, groups=groups, n_boot=400)
+    assert (hi_c - lo_c) > (hi_i - lo_i)           # honest CI is wider
+    assert lo_c < roc_auc(y, s) < hi_c             # and still covers the estimate
+
+
+def test_bootstrap_metric_ci_works_for_any_statistic():
+    rng = np.random.default_rng(12)
+    y = np.r_[np.zeros(300), np.ones(300)]
+    s = np.r_[rng.normal(0, 1, 300), rng.normal(1.5, 1, 300)]
+    lo, hi = bootstrap_metric_ci(y, s, roc_auc, n_boot=300)
+    assert lo > 0.5                                # real skill detected
+
+    # An UNINFORMATIVE BUT CALIBRATED forecast (always the base rate, jittered)
+    # is the climatology null itself, so its BSS interval must include 0.
+    p_flat = np.clip(y.mean() + rng.normal(0, 0.01, 600), 0.01, 0.99)
+    lo_b, hi_b = bootstrap_metric_ci(y, p_flat, brier_skill_score, n_boot=300)
+    assert lo_b < 0 < hi_b
+
+    # Confident RANDOM probabilities are strictly worse than climatology: BSS is
+    # negative with the whole interval below 0. Noise must never look like skill.
+    p_noise = 1 / (1 + np.exp(-rng.normal(0, 1, 600)))
+    lo_n, hi_n = bootstrap_metric_ci(y, p_noise, brier_skill_score, n_boot=300)
+    assert hi_n < 0
+
+
+def test_bootstrap_auc_ci_still_accepts_its_original_signature():
+    rng = np.random.default_rng(13)
+    y = np.r_[np.zeros(200), np.ones(200)]
+    s = np.r_[rng.normal(0, 1, 200), rng.normal(2.0, 1, 200)]
+    lo, hi = bootstrap_auc_ci(y, s, 300)           # positional n_boot, as before
+    assert 0.5 < lo < hi <= 1.0
+    g = np.tile(np.arange(40), 10)
+    lo_g, hi_g = bootstrap_auc_ci(y, s, n_boot=300, groups=g)
+    assert np.isfinite(lo_g) and np.isfinite(hi_g)
+
+
+def test_lift_ceiling_makes_events_comparable():
+    """Raw lift is capped at min(1/base_rate, 1/frac), so a COMMON event can look
+    weak at its mathematical maximum while a rare event looks strong far below
+    its own. lift_efficiency removes the base-rate dependence."""
+    # common event: 80% base rate -> ceiling 1.25x
+    y_common = np.r_[np.ones(80), np.zeros(20)]
+    s_perfect = np.r_[np.linspace(1.0, 0.6, 80), np.linspace(0.4, 0.0, 20)]
+    assert abs(max_lift_at_k(y_common, 0.10) - 1.25) < 1e-9
+    assert abs(lift_at_k(y_common, s_perfect, 0.10) - 1.25) < 1e-9
+    assert abs(lift_efficiency(y_common, s_perfect, 0.10) - 1.0) < 1e-9   # PERFECT
+
+    # rare event: 10% base rate -> ceiling 10x; a 2.5x lift is only 25% of it
+    y_rare = np.r_[np.ones(10), np.zeros(90)]
+    assert abs(max_lift_at_k(y_rare, 0.10) - 10.0) < 1e-9
+    s_partial = np.zeros(100)
+    s_partial[:10] = np.r_[np.ones(3), np.zeros(7)]      # only 3 of 10 ranked top
+    order = np.r_[np.linspace(1.0, 0.9, 3), np.linspace(0.1, 0.0, 7),
+                  np.linspace(0.8, 0.2, 90)]
+    eff = lift_efficiency(y_rare, order, 0.10)
+    assert 0.0 < eff < 1.0
+    # the headline point: raw lift 1.25x (common) BEATS raw lift here in efficiency
+    assert lift_efficiency(y_common, s_perfect, 0.10) > eff
 
 
 def test_effectiveness_metrics_handle_degenerate_input():

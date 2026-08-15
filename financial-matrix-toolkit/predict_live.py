@@ -72,17 +72,34 @@ def main():
         thr = info.get("tuned_threshold", 0.5)
         auc = info.get("auc", float("nan"))
         sig = info.get("auc_significant", False)
-        trust = f"{_G}AUC {auc:.2f} (trustworthy){_X}" if sig else f"{_R}AUC {auc:.2f} (not significant){_X}"
+        # Two DIFFERENT questions, and AUC only answers the first. Ranking skill
+        # (AUC) says the ordering of assets is meaningful; Brier skill says the
+        # PROBABILITY itself beats climatology and is safe to size a bet on. An
+        # event can pass the first and fail the second - vol_transition does.
+        bss = info.get("brier_skill_score", float("nan"))
+        bss_sig = info.get("brier_skill_significant", False)
+        rank = (f"{_G}rank AUC {auc:.2f}{_X}" if sig
+                else f"{_R}rank AUC {auc:.2f} (not significant){_X}")
+        if bss_sig:
+            prob_trust = f"{_G}P usable (BSS {bss:+.2f}){_X}"
+        elif np.isfinite(bss) and bss > 0:
+            prob_trust = f"{_Y}P WITHIN NOISE (BSS {bss:+.2f}){_X}"
+        else:
+            prob_trust = f"{_R}P NO better than base rate (BSS {bss:+.2f}){_X}"
         n_flag = int(np.sum(prob >= thr))
-        print(f"  {_B}{name}{_X}  base rate {info['base_rate']:.0%}, threshold {thr:.2f}  ->  {trust}")
+        print(f"  {_B}{name}{_X}  base rate {info['base_rate']:.0%}, threshold {thr:.2f}"
+              f"  ->  {rank} | {prob_trust}")
         order = np.argsort(prob)[::-1]
         top = order[:5]
         cells = "  ".join(
             f"{md.tickers[a]}:{(_R if prob[a] >= thr else '')}{prob[a]:.0%}{_X if prob[a] >= thr else ''}"
             for a in top)
         print(f"     highest P: {cells}    ({n_flag}/{md.n} assets flagged)")
-    print(f"\n  Only act on events whose AUC CI clears 0.5 (green). Probabilities are calibrated")
-    print(f"  by the tuned threshold; a rare-event probability of 20% can still be the top signal.\n")
+    print("\n  Read the two verdicts separately. Green rank AUC = the ORDERING across assets")
+    print("  is meaningful, so use it to pick which names to watch. Green BSS = the PROBABILITY")
+    print("  itself beats climatology, so it is safe to size on. An event can pass the first and")
+    print("  fail the second: then rank with it, but do NOT treat its P(event) as a real number.")
+    print("  A rare-event probability of 20% can still be the top signal.\n")
 
 
 if __name__ == "__main__":

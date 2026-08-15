@@ -43,9 +43,12 @@ from calibration import (
 from eventmetrics import (
     best_threshold,
     bootstrap_auc_ci,
+    bootstrap_metric_ci,
     brier,
     brier_skill_score,
+    lift_efficiency,
     log_loss,
+    max_lift_at_k,
     mcc,
     murphy_decomposition,
     prob_metrics,
@@ -179,7 +182,7 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
         if t + horizon < S.shape[0]:
             lab[i] = S[t + horizon]
 
-    yt, yraw, ycal, ythr = [], [], [], []
+    yt, yraw, ycal, ythr, ygrp = [], [], [], [], []
     for i in range(n_orig):
         t_i = origins[i]
         # purge: only rows whose label was knowable before the test feature time
@@ -208,10 +211,12 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
             yraw.append(praw)
             ycal.append(apply_calibrator(cal, praw))
             ythr.append(np.full(valid.sum(), thr))
+            ygrp.append(np.full(valid.sum(), i))   # cluster id = forecast origin
     if not yt:
         return None
     y = np.concatenate(yt); p_raw = np.concatenate(yraw); p_cal = np.concatenate(ycal)
     thr_arr = np.concatenate(ythr)
+    grp = np.concatenate(ygrp)
     pred = (p_cal >= thr_arr).astype(float)
     m = prob_metrics(y, p_raw, threshold=0.5)           # AUC/AP from raw scores (rank-based)
     tuned = prob_metrics(y, pred, threshold=0.5)         # tuned-threshold operating point
@@ -221,10 +226,15 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["brier_raw"] = brier(y, p_raw); m["brier_cal"] = brier(y, p_cal)
     m["ece_raw"] = expected_calibration_error(y, p_raw)
     m["ece_cal"] = expected_calibration_error(y, p_cal)
-    lo, hi = bootstrap_auc_ci(y, p_raw)
+    # CLUSTER bootstrap by origin: the 15 assets scored at one origin share a
+    # market factor, so resampling rows i.i.d. would understate the uncertainty.
+    lo, hi = bootstrap_auc_ci(y, p_raw, groups=grp)
     m["auc_lo"], m["auc_hi"] = lo, hi
+    m["n_origins"] = int(len(np.unique(grp)))
     # effectiveness metrics - every one anchored to a null (see eventmetrics.py)
     m["bss_cal"] = brier_skill_score(y, p_cal)           # > 0 beats the base-rate null
+    m["bss_lo"], m["bss_hi"] = bootstrap_metric_ci(
+        y, p_cal, brier_skill_score, groups=grp)         # is that > 0 real, or noise?
     m["log_loss_cal"] = log_loss(y, p_cal)
     dec = murphy_decomposition(y, p_cal)
     m["reliability_cal"] = dec["reliability"]
@@ -232,7 +242,10 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["uncertainty"] = dec["uncertainty"]
     m["spieg_z"], m["spieg_p"] = spiegelhalter_z(y, p_cal)
     m["mcc_tuned"] = mcc(y, pred, threshold=0.5)         # MCC at the tuned operating point
-    # ks / precision_at_10 / lift_at_10 come from the prob_metrics bundle (raw scores)
+    # ks / precision_at_10 / lift_at_10 come from the prob_metrics bundle (raw scores).
+    # Raw lift has a base-rate ceiling, so also record how much of it was captured.
+    m["max_lift_at_10"] = max_lift_at_k(y, 0.10)
+    m["lift_efficiency_10"] = lift_efficiency(y, p_raw, 0.10)
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
     return m
 
@@ -296,6 +309,7 @@ def train_and_save(md, origins, X, last_models, ctx, args):
         if hyb is None:
             print(f"  {name:<15s}  (insufficient data)"); continue
         sig = np.isfinite(hyb["auc_lo"]) and hyb["auc_lo"] > 0.5
+        bss_sig = np.isfinite(hyb["bss_lo"]) and hyb["bss_lo"] > 0.0
         col = _G if sig else _R
         ci = f"[{hyb['auc_lo']:.2f},{hyb['auc_hi']:.2f}]"
         print(f"  {name:<15s}{hyb['base_rate']:>6.0%}{col}{hyb['auc']:>6.2f}{_X}{ci:>14s}"
@@ -332,6 +346,8 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "tuned_threshold": round(hyb["threshold"], 4),
             "tuned_mcc": round(hyb["mcc_tuned"], 4),
             "brier_skill_score": round(hyb["bss_cal"], 4),
+            "brier_skill_ci": [round(hyb["bss_lo"], 4), round(hyb["bss_hi"], 4)],
+            "brier_skill_significant": bool(bss_sig),
             "log_loss_calibrated": round(hyb["log_loss_cal"], 4),
             "murphy": {
                 "reliability": round(hyb["reliability_cal"], 5),
@@ -344,8 +360,13 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "ks": round(hyb["ks"], 4),
             "precision_at_10pct": round(hyb["precision_at_10"], 4),
             "lift_at_10pct": round(hyb["lift_at_10"], 4),
+            "max_lift_at_10pct": round(hyb["max_lift_at_10"], 4),
+            "lift_efficiency_at_10pct": round(hyb["lift_efficiency_10"], 4),
+            "n_origins": hyb["n_origins"],
             "track_auc": round(track["auc"], 4) if track else None,
             "raw_auc": round(raw["auc"], 4) if raw else None,
+            "track_brier_skill_score": round(track["bss_cal"], 4) if track else None,
+            "raw_brier_skill_score": round(raw["bss_cal"], 4) if raw else None,
             "top_features": importances,
         }
 
@@ -363,25 +384,50 @@ def train_and_save(md, origins, X, last_models, ctx, args):
                   f"{info['ece_raw']:>9.3f} -> {info['ece_calibrated']:<6.3f}")
     _plot_reliability(reliab)
 
-    # effectiveness summary: every number anchored to a no-skill null
+    # effectiveness summary: every number anchored to a no-skill null, and every
+    # verdict backed by a cluster-bootstrap CI rather than a point estimate
     print(f"\n{_B}Prediction effectiveness (vs the always-predict-base-rate null):{_X}")
-    print(f"  {'event':<15s}{'BSS':>7s}{'resol':>8s}{'reliab':>8s}{'calib?':>8s}"
-          f"{'MCC':>6s}{'KS':>6s}{'lift@10%':>10s}")
+    print(f"  {'event':<15s}{'BSS':>7s}{'BSS 95% CI':>17s}{'MCC':>6s}{'KS':>6s}"
+          f"{'lift@10%':>10s}{'of max':>8s}   verdict")
     for name in names:
         info = manifest["events"].get(name, {})
         if "brier_skill_score" not in info:
             continue
         bss = info["brier_skill_score"]
-        col = _G if bss > 0 else _R
-        cal_ok = f"{_G}ok{_X}" if info["calibration_consistent"] else f"{_R}off{_X}"
-        print(f"  {name:<15s}{col}{bss:>7.2f}{_X}{info['murphy']['resolution']:>8.3f}"
-              f"{info['murphy']['reliability']:>8.3f}{cal_ok:>17s}"
-              f"{info['tuned_mcc']:>6.2f}{info['ks']:>6.2f}{info['lift_at_10pct']:>9.1f}x")
-    print("  BSS > 0 = the calibrated probabilities beat climatology (0 = knowing only the")
-    print("  base rate, 1 = perfect). resolution must exceed reliability for real skill.")
-    print("  calib? = Spiegelhalter z-test (ok: p>=0.05, probabilities statistically honest).")
+        lo, hi = info["brier_skill_ci"]
+        # three honest states, mirroring harness.py's after-cost edge verdict
+        if bss <= 0:
+            verdict = f"{_R}NO SKILL vs base rate{_X}"
+        elif not info["brier_skill_significant"]:
+            verdict = f"{_Y}positive but WITHIN NOISE{_X}"
+        else:
+            verdict = f"{_G}SIGNIFICANT skill{_X}"
+        print(f"  {name:<15s}{bss:>7.2f}{f'[{lo:+.2f},{hi:+.2f}]':>17s}"
+              f"{info['tuned_mcc']:>6.2f}{info['ks']:>6.2f}"
+              f"{info['lift_at_10pct']:>9.1f}x{info['lift_efficiency_at_10pct']:>7.0%}"
+              f"   {verdict}")
+    print("  BSS = Brier skill vs climatology (0 = knowing only the base rate, 1 = perfect).")
+    print("  Its 95% CI is a CLUSTER bootstrap over forecast origins - the 15 assets scored at")
+    print("  one origin share a market factor, so an i.i.d. row bootstrap would be too narrow.")
+    print("  A positive BSS whose CI still includes 0 is NOT skill; that is the yellow state.")
     print("  MCC at the tuned threshold (0 = chance under any imbalance). lift@10% = how many")
-    print("  times more events the top-decile alert list catches than random flagging.")
+    print("  times more events the top-decile alert list catches than random flagging - but")
+    print("  lift has a base-rate ceiling, so 'of max' is what compares across events.")
+
+    print(f"\n{_B}Is the calibration honest? (Spiegelhalter z-test){_X}")
+    print(f"  {'event':<15s}{'ECE':>7s}{'z':>8s}{'p':>8s}   verdict")
+    for name in names:
+        info = manifest["events"].get(name, {})
+        if "spiegelhalter_z" not in info:
+            continue
+        ok = info["calibration_consistent"]
+        v = (f"{_G}consistent with perfect calibration{_X}" if ok
+             else f"{_Y}detectably miscalibrated (ECE is small but real){_X}")
+        print(f"  {name:<15s}{info['ece_calibrated']:>7.3f}{info['spiegelhalter_z']:>8.2f}"
+              f"{info['spiegelhalter_p']:>8.3f}   {v}")
+    print("  A small ECE alone is not proof of honesty - only the test says whether the gap")
+    print("  is bigger than sampling noise. Note the z-test assumes independent rows, so with")
+    print("  correlated assets pooled it errs toward flagging miscalibration too eagerly.")
 
     # feature-importance highlights
     print(f"\n{_B}Top drivers per event (signed standardised logistic weight):{_X}")

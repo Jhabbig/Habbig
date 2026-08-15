@@ -47,6 +47,46 @@ def test_readout_no_skill_on_noise():
     assert abs(res["bal_acc"] - 0.5) < 0.12
 
 
+def test_readout_effectiveness_metrics_reject_noise():
+    """Noise features must not be credited with EFFECTIVENESS either: the Brier
+    skill CI has to include 0 so the reported verdict cannot be 'significant'."""
+    origins, S, T, n, rng = _fake(seed=4)
+    X = rng.normal(0, 1, (len(origins), n, 5))
+    res = readout_event(origins, X, S, horizon=1, stride=5, min_train=20)
+    assert res["bss_lo"] <= 0.0 <= res["bss_hi"]      # cannot claim skill on noise
+    assert abs(res["mcc_tuned"]) < 0.25
+
+
+def test_readout_ci_is_clustered_by_origin():
+    """The CI must be a cluster bootstrap over origins, not over pooled rows.
+    A learnable signal still has to come out significant under clustering."""
+    origins, S, T, n, rng = _fake(seed=5)
+    X = rng.normal(0, 1, (len(origins), n, 4))
+    for i, t in enumerate(origins):
+        X[i, :, 0] = S[t + 1]
+    res = readout_event(origins, X, S, horizon=1, stride=5, min_train=20)
+    assert res["n_origins"] > 1                       # groups were actually tracked
+    assert res["n_origins"] < len(res["y"])           # ...and coarser than the rows
+    assert res["bss_lo"] > 0.0                        # real signal survives clustering
+
+
+def test_effectiveness_fields_needed_by_predict_live_are_present():
+    """predict_live.py gates its 'safe to size on' verdict on these keys."""
+    origins, S, T, n, rng = _fake(seed=6)
+    X = rng.normal(0, 1, (len(origins), n, 4))
+    for i, t in enumerate(origins):
+        X[i, :, 0] = S[t + 1]
+    res = readout_event(origins, X, S, horizon=1, stride=5, min_train=20)
+    for key in ("bss_cal", "bss_lo", "bss_hi", "mcc_tuned", "ks",
+                "lift_at_10", "max_lift_at_10", "lift_efficiency_10",
+                "spieg_z", "spieg_p", "n_origins"):
+        assert key in res, f"missing {key}"
+        assert np.isfinite(res[key]), f"{key} is not finite"
+    # lift can never exceed its own ceiling
+    assert res["lift_at_10"] <= res["max_lift_at_10"] + 1e-9
+    assert 0.0 <= res["lift_efficiency_10"] <= 1.0 + 1e-9
+
+
 def test_saved_readout_roundtrip():
     origins, S, T, n, rng = _fake(seed=3)
     X = rng.normal(0, 1, (len(origins), n, 6))
