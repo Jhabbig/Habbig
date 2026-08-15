@@ -158,12 +158,7 @@ def bootstrap_metric_ci(y_true, scores, stat, groups=None, n_boot: int = 500,
         def draw():                                   # i.i.d. rows
             return rng.integers(0, n, n)
     else:
-        g_all = np.asarray(groups)
-        if g_all.shape[0] != mask.shape[0]:
-            raise ValueError(
-                f"groups has length {g_all.shape[0]} but there are {mask.shape[0]} "
-                "observations; it must carry one id per row of y_true/scores")
-        g = g_all[mask]                               # drop the same rows as y/s
+        g = _masked_groups(y_true, scores, groups)     # drop the same rows as y/s
         members = [np.where(g == u)[0] for u in np.unique(g)]
         n_g = len(members)
         if n_g < 2:
@@ -202,6 +197,18 @@ def _clean(y_true, scores):
     s = np.asarray(scores, dtype=float)
     mask = np.isfinite(y) & np.isfinite(s)
     return y[mask], s[mask]
+
+
+def _masked_groups(y_true, scores, groups):
+    """Drop the same rows from ``groups`` that ``_clean`` drops from y/scores."""
+    mask = (np.isfinite(np.asarray(y_true, dtype=float))
+            & np.isfinite(np.asarray(scores, dtype=float)))
+    g = np.asarray(groups)
+    if g.shape[0] != mask.shape[0]:
+        raise ValueError(
+            f"groups has length {g.shape[0]} but there are {mask.shape[0]} "
+            "observations; it must carry one id per row of y_true/scores")
+    return g[mask]
 
 
 def log_loss(y_true, proba, eps: float = 1e-12) -> float:
@@ -264,22 +271,73 @@ def murphy_decomposition(y_true, proba, n_bins: int = 10) -> dict:
                 uncertainty=ybar * (1 - ybar), n_bins=n_bins)
 
 
-def spiegelhalter_z(y_true, proba) -> tuple:
+def _two_sided_p(z) -> float:
+    from math import erfc
+    return float(erfc(abs(z) / np.sqrt(2.0)))
+
+
+def spiegelhalter_z(y_true, proba, groups=None) -> tuple:
     """Spiegelhalter's z-test of calibration. Returns (z, two_sided_p).
 
     Under the null "the probabilities are perfectly calibrated", z ~ N(0,1); a
     p-value >= 0.05 means the stated probabilities are statistically consistent
-    with the outcomes (you cannot prove them dishonest on this sample)."""
+    with the outcomes (you cannot prove them dishonest on this sample).
+
+    Pass ``groups`` (the forecast origin) to use a CLUSTER-ROBUST variance
+    sum_g (sum_{i in g} u_i)^2 instead of the textbook i.i.d. one. The closed
+    form assumes independent rows; pooling 15 co-moving assets per origin
+    violates that and makes the test anti-conservative, i.e. too eager to call a
+    forecaster dishonest.
+
+    KNOWN BLIND SPOT: the statistic weights each residual by (1 - 2p), so for
+    forecasts centred near 0.5 the weights cancel and the test is nearly blind to
+    a uniform over- or under-forecast - exactly the bias that matters for sizing.
+    Always read it together with ``calibration_in_the_large``, which is built to
+    catch precisely that."""
     y, p = _clean(y_true, proba)
     if len(y) == 0:
         return (float("nan"), float("nan"))
-    num = float(np.sum((y - p) * (1 - 2 * p)))
-    var = float(np.sum((1 - 2 * p) ** 2 * p * (1 - p)))
+    u = (y - p) * (1 - 2 * p)
+    num = float(np.sum(u))
+    if groups is None:
+        var = float(np.sum((1 - 2 * p) ** 2 * p * (1 - p)))
+    else:
+        g = _masked_groups(y_true, proba, groups)
+        var = float(np.sum([np.sum(u[g == c]) ** 2 for c in np.unique(g)]))
     if var <= 0:
         return (float("nan"), float("nan"))
     z = num / np.sqrt(var)
-    from math import erfc
-    return (float(z), float(erfc(abs(z) / np.sqrt(2.0))))
+    return (float(z), _two_sided_p(z))
+
+
+def calibration_in_the_large(y_true, proba, groups=None) -> dict:
+    """Is the forecaster biased ON AVERAGE? Returns bias, z and p.
+
+        bias = mean(forecast) - observed frequency
+
+    This is the complement to ``spiegelhalter_z``, which is nearly blind to a
+    uniform level shift when the forecasts sit near 0.5. Adding a constant to
+    every probability leaves that test happy but moves this one immediately.
+    ``groups`` gives a cluster-robust standard error over forecast origins;
+    without it the SE assumes independent rows and will be too small."""
+    y, p = _clean(y_true, proba)
+    n = len(y)
+    if n == 0:
+        return dict(bias=float("nan"), z=float("nan"), p_value=float("nan"))
+    d = p - y                                    # per-row signed error
+    bias = float(np.mean(d))
+    if groups is None:
+        var = float(np.var(d, ddof=1) / n) if n > 1 else 0.0
+    else:
+        g = _masked_groups(y_true, proba, groups)
+        uniq = np.unique(g)
+        means = np.array([np.mean(d[g == c]) for c in uniq])
+        n_g = len(uniq)
+        var = float(np.var(means, ddof=1) / n_g) if n_g > 1 else 0.0
+    if var <= 0:
+        return dict(bias=bias, z=float("nan"), p_value=float("nan"))
+    z = bias / np.sqrt(var)
+    return dict(bias=bias, z=float(z), p_value=_two_sided_p(z))
 
 
 def mcc(y_true, scores, threshold: float = 0.5) -> float:
@@ -303,30 +361,58 @@ def mcc(y_true, scores, threshold: float = 0.5) -> float:
 def ks_statistic(y_true, scores) -> float:
     """Kolmogorov-Smirnov distance between the score distributions of the two
     classes = max over thresholds of |TPR - FPR|. Threshold-free discrimination:
-    0 = the classes' scores are indistinguishable, 1 = perfectly separable."""
+    0 = the classes' scores are indistinguishable, 1 = perfectly separable.
+
+    TIE-AWARE, like ``roc_auc``. A threshold can only sit *between* distinct
+    scores, so the ECDF gap is evaluated at the end of each tie group. Walking
+    row by row instead would let the maximum land inside a block of equal scores
+    and make the answer depend on row order: constant scores would score 1.0 on
+    one permutation and 0.0 on another, when the truth is 0.0. That is not
+    hypothetical here - isotonic calibration collapses thousands of rows onto a
+    handful of distinct values."""
     y, s = _clean(y_true, scores)
     n_pos = float(np.sum(y == 1))
     n_neg = float(np.sum(y == 0))
     if n_pos == 0 or n_neg == 0:
         return float("nan")
     order = np.argsort(-s, kind="mergesort")
-    yo = y[order]
+    yo, so = y[order], s[order]
     tpr = np.cumsum(yo) / n_pos
     fpr = np.cumsum(1 - yo) / n_neg
-    return float(np.max(np.abs(tpr - fpr)))
+    at_group_end = np.r_[np.diff(so) != 0, True]      # last row of each tie group
+    return float(np.max(np.abs(tpr - fpr)[at_group_end]))
 
 
 def precision_at_k(y_true, scores, frac: float = 0.10) -> float:
     """Precision inside the top-`frac` highest-scored samples - the alert-list
     view: if you only act on the model's loudest k% of days, what fraction of
-    those alarms are real events?"""
+    those alarms are real events?
+
+    TIE-AWARE. When the k-th boundary falls inside a block of equal scores there
+    is no principled way to pick which of them to alert on, so this returns the
+    EXPECTED precision if the remaining slots were drawn uniformly from that
+    block. Simply slicing the sorted order instead would break ties by array
+    position - in the readout the rows are ordered (origin, asset), so the
+    "winner" would be the earliest walk-forward origin and lowest-index ticker,
+    a chronological artefact reported as alert-list quality. With constant scores
+    this correctly returns the base rate (lift 1.0) rather than 0 or 1 depending
+    on row order."""
     y, s = _clean(y_true, scores)
     n = len(y)
     if n == 0:
         return float("nan")
-    k = max(1, int(np.ceil(frac * n)))
-    top = np.argsort(-s, kind="mergesort")[:k]
-    return float(np.mean(y[top]))
+    k = min(max(1, int(np.ceil(frac * n))), n)
+    order = np.argsort(-s, kind="mergesort")
+    ys, ss = y[order], s[order]
+    cut = ss[k - 1]                       # score at the boundary
+    above = ss > cut                      # strictly better than the boundary
+    n_above = int(above.sum())
+    in_tie = ss == cut
+    n_tie = int(in_tie.sum())
+    tp = float(ys[above].sum())
+    if n_tie:                             # share the remaining slots pro rata
+        tp += float(ys[in_tie].sum()) * (k - n_above) / n_tie
+    return float(tp / k)
 
 
 def lift_at_k(y_true, scores, frac: float = 0.10) -> float:
@@ -383,8 +469,10 @@ def lift_efficiency(y_true, scores, frac: float = 0.10) -> float:
 
 def prob_metrics(y_true, proba, threshold: float = 0.5) -> dict:
     """Full probabilistic + thresholded metric bundle for one event model."""
-    y = np.asarray(y_true, dtype=float)
-    p = np.asarray(proba, dtype=float)
+    # Mask first, like every other function here. Without this the confusion-matrix
+    # half is computed over ALL rows while auc/ap/brier drop the non-finite ones,
+    # so one bundle would describe two different samples.
+    y, p = _clean(y_true, proba)
     pred = (p >= threshold).astype(float)
     tp = float(np.sum((pred == 1) & (y == 1)))
     tn = float(np.sum((pred == 0) & (y == 0)))

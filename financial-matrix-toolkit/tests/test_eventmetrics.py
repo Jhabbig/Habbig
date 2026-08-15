@@ -1,6 +1,7 @@
 """Tests for the probabilistic event metrics."""
 
 import numpy as np
+import pytest
 
 from eventmetrics import (
     average_precision,
@@ -8,6 +9,7 @@ from eventmetrics import (
     bootstrap_auc_ci,
     bootstrap_metric_ci,
     brier,
+    calibration_in_the_large,
     brier_skill_score,
     ks_statistic,
     lift_at_k,
@@ -267,3 +269,93 @@ def test_bootstrap_metric_ci_masks_groups_alongside_nans():
     lo, hi = bootstrap_metric_ci(y, s, roc_auc, groups=groups, n_boot=200)
     assert np.isfinite(lo) and np.isfinite(hi) and lo < hi
     assert lo <= roc_auc(y, s) <= hi
+
+
+# --------------------------------------------------------------------------- #
+# tie handling: ranking metrics must not depend on row order
+# --------------------------------------------------------------------------- #
+def test_ks_is_zero_for_constant_scores_and_order_invariant():
+    """Constant scores carry zero discrimination. Walking the ECDF row by row
+    would let the max land inside the tie block and report up to 1.0."""
+    s = np.full(4, 0.3)
+    assert ks_statistic(np.array([1.0, 0, 1, 0]), s) == 0.0
+    for perm in ([1.0, 0, 0, 1], [0.0, 0, 1, 1], [1.0, 1, 0, 0]):
+        assert ks_statistic(np.array(perm), s) == 0.0
+
+
+def test_topk_metrics_are_order_invariant_under_ties():
+    """Isotonic calibration collapses thousands of rows onto a few values, so
+    ties are the rule, not the exception. Slicing the sorted order would resolve
+    them by array position - here, by earliest origin and lowest ticker index."""
+    rng = np.random.default_rng(30)
+    n = 600
+    y = (rng.random(n) < 0.3).astype(float)
+    p = np.round(rng.random(n), 1)                 # only ~11 distinct values
+    ks0 = ks_statistic(y, p)
+    pr0 = precision_at_k(y, p, 0.10)
+    for _ in range(50):
+        idx = rng.permutation(n)
+        assert ks_statistic(y[idx], p[idx]) == pytest.approx(ks0, abs=1e-12)
+        assert precision_at_k(y[idx], p[idx], 0.10) == pytest.approx(pr0, abs=1e-12)
+
+
+def test_constant_scores_give_base_rate_precision_and_unit_lift():
+    y = np.r_[np.ones(30), np.zeros(70)]
+    s = np.full(100, 0.42)
+    assert precision_at_k(y, s, 0.10) == pytest.approx(0.30)   # == base rate
+    assert lift_at_k(y, s, 0.10) == pytest.approx(1.0)         # no better than random
+
+
+def test_prob_metrics_masks_non_finite_rows():
+    """Every other function here masks; this bundle must too, or its confusion
+    matrix describes a different sample than its auc/brier."""
+    y = np.array([1.0, 0, 1, 0, np.nan])
+    p = np.array([0.9, 0.1, 0.8, 0.2, 0.5])
+    m = prob_metrics(y, p)
+    assert m["base_rate"] == pytest.approx(0.5)
+    assert np.isfinite(m["bal_acc"]) and m["bal_acc"] == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# calibration testing: clustering and the level-bias blind spot
+# --------------------------------------------------------------------------- #
+def test_spiegelhalter_cluster_variance_is_less_eager_to_condemn():
+    """The closed-form variance assumes independent rows. With a shared shock per
+    cluster it understates uncertainty, inflating |z|."""
+    rng = np.random.default_rng(31)
+    n_g, per = 150, 15
+    g = np.repeat(np.arange(n_g), per)
+    p = np.clip(rng.normal(0.5, 0.2, n_g * per), 0.05, 0.95)
+    shock = np.repeat(rng.normal(0, 0.25, n_g), per)        # strong co-movement
+    y = (rng.random(n_g * per) < np.clip(p + shock, 0.01, 0.99)).astype(float)
+    z_iid, _ = spiegelhalter_z(y, p)
+    z_cl, _ = spiegelhalter_z(y, p, groups=g)
+    assert abs(z_cl) < abs(z_iid)                            # honest test is milder
+
+
+def test_calibration_in_the_large_catches_a_uniform_shift():
+    """Spiegelhalter's (1-2p) weighting can go blind to a level shift; this must
+    not."""
+    rng = np.random.default_rng(32)
+    n = 4000
+    p = np.clip(rng.normal(0.5, 0.15, n), 0.02, 0.98)
+    y = (rng.random(n) < p).astype(float)                    # honest
+    honest = calibration_in_the_large(y, p)
+    assert abs(honest["bias"]) < 0.03 and honest["p_value"] > 0.01
+
+    biased = calibration_in_the_large(y, np.clip(p + 0.15, 0.01, 0.99))
+    assert biased["bias"] > 0.10                             # sees the shift
+    assert biased["p_value"] < 0.001                         # and calls it
+
+
+def test_calibration_in_the_large_clustered_se_is_wider():
+    rng = np.random.default_rng(33)
+    n_g, per = 120, 15
+    g = np.repeat(np.arange(n_g), per)
+    p = np.full(n_g * per, 0.4)
+    shock = np.repeat(rng.normal(0, 0.2, n_g), per)
+    y = (rng.random(n_g * per) < np.clip(p + shock, 0.01, 0.99)).astype(float)
+    iid = calibration_in_the_large(y, p)
+    cl = calibration_in_the_large(y, p, groups=g)
+    assert iid["bias"] == pytest.approx(cl["bias"])           # same point estimate
+    assert abs(cl["z"]) < abs(iid["z"])                       # wider SE, smaller z

@@ -152,9 +152,10 @@ the tuned threshold (uses all four confusion cells, so base-rate guessing scores
 exactly 0 under any imbalance), **KS** separation, and **lift@10%** (how many
 times more real events the top-decile alert list catches than random flagging).
 
-Every verdict is three-state, exactly as the after-cost edge test in `harness.py`
-is: *no skill* / *positive but within noise* / *significant*. A point estimate is
-never enough. Findings on the cached panel:
+Every verdict is decided by the **confidence interval, not the sign of the point
+estimate** — in the spirit of the after-cost edge test in `harness.py`. A BSS of
+−0.01 whose interval covers 0 is not established harm any more than +0.02 is
+established skill; both read as noise. Findings on the cached panel:
 
 | event | BSS (95% CI) | verdict | MCC | KS | lift@10% | of its max |
 |-------|--------------|---------|-----|-----|----------|------------|
@@ -162,16 +163,16 @@ never enough. Findings on the cached panel:
 | trend_up | **+0.61** [+0.57,+0.66] | significant | 0.73 | 0.75 | 1.9× | 99% |
 | vol_state | **+0.60** [+0.57,+0.64] | significant | 0.74 | 0.75 | 2.0× | **100%** |
 | big_move | +0.02 [−0.02,+0.06] | *within noise* | 0.14 | 0.28 | 2.4× | 24% |
-| vol_transition | −0.01 [−0.04,+0.01] | no skill | 0.09 | 0.17 | 1.1× | 14% |
+| vol_transition | −0.01 [−0.04,+0.01] | *within noise* | 0.09 | 0.17 | 1.1× | 14% |
 
 These sharpen the honest story in four ways.
 
 1. **Ranking skill does not imply usable probabilities.** `vol_transition`'s AUC
-   is significantly above 0.5, yet its Brier skill is **negative** — the Murphy
-   decomposition shows resolution 0.0013 *below* reliability 0.0024, so what
-   little the forecasts discriminate is more than eaten by what they get wrong.
-   Ranking skill that thin does not survive conversion into a probability you
-   could size a position on.
+   is significantly above 0.5, yet its Brier skill is **indistinguishable from
+   zero** (−0.01, CI [−0.04,+0.01]) and the Murphy decomposition shows resolution
+   0.0013 *below* reliability 0.0024 — what little the forecasts discriminate is
+   more than eaten by what they get wrong. Ranking skill that thin does not
+   survive conversion into a probability you could size a position on.
 
 2. **`big_move`'s apparent edge is noise.** Its BSS is +0.02, but the cluster
    bootstrap CI is [−0.02, +0.06] — it straddles zero, so the model is *not*
@@ -190,9 +191,17 @@ These sharpen the honest story in four ways.
    the old fixed Platt calibrator, `drawdown` and `trend_up` showed statistically
    *detectable* miscalibration (p = 0.000 and 0.006) even at ECE ≈ 0.03, visible
    only because the sample is large. That is what motivated `--calibration auto`
-   below, which fixes it. (The z-test assumes independent rows, so with
-   correlated assets pooled it errs toward flagging miscalibration too eagerly;
-   treat a failure as a prompt to inspect the reliability diagram.)
+   below, which fixes it.
+
+**Calibration is checked by two tests, because neither is sufficient alone.**
+Spiegelhalter's z checks the *shape* of the calibration curve, but it weights
+each residual by (1 − 2p), so for forecasts centred near 0.5 the weights cancel
+and it goes nearly blind to a uniform over- or under-forecast — precisely the
+bias that ruins position sizing. `calibration_in_the_large` (mean forecast minus
+observed rate) is built for that case. Both use a **cluster-robust variance over
+origins**: the textbook i.i.d. form inflates |z| by a measured 1.4–2.2× on this
+panel, which is enough to condemn an honest forecaster. All five events now pass
+both tests.
 
 **Does the two-stage architecture earn its keep?** The manifest records BSS for
 the track-only, raw-only and hybrid readouts, and the answer is honestly *mixed*:

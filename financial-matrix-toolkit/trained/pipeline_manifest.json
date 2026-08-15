@@ -1,6 +1,6 @@
 {
   "window": 504,
-  "stride": 16,
+  "stride": 5,
   "horizon": 1,
   "calibration": "auto",
   "track_features": [
@@ -34,72 +34,363 @@
     "absr"
   ],
   "events": {
-    "drawdown": {
-      "readout_file": "readout_drawdown.npz",
-      "base_rate": 0.8222,
-      "auc": 0.9831,
+    "vol_state": {
+      "readout_file": "readout_vol_state.npz",
+      "base_rate": 0.5101,
+      "auc": 0.9365,
       "auc_ci": [
-        0.9167,
-        1.0
+        0.9254,
+        0.9475
       ],
       "auc_significant": true,
-      "average_precision": 0.9962,
-      "brier_raw": 0.0883,
-      "brier_calibrated": 0.0501,
-      "ece_raw": 0.1477,
-      "ece_calibrated": 0.0596,
+      "average_precision": 0.9432,
+      "brier_raw": 0.0977,
+      "brier_calibrated": 0.0988,
+      "ece_raw": 0.014,
+      "ece_calibrated": 0.0125,
       "calibration": "auto",
-      "tuned_balanced_accuracy": 0.9105,
-      "tuned_recall": 0.9459,
-      "tuned_f1": 0.9589,
-      "tuned_threshold": 0.7979,
-      "tuned_mcc": 0.7847,
-      "brier_skill_score": 0.6573,
+      "tuned_balanced_accuracy": 0.8698,
+      "tuned_recall": 0.8797,
+      "tuned_f1": 0.8735,
+      "tuned_threshold": 0.5324,
+      "tuned_mcc": 0.74,
+      "brier_skill_score": 0.6046,
       "brier_skill_ci": [
-        0.4632,
-        0.9896
+        0.5651,
+        0.6407
       ],
       "brier_skill_significant": true,
-      "log_loss_calibrated": 0.1611,
+      "log_loss_calibrated": 0.3327,
       "murphy": {
-        "reliability": 0.01851,
-        "resolution": 0.11349,
-        "uncertainty": 0.14617
+        "reliability": 0.00047,
+        "resolution": 0.15113,
+        "uncertainty": 0.2499
       },
       "calibrator_used": "isotonic",
-      "spiegelhalter_z": 1.739,
-      "spiegelhalter_p": 0.0821,
+      "spiegelhalter_z": 0.928,
+      "calibration_bias": -0.0054,
+      "calibration_bias_p": 0.5375,
+      "unbiased_in_the_large": true,
+      "spiegelhalter_p": 0.3536,
       "calibration_consistent": true,
-      "ks": 0.875,
-      "precision_at_10pct": 1.0,
-      "lift_at_10pct": 1.2162,
-      "max_lift_at_10pct": 1.2162,
-      "lift_efficiency_at_10pct": 1.0,
-      "n_origins": 3,
-      "track_auc": 0.9223,
-      "raw_auc": 0.9932,
-      "track_brier_skill_score": 0.4551,
-      "raw_brier_skill_score": 0.7612,
+      "ks": 0.749,
+      "precision_at_10pct": 0.9952,
+      "lift_at_10pct": 1.9508,
+      "max_lift_at_10pct": 1.9602,
+      "lift_efficiency_at_10pct": 0.9952,
+      "n_origins": 138,
+      "track_auc": 0.8676,
+      "raw_auc": 0.936,
+      "track_brier_skill_score": 0.4036,
+      "raw_brier_skill_score": 0.5985,
       "top_features": [
         [
-          "drawdown_raw",
-          2.374
+          "vol_rel_raw",
+          1.446
         ],
         [
-          "drawdown",
-          2.29
+          "absr",
+          0.832
         ],
         [
-          "pca_market_share",
-          -0.385
+          "state",
+          0.647
         ],
         [
-          "rollcov_frob_speed",
-          0.294
+          "logvol_21",
+          -0.509
+        ],
+        [
+          "vol_rel",
+          0.48
+        ]
+      ]
+    },
+    "vol_transition": {
+      "readout_file": "readout_vol_transition.npz",
+      "base_rate": 0.1295,
+      "auc": 0.6003,
+      "auc_ci": [
+        0.563,
+        0.6357
+      ],
+      "auc_significant": true,
+      "average_precision": 0.1638,
+      "brier_raw": 0.2404,
+      "brier_calibrated": 0.1137,
+      "ece_raw": 0.3436,
+      "ece_calibrated": 0.0228,
+      "calibration": "auto",
+      "tuned_balanced_accuracy": 0.5661,
+      "tuned_recall": 0.5373,
+      "tuned_f1": 0.2522,
+      "tuned_threshold": 0.1385,
+      "tuned_mcc": 0.0899,
+      "brier_skill_score": -0.0085,
+      "brier_skill_ci": [
+        -0.0368,
+        0.0148
+      ],
+      "brier_skill_significant": false,
+      "log_loss_calibrated": 0.3968,
+      "murphy": {
+        "reliability": 0.00245,
+        "resolution": 0.0013,
+        "uncertainty": 0.11271
+      },
+      "calibrator_used": "platt",
+      "spiegelhalter_z": 0.948,
+      "calibration_bias": 0.0014,
+      "calibration_bias_p": 0.8681,
+      "unbiased_in_the_large": true,
+      "spiegelhalter_p": 0.3433,
+      "calibration_consistent": true,
+      "ks": 0.1659,
+      "precision_at_10pct": 0.1449,
+      "lift_at_10pct": 1.1194,
+      "max_lift_at_10pct": 7.7239,
+      "lift_efficiency_at_10pct": 0.1449,
+      "n_origins": 138,
+      "track_auc": 0.5463,
+      "raw_auc": 0.5831,
+      "track_brier_skill_score": -0.0058,
+      "raw_brier_skill_score": 0.0027,
+      "top_features": [
+        [
+          "absr",
+          -0.681
+        ],
+        [
+          "state_5",
+          0.413
+        ],
+        [
+          "log_absr",
+          0.338
+        ],
+        [
+          "hmm_crisis_prob",
+          -0.3
+        ],
+        [
+          "logvol_5",
+          0.239
+        ]
+      ]
+    },
+    "big_move": {
+      "readout_file": "readout_big_move.npz",
+      "base_rate": 0.0942,
+      "auc": 0.6777,
+      "auc_ci": [
+        0.6331,
+        0.7205
+      ],
+      "auc_significant": true,
+      "average_precision": 0.197,
+      "brier_raw": 0.2336,
+      "brier_calibrated": 0.0838,
+      "ece_raw": 0.363,
+      "ece_calibrated": 0.0244,
+      "calibration": "auto",
+      "tuned_balanced_accuracy": 0.6156,
+      "tuned_recall": 0.6462,
+      "tuned_f1": 0.2293,
+      "tuned_threshold": 0.1046,
+      "tuned_mcc": 0.1362,
+      "brier_skill_score": 0.0182,
+      "brier_skill_ci": [
+        -0.022,
+        0.0552
+      ],
+      "brier_skill_significant": false,
+      "log_loss_calibrated": 0.3108,
+      "murphy": {
+        "reliability": 0.00165,
+        "resolution": 0.0031,
+        "uncertainty": 0.08533
+      },
+      "calibrator_used": "isotonic",
+      "spiegelhalter_z": -0.327,
+      "calibration_bias": 0.0105,
+      "calibration_bias_p": 0.2096,
+      "unbiased_in_the_large": true,
+      "spiegelhalter_p": 0.7436,
+      "calibration_consistent": true,
+      "ks": 0.2814,
+      "precision_at_10pct": 0.2271,
+      "lift_at_10pct": 2.4103,
+      "max_lift_at_10pct": 10.0,
+      "lift_efficiency_at_10pct": 0.241,
+      "n_origins": 138,
+      "track_auc": 0.5989,
+      "raw_auc": 0.6953,
+      "track_brier_skill_score": -0.0193,
+      "raw_brier_skill_score": 0.0462,
+      "top_features": [
+        [
+          "logvol",
+          -0.82
+        ],
+        [
+          "logvol_5",
+          0.637
         ],
         [
           "vol_rel_raw",
-          0.287
+          -0.396
+        ],
+        [
+          "state_5",
+          0.278
+        ],
+        [
+          "ewma_avg_corr",
+          -0.27
+        ]
+      ]
+    },
+    "drawdown": {
+      "readout_file": "readout_drawdown.npz",
+      "base_rate": 0.8536,
+      "auc": 0.9895,
+      "auc_ci": [
+        0.9859,
+        0.9928
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9982,
+      "brier_raw": 0.0395,
+      "brier_calibrated": 0.0304,
+      "ece_raw": 0.0552,
+      "ece_calibrated": 0.0096,
+      "calibration": "auto",
+      "tuned_balanced_accuracy": 0.9478,
+      "tuned_recall": 0.9649,
+      "tuned_f1": 0.9762,
+      "tuned_threshold": 0.7178,
+      "tuned_mcc": 0.8505,
+      "brier_skill_score": 0.7564,
+      "brier_skill_ci": [
+        0.7057,
+        0.7982
+      ],
+      "brier_skill_significant": true,
+      "log_loss_calibrated": 0.0997,
+      "murphy": {
+        "reliability": 0.00059,
+        "resolution": 0.09469,
+        "uncertainty": 0.12495
+      },
+      "calibrator_used": "isotonic",
+      "spiegelhalter_z": 1.486,
+      "calibration_bias": -0.0074,
+      "calibration_bias_p": 0.0929,
+      "unbiased_in_the_large": true,
+      "spiegelhalter_p": 0.1372,
+      "calibration_consistent": true,
+      "ks": 0.9174,
+      "precision_at_10pct": 1.0,
+      "lift_at_10pct": 1.1715,
+      "max_lift_at_10pct": 1.1715,
+      "lift_efficiency_at_10pct": 1.0,
+      "n_origins": 138,
+      "track_auc": 0.9846,
+      "raw_auc": 0.9877,
+      "track_brier_skill_score": 0.7185,
+      "raw_brier_skill_score": 0.7619,
+      "top_features": [
+        [
+          "drawdown_raw",
+          2.538
+        ],
+        [
+          "drawdown",
+          2.356
+        ],
+        [
+          "ma_ratio",
+          -0.314
+        ],
+        [
+          "mom5",
+          -0.263
+        ],
+        [
+          "hmm_crisis_prob",
+          0.222
+        ]
+      ]
+    },
+    "trend_up": {
+      "readout_file": "readout_trend_up.npz",
+      "base_rate": 0.5082,
+      "auc": 0.9413,
+      "auc_ci": [
+        0.9276,
+        0.9536
+      ],
+      "auc_significant": true,
+      "average_precision": 0.9421,
+      "brier_raw": 0.0989,
+      "brier_calibrated": 0.0963,
+      "ece_raw": 0.0419,
+      "ece_calibrated": 0.0051,
+      "calibration": "auto",
+      "tuned_balanced_accuracy": 0.864,
+      "tuned_recall": 0.8213,
+      "tuned_f1": 0.8593,
+      "tuned_threshold": 0.6293,
+      "tuned_mcc": 0.7298,
+      "brier_skill_score": 0.6148,
+      "brier_skill_ci": [
+        0.5693,
+        0.659
+      ],
+      "brier_skill_significant": true,
+      "log_loss_calibrated": 0.3462,
+      "murphy": {
+        "reliability": 7e-05,
+        "resolution": 0.15326,
+        "uncertainty": 0.24993
+      },
+      "calibrator_used": "isotonic",
+      "spiegelhalter_z": -0.001,
+      "calibration_bias": 0.0012,
+      "calibration_bias_p": 0.9131,
+      "unbiased_in_the_large": true,
+      "spiegelhalter_p": 0.9988,
+      "calibration_consistent": true,
+      "ks": 0.7469,
+      "precision_at_10pct": 0.9903,
+      "lift_at_10pct": 1.9487,
+      "max_lift_at_10pct": 1.9677,
+      "lift_efficiency_at_10pct": 0.9903,
+      "n_origins": 138,
+      "track_auc": 0.813,
+      "raw_auc": 0.9477,
+      "track_brier_skill_score": 0.2813,
+      "raw_brier_skill_score": 0.639,
+      "top_features": [
+        [
+          "ma_ratio",
+          3.185
+        ],
+        [
+          "mom5",
+          0.736
+        ],
+        [
+          "mom21",
+          0.466
+        ],
+        [
+          "rollcov_var",
+          0.194
+        ],
+        [
+          "state",
+          -0.177
         ]
       ]
     }

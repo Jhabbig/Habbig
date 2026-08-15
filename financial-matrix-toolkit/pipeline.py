@@ -52,6 +52,7 @@ from eventmetrics import (
     max_lift_at_k,
     mcc,
     murphy_decomposition,
+    calibration_in_the_large,
     prob_metrics,
     spiegelhalter_z,
 )
@@ -245,7 +246,14 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["reliability_cal"] = dec["reliability"]
     m["resolution_cal"] = dec["resolution"]
     m["uncertainty"] = dec["uncertainty"]
-    m["spieg_z"], m["spieg_p"] = spiegelhalter_z(y, p_cal)
+    # cluster-robust: the closed-form variance assumes independent rows, and
+    # pooling co-moving assets inflates |z| (design effect ~1.4-2.2x here), i.e.
+    # it calls honest forecasters dishonest.
+    m["spieg_z"], m["spieg_p"] = spiegelhalter_z(y, p_cal, groups=grp)
+    # Spiegelhalter is nearly blind to a uniform level shift when p sits near
+    # 0.5, so pair it with the test that is built for exactly that.
+    citl = calibration_in_the_large(y, p_cal, groups=grp)
+    m["bias"], m["bias_z"], m["bias_p"] = citl["bias"], citl["z"], citl["p_value"]
     m["mcc_tuned"] = mcc(y, pred, threshold=0.5)         # MCC at the tuned operating point
     # ks / precision_at_10 / lift_at_10 come from the prob_metrics bundle (raw scores).
     # Raw lift has a base-rate ceiling, so also record how much of it was captured.
@@ -363,6 +371,9 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             },
             "calibrator_used": hyb.get("calibrator_used", cal),
             "spiegelhalter_z": round(hyb["spieg_z"], 3),
+            "calibration_bias": round(hyb["bias"], 4),
+            "calibration_bias_p": round(hyb["bias_p"], 4),
+            "unbiased_in_the_large": bool(np.isfinite(hyb["bias_p"]) and hyb["bias_p"] >= 0.05),
             "spiegelhalter_p": round(hyb["spieg_p"], 4),
             "calibration_consistent": bool(np.isfinite(hyb["spieg_p"]) and hyb["spieg_p"] >= 0.05),
             "ks": round(hyb["ks"], 4),
@@ -403,13 +414,18 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             continue
         bss = info["brier_skill_score"]
         lo, hi = info["brier_skill_ci"]
-        # three honest states, mirroring harness.py's after-cost edge verdict
-        if bss <= 0:
-            verdict = f"{_R}NO SKILL vs base rate{_X}"
-        elif not info["brier_skill_significant"]:
+        # Four states, decided by the CI rather than the sign of a point estimate.
+        # A negative BSS whose interval still covers 0 is NOT established harm,
+        # and a positive one whose interval covers 0 is not established skill;
+        # both are noise and must read as noise.
+        if info["brier_skill_significant"]:
+            verdict = f"{_G}SIGNIFICANT skill{_X}"
+        elif hi < 0:
+            verdict = f"{_R}WORSE than base rate{_X}"
+        elif bss > 0:
             verdict = f"{_Y}positive but WITHIN NOISE{_X}"
         else:
-            verdict = f"{_G}SIGNIFICANT skill{_X}"
+            verdict = f"{_Y}negative but WITHIN NOISE{_X}"
         print(f"  {name:<15s}{bss:>7.2f}{f'[{lo:+.2f},{hi:+.2f}]':>17s}"
               f"{info['tuned_mcc']:>6.2f}{info['ks']:>6.2f}"
               f"{info['lift_at_10pct']:>9.1f}x{info['lift_efficiency_at_10pct']:>7.0%}"
@@ -422,20 +438,29 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     print("  times more events the top-decile alert list catches than random flagging - but")
     print("  lift has a base-rate ceiling, so 'of max' is what compares across events.")
 
-    print(f"\n{_B}Is the calibration honest? (Spiegelhalter z-test){_X}")
-    print(f"  {'event':<15s}{'ECE':>7s}{'z':>8s}{'p':>8s}   verdict")
+    print(f"\n{_B}Is the calibration honest? (two tests, both cluster-robust){_X}")
+    print(f"  {'event':<15s}{'ECE':>7s}{'spieg z':>9s}{'p':>7s}{'bias':>8s}{'p':>7s}   verdict")
     for name in names:
         info = manifest["events"].get(name, {})
         if "spiegelhalter_z" not in info:
             continue
-        ok = info["calibration_consistent"]
-        v = (f"{_G}consistent with perfect calibration{_X}" if ok
-             else f"{_Y}detectably miscalibrated (ECE is small but real){_X}")
-        print(f"  {name:<15s}{info['ece_calibrated']:>7.3f}{info['spiegelhalter_z']:>8.2f}"
-              f"{info['spiegelhalter_p']:>8.3f}   {v}")
-    print("  A small ECE alone is not proof of honesty - only the test says whether the gap")
-    print("  is bigger than sampling noise. Note the z-test assumes independent rows, so with")
-    print("  correlated assets pooled it errs toward flagging miscalibration too eagerly.")
+        shape_ok = info["calibration_consistent"]
+        level_ok = info["unbiased_in_the_large"]
+        if shape_ok and level_ok:
+            v = f"{_G}honest{_X}"
+        elif not level_ok:
+            v = f"{_Y}biased in the large (systematic over/under-forecast){_X}"
+        else:
+            v = f"{_Y}right on average, wrong in shape{_X}"
+        print(f"  {name:<15s}{info['ece_calibrated']:>7.3f}{info['spiegelhalter_z']:>9.2f}"
+              f"{info['spiegelhalter_p']:>7.3f}{info['calibration_bias']:>+8.3f}"
+              f"{info['calibration_bias_p']:>7.3f}   {v}")
+    print("  Two questions, because neither test answers both. Spiegelhalter's z checks the")
+    print("  SHAPE of the calibration curve but weights each residual by (1-2p), so it goes")
+    print("  nearly blind to a uniform over-forecast when p sits near 0.5. 'bias' is")
+    print("  mean(P) - observed rate, which catches exactly that. Both use a cluster-robust")
+    print("  variance over origins; the textbook i.i.d. form inflates |z| by ~1.4-2.2x here")
+    print("  and would call honest forecasters dishonest.")
 
     # feature-importance highlights
     print(f"\n{_B}Top drivers per event (signed standardised logistic weight):{_X}")

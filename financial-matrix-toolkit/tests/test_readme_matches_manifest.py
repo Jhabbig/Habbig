@@ -76,13 +76,15 @@ def test_readme_effectiveness_row_matches_manifest(event):
     assert ci_lo == pytest.approx(lo, abs=0.005)
     assert ci_hi == pytest.approx(hi, abs=0.005)
 
-    # the written verdict must agree with the three-state rule the code applies
-    if info["brier_skill_score"] <= 0:
-        expected = "no skill"
-    elif not info["brier_skill_significant"]:
-        expected = "within noise"
-    else:
+    # the written verdict must agree with the rule the code applies, which keys
+    # off the CONFIDENCE INTERVAL rather than the sign of the point estimate
+    lo_hi = info["brier_skill_ci"]
+    if info["brier_skill_significant"]:
         expected = "significant"
+    elif lo_hi[1] < 0:
+        expected = "worse than base rate"
+    else:
+        expected = "within noise"
     assert expected in verdict.replace("*", "").lower(), (
         f"{event}: README says {verdict!r} but the manifest implies {expected!r}")
 
