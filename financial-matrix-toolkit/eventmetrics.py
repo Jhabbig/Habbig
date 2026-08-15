@@ -183,6 +183,60 @@ def bootstrap_metric_ci(y_true, scores, stat, groups=None, n_boot: int = 500,
     return (lo, hi)
 
 
+def paired_metric_diff_ci(y_true, scores_a, scores_b, stat, groups=None,
+                          n_boot: int = 500, seed: int = 42, alpha: float = 0.05):
+    """CI for stat(y, a) - stat(y, b) on the SAME rows, resampled together.
+
+    Comparing two models by their separate point estimates says nothing: the
+    question "does adding these features help?" is about the DIFFERENCE, and the
+    difference has its own sampling error. Because both models are scored on
+    identical rows their errors are highly correlated, so the paired interval is
+    much tighter than differencing two independent intervals - and it is the only
+    one that answers the question. Returns (diff, lo, hi)."""
+    y_all = np.asarray(y_true, dtype=float)
+    a_all = np.asarray(scores_a, dtype=float)
+    b_all = np.asarray(scores_b, dtype=float)
+    if not (len(y_all) == len(a_all) == len(b_all)):
+        raise ValueError("y_true, scores_a and scores_b must be the same length")
+    mask = np.isfinite(y_all) & np.isfinite(a_all) & np.isfinite(b_all)
+    y, a, b = y_all[mask], a_all[mask], b_all[mask]
+    n = len(y)
+    if n < 20 or len(np.unique(y)) < 2:
+        return (float("nan"), float("nan"), float("nan"))
+    point = float(stat(y, a) - stat(y, b))
+    rng = np.random.default_rng(seed)
+    if groups is None:
+        def draw():
+            return rng.integers(0, n, n)
+    else:
+        g = np.asarray(groups)
+        if g.shape[0] != mask.shape[0]:
+            raise ValueError("groups must carry one id per observation")
+        g = g[mask]
+        members = [np.where(g == u)[0] for u in np.unique(g)]
+        n_g = len(members)
+        if n_g < 2:
+            return (point, float("nan"), float("nan"))
+
+        def draw():
+            return np.concatenate([members[j] for j in rng.integers(0, n_g, n_g)])
+
+    vals = []
+    for _ in range(n_boot):
+        idx = draw()
+        yi = y[idx]
+        if len(np.unique(yi)) < 2:
+            continue
+        v = stat(yi, a[idx]) - stat(yi, b[idx])
+        if np.isfinite(v):
+            vals.append(v)
+    if not vals:
+        return (point, float("nan"), float("nan"))
+    return (point,
+            float(np.percentile(vals, 100 * alpha / 2)),
+            float(np.percentile(vals, 100 * (1 - alpha / 2))))
+
+
 def bootstrap_auc_ci(y_true, scores, n_boot: int = 500, seed: int = 42,
                      alpha: float = 0.05, groups=None):
     """Percentile bootstrap CI for AUC. Returns (lo, hi). If lo > 0.5 the ranking
@@ -297,6 +351,11 @@ def spiegelhalter_z(y_true, proba, groups=None) -> tuple:
     y, p = _clean(y_true, proba)
     if len(y) == 0:
         return (float("nan"), float("nan"))
+    # A forecast of exactly 0 or 1 contributes to the numerator whenever it is
+    # wrong but contributes ZERO variance (p(1-p)=0), so a single confident miss
+    # would send |z| to infinity. Clip, as log_loss does. Isotonic calibration
+    # emits exact 0s and 1s routinely, so this is a live case, not a nicety.
+    p = np.clip(p, 1e-6, 1 - 1e-6)
     u = (y - p) * (1 - 2 * p)
     num = float(np.sum(u))
     if groups is None:

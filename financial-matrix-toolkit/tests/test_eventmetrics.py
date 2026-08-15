@@ -18,6 +18,7 @@ from eventmetrics import (
     max_lift_at_k,
     mcc,
     murphy_decomposition,
+    paired_metric_diff_ci,
     precision_at_k,
     prob_metrics,
     roc_auc,
@@ -359,3 +360,54 @@ def test_calibration_in_the_large_clustered_se_is_wider():
     cl = calibration_in_the_large(y, p, groups=g)
     assert iid["bias"] == pytest.approx(cl["bias"])           # same point estimate
     assert abs(cl["z"]) < abs(iid["z"])                       # wider SE, smaller z
+
+
+def test_paired_diff_ci_detects_a_real_improvement_and_a_tie():
+    """The paired interval must separate 'B is genuinely better' from 'the two
+    are the same model with different noise'."""
+    rng = np.random.default_rng(40)
+    n = 3000
+    y = (rng.random(n) < 0.35).astype(float)
+    good = np.clip(0.35 + 0.5 * (y - 0.35) + rng.normal(0, 0.08, n), 0.01, 0.99)
+    weak = np.clip(0.35 + 0.1 * (y - 0.35) + rng.normal(0, 0.08, n), 0.01, 0.99)
+
+    d, lo, hi = paired_metric_diff_ci(y, good, weak, brier_skill_score, n_boot=300)
+    assert d > 0 and lo > 0                       # good really is better
+
+    # same model twice -> difference is exactly zero with a degenerate interval
+    d0, lo0, hi0 = paired_metric_diff_ci(y, good, good, brier_skill_score, n_boot=200)
+    assert d0 == pytest.approx(0.0, abs=1e-12)
+    assert lo0 <= 0 <= hi0
+
+
+def test_paired_diff_ci_is_tighter_than_ignoring_the_pairing():
+    """Both models see identical rows, so their errors co-move; the paired
+    interval must exploit that rather than treating them as independent."""
+    rng = np.random.default_rng(41)
+    n = 2000
+    y = (rng.random(n) < 0.4).astype(float)
+    a = np.clip(0.4 + 0.45 * (y - 0.4) + rng.normal(0, 0.1, n), 0.01, 0.99)
+    b = np.clip(a + rng.normal(0, 0.01, n), 0.01, 0.99)      # nearly identical
+    _, lo, hi = paired_metric_diff_ci(y, a, b, brier_skill_score, n_boot=300)
+    ci_a = bootstrap_metric_ci(y, a, brier_skill_score, n_boot=300)
+    naive_width = (ci_a[1] - ci_a[0]) * 2                    # differencing two CIs
+    assert (hi - lo) < naive_width
+
+
+def test_paired_diff_ci_validates_lengths():
+    y = np.array([1.0, 0, 1, 0] * 10)
+    a = np.linspace(0.1, 0.9, 40)
+    with pytest.raises(ValueError, match="same length"):
+        paired_metric_diff_ci(y, a, a[:20], brier_skill_score, n_boot=10)
+
+
+def test_spiegelhalter_survives_probabilities_at_exactly_zero_and_one():
+    """Isotonic emits exact 0s and 1s. Those add to the numerator when wrong but
+    contribute zero variance, which would send |z| to infinity unclipped."""
+    rng = np.random.default_rng(42)
+    n = 500
+    y = (rng.random(n) < 0.5).astype(float)
+    p = y.copy()
+    p[:20] = 1 - p[:20]                            # 20 confident, wrong calls
+    z, pv = spiegelhalter_z(y, p)
+    assert np.isfinite(z) and np.isfinite(pv)

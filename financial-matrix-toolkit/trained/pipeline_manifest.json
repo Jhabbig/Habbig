@@ -60,6 +60,12 @@
         0.6407
       ],
       "brier_skill_significant": true,
+      "brier_skill_ci_familywise": [
+        0.5499,
+        0.6544
+      ],
+      "brier_skill_significant_familywise": true,
+      "familywise_alpha": 0.01,
       "log_loss_calibrated": 0.3327,
       "murphy": {
         "reliability": 0.00047,
@@ -81,6 +87,15 @@
       "n_origins": 138,
       "track_auc": 0.8676,
       "raw_auc": 0.936,
+      "tracks_vs_raw": {
+        "bss_hybrid_minus_raw": 0.0061,
+        "ci": [
+          -0.0059,
+          0.0175
+        ],
+        "significant": false,
+        "direction": "indistinguishable"
+      },
       "track_brier_skill_score": 0.4036,
       "raw_brier_skill_score": 0.5985,
       "top_features": [
@@ -132,6 +147,12 @@
         0.0148
       ],
       "brier_skill_significant": false,
+      "brier_skill_ci_familywise": [
+        -0.0465,
+        0.0202
+      ],
+      "brier_skill_significant_familywise": false,
+      "familywise_alpha": 0.01,
       "log_loss_calibrated": 0.3968,
       "murphy": {
         "reliability": 0.00245,
@@ -153,6 +174,15 @@
       "n_origins": 138,
       "track_auc": 0.5463,
       "raw_auc": 0.5831,
+      "tracks_vs_raw": {
+        "bss_hybrid_minus_raw": -0.0111,
+        "ci": [
+          -0.034,
+          0.0093
+        ],
+        "significant": false,
+        "direction": "indistinguishable"
+      },
       "track_brier_skill_score": -0.0058,
       "raw_brier_skill_score": 0.0027,
       "top_features": [
@@ -204,6 +234,12 @@
         0.0552
       ],
       "brier_skill_significant": false,
+      "brier_skill_ci_familywise": [
+        -0.0305,
+        0.0623
+      ],
+      "brier_skill_significant_familywise": false,
+      "familywise_alpha": 0.01,
       "log_loss_calibrated": 0.3108,
       "murphy": {
         "reliability": 0.00165,
@@ -225,6 +261,15 @@
       "n_origins": 138,
       "track_auc": 0.5989,
       "raw_auc": 0.6953,
+      "tracks_vs_raw": {
+        "bss_hybrid_minus_raw": -0.028,
+        "ci": [
+          -0.0544,
+          -0.0098
+        ],
+        "significant": true,
+        "direction": "tracks hurt"
+      },
       "track_brier_skill_score": -0.0193,
       "raw_brier_skill_score": 0.0462,
       "top_features": [
@@ -276,6 +321,12 @@
         0.7982
       ],
       "brier_skill_significant": true,
+      "brier_skill_ci_familywise": [
+        0.6936,
+        0.8068
+      ],
+      "brier_skill_significant_familywise": true,
+      "familywise_alpha": 0.01,
       "log_loss_calibrated": 0.0997,
       "murphy": {
         "reliability": 0.00059,
@@ -287,7 +338,7 @@
       "calibration_bias": -0.0074,
       "calibration_bias_p": 0.0929,
       "unbiased_in_the_large": true,
-      "spiegelhalter_p": 0.1372,
+      "spiegelhalter_p": 0.1373,
       "calibration_consistent": true,
       "ks": 0.9174,
       "precision_at_10pct": 1.0,
@@ -297,6 +348,15 @@
       "n_origins": 138,
       "track_auc": 0.9846,
       "raw_auc": 0.9877,
+      "tracks_vs_raw": {
+        "bss_hybrid_minus_raw": -0.0055,
+        "ci": [
+          -0.0309,
+          0.021
+        ],
+        "significant": false,
+        "direction": "indistinguishable"
+      },
       "track_brier_skill_score": 0.7185,
       "raw_brier_skill_score": 0.7619,
       "top_features": [
@@ -348,6 +408,12 @@
         0.659
       ],
       "brier_skill_significant": true,
+      "brier_skill_ci_familywise": [
+        0.5485,
+        0.6666
+      ],
+      "brier_skill_significant_familywise": true,
+      "familywise_alpha": 0.01,
       "log_loss_calibrated": 0.3462,
       "murphy": {
         "reliability": 7e-05,
@@ -369,6 +435,15 @@
       "n_origins": 138,
       "track_auc": 0.813,
       "raw_auc": 0.9477,
+      "tracks_vs_raw": {
+        "bss_hybrid_minus_raw": -0.0242,
+        "ci": [
+          -0.041,
+          -0.0087
+        ],
+        "significant": true,
+        "direction": "tracks hurt"
+      },
       "track_brier_skill_score": 0.2813,
       "raw_brier_skill_score": 0.639,
       "top_features": [

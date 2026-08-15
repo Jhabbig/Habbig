@@ -125,10 +125,12 @@ regression test.
 Those CIs are **cluster bootstraps over forecast origins**, not over rows. The
 readout pools 15 assets at each of ~138 origins into one vector, but those assets
 share a market factor (mean pairwise correlation 0.30 on the cached panel), so
-resampling rows i.i.d. would pretend the sample carries ~15× more independent
-information than it does and return a CI that is too narrow. Switching to the
-cluster bootstrap widens the intervals by up to 1.3× — the difference between
-`big_move`'s Brier skill reading as a pass and reading as noise.
+resampling rows i.i.d. treats correlated observations as independent evidence and
+returns a CI that is too narrow. Switching to the cluster bootstrap widens the
+measured intervals by **1.0–1.34×** (and the calibration tests' design effects by
+1.4–2.2×). The upper bound on the error is large — 15 perfectly correlated rows
+would carry the information of one — but the realised effect on this panel is the
+smaller number above, because the correlation is 0.30, not 1.0.
 
 **Calibrated probabilities.** The readout's raw scores are recalibrated on
 training data only, so `P(event)` means what it says — essential if you want to
@@ -176,20 +178,21 @@ These sharpen the honest story in four ways.
 
 2. **`big_move`'s apparent edge is noise.** Its BSS is +0.02, but the cluster
    bootstrap CI is [−0.02, +0.06] — it straddles zero, so the model is *not*
-   distinguishable from climatology. The old i.i.d. bootstrap gave [−0.01, +0.06]
-   and made this look like a pass. This is the toolkit's own thesis applied to
-   its own new metric.
+   distinguishable from climatology. (The i.i.d. bootstrap gave [−0.01, +0.06],
+   which straddles zero too: the clustering widened the interval by 1.34× but
+   did **not** flip this verdict. The point estimate alone would have; the
+   interval is what refuses it.)
 
 3. **Raw lift is not comparable across events.** Lift has a ceiling of
-   min(1/base rate, 1/k) — at an 85% base rate the *best possible* lift@10% is
-   1.18×. So `drawdown`'s unimpressive-looking 1.2× is a **perfect** alert list,
+   min(1/base rate, 1/k) — at `drawdown`'s 85.4% base rate the *best possible*
+   lift@10% is 1.17×. So `drawdown`'s unimpressive-looking 1.2× is a **perfect** alert list,
    while `big_move`'s headline 2.4× is only **24%** of what its 9% base rate
    allows. The naive reading inverts the truth; the "of its max" column is what
    compares across events.
 
 4. **A small ECE is not proof of honesty — and the test found a real bug.** With
    the old fixed Platt calibrator, `drawdown` and `trend_up` showed statistically
-   *detectable* miscalibration (p = 0.000 and 0.006) even at ECE ≈ 0.03, visible
+   *detectable* miscalibration (p = 0.000 and 0.006) at ECE 0.033 and 0.024, visible
    only because the sample is large. That is what motivated `--calibration auto`
    below, which fixes it.
 
@@ -203,23 +206,27 @@ origins**: the textbook i.i.d. form inflates |z| by a measured 1.4–2.2× on th
 panel, which is enough to condemn an honest forecaster. All five events now pass
 both tests.
 
-**Does the two-stage architecture earn its keep?** The manifest records BSS for
-the track-only, raw-only and hybrid readouts, and the answer is honestly *mixed*:
+**Does the two-stage architecture earn its keep?** Comparing two models by their
+separate point estimates proves nothing — the question is about the *difference*,
+and the difference has its own sampling error. So the manifest carries a **paired
+cluster-bootstrap CI on (hybrid − raw) Brier skill**, scored on identical rows:
 
-| event | track-only | raw-only | hybrid |
-|-------|-----------|----------|--------|
-| drawdown | +0.719 | **+0.762** | +0.756 |
-| trend_up | +0.281 | **+0.639** | +0.615 |
-| vol_state | +0.404 | +0.599 | **+0.605** |
-| big_move | −0.019 | **+0.046** | +0.018 |
-| vol_transition | −0.006 | **+0.003** | −0.009 |
+| event | hybrid − raw BSS | 95% CI (paired) | verdict |
+|-------|------------------|-----------------|---------|
+| vol_state | +0.006 | [−0.006, +0.018] | indistinguishable |
+| drawdown | −0.006 | [−0.031, +0.021] | indistinguishable |
+| vol_transition | −0.011 | [−0.034, +0.009] | indistinguishable |
+| trend_up | **−0.024** | [−0.041, −0.009] | **tracks hurt** |
+| big_move | **−0.028** | [−0.054, −0.010] | **tracks hurt** |
 
-Only `vol_state` is genuinely better as a hybrid. On every other event the raw
-features alone score *higher* than tracks-plus-raw — the stage-1 tracks are
-diluting the readout, not enriching it. The ranking metrics never showed this
-(hybrid AUC looks fine everywhere); it took a metric that asks whether the
-*probabilities* improved. That is an honest argument for keeping the two-stage
-architecture only where it pays.
+The honest verdict is worse than "mixed": the stage-1 tracks **significantly hurt
+on two events and are indistinguishable on the other three — they demonstrably
+help nowhere.** Adding thirteen matrix-model features to the raw ones dilutes the
+logistic rather than enriching it. The ranking metrics never showed this (hybrid
+AUC looks fine everywhere), and neither would comparing raw BSS point estimates,
+which would have credited `vol_state` with an improvement its CI does not
+support. That is an argument for serving the raw-feature readout unless the
+tracks earn their place on a specific event.
 
 ### Choosing the calibrator honestly (`--calibration auto`, the default)
 

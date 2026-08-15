@@ -53,6 +53,7 @@ from eventmetrics import (
     mcc,
     murphy_decomposition,
     calibration_in_the_large,
+    paired_metric_diff_ci,
     prob_metrics,
     spiegelhalter_z,
 )
@@ -87,6 +88,21 @@ RAW_FEATURES = [
     "logvol", "logvol_5", "logvol_21", "log_absr", "vol_rel_raw", "state",
     "state_5", "state_21", "mom5", "mom21", "drawdown_raw", "ma_ratio", "absr",
 ]
+
+
+def _json_safe(obj):
+    """Recursively replace non-finite floats with None so json.dump can run with
+    allow_nan=False. NaN/Infinity are not valid JSON, and a manifest containing
+    them cannot be read back by a strict parser."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, (float, np.floating)):
+        return float(obj) if np.isfinite(obj) else None
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    return obj
 
 
 def _avg_offdiag(M):
@@ -160,7 +176,7 @@ def build_tracks(md, window, stride, hmm_iter=25, verbose=True):
 # Stage 2 - purged walk-forward event readout on the track features
 # --------------------------------------------------------------------------- #
 def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=None, purge=6,
-                  calibration="platt"):
+                  calibration="platt", n_family=1):
     """Train the stage-2 readout on PAST track rows only (purged) and evaluate OOS.
 
     origins[i] = R-index t_i. The test feature at origin i is as-of index t_i-1
@@ -241,6 +257,13 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     m["bss_cal"] = brier_skill_score(y, p_cal)           # > 0 beats the base-rate null
     m["bss_lo"], m["bss_hi"] = bootstrap_metric_ci(
         y, p_cal, brier_skill_score, groups=grp)         # is that > 0 real, or noise?
+    # Family-wise interval: testing several events at once inflates the chance of
+    # at least one false winner, which is why harness.py Bonferroni-corrects its
+    # Tier-D edges. n_family is filled in by the caller, which knows how many
+    # events are being scored in this run.
+    m["bss_family_alpha"] = 0.05 / max(1, n_family)
+    m["bss_fw_lo"], m["bss_fw_hi"] = bootstrap_metric_ci(
+        y, p_cal, brier_skill_score, groups=grp, alpha=m["bss_family_alpha"])
     m["log_loss_cal"] = log_loss(y, p_cal)
     dec = murphy_decomposition(y, p_cal)
     m["reliability_cal"] = dec["reliability"]
@@ -262,6 +285,7 @@ def readout_event(origins, X, S, horizon, stride, min_train=60, logistic_cfg=Non
     # which calibrator the per-origin fits actually selected (constant unless "auto")
     m["calibrator_used"] = (max(set(chosen), key=chosen.count) if chosen else calibration)
     m["y"] = y; m["p_cal"] = p_cal                        # for the reliability plot
+    m["grp"] = grp                                        # for paired comparisons
     return m
 
 
@@ -301,6 +325,7 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     Xhyb = np.concatenate([X, Xraw], axis=2)           # tracks + raw = full readout
     hyb_names = TRACK_FEATURES + RAW_FEATURES
     names = list(EVENTS) if args.event == "all" else [args.event]
+    n_family = len(names)          # Bonferroni family size for this run
 
     print(f"\n{_B}Two-stage event readout (HYBRID = tracks + raw), probabilistic metrics{_X}")
     print(f"  horizon={args.horizon}, window={args.window}, stride={args.stride}. AUC is threshold-free")
@@ -318,13 +343,14 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             print(f"  unknown event {name!r}"); continue
         S = EVENTS[name][0](ctx)
         cal = args.calibration
-        track = readout_event(origins, X, S, args.horizon, args.stride, calibration=cal)
-        raw = readout_event(origins, Xraw, S, args.horizon, args.stride, calibration=cal)
-        hyb = readout_event(origins, Xhyb, S, args.horizon, args.stride, calibration=cal)
+        track = readout_event(origins, X, S, args.horizon, args.stride, calibration=cal, n_family=n_family)
+        raw = readout_event(origins, Xraw, S, args.horizon, args.stride, calibration=cal, n_family=n_family)
+        hyb = readout_event(origins, Xhyb, S, args.horizon, args.stride, calibration=cal, n_family=n_family)
         if hyb is None:
             print(f"  {name:<15s}  (insufficient data)"); continue
         sig = np.isfinite(hyb["auc_lo"]) and hyb["auc_lo"] > 0.5
         bss_sig = np.isfinite(hyb["bss_lo"]) and hyb["bss_lo"] > 0.0
+        bss_fw_sig = np.isfinite(hyb["bss_fw_lo"]) and hyb["bss_fw_lo"] > 0.0
         col = _G if sig else _R
         ci = f"[{hyb['auc_lo']:.2f},{hyb['auc_hi']:.2f}]"
         print(f"  {name:<15s}{hyb['base_rate']:>6.0%}{col}{hyb['auc']:>6.2f}{_X}{ci:>14s}"
@@ -343,6 +369,20 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             coef = np.abs(w[1:])
             order = np.argsort(coef)[::-1][:5]
             importances = [(hyb_names[j], round(float(w[1 + j]), 3)) for j in order]
+        # Does adding the stage-1 tracks actually help? Answer the DIFFERENCE,
+        # paired on identical rows, not two separate point estimates.
+        tracks_help = None
+        if raw is not None and len(raw["y"]) == len(hyb["y"]) and np.array_equal(raw["y"], hyb["y"]):
+            d, dlo, dhi = paired_metric_diff_ci(
+                hyb["y"], hyb["p_cal"], raw["p_cal"], brier_skill_score, groups=hyb["grp"])
+            tracks_help = {
+                "bss_hybrid_minus_raw": round(d, 4),
+                "ci": [round(dlo, 4), round(dhi, 4)],
+                "significant": bool(np.isfinite(dlo) and (dlo > 0 or dhi < 0)),
+                "direction": ("tracks help" if np.isfinite(dlo) and dlo > 0
+                              else "tracks hurt" if np.isfinite(dhi) and dhi < 0
+                              else "indistinguishable"),
+            }
         manifest["events"][name] = {
             "readout_file": f"readout_{name}.npz" if w is not None else None,
             "base_rate": round(hyb["base_rate"], 4),
@@ -363,6 +403,9 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "brier_skill_score": round(hyb["bss_cal"], 4),
             "brier_skill_ci": [round(hyb["bss_lo"], 4), round(hyb["bss_hi"], 4)],
             "brier_skill_significant": bool(bss_sig),
+            "brier_skill_ci_familywise": [round(hyb["bss_fw_lo"], 4), round(hyb["bss_fw_hi"], 4)],
+            "brier_skill_significant_familywise": bool(bss_fw_sig),
+            "familywise_alpha": round(hyb["bss_family_alpha"], 4),
             "log_loss_calibrated": round(hyb["log_loss_cal"], 4),
             "murphy": {
                 "reliability": round(hyb["reliability_cal"], 5),
@@ -384,13 +427,18 @@ def train_and_save(md, origins, X, last_models, ctx, args):
             "n_origins": hyb["n_origins"],
             "track_auc": round(track["auc"], 4) if track else None,
             "raw_auc": round(raw["auc"], 4) if raw else None,
+            "tracks_vs_raw": tracks_help,
             "track_brier_skill_score": round(track["bss_cal"], 4) if track else None,
             "raw_brier_skill_score": round(raw["bss_cal"], 4) if raw else None,
             "top_features": importances,
         }
 
     with open(os.path.join(TRAINED_DIR, "pipeline_manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
+        # allow_nan=False: a NaN metric (an event with one class, a degenerate
+        # window) would otherwise be written as the literal NaN, which is not
+        # legal JSON and silently breaks every strict parser downstream. Convert
+        # non-finite values to null first so the manifest stays loadable.
+        json.dump(_json_safe(manifest), f, indent=2, allow_nan=False)
     logger.info("Saved trained readouts + manifest to %s", TRAINED_DIR)
 
     # calibration summary: Brier and ECE, raw -> calibrated (lower = better)
@@ -437,6 +485,16 @@ def train_and_save(md, origins, X, last_models, ctx, args):
     print("  MCC at the tuned threshold (0 = chance under any imbalance). lift@10% = how many")
     print("  times more events the top-decile alert list catches than random flagging - but")
     print("  lift has a base-rate ceiling, so 'of max' is what compares across events.")
+    fw = [n for n in names
+          if manifest["events"].get(n, {}).get("brier_skill_significant_familywise")]
+    per = [n for n in names if manifest["events"].get(n, {}).get("brier_skill_significant")]
+    alpha = next((manifest["events"][n]["familywise_alpha"] for n in names
+                  if "familywise_alpha" in manifest["events"].get(n, {})), None)
+    if alpha is not None:
+        print(f"  Testing {len(names)} events at once inflates the chance of a false winner, so - as")
+        print(f"  harness.py does for its Tier-D edges - the manifest also carries a BONFERRONI")
+        print(f"  family-wise interval at alpha={alpha:.3f}. Survivors: {len(fw)}/{len(names)}"
+              f" (vs {len(per)}/{len(names)} uncorrected).")
 
     print(f"\n{_B}Is the calibration honest? (two tests, both cluster-robust){_X}")
     print(f"  {'event':<15s}{'ECE':>7s}{'spieg z':>9s}{'p':>7s}{'bias':>8s}{'p':>7s}   verdict")
