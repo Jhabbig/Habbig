@@ -1,0 +1,115 @@
+# narve Terminal — desktop installer builds (unsigned).
+#
+#   macOS 14 (Apple Silicon runner) -> universal2 .dmg
+#     built with both rust targets (aarch64-apple-darwin + x86_64-apple-darwin)
+#     merged by Tauri's `universal-apple-darwin` target.
+#   windows-latest -> .msi (WiX; the Tauri bundler fetches the toolset).
+#
+# Installers are UNSIGNED in v1. Signing is a certificate problem, not a
+# build problem: the hooks are documented inline below (search "signing")
+# and stay commented until certificates exist. See README "v2 seams".
+
+name: terminal-build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "terminal/**"
+      - ".github/workflows/terminal-build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macos-universal2-dmg
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            tauri-args: --target universal-apple-darwin --bundles dmg
+            bundle-path: terminal/app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          - os: windows-latest
+            label: windows-msi
+            rust-targets: ""
+            tauri-args: --bundles msi
+            bundle-path: terminal/app/src-tauri/target/release/bundle/msi/*.msi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/app/package-lock.json
+
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Rust build cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: terminal/app/src-tauri
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: terminal/sidecar/pyproject.toml
+
+      - name: Install sidecar
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./terminal/sidecar pytest
+
+      # Gate: no installer ships if the sidecar test suite fails.
+      - name: Sidecar test gate (pytest)
+        shell: bash
+        working-directory: terminal/sidecar
+        run: python -m pytest -q
+
+      - name: Install app dependencies
+        working-directory: terminal/app
+        run: npm ci
+
+      - name: Tauri build (unsigned)
+        shell: bash
+        working-directory: terminal/app
+        run: npm run tauri build -- ${{ matrix.tauri-args }}
+        # ── Signing hooks (v2 — commented until certificates exist) ──────
+        # Uncomment the env block and add the repo secrets. Nothing else in
+        # this workflow changes; Tauri picks the variables up automatically.
+        #
+        # env:
+        #   # macOS: Developer ID Application cert, base64-encoded .p12.
+        #   APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        #   APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        #   APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        #   # macOS notarization (App Store Connect app-specific password):
+        #   APPLE_ID: ${{ secrets.APPLE_ID }}
+        #   APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        #   # Tauri updater artifact signing (both platforms), generated
+        #   # with `npm run tauri signer generate`:
+        #   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: narve-terminal-${{ matrix.label }}
+          path: ${{ matrix.bundle-path }}
+          if-no-files-found: error
+          retention-days: 14
