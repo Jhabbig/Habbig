@@ -1,0 +1,7 @@
+{
+  "race_model": {"alpha": 13.0, "beta": 3.0, "n_resolved": 1},
+  "poll_aggregator": {"alpha": 19.0, "beta": 6.0, "n_resolved": 1},
+  "state_polls": {"alpha": 12.0, "beta": 5.0, "n_resolved": 0},
+  "macro_model": {"alpha": 10.0, "beta": 3.0, "n_resolved": 0},
+  "generic_ballot": {"alpha": 20.0, "beta": 7.0, "n_resolved": 0}
+}

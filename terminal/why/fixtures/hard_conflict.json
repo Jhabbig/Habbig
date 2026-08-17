@@ -1,0 +1,16 @@
+{
+  "question_id": "hard-conflict-demo",
+  "question_text": "Do Republicans win both the House and the Senate?",
+  "probability": 0.55,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "race_model", "source_id": "race_model", "p": 0.72,
+     "weight": 0.5, "inputs_ref": ["pred:22", "poll:oh-0615"]},
+    {"model_id": "macro_model", "source_id": "macro_model", "p": 0.34,
+     "weight": 0.5, "inputs_ref": ["pred:9", "econ:cpi-0611"]}
+  ],
+  "market_snapshots": [
+    {"venue": "kalshi", "yes_price": 0.52, "liquidity": 60000,
+     "captured_at": "2026-07-01T08:35:00Z"}
+  ]
+}

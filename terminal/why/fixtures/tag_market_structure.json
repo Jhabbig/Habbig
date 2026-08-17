@@ -1,0 +1,16 @@
+{
+  "question_id": "tag-market-structure-demo",
+  "question_text": "Does the House-majority market settle yes?",
+  "probability": 0.5,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "market_follow", "source_id": "market_follow", "p": 0.7,
+     "weight": 0.7, "inputs_ref": ["snap:kalshi-0630", "snap:polymarket-0630"]},
+    {"model_id": "race_model", "source_id": "race_model", "p": 0.56,
+     "weight": 0.3, "inputs_ref": ["pred:17"]}
+  ],
+  "market_snapshots": [
+    {"venue": "kalshi", "yes_price": 0.47, "liquidity": 50000,
+     "captured_at": "2026-07-01T08:30:00Z"}
+  ]
+}

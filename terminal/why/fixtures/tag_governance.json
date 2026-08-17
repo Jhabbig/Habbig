@@ -1,0 +1,13 @@
+{
+  "question_id": "tag-governance-demo",
+  "question_text": "Does the federal government shut down before October 1?",
+  "probability": 0.5,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "gov_shutdown_model", "source_id": "gov_shutdown_model", "p": 0.7,
+     "weight": 0.7, "inputs_ref": ["gov:approps-0626", "gov:whip-count-0629"]},
+    {"model_id": "race_model", "source_id": "race_model", "p": 0.56,
+     "weight": 0.3, "inputs_ref": ["pred:18"]}
+  ],
+  "market_snapshots": []
+}

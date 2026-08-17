@@ -1,0 +1,11 @@
+{
+  "question_id": "thin-data-demo",
+  "question_text": "Does the Democrat win the Wisconsin Senate race?",
+  "probability": 0.58,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "state_polls", "source_id": "state_polls", "p": 0.61,
+     "weight": 1.0, "inputs_ref": ["poll:wi-0607"]}
+  ],
+  "market_snapshots": []
+}

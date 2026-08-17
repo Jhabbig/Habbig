@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "narve-why"
+version = "0.1.0"
+description = "narve Terminal why engine - explains the probability, never computes it"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy"]
+
+[project.scripts]
+narve-why = "narve_why.cli:main"
+
+[tool.setuptools]
+packages = ["narve_why"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

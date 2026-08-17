@@ -1,0 +1,22 @@
+{
+  "question_id": "midterm-house-gop-2026",
+  "question_text": "Do Republicans win the U.S. House majority?",
+  "probability": 0.62,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "race_model", "source_id": "race_model", "p": 0.64,
+     "weight": 0.34, "inputs_ref": ["pred:12", "poll:az-0612"]},
+    {"model_id": "state_polls", "source_id": "state_polls", "p": 0.61,
+     "weight": 0.31, "inputs_ref": ["poll:mi-0609", "poll:pa-0614"]},
+    {"model_id": "generic_ballot", "source_id": "generic_ballot", "p": 0.58,
+     "weight": 0.2, "inputs_ref": ["poll:natl-0628"]},
+    {"model_id": "macro_model", "source_id": "macro_model", "p": 0.34,
+     "weight": 0.15, "inputs_ref": ["pred:9", "econ:cpi-0611"]}
+  ],
+  "market_snapshots": [
+    {"venue": "kalshi", "yes_price": 0.55, "liquidity": 120000,
+     "captured_at": "2026-07-01T08:40:00Z"},
+    {"venue": "polymarket", "yes_price": 0.57, "liquidity": 8000,
+     "captured_at": "2026-07-01T08:50:00Z"}
+  ]
+}

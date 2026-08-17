@@ -1,0 +1,16 @@
+{
+  "question_id": "tag-economy-demo",
+  "question_text": "Is CPI inflation below 3 percent in the September print?",
+  "probability": 0.5,
+  "as_of": "2026-07-01T09:00:00Z",
+  "model_outputs": [
+    {"model_id": "macro_model", "source_id": "macro_model", "p": 0.7,
+     "weight": 0.7, "inputs_ref": ["econ:cpi-0611", "econ:pce-0627"]},
+    {"model_id": "race_model", "source_id": "race_model", "p": 0.56,
+     "weight": 0.3, "inputs_ref": ["pred:16"]}
+  ],
+  "market_snapshots": [
+    {"venue": "kalshi", "yes_price": 0.47, "liquidity": 50000,
+     "captured_at": "2026-07-01T08:30:00Z"}
+  ]
+}

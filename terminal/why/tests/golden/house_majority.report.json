@@ -1,0 +1,116 @@
+{
+  "confidence_note": "MODERATE — 4 sources, spread 30 pts, 1 resolved call",
+  "conflicts": [
+    {
+      "evidence_refs": [
+        "pred:12",
+        "poll:az-0612",
+        "pred:9",
+        "econ:cpi-0611"
+      ],
+      "note": "race_model (0.64) and macro_model (0.34) are 30 pts apart"
+    },
+    {
+      "evidence_refs": [
+        "poll:mi-0609",
+        "poll:pa-0614",
+        "pred:9",
+        "econ:cpi-0611"
+      ],
+      "note": "state_polls (0.61) and macro_model (0.34) are 27 pts apart"
+    },
+    {
+      "evidence_refs": [
+        "poll:natl-0628",
+        "pred:9",
+        "econ:cpi-0611"
+      ],
+      "note": "generic_ballot (0.58) and macro_model (0.34) are 24 pts apart"
+    }
+  ],
+  "drivers": [
+    {
+      "direction": "down",
+      "evidence_refs": [
+        "pred:9",
+        "econ:cpi-0611"
+      ],
+      "label": "Economic backdrop",
+      "tag": "economy",
+      "weight": 0.475
+    },
+    {
+      "direction": "up",
+      "evidence_refs": [
+        "pred:12",
+        "poll:az-0612"
+      ],
+      "label": "Model momentum",
+      "tag": "momentum",
+      "weight": 0.1986
+    },
+    {
+      "direction": "down",
+      "evidence_refs": [
+        "poll:mi-0609",
+        "poll:pa-0614"
+      ],
+      "label": "Polling",
+      "tag": "polling",
+      "weight": 0.1693
+    },
+    {
+      "direction": "down",
+      "evidence_refs": [
+        "poll:natl-0628"
+      ],
+      "label": "Polling",
+      "tag": "polling",
+      "weight": 0.1571
+    }
+  ],
+  "market_gap": {
+    "gap_pts": 7.0,
+    "read": "market looks cheap",
+    "venue": "kalshi"
+  },
+  "probability": 0.62,
+  "prose": "62% vs a 55% market. Driving it: Model momentum, pushing it up; the counterweight is Economic backdrop, dragging it down. Dissent: race_model (0.64) and macro_model (0.34) are 30 pts apart. Watch: A surprise in the next jobs or inflation print; A sustained multi-week shift in the model trendline. Confidence: MODERATE — 4 sources, spread 30 pts, 1 resolved call.",
+  "question_id": "midterm-house-gop-2026",
+  "sources": [
+    {
+      "contribution": 0.34,
+      "credibility": 0.8125,
+      "n_resolved": 1,
+      "source_id": "race_model",
+      "stance_p": 0.64
+    },
+    {
+      "contribution": 0.31,
+      "credibility": 0.7059,
+      "n_resolved": 0,
+      "source_id": "state_polls",
+      "stance_p": 0.61
+    },
+    {
+      "contribution": 0.2,
+      "credibility": 0.7407,
+      "n_resolved": 0,
+      "source_id": "generic_ballot",
+      "stance_p": 0.58
+    },
+    {
+      "contribution": 0.15,
+      "credibility": 0.7692,
+      "n_resolved": 0,
+      "source_id": "macro_model",
+      "stance_p": 0.34
+    }
+  ],
+  "would_change_it": [
+    "A surprise in the next jobs or inflation print",
+    "A sustained multi-week shift in the model trendline",
+    "New national generic-ballot print",
+    "Any state-level poll after the next debate"
+  ]
+}
