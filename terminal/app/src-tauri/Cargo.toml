@@ -1,0 +1,22 @@
+# narve Terminal — Tauri v2 desktop shell.
+# The Python sidecar (FastAPI on 127.0.0.1:41733) is spawned in dev
+# builds only (see src/main.rs); packaging seam documented there.
+
+[package]
+name = "narve-terminal"
+version = "0.5.0"
+description = "narve Terminal — local credibility engine shell"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true

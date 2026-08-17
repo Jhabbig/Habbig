@@ -1,0 +1,563 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   narve Terminal — app.css
+   Bloomberg-esque monochrome terminal chrome, layered ON TOP of tokens.css
+   (canonical vars — loaded first, never edited). Dark is the DEFAULT
+   (main.ts stamps data-theme="dark" pre-paint); [data-theme="light"] is
+   fully honoured. No hues, no shadows, radius ≤ 4px, hairline grid.
+
+   CLASS PRIMITIVES (screens build against these — the contract):
+   ─────────────────────────────────────────────────────────────────────
+   .nv-cmdbar     top command bar (shell-owned; rendered by main.ts)
+   .nv-statusbar  bottom status bar (shell-owned; `.is-offline` state)
+   .nv-panel      hairline-bordered surface. Modifiers:
+                    .nv-panel--pad   → inner padding
+                  Children: .nv-panel-head (title strip: put a
+                  .nv-marker + optional right-side controls in it).
+   .nv-grid       1px-gap panel grid: children (.nv-panel) get their
+                  borders stripped; hairlines come from the gap.
+   .nv-marker     `[ SECTION / NN ]` label. Write the brackets in the
+                  text itself, e.g.
+                  <div class="nv-marker">[ MARKETS / 01 ]</div>
+   .nv-table      dense mono data table (~26px rows). th auto-caps.
+                  Cell helpers: .num (right-aligned tabular digits),
+                  .nv-dim (tertiary). Row helpers: tr.is-link (pointer
+                  row, e.g. navigates on click), tr.is-selected.
+   .nv-btn        terminal button. Modifiers: .nv-btn--primary
+                  (inverted fill), .nv-btn--danger (heavy border —
+                  still monochrome). <button> or <a>.
+   .nv-input      text input / select / textarea skin.
+   .nv-empty      empty-state block (real copy inside, no icon).
+   .nv-tag        tiny caps chip. Modifiers: .nv-tag--sample (SAMPLE
+                  rows), .nv-tag--local (shell LOCAL badge).
+   Extras (optional, already styled): .nv-modal-backdrop > .nv-modal
+   (confirm dialogs), .nv-kv / .nv-kv-item (label:value strips for
+   header rows), .nv-bignum (large display figure, e.g. combined_p).
+   Signed numbers: render explicit +/− in text — NEVER color.
+   ═════════════════════════════════════════════════════════════════════ */
+
+/* ── @font-face — correct paths for this app ──────────────────────────
+   tokens.css (verbatim from the main repo) points its @font-face srcs
+   at /_gateway_static/… which does not exist here. Same-family faces
+   declared LATER win the face-matching cascade, so these are the ones
+   the browser actually loads; the tokens.css duplicates are never
+   fetched. Inter has no @font-face in tokens.css at all (it lived in
+   gateway.css upstream) — declared here. */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../fonts/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/Inter-Variable-subset.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/InstrumentSerif-Italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("../fonts/SourceSerif4-Variable.woff2") format("woff2-variations");
+}
+
+/* ── Terminal-layer tokens ────────────────────────────────────────────
+   Only additions live here; everything else comes from tokens.css.
+   --bg-void is the deepest ground (behind/between panels). */
+:root,
+:root[data-theme="light"] {
+  --bg-void: #e9e9e7;
+  --nv-hairline: var(--border-subtle);
+  --nv-hairline-strong: var(--border-default);
+  --nv-row-h: 26px;
+  --nv-font-data: 12.5px;   /* everything data: Geist Mono 12–13px */
+  --nv-font-label: 10px;    /* ALL-CAPS letterspaced labels */
+  --nv-track: 0.14em;       /* label letter-spacing */
+  --nv-cmdbar-h: 42px;
+  --nv-statusbar-h: 26px;
+}
+:root[data-theme="dark"] {
+  --bg-void: #050505;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--nv-font-data);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* the screen region scrolls, the shell never does */
+}
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: inherit;
+}
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+::selection {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+}
+
+/* Shared ALL-CAPS label voice (labels, th, markers, tabs, buttons). */
+.nv-label,
+.nv-marker,
+.nv-tab,
+.nv-btn,
+.nv-tag,
+.nv-table th,
+.nv-status-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--nv-font-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--nv-track);
+  text-transform: uppercase;
+}
+
+/* ── Command bar (shell-owned) ─────────────────────────────────────── */
+.nv-cmdbar {
+  flex: 0 0 var(--nv-cmdbar-h);
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: 0 var(--space-3);
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--nv-hairline-strong);
+}
+.nv-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* Logo chip: dark glyph asset; the chip inverts on dark so the mark
+   stays visible — filter, not a second asset. */
+.nv-logo-mark {
+  width: 18px;
+  height: 18px;
+  background: url("../img/logo.png") center / contain no-repeat;
+  border-radius: 2px;
+}
+:root[data-theme="dark"] .nv-logo-mark {
+  filter: invert(1);
+}
+.nv-logo-word {
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--nv-track);
+  text-transform: uppercase;
+}
+.nv-logo-sub {
+  font-size: var(--nv-font-label);
+  letter-spacing: var(--nv-track);
+  text-transform: uppercase;
+  color: var(--text-quaternary);
+}
+
+/* Tabs — active tab is an inverted block, monochrome's "highlight". */
+.nv-tabs {
+  display: flex;
+  align-items: stretch;
+}
+.nv-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+  color: var(--text-tertiary);
+  border-left: 1px solid var(--nv-hairline);
+}
+.nv-tab:last-child {
+  border-right: 1px solid var(--nv-hairline);
+}
+.nv-tab:hover {
+  color: var(--text-primary);
+  background: var(--interactive-ghost);
+}
+.nv-tab[aria-current="page"] {
+  color: var(--interactive-text);
+  background: var(--interactive-bg);
+}
+.nv-cmdbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.nv-clock {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* ── Screen region (router mounts here) ────────────────────────────── */
+.nv-screen {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-2);
+}
+
+/* ── Status bar (shell-owned) ──────────────────────────────────────── */
+.nv-statusbar {
+  flex: 0 0 var(--nv-statusbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--bg-base);
+  border-top: 1px solid var(--nv-hairline-strong);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.nv-status-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nv-status-lbl {
+  color: var(--text-quaternary);
+}
+.nv-status-val {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.nv-status-sep {
+  color: var(--text-quaternary);
+}
+.nv-status-dim {
+  color: var(--text-quaternary);
+  margin-left: auto;
+}
+/* Offline: weight + border carry the alarm — never a hue. */
+.nv-statusbar.is-offline {
+  border-top: 2px solid var(--border-strong);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+/* ── Panels + hairline grid ────────────────────────────────────────── */
+.nv-panel {
+  background: var(--bg-base);
+  border: 1px solid var(--nv-hairline);
+  border-radius: 2px;
+  min-width: 0;
+}
+.nv-panel--pad {
+  padding: var(--space-4);
+}
+.nv-panel + .nv-panel {
+  margin-top: var(--space-2);
+}
+.nv-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--nv-hairline);
+}
+.nv-panel-head > :last-child:not(.nv-marker) {
+  margin-left: auto;
+}
+/* 1px-gap grid: hairlines are the void showing through the gaps. */
+.nv-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--nv-hairline);
+  border: 1px solid var(--nv-hairline);
+  border-radius: 2px;
+}
+.nv-grid > .nv-panel {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+/* ── Section markers — [ MARKETS / 01 ] ────────────────────────────── */
+.nv-marker {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ── Tables — dense, mono, hairline rows ───────────────────────────── */
+.nv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--nv-font-data);
+  font-variant-numeric: tabular-nums;
+}
+.nv-table th {
+  height: var(--nv-row-h);
+  padding: 0 var(--space-3);
+  text-align: left;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--nv-hairline-strong);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg-base);
+  z-index: 1;
+}
+.nv-table td {
+  height: var(--nv-row-h);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-ghost);
+  white-space: nowrap;
+}
+/* Opt-in truncation for wide text columns (e.g. QUESTION titles). */
+.nv-table td.nv-cell-clip {
+  max-width: 0;
+  width: 99%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nv-table .num {
+  text-align: right;
+}
+.nv-table th.num {
+  text-align: right;
+}
+.nv-dim {
+  color: var(--text-tertiary);
+}
+.nv-table tbody tr:hover td {
+  background: var(--bg-raised); /* hover = bg step, never a hue */
+}
+.nv-table tr.is-link {
+  cursor: pointer;
+}
+.nv-table tr.is-selected td {
+  background: var(--bg-overlay);
+}
+.nv-table tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────── */
+.nv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 var(--space-3);
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+.nv-btn:hover {
+  background: var(--interactive-ghost-hover);
+}
+.nv-btn:active {
+  background: var(--bg-inset);
+}
+.nv-btn:disabled {
+  color: var(--text-quaternary);
+  border-color: var(--border-subtle);
+  cursor: not-allowed;
+  background: transparent;
+}
+.nv-btn--primary {
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  border-color: var(--interactive-bg);
+}
+.nv-btn--primary:hover {
+  background: var(--interactive-hover);
+  border-color: var(--interactive-hover);
+}
+/* "Danger" in monochrome: double-weight border, same ink. */
+.nv-btn--danger {
+  border: 2px solid var(--text-primary);
+  font-weight: var(--weight-bold);
+}
+
+/* ── Inputs ────────────────────────────────────────────────────────── */
+.nv-input {
+  font-family: var(--font-mono);
+  font-size: var(--nv-font-data);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--nv-hairline-strong);
+  border-radius: 2px;
+  padding: 4px var(--space-2);
+  min-height: 24px;
+}
+.nv-input::placeholder {
+  color: var(--text-quaternary);
+}
+.nv-input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  background: var(--bg-base);
+}
+
+/* ── Tags / chips ──────────────────────────────────────────────────── */
+.nv-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 9px;
+  color: var(--text-secondary);
+  border: 1px solid var(--nv-hairline-strong);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.nv-tag--sample {
+  color: var(--text-tertiary);
+  border-style: dashed;
+}
+.nv-tag--local {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* ── Empty states (real copy inside — never blank) ─────────────────── */
+.nv-empty {
+  padding: var(--space-6) var(--space-5);
+  border: 1px dashed var(--nv-hairline-strong);
+  border-radius: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--nv-font-data);
+  text-align: center;
+  line-height: 1.6;
+}
+.nv-panel .nv-empty {
+  border: 0;
+}
+
+/* ── Key-value strips (screen header rows) ─────────────────────────── */
+.nv-kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  align-items: baseline;
+}
+.nv-kv-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.nv-kv-item .nv-label {
+  color: var(--text-quaternary);
+}
+
+/* ── Big display figure (QUESTION combined_p) ──────────────────────── */
+.nv-bignum {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+/* ── Modal (RESOLVE confirm) — flat, hairline, no shadow ───────────── */
+.nv-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.nv-modal {
+  width: min(440px, calc(100vw - var(--space-6)));
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  padding: var(--space-4);
+}
+.nv-modal .nv-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* ── "Screen not built" panel (router fallback) ────────────────────── */
+.nv-notbuilt-title {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--nv-track);
+}
+.nv-notbuilt-copy {
+  margin: 0 0 var(--space-3);
+  max-width: 62ch;
+  color: var(--text-secondary);
+}
+.nv-notbuilt-detail {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--nv-hairline);
+  border-radius: 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow-x: auto;
+}
+
+/* ── Scrollbars — monochrome, thin ─────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--nv-hairline-strong);
+  border: 2px solid var(--bg-void);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* ── Misc ──────────────────────────────────────────────────────────── */
+hr {
+  border: 0;
+  border-top: 1px solid var(--nv-hairline);
+  margin: var(--space-3) 0;
+}
+/* v1 seam: reader/models/report chrome mounts additional primitives
+   here (kept out of v0.5 — no dead rules shipped). */

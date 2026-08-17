@@ -1,0 +1,14 @@
+/Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/deps/serde-578a85c26dbc3f99.d: /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/deps/libserde-578a85c26dbc3f99.rlib: /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/deps/libserde-578a85c26dbc3f99.rmeta: /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs
+
+/Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/shocakarel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/build/serde-7525c7b3d2d04bc4/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/shocakarel/Habbig/terminal/app/src-tauri/target/debug/build/serde-7525c7b3d2d04bc4/out

@@ -1,0 +1,404 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   narve.ai design tokens — canonical source of truth
+   ─────────────────────────────────────────────────────────────────────────
+
+   Loaded BEFORE any other stylesheet. Every downstream rule references
+   tokens via var(--name) and MUST NOT inline hex / pixel values for
+   colour or spacing (see DESIGN_SYSTEM.md "Usage rules").
+
+   The palette is strictly monochrome. Colour is never used to carry
+   information — hierarchy is expressed through weight, size, position.
+   Even the "semantic" scale (high / mid / low / none) maps to greyscale
+   steps, not hues. This is deliberate; if you need to differentiate,
+   use typography.
+
+   Two theme roots:
+     :root, :root[data-theme="light"]   — default
+     :root[data-theme="dark"]           — user toggle
+
+   Back-compat aliases live at the bottom of :root and forward legacy
+   names to their canonical equivalents. Kept in service while older
+   call sites migrate; nothing new should add aliases.
+
+   Contrast targets (WCAG 2.1 AA):
+     * text on --bg-base: ≥ 4.5:1 for body, ≥ 3:1 for large/UI
+     * focus rings: ≥ 3:1 against any background they land on
+
+   Exact measured ratios are in the dark-theme comment block below.
+*/
+
+
+/* ── @font-face: Geist Mono (brand monospace) ─────────────────────────────
+   Variable axis covers 100–900 so a single file serves every weight.
+   Inter's @font-face lives in gateway.css (kept there to preserve its
+   load-order comment about @charset). --font-mono below keeps SF Mono,
+   Menlo, etc. as fallbacks so UI doesn't regress while Geist swaps in. */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/_gateway_static/fonts/GeistMono-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* ── @font-face: Instrument Serif Italic (display/editorial) ──────────────
+   Self-hosted to close the Google Fonts privacy/CSP gap (audit LOW #2).
+   Single italic 400 cut covers --font-display usage; upright Instrument
+   Serif is not used anywhere in the design system. local() first so
+   anyone with the font installed skips the network fetch entirely.
+   File: latin subset (U+0000–00FF) — covers English + Western European
+   sufficiently for our editorial copy; if expansion to extended/Cyrillic
+   is needed later, add more @font-face blocks with unicode-range. */
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Instrument Serif Italic"),
+       local("InstrumentSerif-Italic"),
+       url("/_gateway_static/fonts/InstrumentSerif-Italic.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+                 U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF,
+                 U+FFFD;
+}
+
+/* ── @font-face: Source Serif 4 (body) ────────────────────────────────────
+   Self-hosted to close audit LOW #2. Variable font: opsz 8–60, wght
+   200–900 in a single file — covers every weight referenced by
+   --font-body without per-cut downloads. local() fallback for users
+   with the font installed system-wide. */
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: local("Source Serif 4"),
+       local("SourceSerif4-Regular"),
+       url("/_gateway_static/fonts/SourceSerif4-Variable.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+                 U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF,
+                 U+FFFD;
+}
+
+/* ── Editorial body face ──────────────────────────────────────────────────
+   Body text uses Source Serif 4 (self-hosted above) with Georgia
+   (system-installed everywhere) as the fallback. Fallback chain ends at
+   "serif". For italic emphasis use --font-display (Instrument Serif
+   Italic). Nav chrome + logo stay on --font-ui (Inter) by selector
+   specificity. */
+
+
+/* ============================================================
+   LIGHT THEME — DEFAULT
+   ============================================================ */
+:root,
+:root[data-theme="light"] {
+
+  /* ── Backgrounds — 7 levels, pure greyscale ─────────────── */
+  --bg-base:    #ffffff;
+  --bg-surface: #fafafa;
+  --bg-raised:  #f5f5f5;
+  --bg-overlay: #efefef;
+  --bg-float:   #ffffff;
+  --bg-inset:   #f2f2f2;
+
+  /* ── Borders — 4 levels ─────────────────────────────────── */
+  --border-ghost:   #ebebeb;
+  --border-subtle:  #e0e0e0;
+  --border-default: #cccccc;
+  --border-strong:  #b0b0b0;
+
+  /* ── Text — 4 levels + inverse ──────────────────────────── */
+  --text-primary:    #0d0d0d;
+  --text-secondary:  #4a4a4a;
+  /* Was #858585 (3.69:1 on #fff after axe re-measure → fails AA at
+     small sizes on #fafafa/#f5f5f5 backgrounds). Bumped to #6e6e6e
+     = 5.10:1 on #fff, 4.89:1 on #fafafa, 4.68:1 on #f5f5f5. */
+  --text-tertiary:   #6e6e6e;
+  /* Quaternary is decorative-only — separators, divider glyphs,
+     inactive ticks. Fails AA body-text contrast; never use for
+     meaningful copy. (If you see a contrast violation pointing at
+     this variable, the fix is to switch the rule to --text-tertiary,
+     not to bump this token.) */
+  --text-quaternary: #bbbbbb;
+  /* Inverse = text that sits on --interactive-bg. Flipping it in
+     dark theme is what lets a single CSS rule render correctly on
+     both themes. */
+  --text-inverse:    #ffffff;
+
+  /* ── Interactive surfaces ───────────────────────────────── */
+  --interactive-bg:          #0d0d0d;
+  --interactive-text:        #ffffff;
+  --interactive-hover:       #1f1f1f;
+  --interactive-ghost:       rgba(0, 0, 0, 0.04);
+  --interactive-ghost-hover: rgba(0, 0, 0, 0.08);
+
+  /* ── Rank (monochrome) — greyscale steps for tier / prominence.
+     Named "rank" not "high/low" because those words imply
+     green-is-good / red-is-bad hues and the palette explicitly
+     rejects hue as a signal carrier.
+       --rank-1  darkest  — "strongest emphasis" (eg. active badge)
+       --rank-2           — "medium emphasis"    (eg. pending)
+       --rank-3           — "weak emphasis"      (eg. inactive)
+       --rank-4  lightest — "minimal emphasis"   (eg. not measured)
+     Back-compat --semantic-{high,mid,low,none}-* aliases live at
+     the bottom of this block. New code must use --rank-N. */
+  --rank-1:        #0d0d0d;
+  --rank-1-bg:     rgba(0, 0, 0, 0.06);
+  --rank-1-border: rgba(0, 0, 0, 0.20);
+  --rank-2:        #555555;
+  --rank-2-bg:     rgba(0, 0, 0, 0.03);
+  --rank-2-border: rgba(0, 0, 0, 0.12);
+  --rank-3:        #aaaaaa;
+  --rank-3-bg:     rgba(0, 0, 0, 0.02);
+  --rank-3-border: rgba(0, 0, 0, 0.08);
+  --rank-4:        #cccccc;
+  --rank-4-bg:     rgba(0, 0, 0, 0.015);
+  --rank-4-border: rgba(0, 0, 0, 0.06);
+
+  /* Legacy aliases — code still uses --semantic-high/mid/low/none.
+     Forward them to --rank-N so the migration is zero-risk. Remove
+     this block after grep shows zero callers. */
+  --semantic-high:        var(--rank-1);
+  --semantic-high-bg:     var(--rank-1-bg);
+  --semantic-high-border: var(--rank-1-border);
+  --semantic-mid:         var(--rank-2);
+  --semantic-mid-bg:      var(--rank-2-bg);
+  --semantic-mid-border:  var(--rank-2-border);
+  --semantic-low:         var(--rank-3);
+  --semantic-low-bg:      var(--rank-3-bg);
+  --semantic-low-border:  var(--rank-3-border);
+  --semantic-none:        var(--rank-4);
+  --semantic-none-bg:     var(--rank-4-bg);
+  --semantic-none-border: var(--rank-4-border);
+
+  /* ── Error — monochrome, differentiated by weight + border */
+  --error-text:   #1a1a1a;
+  --error-bg:     rgba(0, 0, 0, 0.05);
+  --error-border: rgba(0, 0, 0, 0.18);
+
+  /* ── Shadows ────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.09), 0 2px 4px rgba(0,0,0,0.05);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.11), 0 4px 8px rgba(0,0,0,0.07);
+
+  /* ── Spacing — 4 px base, existing step sizes.
+     * 1–4 follow strict 4-px multiples;
+     * 5–10 use round dimensional numbers (24 / 32 / 48 / 64 /
+       96 / 128) that predate this cleanup pass. Renaming them
+       would silently shift every layout by integer pixels, so
+       we keep the values and document the non-linear scale in
+       DESIGN_SYSTEM.md instead of breaking screens. */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+  --space-10: 128px;
+
+  /* ── Density ─────────────────────────────────────────────
+     "Comfortable" defaults live here so untouched call sites
+     inherit the airy spacing automatically. The compact override
+     block is at the bottom of this file — setting
+     ``data-density="compact"`` on <html> tightens every surface
+     that opted into these vars (rows, cards, sections, page
+     chrome).
+
+     Only structural spacing belongs here. One-off decorative
+     paddings — tooltip arrows, pill badges, focus halos — should
+     stay hardcoded so they don't shift when the user flips the
+     toggle. */
+  --row-pad-y:   var(--space-3);  /* 12px */
+  --row-pad-x:   var(--space-4);  /* 16px */
+  --card-pad:    var(--space-4);  /* 16px */
+  --section-gap: var(--space-5);  /* 24px */
+  --page-pad:    var(--space-5);  /* 24px */
+
+  /* ── Radii ──────────────────────────────────────────────── */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+  /* Legacy alias — existing call sites use --radius for 16 px.
+     Routes through --radius-xl so future changes go one place. */
+  --radius: var(--radius-xl);
+
+  /* ── Typography — sizes ─────────────────────────────────── */
+  --text-xs:   11px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   18px;
+  --text-xl:   20px;
+  --text-2xl:  24px;
+  --text-3xl:  32px;
+  --text-4xl:  48px;
+  --text-5xl:  72px;
+
+  /* ── Font families ──────────────────────────────────────── */
+  /* Editorial body face — long-form reading + paragraph copy. Site-wide
+     default for <body>; nav chrome + logo override back to --font-ui via
+     component selectors. */
+  --font-body:    "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-ui:      "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                  ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-mono:    "Geist Mono", "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+
+  /* ── Weights ────────────────────────────────────────────── */
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ── Animation ──────────────────────────────────────────── */
+  --ease:           cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast:  0.12s;
+  --duration-base:  0.20s;
+  --duration-slow:  0.40s;
+
+  /* ── Z-index — one authoritative stack ──────────────────── */
+  --z-dropdown:  100;
+  --z-sticky:    200;
+  --z-modal:     1000;
+  --z-toast:     2000;
+  --z-watermark: 9998;
+  --z-overlay:   9999;
+
+  /* ── Layout dimensions ──────────────────────────────────── */
+  /* Surface the four repeated layout magic-numbers so adjusting
+     one header height doesn't require grepping a dozen files. */
+  --max-content-width: 1200px;
+  --header-height:     64px;
+  --sidebar-width:     240px;
+
+  /* ── Focus ring ─────────────────────────────────────────── */
+  /* Shared across every interactive element. A 2-px outline with
+     a 2-px offset keeps the ring visible on both themes without
+     clipping rounded borders. Use as:
+         :focus-visible { outline: var(--focus-ring); outline-offset: 2px; } */
+  --focus-ring:        2px solid var(--border-strong);
+
+  /* ── Back-compat aliases (legacy names still in use) ────── */
+  --bg:             var(--bg-base);
+  --surface:        var(--bg-surface);
+  --surface-hover:  var(--bg-raised);
+  --surface-raised: var(--bg-raised);
+  --border:         var(--border-default);
+  --border-light:   var(--border-subtle);
+  --text-muted:     var(--text-tertiary);
+  --accent:         var(--interactive-bg);
+  --accent-light:   var(--interactive-ghost);
+  --cta-bg:         var(--interactive-bg);
+  --cta-text:       var(--interactive-text);
+  /* Monochrome "green / red" aliases — kept so `.badge-active` etc.
+     that use these names continue to work; they resolve to the
+     same greyscale semantic-high / semantic-low values. */
+  --green:    var(--semantic-high);
+  --green-bg: var(--semantic-high-bg);
+  --red:      var(--semantic-low);
+  --red-bg:   var(--semantic-low-bg);
+}
+
+
+/* ============================================================
+   DARK THEME — USER TOGGLE
+   ============================================================
+   Per-WCAG measured ratios on --bg-base (#0d0d0d):
+     --text-primary   #f0f0f0 → 16.1:1 (AAA)
+     --text-secondary #b0b0b0 →  8.4:1 (AAA)
+     --text-tertiary  #8a8a8a →  5.2:1 (AA body)
+   Values were picked to hit AA body contrast without washing the
+   secondary tier into white. Do not "adjust" these by taste; run
+   an axe check first.
+*/
+:root[data-theme="dark"] {
+
+  /* ── Backgrounds ────────────────────────────────────────── */
+  --bg-base:    #0d0d0d;
+  --bg-surface: #111111;
+  --bg-raised:  #161616;
+  --bg-overlay: #1a1a1a;
+  --bg-float:   #1f1f1f;
+  --bg-inset:   #242424;
+
+  /* ── Borders ────────────────────────────────────────────── */
+  --border-ghost:   #141414;
+  --border-subtle:  #1f1f1f;
+  --border-default: #2a2a2a;
+  --border-strong:  #383838;
+
+  /* ── Text ───────────────────────────────────────────────── */
+  --text-primary:    #f0f0f0;
+  --text-secondary:  #b0b0b0;
+  /* Was #8a8a8a — measured 4.23:1 on --bg-float (#1f1f1f), below AA
+     body. Bumped to #909090 = 4.97:1 on --bg-base, 5.65:1 on
+     --bg-surface, 4.84:1 on --bg-float. All AA body-pass. */
+  --text-tertiary:   #909090;
+  --text-quaternary: #6e6e6e;
+  --text-inverse:    #0d0d0d;
+
+  /* ── Interactive ────────────────────────────────────────── */
+  --interactive-bg:          #f0f0f0;
+  --interactive-text:        #0d0d0d;
+  --interactive-hover:       #d4d4d4;
+  --interactive-ghost:       rgba(240, 240, 240, 0.06);
+  --interactive-ghost-hover: rgba(240, 240, 240, 0.10);
+
+  /* ── Rank (dark: just lightness-flipped — darkest is now brightest) */
+  --rank-1:        #e0e0e0;
+  --rank-1-bg:     rgba(255, 255, 255, 0.08);
+  --rank-1-border: rgba(255, 255, 255, 0.20);
+  --rank-2:        #888888;
+  --rank-2-bg:     rgba(255, 255, 255, 0.04);
+  --rank-2-border: rgba(255, 255, 255, 0.10);
+  --rank-3:        #444444;
+  --rank-3-bg:     rgba(255, 255, 255, 0.02);
+  --rank-3-border: rgba(255, 255, 255, 0.06);
+  --rank-4:        #2a2a2a;
+  --rank-4-bg:     rgba(255, 255, 255, 0.015);
+  --rank-4-border: rgba(255, 255, 255, 0.04);
+
+  /* --semantic-* aliases defined in :root automatically re-resolve
+     per-theme because they forward to the base --rank-N names that
+     this block redefines. No need to restate the aliases here. */
+
+  /* ── Error ──────────────────────────────────────────────── */
+  --error-text:   #e0e0e0;
+  --error-bg:     rgba(255, 255, 255, 0.06);
+  --error-border: rgba(255, 255, 255, 0.15);
+
+  /* ── Shadows — deeper because they sit on near-black ────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4),  0 1px 2px rgba(0,0,0,0.6);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.5);
+
+  /* Spacing / radii / typography / weights / animation / z-index
+     are lightness-invariant — inherited from :root above.
+     The back-compat aliases re-resolve automatically through their
+     var() references. */
+}
+
+
+/* ============================================================
+   DENSITY — COMPACT OVERRIDE
+   ============================================================
+   Theme-agnostic: applies to both light + dark roots. Tightens
+   every var() the spec calls structural by ~⅓. Untouched
+   surfaces inherit the comfortable :root defaults, so opt-in is
+   per-rule (replace ``padding: 16px`` with
+   ``padding: var(--card-pad)`` and the rule gets density-aware). */
+:root[data-density="compact"] {
+  --row-pad-y:   var(--space-2);  /* 8px  */
+  --row-pad-x:   var(--space-3);  /* 12px */
+  --card-pad:    var(--space-3);  /* 12px */
+  --section-gap: var(--space-4);  /* 16px */
+  --page-pad:    var(--space-4);  /* 16px */
+}

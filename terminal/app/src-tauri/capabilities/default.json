@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "narve Terminal main window. The webview only needs core defaults: the sidecar is spawned from Rust (dev builds), and all data access is plain fetch() to 127.0.0.1:41733 — no shell permissions exposed to the frontend.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
