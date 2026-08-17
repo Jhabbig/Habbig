@@ -4,7 +4,10 @@
 one polymarket snapshot per row at market_price. Plus 2 PRE-RESOLVED 2025
 governor questions (a hit for race_model, a miss for poll_aggregator) run
 through the real resolution loop so the SOURCES screen shows credibility
-movement out of the box. Everything is_sample=1; source ids prefixed
+movement out of the box. v2 adds one HUMAN source (sample:capitol_staffer,
+kind='user', fresh 2/2 prior) with 3 text messages around the House question —
+the one carrying question+stance also lands a prediction, entering the texter
+into the credibility loop. Everything is_sample=1; source ids prefixed
 'sample:'; questions keep their slug ids. Loading is idempotent.
 """
 
@@ -15,8 +18,15 @@ from datetime import datetime, timedelta, timezone
 
 from . import credibility
 from .db import utcnow
+from .ingest import text_hash
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+# Fixed anchor for every sample timestamp (age_minutes counts back from here).
+# Deliberately NOT wall-clock: the natural keys (stated_at / captured_at /
+# sent_at) must be identical on every load, or INSERT OR IGNORE can't dedupe
+# and each /sample/load would re-insert the whole set with fresh keys.
+ANCHOR = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 # (title, question_id, source_id, listed_cred, narve_p, market_price, age_minutes)
 EVENTS = [
@@ -51,6 +61,25 @@ SOURCES = {
     "generic_ballot": ("Generic Ballot", 20.0, 7.0),
 }
 
+# One human texter, kind='user', fresh Beta(2,2) prior — scored only when a
+# question it predicted on resolves.
+USER_SOURCES = {
+    "capitol_staffer": ("Capitol Staffer", 2.0, 2.0),
+}
+
+# (age_minutes, question_id | None, stance_p | None, text). The second message
+# carries BOTH question_id and stance, so it also lands a predictions row —
+# mirroring the messages-ingest rule. The first has a stance but no question
+# link; the third is context-only (no stance).
+MESSAGES = [
+    (90, None, 0.70,
+     "Leadership whip count has the House majority holding — floor mood is confident."),
+    (55, "midterm-house-gop-2026", 0.66,
+     "Latest internal count on the House: still see it around 2-in-3 for the GOP."),
+    (25, "midterm-house-gop-2026", None,
+     "FWIW two members told me the NRCC is moving money into toss-up seats this week."),
+]
+
 # (title, question_id, source_id, p, outcome, stated_at, resolved_at)
 RESOLVED = [
     ("Virginia Governor — Democrat wins (2025)", "va-gov-dem-2025",
@@ -74,37 +103,62 @@ def _counts(conn: sqlite3.Connection) -> dict:
 
 
 def load_sample(conn: sqlite3.Connection) -> dict:
-    """Idempotent: a second load is a no-op that returns the current counts."""
-    if conn.execute("SELECT 1 FROM sources WHERE is_sample = 1 LIMIT 1").fetchone():
-        return _counts(conn)
-    now = datetime.now(timezone.utc)
+    """Idempotent at ROW level (INSERT OR IGNORE on every natural key), so a
+    re-load is a no-op AND an upgraded sample set tops up an existing DB with
+    only its new rows — a table-level "already loaded" guard would strand old
+    DBs on the old sample forever."""
+    now = ANCHOR
     created = utcnow()
     for sid, (name, alpha, beta) in SOURCES.items():
         conn.execute(
-            "INSERT INTO sources(id, name, alpha, beta, is_sample, created_at)"
-            " VALUES (?, ?, ?, ?, 1, ?)",
+            "INSERT OR IGNORE INTO sources(id, name, alpha, beta, kind, is_sample,"
+            " created_at) VALUES (?, ?, ?, ?, 'model', 1, ?)",
+            (f"sample:{sid}", name, alpha, beta, created),
+        )
+    for sid, (name, alpha, beta) in USER_SOURCES.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO sources(id, name, alpha, beta, kind, is_sample,"
+            " created_at) VALUES (?, ?, ?, ?, 'user', 1, ?)",
             (f"sample:{sid}", name, alpha, beta, created),
         )
     for i, (title, qid, sid, _cred, narve_p, mkt, age_min) in enumerate(EVENTS):
         at = (now - timedelta(minutes=age_min)).strftime(TS_FMT)
         conn.execute(
-            "INSERT INTO questions(id, title, status, is_sample, created_at)"
+            "INSERT OR IGNORE INTO questions(id, title, status, is_sample, created_at)"
             " VALUES (?, ?, 'live', 1, ?)", (qid, title, created))
         conn.execute(
-            "INSERT INTO predictions(source_id, question_id, p, stated_at, note)"
+            "INSERT OR IGNORE INTO predictions(source_id, question_id, p, stated_at, note)"
             " VALUES (?, ?, ?, ?, NULL)", (f"sample:{sid}", qid, narve_p, at))
         conn.execute(
-            "INSERT INTO market_snapshots"
+            "INSERT OR IGNORE INTO market_snapshots"
             "(venue, market_id, question_id, yes_price, liquidity, captured_at)"
             " VALUES ('polymarket', ?, ?, ?, ?, ?)",
             (qid, qid, mkt, 50000.0 * (12 - i), at))
+    for age_min, qid, stance, text in MESSAGES:
+        at = (now - timedelta(minutes=age_min)).strftime(TS_FMT)
+        conn.execute(
+            "INSERT OR IGNORE INTO messages(source_id, question_id, text, sent_at,"
+            " stance_p, text_hash, is_sample) VALUES (?, ?, ?, ?, ?, ?, 1)",
+            ("sample:capitol_staffer", qid, text, at, stance, text_hash(text)),
+        )
+        if qid and stance is not None:  # question+stance -> credibility loop
+            conn.execute(
+                "INSERT OR IGNORE INTO predictions(source_id, question_id, p, stated_at,"
+                " note) VALUES (?, ?, ?, ?, ?)",
+                ("sample:capitol_staffer", qid, stance, at, text[:100]),
+            )
     for title, qid, sid, p, outcome, stated_at, resolved_at in RESOLVED:
         conn.execute(
-            "INSERT INTO questions(id, title, status, is_sample, created_at)"
+            "INSERT OR IGNORE INTO questions(id, title, status, is_sample, created_at)"
             " VALUES (?, ?, 'live', 1, ?)", (qid, title, created))
         conn.execute(
-            "INSERT INTO predictions(source_id, question_id, p, stated_at, note)"
+            "INSERT OR IGNORE INTO predictions(source_id, question_id, p, stated_at, note)"
             " VALUES (?, ?, ?, ?, NULL)", (f"sample:{sid}", qid, p, stated_at))
-        credibility.resolve_question(conn, qid, outcome, resolved_at)
+        # Only score once: on re-load (or an upgraded DB) the question is
+        # already resolved and re-scoring would double-count credibility.
+        status = conn.execute(
+            "SELECT status FROM questions WHERE id = ?", (qid,)).fetchone()
+        if status is not None and status[0] == "live":
+            credibility.resolve_question(conn, qid, outcome, resolved_at)
     conn.commit()
     return _counts(conn)

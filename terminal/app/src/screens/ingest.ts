@@ -1,4 +1,4 @@
-// screens/ingest.ts — three upload cards (drag-drop + picker), template
+// screens/ingest.ts — four upload cards (drag-drop + picker), template
 // downloads, LOAD SAMPLE DATA, full LINE·REASON error table, raw-data peek.
 // CSV + JSON array only in v0.5 (XLSX lands in v1).
 import {
@@ -23,6 +23,7 @@ const KINDS: { kind: IngestKind; cols: string }[] = [
     cols: "venue · market_id · question_id · yes_price · liquidity? · captured_at",
   },
   { kind: "resolutions", cols: "question_id · outcome (yes|no|void) · resolved_at" },
+  { kind: "messages", cols: "source_id · text · sent_at · question_id? · stance?" },
 ];
 
 export function mount(root: HTMLElement, _params: Record<string, string>): void {
@@ -41,14 +42,18 @@ export function mount(root: HTMLElement, _params: Record<string, string>): void 
   // sample loader
   const sampleRow = el("div");
   const sampleBtn = el("button", "nv-btn", "LOAD SAMPLE DATA");
-  const sampleStatus = el("span", undefined, " 12 markets + 2 pre-resolved questions, tagged SAMPLE");
+  const sampleStatus = el(
+    "span",
+    undefined,
+    " 12 markets + 2 pre-resolved questions + 1 texter with 3 messages, tagged SAMPLE",
+  );
   sampleRow.append(sampleBtn, sampleStatus);
   panel.appendChild(sampleRow);
 
   const resultPanel = el("div");
   const rawBody = el("div");
 
-  // three upload cards
+  // four upload cards
   const cards = el("div");
   cards.style.cssText = "display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;";
   for (const { kind, cols } of KINDS) {
@@ -86,9 +91,10 @@ async function doSample(
   try {
     const res = await loadSample();
     const c = res.counts;
+    const msgs = c.messages !== undefined ? ` · ${c.messages} MESSAGES` : "";
     status.textContent =
       ` LOADED · ${c.sources} SOURCES · ${c.questions} QUESTIONS · ` +
-      `${c.predictions} PREDICTIONS · ${c.snapshots} SNAPSHOTS — see MARKETS`;
+      `${c.predictions} PREDICTIONS · ${c.snapshots} SNAPSHOTS${msgs} — see MARKETS`;
     window.dispatchEvent(
       new CustomEvent("nv:ingest", { detail: { at: new Date().toISOString() } }),
     );

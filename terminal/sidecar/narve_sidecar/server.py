@@ -58,7 +58,8 @@ def _source_row(c, s) -> dict:
     ).fetchone()[0]
     b = credibility.brier(c, s["id"])
     return {
-        "id": s["id"], "name": s["name"], "alpha": s["alpha"], "beta": s["beta"],
+        "id": s["id"], "name": s["name"], "kind": s["kind"],
+        "alpha": s["alpha"], "beta": s["beta"],
         "credibility": round(credibility.credibility(s["alpha"], s["beta"]), 4),
         "n_resolved": n_resolved, "n_live": n_live,
         "brier": round(b, 4) if b is not None else None,
@@ -116,7 +117,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def ingest_endpoint(kind: str, request: Request):
         if kind not in ingest_mod.KINDS:
             raise HTTPException(404, f"unknown ingest kind {kind!r} — expected"
-                                     " predictions, markets or resolutions")
+                                     " predictions, markets, resolutions or"
+                                     " messages")
         content_type = (request.headers.get("content-type") or "").lower()
         with closing(conn()) as c:
             try:
@@ -217,6 +219,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
             history = [_snapshot(r) for r in c.execute(
                 "SELECT * FROM market_snapshots WHERE question_id = ?"
                 " ORDER BY captured_at ASC, id ASC", (question_id,)).fetchall()]
+            messages = [dict(m) for m in c.execute(
+                "SELECT id, source_id, text, sent_at, stance_p FROM messages"
+                " WHERE question_id = ? ORDER BY sent_at DESC, id DESC",
+                (question_id,)).fetchall()]
             question = {"id": q["id"], "title": q["title"], "status": q["status"],
                         "resolved_outcome": q["resolved_outcome"],
                         "resolved_at": q["resolved_at"],
@@ -224,7 +230,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         "created_at": q["created_at"]}
         return {"question": question, "per_source": per_source,
                 "combined_p": round(combined, 4) if combined is not None else None,
-                "market": market, "history": history}
+                "market": market, "history": history, "messages": messages}
 
     @app.post("/resolve")
     def resolve(body: ResolveBody):
@@ -262,6 +268,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 where.append("question_id = ?"); args.append(question_id)
             select = ("SELECT id, venue, market_id, question_id, yes_price,"
                       " liquidity, captured_at ")
+        elif kind == "messages":
+            base, order = "FROM messages", "ORDER BY sent_at DESC, id DESC"
+            if question_id:
+                where.append("question_id = ?"); args.append(question_id)
+            if source_id:
+                where.append("source_id = ?"); args.append(source_id)
+            select = ("SELECT id, source_id, question_id, text, sent_at,"
+                      " stance_p ")
         else:  # resolutions live ON questions in v0.5
             base, order = "FROM questions", "ORDER BY resolved_at DESC, id DESC"
             where.append("status != 'live'")

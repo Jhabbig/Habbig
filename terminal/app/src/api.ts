@@ -5,7 +5,7 @@
 
 export const API_BASE = "http://127.0.0.1:41733";
 
-export type IngestKind = "predictions" | "markets" | "resolutions";
+export type IngestKind = "predictions" | "markets" | "resolutions" | "messages";
 export type Outcome = "yes" | "no" | "void";
 
 export interface Health {
@@ -34,12 +34,16 @@ export interface SampleLoadResult {
     questions: number;
     predictions: number;
     snapshots: number;
+    messages?: number; // present once the sidecar ships sample data v2
   };
 }
+
+export type SourceKind = "model" | "user";
 
 export interface SourceRow {
   id: string;
   name: string;
+  kind: SourceKind;
   alpha: number;
   beta: number;
   credibility: number;
@@ -114,12 +118,23 @@ export interface PerSource {
   stated_at: string;
 }
 
+// A text message from a person-source (kind='user'). stance_p is the
+// sender's stated probability in [0,1], or null for context-only texts.
+export interface MessageRow {
+  id: number;
+  source_id: string;
+  text: string;
+  sent_at: string;
+  stance_p: number | null;
+}
+
 export interface QuestionDetail {
   question: Question;
   per_source: PerSource[];
   combined_p: number | null;
   market: Snapshot[]; // latest snapshot per venue
   history: Snapshot[]; // all snapshots, captured_at asc
+  messages: MessageRow[]; // newest-first
 }
 
 export interface ResolveMove {

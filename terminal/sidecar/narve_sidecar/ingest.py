@@ -1,4 +1,5 @@
-"""Strict CSV/JSON ingest for the three kinds: predictions, markets, resolutions.
+"""Strict CSV/JSON ingest for four kinds: predictions, markets, resolutions,
+messages (texts from people — sources with kind='user').
 
 ALL row errors are reported at once as [{line, reason}] with 1-based data
 lines; valid rows are still applied (partial ingest — the file's counts land
@@ -19,26 +20,35 @@ from datetime import datetime
 from . import credibility
 from .db import utcnow
 
-KINDS = ("predictions", "markets", "resolutions")
+KINDS = ("predictions", "markets", "resolutions", "messages")
 
 # kind -> (required columns, optional columns) — CSV header order below.
 COLUMNS: dict[str, tuple[list[str], list[str]]] = {
     "predictions": (["source_id", "question_id", "predicted_probability", "stated_at"], ["note"]),
     "markets": (["venue", "market_id", "question_id", "yes_price", "captured_at"], ["liquidity"]),
     "resolutions": (["question_id", "outcome", "resolved_at"], []),
+    "messages": (["source_id", "text", "sent_at"], ["question_id", "stance"]),
 }
 
 HEADERS: dict[str, list[str]] = {
     "predictions": ["source_id", "question_id", "predicted_probability", "stated_at", "note"],
     "markets": ["venue", "market_id", "question_id", "yes_price", "liquidity", "captured_at"],
     "resolutions": ["question_id", "outcome", "resolved_at"],
+    "messages": ["source_id", "text", "sent_at", "question_id", "stance"],
 }
 
 TEMPLATE_EXAMPLES: dict[str, list[str]] = {
     "predictions": ["race_model", "midterm-house-gop-2026", "0.62", "2026-08-01T12:00:00Z", "optional note"],
     "markets": ["polymarket", "midterm-house-gop-2026", "midterm-house-gop-2026", "0.55", "250000", "2026-08-01T12:00:00Z"],
     "resolutions": ["midterm-house-gop-2026", "yes", "2026-11-04T04:00:00Z"],
+    "messages": ["capitol_staffer", "Whip count still shows the majority holding",
+                 "2026-08-01T12:00:00Z", "midterm-house-gop-2026", "0.7"],
 }
+
+
+def text_hash(text: str) -> str:
+    """Short content hash stored on each message (dedupe key component)."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 class IngestError(Exception):
@@ -156,19 +166,47 @@ def _v_resolution(row: dict) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _v_message(row: dict) -> tuple[dict | None, str | None]:
+    if not _s(row, "source_id"):
+        return None, "source_id is required"
+    text = _s(row, "text")
+    if not text:
+        return None, "text is required"
+    sent_at = _s(row, "sent_at")
+    if not sent_at:
+        return None, "sent_at is required"
+    if not _iso_ok(sent_at):
+        return None, f"sent_at must be an ISO 8601 timestamp, got {sent_at!r}"
+    stance: float | None = None
+    if _s(row, "stance"):
+        stance, err = _num(row, "stance")
+        if err:  # never map yes/no words to invented numbers — hard row error
+            return None, err
+        if not 0.0 <= stance <= 1.0:
+            return None, f"stance must be between 0 and 1, got {stance}"
+    return {
+        "source_id": _s(row, "source_id"),
+        "question_id": _s(row, "question_id") or None,
+        "text": text, "sent_at": sent_at, "stance": stance,
+    }, None
+
+
 VALIDATORS = {
     "predictions": _v_prediction,
     "markets": _v_market,
     "resolutions": _v_resolution,
+    "messages": _v_message,
 }
 
 
 # --- appliers: (conn, [(line, clean)], errors) -> (ok, dedup_skipped) --------
 
 def _ensure_source(conn: sqlite3.Connection, source_id: str) -> None:
+    # Every ingest auto-create is kind='user' — models are seeded explicitly
+    # by sample data with kind='model'.
     conn.execute(
-        "INSERT OR IGNORE INTO sources(id, name, alpha, beta, is_sample, created_at)"
-        " VALUES (?, '', 2.0, 2.0, 0, ?)",
+        "INSERT OR IGNORE INTO sources(id, name, alpha, beta, kind, is_sample,"
+        " created_at) VALUES (?, '', 2.0, 2.0, 'user', 0, ?)",
         (source_id, utcnow()),
     )
 
@@ -227,10 +265,38 @@ def _apply_resolutions(conn, valid, errors) -> tuple[int, int]:
     return ok, 0
 
 
+def _apply_messages(conn, valid, errors) -> tuple[int, int]:
+    ok = dedup = 0
+    for _line, r in valid:
+        _ensure_source(conn, r["source_id"])
+        if r["question_id"]:
+            _ensure_question(conn, r["question_id"])
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO messages"
+            "(source_id, question_id, text, sent_at, stance_p, text_hash, is_sample)"
+            " VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (r["source_id"], r["question_id"], r["text"], r["sent_at"],
+             r["stance"], text_hash(r["text"])),
+        )
+        if r["question_id"] and r["stance"] is not None:
+            # BOTH question_id and stance -> the texter enters the credibility
+            # loop through the existing idempotent predictions path.
+            conn.execute(
+                "INSERT OR IGNORE INTO predictions"
+                "(source_id, question_id, p, stated_at, note)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (r["source_id"], r["question_id"], r["stance"], r["sent_at"],
+                 r["text"][:100]),
+            )
+        ok, dedup = (ok + 1, dedup) if cur.rowcount else (ok, dedup + 1)
+    return ok, dedup
+
+
 APPLIERS = {
     "predictions": _apply_predictions,
     "markets": _apply_markets,
     "resolutions": _apply_resolutions,
+    "messages": _apply_messages,
 }
 
 

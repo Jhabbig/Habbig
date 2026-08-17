@@ -77,6 +77,7 @@ async function render(body: HTMLElement, id: string): Promise<void> {
 
   body.appendChild(marketBlock(d));
   body.appendChild(perSourceBlock(d));
+  body.appendChild(messagesBlock(d));
   body.appendChild(resolveBlock(d, statusLine));
 }
 
@@ -166,6 +167,38 @@ function perSourceBlock(d: QuestionDetail): HTMLElement {
     tr.appendChild(td(fmtProb(s.credibility), "nv-num"));
     tr.appendChild(td(fmtProb(s.p), "nv-num"));
     tr.appendChild(td(fmtTime(s.stated_at), "nv-num"));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+// Texts from person-sources on this question, newest first. Stance is the
+// sender's stated probability; context-only texts show an em-dash.
+function messagesBlock(d: QuestionDetail): HTMLElement {
+  const wrap = el("div");
+  wrap.appendChild(el("div", "nv-marker", "[ MESSAGES ]"));
+  const messages = d.messages ?? []; // tolerate a pre-v2 sidecar mid-rollout
+  if (messages.length === 0) {
+    wrap.appendChild(
+      el(
+        "div",
+        "nv-empty",
+        "No messages on this question — ingest texts from the MESSAGES card.",
+      ),
+    );
+    return wrap;
+  }
+  const table = el("table", "nv-table");
+  table.appendChild(theadRow(["SOURCE", "STANCE", "SENT", "TEXT"]));
+  const tbody = el("tbody");
+  for (const m of messages) {
+    const tr = el("tr");
+    tr.appendChild(td(m.source_id));
+    tr.appendChild(td(fmtProb(m.stance_p), "nv-num"));
+    tr.appendChild(td(fmtTime(m.sent_at), "nv-num"));
+    tr.appendChild(td(m.text));
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
