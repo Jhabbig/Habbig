@@ -1,0 +1,17 @@
+[project]
+name = "narve-sidecar"
+version = "0.5.0"
+description = "narve Terminal credibility-engine sidecar (FastAPI, SQLite WAL)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

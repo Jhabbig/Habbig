@@ -1,0 +1,17 @@
+# terminal/ — build artifacts and caches
+
+# frontend
+node_modules/
+dist/
+
+# tauri / rust
+src-tauri/target/
+
+# python
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# macOS
+.DS_Store
