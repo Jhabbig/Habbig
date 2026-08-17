@@ -163,7 +163,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with closing(conn()) as c:
             rows = [_source_row(c, s) for s in
                     c.execute("SELECT * FROM sources").fetchall()]
-        rows.sort(key=lambda r: r["credibility"], reverse=True)
+        # Credibility is a/(a+b) on INTEGER counts, so identical records tie
+        # exactly (39 accounts at 5/2=0.714 in the 25k stress test). Within a
+        # tie, rank by Brier (lower = sharper calls) — continuous, so it
+        # separates skill from luck where hit-rate can't. No-Brier sources sink
+        # to the bottom of their tie group; resolved-call count breaks the rest.
+        rows.sort(key=lambda r: (
+            -r["credibility"],
+            r["brier"] if r["brier"] is not None else 2.0,
+            -r["n_resolved"],
+            r["id"],
+        ))
         return rows
 
     @app.get("/sources/{source_id}")
