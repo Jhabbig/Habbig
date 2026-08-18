@@ -166,3 +166,27 @@ def test_sample_load_adds_capitol_staffer_and_stays_idempotent(client):
     again = client.post("/sample/load").json()
     assert again["counts"] == first["counts"]  # second load is a no-op
     assert client.get("/raw/messages").json()["total"] == 3
+
+
+def test_failed_ingest_is_never_sealed_by_its_sha(conn):
+    """A file whose first ingest had row errors must fully reprocess on
+    retry (same bytes), reporting the errors again — not replay logged counts
+    with an empty errors list. Clean ingests still short-circuit."""
+    from narve_sidecar import ingest
+
+    bad = (b"source_id,text,sent_at,question_id,stance\n"
+           b"u1,call it,2026-01-01T00:00:00Z,q1,1.4\n"       # stance out of range
+           b"u1,context only,2026-01-01T00:01:00Z,q1,\n")
+    r1 = ingest.ingest_file(conn, "messages", bad, "mixed.csv")
+    assert (r1["ok_rows"], r1["err_rows"], r1["already_ingested"]) == (1, 1, False)
+
+    r2 = ingest.ingest_file(conn, "messages", bad, "mixed.csv")
+    assert r2["already_ingested"] is False          # NOT sealed
+    assert r2["err_rows"] == 1 and r2["errors"]     # errors visible again
+    assert r2["dedup_skipped"] == 1                 # the good row deduped, not duplicated
+
+    good = (b"source_id,text,sent_at,question_id,stance\n"
+            b"u2,clean call,2026-01-02T00:00:00Z,q2,0.7\n")
+    ingest.ingest_file(conn, "messages", good, "good.csv")
+    r3 = ingest.ingest_file(conn, "messages", good, "good.csv")
+    assert r3["already_ingested"] is True           # clean files still short-circuit

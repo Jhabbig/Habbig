@@ -331,9 +331,17 @@ def _run(conn: sqlite3.Connection, kind: str, rows: list, sha: str,
     prior = conn.execute(
         "SELECT rows_ok, rows_err FROM ingest_log WHERE sha256 = ?", (sha,)
     ).fetchone()
-    if prior is not None:
+    if prior is not None and prior["rows_err"] == 0:
+        # Clean prior ingest of the identical file: short-circuit.
         return {"ok_rows": prior["rows_ok"], "err_rows": prior["rows_err"],
                 "dedup_skipped": 0, "already_ingested": True, "errors": []}
+    if prior is not None:
+        # The identical file previously ingested WITH row errors. Never seal a
+        # failed import behind its sha: the user's natural move is to fix the
+        # cause and retry the same file, and the retry must (a) actually
+        # reprocess and (b) show the row errors again. Row-level natural keys
+        # make reprocessing safe; drop the stale log row so this run re-logs.
+        conn.execute("DELETE FROM ingest_log WHERE sha256 = ?", (sha,))
     errors: list[dict] = []
     valid: list[tuple[int, dict]] = []
     for line, row in enumerate(rows, start=1):
