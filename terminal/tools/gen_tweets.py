@@ -1,24 +1,33 @@
 #!/usr/bin/env python3.11
-"""Generate 25k SYNTHETIC GOP tweets for a narve Terminal stress test.
+"""Generate SYNTHETIC GOP tweets for narve Terminal stress/demo imports.
 
-Deterministic (seed=42). 1,200 fake accounts, each with a latent skill
-(probability their stance points the right way). 8 already-decided synthetic
-GOP questions (outcomes predetermined here) + the 12 live sample midterm
-questions as targets. ~40% of tweets carry an explicit stance; the rest are
-context-only. The point: after resolution, credibility should SEPARATE the
-skilled accounts from the noise.
+Usage:
+    python3.11 tools/gen_tweets.py [out_dir] [n_tweets] [n_accounts] [seed]
+    # defaults:            .          25000      1200        42
+
+Deterministic for a given (n_tweets, n_accounts, seed). Writes:
+    out_dir/tweets_<n>.csv        — messages-ingest CSV (drag into INGEST)
+    out_dir/gop_resolutions.csv   — resolutions for the 8 synthetic questions
+
+Design: each account has a latent skill (P(stance points the right way)) and a
+Pareto-drawn posting volume, so tweet counts per user follow a heavy power law
+(a few accounts post hundreds, most a handful). A planted cohort (first 30
+accounts) is genuinely skilled — after resolution, credibility scoring should
+separate them from the noise. ~40% of tweets carry an explicit stance; the
+rest are context-only.
 """
 import csv
 import random
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-random.seed(42)
 OUT = sys.argv[1] if len(sys.argv) > 1 else "."
-N_TWEETS = 25_000
-N_ACCOUNTS = 1_200
+N_TWEETS = int(sys.argv[2]) if len(sys.argv) > 2 else 25_000
+N_ACCOUNTS = int(sys.argv[3]) if len(sys.argv) > 3 else 1_200
+SEED = int(sys.argv[4]) if len(sys.argv) > 4 else 42
+random.seed(SEED)
 
-# Synthetic resolved cohort: (question_id, outcome yes|no)
 RESOLVED_QS = [
     ("gop-primary-oh-sen-2026", "yes"), ("gop-primary-az-gov-2026", "no"),
     ("gop-speaker-vote-jul-2026", "yes"), ("gop-platform-vote-2026", "yes"),
@@ -45,6 +54,7 @@ TMPL_STANCE = [
     "Been tracking this all week. {q}? Roughly {pct}% imo.",
     "Hot take but data-backed: {q} at {pct}%.",
     "Updated my model, {q} now {pct}% from where I sit.",
+    "Quietly repositioning: {q} feels like {pct}% after today.",
 ]
 TMPL_CTX = [
     "Turnout chatter in {st} is wild today. GOP field offices packed.",
@@ -52,52 +62,47 @@ TMPL_CTX = [
     "Canvassed {st} this weekend — mood is tense on both sides.",
     "GOP county chairs in {st} are quietly nervous, per two people I spoke to.",
     "Ad spend just tripled in {st}. Somebody's internal polling moved.",
+    "Early-vote requests in {st} running ahead of 2022 pace.",
 ]
 STATES = ["OH", "AZ", "GA", "TX", "NH", "MI", "NV", "PA", "WI", "NC"]
 
-accounts = []
+handles, skills, weights = [], [], []
 for i in range(N_ACCOUNTS):
-    handle = f"{random.choice(STYLE)}_{random.choice(FIRST)}_{i:04d}"
-    skill = random.betavariate(5, 5)          # most ~0.5, tails both ways
+    handles.append(f"{random.choice(STYLE)}_{random.choice(FIRST)}_{i:05d}")
+    skill = random.betavariate(5, 5)
     if i < 30:
-        skill = random.uniform(0.78, 0.92)    # a small genuinely-good cohort
-    weight = random.paretovariate(1.6)        # power-law tweet volume
-    accounts.append((handle, skill, weight))
-total_w = sum(a[2] for a in accounts)
+        skill = random.uniform(0.78, 0.92)   # the planted genuinely-good cohort
+    skills.append(skill)
+    weights.append(random.paretovariate(1.3))  # heavy tail: volumes vary wildly
 
 anchor = datetime(2026, 8, 18, 0, 0, tzinfo=timezone.utc)
+SPAN_S = 45 * 86_400   # 45 days, second resolution -> dedupe-safe at 100k+
+picks = random.choices(range(N_ACCOUNTS), weights=weights, k=N_TWEETS)
+
 rows = []
-for n in range(N_TWEETS):
-    r = random.random() * total_w
-    acc = None
-    for handle, skill, w in accounts:
-        r -= w
-        if r <= 0:
-            acc = (handle, skill)
-            break
-    if acc is None:
-        acc = (accounts[-1][0], accounts[-1][1])
-    handle, skill = acc
-    sent = (anchor - timedelta(minutes=random.randint(1, 60 * 24 * 45))
+for idx in picks:
+    handle, skill = handles[idx], skills[idx]
+    sent = (anchor - timedelta(seconds=random.randint(1, SPAN_S))
             ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if random.random() < 0.4:                 # stance tweet
-        if random.random() < 0.55:            # on a resolved question
+    if random.random() < 0.4:
+        if random.random() < 0.55:
             qid, outcome = random.choice(RESOLVED_QS)
             right = random.random() < skill
             hi = (outcome == "yes") == right
             p = random.uniform(0.55, 0.95) if hi else random.uniform(0.05, 0.45)
-        else:                                 # on a live question
+        else:
             qid = random.choice(LIVE_QS)
             p = min(0.95, max(0.05, random.gauss(LIVE_CONSENSUS[qid], 0.12)))
         text = random.choice(TMPL_STANCE).format(q=qid, pct=round(p * 100))
         rows.append((f"x:{handle}", text, sent, qid, f"{p:.2f}"))
-    else:                                     # context-only tweet
+    else:
         text = random.choice(TMPL_CTX).format(st=random.choice(STATES))
         qid = random.choice(LIVE_QS + [q for q, _ in RESOLVED_QS]) \
             if random.random() < 0.5 else ""
         rows.append((f"x:{handle}", text, sent, qid, ""))
 
-with open(f"{OUT}/tweets_25k.csv", "w", newline="") as f:
+out_csv = f"{OUT}/tweets_{N_TWEETS}.csv"
+with open(out_csv, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["source_id", "text", "sent_at", "question_id", "stance"])
     w.writerows(rows)
@@ -106,5 +111,11 @@ with open(f"{OUT}/gop_resolutions.csv", "w", newline="") as f:
     w.writerow(["question_id", "outcome", "resolved_at"])
     for qid, outcome in RESOLVED_QS:
         w.writerow([qid, outcome, "2026-08-17T22:00:00Z"])
+
+per_user = Counter(r[0] for r in rows)
+counts = sorted(per_user.values())
 stance_n = sum(1 for r in rows if r[4])
-print(f"wrote {len(rows)} tweets ({stance_n} with stance) from {N_ACCOUNTS} accounts")
+print(f"wrote {out_csv}: {len(rows)} tweets ({stance_n} with stance) "
+      f"from {len(per_user)} active accounts (of {N_ACCOUNTS})")
+print(f"tweets/user: max={counts[-1]} p90={counts[int(len(counts)*0.9)]} "
+      f"median={counts[len(counts)//2]} min={counts[0]}")
