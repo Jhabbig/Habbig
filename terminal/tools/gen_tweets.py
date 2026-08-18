@@ -7,7 +7,7 @@ Usage:
 
 Deterministic for a given (n_tweets, n_accounts, seed). Writes:
     out_dir/tweets_<n>.csv        — messages-ingest CSV (drag into INGEST)
-    out_dir/gop_resolutions.csv   — resolutions for the 8 synthetic questions
+    out_dir/resolutions_2025.csv  — REAL 2025 events with their real outcomes
 
 Design: each account has a latent skill (P(stance points the right way)) and a
 Pareto-drawn posting volume, so tweet counts per user follow a heavy power law
@@ -28,11 +28,23 @@ N_ACCOUNTS = int(sys.argv[3]) if len(sys.argv) > 3 else 1_200
 SEED = int(sys.argv[4]) if len(sys.argv) > 4 else 42
 random.seed(SEED)
 
+# REAL events that already happened, with their REAL outcomes and resolution
+# dates (late 2025). Stance tweets about these are timestamped BEFORE each
+# event's resolution — the engine's lookahead guard refuses hindsight, and so
+# does this dataset.
 RESOLVED_QS = [
-    ("gop-primary-oh-sen-2026", "yes"), ("gop-primary-az-gov-2026", "no"),
-    ("gop-speaker-vote-jul-2026", "yes"), ("gop-platform-vote-2026", "yes"),
-    ("gop-debate-happens-aug-2026", "no"), ("gop-ga-runoff-2026", "yes"),
-    ("gop-tx-convention-2026", "no"), ("gop-nh-endorsement-2026", "yes"),
+    ("spanberger-wins-va-2025",    "yes", "2025-11-05T04:00:00Z"),  # she won
+    ("ciattarelli-wins-nj-2025",   "no",  "2025-11-05T04:00:00Z"),  # Sherrill (D) won
+    ("nyc-mayor-mamdani-2025",     "yes", "2025-11-05T04:00:00Z"),  # Mamdani won
+    ("cuomo-wins-nyc-2025",        "no",  "2025-11-05T04:00:00Z"),
+    ("us-shutdown-starts-oct-2025","yes", "2025-10-01T05:00:00Z"),  # shutdown began Oct 1
+    ("shutdown-ends-by-oct31-2025","no",  "2025-11-01T00:00:00Z"),  # still on into Nov
+    ("shutdown-ends-by-nov20-2025","yes", "2025-11-13T00:00:00Z"),  # ended Nov 12
+    ("fed-cut-sep-2025",           "yes", "2025-09-17T19:00:00Z"),  # 25bp cut
+    ("fed-cut-50bp-sep-2025",      "no",  "2025-09-17T19:00:00Z"),  # was 25, not 50
+    ("fed-cut-dec-2025",           "yes", "2025-12-10T20:00:00Z"),  # 25bp cut
+    ("ca-prop50-passes-2025",      "yes", "2025-11-05T04:00:00Z"),  # passed
+    ("gaza-ceasefire-oct-2025",    "yes", "2025-10-10T12:00:00Z"),  # deal took effect
 ]
 LIVE_QS = [
     "midterm-house-gop-2026", "midterm-senate-dem-2026", "midterm-tx-sen-gop-2026",
@@ -77,27 +89,35 @@ for i in range(N_ACCOUNTS):
 
 anchor = datetime(2026, 8, 18, 0, 0, tzinfo=timezone.utc)
 SPAN_S = 45 * 86_400   # 45 days, second resolution -> dedupe-safe at 100k+
+FMT = "%Y-%m-%dT%H:%M:%SZ"
+RESOLVED_DT = {q: datetime.strptime(at, FMT).replace(tzinfo=timezone.utc)
+               for q, _, at in RESOLVED_QS}
 picks = random.choices(range(N_ACCOUNTS), weights=weights, k=N_TWEETS)
 
 rows = []
 for idx in picks:
     handle, skill = handles[idx], skills[idx]
-    sent = (anchor - timedelta(seconds=random.randint(1, SPAN_S))
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
     if random.random() < 0.4:
         if random.random() < 0.55:
-            qid, outcome = random.choice(RESOLVED_QS)
+            qid, outcome, _at = random.choice(RESOLVED_QS)
             right = random.random() < skill
             hi = (outcome == "yes") == right
             p = random.uniform(0.55, 0.95) if hi else random.uniform(0.05, 0.45)
+            # stated 1h..60d BEFORE the real resolution — never hindsight
+            back = random.randint(3_600, 60 * 86_400)
+            sent = (RESOLVED_DT[qid] - timedelta(seconds=back)).strftime(FMT)
         else:
             qid = random.choice(LIVE_QS)
             p = min(0.95, max(0.05, random.gauss(LIVE_CONSENSUS[qid], 0.12)))
+            sent = (anchor - timedelta(seconds=random.randint(1, SPAN_S))
+                    ).strftime(FMT)
         text = random.choice(TMPL_STANCE).format(q=qid, pct=round(p * 100))
         rows.append((f"x:{handle}", text, sent, qid, f"{p:.2f}"))
     else:
+        sent = (anchor - timedelta(seconds=random.randint(1, SPAN_S))
+                ).strftime(FMT)
         text = random.choice(TMPL_CTX).format(st=random.choice(STATES))
-        qid = random.choice(LIVE_QS + [q for q, _ in RESOLVED_QS]) \
+        qid = random.choice(LIVE_QS + [q for q, _, _ in RESOLVED_QS]) \
             if random.random() < 0.5 else ""
         rows.append((f"x:{handle}", text, sent, qid, ""))
 
@@ -106,11 +126,11 @@ with open(out_csv, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["source_id", "text", "sent_at", "question_id", "stance"])
     w.writerows(rows)
-with open(f"{OUT}/gop_resolutions.csv", "w", newline="") as f:
+with open(f"{OUT}/resolutions_2025.csv", "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["question_id", "outcome", "resolved_at"])
-    for qid, outcome in RESOLVED_QS:
-        w.writerow([qid, outcome, "2026-08-17T22:00:00Z"])
+    for qid, outcome, resolved_at in RESOLVED_QS:
+        w.writerow([qid, outcome, resolved_at])
 
 per_user = Counter(r[0] for r in rows)
 counts = sorted(per_user.values())

@@ -141,3 +141,31 @@ def test_brier_none_when_nothing_resolved(conn):
     add_question(conn, "q1")
     add_prediction(conn, "a", "q1", 0.5)
     assert cr.brier(conn, "a") is None
+
+
+def test_lookahead_guard_post_resolution_stance_never_graded(conn):
+    """A stance stated AFTER the resolution moment is not a prediction —
+    hindsight can't buy credibility. A source whose latest call is post-
+    resolution is graded on its latest PRE-resolution call instead."""
+    c = conn
+    c.execute("INSERT INTO sources(id, alpha, beta, created_at)"
+              " VALUES ('s1', 2.0, 2.0, '2025-01-01T00:00:00Z')")
+    c.execute("INSERT INTO sources(id, alpha, beta, created_at)"
+              " VALUES ('s2', 2.0, 2.0, '2025-01-01T00:00:00Z')")
+    c.execute("INSERT INTO questions(id, title, status, created_at)"
+              " VALUES ('q', 'Q', 'live', '2025-01-01T00:00:00Z')")
+    # s1: only a post-resolution stance -> must NOT be graded at all
+    c.execute("INSERT INTO predictions(source_id, question_id, p, stated_at)"
+              " VALUES ('s1', 'q', 0.9, '2025-11-05T00:00:00Z')")
+    # s2: early wrong call (0.3), then a post-resolution "right" one (0.9)
+    #     -> graded on the EARLY call only (a miss)
+    c.execute("INSERT INTO predictions(source_id, question_id, p, stated_at)"
+              " VALUES ('s2', 'q', 0.3, '2025-11-01T00:00:00Z')")
+    c.execute("INSERT INTO predictions(source_id, question_id, p, stated_at)"
+              " VALUES ('s2', 'q', 0.9, '2025-11-05T00:00:00Z')")
+    moves = cr.resolve_question(c, "q", "yes", "2025-11-04T04:00:00Z")
+    by = {m["source_id"]: m for m in moves}
+    assert "s1" not in by                      # hindsight-only: never graded
+    assert by["s2"]["hit"] is False            # graded on the pre-resolution miss
+    row = c.execute("SELECT alpha, beta FROM sources WHERE id='s2'").fetchone()
+    assert (row["alpha"], row["beta"]) == (2.0, 3.0)

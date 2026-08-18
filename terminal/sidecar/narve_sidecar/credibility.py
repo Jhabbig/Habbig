@@ -30,9 +30,17 @@ def credibility(alpha: float, beta: float) -> float:
     return alpha / (alpha + beta)
 
 
-def latest_predictions(conn: sqlite3.Connection, question_id: str) -> list[sqlite3.Row]:
+def latest_predictions(
+    conn: sqlite3.Connection, question_id: str, *, stated_before: str | None = None
+) -> list[sqlite3.Row]:
     """One row per source: its latest prediction on the question
-    (by stated_at, ties broken by insertion id)."""
+    (by stated_at, ties broken by insertion id).
+
+    `stated_before` is the lookahead guard used at resolution time: only
+    predictions stated at/before that ISO-8601 UTC instant are considered, so
+    a stance recorded after the outcome was known can never be graded — and a
+    source whose latest call is post-resolution is graded on its latest
+    PRE-resolution call instead. (ISO strings compare correctly as strings.)"""
     return conn.execute(
         """
         SELECT * FROM (
@@ -40,9 +48,10 @@ def latest_predictions(conn: sqlite3.Connection, question_id: str) -> list[sqlit
                 PARTITION BY source_id ORDER BY stated_at DESC, id DESC
             ) AS rn
             FROM predictions p WHERE question_id = ?
+              AND (? IS NULL OR stated_at <= ?)
         ) WHERE rn = 1
         """,
-        (question_id,),
+        (question_id, stated_before, stated_before),
     ).fetchall()
 
 
@@ -115,7 +124,7 @@ def resolve_question(
 
     outcome_yes = outcome == "yes"
     moves: list[dict] = []
-    for pred in latest_predictions(conn, question_id):
+    for pred in latest_predictions(conn, question_id, stated_before=at):
         src = conn.execute(
             "SELECT * FROM sources WHERE id = ?", (pred["source_id"],)
         ).fetchone()

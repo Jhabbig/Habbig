@@ -67,7 +67,7 @@ Then with the sidecar on a scratch DB (`NARVE_DB_PATH=/tmp/stress.db`):
 
 ```bash
 curl -X POST -F "file=@tweets_25k.csv" http://127.0.0.1:41733/ingest/messages
-curl -X POST -F "file=@gop_resolutions.csv" http://127.0.0.1:41733/ingest/resolutions
+curl -X POST -F "file=@resolutions_2025.csv" http://127.0.0.1:41733/ingest/resolutions
 ```
 
 Measured on a MacBook (2026-08-18): **25,000 tweets ingested in 0.44s**
@@ -84,7 +84,7 @@ records at low n — the Brier-weighted-credibility upgrade is specced for v1
 and this test is its evidence.
 
 *(generator: `terminal/tools/gen_tweets.py` — deterministic, seed 42; it also
-writes gop_resolutions.csv for the resolve step.)*
+writes resolutions_2025.csv for the resolve step.)*
 
 ## The why engine (Julian's integration seam)
 
