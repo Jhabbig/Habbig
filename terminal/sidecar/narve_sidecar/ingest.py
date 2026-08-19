@@ -1,5 +1,7 @@
-"""Strict CSV/JSON ingest for four kinds: predictions, markets, resolutions,
-messages (texts from people — sources with kind='user').
+"""Strict CSV/JSON ingest for five kinds: predictions, markets, resolutions,
+messages (texts from people — sources with kind='user'), and accounts
+(context UPSERTed onto sources: bias/region/affiliation/topics/followers/
+verified/notes — only provided non-empty fields overwrite).
 
 ALL row errors are reported at once as [{line, reason}] with 1-based data
 lines; valid rows are still applied (partial ingest — the file's counts land
@@ -18,9 +20,10 @@ import sqlite3
 from datetime import datetime
 
 from . import credibility
+from .context import BIAS_LEVELS
 from .db import utcnow
 
-KINDS = ("predictions", "markets", "resolutions", "messages")
+KINDS = ("predictions", "markets", "resolutions", "messages", "accounts")
 
 # kind -> (required columns, optional columns) — CSV header order below.
 COLUMNS: dict[str, tuple[list[str], list[str]]] = {
@@ -28,6 +31,8 @@ COLUMNS: dict[str, tuple[list[str], list[str]]] = {
     "markets": (["venue", "market_id", "question_id", "yes_price", "captured_at"], ["liquidity"]),
     "resolutions": (["question_id", "outcome", "resolved_at"], []),
     "messages": (["source_id", "text", "sent_at"], ["question_id", "stance"]),
+    "accounts": (["source_id"], ["bias", "region", "affiliation", "topics",
+                                 "followers", "verified", "notes"]),
 }
 
 HEADERS: dict[str, list[str]] = {
@@ -35,6 +40,8 @@ HEADERS: dict[str, list[str]] = {
     "markets": ["venue", "market_id", "question_id", "yes_price", "liquidity", "captured_at"],
     "resolutions": ["question_id", "outcome", "resolved_at"],
     "messages": ["source_id", "text", "sent_at", "question_id", "stance"],
+    "accounts": ["source_id", "bias", "region", "affiliation", "topics",
+                 "followers", "verified", "notes"],
 }
 
 TEMPLATE_EXAMPLES: dict[str, list[str]] = {
@@ -43,6 +50,8 @@ TEMPLATE_EXAMPLES: dict[str, list[str]] = {
     "resolutions": ["midterm-house-gop-2026", "yes", "2026-11-04T04:00:00Z"],
     "messages": ["capitol_staffer", "Whip count still shows the majority holding",
                  "2026-08-01T12:00:00Z", "midterm-house-gop-2026", "0.7"],
+    "accounts": ["capitol_staffer", "lean-right", "US-DC", "staffer",
+                 "midterms house djt", "12000", "1", "hill contact since 2024"],
 }
 
 
@@ -191,11 +200,58 @@ def _v_message(row: dict) -> tuple[dict | None, str | None]:
     }, None
 
 
+def _v_account(row: dict) -> tuple[dict | None, str | None]:
+    """Context UPSERT row: only provided NON-EMPTY fields land in the clean
+    dict (as non-None) — the applier never overwrites with blanks."""
+    if not _s(row, "source_id"):
+        return None, "source_id is required"
+    clean: dict = {"source_id": _s(row, "source_id")}
+    bias = _s(row, "bias").lower()
+    if bias and bias not in BIAS_LEVELS:
+        return None, ("bias must be one of "
+                      f"{'|'.join(BIAS_LEVELS)}, got {_s(row, 'bias')!r}")
+    clean["bias"] = bias or None
+    for key in ("region", "affiliation", "topics", "notes"):
+        clean[key] = _s(row, key) or None
+    followers: int | None = None
+    fv = row.get("followers")
+    if fv is not None and str(fv).strip() != "":
+        bad = f"followers must be a non-negative integer, got {fv!r}"
+        if isinstance(fv, bool):
+            return None, bad
+        if isinstance(fv, int):
+            followers = fv
+        elif isinstance(fv, float):
+            if not fv.is_integer():
+                return None, bad
+            followers = int(fv)
+        else:
+            try:
+                followers = int(str(fv).strip())
+            except ValueError:
+                return None, bad
+        if followers < 0:
+            return None, bad
+    clean["followers"] = followers
+    verified: int | None = None
+    vv = _s(row, "verified").lower()  # JSON true/1/false/0 stringify cleanly
+    if vv:
+        if vv in ("1", "true"):
+            verified = 1
+        elif vv in ("0", "false"):
+            verified = 0
+        else:
+            return None, f"verified must be 0|1|true|false, got {_s(row, 'verified')!r}"
+    clean["verified"] = verified
+    return clean, None
+
+
 VALIDATORS = {
     "predictions": _v_prediction,
     "markets": _v_market,
     "resolutions": _v_resolution,
     "messages": _v_message,
+    "accounts": _v_account,
 }
 
 
@@ -292,11 +348,39 @@ def _apply_messages(conn, valid, errors) -> tuple[int, int]:
     return ok, dedup
 
 
+_ACCOUNT_TEXT_COLS = ("bias", "region", "affiliation", "topics", "notes")
+
+
+def _apply_accounts(conn, valid, errors) -> tuple[int, int]:
+    """UPSERT context onto sources (auto-create neutral kind='user' if
+    unknown). Only provided non-empty fields overwrite, so the operation is
+    idempotent by nature — same file, same end state. dedup_skipped stays 0:
+    there is no natural-key dedupe, re-applying identical context is a no-op."""
+    ok = 0
+    for _line, r in valid:
+        _ensure_source(conn, r["source_id"])
+        sets, args = [], []
+        for key in _ACCOUNT_TEXT_COLS:  # fixed column names — safe to format
+            if r[key] is not None:
+                sets.append(f"{key} = ?")
+                args.append(r[key])
+        for key in ("followers", "verified"):
+            if r[key] is not None:
+                sets.append(f"{key} = ?")
+                args.append(r[key])
+        if sets:
+            conn.execute(f"UPDATE sources SET {', '.join(sets)} WHERE id = ?",
+                         (*args, r["source_id"]))
+        ok += 1
+    return ok, 0
+
+
 APPLIERS = {
     "predictions": _apply_predictions,
     "markets": _apply_markets,
     "resolutions": _apply_resolutions,
     "messages": _apply_messages,
+    "accounts": _apply_accounts,
 }
 
 

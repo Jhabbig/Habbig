@@ -42,7 +42,7 @@ cd app && npm install && npm run dev                       # UI on :5173
 ## The automated suites (run live in front of him)
 
 ```bash
-cd terminal/sidecar && python3.11 -m pytest -q     # 48 passed
+cd terminal/sidecar && python3.11 -m pytest -q     # 75 passed
 ```
 ```bash
 cd terminal/why && python3.11 -m pytest -q         # 127 passed

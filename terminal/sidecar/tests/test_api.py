@@ -9,8 +9,8 @@ def test_health(client, db_file):
 def test_sample_load_counts_and_idempotence(client):
     body = client.post("/sample/load").json()
     assert body["loaded"] is True
-    assert body["counts"] == {"sources": 6, "questions": 14,
-                              "predictions": 15, "snapshots": 12}
+    assert body["counts"] == {"sources": 6, "questions": 15,
+                              "predictions": 17, "snapshots": 13}
     again = client.post("/sample/load").json()
     assert again["counts"] == body["counts"]  # second load is a no-op
 
@@ -22,13 +22,14 @@ def test_sources_shape_order_and_movement(client):
     creds = [r["credibility"] for r in rows]
     assert creds == sorted(creds, reverse=True)  # cred desc
     keys = {"id", "name", "kind", "alpha", "beta", "credibility", "n_resolved",
-            "n_live", "brier", "is_sample", "last_active"}
+            "n_live", "brier", "bias", "region", "affiliation", "topics",
+            "followers", "verified", "is_sample", "last_active"}
     assert set(rows[0]) == keys
     by_id = {r["id"]: r for r in rows}
     race = by_id["sample:race_model"]
     assert race["alpha"] == 13.0 and race["beta"] == 3.0  # 12/3 + resolved hit
     assert race["credibility"] == 0.8125
-    assert race["n_resolved"] == 1 and race["n_live"] == 3
+    assert race["n_resolved"] == 1 and race["n_live"] == 4  # + DJT sample q
     assert race["brier"] == round((0.72 - 1) ** 2, 4)
     poll = by_id["sample:poll_aggregator"]
     assert poll["beta"] == 6.0 and poll["credibility"] == 0.76  # miss recorded
@@ -44,14 +45,14 @@ def test_source_detail_events_and_predictions(client):
     ev = body["events"][0]
     assert ev["old_alpha"] == 12.0 and ev["new_alpha"] == 13.0
     assert ev["question_id"] == "va-gov-dem-2025"
-    assert len(body["predictions"]) == 4
+    assert len(body["predictions"]) == 5  # 3 live + 1 resolved + 1 DJT
     assert client.get("/sources/nope").status_code == 404
 
 
 def test_questions_shape_and_edge_sort(client):
     client.post("/sample/load")
     rows = client.get("/questions").json()
-    assert len(rows) == 14
+    assert len(rows) == 15
     keys = {"id", "title", "status", "n_sources", "combined_p", "market_price",
             "edge", "is_sample", "updated_at"}
     assert set(rows[0]) == keys
@@ -68,7 +69,8 @@ def test_question_detail_shape(client):
     client.post("/sample/load")
     body = client.get("/questions/midterm-house-gop-2026").json()
     assert set(body) == {"question", "per_source", "combined_p", "market",
-                         "history", "messages"}
+                         "history", "messages", "source_context",
+                         "relevant_sources"}
     assert body["question"]["status"] == "live"
     # race_model 0.62 @ cred 0.8125 + capitol_staffer 0.66 @ cred 0.5
     assert body["combined_p"] == 0.6352
@@ -144,7 +146,7 @@ def test_raw_endpoint(client):
     client.post("/sample/load")
     body = client.get("/raw/predictions").json()
     assert set(body) == {"rows", "total"}
-    assert body["total"] == 15 and len(body["rows"]) == 15
+    assert body["total"] == 17 and len(body["rows"]) == 17
     filtered = client.get(
         "/raw/predictions",
         params={"source_id": "sample:state_polls", "limit": 3}).json()

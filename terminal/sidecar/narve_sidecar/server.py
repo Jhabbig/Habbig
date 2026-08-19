@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from . import __version__, credibility, sample_data
+from . import __version__, context, credibility, sample_data
 from . import db as db_mod
 from . import ingest as ingest_mod
 
@@ -63,6 +63,9 @@ def _source_row(c, s) -> dict:
         "credibility": round(credibility.credibility(s["alpha"], s["beta"]), 4),
         "n_resolved": n_resolved, "n_live": n_live,
         "brier": round(b, 4) if b is not None else None,
+        "bias": s["bias"], "region": s["region"],
+        "affiliation": s["affiliation"], "topics": s["topics"],
+        "followers": s["followers"], "verified": bool(s["verified"]),
         "is_sample": bool(s["is_sample"]), "last_active": last_active,
     }
 
@@ -117,8 +120,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def ingest_endpoint(kind: str, request: Request):
         if kind not in ingest_mod.KINDS:
             raise HTTPException(404, f"unknown ingest kind {kind!r} — expected"
-                                     " predictions, markets, resolutions or"
-                                     " messages")
+                                     " predictions, markets, resolutions,"
+                                     " messages or accounts")
         content_type = (request.headers.get("content-type") or "").lower()
         with closing(conn()) as c:
             try:
@@ -184,6 +187,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             if s is None:
                 raise HTTPException(404, f"unknown source_id {source_id!r}")
             out = _source_row(c, s)
+            out["notes"] = s["notes"]
             out["events"] = [dict(e) for e in c.execute(
                 "SELECT * FROM credibility_events WHERE source_id = ?"
                 " ORDER BY at DESC, id DESC", (source_id,)).fetchall()]
@@ -238,9 +242,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         "resolved_at": q["resolved_at"],
                         "is_sample": bool(q["is_sample"]),
                         "created_at": q["created_at"]}
+            q_text = f"{q['id']} {q['title']}"
+            source_context = context.source_context(c, question_id, q_text)
+            relevant = context.relevant_sources(c, question_id, q_text)
         return {"question": question, "per_source": per_source,
                 "combined_p": round(combined, 4) if combined is not None else None,
-                "market": market, "history": history, "messages": messages}
+                "market": market, "history": history, "messages": messages,
+                "source_context": source_context, "relevant_sources": relevant}
 
     @app.post("/resolve")
     def resolve(body: ResolveBody):
@@ -286,6 +294,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 where.append("source_id = ?"); args.append(source_id)
             select = ("SELECT id, source_id, question_id, text, sent_at,"
                       " stance_p ")
+        elif kind == "accounts":  # context lives ON sources
+            base, order = "FROM sources", "ORDER BY id ASC"
+            if source_id:
+                where.append("id = ?"); args.append(source_id)
+            select = ("SELECT id AS source_id, name, kind, bias, region,"
+                      " affiliation, topics, followers, verified, notes ")
         else:  # resolutions live ON questions in v0.5
             base, order = "FROM questions", "ORDER BY resolved_at DESC, id DESC"
             where.append("status != 'live'")

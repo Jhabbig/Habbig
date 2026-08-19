@@ -13,7 +13,14 @@ import {
   td,
   theadRow,
 } from "../api.ts";
-import type { Outcome, QuestionDetail, ResolveResult, Snapshot } from "../api.ts";
+import type {
+  BiasSpread,
+  Outcome,
+  QuestionDetail,
+  RelevantSource,
+  ResolveResult,
+  Snapshot,
+} from "../api.ts";
 
 export function mount(root: HTMLElement, params: Record<string, string>): void {
   root.textContent = "";
@@ -77,6 +84,7 @@ async function render(body: HTMLElement, id: string): Promise<void> {
 
   body.appendChild(marketBlock(d));
   body.appendChild(perSourceBlock(d));
+  body.appendChild(sourceContextBlock(d));
   body.appendChild(messagesBlock(d));
   body.appendChild(resolveBlock(d, statusLine));
 }
@@ -171,6 +179,69 @@ function perSourceBlock(d: QuestionDetail): HTMLElement {
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
+  return wrap;
+}
+
+// ── SOURCE CONTEXT — who is calling this question ────────────────────────
+// Bias/region composition of the predicting sources, the sidecar's DJT skew
+// note when present (emphasis via weight+border — never hue), and WORTH
+// HEARING FROM: topic-matched sources with no prediction on it yet.
+
+const BIAS_ORDER: (keyof BiasSpread)[] = [
+  "left",
+  "lean-left",
+  "center",
+  "lean-right",
+  "right",
+  "unknown",
+];
+
+function sourceContextBlock(d: QuestionDetail): HTMLElement {
+  const wrap = el("div");
+  const ctx = d.source_context ?? null; // tolerate a pre-v3 sidecar mid-rollout
+  const relevant: RelevantSource[] = d.relevant_sources ?? [];
+  if (ctx === null && relevant.length === 0) return wrap;
+
+  wrap.appendChild(el("div", "nv-marker", "[ SOURCE CONTEXT ]"));
+  if (ctx !== null) {
+    const biasLine = BIAS_ORDER.map((k) => `${k} ${ctx.bias_spread[k]}`).join(" · ");
+    wrap.appendChild(el("div", undefined, `BIAS ${biasLine}`));
+    const regionLine = Object.entries(ctx.region_spread)
+      .sort((a, b) => b[1] - a[1])
+      .map(([region, n]) => `${region} ${n}`)
+      .join(" · ");
+    wrap.appendChild(el("div", undefined, `REGION ${regionLine || "—"}`));
+    if (ctx.skew_note !== null && ctx.skew_note !== "") {
+      const note = el("div", undefined, ctx.skew_note);
+      note.style.cssText =
+        "border:1px solid currentColor;padding:8px 10px;margin:8px 0;" +
+        "font-weight:600;max-width:520px;";
+      wrap.appendChild(note);
+    }
+  }
+
+  if (relevant.length > 0) {
+    wrap.appendChild(el("div", "nv-marker", "[ WORTH HEARING FROM ]"));
+    wrap.appendChild(
+      el(
+        "div",
+        undefined,
+        "Topic-matched sources with no call on this question yet.",
+      ),
+    );
+    const table = el("table", "nv-table");
+    table.appendChild(theadRow(["SOURCE", "CRED", "MATCH"]));
+    const tbody = el("tbody");
+    for (const r of relevant) {
+      const tr = el("tr");
+      tr.appendChild(td(r.source_id));
+      tr.appendChild(td(fmtProb(r.credibility), "nv-num"));
+      tr.appendChild(td(fmtProb(r.match, 2), "nv-num"));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
   return wrap;
 }
 

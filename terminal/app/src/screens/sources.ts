@@ -5,6 +5,7 @@ import {
   el,
   errorMessage,
   fmtAB,
+  fmtCtx,
   fmtProb,
   fmtSigned,
   fmtTime,
@@ -16,7 +17,18 @@ import {
 } from "../api.ts";
 import type { CredibilityEvent, SourceRow } from "../api.ts";
 
-const COLS = ["SOURCE", "KIND", "CRED", "α/β", "RESOLVED", "LIVE", "BRIER", "LAST"];
+const COLS = [
+  "SOURCE",
+  "KIND",
+  "BIAS",
+  "FROM",
+  "CRED",
+  "α/β",
+  "RESOLVED",
+  "LIVE",
+  "BRIER",
+  "LAST",
+];
 const NCOLS = COLS.length;
 
 export function mount(root: HTMLElement, _params: Record<string, string>): void {
@@ -74,6 +86,9 @@ function row(s: SourceRow, tbody: HTMLTableSectionElement): HTMLTableRowElement 
   const kind = td("");
   kind.appendChild(el("span", "nv-tag", (s.kind || "model").toUpperCase()));
   tr.appendChild(kind);
+  // account context — compact, text-only; unknown renders as em-dash
+  tr.appendChild(td(fmtCtx(s.bias)));
+  tr.appendChild(td(fmtCtx(s.region)));
   const cred = td(credBar(s.credibility) + " ");
   cred.appendChild(el("span", "nv-num", fmtProb(s.credibility)));
   tr.appendChild(cred);

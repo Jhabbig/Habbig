@@ -5,8 +5,17 @@
 
 export const API_BASE = "http://127.0.0.1:41733";
 
-export type IngestKind = "predictions" | "markets" | "resolutions" | "messages";
+export type IngestKind =
+  | "predictions"
+  | "markets"
+  | "resolutions"
+  | "messages"
+  | "accounts";
 export type Outcome = "yes" | "no" | "void";
+
+// Political lean of a source, as ingested via the accounts kind.
+// The sidecar validates against this enum; 'unknown' is the default.
+export type Bias = "left" | "lean-left" | "center" | "lean-right" | "right" | "unknown";
 
 export interface Health {
   ok: boolean;
@@ -52,6 +61,13 @@ export interface SourceRow {
   brier: number | null;
   is_sample: number;
   last_active: string | null;
+  // account context (migration 003) — who the source is, not just its record
+  bias: Bias;
+  region: string; // '' = unknown
+  affiliation: string; // free text: journalist/staffer/campaign/…; '' = unknown
+  topics: string; // space-or-comma-separated beats, e.g. "djt midterms fed"
+  followers: number | null;
+  verified: number; // 0 | 1
 }
 
 export interface CredibilityEvent {
@@ -75,6 +91,7 @@ export interface PredictionRow {
 }
 
 export interface SourceDetail extends SourceRow {
+  notes: string; // free-text context notes, detail view only
   events: CredibilityEvent[];
   predictions: PredictionRow[];
 }
@@ -128,6 +145,38 @@ export interface MessageRow {
   stance_p: number | null;
 }
 
+// Counts per bias bucket over sources WITH a prediction on the question.
+export interface BiasSpread {
+  left: number;
+  "lean-left": number;
+  center: number;
+  "lean-right": number;
+  right: number;
+  unknown: number;
+}
+
+// Who is calling this question — bias/region composition plus the DJT rule:
+// skew_note appears only when the question is DJT-related, ≥3 predicting
+// sources are known-bias, and one bucket exceeds 60% of them. Facts, never
+// colors.
+export interface SourceContext {
+  bias_spread: BiasSpread;
+  region_spread: Record<string, number>; // top 5 regions by count; '' → 'unknown'
+  djt_related: boolean;
+  skew_note: string | null;
+}
+
+// A source whose topics match the question but has NO prediction on it yet —
+// "who we should be hearing from but aren't". match = deterministic token
+// overlap in [0,1]. Sorted (match desc, credibility desc), max 10.
+export interface RelevantSource {
+  source_id: string;
+  credibility: number;
+  bias: Bias;
+  region: string;
+  match: number;
+}
+
 export interface QuestionDetail {
   question: Question;
   per_source: PerSource[];
@@ -135,6 +184,8 @@ export interface QuestionDetail {
   market: Snapshot[]; // latest snapshot per venue
   history: Snapshot[]; // all snapshots, captured_at asc
   messages: MessageRow[]; // newest-first
+  source_context: SourceContext;
+  relevant_sources: RelevantSource[];
 }
 
 export interface ResolveMove {
@@ -298,6 +349,13 @@ export function fmtAB(v: number): string {
 export function fmtInt(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   return Math.round(v).toLocaleString("en-US");
+}
+
+// Account-context text fields: '' and 'unknown' both render as an em-dash —
+// unknown is unknown, never fake data.
+export function fmtCtx(v: string | null | undefined): string {
+  if (v === null || v === undefined || v === "" || v === "unknown") return "—";
+  return v;
 }
 
 // "MM-DD HH:MM" in UTC. Timestamps without an explicit zone are treated

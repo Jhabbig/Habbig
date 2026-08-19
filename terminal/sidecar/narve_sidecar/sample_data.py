@@ -7,8 +7,12 @@ through the real resolution loop so the SOURCES screen shows credibility
 movement out of the box. v2 adds one HUMAN source (sample:capitol_staffer,
 kind='user', fresh 2/2 prior) with 3 text messages around the House question —
 the one carrying question+stance also lands a prediction, entering the texter
-into the credibility loop. Everything is_sample=1; source ids prefixed
-'sample:'; questions keep their slug ids. Loading is idempotent.
+into the credibility loop. v3 adds ACCOUNT CONTEXT (bias/region/affiliation/
+topics via targeted UPDATEs, so upgraded DBs pick it up too) and one DJT
+sample question (trump-2026-rally-tour) with two predictions and a snapshot,
+so the source_context + DJT skew logic is demoable out of the box.
+Everything is_sample=1; source ids prefixed 'sample:'; questions keep their
+slug ids. Loading is idempotent.
 """
 
 from __future__ import annotations
@@ -80,6 +84,31 @@ MESSAGES = [
      "FWIW two members told me the NRCC is moving money into toss-up seats this week."),
 ]
 
+# Account context, applied as targeted UPDATEs on every load (idempotent —
+# same values every time — and it upgrades v1/v2 DBs whose sample sources
+# already exist so INSERT OR IGNORE alone would leave them context-less).
+MODEL_TOPICS = "midterms polls senate house"
+CONTEXT = {  # sid -> (bias, region, affiliation, topics)
+    "race_model": ("center", "US", "model", MODEL_TOPICS),
+    "poll_aggregator": ("center", "US", "model", MODEL_TOPICS),
+    "state_polls": ("center", "US", "model", MODEL_TOPICS),
+    "macro_model": ("center", "US", "model", MODEL_TOPICS),
+    "generic_ballot": ("center", "US", "model", MODEL_TOPICS),
+    "capitol_staffer": ("lean-right", "US-DC", "staffer", "midterms house djt"),
+}
+
+# The DJT sample question: live, two predictions, one snapshot — enough for
+# the QUESTION drill to show source_context (djt_related, bias spread) and a
+# non-empty WORTH HEARING FROM list (the four non-predicting models match on
+# the "midterms" topic token).
+DJT_QUESTION = ("trump-2026-rally-tour",
+                "Trump holds 20+ rallies before the 2026 midterms")
+DJT_PREDICTIONS = [  # (source_id, p, age_minutes)
+    ("capitol_staffer", 0.7, 45),
+    ("race_model", 0.55, 50),
+]
+DJT_SNAPSHOT = (0.6, 30000.0, 40)  # (yes_price, liquidity, age_minutes)
+
 # (title, question_id, source_id, p, outcome, stated_at, resolved_at)
 RESOLVED = [
     ("Virginia Governor — Democrat wins (2025)", "va-gov-dem-2025",
@@ -121,6 +150,12 @@ def load_sample(conn: sqlite3.Connection) -> dict:
             " created_at) VALUES (?, ?, ?, ?, 'user', 1, ?)",
             (f"sample:{sid}", name, alpha, beta, created),
         )
+    for sid, (bias, region, affiliation, topics) in CONTEXT.items():
+        conn.execute(
+            "UPDATE sources SET bias = ?, region = ?, affiliation = ?,"
+            " topics = ? WHERE id = ?",
+            (bias, region, affiliation, topics, f"sample:{sid}"),
+        )
     for i, (title, qid, sid, _cred, narve_p, mkt, age_min) in enumerate(EVENTS):
         at = (now - timedelta(minutes=age_min)).strftime(TS_FMT)
         conn.execute(
@@ -147,6 +182,21 @@ def load_sample(conn: sqlite3.Connection) -> dict:
                 " note) VALUES (?, ?, ?, ?, ?)",
                 ("sample:capitol_staffer", qid, stance, at, text[:100]),
             )
+    djt_qid, djt_title = DJT_QUESTION
+    conn.execute(
+        "INSERT OR IGNORE INTO questions(id, title, status, is_sample, created_at)"
+        " VALUES (?, ?, 'live', 1, ?)", (djt_qid, djt_title, created))
+    for sid, p, age_min in DJT_PREDICTIONS:
+        at = (now - timedelta(minutes=age_min)).strftime(TS_FMT)
+        conn.execute(
+            "INSERT OR IGNORE INTO predictions(source_id, question_id, p, stated_at,"
+            " note) VALUES (?, ?, ?, ?, NULL)", (f"sample:{sid}", djt_qid, p, at))
+    price, liq, age_min = DJT_SNAPSHOT
+    at = (now - timedelta(minutes=age_min)).strftime(TS_FMT)
+    conn.execute(
+        "INSERT OR IGNORE INTO market_snapshots"
+        "(venue, market_id, question_id, yes_price, liquidity, captured_at)"
+        " VALUES ('polymarket', ?, ?, ?, ?, ?)", (djt_qid, djt_qid, price, liq, at))
     for title, qid, sid, p, outcome, stated_at, resolved_at in RESOLVED:
         conn.execute(
             "INSERT OR IGNORE INTO questions(id, title, status, is_sample, created_at)"

@@ -158,9 +158,11 @@ def test_sample_load_adds_capitol_staffer_and_stays_idempotent(client):
     assert stances == [0.66, 0.7]
     preds = client.get("/raw/predictions",
                        params={"source_id": "sample:capitol_staffer"}).json()
-    assert preds["total"] == 1  # only the question+stance message landed one
-    assert preds["rows"][0]["p"] == 0.66
-    assert preds["rows"][0]["question_id"] == "midterm-house-gop-2026"
+    # the question+stance message landed one + the v3 DJT sample prediction
+    assert preds["total"] == 2
+    by_q = {r["question_id"]: r["p"] for r in preds["rows"]}
+    assert by_q == {"midterm-house-gop-2026": 0.66,
+                    "trump-2026-rally-tour": 0.7}
     drill = client.get("/questions/midterm-house-gop-2026").json()
     assert [m["stance_p"] for m in drill["messages"]] == [None, 0.66]
     again = client.post("/sample/load").json()

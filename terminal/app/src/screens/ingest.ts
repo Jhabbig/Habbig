@@ -1,4 +1,4 @@
-// screens/ingest.ts — four upload cards (drag-drop + picker), template
+// screens/ingest.ts — five upload cards (drag-drop + picker), template
 // downloads, LOAD SAMPLE DATA, full LINE·REASON error table, raw-data peek.
 // CSV + JSON array only in v0.5 (XLSX lands in v1).
 import {
@@ -24,6 +24,12 @@ const KINDS: { kind: IngestKind; cols: string }[] = [
   },
   { kind: "resolutions", cols: "question_id · outcome (yes|no|void) · resolved_at" },
   { kind: "messages", cols: "source_id · text · sent_at · question_id? · stance?" },
+  {
+    kind: "accounts",
+    cols:
+      "source_id · bias? · region? · affiliation? · topics? · followers? · " +
+      "verified? · notes?",
+  },
 ];
 
 export function mount(root: HTMLElement, _params: Record<string, string>): void {
@@ -45,7 +51,8 @@ export function mount(root: HTMLElement, _params: Record<string, string>): void 
   const sampleStatus = el(
     "span",
     undefined,
-    " 12 markets + 2 pre-resolved questions + 1 texter with 3 messages, tagged SAMPLE",
+    " 12 markets + 2 pre-resolved + 1 DJT question + 1 texter with 3 messages" +
+      " + account context, tagged SAMPLE",
   );
   sampleRow.append(sampleBtn, sampleStatus);
   panel.appendChild(sampleRow);

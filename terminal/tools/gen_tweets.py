@@ -132,6 +132,34 @@ with open(f"{OUT}/resolutions_2025.csv", "w", newline="") as f:
     for qid, outcome, resolved_at in RESOLVED_QS:
         w.writerow([qid, outcome, resolved_at])
 
+# Account context: deterministic bias/region/role/topics per account, written
+# as an accounts-ingest CSV. Bias leans follow the handle's style prefix (a
+# maga_* account plausibly leans right) with noise so it isn't a caricature.
+BIAS_BY_STYLE = {
+    "maga": ["right", "lean-right", "lean-right"], "gop": ["lean-right", "right", "center"],
+    "bluewave": ["left", "lean-left", "lean-left"], "dem": ["lean-left", "left", "center"],
+    "polls": ["center", "center", "lean-left"], "county": ["center", "lean-right", "center"],
+    "capitol": ["center", "lean-left", "lean-right"], "beltway": ["center", "center", "lean-right"],
+    "swing": ["center", "center", "unknown"], "midterm": ["center", "unknown", "lean-left"],
+    "precinct": ["center", "lean-right", "unknown"], "ticket": ["unknown", "center", "center"],
+}
+ROLES = ["anon", "journalist", "organizer", "trader", "staffer", "academic", "anon", "anon"]
+with open(f"{OUT}/accounts_{N_ACCOUNTS}.csv", "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["source_id", "bias", "region", "affiliation", "topics",
+                "followers", "verified", "notes"])
+    for i, handle in enumerate(handles):
+        style = handle.split("_")[0]
+        bias = random.choice(BIAS_BY_STYLE.get(style, ["unknown"]))
+        region = "US-" + random.choice(STATES) if random.random() < 0.7 else "US"
+        role = random.choice(ROLES)
+        beats = ["midterms"] + random.sample(["polls", "house", "senate", "djt",
+                                              "fed", "turnout", "fundraising"], 2)
+        followers = int(random.paretovariate(1.1) * 250)
+        verified = 1 if random.random() < 0.08 else 0
+        w.writerow([f"x:{handle}", bias, region, role, " ".join(beats),
+                    followers, verified, ""])
+
 per_user = Counter(r[0] for r in rows)
 counts = sorted(per_user.values())
 stance_n = sum(1 for r in rows if r[4])
